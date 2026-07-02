@@ -144,35 +144,35 @@
           ;; capability-matrix tests cover the unavailable path.
           (expect (not (ws/isolated-workspaces-supported? base)))
           (do
-        (spit (io/file base "a.txt") "original\n")
-        (with-store
-          (fn [store]
-            (let [seed     (seed-workspace! store base)
-                  draft    (ws/create! store {:from seed})
-                  draft-id (:id draft)]
-              (try
+            (spit (io/file base "a.txt") "original\n")
+            (with-store
+              (fn [store]
+                (let [seed     (seed-workspace! store base)
+                      draft    (ws/create! store {:from seed})
+                      draft-id (:id draft)]
+                  (try
                 ;; a real, distinct clone carrying the parent's tree
-                (expect (some? (:root draft)))
-                (expect (not= base (:root draft)))
-                (expect (.exists (io/file (:root draft) "a.txt")))
+                    (expect (some? (:root draft)))
+                    (expect (not= base (:root draft)))
+                    (expect (.exists (io/file (:root draft) "a.txt")))
                 ;; trunk inherited from the parent so apply lands back into base
-                (expect (= base (:repo-root draft)))
+                    (expect (= base (:repo-root draft)))
                 ;; edit + add inside the clone AFTER the fork
-                (Thread/sleep 8)
-                (spit (io/file (:root draft) "a.txt") "EDITED\n")
-                (spit (io/file (:root draft) "b.txt") "NEW\n")
-                (let [{:keys [landed changed]} (ws/apply! store {:workspace-id draft-id})]
-                  (expect (= 2 landed))
-                  (expect (= #{"a.txt" "b.txt"} (set (map :path changed))))
-                  (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
-                  (expect (= "NEW\n" (slurp (io/file base "b.txt")))))
+                    (Thread/sleep 8)
+                    (spit (io/file (:root draft) "a.txt") "EDITED\n")
+                    (spit (io/file (:root draft) "b.txt") "NEW\n")
+                    (let [{:keys [landed changed]} (ws/apply! store {:workspace-id draft-id})]
+                      (expect (= 2 landed))
+                      (expect (= #{"a.txt" "b.txt"} (set (map :path changed))))
+                      (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
+                      (expect (= "NEW\n" (slurp (io/file base "b.txt")))))
                 ;; abandon trashes the clone + marks the row discarded
-                (let [done (ws/abandon! store {:workspace-id draft-id :reason "done"})]
-                  (expect (= :discarded (:state done)))
-                  (expect (= "done" (:reason done))))
-                (finally
-                  (try (ws/abandon! store {:workspace-id draft-id})
-                    (catch Throwable _ nil))))))))) ; close fn/with-store, then do + if-not
+                    (let [done (ws/abandon! store {:workspace-id draft-id :reason "done"})]
+                      (expect (= :discarded (:state done)))
+                      (expect (= "done" (:reason done))))
+                    (finally
+                      (try (ws/abandon! store {:workspace-id draft-id})
+                        (catch Throwable _ nil))))))))) ; close fn/with-store, then do + if-not
         (finally (delete-tree! base)))))
 
   (it "apply! throws for an unknown workspace-id"
@@ -307,34 +307,34 @@
         (spit (io/file base "a.txt") "base\n")
         (spit (io/file ext "lib.txt") "orig\n")
         (when-cow base
-        (with-store
-          (fn [store]
-            (let [seed     (seed-workspace! store base)
-                  draft    (ws/create! store {:from seed})
-                  draft-id (:id draft)]
-              (try
-                (ws/add-filesystem-root! store draft-id ext)
-                (let [entry (first (ws/filesystem-roots (ws/get store draft-id)))]
+          (with-store
+            (fn [store]
+              (let [seed     (seed-workspace! store base)
+                    draft    (ws/create! store {:from seed})
+                    draft-id (:id draft)]
+                (try
+                  (ws/add-filesystem-root! store draft-id ext)
+                  (let [entry (first (ws/filesystem-roots (ws/get store draft-id)))]
                   ;; auto-cloned: a real distinct working copy with a fork baseline
-                  (expect (= (.getCanonicalPath (io/file ext)) (:trunk entry)))
-                  (expect (not= (:trunk entry) (:clone entry)))
-                  (expect (some? (:fork-ms entry)))
-                  (expect (.exists (io/file (:clone entry) "lib.txt")))
+                    (expect (= (.getCanonicalPath (io/file ext)) (:trunk entry)))
+                    (expect (not= (:trunk entry) (:clone entry)))
+                    (expect (some? (:fork-ms entry)))
+                    (expect (.exists (io/file (:clone entry) "lib.txt")))
                   ;; edit inside the context CLONE (isolated from the real dir)
-                  (Thread/sleep 8)
-                  (spit (io/file (:clone entry) "lib.txt") "EDITED\n")
-                  (expect (= "orig\n" (slurp (io/file ext "lib.txt")))) ;; real dir untouched pre-apply
+                    (Thread/sleep 8)
+                    (spit (io/file (:clone entry) "lib.txt") "EDITED\n")
+                    (expect (= "orig\n" (slurp (io/file ext "lib.txt")))) ;; real dir untouched pre-apply
                   ;; apply! lands the context clone back into its own trunk
-                  (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
-                    (expect (some #(and (= "lib.txt" (:path %))
-                                     (= (.getCanonicalPath (io/file ext)) (:root %)))
-                              changed))
-                    (expect (= "EDITED\n" (slurp (io/file ext "lib.txt")))))
+                    (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                      (expect (some #(and (= "lib.txt" (:path %))
+                                       (= (.getCanonicalPath (io/file ext)) (:root %)))
+                                changed))
+                      (expect (= "EDITED\n" (slurp (io/file ext "lib.txt")))))
                   ;; abandon! trashes the context clone too
-                  (ws/abandon! store {:workspace-id draft-id :reason "done"})
-                  (expect (not (.exists (io/file (:clone entry))))))
-                (finally
-                  (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil))))))))
+                    (ws/abandon! store {:workspace-id draft-id :reason "done"})
+                    (expect (not (.exists (io/file (:clone entry))))))
+                  (finally
+                    (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil))))))))
         (finally (delete-tree! base) (delete-tree! ext)))))
 
   (it "a DRAFT with MORE THAN ONE filesystem root clones each, and apply! lands them all"
@@ -346,24 +346,24 @@
         (spit (io/file e1 "f1.txt") "o1\n")
         (spit (io/file e2 "f2.txt") "o2\n")
         (when-cow base
-        (with-store
-          (fn [store]
-            (let [draft (ws/create! store {:from (seed-workspace! store base)})
-                  did   (:id draft)]
-              (try
-                (ws/add-filesystem-root! store did e1)
-                (ws/add-filesystem-root! store did e2)
-                (let [roots (ws/filesystem-roots (ws/get store did))]
-                  (expect (= 2 (count roots)))
-                  (expect (every? #(not= (:trunk %) (:clone %)) roots)) ;; both cloned
-                  (Thread/sleep 8)
-                  (doseq [r roots]
-                    (spit (io/file (:clone r) (if (re-find #"e1" (:trunk r)) "f1.txt" "f2.txt"))
-                      "EDITED\n"))
-                  (ws/apply! store {:workspace-id did})
-                  (expect (= "EDITED\n" (slurp (io/file e1 "f1.txt"))))
-                  (expect (= "EDITED\n" (slurp (io/file e2 "f2.txt")))))
-                (finally (try (ws/abandon! store {:workspace-id did}) (catch Throwable _ nil))))))))
+          (with-store
+            (fn [store]
+              (let [draft (ws/create! store {:from (seed-workspace! store base)})
+                    did   (:id draft)]
+                (try
+                  (ws/add-filesystem-root! store did e1)
+                  (ws/add-filesystem-root! store did e2)
+                  (let [roots (ws/filesystem-roots (ws/get store did))]
+                    (expect (= 2 (count roots)))
+                    (expect (every? #(not= (:trunk %) (:clone %)) roots)) ;; both cloned
+                    (Thread/sleep 8)
+                    (doseq [r roots]
+                      (spit (io/file (:clone r) (if (re-find #"e1" (:trunk r)) "f1.txt" "f2.txt"))
+                        "EDITED\n"))
+                    (ws/apply! store {:workspace-id did})
+                    (expect (= "EDITED\n" (slurp (io/file e1 "f1.txt"))))
+                    (expect (= "EDITED\n" (slurp (io/file e2 "f2.txt")))))
+                  (finally (try (ws/abandon! store {:workspace-id did}) (catch Throwable _ nil))))))))
         (finally (delete-tree! base) (delete-tree! e1) (delete-tree! e2)))))
 
   (it "DELETE trashes a draft's clones (primary + context); a TRUNK session's real dirs survive"
@@ -374,26 +374,26 @@
         (spit (io/file base "a.txt") "x\n")
         (spit (io/file ext "e.txt") "x\n")
         (when-cow base
-        (with-store
-          (fn [store]
+          (with-store
+            (fn [store]
             ;; DRAFT session → discard-session-clones! trashes primary + context clones
-            (let [draft (ws/create! store {:from (seed-workspace! store base)})
-                  soul  (str (random-uuid))]
-              (pin-session! store soul (:id draft))
-              (ws/add-filesystem-root! store (:id draft) ext)
-              (let [entry (first (ws/filesystem-roots (ws/get store (:id draft))))]
-                (expect (.exists (io/file (:root draft))))
-                (expect (.exists (io/file (:clone entry))))
-                (ws/discard-session-clones! store soul)
-                (expect (not (.exists (io/file (:root draft)))))
-                (expect (not (.exists (io/file (:clone entry)))))
-                (expect (.exists (io/file ext)))))            ;; REAL filesystem dir untouched
+              (let [draft (ws/create! store {:from (seed-workspace! store base)})
+                    soul  (str (random-uuid))]
+                (pin-session! store soul (:id draft))
+                (ws/add-filesystem-root! store (:id draft) ext)
+                (let [entry (first (ws/filesystem-roots (ws/get store (:id draft))))]
+                  (expect (.exists (io/file (:root draft))))
+                  (expect (.exists (io/file (:clone entry))))
+                  (ws/discard-session-clones! store soul)
+                  (expect (not (.exists (io/file (:root draft)))))
+                  (expect (not (.exists (io/file (:clone entry)))))
+                  (expect (.exists (io/file ext)))))            ;; REAL filesystem dir untouched
             ;; TRUNK session → discard must NEVER touch the user's real cwd
-            (let [trunk (ws/create-trunk-at! store live)
-                  soul2 (str (random-uuid))]
-              (pin-session! store soul2 (:id trunk))
-              (ws/discard-session-clones! store soul2)
-              (expect (.exists (io/file live)))))))
+              (let [trunk (ws/create-trunk-at! store live)
+                    soul2 (str (random-uuid))]
+                (pin-session! store soul2 (:id trunk))
+                (ws/discard-session-clones! store soul2)
+                (expect (.exists (io/file live)))))))
         (finally (delete-tree! base) (delete-tree! ext) (delete-tree! live))))))
 
 (defdescribe change-root-test

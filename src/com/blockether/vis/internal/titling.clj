@@ -13,7 +13,6 @@
    [com.blockether.vis.internal.strutil :refer [truncate]]
    [taoensso.telemere :as tel]))
 
-
 (defonce ^:private title-listeners
   ;; {session-id-uuid #{listener-fn ...}}
   (atom {}))

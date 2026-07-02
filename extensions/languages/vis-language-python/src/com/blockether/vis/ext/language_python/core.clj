@@ -18,12 +18,12 @@
   (let [root (some-> (:workspace/root env) io/file)]
     (when (and root (.isDirectory root))
       (or
-       (some #(.exists (io/file root %))
-             ["pyproject.toml" "setup.py" "setup.cfg" "requirements.txt" "Pipfile" "uv.lock"])
+        (some #(.exists (io/file root %))
+          ["pyproject.toml" "setup.py" "setup.cfg" "requirements.txt" "Pipfile" "uv.lock"])
         ;; bounded scan for a .py anywhere (lazy file-seq, capped)
-       (boolean (some #(and (.isFile ^java.io.File %)
-                            (str/ends-with? (.getName ^java.io.File %) ".py"))
-                      (take 3000 (file-seq root))))))))
+        (boolean (some #(and (.isFile ^java.io.File %)
+                          (str/ends-with? (.getName ^java.io.File %) ".py"))
+                   (take 3000 (file-seq root))))))))
 
 (defn- activation-fn [env] (boolean (workspace-has-python? env)))
 
@@ -33,16 +33,16 @@
 
 (defn- env-root ^String [env]
   (or (:workspace/root env)
-      (throw (ex-info "python tool fired without :workspace/root in env"
-                      {:type :py/no-workspace}))))
+    (throw (ex-info "python tool fired without :workspace/root in env"
+             {:type :py/no-workspace}))))
 
 (defn- resolve-dir ^String [root dir]
   (let [d (str (or dir ""))]
     (.getCanonicalPath
-     (cond
-       (= "" d)                   (io/file root)
-       (.isAbsolute (io/file d))  (io/file d)
-       :else                      (io/file root d)))))
+      (cond
+        (= "" d)                   (io/file root)
+        (.isAbsolute (io/file d))  (io/file d)
+        :else                      (io/file root d)))))
 
 (defn- opt [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
@@ -56,22 +56,22 @@
   [session dir result & [id]]
   (when (and session (:pid result))
     (vis/register-resource! session
-                            {:id       (repl-resource-id dir id)
-                             :kind     :repl
-                             :label    (str "python REPL " (.getName (io/file dir)))
-                             :status   (or (:status result) :up)
-                             :detail   {:dir dir :cmd (:cmd result)}
-                             :pid      (:pid result)
-                             :owner    :ext/language-python
-                             :language :python}
-                            {:stop-fn    (fn [] (repl/stop! dir))
-                             :restart-fn (fn []
-                                           (repl/stop! dir)
-                                           (let [r (repl/start! dir {})]
-                                             (register-repl-resource! session dir r id)
-                                             r))})
+      {:id       (repl-resource-id dir id)
+       :kind     :repl
+       :label    (str "python REPL " (.getName (io/file dir)))
+       :status   (or (:status result) :up)
+       :detail   {:dir dir :cmd (:cmd result)}
+       :pid      (:pid result)
+       :owner    :ext/language-python
+       :language :python}
+      {:stop-fn    (fn [] (repl/stop! dir))
+       :restart-fn (fn []
+                     (repl/stop! dir)
+                     (let [r (repl/start! dir {})]
+                       (register-repl-resource! session dir r id)
+                       r))})
     (vis/notify! (str "● python REPL up — " (.getName (io/file dir)))
-                 :level :success :ttl-ms 4000)))
+      :level :success :ttl-ms 4000)))
 
 ;; =============================================================================
 ;; Language-facade handlers
@@ -92,11 +92,11 @@
                 (extension/success {:result r}))
       (:start :restart)
       (do (when (= op :restart) (repl/stop! dir))
-          (let [r (repl/start! dir (or opts {}))]
-            (register-repl-resource! (:session-id env) dir r id)
-            (extension/success {:result r})))
+        (let [r (repl/start! dir (or opts {}))]
+          (register-repl-resource! (:session-id env) dir r id)
+          (extension/success {:result r})))
       (throw (ex-info (str "repl_start(python) unknown op: " (pr-str op))
-                      {:type :py/bad-args :got op})))))
+               {:type :py/bad-args :got op})))))
 
 (defn py-repl-eval-fn
   "repl_eval handler for Python. Accepts a code string or
@@ -105,9 +105,9 @@
   [env arg]
   (let [root (env-root env)
         code (cond (string? arg) arg
-                   (map? arg) (str (or (opt arg :code) (opt arg :source)))
-                   :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
-                                         {:type :py/bad-args :got arg})))
+               (map? arg) (str (or (opt arg :code) (opt arg :source)))
+               :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
+                              {:type :py/bad-args :got arg})))
         dir  (resolve-dir root (opt arg :dir))
         tmo  (opt arg :timeout_ms)]
     (when-not (= :up (:status (repl/status dir)))
@@ -125,25 +125,25 @@
 
 (def vis-extension
   (vis/extension
-   {:ext/name           "language-python"
-    :ext/description    "Python language pack: a managed Python REPL (uv/poetry/venv/python3) behind the generic repl_start/repl_eval/repl_stop facade. Activates on Python workspaces."
-    :ext/version        "0.1.0"
-    :ext/author         "Blockether"
-    :ext/owner          "vis"
-    :ext/license        "Apache-2.0"
-    :ext/activation-fn  activation-fn
-    :ext/language-tools [{:language      :python
-                          :repl-eval-fn  py-repl-eval-fn
-                          :start-repl-fn (fn [env op opts] (py-start-repl-fn env op opts))}]
-    :ext/startable-resources
-    [{:kind     :repl
-      :label    "Python REPL"
-      :start-fn (fn [env _selected]
-                  (let [root (env-root env)
-                        dir  (resolve-dir root nil)
-                        r    (repl/start! dir {})]
-                    (register-repl-resource! (:session-id env) dir r)
-                    r))}]
-    :ext/kind           "language"}))
+    {:ext/name           "language-python"
+     :ext/description    "Python language pack: a managed Python REPL (uv/poetry/venv/python3) behind the generic repl_start/repl_eval/repl_stop facade. Activates on Python workspaces."
+     :ext/version        "0.1.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
+     :ext/activation-fn  activation-fn
+     :ext/language-tools [{:language      :python
+                           :repl-eval-fn  py-repl-eval-fn
+                           :start-repl-fn (fn [env op opts] (py-start-repl-fn env op opts))}]
+     :ext/startable-resources
+     [{:kind     :repl
+       :label    "Python REPL"
+       :start-fn (fn [env _selected]
+                   (let [root (env-root env)
+                         dir  (resolve-dir root nil)
+                         r    (repl/start! dir {})]
+                     (register-repl-resource! (:session-id env) dir r)
+                     r))}]
+     :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)

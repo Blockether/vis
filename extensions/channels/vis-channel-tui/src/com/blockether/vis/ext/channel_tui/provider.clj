@@ -126,9 +126,9 @@
           (cancel-copilot-oauth-poll! result)
           (when screen
             (dlg/text-view-dialog! screen "GitHub Copilot"
-                                   ["Timed out waiting for GitHub authorization."
-                                    ""
-                                    "Restart auth when ready."]))
+              ["Timed out waiting for GitHub authorization."
+               ""
+               "Restart auth when ready."]))
           copilot-oauth-cancelled)
 
         :else
@@ -136,8 +136,8 @@
           (when screen
             (draw-copilot-waiting! screen started-at-ms))
           (if (and screen
-                   (when-let [key (.pollInput screen)]
-                     (dlg/modal-escape-key? key)))
+                (when-let [key (.pollInput screen)]
+                  (dlg/modal-escape-key? key)))
             (do
               (cancel-copilot-oauth-poll! result)
               copilot-oauth-cancelled)
@@ -170,14 +170,14 @@
       (p/fill-rect! g (inc left) content-top inner-w content-h)
 
       (doseq [[idx line] (map-indexed vector
-                                      [url-label
-                                       verification-uri
-                                       ""
-                                       code-label
-                                       user-code
-                                       ""
-                                       (first help-lines)
-                                       (second help-lines)])]
+                           [url-label
+                            verification-uri
+                            ""
+                            code-label
+                            user-code
+                            ""
+                            (first help-lines)
+                            (second help-lines)])]
         (let [row (+ content-top idx)]
           (when (< row (+ content-top content-h))
             (p/fill-rect! g (inc left) row inner-w 1)
@@ -186,13 +186,13 @@
               (do
                 (p/set-colors! g t/link-chrome-fg t/dialog-bg)
                 (p/styled g [p/BOLD]
-                          (p/put-str! g url-col row (dlg/ellipsize verification-uri text-w))))
+                  (p/put-str! g url-col row (dlg/ellipsize verification-uri text-w))))
 
               (= row code-row)
               (do
                 (p/set-colors! g t/link-chrome-fg t/dialog-bg)
                 (p/styled g [p/BOLD]
-                          (p/put-str! g code-col row (dlg/ellipsize user-code text-w))))
+                  (p/put-str! g code-col row (dlg/ellipsize user-code text-w))))
 
               :else
               (do
@@ -204,7 +204,7 @@
         (p/put-str! g text-x status-row (dlg/ellipsize status text-w)))
 
       (dlg/draw-hint-bar! g left hint-row inner-w
-                          [["Enter" "continue"] ["Click URL" "open"] ["Click code" "copy"] ["Esc" "cancel"]])
+        [["Enter" "continue"] ["Click URL" "open"] ["Click code" "copy"] ["Esc" "cancel"]])
       (.setCursorPosition screen (p/cursor-pos 0 0))
       (.refresh screen Screen$RefreshType/DELTA)
 
@@ -218,21 +218,21 @@
                   mx    (.getColumn pos)
                   my    (.getRow pos)
                   on-url?  (and (= atype MouseActionType/CLICK_DOWN)
-                                (= my url-row)
-                                (>= mx url-col)
-                                (< mx (+ url-col (count verification-uri))))
+                             (= my url-row)
+                             (>= mx url-col)
+                             (< mx (+ url-col (count verification-uri))))
                   on-code? (and (= atype MouseActionType/CLICK_DOWN)
-                                (= my code-row)
-                                (>= mx code-col)
-                                (< mx (+ code-col (count user-code))))]
+                             (= my code-row)
+                             (>= mx code-col)
+                             (< mx (+ code-col (count user-code))))]
               (cond
                 on-url?
                 (do (opener/open! verification-uri)
-                    (recur "Opened browser URL."))
+                  (recur "Opened browser URL."))
 
                 on-code?
                 (do (input/clipboard-copy! user-code)
-                    (recur "Copied device code to clipboard."))
+                  (recur "Copied device code to clipboard."))
 
                 :else
                 (recur status)))
@@ -244,9 +244,9 @@
               (= KeyType/Character (.getKeyType key))
               (case (Character/toLowerCase (.getCharacter key))
                 \o (do (opener/open! verification-uri)
-                       (recur "Opened browser URL."))
+                     (recur "Opened browser URL."))
                 \c (do (input/clipboard-copy! user-code)
-                       (recur "Copied device code to clipboard."))
+                     (recur "Copied device code to clipboard."))
                 (recur status))
               :else (recur status))))))))
 
@@ -277,7 +277,7 @@
         ;; Device flow
        (try
          (let [start-result (vis/worker-future "vis-tui-copilot-oauth-start"
-                                               #(start-fn opts))
+                              #(start-fn opts))
                flow        (wait-for-copilot-oauth! screen start-result)]
            (when-not (= copilot-oauth-cancelled flow)
              (let [{:keys [user-code verification-uri device-code interval expires-in]} flow]
@@ -286,7 +286,7 @@
                    (copilot/logout!))
                 ;; Poll in background, show waiting message
                  (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
-                                                 #(poll-fn device-code interval expires-in opts))
+                                #(poll-fn device-code interval expires-in opts))
                        poll-result (wait-for-copilot-oauth! screen result)]
                    (when-not (= copilot-oauth-cancelled poll-result)
                      (let [{:keys [token]} (exchange-fn opts)]
@@ -314,29 +314,29 @@
      (if (and (not force?) detect-fn (detect-fn))
        true
        (when (dlg/confirm-dialog! screen "OpenAI Codex"
-                                  ["Vis will start the ChatGPT/Codex browser OAuth flow."
-                                   ""
-                                   "After browser login, copy the final redirect URL from the"
-                                   "address bar and paste it into the next dialog."
-                                   ""
-                                   "Fallback if needed:"
-                                   "  vis providers auth openai-codex"])
+               ["Vis will start the ChatGPT/Codex browser OAuth flow."
+                ""
+                "After browser login, copy the final redirect URL from the"
+                "address bar and paste it into the next dialog."
+                ""
+                "Fallback if needed:"
+                "  vis providers auth openai-codex"])
          (try
            (let [_result (codex/login! (constantly nil)
-                                       {:originator     "vis-tui"
-                                        :force?         force?
-                                        :manual-code-fn (fn [_]
-                                                          (dlg/text-input-dialog! screen
-                                                                                  "OpenAI Codex"
-                                                                                  "Paste the final browser URL or authorization code:"))})]
+                           {:originator     "vis-tui"
+                            :force?         force?
+                            :manual-code-fn (fn [_]
+                                              (dlg/text-input-dialog! screen
+                                                "OpenAI Codex"
+                                                "Paste the final browser URL or authorization code:"))})]
              ;; Success is silent: parity with anthropic + copilot flows.
              true)
            (catch Exception e
              (dlg/text-view-dialog! screen "OpenAI Codex"
-                                    [(str "Auth failed: " (ex-message e))
-                                     ""
-                                     "If browser auth still fails here, run:"
-                                     "  vis providers auth openai-codex"])
+               [(str "Auth failed: " (ex-message e))
+                ""
+                "If browser auth still fails here, run:"
+                "  vis providers auth openai-codex"])
              false)))))))
 
 (defn- anthropic-oauth-ready!
@@ -349,27 +349,27 @@
      (if (and (not force?) detect-fn (detect-fn))
        true
        (when (dlg/confirm-dialog! screen "Anthropic"
-                                  ["Vis will start the Anthropic Claude subscription OAuth flow."
-                                   ""
-                                   "After browser login, copy the final redirect URL from the"
-                                   "address bar and paste it into the next dialog."
-                                   ""
-                                   "Fallback if needed:"
-                                   "  vis providers auth anthropic-coding-plan"])
+               ["Vis will start the Anthropic Claude subscription OAuth flow."
+                ""
+                "After browser login, copy the final redirect URL from the"
+                "address bar and paste it into the next dialog."
+                ""
+                "Fallback if needed:"
+                "  vis providers auth anthropic-coding-plan"])
          (try
            (let [_result (anthropic/login! (constantly nil)
-                                           {:force?         force?
-                                            :manual-code-fn (fn [_]
-                                                              (dlg/text-input-dialog! screen
-                                                                                      "Anthropic"
-                                                                                      "Paste the final browser URL or authorization code:"))})]
+                           {:force?         force?
+                            :manual-code-fn (fn [_]
+                                              (dlg/text-input-dialog! screen
+                                                "Anthropic"
+                                                "Paste the final browser URL or authorization code:"))})]
              true)
            (catch Exception e
              (dlg/text-view-dialog! screen "Anthropic"
-                                    [(str "Auth failed: " (ex-message e))
-                                     ""
-                                     "If browser auth still fails here, run:"
-                                     "  vis providers auth anthropic-coding-plan"])
+               [(str "Auth failed: " (ex-message e))
+                ""
+                "If browser auth still fails here, run:"
+                "  vis providers auth anthropic-coding-plan"])
              false)))))))
 
 (defn- add-provider!
@@ -386,13 +386,13 @@
               ;; Blank input or Esc keeps the preset default.
               base-url   (if local?
                            (or (some-> (dlg/text-input-dialog! screen
-                                                               (str (:label preset) " Setup")
-                                                               "Base URL:"
-                                                               :initial (or (:base-url preset) ""))
-                                       str/trim
-                                       (str/replace #"/+$" "")
-                                       not-empty)
-                               (:base-url preset))
+                                         (str (:label preset) " Setup")
+                                         "Base URL:"
+                                         :initial (or (:base-url preset) ""))
+                                 str/trim
+                                 (str/replace #"/+$" "")
+                                 not-empty)
+                             (:base-url preset))
                            (:base-url preset))
               preset     (assoc preset :base-url base-url)
               has-key?   (some? (:api-key preset))
@@ -406,9 +406,9 @@
                            (= pid :openai-codex)          (when (codex-oauth-ready! screen) :oauth-ready)
                            (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen) :oauth-ready)
                            needs-key? (let [raw (dlg/text-input-dialog! screen
-                                                                        (str (:label preset) " Setup")
-                                                                        "API Key:"
-                                                                        :mask \*)]
+                                                  (str (:label preset) " Setup")
+                                                  "API Key:"
+                                                  :mask \*)]
                                         (when-not (str/blank? raw) raw))
                            :else      nil)
               auth-ok?   (cond
@@ -455,7 +455,7 @@
    one-row gap between cards."
   [content-h]
   (max 1 (quot (+ (max 0 (long content-h)) card-gap)
-               (+ card-rows card-gap))))
+           (+ card-rows card-gap))))
 
 (defn- card-window-start
   [selected current-start content-h total]
@@ -505,8 +505,8 @@
                              (when-not dynamic-text
                                (when-let [tpm (get-in limits [:static :tpm])]
                                  (str "catalog TPM " tpm)))]
-                            (remove nil?)
-                            (str/join " / "))
+                         (remove nil?)
+                         (str/join " / "))
         ;; Layout line 1:  "① Label" ... "host  ●"
         left-part     (str pri " " (or label "?"))
         right-part    (str host "  ●")]
@@ -526,7 +526,7 @@
     ;; Line 1 left - priority + label (bold)
     (p/set-fg! g t/dialog-fg)
     (p/styled g [p/BOLD]
-              (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
+      (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
 
     ;; Line 1 right - host (italic dimmed) + status dot
     (let [dot-col  (+ text-x text-w -1)
@@ -534,7 +534,7 @@
       ;; Host
       (p/set-fg! g t/dialog-hint)
       (p/styled g [p/ITALIC]
-                (p/put-str! g (max (+ text-x (count left-part) 1) host-col) row host))
+        (p/put-str! g (max (+ text-x (count left-part) 1) host-col) row host))
       ;; Status dot - green/red after probe, dim while background checks run.
       (p/set-fg! g (cond
                      (or loading-status? loading-limits?) t/dialog-hint-key
@@ -552,14 +552,14 @@
         (do
           (p/set-fg! g t/status-bad)
           (p/put-str! g text-x (inc row)
-                      (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
+            (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
         (do
           (p/set-fg! g t/dialog-fg)
           (p/put-str! g text-x (inc row)
-                      (dlg/ellipsize (str "   ★ " root-name "  " suffix
-                                          (when (seq limit-summary)
-                                            (str " / " limit-summary)))
-                                     text-w)))))))
+            (dlg/ellipsize (str "   ★ " root-name "  " suffix
+                             (when (seq limit-summary)
+                               (str " / " limit-summary)))
+              text-w)))))))
 
 (defn- draw-model-card!
   "Two-line model card. Mirrors `draw-provider-card!` layout:
@@ -608,25 +608,25 @@
     (let [reserved (if tag (+ (count tag) 1) 0)]
       (p/set-fg! g t/dialog-fg)
       (p/styled g [p/BOLD]
-                (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
+        (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
 
     ;; Line 1 right - ★ Primary tag, right-aligned in status-ok green.
     (when tag
       (let [tag-col (+ text-x (- text-w (count tag)))]
         (p/set-fg! g t/status-ok)
         (p/styled g [p/BOLD]
-                  (p/put-str! g tag-col row tag))))
+          (p/put-str! g tag-col row tag))))
 
     ;; Line 2 - dimmed italic chain breadcrumb.
     (p/set-fg! g t/dialog-hint)
     (p/styled g [p/ITALIC]
-              (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
+      (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
 
 (defn- swap-items
   [items i j]
   (-> items
-      (assoc i (nth items j))
-      (assoc j (nth items i))))
+    (assoc i (nth items j))
+    (assoc j (nth items i))))
 
 (defn- remove-provider-by-id
   [items provider-id]
@@ -638,13 +638,13 @@
     models
     (let [m (nth models idx)]
       (vec (cons m (concat (subvec models 0 idx)
-                           (subvec models (inc idx))))))))
+                     (subvec models (inc idx))))))))
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
   (let [models   (atom (->> (:models provider)
-                            (keep vis/->svar-model)
-                            vec))
+                         (keep vis/->svar-model)
+                         vec))
         selected (atom 0)
         scroll   (atom 0)]
     (loop []
@@ -678,7 +678,7 @@
           (do
             (p/set-colors! g t/dialog-hint t/dialog-bg)
             (p/draw-centered! g (inc left) (+ content-top (quot content-h 2)) inner-w
-                              "No models. Press A to add."))
+              "No models. Press A to add."))
           (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
             (let [card-y (+ content-top (card-start-row (- idx @scroll)))
                   model  (nth @models idx)
@@ -687,21 +687,21 @@
                   next-name     (when (< idx (dec total))
                                   (:name (nth @models (inc idx))))]
               (draw-model-card! g left card-y card-inner-w idx (= idx @selected)
-                                (zero? idx)
-                                (:id provider)
-                                model
-                                previous-name
-                                next-name))))
+                (zero? idx)
+                (:id provider)
+                model
+                previous-name
+                next-name))))
         (scrollbar/draw! g
-                         {:col     (+ left inner-w)
-                          :top     content-top
-                          :track-h content-h
-                          :total-h total
-                          :inner-h (card-visible-count content-h)
-                          :scroll  @scroll})
+          {:col     (+ left inner-w)
+           :top     content-top
+           :track-h content-h
+           :total-h total
+           :inner-h (card-visible-count content-h)
+           :scroll  @scroll})
 
         (dlg/draw-hint-bar! g left hint-row inner-w
-                            [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
+          [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -715,22 +715,22 @@
                     mx     (.getColumn pos)
                     my     (.getRow pos)
                     hit-idx (when (and (>= mx (inc left))
-                                       (< mx (+ left inner-w))
-                                       (>= my content-top)
-                                       (< my (+ content-top content-h)))
+                                    (< mx (+ left inner-w))
+                                    (>= my content-top)
+                                    (< my (+ content-top content-h)))
                               (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
                 (cond
                   (= action MouseActionType/SCROLL_UP)
                   (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                      (recur))
+                    (recur))
 
                   (= action MouseActionType/SCROLL_DOWN)
                   (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                      (recur))
+                    (recur))
 
                   (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
                   (do (reset! selected hit-idx)
-                      (recur))
+                    (recur))
 
                   :else (recur)))
 
@@ -745,18 +745,18 @@
                     (do (when (pos? @selected)
                           (swap! models swap-items @selected (dec @selected))
                           (swap! selected dec))
-                        (recur))
+                      (recur))
                     (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                        (recur)))
+                      (recur)))
 
                   (= ktype KeyType/ArrowDown)
                   (if (input/reorder-modifier? key)
                     (do (when (< @selected (dec total))
                           (swap! models swap-items @selected (inc @selected))
                           (swap! selected inc))
-                        (recur))
+                      (recur))
                     (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                        (recur)))
+                      (recur)))
 
                   (= ktype KeyType/Character)
                   (let [c (Character/toLowerCase (.getCharacter key))
@@ -770,23 +770,23 @@
                       (do (when (pos? @selected)
                             (swap! models swap-items @selected (dec @selected))
                             (swap! selected dec))
-                          (recur))
+                        (recur))
                       (and ctrl (= c keymap/picker-reorder-down))
                       (do (when (< @selected (dec total))
                             (swap! models swap-items @selected (inc @selected))
                             (swap! selected inc))
-                          (recur))
+                        (recur))
 
                       (= c \a)
                       (do
                         (when-let [model-name (select-model! screen
-                                                             provider
-                                                             (->> (concat (map vis/model-name @models)
-                                                                          (:default-models (vis/provider-template (:id provider)))
-                                                                          (:default-models provider))
-                                                                  (remove nil?)
-                                                                  distinct
-                                                                  vec))]
+                                                provider
+                                                (->> (concat (map vis/model-name @models)
+                                                       (:default-models (vis/provider-template (:id provider)))
+                                                       (:default-models provider))
+                                                  (remove nil?)
+                                                  distinct
+                                                  vec))]
                           (when-not (some #(= model-name (vis/model-name %)) @models)
                             (swap! models conj {:name model-name})
                             (reset! selected (dec (count @models)))))
@@ -795,10 +795,10 @@
                       (= c \d)
                       (do
                         (when (and (pos? total)
-                                   (dlg/confirm-dialog! screen "Remove Model"
-                                                        [(str "Remove " (:name (nth @models @selected)) "?")]))
+                                (dlg/confirm-dialog! screen "Remove Model"
+                                  [(str "Remove " (:name (nth @models @selected)) "?")]))
                           (swap! models #(vec (concat (subvec % 0 @selected)
-                                                      (subvec % (inc @selected)))))
+                                                (subvec % (inc @selected)))))
                           (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
                         (recur))
 
@@ -806,7 +806,7 @@
                       (do (when (pos? total)
                             (swap! models move-model-to-front @selected)
                             (reset! selected 0))
-                          (recur))
+                        (recur))
 
                       :else (recur)))
 
@@ -829,9 +829,9 @@
     (swap! statuses assoc pid (initial-provider-status provider))
     (swap! limits assoc pid (initial-provider-limits provider))
     (vis/worker-future "vis-tui-provider-status"
-                       #(swap! statuses assoc pid (configured-provider-status provider)))
+      #(swap! statuses assoc pid (configured-provider-status provider)))
     (vis/worker-future "vis-tui-provider-limits"
-                       #(swap! limits assoc pid (safe-provider-limits provider))))
+      #(swap! limits assoc pid (safe-provider-limits provider))))
   nil)
 
 (defn- refresh-providers-diagnostics!
@@ -843,8 +843,8 @@
 (defn- provider-diagnostics-loading?
   [statuses limits]
   (boolean
-   (or (some :loading? (vals statuses))
-       (some #(= :loading (:status %)) (vals limits)))))
+    (or (some :loading? (vals statuses))
+      (some #(= :loading (:status %)) (vals limits)))))
 
 (defn- provider-authenticated?
   ([provider]
@@ -858,12 +858,12 @@
    report the web renders as markdown."
   ([^TerminalScreen screen provider]
    (dlg/markdown-viewer-dialog! screen
-                                (str (vis/display-label (:id provider)) " Status & Limits")
-                                (vis/provider-status-md provider)))
+     (str (vis/display-label (:id provider)) " Status & Limits")
+     (vis/provider-status-md provider)))
   ([^TerminalScreen screen provider status limits]
    (dlg/markdown-viewer-dialog! screen
-                                (str (vis/display-label (:id provider)) " Status & Limits")
-                                (vis/provider-status-md provider status limits))))
+     (str (vis/display-label (:id provider)) " Status & Limits")
+     (vis/provider-status-md provider status limits))))
 
 (defn- provider-supports-auth?
   [provider]
@@ -883,12 +883,12 @@
        (conj {:id :authenticate :label auth-label :force? authenticated?})
 
        (or (:provider/status-fn registered)
-           (:provider/detect-fn registered)
-           (:api-key provider))
+         (:provider/detect-fn registered)
+         (:api-key provider))
        (conj {:id :status :label "Show Status + Limits"})
 
        (or (:provider/logout-fn registered)
-           (:api-key provider))
+         (:api-key provider))
        (conj {:id :logout :label "Log Out"})))))
 
 (def ^:private api-key-prompt-cancelled ::api-key-prompt-cancelled)
@@ -896,11 +896,11 @@
 (defn- trim-blank-lines
   [lines]
   (->> lines
-       (drop-while str/blank?)
-       reverse
-       (drop-while str/blank?)
-       reverse
-       vec))
+    (drop-while str/blank?)
+    reverse
+    (drop-while str/blank?)
+    reverse
+    vec))
 
 (defn- provider-auth-prompt-body
   [provider]
@@ -914,18 +914,18 @@
             (not-empty (trim-blank-lines @lines))
             (catch Throwable e
               (not-empty
-               (trim-blank-lines
-                (conj @lines "" (str "Authentication info failed: " (or (ex-message e) (str e)))))))))))))
+                (trim-blank-lines
+                  (conj @lines "" (str "Authentication info failed: " (or (ex-message e) (str e)))))))))))))
 
 (defn- prompt-for-api-key!
   [^TerminalScreen screen provider]
   (let [raw (dlg/text-input-dialog! screen
-                                    (str (vis/display-label (:id provider)) " Authentication")
-                                    "API Key:"
-                                    :mask \*
-                                    :flat? true
-                                    :logo dlg/vis-logo-lines
-                                    :body (provider-auth-prompt-body provider))]
+              (str (vis/display-label (:id provider)) " Authentication")
+              "API Key:"
+              :mask \*
+              :flat? true
+              :logo dlg/vis-logo-lines
+              :body (provider-auth-prompt-body provider))]
     (cond
       (nil? raw) api-key-prompt-cancelled
       (str/blank? raw) nil
@@ -956,17 +956,17 @@
             (when-not (contains? auth-fn-success-results result)
               (when-let [collected (seq @lines)]
                 (dlg/text-viewer-dialog! screen
-                                         (str (vis/display-label (:id provider)) " Authentication")
-                                         (str/join "\n" collected)))))
+                  (str (vis/display-label (:id provider)) " Authentication")
+                  (str/join "\n" collected)))))
           provider
           (catch Throwable e
             (dlg/text-viewer-dialog! screen
-                                     (str (vis/display-label (:id provider)) " Authentication")
-                                     (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
+              (str (vis/display-label (:id provider)) " Authentication")
+              (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
             nil)))
       (do
         (dlg/text-view-dialog! screen "Authenticate Provider"
-                               [(str (vis/display-label (:id provider)) " does not expose an interactive auth flow.")])
+          [(str (vis/display-label (:id provider)) " does not expose an interactive auth flow.")])
         nil))))
 
 (defn authenticate-provider!
@@ -993,37 +993,37 @@
   (let [provider-id (:id provider)
         registered  (vis/provider-by-id provider-id)]
     (when (dlg/confirm-dialog! screen
-                               (str (vis/display-label provider-id) " Authentication")
-                               [(str "Log out of " (vis/display-label provider-id) "?")])
+            (str (vis/display-label provider-id) " Authentication")
+            [(str "Log out of " (vis/display-label provider-id) "?")])
       (when-let [logout-fn (:provider/logout-fn registered)]
         (logout-fn))
       (vis/remove-config-provider! provider-id :tui-provider-logout)
       (dlg/text-view-dialog! screen
-                             (str (vis/display-label provider-id) " Authentication")
-                             [(str "Logged out of " (vis/display-label provider-id) ". Provider removed from config.")])
+        (str (vis/display-label provider-id) " Authentication")
+        [(str "Logged out of " (vis/display-label provider-id) ". Provider removed from config.")])
       true)))
 
 (defn auth-provider-items
   []
   (->> (vis/registered-providers)
-       (remove #(contains? local-no-auth-provider-ids (:provider/id %)))
-       (map (fn [provider]
-              (let [status (safe-provider-status provider)]
-                {:provider-id (:provider/id provider)
-                 :provider    provider
-                 :label       (str (:provider/label provider)
-                                   " / "
-                                   (if (:authenticated? status)
-                                     "authenticated"
-                                     "not authenticated"))})))
-       (sort-by :label)
-       vec))
+    (remove #(contains? local-no-auth-provider-ids (:provider/id %)))
+    (map (fn [provider]
+           (let [status (safe-provider-status provider)]
+             {:provider-id (:provider/id provider)
+              :provider    provider
+              :label       (str (:provider/label provider)
+                             " / "
+                             (if (:authenticated? status)
+                               "authenticated"
+                               "not authenticated"))})))
+    (sort-by :label)
+    vec))
 
 (defn show-provider-auth-dialog!
   [^TerminalScreen screen]
   (when-let [item (dlg/select-dialog! screen "Authenticate Provider" (auth-provider-items))]
     (let [provider (or (:provider item)
-                       (vis/provider-by-id (:provider-id item)))]
+                     (vis/provider-by-id (:provider-id item)))]
       (cond
         (github-copilot-provider? (:provider/id provider))
         (boolean (copilot-oauth-flow! screen (github-copilot-account-type (:provider/id provider))))
@@ -1045,13 +1045,13 @@
                 (when-not (contains? auth-fn-success-results result)
                   (when-let [collected (seq @lines)]
                     (dlg/text-viewer-dialog! screen
-                                             (str (:provider/label provider) " Authentication")
-                                             (str/join "\n" collected))))
+                      (str (:provider/label provider) " Authentication")
+                      (str/join "\n" collected))))
                 result)
               (catch Throwable e
                 (dlg/text-viewer-dialog! screen
-                                         (str (:provider/label provider) " Authentication")
-                                         (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
+                  (str (:provider/label provider) " Authentication")
+                  (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
                 nil)))
           nil)))))
 
@@ -1111,11 +1111,11 @@
             ;; the dark title BAR, so it vanished on the light dialog BODY.
             ;; `header-active-tab-accent` has real contrast on every theme's
             ;; dialog background (indigo on light, sky on dark).
-                         (if (contains? welcome-accent-lines line) t/header-active-tab-accent t/dialog-fg)
-                         t/dialog-bg)
+            (if (contains? welcome-accent-lines line) t/header-active-tab-accent t/dialog-fg)
+            t/dialog-bg)
           (p/draw-centered! g (inc left) (+ start i) inner-w line)))
       (dlg/draw-hint-bar! g left hint-row inner-w
-                          [["Enter" "connect a provider"] ["?" "how your key is used"] ["Esc" "quit"]])
+        [["Enter" "connect a provider"] ["?" "how your key is used"] ["Esc" "quit"]])
       (.setCursorPosition screen (p/cursor-pos 0 0))
       (.refresh screen Screen$RefreshType/DELTA)
       (let [key (dlg/read-modal-key! screen)]
@@ -1130,14 +1130,14 @@
                               ;; launch saw an empty config and re-showed the
                               ;; welcome screen. Preserve any other global keys.
                               (let [persisted (assoc (or (vis/load-config-raw) {})
-                                                     :providers [(persisted-provider-config cfg)])]
+                                                :providers [(persisted-provider-config cfg)])]
                                 (vis/save-config! persisted)
                                 persisted)
                               (recur))
             KeyType/Escape  nil
             KeyType/Character (do (when (= \? (.getCharacter key))
                                     (dlg/text-view-dialog! screen "How vis uses your key" how-key-lines))
-                                  (recur))
+                                (recur))
             (recur)))))))
 
 (defn show-provider-dialog!
@@ -1150,13 +1150,13 @@
    (let [seed      (or current-config (vis/load-config) {:providers []})
          items     (atom (vec (or (:providers seed) [])))
          statuses  (atom (into {}
-                               (map (fn [provider]
-                                      [(:id provider) (initial-provider-status provider)]))
-                               @items))
+                           (map (fn [provider]
+                                  [(:id provider) (initial-provider-status provider)]))
+                           @items))
          limits    (atom (into {}
-                               (map (fn [provider]
-                                      [(:id provider) (initial-provider-limits provider)]))
-                               @items))
+                           (map (fn [provider]
+                                  [(:id provider) (initial-provider-limits provider)]))
+                           @items))
          selected  (atom 0)
          scroll    (atom 0)]
      (refresh-providers-diagnostics! @items statuses limits)
@@ -1184,7 +1184,7 @@
              ;; a long provider list still grows past it and scrolls.
              content-rows (max (card-height (max 1 total)) (dlg/default-content-height rows))
              bounds  (dlg/draw-dialog-chrome! g cols rows "Router"
-                                              (dlg/default-content-width cols) content-rows)
+                       (dlg/default-content-width cols) content-rows)
              {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds content-rows)
              visible-count (card-visible-count content-h)
@@ -1201,24 +1201,24 @@
            (do
              (p/set-colors! g t/dialog-hint t/dialog-bg)
              (p/draw-centered! g (inc left) (+ content-top (quot content-h 2)) inner-w
-                               "No providers. Press A to add."))
+               "No providers. Press A to add."))
            ;; Draw visible cards
            (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
              (let [card-y (+ content-top (card-start-row (- idx @scroll)))]
                (draw-provider-card! g left card-y card-inner-w idx (= idx @selected)
-                                    (nth @items idx)
-                                    (get @statuses (:id (nth @items idx)))
-                                    (get @limits (:id (nth @items idx)))))))
+                 (nth @items idx)
+                 (get @statuses (:id (nth @items idx)))
+                 (get @limits (:id (nth @items idx)))))))
          (scrollbar/draw! g
-                          {:col     (+ left inner-w)
-                           :top     content-top
-                           :track-h content-h
-                           :total-h total
-                           :inner-h (card-visible-count content-h)
-                           :scroll  @scroll})
+           {:col     (+ left inner-w)
+            :top     content-top
+            :track-h content-h
+            :total-h total
+            :inner-h (card-visible-count content-h)
+            :scroll  @scroll})
 
          (dlg/draw-hint-bar! g left hint-row inner-w
-                             [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
+           [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1237,22 +1237,22 @@
                      mx     (.getColumn pos)
                      my     (.getRow pos)
                      hit-idx (when (and (>= mx (inc left))
-                                        (< mx (+ left inner-w))
-                                        (>= my content-top)
-                                        (< my (+ content-top content-h)))
+                                     (< mx (+ left inner-w))
+                                     (>= my content-top)
+                                     (< my (+ content-top content-h)))
                                (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
                  (cond
                    (= action MouseActionType/SCROLL_UP)
                    (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                       (recur))
+                     (recur))
 
                    (= action MouseActionType/SCROLL_DOWN)
                    (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                       (recur))
+                     (recur))
 
                    (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
                    (do (reset! selected hit-idx)
-                       (recur))
+                     (recur))
 
                    :else (recur)))
 
@@ -1261,9 +1261,9 @@
                  (cond
                    (= ktype KeyType/Escape)
                    (let [cfg (assoc (or (vis/load-config-raw) {})
-                                    :providers (->> @items
-                                                    (map persisted-provider-config)
-                                                    vec))]
+                               :providers (->> @items
+                                            (map persisted-provider-config)
+                                            vec))]
                      (vis/save-config! cfg)
                      cfg)
 
@@ -1273,18 +1273,18 @@
                      (do (when (pos? @selected)
                            (swap! items swap-items @selected (dec @selected))
                            (swap! selected dec))
-                         (recur))
+                       (recur))
                      (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                         (recur)))
+                       (recur)))
 
                    (= ktype KeyType/ArrowDown)
                    (if (input/reorder-modifier? key)
                      (do (when (< @selected (dec total))
                            (swap! items swap-items @selected (inc @selected))
                            (swap! selected inc))
-                         (recur))
+                       (recur))
                      (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                         (recur)))
+                       (recur)))
 
                    ;; Enter - open action menu for selected provider
                    (= ktype KeyType/Enter)
@@ -1292,14 +1292,14 @@
                      (when (pos? total)
                        (let [provider (nth @items @selected)]
                          (when-let [action (dlg/select-dialog! screen
-                                                               (str (vis/display-label (:id provider)) " Actions")
-                                                               (provider-action-items provider
-                                                                                      (get @statuses (:id provider))))]
+                                             (str (vis/display-label (:id provider)) " Actions")
+                                             (provider-action-items provider
+                                               (get @statuses (:id provider))))]
                            (case (:id action)
                              :models
                              (when-let [updated-models (show-model-manager! screen provider)]
                                (swap! items assoc @selected
-                                      (assoc provider :models (:models updated-models))))
+                                 (assoc provider :models (:models updated-models))))
 
                              :authenticate
                              (when-let [updated (authenticate-provider! screen provider (:force? action))]
@@ -1307,8 +1307,8 @@
 
                              :status
                              (show-provider-status! screen provider
-                                                    (get @statuses (:id provider))
-                                                    (get @limits (:id provider)))
+                               (get @statuses (:id provider))
+                               (get @limits (:id provider)))
 
                              :logout
                              (when (logout-provider! screen provider)
@@ -1334,12 +1334,12 @@
                        (do (when (pos? @selected)
                              (swap! items swap-items @selected (dec @selected))
                              (swap! selected dec))
-                           (recur))
+                         (recur))
                        (and ctrl (= c keymap/picker-reorder-down))
                        (do (when (< @selected (dec total))
                              (swap! items swap-items @selected (inc @selected))
                              (swap! selected inc))
-                           (recur))
+                         (recur))
 
                       ;; A - add provider
                        (= c \a)
@@ -1347,18 +1347,18 @@
                              (swap! items conj p)
                              (refresh-provider-diagnostics! p statuses limits)
                              (reset! selected (dec (count @items))))
-                           (recur))
+                         (recur))
 
                       ;; D - delete provider
                        (= c \d)
                        (do
                          (when (and (pos? total)
-                                    (dlg/confirm-dialog! screen
-                                                         "Remove"
-                                                         [(str "Remove " (vis/display-label (:id (nth @items @selected))) "?")]))
+                                 (dlg/confirm-dialog! screen
+                                   "Remove"
+                                   [(str "Remove " (vis/display-label (:id (nth @items @selected))) "?")]))
                            (let [provider-id (:id (nth @items @selected))]
                              (swap! items #(vec (concat (subvec % 0 @selected)
-                                                        (subvec % (inc @selected)))))
+                                                  (subvec % (inc @selected)))))
                              (swap! statuses dissoc provider-id)
                              (swap! limits dissoc provider-id)
                              (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items)))))))

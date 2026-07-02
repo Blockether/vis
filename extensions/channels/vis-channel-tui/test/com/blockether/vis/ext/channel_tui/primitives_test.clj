@@ -29,8 +29,8 @@
   [apple? & body]
   `(let [prev# (TextCharacter/appleTerminalWidths)]
      (try (TextCharacter/setAppleTerminalWidths ~apple?)
-          ~@body
-          (finally (TextCharacter/setAppleTerminalWidths prev#)))))
+       ~@body
+       (finally (TextCharacter/setAppleTerminalWidths prev#)))))
 
 (defdescribe display-width-test
   (describe "display-width counts terminal columns, not Java chars"
@@ -100,7 +100,7 @@
         (expect (= 1 (p/display-width "\u25B6\uFE0F")))   ;; play triangle
         ;; a checked/unchecked task pair now aligns (both 7 cols)
         (expect (= (p/display-width "\u2611\uFE0F  item")
-                   (p/display-width "\u2B1C item")))
+                  (p/display-width "\u2B1C item")))
         ;; genuine emoji (no VS-16) stay wide even under Apple mode
         (expect (= 2 (p/display-width "\u2705")))))        ;; check mark button
     (it "VS-16 emoji stay wide when Apple mode is off"

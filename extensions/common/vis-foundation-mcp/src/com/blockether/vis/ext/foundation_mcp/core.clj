@@ -40,16 +40,16 @@
   "MCP is OFF. Enable it in settings (toggle :mcp/enabled) to connect to MCP servers and call their tools.")
 
 (toggles/register-toggle!
- {:id          :mcp/enabled
-  :label       "MCP servers"
-  :description (str "When ON the agent can connect to the Model Context Protocol"
-                    " servers declared in ~/.vis/config.edn (:mcp :servers) and call"
-                    " their tools (mcp_servers / mcp_tools / mcp_call). Each live"
-                    " connection is a session resource (footer count, F4, resource_stop)."
-                    " OFF by default — connecting spawns processes / network calls.")
-  :default     false
-  :owner       "foundation-mcp"
-  :group       :tools})
+  {:id          :mcp/enabled
+   :label       "MCP servers"
+   :description (str "When ON the agent can connect to the Model Context Protocol"
+                  " servers declared in ~/.vis/config.edn (:mcp :servers) and call"
+                  " their tools (mcp_servers / mcp_tools / mcp_call). Each live"
+                  " connection is a session resource (footer count, F4, resource_stop)."
+                  " OFF by default — connecting spawns processes / network calls.")
+   :default     false
+   :owner       "foundation-mcp"
+   :group       :tools})
 
 ;; ---------------------------------------------------------------------------
 ;; Config — declared servers from ~/.vis/config.edn :mcp :servers
@@ -76,8 +76,8 @@
     (when-not server
       (throw (ex-info "MCP server name is required" {:type :mcp/config})))
     (vis/save-config!
-     (assoc-in raw [:mcp :servers server] spec)
-     :mcp)
+      (assoc-in raw [:mcp :servers server] spec)
+      :mcp)
     server))
 
 (defn- add-stdio-server!
@@ -86,10 +86,10 @@
     (when-not cmd
       (throw (ex-info "Command is required for a local MCP server" {:type :mcp/config})))
     (add-configured-server! name
-                            (cond-> {:transport :stdio
-                                     :command cmd
-                                     :args (parse-args args)}
-                              (some-> cwd str str/trim not-empty) (assoc :cwd (str/trim cwd))))))
+      (cond-> {:transport :stdio
+               :command cmd
+               :args (parse-args args)}
+        (some-> cwd str str/trim not-empty) (assoc :cwd (str/trim cwd))))))
 
 (defn- add-http-server!
   [{:keys [name url authorization]}]
@@ -97,10 +97,10 @@
     (when-not u
       (throw (ex-info "URL is required for a remote MCP server" {:type :mcp/config})))
     (add-configured-server! name
-                            (cond-> {:transport :http
-                                     :url u}
-                              (some-> authorization str str/trim not-empty)
-                              (assoc :headers {"Authorization" (str/trim authorization)})))))
+      (cond-> {:transport :http
+               :url u}
+        (some-> authorization str str/trim not-empty)
+        (assoc :headers {"Authorization" (str/trim authorization)})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Live connections, partitioned by session: { session-id { server conn } }
@@ -117,27 +117,27 @@
    resource, cache the conn. Returns the conn or nil (unknown / failed)."
   [session server]
   (or (get-conn session server)
-      (when-let [spec (get (configured-servers) server)]
-        (try
-          (let [conn  (mcp/connect server spec)
-                tools (try (mcp/list-tools conn) (catch Throwable _ []))]
-            (swap! conns assoc-in [session server] conn)
-            (resources/register! session
-                                 {:id     (resource-id server)
-                                  :kind   :mcp
-                                  :label  (str "MCP " server)
-                                  :status :up
-                                  :detail (str (name (transport-of spec)) " · " (count tools) " tools")
-                                  :pid    (:pid conn)
-                                  :owner  "foundation-mcp"}
-                                 {:stop-fn  (fn [] (mcp/close conn) (swap! conns update session dissoc server))
-                                  :alive-fn (fn [] (mcp/alive? conn))})
-            conn)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::connect-failed
-                       :data {:server server :error (ex-message t)}}
-                      "MCP connect failed")
-            nil)))))
+    (when-let [spec (get (configured-servers) server)]
+      (try
+        (let [conn  (mcp/connect server spec)
+              tools (try (mcp/list-tools conn) (catch Throwable _ []))]
+          (swap! conns assoc-in [session server] conn)
+          (resources/register! session
+            {:id     (resource-id server)
+             :kind   :mcp
+             :label  (str "MCP " server)
+             :status :up
+             :detail (str (name (transport-of spec)) " · " (count tools) " tools")
+             :pid    (:pid conn)
+             :owner  "foundation-mcp"}
+            {:stop-fn  (fn [] (mcp/close conn) (swap! conns update session dissoc server))
+             :alive-fn (fn [] (mcp/alive? conn))})
+          conn)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::connect-failed
+                     :data {:server server :error (ex-message t)}}
+            "MCP connect failed")
+          nil)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Verb implementations (env injected by the gate as the first arg)
@@ -156,27 +156,27 @@
   (let [session (:session-id env)
         live    (get @conns session)]
     (ok :mcp/servers
-        {:servers (mapv (fn [[nm spec]]
-                          (let [conn (get live nm)]
-                            (cond-> {:name nm
-                                     :transport (name (transport-of spec))
-                                     :connected (boolean conn)}
-                              conn          (assoc :tools (count (or (some-> (:tools conn) deref) [])))
-                              (:command spec) (assoc :command (:command spec))
-                              (:url spec)     (assoc :url (:url spec)))))
-                        (configured-servers))})))
+      {:servers (mapv (fn [[nm spec]]
+                        (let [conn (get live nm)]
+                          (cond-> {:name nm
+                                   :transport (name (transport-of spec))
+                                   :connected (boolean conn)}
+                            conn          (assoc :tools (count (or (some-> (:tools conn) deref) [])))
+                            (:command spec) (assoc :command (:command spec))
+                            (:url spec)     (assoc :url (:url spec)))))
+                  (configured-servers))})))
 
 (defn- mcp-tools-impl
   [env server]
   (if-let [conn (connect-server! (:session-id env) server)]
     (ok :mcp/tools
-        {:server server
-         :tools  (mapv (fn [t] {:name         (get t "name")
-                                :description  (get t "description")
-                                :input_schema (get t "inputSchema")})
-                       (mcp/list-tools conn))})
+      {:server server
+       :tools  (mapv (fn [t] {:name         (get t "name")
+                              :description  (get t "description")
+                              :input_schema (get t "inputSchema")})
+                 (mcp/list-tools conn))})
     (err :mcp/tools (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
-         :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers))))))))
+      :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers))))))))
 
 (defn- mcp-call-impl
   ([env server tool] (mcp-call-impl env server tool {}))
@@ -184,12 +184,12 @@
    (if-let [conn (connect-server! (:session-id env) server)]
      (let [r (mcp/call-tool conn tool (if (map? args) args {}))]
        (ok :mcp/call
-           {:server  server
-            :tool    tool
-            :content (get r "content")
-            :is_error (boolean (get r "isError"))}))
+         {:server  server
+          :tool    tool
+          :content (get r "content")
+          :is_error (boolean (get r "isError"))}))
      (err :mcp/call (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
-          :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers)))))))))
+       :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers)))))))))
 
 (defn- mcp-connect-impl
   [env server]
@@ -213,16 +213,16 @@
     (if (toggles/enabled? :mcp/enabled)
       {:env env :fn f :args (into [env] args)}
       {:result (err op (str (name op) " blocked: " disabled-hint)
-                    :type ::disabled :reason :mcp-disabled
-                    :hint disabled-hint :loop-hint disabled-hint)})))
+                 :type ::disabled :reason :mcp-disabled
+                 :hint disabled-hint :loop-hint disabled-hint)})))
 
 (defn- mcp-on-error
   [op]
   (fn [err* _env _f _args]
     {:result (extension/failure
-              {:result nil :op op
-               :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
-               :throwable err*})}))
+               {:result nil :op op
+                :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
+                :throwable err*})}))
 
 ;; ---------------------------------------------------------------------------
 ;; Native op-card renderers — `:result` → `{:summary :body}`. Keys arrive
@@ -238,12 +238,12 @@
     {:summary (str (count servers) " MCP server" (when (not= 1 (count servers)) "s"))
      :body    (when (seq servers)
                 (str/join "\n"
-                          (map (fn [s]
-                                 (str "- `" (:name s) "` " (:transport s)
-                                      (if (:connected s)
-                                        (str " ✓" (when (:tools s) (str " (" (:tools s) " tools)")))
-                                        " ·")))
-                               servers)))}))
+                  (map (fn [s]
+                         (str "- `" (:name s) "` " (:transport s)
+                           (if (:connected s)
+                             (str " ✓" (when (:tools s) (str " (" (:tools s) " tools)")))
+                             " ·")))
+                    servers)))}))
 
 (defn- render-mcp-tools-result
   [r]
@@ -251,25 +251,25 @@
     {:summary (str "`" (:server r) "` — " (count tools) " tool" (when (not= 1 (count tools)) "s"))
      :body    (when (seq tools)
                 (str/join "\n"
-                          (map (fn [t]
-                                 (str "- `" (:name t) "`"
-                                      (when (seq (str (:description t)))
-                                        (str " — " (:description t)))))
-                               tools)))}))
+                  (map (fn [t]
+                         (str "- `" (:name t) "`"
+                           (when (seq (str (:description t)))
+                             (str " — " (:description t)))))
+                    tools)))}))
 
 (defn- render-mcp-call-result
   [r]
   (let [blocks (:content r)
         text   (->> blocks
-                    (keep (fn [b] (or (get b "text") (get b :text))))
-                    (str/join "\n"))]
+                 (keep (fn [b] (or (get b "text") (get b :text))))
+                 (str/join "\n"))]
     {:summary (str "`" (:server r) "`/" (:tool r) (when (:is_error r) " — error"))
      :body    (mcp-fence (if (seq text) text (pr-str blocks)))}))
 
 (defn- render-mcp-connect-result
   [r]
   {:summary (str "connected `" (:server r) "`"
-                 (when (:tools r) (str " (" (:tools r) " tools)")))})
+              (when (:tools r) (str " (" (:tools r) " tools)")))})
 
 (defn- render-mcp-disconnect-result
   [r]
@@ -306,57 +306,57 @@
 
 (def ^:private mcp-symbols
   [(vis/symbol #'mcp-servers
-               {:symbol 'servers :name "mcp_servers"
-                :native-tool? true :render render-mcp-servers-result
+     {:symbol 'servers :name "mcp_servers"
+      :native-tool? true :render render-mcp-servers-result
                 ;; mcp verbs bind positionally under the wire name: mcp_servers(),
                 ;; mcp_tools(server), mcp_call(server, tool, args?), mcp_(dis)connect(server).
-                :call {:pos []}
-                :color-role :tool-color/meta
-                :schema {:type "object" :properties {} :required []}
-                :before-fn (mcp-gate-before-fn :mcp/servers)
-                :tag :observation :on-error-fn (mcp-on-error :mcp/servers)})
+      :call {:pos []}
+      :color-role :tool-color/meta
+      :schema {:type "object" :properties {} :required []}
+      :before-fn (mcp-gate-before-fn :mcp/servers)
+      :tag :observation :on-error-fn (mcp-on-error :mcp/servers)})
    (vis/symbol #'mcp-tools
-               {:symbol 'tools :name "mcp_tools"
-                :native-tool? true :render render-mcp-tools-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/meta
-                :schema {:type "object"
-                         :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/tools)
-                :tag :observation :on-error-fn (mcp-on-error :mcp/tools)})
+     {:symbol 'tools :name "mcp_tools"
+      :native-tool? true :render render-mcp-tools-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/meta
+      :schema {:type "object"
+               :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}}
+               :required ["server"]}
+      :before-fn (mcp-gate-before-fn :mcp/tools)
+      :tag :observation :on-error-fn (mcp-on-error :mcp/tools)})
    (vis/symbol #'mcp-call
-               {:symbol 'call :name "mcp_call"
-                :native-tool? true :render render-mcp-call-result
-                :call {:pos ["server" "tool"] :opt-pos ["args"]}
-                :color-role :tool-color/shell
-                :schema {:type "object"
-                         :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}
-                                      "tool"   {:type "string" :description "Tool name on that server (see mcp_tools)."}
-                                      "args"   {:type "object" :description "Args matching the tool's input_schema; omit or {} for none."}}
-                         :required ["server" "tool"]}
-                :before-fn (mcp-gate-before-fn :mcp/call)
-                :tag :mutation :on-error-fn (mcp-on-error :mcp/call)})
+     {:symbol 'call :name "mcp_call"
+      :native-tool? true :render render-mcp-call-result
+      :call {:pos ["server" "tool"] :opt-pos ["args"]}
+      :color-role :tool-color/shell
+      :schema {:type "object"
+               :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}
+                            "tool"   {:type "string" :description "Tool name on that server (see mcp_tools)."}
+                            "args"   {:type "object" :description "Args matching the tool's input_schema; omit or {} for none."}}
+               :required ["server" "tool"]}
+      :before-fn (mcp-gate-before-fn :mcp/call)
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/call)})
    (vis/symbol #'mcp-connect
-               {:symbol 'connect :name "mcp_connect"
-                :native-tool? true :render render-mcp-connect-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/create
-                :schema {:type "object"
-                         :properties {"server" {:type "string" :description "Configured MCP server to connect + register as a resource."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/connect)
-                :tag :mutation :on-error-fn (mcp-on-error :mcp/connect)})
+     {:symbol 'connect :name "mcp_connect"
+      :native-tool? true :render render-mcp-connect-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/create
+      :schema {:type "object"
+               :properties {"server" {:type "string" :description "Configured MCP server to connect + register as a resource."}}
+               :required ["server"]}
+      :before-fn (mcp-gate-before-fn :mcp/connect)
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/connect)})
    (vis/symbol #'mcp-disconnect
-               {:symbol 'disconnect :name "mcp_disconnect"
-                :native-tool? true :render render-mcp-disconnect-result
-                :call {:pos ["server"]}
-                :color-role :tool-color/delete
-                :schema {:type "object"
-                         :properties {"server" {:type "string" :description "Connected MCP server to disconnect (stops its resource)."}}
-                         :required ["server"]}
-                :before-fn (mcp-gate-before-fn :mcp/disconnect)
-                :tag :mutation :on-error-fn (mcp-on-error :mcp/disconnect)})])
+     {:symbol 'disconnect :name "mcp_disconnect"
+      :native-tool? true :render render-mcp-disconnect-result
+      :call {:pos ["server"]}
+      :color-role :tool-color/delete
+      :schema {:type "object"
+               :properties {"server" {:type "string" :description "Connected MCP server to disconnect (stops its resource)."}}
+               :required ["server"]}
+      :before-fn (mcp-gate-before-fn :mcp/disconnect)
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/disconnect)})])
 
 (defn- contribute
   "`:ext/ctx-fn` — surface this session's CONNECTED MCP servers (+ tool counts) so
@@ -370,19 +370,19 @@
                                {:name nm
                                 :transport (name (:transport conn))
                                 :tools (count (or (some-> (:tools conn) deref) []))})
-                             live)}}})))
+                         live)}}})))
 
 (def ^:private prompt-text
   (str "MCP servers available. Connect to Model Context Protocol servers (declared in\n"
-       "~/.vis/config.edn under :mcp :servers) and call their tools. Verbs (alias mcp):\n"
-       "  mcp_servers()                  — configured servers + connection status + tool counts\n"
-       "  mcp_tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
-       "  mcp_call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
-       "  mcp_connect(server) / mcp_disconnect(server) — manage the connection explicitly\n"
-       "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
-       "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
-       "Workflow: mcp_servers() to see what's there → mcp_tools(server) to learn a tool's input_schema →\n"
-       "mcp_call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"]."))
+    "~/.vis/config.edn under :mcp :servers) and call their tools. Verbs (alias mcp):\n"
+    "  mcp_servers()                  — configured servers + connection status + tool counts\n"
+    "  mcp_tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
+    "  mcp_call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
+    "  mcp_connect(server) / mcp_disconnect(server) — manage the connection explicitly\n"
+    "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
+    "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
+    "Workflow: mcp_servers() to see what's there → mcp_tools(server) to learn a tool's input_schema →\n"
+    "mcp_call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"]."))
 
 (defn- activation-fn
   "Active when at least one MCP server is configured."
@@ -398,48 +398,48 @@
 
 (def vis-extension
   (vis/extension
-   {:ext/name           "foundation-mcp"
-    :ext/description    "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp_servers/mcp_tools/mcp_call), each live connection a session resource. Gated by :mcp/enabled (OFF by default). Activates when servers are configured."
-    :ext/version        "0.1.0"
-    :ext/author         "Blockether"
-    :ext/owner          "vis"
-    :ext/license        "Apache-2.0"
-    :ext/activation-fn  activation-fn
-    :ext/engine         {:ext.engine/alias 'mcp
-                         :ext.engine/symbols mcp-symbols}
-    :ext/prompt-fn         (fn [_env] prompt-text)
-    :ext/ctx-fn            contribute
-    :ext/startable-resources
-    [{:kind          :mcp-configured
-      :label         "configured MCP client"
-      :options-label "client"
+    {:ext/name           "foundation-mcp"
+     :ext/description    "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp_servers/mcp_tools/mcp_call), each live connection a session resource. Gated by :mcp/enabled (OFF by default). Activates when servers are configured."
+     :ext/version        "0.1.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
+     :ext/activation-fn  activation-fn
+     :ext/engine         {:ext.engine/alias 'mcp
+                          :ext.engine/symbols mcp-symbols}
+     :ext/prompt-fn         (fn [_env] prompt-text)
+     :ext/ctx-fn            contribute
+     :ext/startable-resources
+     [{:kind          :mcp-configured
+       :label         "configured MCP client"
+       :options-label "client"
        ;; Only when MCP is ON *and* there's at least one configured server to
        ;; connect to — an empty "connect to configured client" row is noise.
-      :visible-fn    (fn [] (and (mcp-enabled?) (boolean (seq (configured-servers)))))
-      :options-fn    (fn [_env] (vec (keys (configured-servers))))
-      :start-fn      (fn [env selected]
-                       (let [session (:session-id env)
-                             names   (if (sequential? selected) selected [selected])]
-                         (doseq [s names :when s] (connect-server! session (str s)))))}
-     {:kind     :mcp-stdio
-      :label    "local command MCP client"
-      :visible-fn mcp-enabled?
-      :fields   [{:name :name :label "Client name" :placeholder "filesystem" :required true}
-                 {:name :command :label "Command" :placeholder "npx" :required true}
-                 {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
-                 {:name :cwd :label "Working directory" :placeholder "optional"}]
-      :start-fn (fn [env fields]
-                  (let [server (add-stdio-server! fields)]
-                    (connect-server! (:session-id env) server)))}
-     {:kind     :mcp-http
-      :label    "remote HTTP MCP client"
-      :visible-fn mcp-enabled?
-      :fields   [{:name :name :label "Client name" :placeholder "remote" :required true}
-                 {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
-                 {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
-      :start-fn (fn [env fields]
-                  (let [server (add-http-server! fields)]
-                    (connect-server! (:session-id env) server)))}]
-    :ext/kind           "common"}))
+       :visible-fn    (fn [] (and (mcp-enabled?) (boolean (seq (configured-servers)))))
+       :options-fn    (fn [_env] (vec (keys (configured-servers))))
+       :start-fn      (fn [env selected]
+                        (let [session (:session-id env)
+                              names   (if (sequential? selected) selected [selected])]
+                          (doseq [s names :when s] (connect-server! session (str s)))))}
+      {:kind     :mcp-stdio
+       :label    "local command MCP client"
+       :visible-fn mcp-enabled?
+       :fields   [{:name :name :label "Client name" :placeholder "filesystem" :required true}
+                  {:name :command :label "Command" :placeholder "npx" :required true}
+                  {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
+                  {:name :cwd :label "Working directory" :placeholder "optional"}]
+       :start-fn (fn [env fields]
+                   (let [server (add-stdio-server! fields)]
+                     (connect-server! (:session-id env) server)))}
+      {:kind     :mcp-http
+       :label    "remote HTTP MCP client"
+       :visible-fn mcp-enabled?
+       :fields   [{:name :name :label "Client name" :placeholder "remote" :required true}
+                  {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
+                  {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
+       :start-fn (fn [env fields]
+                   (let [server (add-http-server! fields)]
+                     (connect-server! (:session-id env) server)))}]
+     :ext/kind           "common"}))
 
 (vis/register-extension! vis-extension)

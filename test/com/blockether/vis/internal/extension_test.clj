@@ -54,8 +54,8 @@
   (it ":native-tool? true WITHOUT a :schema is rejected at build time"
     (expect (try (extension/symbol #'flat-native-tool
                    {:tag :observation :native-tool? true :name "no_schema_tool"})
-                 false
-                 (catch Throwable _ true)))))
+              false
+              (catch Throwable _ true)))))
 
 (defdescribe prompt-normalization-test
   (it "normalizes string and fn extension prompts"
@@ -76,8 +76,8 @@
     (let [root (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
           ext  {:ext/name "test.ctx-workspace"
                 :ext/ctx-fn  (fn [_]
-                            {:project {:ctx-root workspace/*workspace-root*
-                                       :cwd      (.getCanonicalPath (workspace/cwd))}})}
+                               {:project {:ctx-root workspace/*workspace-root*
+                                          :cwd      (.getCanonicalPath (workspace/cwd))}})}
           ctx  (extension/ctx-contributions {:workspace/root root} [ext])]
       (expect (= root (get-in ctx [:project :ctx-root])))
       (expect (= root (get-in ctx [:project :cwd]))))))

@@ -17,8 +17,8 @@
   "True when `x` is an RGB triple `[r g b]`, each channel 0..255."
   [x]
   (and (vector? x)
-       (= 3 (count x))
-       (every? byte? x)))
+    (= 3 (count x))
+    (every? byte? x)))
 
 (defn- non-blank-string? [x]
   (and (string? x) (not (str/blank? x))))
@@ -28,15 +28,15 @@
 
 (defn- theme-setting-value? [x]
   (or (nil? x)
-      (string? x)
-      (number? x)
-      (boolean? x)
-      (keyword? x)
-      (rgb? x)
-      (and (vector? x) (every? theme-setting-value? x))
-      (and (map? x)
-           (every? theme-key? (keys x))
-           (every? theme-setting-value? (vals x)))))
+    (string? x)
+    (number? x)
+    (boolean? x)
+    (keyword? x)
+    (rgb? x)
+    (and (vector? x) (every? theme-setting-value? x))
+    (and (map? x)
+      (every? theme-key? (keys x))
+      (every? theme-setting-value? (vals x)))))
 
 (s/def ::rgb rgb?)
 (s/def ::name non-blank-string?)
@@ -590,9 +590,9 @@
   [theme-map]
   (when-not (valid-theme? theme-map)
     (throw (ex-info "Invalid theme"
-                    {:type :vis.internal.theme/invalid-theme
-                     :theme theme-map
-                     :explain (explain-theme theme-map)})))
+             {:type :vis.internal.theme/invalid-theme
+              :theme theme-map
+              :explain (explain-theme theme-map)})))
   theme-map)
 
 (defn theme-registry
@@ -605,7 +605,7 @@
    `default-theme`."
   [id]
   (or (some->> id normalize-theme-id (get @themes))
-      default-theme))
+    default-theme))
 
 (defn color
   "Return RGB vector for palette token `k` in `theme-map` (or selected/default theme)."
@@ -619,15 +619,15 @@
                "light" :light
                (:mode default-theme))]
     (-> (if (= :dark mode) vis-dark vis-light)
-        (assoc :name id
-               :display-name id
-               :mode mode)
-        (update :settings merge settings {"THEME_NAME" id "MODE" (name mode)}))))
+      (assoc :name id
+        :display-name id
+        :mode mode)
+      (update :settings merge settings {"THEME_NAME" id "MODE" (name mode)}))))
 
 (defn- theme-entry
   [id entry]
   (let [id (or (normalize-theme-id id)
-               (normalize-theme-id (:name entry)))]
+             (normalize-theme-id (:name entry)))]
     (cond
       (and id (valid-theme? entry))
       [id (assert-theme! (assoc entry :name id))]
@@ -637,9 +637,9 @@
 
       :else
       (throw (ex-info "Invalid theme registry entry"
-                      {:type :vis.internal.theme/invalid-theme-entry
-                       :id id
-                       :entry entry})))))
+               {:type :vis.internal.theme/invalid-theme-entry
+                :id id
+                :entry entry})))))
 
 (defn register-theme!
   "Add or replace one theme in the process registry.
@@ -698,19 +698,19 @@
    or full theme maps."
   [x]
   (and (map? x)
-       (every? theme-key? (keys x))
-       (every? #(and (map? %) (every? theme-key? (keys %)) (every? theme-setting-value? (vals %)))
-               (vals x))))
+    (every? theme-key? (keys x))
+    (every? #(and (map? %) (every? theme-key? (keys %)) (every? theme-setting-value? (vals %)))
+      (vals x))))
 
 (defn extension-theme-settings
   "Return a registry in extension `:ext/theme` compact settings shape."
   ([] (extension-theme-settings @themes))
   ([theme-registry]
    (into {}
-         (map (fn [[id theme-map]] [id (:settings theme-map)]))
-         (if (instance? clojure.lang.IDeref theme-registry)
-           @theme-registry
-           theme-registry))))
+     (map (fn [[id theme-map]] [id (:settings theme-map)]))
+     (if (instance? clojure.lang.IDeref theme-registry)
+       @theme-registry
+       theme-registry))))
 
 (defn extension-themes
   "Merge `:ext/theme` maps from registered extension descriptors.
@@ -718,8 +718,8 @@
   [extensions]
   (reduce (fn [acc ext]
             (merge acc (:ext/theme ext)))
-          {}
-          (or extensions [])))
+    {}
+    (or extensions [])))
 
 (defn available-theme-ids
   "Theme ids from the process registry plus optional unregistered extension
@@ -728,14 +728,14 @@
   ([] (available-theme-ids nil))
   ([extensions]
    (->> (merge @themes
-               (into {}
-                     (map (fn [[id entry]] (theme-entry id entry)))
-                     (extension-themes extensions)))
-        keys
-        (map name)
-        distinct
-        sort
-        vec)))
+          (into {}
+            (map (fn [[id entry]] (theme-entry id entry)))
+            (extension-themes extensions)))
+     keys
+     (map name)
+     distinct
+     sort
+     vec)))
 
 (defn- mix-rgb
   "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
@@ -822,15 +822,15 @@
         fg (:text-fg palette)
         border (:border-fg palette)]
     (merge
-     (into (sorted-map)
-           (map (fn [[css-var palette-key]] [css-var (rgb->css (get palette palette-key))]))
-           web-css-palette-tokens)
-     (into (sorted-map)
-           (map (fn [[css-var ratio]] [css-var (rgb->css (mix-rgb bg fg ratio))]))
-           web-css-derived-tokens)
-     (into (sorted-map)
-           (map (fn [[css-var delta]] [css-var (rgb->css (mix-to-luminance-delta bg border delta))]))
-           web-css-border-tokens))))
+      (into (sorted-map)
+        (map (fn [[css-var palette-key]] [css-var (rgb->css (get palette palette-key))]))
+        web-css-palette-tokens)
+      (into (sorted-map)
+        (map (fn [[css-var ratio]] [css-var (rgb->css (mix-rgb bg fg ratio))]))
+        web-css-derived-tokens)
+      (into (sorted-map)
+        (map (fn [[css-var delta]] [css-var (rgb->css (mix-to-luminance-delta bg border delta))]))
+        web-css-border-tokens))))
 
 (defn web-css-root
   "A `:root{...}` CSS block for a theme id (or theme map): every shared
@@ -839,8 +839,8 @@
   [theme-or-id]
   (let [theme-map (if (map? theme-or-id) theme-or-id (theme theme-or-id))]
     (str ":root{"
-         (->> (theme->web-css-vars theme-map)
-              (map (fn [[k v]] (str k ":" v)))
-              (str/join ";"))
-         ";color-scheme:" (name (:mode theme-map :light))
-         "}")))
+      (->> (theme->web-css-vars theme-map)
+        (map (fn [[k v]] (str k ":" v)))
+        (str/join ";"))
+      ";color-scheme:" (name (:mode theme-map :light))
+      "}")))

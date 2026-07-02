@@ -165,23 +165,23 @@
                             (let [lo (patch/anchor->line (:anchor d))
                                   hi (patch/anchor->line (:end-anchor d))]
                               (if-let [i (first (keep-indexed
-                                                 (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                                                   (when (and (not (contains? acc i))
-                                                              (<= lo (.line h) hi))
-                                                     i))
-                                                 hits))]
+                                                  (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+                                                    (when (and (not (contains? acc i))
+                                                            (<= lo (.line h) hi))
+                                                      i))
+                                                  hits))]
                                 (assoc acc i d)
                                 acc)))
-                          {} defs)]
+                    {} defs)]
       (vec (map-indexed
-            (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-              (let [base {:anchor (line-anchor (.line h))}]
-                (if-let [d (get claimed i)]
-                  (assoc base
-                         :is-definition true
-                         :kind (:kind d) :visibility (:visibility d)
-                         :signature (:signature d) :doc (:doc d)
-                         :end-anchor (:end-anchor d))
-                  base)))
-            hits)))
+             (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+               (let [base {:anchor (line-anchor (.line h))}]
+                 (if-let [d (get claimed i)]
+                   (assoc base
+                     :is-definition true
+                     :kind (:kind d) :visibility (:visibility d)
+                     :signature (:signature d) :doc (:doc d)
+                     :end-anchor (:end-anchor d))
+                   base)))
+             hits)))
     []))

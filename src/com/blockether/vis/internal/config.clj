@@ -83,11 +83,11 @@
   ;; handler so only one writer remains.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path              log-path
-                                       :interval          :monthly
-                                       :max-file-size     4000000
-                                       :max-num-parts     8
-                                       :max-num-intervals 6}))
+    (tel/handler:file {:path              log-path
+                       :interval          :monthly
+                       :max-file-size     4000000
+                       :max-num-parts     8
+                       :max-num-intervals 6}))
   (tel/call-on-shutdown! (fn [] (tel/stop-handlers!))))
 
 (defn init-cli!
@@ -117,11 +117,11 @@
   ;; takes over as the single writer.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path              log-path
-                                       :interval          :monthly
-                                       :max-file-size     4000000
-                                       :max-num-parts     8
-                                       :max-num-intervals 6})))
+    (tel/handler:file {:path              log-path
+                       :interval          :monthly
+                       :max-file-size     4000000
+                       :max-num-parts     8
+                       :max-num-intervals 6})))
 
 (defn shutdown!
   "Flush and stop all telemere handlers. Call after the TUI screen
@@ -148,14 +148,14 @@
   [pid]
   (when-let [provider (registry/provider-by-id pid)]
     (merge (:provider/preset provider)
-           (when-let [label (:provider/label provider)]
-             {:label label}))))
+      (when-let [label (:provider/label provider)]
+        {:label label}))))
 
 (defn- known-provider-base-url
   "Base URL for a provider id: provider extension first, svar table last."
   [pid]
   (or (:base-url (registered-provider-metadata pid))
-      (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
+    (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
 
 (defn provider-template
   "Preset descriptor for a provider id, merged from a provider
@@ -170,8 +170,8 @@
           (:label provider-md)             (assoc :label (:label provider-md))
           (known-provider-base-url pid)    (assoc :base-url (known-provider-base-url pid))
           (or (:api-style provider-md)
-              (:api-style svar-md))          (assoc :api-style (or (:api-style provider-md)
-                                                                   (:api-style svar-md)))
+            (:api-style svar-md))          (assoc :api-style (or (:api-style provider-md)
+                                                               (:api-style svar-md)))
           (:default-models provider-md)    (assoc :default-models (:default-models provider-md))
           (:extra-body provider-md)        (assoc :extra-body (:extra-body provider-md))
           (:hidden? provider-md)           (assoc :hidden? true))))))
@@ -181,27 +181,27 @@
   []
   (let [order-rank (zipmap PRESET_ORDER (range))
         ids        (into #{} (concat (keys svar-router/KNOWN_PROVIDERS)
-                                     (map :provider/id (registry/registered-providers))))]
+                               (map :provider/id (registry/registered-providers))))]
     (->> ids
-         (remove removed-provider-ids)
-         (keep provider-template)
-         (remove :hidden?)
+      (remove removed-provider-ids)
+      (keep provider-template)
+      (remove :hidden?)
       ;; Drop presets with no human label. A label is only set when a vis
       ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
       ;; keys with no matching extension (e.g. :github-copilot-enterprise,
       ;; :zai-coding) would otherwise render as blank, selectable rows after
       ;; the last named preset in the "Add Provider" picker — and the TUI has
       ;; no handling for them anyway.
-         (remove #(str/blank? (:label %)))
-         (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
-         vec)))
+      (remove #(str/blank? (:label %)))
+      (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
+      vec)))
 
 (defn display-label
   "Human-readable label for a provider id. Never persisted."
   [pid]
   (or (:label (registered-provider-metadata pid))
-      (some-> pid name str/capitalize)
-      "Provider"))
+    (some-> pid name str/capitalize)
+    "Provider"))
 
 (defn- trim-trailing-slashes
   [s]
@@ -214,13 +214,13 @@
    and catalog defaults must not pin traffic to the stale bootstrap host."
   [provider-id url]
   (= (some-> url trim-trailing-slashes)
-     (some-> (known-provider-base-url provider-id) trim-trailing-slashes)))
+    (some-> (known-provider-base-url provider-id) trim-trailing-slashes)))
 
 (defn- provider-token-base-url
   [provider-id explicit-url api-url]
   (cond
     (and api-url (or (nil? explicit-url)
-                     (catalog-base-url? provider-id explicit-url)))
+                   (catalog-base-url? provider-id explicit-url)))
     api-url
 
     explicit-url explicit-url
@@ -290,10 +290,10 @@
          ;; (e.g. `:reasoning-effort?`) onto the Anthropic wire.
 
          (and (zai-provider-id? provider-id)
-              (zai-thinking-model? n))
+           (zai-thinking-model? n))
          (assoc :reasoning? true
-                :reasoning-style :zai-thinking
-                :reasoning-effort? false))))))
+           :reasoning-style :zai-thinking
+           :reasoning-effort? false))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
@@ -349,7 +349,7 @@
           merged-extra-body (assoc :extra-body merged-extra-body)))
       (cond-> {:id pid :models models}
         (or api-key
-            catalog-api-key) (assoc :api-key (or api-key catalog-api-key))
+          catalog-api-key) (assoc :api-key (or api-key catalog-api-key))
         explicit-url        (assoc :base-url explicit-url)
         explicit-api-style  (assoc :api-style explicit-api-style)
         explicit-responses  (assoc :responses-path explicit-responses)
@@ -400,8 +400,8 @@
    win; nested maps merge; scalar/vector values replace."
   []
   (deep-merge-config (load-global-config-raw)
-                     (load-project-config-raw)
-                     (load-project-root-config-raw)))
+    (load-project-config-raw)
+    (load-project-root-config-raw)))
 
 (defn- apply-provider-metadata
   "Attach catalog metadata needed by the runtime while preserving the
@@ -422,8 +422,8 @@
   "Load provider config in svar-native syntax from `~/.vis/config.edn`."
   []
   (some-> (load-config-raw)
-          ((fn [raw] (when (seq (:providers raw)) raw)))
-          apply-config-metadata))
+    ((fn [raw] (when (seq (:providers raw)) raw)))
+    apply-config-metadata))
 
 (defn- active-provider-entry [config]
   (first (:providers config)))
@@ -431,7 +431,7 @@
 (defn- provider-selection-changed?
   [previous-provider selected-provider]
   (and selected-provider
-       (not= (:id previous-provider) (:id selected-provider))))
+    (not= (:id previous-provider) (:id selected-provider))))
 
 (defn- emit-provider-selected!
   [{:keys [previous-provider provider config source]}]
@@ -448,7 +448,7 @@
                            :error    (ex-message t)
                            :ex-class (.getName (class t))}
                    :msg   (str "Provider on-selected hook for " (:id provider)
-                               " threw; selection continues")})))))
+                            " threw; selection continues")})))))
 
 (defn save-config!
   "Persist provider config to `~/.vis/config.edn`.
@@ -484,7 +484,7 @@
        (save-config! (if (seq providers*)
                        (assoc raw :providers providers*)
                        (dissoc raw :providers))
-                     source)
+         source)
        true))))
 
 (defn resolve-config
@@ -493,9 +493,9 @@
   ([] (resolve-config nil))
   ([explicit-config]
    (or explicit-config
-       (load-config)
-       (throw (ex-info "No AI provider is configured yet."
-                       {:type :vis/no-provider})))))
+     (load-config)
+     (throw (ex-info "No AI provider is configured yet."
+              {:type :vis/no-provider})))))
 
 (defn provider-configured?
   "True when at least one provider is configured (global or project config).
@@ -511,7 +511,7 @@
    (e.g. removed their only one)."
   []
   (and (not (provider-configured?))
-       (not (.exists (io/file config-path)))))
+    (not (.exists (io/file config-path)))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
@@ -561,10 +561,10 @@
         m   (when (map? raw) (get raw extension-env-config-key))]
     (if (map? m)
       (into {}
-            (keep (fn [[k v]]
-                    (when (and (string? k) (string? v) (not (str/blank? v)))
-                      [k v])))
-            m)
+        (keep (fn [[k v]]
+                (when (and (string? k) (string? v) (not (str/blank? v)))
+                  [k v])))
+        m)
       {})))
 
 (defn extension-env-status
@@ -599,7 +599,7 @@
     (save-config! (if (seq envs)
                     (assoc raw extension-env-config-key envs)
                     (dissoc raw extension-env-config-key))
-                  :environment)
+      :environment)
     (extension-env-status name')))
 
 (defn resolve-db-spec
@@ -608,10 +608,10 @@
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec
-       (when-let [env-path (System/getenv "VIS_DB_PATH")]
-         {:backend :sqlite :path env-path})
-       (:db-spec (load-config-raw))
-       default-db-spec)))
+     (when-let [env-path (System/getenv "VIS_DB_PATH")]
+       {:backend :sqlite :path env-path})
+     (:db-spec (load-config-raw))
+     default-db-spec)))
 
 ;; =============================================================================
 ;; Active provider state
@@ -635,9 +635,9 @@
   "Return the current provider config. Loads from disk on first call."
   []
   (or @active-config
-      (let [cfg (load-config)]
-        (reset! active-config cfg)
-        cfg)))
+    (let [cfg (load-config)]
+      (reset! active-config cfg)
+      cfg)))
 
 (defn active-provider
   "Return the first (primary) provider from config, or nil."

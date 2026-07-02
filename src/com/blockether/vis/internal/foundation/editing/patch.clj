@@ -585,10 +585,10 @@
             ;; zero-width (char-start == char-end); without this guard the check
             ;; reads the PREVIOUS line's `\n` (just before char-end) and wrongly
             ;; pads the replacement with a `\n`, inserting instead of replacing.
-            matched-ends-nl? (and (< (long char-start) (long char-end))
-                               (= \newline (.charAt current (dec (long char-end)))))
-            replace-ends-nl? (str/ends-with? replace "\n")
-            rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
+                matched-ends-nl? (and (< (long char-start) (long char-end))
+                                   (= \newline (.charAt current (dec (long char-end)))))
+                replace-ends-nl? (str/ends-with? replace "\n")
+                rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
             {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))))
 (defn resolve-anchor-edit
   "Content-addressed line-range replace returning full `{:new-content S

@@ -31,7 +31,7 @@
   (let [root (:workspace/root env)]
     (when (string? root)
       (try (git-core/in-repository? (io/file root))
-           (catch Throwable _ false)))))
+        (catch Throwable _ false)))))
 
 (defn- activation-fn
   "Per-turn activation. Returns true only when the workspace root is in
@@ -50,8 +50,8 @@
    one, so this is a defensive last line."
   [env]
   (or (:workspace/root env)
-      (throw (ex-info "git/* tool fired without :workspace/root in env"
-                      {:type :foundation-git/no-workspace}))))
+    (throw (ex-info "git/* tool fired without :workspace/root in env"
+             {:type :foundation-git/no-workspace}))))
 
 ;; =============================================================================
 ;; Tools
@@ -91,20 +91,20 @@
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
      (throw (ex-info (str "git_diff expected optional opts dict, got " (pr-str opts) ". "
-                          "Call git_diff(), git_diff({\"from\": \"sha\"}), or git_diff({\"from\": \"a\", \"to\": \"b\", \"path\": \"src\"}).")
-                     {:type :foundation-git/invalid-opts
-                      :opts opts
-                      :expected "nil or map"
-                      :examples ["git_diff()"
-                                 "git_diff({\"from\": \"HEAD~3\"})"
-                                 "git_diff({\"from\": \"main\", \"to\": \"feature\"})"
-                                 "git_diff({\"path\": \"src/foo.clj\"})"
-                                 "git_diff({\"from\": \"HEAD~1\", \"is_patch\": True})"]})))
+                       "Call git_diff(), git_diff({\"from\": \"sha\"}), or git_diff({\"from\": \"a\", \"to\": \"b\", \"path\": \"src\"}).")
+              {:type :foundation-git/invalid-opts
+               :opts opts
+               :expected "nil or map"
+               :examples ["git_diff()"
+                          "git_diff({\"from\": \"HEAD~3\"})"
+                          "git_diff({\"from\": \"main\", \"to\": \"feature\"})"
+                          "git_diff({\"path\": \"src/foo.clj\"})"
+                          "git_diff({\"from\": \"HEAD~1\", \"is_patch\": True})"]})))
    (let [{:keys [from to path]} (or opts {})
          _ (doseq [[k v] {:from from :to to :path path}]
              (when (and (some? v) (not (string? v)))
                (throw (ex-info (str "git_diff " k " must be a string, got " (pr-str v))
-                               {:type :foundation-git/invalid-opts :opts opts :key k :value v}))))
+                        {:type :foundation-git/invalid-opts :opts opts :key k :value v}))))
          root        (env-root env)
          root-file   (io/file root)
          ws-id       (:workspace/id env)
@@ -129,27 +129,27 @@
          tracked     (set (map :file files))
          untracked   (when-not new-rev
                        (->> (:entries status)
-                            (map :file)
-                            (remove tracked)
-                            vec))
+                         (map :file)
+                         (remove tracked)
+                         vec))
          head        (:head status)
          +sum        (reduce + 0 (map :add files))
          -sum        (reduce + 0 (map :del files))
          kind        (cond from :range :else (:kind ws))
          range-mode? (= kind :range)]
      (extension/success
-      {:result (cond-> {:from  base
-                        :stat  {:files (count files) :add +sum :del -sum}
-                        :files files}
-                 head (assoc :head (let [h (str head)]
-                                     (if (> (count h) 10) (subs h 0 10) h)))
-                 kind (assoc :kind kind)
-                 new-rev (assoc :to new-rev)
-                 (seq untracked) (assoc :untracked untracked)
-                 (and (not range-mode?) (:branch ws))
-                 (assoc :branch (:branch ws))
-                 path (assoc :path path)
-                 patch? (assoc :patch (->> files (keep :patch) (str/join "\n"))))}))))
+       {:result (cond-> {:from  base
+                         :stat  {:files (count files) :add +sum :del -sum}
+                         :files files}
+                  head (assoc :head (let [h (str head)]
+                                      (if (> (count h) 10) (subs h 0 10) h)))
+                  kind (assoc :kind kind)
+                  new-rev (assoc :to new-rev)
+                  (seq untracked) (assoc :untracked untracked)
+                  (and (not range-mode?) (:branch ws))
+                  (assoc :branch (:branch ws))
+                  path (assoc :path path)
+                  patch? (assoc :patch (->> files (keep :patch) (str/join "\n"))))}))))
 
 (defn- group-status-by-bucket
   "Fold flat porcelain `[{:status CODE :file PATH} ...]` into a map keyed by
@@ -167,7 +167,7 @@
               (if-let [fs (seq (get g code))]
                 (assoc m bucket (mapv :file fs))
                 m))
-            {} bucket-order)))
+      {} bucket-order)))
 
 (defn- short-head
   "10-char short sha from a snapshot's :head, or nil when absent."
@@ -184,9 +184,9 @@
   [^java.io.File primary-work-tree ^String root]
   (let [work-tree (git-core/repo-work-tree (io/file root))]
     (when (and work-tree
-               (or (nil? primary-work-tree)
-                   (not= (.getCanonicalPath ^java.io.File work-tree)
-                         (.getCanonicalPath ^java.io.File primary-work-tree))))
+            (or (nil? primary-work-tree)
+              (not= (.getCanonicalPath ^java.io.File work-tree)
+                (.getCanonicalPath ^java.io.File primary-work-tree))))
       (let [snapshot (git-core/status-snapshot (io/file root))]
         (when (seq (:entries snapshot))
           {:root    root
@@ -218,22 +218,22 @@
   ([env _opts]
    (let [primary-root      (io/file (env-root env))
          snapshot          (or (git-core/status-snapshot primary-root)
-                               {:branch nil :head nil :entries []})
+                             {:branch nil :head nil :entries []})
          primary-work-tree (git-core/repo-work-tree primary-root)
          extra-roots       (->> (workspace/env-filesystem-roots env)
-                                (keep :clone)
-                                (keep #(some-> ^String % str/trim not-empty))
-                                distinct)
+                             (keep :clone)
+                             (keep #(some-> ^String % str/trim not-empty))
+                             distinct)
          context-repos     (->> extra-roots
-                                (keep #(context-repo-status primary-work-tree %))
-                                seq)]
+                             (keep #(context-repo-status primary-work-tree %))
+                             seq)]
      (extension/success
-      {:result (cond-> {:branch  (:branch snapshot)
-                        :changes (group-status-by-bucket (:entries snapshot))}
-                 (:head snapshot)
-                 (assoc :head (short-head snapshot))
-                 context-repos
-                 (assoc :context-repos (vec context-repos)))}))))
+       {:result (cond-> {:branch  (:branch snapshot)
+                         :changes (group-status-by-bucket (:entries snapshot))}
+                  (:head snapshot)
+                  (assoc :head (short-head snapshot))
+                  context-repos
+                  (assoc :context-repos (vec context-repos)))}))))
 
 (defn- coerce-log-limit
   "Normalize the git_log() argument into a 1..200 integer.
@@ -253,12 +253,12 @@
               :else        nil)]
     (when (or (nil? raw) (neg? (long raw)))
       (throw (ex-info (str "git_log expected nil, a positive integer, or {\"limit\": N}, got "
-                           (pr-str arg) ". "
-                           "Call git_log(), git_log(50), or git_log({\"limit\": 50}).")
-                      {:type :foundation-git/invalid-opts
-                       :opts arg
-                       :expected "nil, positive integer, or {\"limit\": N}"
-                       :examples ["git_log()" "git_log(50)" "git_log({\"limit\": 50})"]})))
+                        (pr-str arg) ". "
+                        "Call git_log(), git_log(50), or git_log({\"limit\": 50}).")
+               {:type :foundation-git/invalid-opts
+                :opts arg
+                :expected "nil, positive integer, or {\"limit\": N}"
+                :examples ["git_log()" "git_log(50)" "git_log({\"limit\": 50})"]})))
     (max 1 (min 200 (long raw)))))
 
 (defn- coerce-log-opts "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for\n   commit selection, `:since/:until/:author` for time + author filters, and\n   the field selectors `:subject_only` (one-line scan: only short_sha +\n   subject) and `:is_body` (opt-in full body; default DROPS it).\n   Returns a normalised opts map; anything not-a-map throws the same\n   :foundation-git/invalid-opts shape as `coerce-log-limit`." [m] (when-not (map? m) (throw (ex-info (str "git_log expected a dict, got " (pr-str m)) {:type :foundation-git/invalid-opts, :opts m}))) {:limit (coerce-log-limit (or (:limit m) (:n m))), :path (when-let [p (:path m)] (when (string? p) p)), :ref (when-let [r (:ref m)] (when (string? r) r)), :since (:since m), :until (:until m), :author (when-let [a (:author m)] (when (string? a) a)), :subject-only (boolean (:subject_only m)), :is-body (boolean (:is_body m))})
@@ -286,19 +286,19 @@
            (string? arg) {:rev arg}
            (map? arg)    arg
            :else         (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
-                                         {:type :foundation-git/invalid-opts :opts arg
-                                          :examples ["git_show(\"HEAD\")"
-                                                     "git_show(\"abc1234\")"
-                                                     "git_show({\"rev\": \"HEAD~1\"})"
-                                                     "git_show({\"rev\": \"HEAD\", \"is_patch\": True})"]})))]
+                                  {:type :foundation-git/invalid-opts :opts arg
+                                   :examples ["git_show(\"HEAD\")"
+                                              "git_show(\"abc1234\")"
+                                              "git_show({\"rev\": \"HEAD~1\"})"
+                                              "git_show({\"rev\": \"HEAD\", \"is_patch\": True})"]})))]
      (when-not (and (string? rev) (seq rev))
        (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
-                       {:type :foundation-git/invalid-opts :opts arg})))
+                {:type :foundation-git/invalid-opts :opts arg})))
      (let [root   (io/file (env-root env))
            result (git-core/show-commit root rev {:with-patch? (boolean is_patch)})]
        (when-not result
          (throw (ex-info (str "git/show could not resolve revision: " rev)
-                         {:type :foundation-git/unknown-rev :rev rev})))
+                  {:type :foundation-git/unknown-rev :rev rev})))
        (extension/success {:result result})))))
 
 (defn- legendize-blame
@@ -317,21 +317,21 @@
    :author/:email/:at/:source-line are dropped (now in the legend)."
   [{:keys [lines] :as result}]
   (let [commits (persistent!
-                 (reduce
-                  (fn [acc {:keys [sha short-sha author email at]}]
-                    (if (and short-sha (not (contains? acc short-sha)))
-                      (assoc! acc short-sha {:sha    sha
-                                             :author author
-                                             :email  email
-                                             :at     at})
-                      acc))
-                  (transient {})
-                  lines))]
+                  (reduce
+                    (fn [acc {:keys [sha short-sha author email at]}]
+                      (if (and short-sha (not (contains? acc short-sha)))
+                        (assoc! acc short-sha {:sha    sha
+                                               :author author
+                                               :email  email
+                                               :at     at})
+                        acc))
+                    (transient {})
+                    lines))]
     (-> result
-        (assoc :commits commits)
-        (assoc :lines (mapv (fn [{:keys [line short-sha content]}]
-                              {:line line :sha short-sha :content content})
-                            lines)))))
+      (assoc :commits commits)
+      (assoc :lines (mapv (fn [{:keys [line short-sha content]}]
+                            {:line line :sha short-sha :content content})
+                      lines)))))
 
 (defn- coerce-line-num
   "Normalize a git_blame line-range bound (:from / :to) to a positive int.
@@ -344,12 +344,12 @@
     (nil? v)     nil
     (integer? v) v
     (string? v)  (or (parse-long (str/trim v))
-                     (throw (ex-info (str "git_blame " (name k) " must be a line number, got " (pr-str v)
-                                          ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
-                                     {:type :foundation-git/invalid-opts :key k :value v})))
+                   (throw (ex-info (str "git_blame " (name k) " must be a line number, got " (pr-str v)
+                                     ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
+                            {:type :foundation-git/invalid-opts :key k :value v})))
     :else        (throw (ex-info (str "git_blame " (name k) " must be a line number, got " (pr-str v)
-                                      ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
-                                 {:type :foundation-git/invalid-opts :key k :value v}))))
+                                   ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
+                          {:type :foundation-git/invalid-opts :key k :value v}))))
 
 (defn git-blame-fn
   "Per-line blame for one tracked file.
@@ -383,28 +383,28 @@
            (string? arg) {:path arg}
            (map? arg)    arg
            :else         (throw (ex-info (str "git_blame expected a path string or opts dict, got " (pr-str arg))
-                                         {:type :foundation-git/invalid-opts :opts arg
-                                          :examples ["git_blame(\"src/foo.clj\")"
-                                                     "git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})"
-                                                     "git_blame({\"path\": \"src/foo.clj\", \"ignore_revs\": [\"abc1234\"]})"]})))]
+                                  {:type :foundation-git/invalid-opts :opts arg
+                                   :examples ["git_blame(\"src/foo.clj\")"
+                                              "git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})"
+                                              "git_blame({\"path\": \"src/foo.clj\", \"ignore_revs\": [\"abc1234\"]})"]})))]
      (when-not (and (string? path) (seq path))
        (throw (ex-info (str "git_blame requires a non-blank path, got " (pr-str arg))
-                       {:type :foundation-git/invalid-opts :opts arg})))
+                {:type :foundation-git/invalid-opts :opts arg})))
      (when (and (some? ignore_revs) (not (sequential? ignore_revs)))
        (throw (ex-info (str "git_blame ignore_revs must be a list of sha strings, got " (pr-str ignore_revs))
-                       {:type :foundation-git/invalid-opts :opts arg :key :ignore_revs})))
+                {:type :foundation-git/invalid-opts :opts arg :key :ignore_revs})))
      (let [root   (io/file (env-root env))
            result (git-core/blame-file root path
-                                       {:from (coerce-line-num :from from) :to (coerce-line-num :to to)
-                                        :ignore-revs (when (seq ignore_revs)
-                                                       (vec (filter string? ignore_revs)))})]
+                    {:from (coerce-line-num :from from) :to (coerce-line-num :to to)
+                     :ignore-revs (when (seq ignore_revs)
+                                    (vec (filter string? ignore_revs)))})]
        (when-not result
          (throw (ex-info (str "git_blame failed: file is outside the repo or not tracked: " path)
-                         {:type :foundation-git/not-tracked :path path})))
+                  {:type :foundation-git/not-tracked :path path})))
        (when (:binary? result)
          (throw (ex-info (str "git_blame refused: " path " is a binary blob, per-line blame is meaningless. "
-                              "Use git_log({\"path\": \"" path "\"}) for commit history instead.")
-                         {:type :foundation-git/binary :path path :head (:head result)})))
+                           "Use git_log({\"path\": \"" path "\"}) for commit history instead.")
+                  {:type :foundation-git/binary :path path :head (:head result)})))
        (extension/success {:result (legendize-blame result)})))))
 
 (def ^{:doc "await git_diff()                                              # workspace default
@@ -481,38 +481,38 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
 
 (def diff-symbol
   (vis/symbol #'diff
-              {:before-fn inject-env
-               :render    render/render-diff
-               :color-role :tool-color/read
-               :tag       :observation}))
+    {:before-fn inject-env
+     :render    render/render-diff
+     :color-role :tool-color/read
+     :tag       :observation}))
 
 (def status-symbol
   (vis/symbol #'status
-              {:before-fn inject-env
-               :render    render/render-status
-               :color-role :tool-color/read
-               :tag       :observation}))
+    {:before-fn inject-env
+     :render    render/render-status
+     :color-role :tool-color/read
+     :tag       :observation}))
 
 (def log-symbol
   (vis/symbol #'log
-              {:before-fn inject-env
-               :render    render/render-log
-               :color-role :tool-color/read
-               :tag       :observation}))
+    {:before-fn inject-env
+     :render    render/render-log
+     :color-role :tool-color/read
+     :tag       :observation}))
 
 (def show-symbol
   (vis/symbol #'show
-              {:before-fn inject-env
-               :render    render/render-show
-               :color-role :tool-color/read
-               :tag       :observation}))
+    {:before-fn inject-env
+     :render    render/render-show
+     :color-role :tool-color/read
+     :tag       :observation}))
 
 (def blame-symbol
   (vis/symbol #'blame
-              {:before-fn inject-env
-               :render    render/render-blame
-               :color-role :tool-color/read
-               :tag       :observation}))
+    {:before-fn inject-env
+     :render    render/render-blame
+     :color-role :tool-color/read
+     :tag       :observation}))
 
 (def git-symbols
   ;; Observation + merge-resolve ops all live under the `git/` alias.
@@ -521,31 +521,31 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
   ;; called outside an active merge (JGit-side checks surface as
   ;; structured exceptions for the model to read).
   (vec (concat
-        [diff-symbol status-symbol log-symbol show-symbol blame-symbol]
-        merge-ops/merge-ops-symbols
-        write-ops/write-ops-symbols)))
+         [diff-symbol status-symbol log-symbol show-symbol blame-symbol]
+         merge-ops/merge-ops-symbols
+         write-ops/write-ops-symbols)))
 
 (def ^:private prompt-text
   (str
-   "git_ surface active — JGit-backed, no host git binary needed. Workspace\n"
-   "VCS truth (branch, head, dirty, mainline) already rides in context under\n"
-   "context[\"workspace\"]; read it there before probing. Bare Python\n"
-   "functions (snake_case, dict options with snake_case keys):\n"
-   "  OBSERVE (read-only):\n"
-   "    git_status()                              -> {branch, head, changes: {added/modified/deleted/untracked/conflicted: [paths]}} (empty changes = clean)\n"
-   "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  numstat (+untracked for WT diffs); is_patch adds unified text\n"
-   "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":.., \"subject_only\":True, \"is_body\":True})  commits (default 20, max 200); each has sha/short_sha/author/email/at/subject; body is opt-in via is_body, committer*/parents only when they differ; subject_only trims to short_sha+subject\n"
-   "    git_show(sha)  or  git_show({\"rev\":.., \"is_patch\":True})  one commit: per-file numstat (+ patch)\n"
-   "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame -> {commits:{<short_sha>:{author,email,at}}, lines:[{line,sha,content}]}; author via r[\"commits\"][line[\"sha\"]][\"author\"]\n"
-   "  WRITE (mutating):\n"
-   "    git_add(paths)  git_commit({\"message\": ..})  git_amend(..)\n"
-   "    git_push(..)  git_fetch(..)  git_reset(..)  git_branch(..)\n"
-   "    git_checkout(..)  git_cherry_pick(..)  git_rebase(..)\n"
-   "    git_merge({\"branch\":.., \"is_no_ff\":True, \"is_ff_only\":True, \"is_squash\":True})  merge a branch INTO current; clean->commit/ff, conflicts->MERGE-RESOLVE below\n"
-   "  MERGE-RESOLVE (drive a conflicted git_merge, or any active merge):\n"
-   "    git_merge_status()  git_merge_accept_ours()  git_merge_accept_theirs()\n"
-   "    git_merge_mark_resolved()  git_merge_continue()  git_merge_abort()\n"
-   "doc(\"git_status\"), doc(\"git_diff\"), etc. for full opts — do NOT apropos to rediscover this surface."))
+    "git_ surface active — JGit-backed, no host git binary needed. Workspace\n"
+    "VCS truth (branch, head, dirty, mainline) already rides in context under\n"
+    "context[\"workspace\"]; read it there before probing. Bare Python\n"
+    "functions (snake_case, dict options with snake_case keys):\n"
+    "  OBSERVE (read-only):\n"
+    "    git_status()                              -> {branch, head, changes: {added/modified/deleted/untracked/conflicted: [paths]}} (empty changes = clean)\n"
+    "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  numstat (+untracked for WT diffs); is_patch adds unified text\n"
+    "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":.., \"subject_only\":True, \"is_body\":True})  commits (default 20, max 200); each has sha/short_sha/author/email/at/subject; body is opt-in via is_body, committer*/parents only when they differ; subject_only trims to short_sha+subject\n"
+    "    git_show(sha)  or  git_show({\"rev\":.., \"is_patch\":True})  one commit: per-file numstat (+ patch)\n"
+    "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame -> {commits:{<short_sha>:{author,email,at}}, lines:[{line,sha,content}]}; author via r[\"commits\"][line[\"sha\"]][\"author\"]\n"
+    "  WRITE (mutating):\n"
+    "    git_add(paths)  git_commit({\"message\": ..})  git_amend(..)\n"
+    "    git_push(..)  git_fetch(..)  git_reset(..)  git_branch(..)\n"
+    "    git_checkout(..)  git_cherry_pick(..)  git_rebase(..)\n"
+    "    git_merge({\"branch\":.., \"is_no_ff\":True, \"is_ff_only\":True, \"is_squash\":True})  merge a branch INTO current; clean->commit/ff, conflicts->MERGE-RESOLVE below\n"
+    "  MERGE-RESOLVE (drive a conflicted git_merge, or any active merge):\n"
+    "    git_merge_status()  git_merge_accept_ours()  git_merge_accept_theirs()\n"
+    "    git_merge_mark_resolved()  git_merge_continue()  git_merge_abort()\n"
+    "doc(\"git_status\"), doc(\"git_diff\"), etc. for full opts — do NOT apropos to rediscover this surface."))
 
 ;; =============================================================================
 ;; Extension manifest
@@ -553,16 +553,16 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
 
 (def vis-extension
   (vis/extension
-   {:ext/name           "foundation-git"
-    :ext/description    "JGit-backed git/ surface: observation (diff, status, log, show, blame) + write ops (add, commit, amend, push, fetch, reset, branch, checkout, cherry-pick, rebase, merge) + merge-resolve sub-session ops (merge-status / merge-accept-ours / merge-accept-theirs / merge-mark-resolved / merge-continue! / merge-abort!). Activates only when the active workspace sits inside a repo."
-    :ext/version        "0.1.0"
-    :ext/author         "Blockether"
-    :ext/owner          "vis"
-    :ext/license        "Apache-2.0"
-    :ext/activation-fn  activation-fn
-    :ext/engine            {:ext.engine/alias 'git
-                            :ext.engine/symbols git-symbols}
-    :ext/prompt-fn         (fn [_env] prompt-text)
-    :ext/kind           "git"}))
+    {:ext/name           "foundation-git"
+     :ext/description    "JGit-backed git/ surface: observation (diff, status, log, show, blame) + write ops (add, commit, amend, push, fetch, reset, branch, checkout, cherry-pick, rebase, merge) + merge-resolve sub-session ops (merge-status / merge-accept-ours / merge-accept-theirs / merge-mark-resolved / merge-continue! / merge-abort!). Activates only when the active workspace sits inside a repo."
+     :ext/version        "0.1.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
+     :ext/activation-fn  activation-fn
+     :ext/engine            {:ext.engine/alias 'git
+                             :ext.engine/symbols git-symbols}
+     :ext/prompt-fn         (fn [_env] prompt-text)
+     :ext/kind           "git"}))
 
 (vis/register-extension! vis-extension)

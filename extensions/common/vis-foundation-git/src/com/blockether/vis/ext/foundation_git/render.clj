@@ -70,30 +70,30 @@
   [{:keys [short_sha message amend]}]
   (let [ls (some-> message s str/split-lines)]
     {:summary (str (if amend "amended " "commit ") (code short_sha)
-                   (when-let [f (first-line message)] (str " · " f)))
+                (when-let [f (first-line message)] (str " · " f)))
      :body    (when (> (count ls) 1) (block (map #(str "  " %) ls)))}))
 
 (defn render-push
   "git_push → `pushed `branch` → remote · STATUS…` + per-ref update rows."
   [{:keys [remote branch force delete updates]}]
   {:summary (str (if delete "deleted " "pushed ") (code branch) " → " (s remote)
-                 (when force " (force)")
-                 (when (seq updates)
-                   (str " · " (str/join ", " (distinct (map #(s (:status %)) updates))))))
+              (when force " (force)")
+              (when (seq updates)
+                (str " · " (str/join ", " (distinct (map #(s (:status %)) updates))))))
    :body    (block (for [u updates]
                      (str "  " (s (:status u)) "  " (s (:remote_name u))
-                          (when-let [m (some-> (:message u) s not-empty)] (str " — " m)))))})
+                       (when-let [m (some-> (:message u) s not-empty)] (str " — " m)))))})
 
 (defn render-fetch
   "git_fetch → `fetched remote · STATUS · N updates` + per-ref ranges."
   [{:keys [remote status summary updates]}]
   (let [n (:updated summary)]
     {:summary (str "fetched " (s remote) " · " (s status)
-                   (when (and n (pos? (long n))) (str " · " (plural n "update"))))
+                (when (and n (pos? (long n))) (str " · " (plural n "update"))))
      :body    (block (for [u updates]
                        (str "  " (s (:ref u))
-                            (when-let [r (some-> (:range u) s not-empty)] (str "  " r))
-                            (when-let [k (some-> (:kind u) s not-empty)] (str " (" k ")")))))}))
+                         (when-let [r (some-> (:range u) s not-empty)] (str "  " r))
+                         (when-let [k (some-> (:kind u) s not-empty)] (str " (" k ")")))))}))
 
 (defn render-reset
   "git_reset → `reset --mode → `sha`` (or per-path reset) + head before→after."
@@ -102,7 +102,7 @@
     {:summary (str "reset " (plural (count paths) "path") " to " (code to))
      :body    (block (map #(str "  " (s %)) paths))}
     {:summary (str "reset" (when mode (str " --" (s mode))) " → " (code short_sha)
-                   (when (and to (not= (s to) (s short_sha))) (str " (" (s to) ")")))
+                (when (and to (not= (s to) (s short_sha))) (str " (" (s to) ")")))
      :body    (when (and head_before head_after (not= head_before head_after))
                 (block [(str "  " (short7 head_before) " → " (short7 head_after))]))}))
 
@@ -114,7 +114,7 @@
     {:summary (str (plural (count branches) "branch") (when mode (str " (" (s mode) ")")))
      :body    (block (for [b branches]
                        (str "  " (s (:short b))
-                            (when (:short_sha b) (str "  " (s (:short_sha b)))))))}
+                         (when (:short_sha b) (str "  " (s (:short_sha b)))))))}
 
     (contains? r :deleted)
     {:summary (str "deleted " (plural (count deleted) "branch") (when force " (force)"))
@@ -125,9 +125,9 @@
 
     :else
     {:summary (str "created branch " (code name)
-                   (when short_sha (str " @ " (s short_sha)))
-                   (when (and from (not= "HEAD" (s from))) (str " from " (code from)))
-                   (when force " (force)"))}))
+                (when short_sha (str " @ " (s short_sha)))
+                (when (and from (not= "HEAD" (s from))) (str " from " (code from)))
+                (when force " (force)"))}))
 
 (defn render-checkout
   "git_checkout → restored-paths / branch-switch / detached-HEAD card."
@@ -135,32 +135,32 @@
   (cond
     (contains? r :files_restored)
     {:summary (str "restored " (plural files_restored "file")
-                   (when start_point (str " from " (code start_point))))
+                (when start_point (str " from " (code start_point))))
      :body    (block (map #(str "  " (s %)) paths))}
 
     branch
     {:summary (str (if created "created + checked out " "checked out ") (code branch)
-                   (when short_head (str " @ " (s short_head))))}
+                (when short_head (str " @ " (s short_head))))}
 
     :else
     {:summary (str (if detached "detached HEAD at " "checked out ")
-                   (code (or short_head sha)))}))
+                (code (or short_head sha)))}))
 
 (defn render-cherry-pick
   "git_cherry_pick → `cherry-pick STATUS · N commits` + picked / conflicts."
   [{:keys [status picked failing_paths]}]
   {:summary (str "cherry-pick " (s status) " · " (plural (count picked) "commit")
-                 (when (seq failing_paths) (str " · " (plural (count failing_paths) "conflict"))))
+              (when (seq failing_paths) (str " · " (plural (count failing_paths) "conflict"))))
    :body    (block (concat (for [p picked] (str "  picked " (s (:short_sha p))))
-                           (for [fp failing_paths] (str "  conflict " (s fp)))))})
+                     (for [fp failing_paths] (str "  conflict " (s fp)))))})
 
 (defn render-rebase
   "git_rebase → `rebase STATUS @ sha` + conflicts / failing paths / hint."
   [{:keys [status conflicts failing_paths short_current hint]}]
   {:summary (str "rebase " (s status) (when short_current (str " @ " (s short_current))))
    :body    (block (concat (for [c conflicts] (str "  conflict " (s c)))
-                           (for [fp failing_paths] (str "  failed " (s fp)))
-                           (when hint [(str "  → " (s hint))])))})
+                     (for [fp failing_paths] (str "  failed " (s fp)))
+                     (when hint [(str "  → " (s hint))])))})
 
 ;; ----------------------------------------------------------------------------
 ;; Observation ops
@@ -175,10 +175,10 @@
   [{:keys [branch head changes]}]
   (let [total (reduce + 0 (map (fn [[k _]] (count (get changes k))) status-buckets))]
     {:summary (str "on " (code branch) (when head (str " @ " (s head)))
-                   " · " (if (zero? total) "clean" (plural total "change")))
+                " · " (if (zero? total) "clean" (plural total "change")))
      :body    (block (mapcat (fn [[k mark]]
                                (for [f (get changes k)] (str "  " mark "  " (s f))))
-                             status-buckets))}))
+                       status-buckets))}))
 
 (defn- diff-files-block
   "Body for a diff/show file vector: a `+A -D  path` header per file so a
@@ -186,10 +186,10 @@
    patch when `is_patch` supplied one (else the numstat header stands alone)."
   [files]
   (block
-   (mapcat (fn [f]
-             (cons (str "  +" (or (:add f) 0) " -" (or (:del f) 0) "  " (s (:file f)))
-                   (some-> (:patch f) s not-empty str/split-lines)))
-           files)))
+    (mapcat (fn [f]
+              (cons (str "  +" (or (:add f) 0) " -" (or (:del f) 0) "  " (s (:file f)))
+                (some-> (:patch f) s not-empty str/split-lines)))
+      files)))
 
 (defn render-diff
   "git_diff → `diff `from`…`to` · N files +A -D` + per-file numstat / patch,
@@ -197,14 +197,14 @@
   [{:keys [from to stat files untracked]}]
   (let [fc (or (:files stat) (count files))]
     {:summary (str "diff " (code from) (when to (str "…" (code to)))
-                   " · " (plural fc "file") " +" (or (:add stat) 0) " -" (or (:del stat) 0)
-                   (when (seq untracked) (str " · " (count untracked) " untracked")))
+                " · " (plural fc "file") " +" (or (:add stat) 0) " -" (or (:del stat) 0)
+                (when (seq untracked) (str " · " (count untracked) " untracked")))
      :body    (not-empty
-               (str/join "\n"
-                         (remove nil?
-                                 [(diff-files-block files)
-                                  (when (seq untracked)
-                                    (block (for [u untracked] (str "  ?  " (s u)))))])))}))
+                (str/join "\n"
+                  (remove nil?
+                    [(diff-files-block files)
+                     (when (seq untracked)
+                       (block (for [u untracked] (str "  ?  " (s u)))))])))}))
 
 (defn render-log
   "git_log → `N commits on `branch`` + `sha subject` rows."
@@ -219,8 +219,8 @@
   {:summary (str "commit " (code short_sha) (when subject (str " · " (first-line subject))))
    :body    (let [num (diff-files-block files)]
               (block (remove nil?
-                             (concat (when author [(str "  " (s author))])
-                                     (when num [num])))))})
+                       (concat (when author [(str "  " (s author))])
+                         (when num [num])))))})
 
 (defn render-blame
   "git_blame → `blame `path` · N lines` (body omitted — the legend is large)."
@@ -243,7 +243,7 @@
   [{:keys [in_progress branch conflicts]}]
   (if in_progress
     {:summary (str "merge in progress" (when branch (str " on " (code branch)))
-                   (when (seq conflicts) (str " · " (plural (count conflicts) "conflict"))))
+                (when (seq conflicts) (str " · " (plural (count conflicts) "conflict"))))
      :body    (block (map #(str "  " (conflict-str %)) conflicts))}
     {:summary "no merge in progress"}))
 
@@ -266,8 +266,8 @@
   "git_merge_continue → `merge committed `sha` · subject`."
   [{:keys [head message]}]
   {:summary (str "merge committed"
-                 (when head (str " " (code (short7 head))))
-                 (when-let [f (first-line message)] (str " · " f)))})
+              (when head (str " " (code (short7 head))))
+              (when-let [f (first-line message)] (str " · " f)))})
 
 (defn render-merge-abort
   "git_merge_abort → `merge aborted`."
@@ -279,5 +279,5 @@
   [{:keys [status conflicts failing_paths hint head]}]
   {:summary (str "merge " (s status) (when head (str " @ " (short7 head))))
    :body    (block (concat (for [c conflicts] (str "  conflict " (conflict-str c)))
-                           (for [[p st] failing_paths] (str "  failed " (s p) " (" (s st) ")"))
-                           (when hint [(str "  → " (s hint))])))})
+                     (for [[p st] failing_paths] (str "  failed " (s p) " (" (s st) ")"))
+                     (when hint [(str "  → " (s hint))])))})

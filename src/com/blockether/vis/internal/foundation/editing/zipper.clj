@@ -150,23 +150,23 @@
                  :message (str (name op) ": node at " (vec at) " has no named "
                             "children — navigate down and insert, or use replace")}}))
     (with-target lang source at
-    (fn [^Node node src-bytes]
-      (let [sb (.startByte node) eb (.endByte node)
-            ins (utf8 (str code))
-            new-bytes (case op
-                        :replace        (byte-splice src-bytes sb eb ins)
-                        :insert-before  (byte-splice src-bytes sb sb ins)
-                        :insert-after   (byte-splice src-bytes eb eb ins)
-                        nil)]
-        (if-not new-bytes
-          {:error {:reason :bad-op :message (str "unknown op " op)}}
-          (let [new-source (String. new-bytes StandardCharsets/UTF_8)]
-            (if (and (syntax-broken? lang new-source)
-                  (not (syntax-broken? lang source)))
-              {:error {:reason :syntax-broken
-                       :message (str "refused: " (name op) " at " (vec at)
-                                  " would introduce a syntax error")}}
-              {:ok? true :new-source new-source}))))))))
+      (fn [^Node node src-bytes]
+        (let [sb (.startByte node) eb (.endByte node)
+              ins (utf8 (str code))
+              new-bytes (case op
+                          :replace        (byte-splice src-bytes sb eb ins)
+                          :insert-before  (byte-splice src-bytes sb sb ins)
+                          :insert-after   (byte-splice src-bytes eb eb ins)
+                          nil)]
+          (if-not new-bytes
+            {:error {:reason :bad-op :message (str "unknown op " op)}}
+            (let [new-source (String. new-bytes StandardCharsets/UTF_8)]
+              (if (and (syntax-broken? lang new-source)
+                    (not (syntax-broken? lang source)))
+                {:error {:reason :syntax-broken
+                         :message (str "refused: " (name op) " at " (vec at)
+                                    " would introduce a syntax error")}}
+                {:ok? true :new-source new-source}))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
 (def ^:private move-aliases

@@ -25,84 +25,84 @@
 
 (defdescribe eval-test
   (it "evaluates a single form and reports the value"
-      (with-server
-        (fn [port]
-          (let [r (nc/eval! {:port port :code "(+ 1 2)"})]
-            (expect (= "3" (:value r)))
-            (expect (contains? (:status r) "done"))
-            (expect (false? (:timed_out r)))
-            (expect (number? (:ms r)))))))
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port :code "(+ 1 2)"})]
+          (expect (= "3" (:value r)))
+          (expect (contains? (:status r) "done"))
+          (expect (false? (:timed_out r)))
+          (expect (number? (:ms r)))))))
 
   (it "captures stdout"
-      (with-server
-        (fn [port]
-          (let [r (nc/eval! {:port port :code "(println \"hi\")"})]
-            (expect (re-find #"hi" (:out r)))
-            (expect (contains? (:status r) "done"))))))
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port :code "(println \"hi\")"})]
+          (expect (re-find #"hi" (:out r)))
+          (expect (contains? (:status r) "done"))))))
 
   (it "reports eval exceptions inside the response"
-      (with-server
-        (fn [port]
-          (let [r (nc/eval! {:port port :code "(/ 1 0)"})]
-            (expect (false? (:timed_out r)))
-            (expect (or (re-find #"Divide" (str (:err r) ""))
-                        (some? (:ex r)))))))))
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port :code "(/ 1 0)"})]
+          (expect (false? (:timed_out r)))
+          (expect (or (re-find #"Divide" (str (:err r) ""))
+                    (some? (:ex r)))))))))
 
 (defdescribe error-enrichment-test
   (it "enriches an eval error with a structured message + demunged user trace"
-      (with-server
-        (fn [port]
+    (with-server
+      (fn [port]
         ;; plain embedded nREPL (no cider-nrepl) → exercises the *e self-fetch
-          (nc/eval! {:port port :code "(defn boom [x] (/ x 0)) (defn caller [] (boom 5)) nil"})
-          (let [r (nc/eval! {:port port :code "(caller)"})]
-            (expect (contains? (:status r) "eval-error"))
-            (expect (re-find #"ArithmeticException" (str (:error_message r))))
-            (expect (re-find #"Divide by zero" (str (:error_message r))))
+        (nc/eval! {:port port :code "(defn boom [x] (/ x 0)) (defn caller [] (boom 5)) nil"})
+        (let [r (nc/eval! {:port port :code "(caller)"})]
+          (expect (contains? (:status r) "eval-error"))
+          (expect (re-find #"ArithmeticException" (str (:error_message r))))
+          (expect (re-find #"Divide by zero" (str (:error_message r))))
           ;; the trace names OUR frames, not JVM/nREPL plumbing
-            (expect (vector? (:trace r)))
-            (expect (some #(re-find #"user/boom" %) (:trace r)))
-            (expect (some #(re-find #"user/caller" %) (:trace r)))
-            (expect (not-any? #(re-find #"clojure\.lang\." %) (:trace r)))))))
+          (expect (vector? (:trace r)))
+          (expect (some #(re-find #"user/boom" %) (:trace r)))
+          (expect (some #(re-find #"user/caller" %) (:trace r)))
+          (expect (not-any? #(re-find #"clojure\.lang\." %) (:trace r)))))))
 
   (it "surfaces ex-data on an ExceptionInfo"
-      (with-server
-        (fn [port]
-          (let [r (nc/eval! {:port port
-                             :code "(throw (ex-info \"boom\" {:code 42}))"})]
-            (expect (re-find #"ExceptionInfo" (str (:error_message r))))
-            (expect (re-find #":code 42" (str (:error_data r)))))))))
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port
+                           :code "(throw (ex-info \"boom\" {:code 42}))"})]
+          (expect (re-find #"ExceptionInfo" (str (:error_message r))))
+          (expect (re-find #":code 42" (str (:error_data r)))))))))
 
 (defdescribe reader-error-test
   (it "returns reader syntax errors immediately instead of timing out"
-      (with-server
-        (fn [port]
-          (let [r (nc/eval! {:port port
-                             :code "(defn broken []])"
-                             :timeout-ms 5000})]
-            (expect (false? (:timed_out r)))
-            (expect (contains? (:status r) "eval-error"))
-            (expect (re-find #"Syntax error reading source" (:err r))))))))
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port
+                           :code "(defn broken []])"
+                           :timeout-ms 5000})]
+          (expect (false? (:timed_out r)))
+          (expect (contains? (:status r) "eval-error"))
+          (expect (re-find #"Syntax error reading source" (:err r))))))))
 
 (defdescribe connect-failure-test
   (it "throws :clj/nrepl-connect-failed on an obviously-closed port"
-      (let [thrown? (try
-                      (nc/eval! {:port 1 :code "(+ 1 1)"})
-                      false
-                      (catch clojure.lang.ExceptionInfo e
-                        (= :clj/nrepl-connect-failed (:type (ex-data e)))))]
-        (expect thrown?))))
+    (let [thrown? (try
+                    (nc/eval! {:port 1 :code "(+ 1 1)"})
+                    false
+                    (catch clojure.lang.ExceptionInfo e
+                      (= :clj/nrepl-connect-failed (:type (ex-data e)))))]
+      (expect thrown?))))
 
 (defdescribe probe-test
   (it "reports :up with versions, :clj dialect, and a string cwd against a live server"
-      (with-server
-        (fn [port]
-          (let [r (nc/probe! {:port port :timeout-ms 1000})]
-            (expect (= :up (:status r)))
-            (expect (= :clj (:dialect r)))
-            (expect (string? (get-in r [:versions :clojure])))
+    (with-server
+      (fn [port]
+        (let [r (nc/probe! {:port port :timeout-ms 1000})]
+          (expect (= :up (:status r)))
+          (expect (= :clj (:dialect r)))
+          (expect (string? (get-in r [:versions :clojure])))
           ;; cwd is best-effort; when present it must be a non-blank string
-            (expect (or (nil? (:cwd r)) (and (string? (:cwd r)) (seq (:cwd r)))))))))
+          (expect (or (nil? (:cwd r)) (and (string? (:cwd r)) (seq (:cwd r)))))))))
 
   (it "reports :down on a closed port and never throws"
-      (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
-      (expect (= {:status :down} (nc/probe! {:port nil})))))
+    (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
+    (expect (= {:status :down} (nc/probe! {:port nil})))))

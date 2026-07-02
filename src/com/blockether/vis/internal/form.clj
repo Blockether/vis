@@ -99,8 +99,8 @@
       {:tool?        true
        :label        (tool-label tool-name)
        :color-role   (cond (keyword? tool-color-role) tool-color-role
-                           (string? tool-color-role)  (keyword tool-color-role)
-                           :else                      nil)
+                       (string? tool-color-role)  (keyword tool-color-role)
+                       :else                      nil)
        :summary      summary
        :body         body
        :collapsible? (boolean body)})))
@@ -130,7 +130,7 @@
    instead of hand-listing keys. Drops nils so a merge never stamps empty keys."
   [m]
   (reduce (fn [acc k] (if (some? (get m k)) (assoc acc k (get m k)) acc))
-          {} display-keys))
+    {} display-keys))
 
 (defn- spellings
   "Every keyword + string spelling of a base name, snake_case and kebab-case."
@@ -149,8 +149,8 @@
   (let [n  (name k)
         ns (namespace k)]
     (distinct (concat [k]
-                      (when ns (spellings (str ns "/" n)))
-                      (spellings n)))))
+                (when ns (spellings (str ns "/" n)))
+                (spellings n)))))
 
 (defn- wire-get
   "Read one display key off a wire event, tolerant of snake_case / namespaced /
@@ -174,4 +174,4 @@
                 ;; colour keyword survives the hop the same way the top-level one does.
                 (= k :cards)           (assoc acc k (mapv <-wire v))
                 :else                  (assoc acc k v))))
-          {} display-keys))
+    {} display-keys))
