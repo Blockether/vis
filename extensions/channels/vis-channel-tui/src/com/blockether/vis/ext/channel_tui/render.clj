@@ -300,12 +300,13 @@
         golden-w (int (* min-h phi))
         box-w (max min-w golden-w)
         box-h min-h
-        ;; Clamp to terminal
-        box-w (min box-w (- cols 4))
-        box-h (min box-h (- rows 4))
-        ;; Floor - minimum width generous enough for hint bars + labels
+        ;; Floor - minimum size generous enough for hint bars + labels
         box-w (max box-w 40)
-        box-h (max box-h 7)]
+        box-h (max box-h 7)
+        ;; Clamp to terminal - hard constraint, always final so the
+        ;; frame can never leave the screen even on a tiny terminal
+        box-w (min box-w (- cols 4))
+        box-h (min box-h (- rows 4))]
     [box-w box-h]))
 ;;; ── Box drawing ────────────────────────────────────────────────────────────
 (defn- embed-in-bar
@@ -538,57 +539,63 @@
 (defn- draw-slash-suggestion-row!
   "Paint one suggestion row inside the inset span [`left`, `left+inner-w`).
 
-   Layout (mirrors the markdown line `\\`/cmd\\` - description`):
-     <selection gutter> <⎹ /cmd ⎺> <\" - \"> <italic description>
+   Two layouts share this row, keyed by `:file/mention?`:
 
-   - The first `p/SELECTION_WIDTH` cols of the row are the selection
-     gutter: a `>` cursor on selected rows, blank otherwise. The
-     marker itself is painted at `left` by the caller; this function
-     only reserves the cols by shifting the chip start.
-   - The usage is rendered as an INLINE CODE chip: the cells under
-     the chip get `code-block-bg`/`code-block-fg`, padded by one
-     space inside the chip on each side, so it reads as a markdown
-     code span the way the rest of the chat renders backtick spans.
-   - A plain ` - ` separator follows on the row's normal fg/bg.
-   - The description is ITALIC, dimmed (`dialog-hint`) on every row
-     — selection is signalled by the `>` glyph, not by re-coloring
-     the description.
-   - Truncation drops the description first; the chip always renders
-     fully if at all possible."
+   - SLASH commands read like the markdown line `\\`/cmd\\` - description`:
+     an inline-code chip, a ` - ` separator, then a left-anchored italic
+     description.
+   - FILE `@` mentions read like a proper file picker: the path chip on the
+     LEFT and the `size · age · status` meta RIGHT-ALIGNED to the row's right
+     edge. Right-aligning the meta spans the full width instead of stranding
+     it next to the chip with a wide empty gutter (the old symmetric padding).
+
+   The first `p/SELECTION_WIDTH` cols are the selection gutter (`>`/`•` on the
+   selected row, painted by the caller); ONE col on the right is kept clear for
+   the overlay scrollbar thumb. Truncation drops the description first; the
+   chip renders fully whenever at all possible."
   [^TextGraphics g row left inner-w suggestion]
-  (let [;; Skip the selection gutter (`>` + 1 col margin) at the start
-        ;; of the row so the chip never overlaps with the cursor.
-        pad p/SELECTION_WIDTH
-        avail (max 0 (- inner-w (* 2 pad)))
+  (let [pad       p/SELECTION_WIDTH
+        file?     (:file/mention? suggestion)
+        x0        (+ left pad)
+        ;; Last paintable col of the inset body, keeping 1 col clear on the
+        ;; right for the scrollbar thumb (no symmetric right padding).
+        row-right (+ left (max 0 (dec inner-w)))
+        avail     (max 0 (- row-right x0))
         usage-raw (or (:slash/usage suggestion) "")
-        usage (p/truncate-cols usage-raw avail)
-        usage-w (p/display-width usage)
+        usage     (p/truncate-cols usage-raw avail)
+        usage-w   (p/display-width usage)
         ;; Inline code chip = usage padded by 1 space on each side.
-        chip-w (if (pos? usage-w) (+ usage-w 2) 0)
-        sep slash-desc-separator
-        sep-w (if (and (pos? chip-w) (< (+ chip-w (count sep)) avail)) (count sep) 0)
-        desc-w (max 0 (- avail chip-w sep-w))
-        desc-raw (or (:label suggestion) "")
-        desc (when (pos? desc-w) (p/truncate-cols desc-raw desc-w))
-        x0 (+ left pad)
-        ;; Save row colors so we can restore between segments.
-        row-fg (.getForegroundColor g)
-        row-bg (.getBackgroundColor g)]
-    ;; Inline code chip for the usage — markdown `\\`/cmd\\`` look.
+        chip-w    (if (pos? usage-w) (+ usage-w 2) 0)
+        chip-end  (+ x0 chip-w)
+        desc-raw  (or (:label suggestion) "")
+        row-fg    (.getForegroundColor g)
+        row-bg    (.getBackgroundColor g)]
+    ;; Inline code chip for the usage/path — markdown `\\`…\\`` look.
     (when (pos? chip-w)
       (p/set-colors! g t/code-block-fg t/code-block-bg)
       (p/fill-rect! g x0 row chip-w 1)
       (p/put-str! g (inc x0) row usage)
       (p/set-colors! g row-fg row-bg))
-    ;; Plain ` - ` separator on the row's normal colors.
-    (when (pos? sep-w) (p/put-str! g (+ x0 chip-w) row sep))
-    ;; Italic description in the dim hint color. The cursor glyph in
-    ;; the left margin (painted by the caller) carries the selection
-    ;; cue, so the description palette is the same on every row.
-    (when (and desc (pos? (p/display-width desc)))
-      (p/set-fg! g t/dialog-hint)
-      (p/styled g [p/ITALIC] (p/put-str! g (+ x0 chip-w sep-w) row desc))
-      (p/set-fg! g row-fg))))
+    (if file?
+      ;; FILE row: size · age · status meta, RIGHT-ALIGNED to the row edge.
+      (let [desc-avail (max 0 (- row-right chip-end 1))
+            desc       (when (pos? desc-avail) (p/truncate-cols desc-raw desc-avail))
+            desc-w     (if desc (p/display-width desc) 0)]
+        (when (and desc (pos? desc-w))
+          (let [desc-x (max (+ chip-end 1) (- row-right desc-w))]
+            (p/set-fg! g t/dialog-hint)
+            (p/styled g [p/ITALIC] (p/put-str! g desc-x row desc))
+            (p/set-fg! g row-fg))))
+      ;; SLASH row: ` - ` separator + left-anchored italic description.
+      (let [sep    slash-desc-separator
+            sep-w  (if (and (pos? chip-w) (< (+ chip-w (count sep)) avail)) (count sep) 0)
+            desc-w (max 0 (- avail chip-w sep-w))
+            desc   (when (pos? desc-w) (p/truncate-cols desc-raw desc-w))]
+        (when (pos? sep-w) (p/put-str! g chip-end row sep))
+        (when (and desc (pos? (p/display-width desc)))
+          (p/set-fg! g t/dialog-hint)
+          (p/styled g [p/ITALIC] (p/put-str! g (+ chip-end sep-w) row desc))
+          (p/set-fg! g row-fg))))))
 (def ^:private slash-title-label "Slash commands")
 (def ^:private slash-title-hints
   ;; Flex items rendered space-between in the title bar. Keys are

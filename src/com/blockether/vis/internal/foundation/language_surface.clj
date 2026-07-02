@@ -252,8 +252,9 @@
      :body    (when (seq lines) (fence nil (str/join "\n" lines)))}))
 
 (defn- render-test-result
-  "run_tests → `✓/✗ <ns> — pass/total` headline (the RUN_TESTS badge already
-   names the tool, so no redundant `tests` word); the run output on failure, or
+  "run_tests → `<ns> — pass/total (Nms)` headline (the RUN_TESTS badge already
+   names the tool, so no redundant `tests` word or success glyph — only a
+   leading `✗` flags a failure); the run output on failure, or
    the error text when the run itself could not produce a result. A failing run
    NEVER renders blank — with neither output nor error we surface the raw result
    so the user always sees *something* went wrong, never an empty card."
@@ -267,11 +268,12 @@
         detail (or (not-empty (str (:output r)))
                    (not-empty (str error))
                    (when-not ok (str "no test result returned — " (pr-str r))))]
-    {:summary (str (if ok "✓" "✗")
-                   (when (seq (str (:ns r))) (str " " (:ns r)))
+    {:summary (str (when-not ok "✗ ")
+                   (when (seq (str (:ns r))) (str (:ns r)))
                    (when total (str " — " pass "/" total " passed"
                                     (when (and (number? fail) (pos? fail)) (str ", " fail " failed"))))
                    (when (and (not ok) (not total)) " — error")
+                   (when-let [ms (:ms r)] (str " (" ms "ms)"))
                    (when (:note r) (str " (" (:note r) ")")))
      :body    (when-not ok (fence nil detail))}))
 
@@ -331,7 +333,14 @@
 (defn run-tests
   "Run tests using a language extension. Prefer run_tests(language, arg); the one-arg form uses the active workspace language. `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
   [env & args]
-  (dispatch! env :test-fn args))
+  ;; Wall-clock the whole run so the RUN_TESTS card can headline how long it
+  ;; took (parity with repl_eval's `(Nms)`); language handlers don't time
+  ;; themselves, and this captures dispatch + run end-to-end.
+  (let [start  (System/currentTimeMillis)
+        result (dispatch! env :test-fn args)]
+    (if (map? result)
+      (assoc result :ms (- (System/currentTimeMillis) start))
+      result)))
 
 (defn repl-eval
   "Evaluate code in a language REPL. Prefer repl_eval(language, arg). `arg` may include `id`/`repl_id` to target a registered REPL resource."

@@ -51,18 +51,18 @@
   [host port timeout-ms]
   (try
     (nrepl/connect :host (or host "localhost")
-      :port (int port)
-      :transport-fn transport/bencode
+                   :port (int port)
+                   :transport-fn transport/bencode
       ;; transport-level read timeout; eval timeout is enforced
       ;; separately via combined-response-fn below.
-      :timeout (long timeout-ms))
+                   :timeout (long timeout-ms))
     (catch Throwable t
       (throw (ex-info (str "nREPL connect failed on " (or host "localhost") ":" port
-                        " — is the REPL running? Check ctx for nREPL state or call clj_repl().")
-               {:type :clj/nrepl-connect-failed
-                :host (or host "localhost")
-                :port port
-                :cause (.getMessage t)})))))
+                           " — is the REPL running? Check ctx for nREPL state or call clj_repl().")
+                      {:type :clj/nrepl-connect-failed
+                       :host (or host "localhost")
+                       :port port
+                       :cause (.getMessage t)})))))
 
 (defn- evict! [host port]
   (swap! connections dissoc (key-of host port)))
@@ -74,9 +74,9 @@
   [host port timeout-ms]
   (let [k (key-of host port)]
     (or (get-in @connections [k :conn])
-      (let [c (open! host port timeout-ms)]
-        (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
-        c))))
+        (let [c (open! host port timeout-ms)]
+          (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
+          c))))
 
 (defn close-all!
   "Close every cached connection. Idempotent. Useful from
@@ -180,19 +180,25 @@
      :host        defaults to \"localhost\"
      :ns          starting namespace, e.g. \"user\"
      :timeout-ms  default 30000
+     :pretty?     when true, ask nREPL's print middleware to pretty-print the
+                  value(s) SERVER-SIDE via `nrepl.util.print/pprint` — so the
+                  live object is formatted where it lives (handles unreadable
+                  objects / lazy seqs) and `:value`/`:values` come back as
+                  multi-line, indented text. Output stays valid EDN.
+     :print-margin  right-margin columns for pretty printing (default 100)
 
    Always returns a map (see ns docstring). Connection failures
    throw `:clj/nrepl-connect-failed`; everything else (eval error,
    timeout) is reported inside the returned map so the model can
    read it as data."
-  [{:keys [host port code ns timeout-ms]
-    :or   {host "localhost" timeout-ms 30000}}]
+  [{:keys [host port code ns timeout-ms pretty? print-margin]
+    :or   {host "localhost" timeout-ms 30000 print-margin 100}}]
   (when-not (pos? (or port 0))
     (throw (ex-info "eval! requires a positive :port"
-             {:type :clj/nrepl-bad-args :port port})))
+                    {:type :clj/nrepl-bad-args :port port})))
   (when-not (string? code)
     (throw (ex-info "eval! requires a :code string"
-             {:type :clj/nrepl-bad-args :code code})))
+                    {:type :clj/nrepl-bad-args :code code})))
   (let [start    (System/currentTimeMillis)
         deadline (+ start (long timeout-ms))]
     (try
@@ -200,7 +206,9 @@
             client   (nrepl/client conn timeout-ms)
             session  (nrepl/client-session client)
             req      (cond-> {:op "eval" :code code}
-                       (string? ns) (assoc :ns ns))
+                       (string? ns) (assoc :ns ns)
+                       pretty?      (assoc :nrepl.middleware.print/print "nrepl.util.print/pprint"
+                                           :nrepl.middleware.print/options {:right-margin print-margin}))
             responses (session req)
             combined (combine responses deadline)
             elapsed  (- (System/currentTimeMillis) start)]
@@ -208,16 +216,16 @@
       (catch IOException ioe
         (evict! host port)
         (throw (ex-info (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
-                 {:type :clj/nrepl-io
-                  :host host :port port
-                  :cause (.getMessage ioe)})))
+                        {:type :clj/nrepl-io
+                         :host host :port port
+                         :cause (.getMessage ioe)})))
       (catch Throwable t
         (if (= :clj/nrepl-connect-failed (:type (ex-data t)))
           (throw t)
           (throw (ex-info (str "nREPL eval failed: " (.getMessage t))
-                   {:type :clj/nrepl-eval-failed
-                    :host host :port port
-                    :cause (.getMessage t)})))))))
+                          {:type :clj/nrepl-eval-failed
+                           :host host :port port
+                           :cause (.getMessage t)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; probe — cheap liveness check (no code execution)
@@ -234,8 +242,8 @@
           vstr (fn [m] (when (map? m)
                          (or (get m :version-string) (get m "version-string"))))
           out  (into {}
-                 (keep (fn [k] (when-let [s (vstr (vget k))] [k s])))
-                 [:clojure :clojurescript :nrepl :java])]
+                     (keep (fn [k] (when-let [s (vstr (vget k))] [k s])))
+                     [:clojure :clojurescript :nrepl :java])]
       (not-empty out))))
 
 (defn- detect-dialect
@@ -302,9 +310,9 @@
                                 :versions (or versions {})
                                 :dialect  (detect-dialect (or versions {}) ops)}
                          true (as-> m
-                                (if-let [cwd (server-cwd host port timeout-ms)]
-                                  (assoc m :cwd cwd)
-                                  m))))]
+                                    (if-let [cwd (server-cwd host port timeout-ms)]
+                                      (assoc m :cwd cwd)
+                                      m))))]
         (loop [rs       responses
                versions nil
                ops      nil
@@ -331,9 +339,9 @@
                         (coll? s)   (set (map str s))
                         :else       #{(str s)})]
               (recur (next rs)
-                (or v versions)
-                (or o ops)
-                (contains? st "done"))))))
+                     (or v versions)
+                     (or o ops)
+                     (contains? st "done"))))))
       (catch clojure.lang.ExceptionInfo e
         (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
           {:status :down}

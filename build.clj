@@ -233,6 +233,13 @@
 
 (def ^:private native-class-dir "target/native-classes")
 (def ^:private native-uber "target/vis.jar")
+
+(def ^:private uber-exclusions
+  "Entry patterns dropped from the portable uberjar. The jar DELIBERATELY keeps
+   every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc) — it is the
+   single cross-OS `vis --jvm` distribution — but the onnxruntime macOS libs drag
+   ~16.5 MB of nested *.dSYM DWARF debug bundles along; no runtime reads those."
+  ["ai/onnxruntime/native/.*\\.dSYM/.*"])
 (def ^:private native-bin
   (str "target/vis" (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
 
@@ -423,7 +430,7 @@
   (b/delete {:path native-uber})
   (let [basis (prepare-native-classes!)]
     (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
-             :main 'com.blockether.vis.core})
+             :main 'com.blockether.vis.core :exclude uber-exclusions})
     (println "->" native-uber)))
 
 (defn- native-lib-token
@@ -555,9 +562,19 @@
              "-H:IncludeResources=vis/VERSION"
              ;; Flyway migration SQL (not in the agent-traced metadata)
              "-H:IncludeResources=db/.*"
-             ;; voice JNI native libs for THIS platform (sherpa + onnxruntime)
+             ;; Web channel UI assets (ui.js/rec-worklet.js/app.css/icons.svg)
+             ;; + docs/site assets (woff2 fonts, logos) — ALL served at RUNTIME
+             ;; via io/resource, and NONE of them in the agent-traced metadata
+             ;; (the trace never opened /ui), so without these two patterns the
+             ;; native binary's web UI is a blank page over 404'd assets.
+             "-H:IncludeResources=vis-channel-web/public/.*"
+             "-H:IncludeResources=vis-docs/assets/.*"
+             ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
+             ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
+             ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
+             ;; jar's nested *.dSYM DWARF debug bundles (~8 MB) don't ride in.
              (str "-H:IncludeResources=native/" tok "/.*")
-             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")
+             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/[^/]*$")
              ;; tree-sitter binding: a few pure-data classes (enums / structural
              ;; op tables) reach the image heap and must initialize at BUILD time.
              ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
@@ -613,7 +630,7 @@
     ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.
     (b/delete {:path native-uber})
     (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
-             :main 'com.blockether.vis.core})
+             :main 'com.blockether.vis.core :exclude uber-exclusions})
     (println "->" native-uber)
     ;; (2) native distribution. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
