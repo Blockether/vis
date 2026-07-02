@@ -328,19 +328,32 @@
                                            0 (:forms it)))))
                                0 trace))
              ;; ▸ THINKING accordion: blank + band-top + header + band-gap
-             ;; + peek/full + bottom edge ≈ content + 5 chrome rows.
+             ;; + peek/full + bottom edge ≈ content + 5 chrome rows. The LIVE
+             ;; `:content-stream` merges into the same band while no form has
+             ;; landed yet — size them together under the same collapse cap.
              think-rows (long (reduce
                                 (fn [^long acc it]
-                                  (+ acc (long (let [full (prose-rows-est (:thinking it) fold-w)]
+                                  (+ acc (long (let [live (when (empty? (:forms it))
+                                                            (:content-stream it))
+                                                     full (+ (prose-rows-est (:thinking it) fold-w)
+                                                            (prose-rows-est live fold-w))]
                                                  (cond (zero? full) 0
                                                        expanded?    (+ full 5)
                                                        :else        (+ (min full cap) 5))))))
+                                0 trace))
+             ;; Per-iteration `:assistant-prose` paints as its OWN full block
+             ;; (never collapsed) between thinking and code+result.
+             prose-rows (long (reduce
+                                (fn [^long acc it]
+                                  (+ acc (long (let [r (prose-rows-est (:assistant-prose it) fold-w)]
+                                                 (if (pos? r) (+ r 2) 0)))))
                                 0 trace))]
          (long
            (+ 5                                  ;; label + footer + note + gap
              n-iter                              ;; iteration headers
              form-rows                           ;; code + result (+ error) rows
              think-rows                          ;; per-iteration reasoning + band
+             prose-rows                          ;; per-iteration assistant prose
              (prose-rows-est text (max 1 (min 60 fold-w))))))
 
        (= role :assistant)

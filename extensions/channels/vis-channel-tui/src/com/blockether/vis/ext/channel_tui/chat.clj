@@ -497,10 +497,18 @@
                          :iteration iteration
                          :text text}
       ;; Model prose streaming alongside the tool call — progress.clj accumulates
-      ;; it as :content-stream so the live bubble paints the markdown.
-      "content.delta" {:phase :content
-                       :iteration iteration
-                       :content text}
+      ;; it as :content-stream so the live bubble paints the markdown. The gateway
+      ;; remaps the end-of-iteration `:assistant-prose` onto content.delta too,
+      ;; tagged `:prose-final`; route THAT to the :assistant-prose phase so it
+      ;; pins as its own block (between thinking and the code) instead of the
+      ;; transient content tail that gets dropped once the code block lands.
+      "content.delta" (if (event-get event :prose-final)
+                        {:phase :assistant-prose
+                         :iteration iteration
+                         :text text}
+                        {:phase :content
+                         :iteration iteration
+                         :content text})
       "block.started" {:phase :form-start
                        :iteration iteration
                        :position block-id
