@@ -67,6 +67,7 @@
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.pyfmt        :as pyfmt]
+   [com.blockether.vis.internal.python-extensions :as python-extensions]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.providers    :as providers]
    [com.blockether.vis.internal.session-model :as session-model]
@@ -550,6 +551,16 @@
  [deregister-extension! extension/deregister-extension!]
  [extension-source-markers-of extension/extension-source-markers-of]
  [channel-contributions-for extension/channel-contributions-for])
+
+;; Project-local Python extensions (`~/.vis/extensions` + `.vis/extensions`,
+;; trusted GraalPy contexts — see `internal.python-extensions`).
+(import-vars
+ [load-python-extensions! python-extensions/load-python-extensions!]
+ [reload-python-extensions! python-extensions/reload-python-extensions!]
+ [python-extension-load-failures python-extensions/load-failures]
+ [loaded-python-extensions python-extensions/loaded-python-extensions]
+ [add-python-extension-change-listener! python-extensions/add-change-listener!]
+ [remove-python-extension-change-listener! python-extensions/remove-change-listener!])
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-

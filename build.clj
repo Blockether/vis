@@ -684,12 +684,14 @@
              ;; Flyway migration SQL (not in the agent-traced metadata)
              "-H:IncludeResources=db/.*"
              ;; Web channel UI assets (ui.js/rec-worklet.js/app.css/icons.svg)
-             ;; + docs/site assets (woff2 fonts, logos) — ALL served at RUNTIME
-             ;; via io/resource, and NONE of them in the agent-traced metadata
-             ;; (the trace never opened /ui), so without these two patterns the
-             ;; native binary's web UI is a blank page over 404'd assets.
+             ;; + the WHOLE embedded docs corpus (markdown pages + manifest +
+             ;; woff2 fonts/logos) — ALL read at RUNTIME via io/resource
+             ;; (gateway /docs site AND the model-facing `vis_docs` tool), and
+             ;; NONE of it in the agent-traced metadata (the trace never opened
+             ;; /ui or called vis_docs), so without these two patterns the web
+             ;; UI is blank and vis_docs returns zero pages in the native binary.
              "-H:IncludeResources=vis-channel-web/public/.*"
-             "-H:IncludeResources=vis-docs/assets/.*"
+             "-H:IncludeResources=vis-docs/.*"
              ;; tree-sitter pack FFI lib for THIS platform. The pack's own
              ;; metadata ships NO resource glob (unlike fff/rift/ruff's
              ;; prebuilds/**), so without this the shipped binary embeds no

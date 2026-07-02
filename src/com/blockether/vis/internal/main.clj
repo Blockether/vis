@@ -38,6 +38,7 @@
    [com.blockether.vis.internal.doctor :as doctor]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.python-extensions :as python-extensions]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -2648,6 +2649,7 @@
    for an entire session."
   []
   (extension/discover-extensions!)
+  (python-extensions/load-python-extensions!)
   (print-extension-load-failures!)
   nil)
 

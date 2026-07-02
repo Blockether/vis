@@ -7,6 +7,7 @@
    [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.foundation.introspection :as introspection]
    [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+   [com.blockether.vis.internal.foundation.self-docs :as self-docs]
    [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
    [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
    [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
@@ -17,11 +18,12 @@
    and project guidance flow through `ctx`, not prompt labels."
   [env]
   (str/join "\n\n"
-            (remove str/blank?
-                    [(environment/environment-prompt env)
-                     introspection/introspection-prompt
-                     (language-surface/prompt env)            ; nil when no language pack is active
-                     (editing/available-editing-prompt)])))
+    (remove str/blank?
+      [(environment/environment-prompt env)
+       introspection/introspection-prompt
+       self-docs/prompt
+       (language-surface/prompt env)            ; nil when no language pack is active
+       (editing/available-editing-prompt)])))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
@@ -39,7 +41,7 @@
 (defn- fallback-workspace
   [env]
   {:root (or (workspace/workspace-root env)
-             (workspace/normalize-root (workspace/cwd)))})
+           (workspace/normalize-root (workspace/cwd)))})
 
 (defn- session-workspace-block
   "Resolve the env's pinned workspace + session-state and render the
@@ -52,7 +54,7 @@
         pair  (when (and db ws-id)
                 (workspace/workspace-with-session db ws-id))]
     (workspace-ctx/render-block
-     (or pair {:workspace (fallback-workspace env)}))))
+      (or pair {:workspace (fallback-workspace env)}))))
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace
@@ -74,26 +76,27 @@
 
 (def vis-extension
   (vis/extension
-   {:ext/name           "foundation-core"
-    :ext/description    "Foundation kernel (bare Python functions): session_state/session_report_md/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find/rg/ls/patch/write/copy/move/delete/delete_if_exists/file_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main_agent_instructions. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
-    :ext/version        "0.7.0"
-    :ext/author         "Blockether"
-    :ext/owner          "vis"
-    :ext/license        "Apache-2.0"
+    {:ext/name           "foundation-core"
+     :ext/description    "Foundation kernel (bare Python functions): session_state/session_report_md/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl_start/repl_stop), file I/O (cat/find/rg/ls/patch/write/copy/move/delete/delete_if_exists/file_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     :ext/version        "0.7.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
      ;; BUILT-IN: foundation is the mandatory kernel promoted into core, so
      ;; its symbols bind BARE into the sandbox ns (cat/find/rg/patch …) right next
      ;; to the engine verb `done` — NO `v/` alias. `:builtin?`
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
-    :ext/engine            {:ext.engine/builtin? true
-                            :ext.engine/symbols (vec (concat introspection/all-symbols
-                                                             language-surface/symbols
-                                                             (editing/available-editing-symbols)
-                                                             environment/environment-symbols))}
-    :ext/kind           "foundation"
-    :ext/slash-commands (into workspace-slashes/specs session-slashes/specs)
-    :ext/ctx-fn            combined-ctx
-    :ext/prompt-fn         combined-prompt
-    :ext/doctor-fn      lazy-doctor-fn}))
+     :ext/engine            {:ext.engine/builtin? true
+                             :ext.engine/symbols (vec (concat introspection/all-symbols
+                                                        language-surface/symbols
+                                                        (editing/available-editing-symbols)
+                                                        environment/environment-symbols
+                                                        self-docs/symbols))}
+     :ext/kind           "foundation"
+     :ext/slash-commands (into workspace-slashes/specs session-slashes/specs)
+     :ext/ctx-fn            combined-ctx
+     :ext/prompt-fn         combined-prompt
+     :ext/doctor-fn      lazy-doctor-fn}))
 
 (vis/register-extension! vis-extension)
