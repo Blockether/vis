@@ -2977,16 +2977,50 @@
 ;; renderers against THAT shape, not the tool's raw Clojure return.
 ;; -----------------------------------------------------------------------------
 
+(defn- anchor-line-spans
+  "Sorted contiguous line-number runs from cat anchor keys —
+   `[[1 60] [370 405] …]`. nil when any key fails to parse, so the
+   caller can fall back to a count-only summary instead of lying."
+  [anchors]
+  (let [nums (mapv (fn [k]
+                     (parse-long (first (str/split (if (keyword? k) (name k) (str k)) #":"))))
+               (keys anchors))]
+    (when (and (seq nums) (every? some? nums))
+      (reduce (fn [acc ^long x]
+                (let [[a ^long b] (peek acc)]
+                  (if (and b (= x (inc b)))
+                    (conj (pop acc) [a x])
+                    (conj acc [x x]))))
+        [] (sort nums)))))
+
 (defn- render-cat-result
-  "cat → `{:summary :body}`: the summary is the path + line count (the op-card
-   headline); the body is the numbered slice as a code block. `r` is the inner cat
-   data `{:path :anchors}`; anchor keys are keywords like `:12:ab` (lineno via
-   `name`)."
+  "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
+   line count (the op-card headline); the body is the numbered slice as a code
+   block. `r` is the inner cat data `{:path :anchors}`; anchor keys are
+   keywords like `:12:ab` (lineno via `name`).
+
+   Spans exist so two adjacent ranged reads of the SAME file don't render as
+   look-alike duplicate cards (session 128cefd8: `L1-60` then
+   `L370-975 (6 ranges)` both showed only `app.css · N lines`). A single
+   contiguous run shows just `L<a>-<b>` — the count is implied; multi-run
+   shows the overall extent + run count + line total."
   [r]
   (let [line-no (fn [k] (first (str/split (if (keyword? k) (name k) (str k)) #":")))
         rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))
-        n       (count rows)]
-    {:summary (str "`" (:path r) "` · " n " line" (when (not= 1 n) "s"))
+        n       (count rows)
+        spans   (anchor-line-spans (:anchors r))
+        span-str (fn [[a b]] (if (= a b) (str "L" a) (str "L" a "-" b)))
+        loc     (cond
+                  (nil? spans)        nil
+                  (= 1 (count spans)) (span-str (first spans))
+                  :else               (str "L" (ffirst spans) "-" (second (peek spans))
+                                        " (" (count spans) " ranges)"))
+        counted (str n " line" (when (not= 1 n) "s"))]
+    {:summary (str "`" (:path r) "` · "
+                (cond
+                  (nil? loc)              counted
+                  (= 1 (count spans))     loc
+                  :else                   (str loc " · " counted)))
      :body    (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))}))
 
 (defn- render-exists-result

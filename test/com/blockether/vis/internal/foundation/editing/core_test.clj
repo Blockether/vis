@@ -1738,6 +1738,37 @@
         (let [card (render {:matches {:x.clj {:1:abc "line one"}} :hit_count 1 :file_count 1})]
           (expect (= "1 hit in 1 file" (:summary card)))))))
 
+(defdescribe render-cat-result-spans-test
+  ;; Regression (session 128cefd8): two adjacent ranged reads of the SAME file
+  ;; rendered near-identical cards — `app.css · 60 lines` then `app.css ·
+  ;; 266 lines` — because the summary carried no line-span info. The headline
+  ;; now says WHICH lines were read.
+  (let [render @#'editing/render-cat-result]
+    (it "single contiguous range: `L<a>-<b>`, count implied"
+        (let [card (render {:path "app.css"
+                            :anchors {:1:aa "x" :2:bb "y" :3:cc "z"}})]
+          (expect (= "`app.css` · L1-3" (:summary card)))
+          (expect (clojure.string/includes? (:body card) "    1  x"))))
+    (it "single line: bare `L<n>`"
+        (expect (= "`app.css` · L42"
+                   (:summary (render {:path "app.css" :anchors {:42:ff "q"}})))))
+    (it "multiple ranges: overall extent + run count + line total"
+        (expect (= "`app.css` · L1-371 (2 ranges) · 4 lines"
+                   (:summary (render {:path "app.css"
+                                      :anchors {:1:aa "a" :2:bb "b"
+                                                :370:cc "c" :371:dd "d"}})))))
+    (it "spans derive from SORTED line numbers, not map iteration order"
+        (expect (= "`app.css` · L5-7"
+                   (:summary (render {:path "app.css"
+                                      :anchors {:7:cc "c" :5:aa "a" :6:bb "b"}})))))
+    (it "unparseable anchor key degrades to the count-only summary (total, never throws)"
+        (expect (= "`app.css` · 1 line"
+                   (:summary (render {:path "app.css" :anchors {:garbage "g"}})))))
+    (it "empty anchors: `0 lines`, no body"
+        (let [card (render {:path "app.css" :anchors {}})]
+          (expect (= "`app.css` · 0 lines" (:summary card)))
+          (expect (nil? (:body card)))))))
+
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
 (defdescribe occurrences-tool-e2e-test
