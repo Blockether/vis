@@ -113,8 +113,14 @@
                                :md md :html html :toc toc})))
                         (:pages m))))
                   manifests))
+        ;; Sections appear in the order of their lowest page `:order`, not
+        ;; alphabetically — so manifest `:order` controls sidebar section
+        ;; placement. Within a section, pages sort by `:order` then title.
+        sec-order (into {} (map (fn [[sec ps]]
+                                  [sec (reduce min (map #(or (:order %) 100) ps))]))
+                    (group-by :section pages))
         ordered (sort-by (juxt #(if (= "index" (:slug %)) 0 1)
-                           #(or (:section %) "") :order :title)
+                           #(get sec-order (:section %) 100) :order :title)
                   pages)]
     {:site @site :pages (vec ordered)}))
 
