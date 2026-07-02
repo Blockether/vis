@@ -11,4 +11,5 @@
          {:file "distributions.md"      :title "Custom distributions" :section "Runtime"     :order 40}
          {:file "configuration.md"      :title "Configuration"        :section "Using Vis"   :order 50}
          {:file "extending.md"          :title "Extending Vis"        :section "Using Vis"   :order 60}
-         {:file "python-extensions.md"  :title "Python extensions"    :section "Using Vis"   :order 70}]}
+         {:file "python-extensions.md"  :title "Python extensions"    :section "Using Vis"   :order 70}
+         {:file "skills.md"             :title "Skills"                :section "Using Vis"   :order 80}]}
