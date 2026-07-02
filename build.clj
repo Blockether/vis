@@ -556,7 +556,12 @@
                ;; never downloads — and cognitect.aws is not native-image-safe
                ;; (objects land in the image heap → build failure). The plain-JVM
                ;; classpath (deps.edn) keeps tools.deps so download still works.
-               (remove #(re-find #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/" %)))]
+               ;; NOTE the AWS-scoped `/com/cognitect/aws/` (NOT /com/cognitect/):
+               ;; the broad form also stripped cognitect/transit-clj, which
+               ;; clj-kondo.impl.cache requires — that silently failed the whole
+               ;; clj-kondo build-time preload chain and left the language-clojure
+               ;; extension UNBOUND in the native binary.
+               (remove #(re-find #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/" %)))]
     (->> (concat jars (native-lib-jars basis))
       (into [native-class-dir])
       (str/join java.io.File/pathSeparator))))

@@ -437,9 +437,12 @@
                              :title "Change this session's model"}
        (icon "zap")
        [:span.foot-routing-name
-        (cond (and provider model) (str provider " / " model)
-              provider provider
-              :else "router default")]
+        ;; Display-only: path-style model ids flatten `/`→`-` so the chip
+        ;; stays `provider / model`, never three ambiguous segments.
+        (let [m (vis/display-model-name model)]
+          (cond (and provider m) (str provider " / " m)
+                provider provider
+                :else "router default"))]
        (when overload
          [:span.foot-routing-overload
           (icon "info")
@@ -652,7 +655,8 @@
        [:ul.pe-attempts
         (for [{:keys [provider model status reason]} attempts]
           [:li {:key (str provider "/" model)}
-           [:span.pe-prov (str provider (when (seq (str model)) (str "/" model)))]
+           [:span.pe-prov (str provider (when-let [m (vis/display-model-name (some-> model str))]
+                                          (str "/" m)))]
            (when status [:span.pe-status (str status)])
            (when reason [:span.pe-reason (name reason)])])])
      (when (seq facts)

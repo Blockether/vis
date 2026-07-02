@@ -9,7 +9,7 @@
  ;; the gateway, no channel-specific code in core. Pure Clojure SSR:
  ;; hiccup renders, HTMX (CDN) swaps, SSE streams HTML fragments.
  :deps
- {org.clojure/clojure   {:mvn/version "1.12.4"}
+ {org.clojure/clojure   {:mvn/version "1.12.5"}
   com.blockether/vis    {:local/root "../../.."}
   hiccup/hiccup         {:mvn/version "2.0.0"}
   com.taoensso/telemere {:mvn/version "1.2.1"}}
