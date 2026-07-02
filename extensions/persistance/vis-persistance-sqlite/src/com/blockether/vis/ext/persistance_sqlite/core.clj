@@ -577,7 +577,7 @@
       ;; last-focused → created_at).
       (:label row)               (assoc :label (:label row))
       (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row))
-      (:context_roots row)       (assoc :context-roots (or (<-json (:context_roots row)) [])))))
+      (:filesystem_roots row)       (assoc :filesystem-roots (or (<-json (:filesystem_roots row)) [])))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
@@ -651,8 +651,8 @@
                                        {:select [:*] :from :workspace
                                         :where  [:= :id id]})))))))
 
-(defn db-workspace-set-context-roots!
-  "Persist the workspace's extra context roots as a JSON array of canonical
+(defn db-workspace-set-filesystem-roots!
+  "Persist the workspace's extra filesystem roots as a JSON array of canonical
    path strings. `roots` is a coll of strings (deduped/canonicalized by the
    caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
   [db-info workspace-id roots]
@@ -664,7 +664,7 @@
                         (fn [tx-info]
                           (execute! tx-info
                                     {:update :workspace
-                                     :set    {:context_roots stored}
+                                     :set    {:filesystem_roots stored}
                                      :where  [:= :id id]})
                           (row->workspace
                            (query-one! tx-info

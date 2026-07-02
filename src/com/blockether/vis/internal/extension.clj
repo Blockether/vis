@@ -1467,7 +1467,7 @@
   (binding [*current-extension* ext
             *current-symbol* nil
             workspace/*workspace-root* (workspace/workspace-root environment)
-            workspace/*context-roots* (workspace/env-context-roots environment)]
+            workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
     (f environment)))
 (defn- active-extension?
   [environment ext]
@@ -1527,7 +1527,7 @@
                                                 *current-symbol* nil
                                                 workspace/*workspace-root* (workspace/workspace-root
                                                                             environment)
-                                                workspace/*context-roots* (workspace/env-context-roots
+                                                workspace/*filesystem-roots* (workspace/env-filesystem-roots
                                                                            environment)]
                                         (f environment))
                                       (catch Throwable t
@@ -1778,7 +1778,7 @@
                     (fn [& args]
                       (let [env (env-thunk)]
                         (binding [workspace/*workspace-root* (workspace/workspace-root env)
-                                  workspace/*context-roots* (workspace/env-context-roots env)]
+                                  workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
                           (apply (:ext.symbol/fn sym-entry) args))))
                     (fn [& args]
                       (let [env (env-thunk)
@@ -1786,7 +1786,7 @@
                         (binding [*out* w
                                   *err* w
                                   workspace/*workspace-root* (workspace/workspace-root env)
-                                  workspace/*context-roots* (workspace/env-context-roots env)]
+                                  workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
                           (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                  [sym (:ext.symbol/val sym-entry)]))))
           entries)))

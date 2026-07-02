@@ -90,21 +90,30 @@
 ;; Specs shape
 ;; =============================================================================
 (defdescribe specs-shape-test
-  (it "exposes the full slash spec set (/draft + new/apply/abandon, /dir + add/remove/list/create)"
-    (expect (= 9 (count ws-slashes/specs))))
-  (it "exposes /dir add/remove/list/create subcommands under `:slash/parent [\"dir\"]`"
-    (let [dirsubs (filter #(= ["dir"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= #{"add" "remove" "list" "create"} (set (map :slash/name dirsubs))))))
+  (it "exposes the full slash spec set (/draft tree, /root, /fs tree)"
+    (expect (= 11 (count ws-slashes/specs))))
+  (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
+    (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
+      (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
+  (it "exposes a TOP-LEVEL /root (quick root change) alongside /fs root"
+    (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
+      (expect (contains? (set (map :slash/name tops)) "root"))))
+  (it "the /fs slash commands carry no channel availability gate (every channel gets them)"
+    (let [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
+                    ws-slashes/specs)]
+      (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
   (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
       (expect (= 3 (count subs)))
       (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
     (let [env (env-with nil)]
-      ;; 9 specs: /draft + new/apply/abandon + /dir + add/remove/list/create.
+      ;; 11 specs: /draft + new/apply/abandon + /root + /fs + root/add/remove/list/create.
       ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-      (expect (= 9 (count (slash/active-slashes env))))
-      (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
+      (expect (= 11 (count (slash/active-slashes env))))
+      (expect (some? (slash/slash-by-path env ["draft" "apply"])))
+      (expect (some? (slash/slash-by-path env ["fs" "root"])))
+      (expect (some? (slash/slash-by-path env ["root"]))))))
 ;; =============================================================================
 ;; Dispatch
 ;; =============================================================================
@@ -188,7 +197,7 @@
   (it "/draft remains discoverable when no isolation backend is available"
     (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
       (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-        (expect (= #{"draft" "new" "apply" "abandon" "dir" "add" "remove" "list" "create"} names)))))
+        (expect (= #{"draft" "new" "apply" "abandon" "root" "fs" "add" "remove" "list" "create"} names)))))
 
   (it "/draft new reports the unavailable capability matrix"
     (with-store
@@ -208,3 +217,45 @@
                             (get-in out [:result :slash/data
                                          :capability-matrix 0 :backend]))))))
             (finally (delete-tree! base))))))))
+
+(defdescribe dispatch-root-test
+  (it "/root <path> repoints the session's primary filesystem root"
+    (let [a (temp-dir "vis-slash-root-a") b (temp-dir "vis-slash-root-b")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (workspace/create-trunk-at! store a)
+                  state-id (pin-session! store (:id trunk))
+                  env      (env-with store)
+                  out      (dispatch! env store state-id (str "/root " b))]
+              (expect (= :ok (get-in out [:result :slash/status])))
+              (expect (= (workspace/normalize-root b)
+                        (:root (workspace/for-session store state-id)))))))
+        (finally (delete-tree! a) (delete-tree! b)))))
+  (it "bare /root reports the current root without changing anything"
+    (let [a (temp-dir "vis-slash-root-show")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (workspace/create-trunk-at! store a)
+                  state-id (pin-session! store (:id trunk))
+                  env      (env-with store)
+                  out      (dispatch! env store state-id "/root")]
+              (expect (= :ok (get-in out [:result :slash/status])))
+              (expect (= (:id trunk)
+                        (:id (workspace/for-session store state-id)))))))
+        (finally (delete-tree! a)))))
+  (it "/fs lists the root plus additional filesystem roots"
+    (let [a (temp-dir "vis-slash-fs-a") ext (temp-dir "vis-slash-fs-ext")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (workspace/create-trunk-at! store a)
+                  state-id (pin-session! store (:id trunk))
+                  env      (env-with store)
+                  _        (dispatch! env store state-id (str "/fs add " ext))
+                  out      (dispatch! env store state-id "/fs list")]
+              (expect (= :ok (get-in out [:result :slash/status])))
+              (expect (= [(workspace/normalize-root ext)]
+                        (mapv :trunk (get-in out [:result :slash/data :filesystem-roots])))))))
+        (finally (delete-tree! a) (delete-tree! ext))))))

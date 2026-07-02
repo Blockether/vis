@@ -176,7 +176,7 @@
     (if (> (count h) 10) (subs h 0 10) h)))
 
 (defn- context-repo-status
-  "Status for a context-root working copy that lives in a DIFFERENT git
+  "Status for a filesystem-root working copy that lives in a DIFFERENT git
   repository than the primary workspace. Returns nil for roots that are
   not a separate repo or are clean — subdirs of the primary repo are
   already covered by its snapshot, and unchanged roots would only bloat
@@ -208,7 +208,7 @@
    valid git ref for any follow-up git op); this result rides every later
    prompt, so it carries no derivable or oversized fields.
 
-   Added context roots that are SEPARATE git repositories (a different
+   Added filesystem roots that are SEPARATE git repositories (a different
    repository than the primary workspace — e.g. another project the model
    may edit) are scanned too: any DIRTY one appears under :context-repos
    as {:root :branch :head :changes}. Roots sharing the primary repo
@@ -220,7 +220,7 @@
          snapshot          (or (git-core/status-snapshot primary-root)
                                {:branch nil :head nil :entries []})
          primary-work-tree (git-core/repo-work-tree primary-root)
-         extra-roots       (->> (workspace/env-context-roots env)
+         extra-roots       (->> (workspace/env-filesystem-roots env)
                                 (keep :clone)
                                 (keep #(some-> ^String % str/trim not-empty))
                                 distinct)

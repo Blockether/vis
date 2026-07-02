@@ -72,7 +72,7 @@
 (defn repo-work-tree
   "Canonical work-tree directory of the git repository containing `start`,
   or nil when `start` is outside any git repo. Used to tell whether an
-  added context root lives in a DIFFERENT repository than the primary
+  added filesystem root lives in a DIFFERENT repository than the primary
   workspace root (subdirs of the primary repo resolve to the SAME work
   tree, so they are already covered by the primary status snapshot)."
   ^File [^File start]

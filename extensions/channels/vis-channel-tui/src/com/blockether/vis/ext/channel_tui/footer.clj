@@ -305,11 +305,11 @@
         ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                               (catch Throwable _ nil)))
-        ;; Context roots: primary workspace + any extra dirs added via `/dir`.
+        ;; Filesystem: the session root + any extra dirs granted via /fs or the picker.
         ;; Surfaced in the footer (BOTH channels) so the add-directory
-        ;; affordance is discoverable here, not buried; `/dir` manages it
+        ;; affordance is discoverable here, not buried; /fs and /root manage it
         ;; (the web twin is the clickable footer dirs button).
-        dir-count (inc (count (try (lp/workspace-context-roots ws) (catch Throwable _ nil))))]
+        dir-count (inc (count (try (lp/workspace-filesystem-roots ws) (catch Throwable _ nil))))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
@@ -346,10 +346,10 @@
                   :region   :right
                   :priority 2
                   :kind     :footer-resources})
-      ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
+      ;; ── RIGHT: filesystem-root count as a CLICKABLE button (web-footer parity).
       ;; Clicking it — or pressing C-x d — opens the file-explorer picker; the
-      ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
-      ;; Telegram-only now, so this button + C-x d IS the TUI affordance.
+      ;; binding rides ON the chip so it's discoverable. `/fs` opens the same
+      ;; picker; `/root <path>` changes the session's root by typing.
       ;; Rendered as a bare "dirs N (C-x d)" button — no glyph (the word
       ;; is the affordance).
       true (conj {:text     (str " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),

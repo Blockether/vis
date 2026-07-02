@@ -41,14 +41,14 @@
    by the channel layer; never `nil` in normal operation."
   nil)
 
-(def ^:dynamic *context-roots*
-  "Extra context roots the current tool call may ALSO operate under, beyond the
+(def ^:dynamic *filesystem-roots*
+  "Extra filesystem roots the current tool call may ALSO operate under, beyond the
    primary `*workspace-root*`, as `[{:trunk :clone}]` canonical pairs: `:trunk`
    is the REAL directory the user added (what the model addresses), `:clone` is
    the backend working copy edits land in (== `:trunk` when live). Bound
-   per-turn by the channel layer from the session's persisted context roots.
+   per-turn by the channel layer from the session's persisted filesystem roots.
    Empty in the common single-root case. The editing layer confines to the
-   clones and transparently remaps trunk↔clone (see `context-root-mappings`)."
+   clones and transparently remaps trunk↔clone (see `filesystem-root-mappings`)."
   nil)
 
 (defn normalize-root
@@ -73,7 +73,7 @@
     :else :live))
 
 (defn- root-entry
-  "Normalize one persisted context-root entry to `{:trunk :clone :fork-ms}`.
+  "Normalize one persisted filesystem-root entry to `{:trunk :clone :fork-ms}`.
    Entries are always maps (`<-json` keywordizes keys): `:trunk` is the real
    dir, `:clone` its backend working copy (== `:trunk` when live), `:fork-ms`
    the since-fork mtime baseline (nil = live). Returns nil for junk."
@@ -86,16 +86,16 @@
                :fork-ms (:fork-ms e)
                :backend (backend-id (:backend e))}))))
 
-(defn env-context-roots
+(defn env-filesystem-roots
   "Canonical `[{:trunk :clone}]` pairs for the current tool call's extra
-   context roots, beyond the primary. Reads `:workspace/context-roots` from an
+   filesystem roots, beyond the primary. Reads `:workspace/filesystem-roots` from an
    env map (or a raw coll). `:trunk` is the real dir the model addresses;
    `:clone` is the backend working copy edits land in (== trunk when live).
-   The channel layer binds `*context-roots*` from this per turn; the editing
+   The channel layer binds `*filesystem-roots*` from this per turn; the editing
    layer confines to the clones and transparently remaps trunk↔clone."
   [env-or-roots]
   (let [roots (if (map? env-or-roots)
-                (:workspace/context-roots env-or-roots)
+                (:workspace/filesystem-roots env-or-roots)
                 env-or-roots)]
     (vec (keep (fn [e] (when-let [{:keys [trunk clone]} (root-entry e)]
                          {:trunk trunk :clone clone}))
@@ -111,22 +111,22 @@
 
 (defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
-   operate under: the primary cwd FIRST, then each bound context root's
+   operate under: the primary cwd FIRST, then each bound filesystem root's
    `:clone`. Deduped; the primary is always present. The confinement set the
    editing layer's `safe-path` checks the (possibly remapped) target against."
   []
   (let [primary (.getCanonicalPath (cwd))
-        extra   (keep #(some-> (:clone %) normalize-root) *context-roots*)]
+        extra   (keep #(some-> (:clone %) normalize-root) *filesystem-roots*)]
     (vec (distinct (cons primary extra)))))
 
-(defn context-root-mappings
-  "The bound context roots as canonical `[{:trunk :clone}]` pairs — the
+(defn filesystem-root-mappings
+  "The bound filesystem roots as canonical `[{:trunk :clone}]` pairs — the
    trunk↔clone remap table the editing layer uses so the model can address a
    context file by its REAL (trunk) path while edits land in the `:clone`.
    Empty in the single-root case. Does NOT include the primary (relative paths
    resolve under cwd directly)."
   []
-  (vec *context-roots*))
+  (vec *filesystem-roots*))
 
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
@@ -468,24 +468,24 @@
     (p/db-workspace-update-label! db-info workspace-id trimmed)))
 
 ;; `draft?` / `free-draft-name` are defined further down (Mutations); the
-;; context-root autoclone path needs them here.
+;; filesystem-root autoclone path needs them here.
 (declare draft? free-workspace-name)
 (declare abandon!)
 
-(defn context-roots
-  "Extra context roots configured for `ws`, normalized to
+(defn filesystem-roots
+  "Extra filesystem roots configured for `ws`, normalized to
    `[{:trunk :clone :fork-ms :backend}]`."
   [ws]
-  (vec (keep root-entry (:context-roots ws))))
+  (vec (keep root-entry (:filesystem-roots ws))))
 
-(defn add-context-root!
-  "Add `path` to the workspace's extra context roots. Drafts require the same
+(defn add-filesystem-root!
+  "Add `path` to the workspace's extra filesystem roots. Drafts require the same
    isolation capabilities for every added root; live workspaces add it live."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
     (let [canon (normalize-root path)
           dir   (some-> canon io/file)
-          roots (context-roots ws)]
+          roots (filesystem-roots ws)]
       (cond
         (nil? canon)
         (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path}))
@@ -495,7 +495,7 @@
                  {:type :workspace/not-a-directory :path path}))
 
         (some #(= canon (:trunk %)) roots)
-        ws ;; idempotent — already a context root
+        ws ;; idempotent — already a filesystem root
 
         :else
         (let [entry (if (draft? ws)
@@ -505,20 +505,20 @@
                         {:trunk canon :clone root :fork-ms (System/currentTimeMillis)
                          :backend backend})
                       {:trunk canon :clone canon :fork-ms nil :backend :live})]
-          (p/db-workspace-set-context-roots! db-info workspace-id
+          (p/db-workspace-set-filesystem-roots! db-info workspace-id
             (conj roots entry)))))))
 
-(defn remove-context-root!
-  "Remove `path` from the workspace's extra context roots and release any
+(defn remove-filesystem-root!
+  "Remove `path` from the workspace's extra filesystem roots and release any
    backend-owned isolated root."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
     (let [canon (normalize-root path)
-          roots (context-roots ws)
+          roots (filesystem-roots ws)
           gone  (some #(when (= canon (:trunk %)) %) roots)]
       (when (and gone (:clone gone) (not= (:clone gone) (:trunk gone)))
         (try (discard-root! (:backend gone) (:clone gone)) (catch Throwable _ nil)))
-      (p/db-workspace-set-context-roots! db-info workspace-id
+      (p/db-workspace-set-filesystem-roots! db-info workspace-id
         (vec (remove #(= canon (:trunk %)) roots))))))
 
 (defn subdirs
@@ -705,6 +705,38 @@
   [db-info root]
   (insert-trunk! db-info nil (file-path root)))
 
+(defn change-root!
+  "Repoint `session-state-id`'s PRIMARY filesystem root to `path` — the
+   session now works in a different project directory: shell cwd, relative
+   path resolution, file tools (cat/patch/write), and search (rg/find_files)
+   all follow from the next turn, because they resolve through the session's
+   pinned workspace. Additional filesystem roots CARRY OVER (they are
+   session-scoped permissions, not root-relative); an entry equal to the new
+   root is dropped as redundant. Refuses while the session is in a draft —
+   a draft is a fork of the OLD root, so apply/abandon it first. Returns the
+   newly pinned trunk workspace (or the current one when `path` already IS
+   the root)."
+  [db-info session-state-id path]
+  (let [canon (normalize-root path)
+        dir   (some-> canon io/file)]
+    (when-not canon
+      (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path})))
+    (when-not (.isDirectory ^File dir)
+      (throw (ex-info (str "Not a directory: " path)
+               {:type :workspace/not-a-directory :path path})))
+    (let [current (for-session db-info session-state-id)]
+      (when (draft? current)
+        (throw (ex-info "Session is in a draft — /draft apply or /draft abandon before changing the root"
+                 {:type :workspace/root-change-in-draft
+                  :workspace-id (:id current)})))
+      (if (= canon (some-> (:root current) normalize-root))
+        current
+        (let [carried (vec (remove #(= canon (:trunk %)) (filesystem-roots current)))
+              ws      (insert-trunk! db-info session-state-id canon)]
+          (if (seq carried)
+            (or (p/db-workspace-set-filesystem-roots! db-info (:id ws) carried) ws)
+            ws))))))
+
 (defn create!
   "Create an isolated DRAFT using the strongest available backend and pin it
    to `:session-state-id`. The backend must provide the full draft capability
@@ -773,7 +805,7 @@
   "Land the draft's since-fork edits into the user's real dirs (trunk),
    leaving them uncommitted for the user to review/commit. A draft is about
    the WHOLE workspace: this lands the primary clone AND every auto-cloned
-   context root (each into its own trunk). Vis owns no git lifecycle.
+   filesystem root (each into its own trunk). Vis owns no git lifecycle.
    Adds/modifications come from the mtime diff; deletions are files that
    existed at the fork but the agent removed in the draft. Returns
    `{:status :ok :changed [{:status :path :root}] :landed n :workspace ws}`."
@@ -788,11 +820,11 @@
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                  {:type :workspace/no-baseline :workspace-id workspace-id})))
       (let [primary (land-clone! clone trunk fork-ms)
-            ;; each isolated context root lands back into its own trunk
+            ;; each isolated filesystem root lands back into its own trunk
             extra   (mapcat (fn [{:keys [trunk clone fork-ms]}]
                               (when (and fork-ms (not= clone trunk))
                                 (land-clone! clone trunk fork-ms)))
-                      (context-roots ws))
+                      (filesystem-roots ws))
             changes (vec (concat primary extra))]
         (fire-hook! :on-apply ws {:changed changes})
         {:status    :ok
@@ -820,7 +852,7 @@
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (discard-root! (:workspace-backend ws) (:root ws))
-    (doseq [{:keys [trunk clone backend]} (context-roots ws)
+    (doseq [{:keys [trunk clone backend]} (filesystem-roots ws)
             :when (and clone (not= clone trunk))]
       (try (discard-root! backend clone) (catch Throwable _ nil)))
     (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
@@ -836,7 +868,7 @@
       (loop [ws (for-session db-info state-id)]
         (when ws
           (try (discard-root! (:workspace-backend ws) (:root ws)) (catch Throwable _ nil))
-          (doseq [{:keys [trunk clone backend]} (context-roots ws)
+          (doseq [{:keys [trunk clone backend]} (filesystem-roots ws)
                   :when (and clone (not= clone trunk))]
             (try (discard-root! backend clone) (catch Throwable _ nil)))
           (recur (some->> (:parent-workspace-id ws) (get db-info))))))))

@@ -30,9 +30,9 @@
    :session/env       {:host {:os "macos"} :project {:kind "single"}}
    :session/routing   {:model "gpt-5.5"}})
 
-;; A realistic cross-turn state change: the user added a context root.
+;; A realistic cross-turn state change: the user added a filesystem root.
 (def ^:private changed-ctx
-  (assoc-in base-ctx [:session/workspace :workspace/context-roots] [{:dir "/repo/src"}]))
+  (assoc-in base-ctx [:session/workspace :workspace/filesystem-roots] [{:dir "/repo/src"}]))
 
 (defdescribe ctx-cache-stability-test
   ;; --- THE BUG: re-rendering the static block per turn changes the SYSTEM
@@ -49,7 +49,7 @@
           m1    (cr/ctx-static-map {:ctx changed-ctx})
           delta (cr/render-ctx-delta m0 m1)]
       (expect (some? delta))
-      (expect (str/includes? delta "context_roots"))   ; only what moved
+      (expect (str/includes? delta "filesystem_roots"))   ; only what moved
       (expect (str/includes? delta "session["))          ; append-only assignment
       ;; far cheaper than re-sending the frozen block
       (expect (< (count delta)
@@ -64,7 +64,7 @@
    block ONCE, reuse it across turns, and diff the current util-inclusive map
    against the baseline CARRIED across turns. Proves the cached system prefix
    stays byte-identical while changes ride as appended deltas."
-  ;; A turn-2 ctx that BOTH gained a context root AND measured utilization.
+  ;; A turn-2 ctx that BOTH gained a filesystem root AND measured utilization.
   ;; `:engine/utilization` is the engine-stamped key `session-view` derives
   ;; `:session/utilization` from (ctx_engine/session-view) — same as the live loop.
   (let [util-ctx (assoc changed-ctx :engine/utilization
@@ -86,7 +86,7 @@
             cur      (cr/ctx-delta-map {:ctx util-ctx})
             delta    (cr/render-ctx-delta baseline cur)]
         (expect (some? delta))
-        (expect (str/includes? delta "context_roots"))   ; the state change
+        (expect (str/includes? delta "filesystem_roots"))   ; the state change
         (expect (str/includes? delta "utilization"))      ; live token usage as a delta
         (expect (every? #(str/starts-with? % "session[") (str/split-lines delta)))))
 

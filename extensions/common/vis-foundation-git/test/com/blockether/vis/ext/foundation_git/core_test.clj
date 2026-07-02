@@ -222,8 +222,8 @@
               (expect (= (:result result) (:result with-opts)))))
           (finally (cleanup root))))))
 
-(defdescribe git-status-context-roots-test
-  (it "reports DIRTY context roots that live in a separate repository"
+(defdescribe git-status-filesystem-roots-test
+  (it "reports DIRTY filesystem roots that live in a separate repository"
       (let [primary (make-tmp-dir)
             extra   (make-tmp-dir)]
         (try
@@ -232,14 +232,14 @@
           (spit-rel extra "untracked.txt" "x")
           (let [result (git/git-status-fn
                         {:workspace/root (.getCanonicalPath primary)
-                         :workspace/context-roots
+                         :workspace/filesystem-roots
                          [{:trunk (.getCanonicalPath extra)
                            :clone (.getCanonicalPath extra)}]})
                 data   (:result result)]
             (expect (extension/tool-result? result))
           ;; primary repo is clean (committed base)
             (expect (= {} (:changes data)))
-          ;; the dirty separate-repo context root surfaces under :context-repos
+          ;; the dirty separate-repo filesystem root surfaces under :context-repos
             (expect (seq (:context-repos data)))
             (let [ctx (first (:context-repos data))]
               (expect (= (.getCanonicalPath extra) (:root ctx)))
@@ -257,7 +257,7 @@
         ;; one root is the clean separate repo, one is a SUBDIR of primary
           (let [result (git/git-status-fn
                         {:workspace/root (.getCanonicalPath primary)
-                         :workspace/context-roots
+                         :workspace/filesystem-roots
                          [{:trunk (.getCanonicalPath extra)
                            :clone (.getCanonicalPath extra)}
                           {:trunk (.getCanonicalPath primary)

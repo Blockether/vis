@@ -2284,7 +2284,7 @@
           allowed  (seq (remove #(= "*" (str %)) (:allowed-domains net)))
           star?    (some #(= "*" (str %)) (:allowed-domains net))
           fs-part  (if (:fs? caps)
-                     "Filesystem: REAL access (open/read/write, os.walk, glob), CONFINED to the context roots (outside ⇒ PermissionError) — still prefer cat/rg/patch for plain reads/edits."
+                     "Filesystem: REAL access (open/read/write, os.walk, glob), CONFINED to the filesystem roots (outside ⇒ PermissionError) — still prefer cat/rg/patch for plain reads/edits."
                      "Filesystem: none (no workspace) — read/edit via the cat/rg/patch tools.")
           net-part (cond
                      (not net-on?) "Network: off."
@@ -4995,16 +4995,19 @@
                                      (some->> (:session-id env)
                                               (persistance/db-latest-session-state-id db)))]
                     (when-let [ws (persistance/db-workspace-for-session db sid)]
+                      ;; Keep the sandbox confinement's live pointer in step —
+                      ;; sandbox-roots-fn derefs this on every real-fs access.
+                      (some-> (:workspace-atom env) (reset! ws))
                       (assoc env
                              :workspace      ws
                              :workspace/id   (:id ws)
                              :workspace/root (:root ws)
-                        ;; Carry the extra context roots across the mid-session
+                        ;; Carry the extra filesystem roots across the mid-session
                         ;; env rebuild too — create-environment seeds them, but
                         ;; a /draft refresh re-derived the env from the row and
                         ;; dropped them, silently reverting to primary-root-only
                         ;; confinement for the rest of the session.
-                             :workspace/context-roots (vec (:context-roots ws))))))
+                             :workspace/filesystem-roots (vec (:filesystem-roots ws))))))
                 env)
         ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
         ;; and sink unreachable ones to the END of this turn's router, so a
@@ -6211,11 +6214,17 @@
         ;; deny-by-default polyglot Context, wires the Clojure tools as Python
         ;; callables, and installs doc/apropos introspection).
         ;; Confine the Python sandbox's REAL filesystem to the workspace root +
-        ;; context-root working copies — the SAME set the file tools confine to.
+        ;; filesystem-root working copies — the SAME set the file tools confine to.
         ;; nil (no workspace) ⇒ the sandbox stays IO-NONE.
+        ;; The fn derefs `workspace-atom` (reset by run-turn!'s per-turn
+        ;; workspace re-resolve) instead of closing over the env-creation-time
+        ;; row, so a mid-session `/draft new|apply|abandon` or `/root <path>`
+        ;; retargets the sandbox confinement too — not just the file tools.
+        workspace-atom (atom active-workspace)
         sandbox-roots-fn (when active-workspace
-                           (fn [] (into [(str (:root active-workspace))]
-                                        (keep :clone (workspace/context-roots active-workspace)))))
+                           (fn [] (when-let [ws @workspace-atom]
+                                    (into [(str (:root ws))]
+                                          (keep :clone (workspace/filesystem-roots ws))))))
         ;; Network capability: OFF unless the `:network/enabled` toggle is on. When
         ;; on, config.edn `:network` tunes the host policy:
         ;;   :allowed-domains [...]  confine to these (empty or ["*"] ⇒ allow all)
@@ -6239,6 +6248,10 @@
                      ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
                      :sandbox-caps                      {:fs? (boolean sandbox-roots-fn)
                                                          :network network-opts}
+                     ;; Live workspace pointer for the sandbox confinement —
+                     ;; run-turn! resets it after its per-turn workspace
+                     ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
+                     :workspace-atom                    workspace-atom
                      :depth-atom                        depth-atom
                      ;; false for a sub_loop child reusing the parent's connection
                      ;; — dispose-environment! must NOT close a borrowed DB.
@@ -6254,7 +6267,7 @@
               (assoc :workspace          active-workspace
                      :workspace/id       (:id active-workspace)
                      :workspace/root     (:root active-workspace)
-                     :workspace/context-roots (vec (:context-roots active-workspace))
+                     :workspace/filesystem-roots (vec (:filesystem-roots active-workspace))
 
                 ;; Every workspace is a rift CoW clone — always a sandbox.
                 ;; Reported on :workspace/sandbox?, NOT as a VCS. The

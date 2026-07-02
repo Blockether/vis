@@ -226,7 +226,7 @@
 ;; status footer. Bare BMP glyphs (display-width 1, NOT VS-16 emoji) so
 ;; `(count text)` matches the rendered cell count — same grid rule as above.
 (def ^:const GLYPH_RESOURCES "⚙") ;; managed resources (nREPLs, daemons…)
-(def ^:const GLYPH_DIR       "⌂") ;; context-root directories
+(def ^:const GLYPH_DIR       "⌂") ;; filesystem-root directories
 
 (def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
 

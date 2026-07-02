@@ -173,7 +173,7 @@
    (`session-snapshot`) derive from this. Keeping it in ONE place is
    load-bearing: when the two paths computed different shapes, the model saw
    keys in the text that KeyError'd in code. That is exactly how
-   `session[\"workspace\"]` (and `workspace[\"context_roots\"]`) went missing
+   `session[\"workspace\"]` (and `workspace[\"filesystem_roots\"]`) went missing
    from the bound dict — the ext-contributed `:session/workspace` block was
    merged into the TEXT but not into the binding. Merge ALL ext-ctx so no
    future contributed key can drift the same way.
