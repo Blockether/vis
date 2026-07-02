@@ -56,7 +56,7 @@ jobs:
             -M -e "(require '[com.blockether.vis.internal.docs :as d]) (d/build-site! \"target/docs-site\")"
           test -f target/docs-site/index.html
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: target/docs-site
 
@@ -77,4 +77,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
