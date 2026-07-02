@@ -631,6 +631,73 @@
         (expect (zero? (count compat)))
         (expect (zero? (count replays))))))
 
+(defn- stub-tool-iter
+  "Trailer entry for conversation-suffix tests: one tool call with its
+   result, an assistant message carrying thinking + the tool_use."
+  [{:keys [id provider model replay? content]
+    :or   {provider :lmstudio model "google/gemma-4-12b-qat" replay? true}}]
+  [id
+   {:assistant-message {:role "assistant"
+                        :content (or content
+                                     [{:type "thinking"
+                                       :thinking (str "think-" id)
+                                       :thinking-signature (str "sig-" id)}
+                                      {:type "tool_use" :id (str "tc-" id)
+                                       :name "find_files" :input {"query" "lmstudio"}}])}
+    :llm-provider provider
+    :llm-model model
+    :preserved-thinking/replay? replay?
+    :tool-calls [{:id (str "tc-" id) :name "find_files" :input {"query" "lmstudio"}}]
+    :forms-vec [{:scope (str "t1/i" id) :svar/tool-call-id (str "tc-" id)
+                 :result {"item_count" 2 "paths" ["a.clj" "b.clj"]}}]}])
+
+(defdescribe conversation-suffix-mismatch-test
+  ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the
+  ;; SELECTED model (target) was anthropic/opus while the ACTUAL server was
+  ;; lmstudio/gemma. The old suffix dropped the whole [assistant, tool_result]
+  ;; pair on that mismatch — the model never saw its own find_files result and
+  ;; re-issued the identical call every iteration.
+  (it "replays [assistant sans thinking, tool_result] on provider/model mismatch"
+      (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+            suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+        (expect (= 2 (count suffix)))
+        (let [[assistant results] suffix
+              types (mapv :type (:content assistant))]
+          (expect (= "assistant" (:role assistant)))
+          ;; thinking stripped, tool_use kept — the tool_result stays answerable
+          (expect (= ["tool_use"] types))
+          (expect (= "user" (:role results)))
+          (expect (= "tc-1" (-> results :content first :tool_use_id)))
+          (expect (string? (-> results :content first :content)))
+          (expect (str/includes? (-> results :content first :content) "item_count")))))
+
+  (it "replays thinking verbatim when provider+model match the target"
+      (let [target {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+            suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+        (expect (= 2 (count suffix)))
+        (expect (= ["thinking" "tool_use"]
+                   (mapv :type (:content (first suffix)))))))
+
+  (it "degrades to a plain-text results message when only thinking remains"
+      ;; No tool_use survives the strip → a tool_result would be orphaned
+      ;; (wire error on Anthropic), so the outputs ride as plain text.
+      (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+            entry  (stub-tool-iter {:id 1
+                                    :content [{:type "thinking"
+                                               :thinking "only-thinking"
+                                               :thinking-signature "sig"}]})
+            suffix (conversation-suffix [entry] target)]
+        (expect (= 1 (count suffix)))
+        (let [[results] suffix]
+          (expect (= "user" (:role results)))
+          (expect (string? (:content results)))
+          (expect (str/includes? (:content results) "item_count")))))
+
+  (it "still excludes cross-turn seeds entirely"
+      (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+            suffix (conversation-suffix [(stub-tool-iter {:id 1 :replay? false})] target)]
+        (expect (empty? suffix)))))
+
 ;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
 ;; tests removed: those fns were deleted with the fenced-era machinery (lenient
 ;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are
