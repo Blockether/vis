@@ -4379,10 +4379,6 @@
   }, {
     "glob" : "META-INF/maven/org.xerial/sqlite-jdbc/pom.properties"
   }, {
-    "glob" : "META-INF/resources/darwin/aarch64/native.sha256"
-  }, {
-    "glob" : "META-INF/resources/engine/libtruffleattach/darwin/aarch64/sha256"
-  }, {
     "glob" : "META-INF/resources/include.sha256"
   }, {
     "glob" : "META-INF/resources/libgraalpy.sha256"
@@ -5861,15 +5857,11 @@
   }, {
     "glob" : "org/graalvm/shadowed/com/ibm/icu/impl/data/icudata/uprops.icu"
   }, {
-    "glob" : "org/sqlite/native/Mac/aarch64/libsqlitejdbc.dylib"
-  }, {
     "glob" : "parinferish/core.clj"
   }, {
     "glob" : "parinferish/core.cljc"
   }, {
     "glob" : "parinferish/core__init.class"
-  }, {
-    "glob" : "prebuilds/darwin-arm64/libfff_c.dylib"
   }, {
     "glob" : "reitit/coercion.clj"
   }, {
