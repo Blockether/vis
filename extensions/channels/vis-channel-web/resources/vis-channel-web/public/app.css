@@ -346,7 +346,7 @@ padding:.6rem .8rem;overflow-x:auto;font-size:.76rem;margin:.4rem 0;line-height:
 .suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
 width:min(54rem,92%);margin-bottom:.4rem;background:var(--bg);
 border:1px solid var(--line2);border-radius:var(--r-lg);box-shadow:var(--shadow);
-overflow:hidden;z-index:20}
+overflow-x:hidden;overflow-y:auto;max-height:min(50vh,22rem);-webkit-overflow-scrolling:touch;overscroll-behavior:contain;z-index:20}
 .suggest-row{display:flex;gap:.8rem;align-items:baseline;padding:.45rem .9rem;
 cursor:pointer;font-size:.85rem}
 .suggest-row.active,.suggest-row:hover{background:var(--hover)}
