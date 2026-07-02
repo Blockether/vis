@@ -137,6 +137,11 @@
     (and (string? arg) (#{":all" "all"} arg))     ["."]
     (string? arg)                                 [arg]
     (and (sequential? arg) (every? string? arg))  (vec arg)
+    ;; Dict form from the tool bridge: git_add({"paths": [...]}) /
+    ;; git_add({"path": "x"}) / git_add({"all": true}). The model reaches
+    ;; for the dict shape by habit, so unwrap it to the value coerce handles.
+    (map? arg)                                    (recur (or (some #(get arg %) [:paths :path])
+                                                             (when (contains? arg :all) :all)))
     :else (throw (ex-info (str "git/add expects :all, a path string, or vec of strings, got " (pr-str arg))
                           {:type :foundation-git/invalid-opts :arg arg}))))
 

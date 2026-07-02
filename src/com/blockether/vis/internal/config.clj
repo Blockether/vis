@@ -318,6 +318,12 @@
   (let [pid                   (:id provider)
         template              (provider-template pid)
         api-key               (:api-key provider)
+        ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
+        ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
+        ;; nil value throws (null HTTP header value) — the reason local model
+        ;; catalogs come back empty. Forward the catalog key when the caller
+        ;; configured none. Cloud presets have no catalog key, so unaffected.
+        catalog-api-key       (:api-key (get svar-router/KNOWN_PROVIDERS pid))
         models                (->> (:models provider) (keep #(->svar-model pid %)) vec)
         explicit-url          (:base-url provider)
         explicit-api-style    (or (:api-style provider) (:api-style template))
@@ -342,7 +348,8 @@
           merged-headers    (assoc :llm-headers merged-headers)
           merged-extra-body (assoc :extra-body merged-extra-body)))
       (cond-> {:id pid :models models}
-        api-key             (assoc :api-key api-key)
+        (or api-key
+            catalog-api-key) (assoc :api-key (or api-key catalog-api-key))
         explicit-url        (assoc :base-url explicit-url)
         explicit-api-style  (assoc :api-style explicit-api-style)
         explicit-responses  (assoc :responses-path explicit-responses)

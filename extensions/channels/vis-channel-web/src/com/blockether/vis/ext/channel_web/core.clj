@@ -1208,7 +1208,7 @@
   (let [items (seq (reverse (queued-turns sid)))] ; oldest-first, many queued messages stay separate
     (when items
       [:div.queued-panel
-       [:div.queued-title (str (count items) " queued message" (when (not= 1 (count items)) "s"))]
+       [:div.queued-title "Queued"]
        (for [{:keys [turn_id request]} items]
          [:form.queued-item {:data-turn-id (str turn_id)}
           [:textarea.queued-edit {:name "request" :rows 2

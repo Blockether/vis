@@ -3687,13 +3687,12 @@
   [pending-sends content-w]
   (let [queued (vec (or pending-sends []))]
     (when (seq queued)
-      (let [n (count queued)
-            ;; Every queue row carries a leading rail glyph `│` (painted by
+      (let [;; Every queue row carries a leading rail glyph `│` (painted by
             ;; the marker painters) so the whole block reads as ONE bracketed
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;
-            ;; Header row: bold accent "Queued · N".
-            hdr-line (str queue-hdr-marker "Queued · " n)
+            ;; Header row: bold accent "Queued".
+            hdr-line (str queue-hdr-marker "Queued")
             ;; Rail + its trailing space eat 2 cols before any content.
             rail-w 2
             ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
