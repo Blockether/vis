@@ -30,6 +30,7 @@
    Vis tool wrapper can surface a clean error to the model."
   (:require
    [clojure.edn :as edn]
+   [clojure.string :as str]
    [nrepl.core :as nrepl]
    [nrepl.transport :as transport])
   (:import
@@ -175,6 +176,138 @@
              :root-ex    rx''}
             (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
+;; ---------------------------------------------------------------------------
+;; error enrichment — a beautiful, structured stacktrace on the eval-error path
+;; ---------------------------------------------------------------------------
+
+(defn- eval-error?
+  "True when a combined eval result carries a runtime/eval error worth enriching."
+  [combined]
+  (boolean (or (contains? (:status combined) "eval-error")
+               (:ex combined)
+               (:root-ex combined))))
+
+(defn- sget
+  "Read an nREPL response key that may arrive as a string or a keyword."
+  [m k]
+  (or (get m k) (get m (keyword k))))
+
+(defn- frame-flags [f]
+  (set (map str (sget f "flags"))))
+
+(defn- cider-frame->line
+  "`user/handle-request  (handler.clj:42)` from a cider-nrepl frame map."
+  [f]
+  (str (sget f "name") "  (" (sget f "file")
+       (when-let [l (sget f "line")] (str ":" l)) ")"))
+
+(defn- pick-frames
+  "Drop cider's `dup`/`tooling` noise frames (the same ones its own UI hides by
+   default), keep the rest in order, cap the depth."
+  [frames limit]
+  (->> frames
+       (remove #(let [fl (frame-flags %)] (or (fl "dup") (fl "tooling"))))
+       (map cider-frame->line)
+       (take limit)
+       vec))
+
+(defn- simple-class [cls]
+  (let [s (str cls)
+        i (.lastIndexOf s ".")]
+    (if (neg? i) s (subs s (inc i)))))
+
+(defn- cause->headline [c]
+  (let [msg (str (:message c))]
+    (str (simple-class (:class c)) (when (seq msg) (str ": " msg)))))
+
+(defn- stacktrace->result
+  "Shape cider-nrepl cause messages into `{:error_message :error_data :trace}`.
+   The root (innermost) cause carries the real throw site + message; earlier
+   causes are threaded into the headline as a `← caused by` chain."
+  [causes]
+  (let [causes (vec causes)
+        root   (or (last (filter #(seq (sget % "stacktrace")) causes))
+                   (last causes))
+        heads  (map #(cause->headline {:class (sget % "class") :message (sget % "message")})
+                    causes)]
+    {:error_message (str/join "\n  ← caused by " heads)
+     :error_data    (some-> (sget root "data") not-empty)
+     :trace         (pick-frames (sget root "stacktrace") 16)}))
+
+(defn- collect-op
+  "Drive an op on `session` to `done`, returning `{:status #{..} :msgs [..]}`.
+   Bails on the deadline; never blocks past it."
+  [session op deadline]
+  (loop [rs     (session {:op op})
+         msgs   []
+         status #{}]
+    (if (or (empty? rs) (> (System/currentTimeMillis) deadline))
+      {:status status :msgs msgs}
+      (let [msg (first rs)
+            s   (sget msg "status")
+            st  (into status (cond (nil? s) [] (string? s) [s]
+                                   (coll? s) (map str s) :else [(str s)]))
+            msgs' (cond-> msgs (sget msg "class") (conj msg))]
+        (if (contains? st "done")
+          {:status st :msgs msgs'}
+          (recur (next rs) msgs' st))))))
+
+(def ^:private e-fetch-code
+  "Portable fallback (no cider-nrepl): read `*e` in-session and hand back a
+   readable `{:error_message :error_data :trace}` map — demunged user frames,
+   JVM/nREPL plumbing filtered out."
+  (str "(when-let [e *e]"
+       "  {:error_message (str (.getSimpleName (class e))"
+       "                       (let [m (.getMessage e)] (when (seq (str m)) (str \": \" m))))"
+       "   :error_data (when (instance? clojure.lang.IExceptionInfo e) (pr-str (ex-data e)))"
+       "   :trace (let [fs (map (fn [^StackTraceElement el]"
+       "                          [(.getClassName el) (.getFileName el) (.getLineNumber el)])"
+       "                        (.getStackTrace e))"
+       "                fmt (fn [xs] (->> xs (map (fn [[c f l]] (str (clojure.lang.Compiler/demunge c) \"  (\" f \":\" l \")\"))) distinct vec))"
+       "                usr (remove (fn [[c _ _]] (re-find #\"^(java\\.|jdk\\.|sun\\.|nrepl\\.|clojure\\.lang\\.|clojure\\.main|clojure\\.core)\" c)) fs)]"
+       "            (vec (take 16 (fmt (if (seq usr) usr fs)))))})"))
+
+(defn- drain-to-done!
+  "Realize the tail of an in-flight response seq up to ITS `done`, bounded by
+   `deadline`. nREPL's session stream is a single ordered channel (not demuxed by
+   message id), so a follow-up op would otherwise read the previous eval's
+   leftover messages. Returns true once the stream is clean (done reached)."
+  [responses deadline]
+  (loop [rs responses]
+    (cond
+      (> (System/currentTimeMillis) deadline) false
+      (empty? rs)                             true
+      :else
+      (let [s   (sget (first rs) "status")
+            st  (cond (nil? s) #{} (string? s) #{s}
+                      (coll? s) (set (map str s)) :else #{(str s)})]
+        (if (contains? st "done") true (recur (next rs)))))))
+
+(defn- fetch-stacktrace!
+  "Guarded second round-trip on the SAME `session` (so `*e` is bound) to enrich an
+   eval error with a structured message + trace. First DRAINS the errored eval's
+   `responses` to done — combine may have early-bailed on the terminal-error line,
+   and the shared session stream must be clean before another op. Prefers
+   cider-nrepl's stacktrace op (rich `flags` per frame); falls back to a portable
+   `*e` self-fetch when that middleware is absent. Never throws — returns nil on
+   any failure so the base result is untouched."
+  [session responses]
+  (let [deadline (+ (System/currentTimeMillis) 3000)]
+    (try
+      (when (drain-to-done! responses deadline)
+        (or
+         (some (fn [op]
+                 (let [{:keys [status msgs]} (collect-op session op deadline)]
+                   (when (and (seq msgs) (not (contains? status "unknown-op")))
+                     (stacktrace->result msgs))))
+               ["stacktrace" "analyze-last-stacktrace"])
+         (let [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
+               v (:value r)]
+           (when (and (string? v) (not= "nil" v))
+             (let [m (try (edn/read-string v) (catch Throwable _ nil))]
+               (when (map? m) (not-empty m)))))))
+      (catch Throwable _ nil))))
+
 (defn eval!
   "Evaluate `code` in the nREPL at `host:port`. Opts:
      :host        defaults to \"localhost\"
@@ -211,6 +344,9 @@
                                            :nrepl.middleware.print/options {:right-margin print-margin}))
             responses (session req)
             combined (combine responses deadline)
+            combined (if (eval-error? combined)
+                       (merge combined (fetch-stacktrace! session responses))
+                       combined)
             elapsed  (- (System/currentTimeMillis) start)]
         (assoc combined :ms elapsed :port (int port) :host host))
       (catch IOException ioe

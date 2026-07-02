@@ -1,10 +1,13 @@
 name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy).
-# On each `v*` tag this builds, per OS, BOTH native distributions — lean (the
-# voice model downloads on first use) and `-with-assets` (the ~465 MB model
-# embedded for fully-offline voice) — plus the portable JVM uberjar, and
-# attaches them to that tag's release. Tags only; never feature branches.
+# On each `v*` tag this builds, per OS, THREE native distributions — lean (voice
+# included, the model downloads on first use), `-with-assets` (the ~465 MB model
+# embedded for fully-offline voice), and `-novoice` (vis-foundation-voice and
+# every sherpa-onnx/onnxruntime JNI lib dropped entirely; each variant carries
+# ONLY the build host's native libs, never another platform's) — plus the
+# portable JVM uberjar, and attaches them to that tag's release. Tags only;
+# never feature branches.
 on:
   push:
     tags: ['v*']
@@ -28,10 +31,13 @@ jobs:
         include:
           - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64,                   args: "" }
           - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-with-assets,       args: ":with-assets true" }
+          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-novoice,           args: ":voice false" }
           - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64,                 args: "" }
           - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-with-assets,     args: ":with-assets true" }
+          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-novoice,         args: ":voice false" }
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe,             args: "" }
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-with-assets.exe, args: ":with-assets true" }
+          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-novoice.exe,     args: ":voice false" }
     steps:
       - uses: actions/checkout@v4
       - uses: graalvm/setup-graalvm@v1

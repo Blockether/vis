@@ -277,19 +277,41 @@
                    (when (:note r) (str " (" (:note r) ")")))
      :body    (when-not ok (fence nil detail))}))
 
+(defn- short-error
+  "First line of an error headline, trimmed to its class before the `:` — e.g.
+   `NullPointerException: null` → `NullPointerException`. Capped so a long
+   message never blows out the one-line summary badge."
+  [s]
+  (let [head (-> (str s) str/split-lines first (or "") str/trim)
+        cls  (-> head (str/split #":" 2) first str/trim)]
+    (subs cls 0 (min 60 (count cls)))))
+
 (defn- render-repl-eval-result
-  "repl_eval → `(Nms)` headline (REPL_EVAL badge names the tool); value / out / err code blocks."
+  "repl_eval → `(Nms)` headline, or `(Nms) — <Error>` on failure (REPL_EVAL badge
+   names the tool). The body always opens with one blank line so it never fuses
+   with the badge. Happy path: value then out. Error path: the exception MESSAGE
+   first, then the filtered TRACE (and any ex-data) — the *what* before the
+   *where*. `:error_message`/`:trace` come enriched from the nREPL client; we fall
+   back to the raw `:err` one-liner when no structured trace was available."
   [r]
-  (let [err  (or (:err r) (:ex r) (:root_ex r))
-        body (->> [(fence nil (:value r))
-                   (fence "out" (:out r))
-                   (fence "err" (when (seq (str err)) err))]
-                  (remove nil?)
-                  (str/join "\n\n"))]
+  (let [emsg   (not-empty (str (:error_message r)))
+        trace  (:trace r)
+        err    (or (:err r) (:ex r) (:root_ex r))
+        error? (boolean (or emsg (seq (str err))))
+        blocks (if error?
+                 [(fence nil (or emsg (str err)))
+                  (fence "trace" (when (seq trace) (str/join "\n" trace)))
+                  (fence "data" (:error_data r))
+                  (fence "out" (:out r))]
+                 [(fence nil (:value r))
+                  (fence "out" (:out r))])
+        body   (->> blocks (remove nil?) (str/join "\n\n"))]
     {:summary (not-empty
                (str (when (:ms r) (str "(" (:ms r) "ms)"))
-                    (when (seq (str err)) (str (when (:ms r) " ") "— error"))))
-     :body    (when (seq body) body)}))
+                    (when error?
+                      (str (when (:ms r) " ") "— "
+                           (if emsg (short-error emsg) "error")))))
+     :body    (when (seq body) (str "\n" body))}))
 
 (defn- render-repl-status-result
   "repl_status → `N REPLs: id (status), …`."

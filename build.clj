@@ -243,12 +243,23 @@
 (def ^:private native-bin
   (str "target/vis" (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
 
+(defn- root-deps-edn
+  "Root deps.edn as an edn map. `voice?` false REMOVES the vis-foundation-voice
+   extension dep — that is the entire no-voice distribution: sherpa-onnx and
+   onnxruntime ride in ONLY through that extension's deps, so dropping it
+   leaves zero voice JNI libs (any platform) on the classpath. Every channel
+   soft-resolves voice fns (web answers 501, Telegram/TUI show 'not loaded'),
+   so the build needs no other change."
+  [voice?]
+  (cond-> (read-string (slurp "deps.edn"))
+    (not voice?) (update :deps dissoc 'com.blockether/vis-foundation-voice)))
+
 (defn- all-source-roots
   "Every production src/resources dir on the vis classpath: the repo root plus
    each `:local/root` extension. AOT covers all of these so every extension ns
    the runtime manifest scan `require`s is already compiled into the image."
-  []
-  (let [deps  (:deps (read-string (slurp "deps.edn")))
+  [voice?]
+  (let [deps  (:deps (root-deps-edn voice?))
         roots (->> deps vals (keep :local/root))
         dirs  (into ["src" "resources"]
                 (mapcat (fn [r] [(str r "/src") (str r "/resources")]) roots))]
@@ -262,10 +273,15 @@
    every extension's manifest map into ONE combined file in the class-dir.
    `manifest.clj` already iterates a multi-id map, so a single merged resource
    carries every extension id with no runtime change."
-  [class-dir]
+  [class-dir voice?]
   (let [files  (->> (file-seq (io/file "extensions"))
                  (filter #(and (= "vis.edn" (.getName ^java.io.File %))
-                            (str/includes? (str %) "META-INF/vis-extension"))))
+                            (str/includes? (str %) "META-INF/vis-extension")
+                            ;; no-voice build: the voice extension is off the
+                            ;; classpath, so its manifest must not be merged —
+                            ;; discovery would `require` namespaces that are
+                            ;; not in the image.
+                            (or voice? (not (str/includes? (str %) "vis-foundation-voice"))))))
         merged (reduce (fn [m f] (merge m (read-string (slurp f)))) {} files)
         out    (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
     (io/make-parents out)
@@ -294,8 +310,8 @@
    (eval → 'Classes cannot be defined at runtime'). Build-time-requiring them
    makes the lazy resolve a no-op. Covers nses that lack a
    `(set! *warn-on-reflection* …)` and aren't manifest entry points."
-  []
-  (->> (all-source-roots)
+  [voice?]
+  (->> (all-source-roots voice?)
     (mapcat (fn [d]
               (->> (file-seq (io/file d))
                 (filter #(and (.isFile ^java.io.File %)
@@ -356,7 +372,7 @@
       (->> (read-string (slurp f)) vals (mapcat :nses) (map str))
       [])))
 
-(defn- write-preload-namespaces! [class-dir basis]
+(defn- write-preload-namespaces! [class-dir basis voice?]
   ;; The native Feature `require`s every ns in this list at BUILD time. It must
   ;; cover not just the (set! *warn-on-reflection* …) namespaces, but also every
   ;; namespace vis `require`s at RUNTIME during extension discovery
@@ -366,7 +382,7 @@
   ;; defined at runtime", the foundation/core.clj smoke-test crash). Build-time
   ;; initializing them here makes the runtime require a no-op.
   (let [warn (map str (preload-namespaces basis))
-        srcs (all-source-root-namespaces)
+        srcs (all-source-root-namespaces voice?)
         exts (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
         nses (->> (concat warn srcs exts) distinct sort vec)
         out  (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
@@ -396,17 +412,18 @@
    all resources, collapsing the per-extension manifests into ONE merged file.
    Also writes the build-time-init preload list. Shared by `uber` and `native`.
    Returns the `:native`-alias basis."
-  []
+  [voice?]
   (b/delete {:path native-class-dir})
-  (let [basis (b/create-basis {:project "deps.edn" :aliases [:native]})
-        srcs  (all-source-roots)]
-    (println "AOT compiling every ns across" (count srcs) "source roots…")
+  (let [basis (b/create-basis {:project (root-deps-edn voice?) :aliases [:native]})
+        srcs  (all-source-roots voice?)]
+    (println "AOT compiling every ns across" (count srcs) "source roots…"
+      (if voice? "(with voice)" "(NO voice)"))
     ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
     (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
     ;; collapse the per-extension manifests into ONE so discovery finds them all
-    (merge-extension-manifests! native-class-dir)
+    (merge-extension-manifests! native-class-dir voice?)
     ;; list every namespace the native Feature must require before build-time init
-    (write-preload-namespaces! native-class-dir basis)
+    (write-preload-namespaces! native-class-dir basis voice?)
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
     ;; `vis/VERSION` resource (git short sha) so `vis --version` has a value.
@@ -426,9 +443,9 @@
    sanity-check the AOT'd app. NOTE: the native build does NOT use this jar —
    GraalPy's polyglot jar declares `ForceOnModulePath`, which a flat uberjar
    (no module-info) breaks; `native` builds from a classpath of real jars."
-  [_]
+  [opts]
   (b/delete {:path native-uber})
-  (let [basis (prepare-native-classes!)]
+  (let [basis (prepare-native-classes! (not (false? (:voice opts))))]
     (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
              :main 'com.blockether.vis.core :exclude uber-exclusions})
     (println "->" native-uber)))
@@ -551,8 +568,10 @@
    (META-INF/native-image/…); here we add only classpath/main/output, the
    vis-extension/edn/db resource includes, and the build-host voice native libs
    (sherpa-onnx + onnxruntime JNI dylibs) so voice ASR works in the binary.
-   `with-assets?` also embeds the vendored voice model resources."
-  [basis with-assets?]
+   `with-assets?` also embeds the vendored voice model resources; `voice?`
+   false drops every voice resource pattern (the extension is off the
+   classpath, so the jars carrying those resources are absent anyway)."
+  [basis with-assets? voice?]
   (let [tok (native-platform-token)]
     (cond-> ["-cp" (native-classpath basis)
              "-o" (str/replace native-bin #"\.exe$" "")
@@ -569,12 +588,6 @@
              ;; native binary's web UI is a blank page over 404'd assets.
              "-H:IncludeResources=vis-channel-web/public/.*"
              "-H:IncludeResources=vis-docs/assets/.*"
-             ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
-             ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
-             ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
-             ;; jar's nested *.dSYM DWARF debug bundles (~8 MB) don't ride in.
-             (str "-H:IncludeResources=native/" tok "/.*")
-             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/[^/]*$")
              ;; tree-sitter binding: a few pure-data classes (enums / structural
              ;; op tables) reach the image heap and must initialize at BUILD time.
              ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
@@ -596,6 +609,12 @@
              "-J-Dpolyglot.image-build-time.PreinitializeContexts=python"
              "-R:StackSize=16777216"
              "-H:+AddAllCharsets"]
+      ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
+      ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
+      ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
+      ;; jar's nested *.dSYM DWARF debug bundles (~8 MB) don't ride in.
+      voice? (conj (str "-H:IncludeResources=native/" tok "/.*")
+               (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/[^/]*$"))
       with-assets? (conj "-H:IncludeResources=voice-assets/.*")
       :always (conj "com.blockether.vis.core"))))
 
@@ -604,9 +623,10 @@
    `target/native-classes` from a prior `native` build (no re-AOT). For tuning
    native-image flags; run `native` once first to populate the AOT classes."
   [opts]
-  (let [basis (b/create-basis {:project "deps.edn" :aliases [:native]})]
+  (let [voice? (not (false? (:voice opts)))
+        basis  (b/create-basis {:project (root-deps-edn voice?) :aliases [:native]})]
     (println "native-image (reusing target/native-classes)…")
-    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis (boolean (:with-assets opts))))})]
+    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis (boolean (:with-assets opts)) voice?))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))
@@ -621,10 +641,19 @@
 
    Options:
      :with-assets true  — also embed the ~465 MB voice ASR model for a
-                          fully-offline 'fat' binary (default: download on first use)."
+                          fully-offline 'fat' binary (default: download on first use).
+     :voice false       — the NO-VOICE distribution: vis-foundation-voice (and
+                          with it every sherpa-onnx / onnxruntime JNI lib) is
+                          dropped from the classpath entirely. Channels degrade
+                          gracefully (web /voice answers 501, Telegram/TUI say
+                          'voice not loaded')."
   [opts]
   (let [with-assets? (boolean (:with-assets opts))
-        basis        (prepare-native-classes!)]
+        voice?       (not (false? (:voice opts)))
+        _            (when (and with-assets? (not voice?))
+                       (throw (ex-info ":with-assets embeds the voice model — it cannot combine with :voice false"
+                                {:opts opts})))
+        basis        (prepare-native-classes! voice?)]
     (when with-assets?
       (vendor-voice-model! native-class-dir))
     ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.
@@ -634,9 +663,10 @@
     (println "->" native-uber)
     ;; (2) native distribution. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
-    (println "native-image:" native-bin (if with-assets? "(+assets)" "")
+    (println "native-image:" native-bin
+      (cond with-assets? "(+assets)" (not voice?) "(no voice)" :else "")
       "(this takes several minutes)…")
-    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis with-assets?))})]
+    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis with-assets? voice?))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))
