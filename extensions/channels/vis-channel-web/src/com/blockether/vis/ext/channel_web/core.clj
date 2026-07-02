@@ -58,7 +58,10 @@
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
    "marked.min.js" "vis-channel-web/public/marked.min.js"
    "prism.min.js"  "vis-channel-web/public/prism.min.js"
-   "ui.js"         "vis-channel-web/public/ui.js"})
+   "ui.js"         "vis-channel-web/public/ui.js"
+   ;; AudioWorklet module (voice capture off the main thread) — fetched by
+   ;; ui.js via audioWorklet.addModule, not a <script> tag.
+   "rec-worklet.js" "vis-channel-web/public/rec-worklet.js"})
 
 (def ^:private asset-version
   "Cache-buster appended as `?v=` to the /ui/app.css + /ui/js/* URLs. Stamped
@@ -3202,10 +3205,13 @@
         (providers-modal sid)))))
 
 (defn- wav-file?
-  "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
-   file to the ASR: sherpa-onnx's native WaveReader ABORTS THE WHOLE JVM
-   on malformed input (observed live: Abort trap 6 on a garbage body) —
-   an exception we can catch is not on offer, so we refuse early."
+  "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns
+   an obviously-not-audio body into a clear 400 without waking the ASR. The
+   guard that actually protects the process is `asr/validate-wav-file!`
+   inside `transcribe-file!`: sherpa-onnx's native WaveReader ABORTS THE
+   WHOLE JVM on malformed input (garbage body: Abort trap 6; valid magic
+   with truncated data: SIGSEGV — both observed live), so the full chunk
+   table is verified in JVM code before the native reader ever runs."
   [^java.io.File f]
   (and (>= (.length f) 44)
        (with-open [in (io/input-stream f)]
@@ -3687,7 +3693,7 @@
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
-                "/ui/js/prism.min.js" "/ui/js/ui.js"
+                "/ui/js/prism.min.js" "/ui/js/ui.js" "/ui/js/rec-worklet.js"
                 "/ui/fonts/hanken-grotesk.woff2" "/ui/fonts/jetbrains-mono.woff2"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
