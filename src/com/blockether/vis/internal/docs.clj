@@ -143,9 +143,9 @@
   --bg:#fff; --bg-soft:#f8f8f8; --panel:#f8f8f8; --header:rgba(255,255,255,.82);
   --fg:#1e1e1e; --fg-soft:#1e1e1e; --dim:#505050; --faint:#787878;
   --line:#e8e8e8; --line-soft:#f0f0f0;
-  --primary:#2563eb; --primary-press:#0a32a0; --accent:#a16207;
+  --primary:#2563eb; --primary-press:#0a32a0; --accent:#2563eb;
   --link:#1e5ac8; --link-hover:#0a32a0;
-  --gold:#facc15; --gold-deep:#be9628; --amber:#a16207; --amber-deep:#7c4a00;
+  --gold:#2563eb; --gold-deep:#1d4ed8; --amber:#4b5563; --amber-deep:#334155;
   --success:#28a03c; --warning:#b59100; --danger:#dc3232; --info:var(--primary);
   --code-bg:#f0f3f8; --code-fg:#1e1e1e; --sel:#dbe7fc;
   --radius:0; --r-sm:0; --measure:44rem; --maxw:88rem;

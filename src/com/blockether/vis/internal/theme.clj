@@ -114,8 +114,10 @@
    :header-active-tab-fg [240 244 252]
    :header-active-tab-bg [37 99 235]
    :header-active-tab-accent [37 99 235]
-   ;; Tab index badge — bright gold, high contrast on the indigo active-tab slab.
-   :header-tab-number-fg [250 204 21]
+   ;; Tab index badge — soft off-white, matching the active-tab label: one
+   ;; calm indigo slab, no gold flash. (Premium restraint: the indigo IS the
+   ;; accent; everything on it stays in the same off-white family.)
+   :header-tab-number-fg [240 244 252]
    :box-bg [255 255 255]
    :box-fg [30 30 30]
    :border-fg [80 80 80]
@@ -134,9 +136,12 @@
    :input-field-bg [255 255 252]
    :user-bubble-bg [255 255 255]
    :user-bubble-fg [30 30 30]
-   :user-role-fg [130 90 0]
-   :turn-separator-bg [248 244 235]
-   :turn-separator-fg [190 150 40]
+   ;; Role labels + turn chrome: slate neutrals, not gold — chrome should
+   ;; recede; only semantic states (ok/warn/error) and the indigo accent
+   ;; carry color.
+   :user-role-fg [71 85 105]
+   :turn-separator-bg [245 247 250]
+   :turn-separator-fg [148 163 184]
    :ai-bubble-bg [255 255 255]
    :ai-bubble-fg [30 30 30]
    :ai-role-fg [80 160 80]
@@ -150,16 +155,16 @@
    :code-block-bg [240 243 248]
    :code-ok-bg [232 248 232]
    :code-err-bg [253 235 235]
-   :result-bg [250 244 230]
+   :result-bg [244 246 250]
    :code-block-fg [30 30 30]
    :code-success-fg [40 160 60]
    :code-error-fg [220 50 50]
    :code-duration-fg [130 130 130]
-   ;; Result text inside code/output blocks. Yellow on both themes
-   ;; for a consistent "this is the answer/output" signal that no
-   ;; longer collides with the lavender used for syntax-special
-   ;; tokens. Amber-700 keeps contrast on the light `code-block-bg`.
-   :code-result-fg [161 98 7]
+   ;; Result text inside code/output blocks: a QUIET slate ink, consistent
+   ;; across every theme (the old amber/gold read as an alarm and clashed
+   ;; per-theme — Solarized was already gray while vis-light went golden).
+   ;; Output is content, not a highlight; slate-600 keeps it legible but calm.
+   :code-result-fg [75 85 99]
    :code-error-result-fg [180 40 40]
    :code-syntax-special-fg [120 70 170]
    :code-syntax-keyword-fg [25 110 120]
@@ -174,7 +179,9 @@
    :tool-color-create [40 150 75]
    :tool-color-delete [210 45 45]
    :tool-color-move [210 105 25]
-   :tool-color-shell [120 140 20]
+   ;; Shell badge: slate, not khaki/olive — terminal output is neutral
+   ;; infrastructure, not a highlight.
+   :tool-color-shell [100 116 139]
    :tool-color-meta [20 135 135]
    :tool-color-test [190 60 130]
    :iteration-header-fg [170 170 170]
@@ -183,9 +190,11 @@
    :answer-sep-bg [250 250 250]
    :answer-bg [255 255 255]
    :answer-fg [25 25 25]
-   :md-h1-fg [150 100 0]
-   :md-h2-fg [125 80 0]
-   :md-h3-fg [100 65 0]
+   ;; Markdown headings: an editorial slate ladder (near-black → slate),
+   ;; weight carries the hierarchy — no gold/brown ink.
+   :md-h1-fg [15 23 42]
+   :md-h2-fg [30 41 59]
+   :md-h3-fg [51 65 85]
    :confidence-fg [140 140 140]
    :md-summary-bg [226 214 250]
    :md-summary-fg [55 30 120]
@@ -216,7 +225,9 @@
    :header-active-tab-fg [226 232 240]
    :header-active-tab-bg [37 99 235]
    :header-active-tab-accent [125 211 252]
-   :header-tab-number-fg [253 224 71]
+   ;; Tab index badge matches the active-tab label (see light palette) —
+   ;; the indigo slab is the accent; no gold on it.
+   :header-tab-number-fg [226 232 240]
    :box-bg [18 22 28]
    :box-fg [226 232 240]
    :border-fg [100 116 139]
@@ -234,9 +245,10 @@
    :input-field-bg [15 23 42]
    :user-bubble-bg [12 14 18]
    :user-bubble-fg [226 232 240]
-   :user-role-fg [245 158 11]
-   :turn-separator-bg [38 30 18]
-   :turn-separator-fg [245 158 11]
+   ;; Slate role/turn chrome (see light palette) — chrome recedes.
+   :user-role-fg [148 163 184]
+   :turn-separator-bg [20 26 36]
+   :turn-separator-fg [100 116 139]
    :ai-bubble-bg [12 14 18]
    :ai-bubble-fg [226 232 240]
    :ai-role-fg [74 222 128]
@@ -250,14 +262,14 @@
    :code-block-bg [15 23 42]
    :code-ok-bg [20 50 35]
    :code-err-bg [69 26 34]
-   :result-bg [34 30 20]
+   :result-bg [20 26 36]
    :code-block-fg [226 232 240]
    :code-success-fg [74 222 128]
    :code-error-fg [248 113 113]
    :code-duration-fg [148 163 184]
-   ;; See light palette: result text picks up the yellow signal in
-   ;; dark mode too. Yellow-300 contrasts on `code-block-bg`.
-   :code-result-fg [250 204 21]
+   ;; See light palette: result text is quiet slate ink in dark mode too —
+   ;; output is content, not a yellow alarm.
+   :code-result-fg [203 213 225]
    :code-error-result-fg [252 165 165]
    :code-syntax-special-fg [216 180 254]
    :code-syntax-keyword-fg [94 234 212]
@@ -272,7 +284,8 @@
    :tool-color-create [74 222 128]
    :tool-color-delete [248 113 113]
    :tool-color-move [251 146 60]
-   :tool-color-shell [190 220 70]
+   ;; Slate shell badge (see light palette) — no khaki.
+   :tool-color-shell [148 163 184]
    :tool-color-meta [45 212 191]
    :tool-color-test [244 114 182]
    :iteration-header-fg [148 148 148]
@@ -281,9 +294,10 @@
    :answer-sep-bg [15 23 42]
    :answer-bg [12 14 18]
    :answer-fg [241 245 249]
-   :md-h1-fg [251 191 36]
-   :md-h2-fg [245 158 11]
-   :md-h3-fg [217 119 6]
+   ;; Editorial slate heading ladder (see light palette) — no amber ink.
+   :md-h1-fg [241 245 249]
+   :md-h2-fg [203 213 225]
+   :md-h3-fg [148 163 184]
    :confidence-fg [148 163 184]
    :md-summary-bg [49 46 129]
    :md-summary-fg [237 233 254]
@@ -313,9 +327,9 @@
    :header-active-tab-fg [253 246 227]
    :header-active-tab-bg [38 139 210]
    :header-active-tab-accent [38 139 210]
-   ;; Badge sits on the blue active-tab slab; raw Solarized yellow b58900
-   ;; is ~1.6:1 there - use a bright gold instead.
-   :header-tab-number-fg [253 224 71]
+   ;; Badge sits on the blue active-tab slab; match the base3 tab label —
+   ;; one calm slab, no gold flash.
+   :header-tab-number-fg [253 246 227]
    :box-bg [253 246 227]
    :box-fg [101 123 131]
    :border-fg [147 161 161]
@@ -332,9 +346,11 @@
    :input-field-bg [253 246 227]
    :user-bubble-bg [253 246 227]
    :user-bubble-fg [101 123 131]
-   :user-role-fg [181 137 0]
+   ;; Chrome recedes: base01/base1 ink for role labels + separators
+   ;; (the yellow accent stays for genuinely semantic uses only).
+   :user-role-fg [88 110 117]
    :turn-separator-bg [238 232 213]
-   :turn-separator-fg [181 137 0]
+   :turn-separator-fg [147 161 161]
    :ai-bubble-bg [253 246 227]
    :ai-bubble-fg [101 123 131]
    :ai-role-fg [133 153 0]
@@ -368,7 +384,8 @@
    :tool-color-create [133 153 0]
    :tool-color-delete [220 50 47]
    :tool-color-move [203 75 22]
-   :tool-color-shell [150 155 25]
+   ;; base00 ink, not khaki — shell output is neutral infrastructure.
+   :tool-color-shell [101 123 131]
    :tool-color-meta [42 161 152]
    :tool-color-test [211 54 130]
    :iteration-header-fg [147 161 161]
@@ -409,8 +426,8 @@
    :header-active-tab-fg [253 246 227]
    :header-active-tab-bg [38 139 210]
    :header-active-tab-accent [42 161 152]
-   ;; Same bright gold as solarized-light: b58900 has no contrast on the blue slab.
-   :header-tab-number-fg [253 224 71]
+   ;; Match the base3 tab label on the blue slab (see solarized-light).
+   :header-tab-number-fg [253 246 227]
    :box-bg [0 43 54]
    :box-fg [131 148 150]
    :border-fg [88 110 117]
@@ -427,9 +444,10 @@
    :input-field-bg [7 54 66]
    :user-bubble-bg [0 43 54]
    :user-bubble-fg [131 148 150]
-   :user-role-fg [181 137 0]
+   ;; Chrome recedes (see solarized-light): base1/base01 ink.
+   :user-role-fg [147 161 161]
    :turn-separator-bg [7 54 66]
-   :turn-separator-fg [181 137 0]
+   :turn-separator-fg [88 110 117]
    :ai-bubble-bg [0 43 54]
    :ai-bubble-fg [131 148 150]
    :ai-role-fg [133 153 0]
@@ -463,7 +481,8 @@
    :tool-color-create [133 153 0]
    :tool-color-delete [220 50 47]
    :tool-color-move [203 75 22]
-   :tool-color-shell [170 170 40]
+   ;; base0 ink, not khaki — shell output is neutral infrastructure.
+   :tool-color-shell [131 148 150]
    :tool-color-meta [42 161 152]
    :tool-color-test [211 54 130]
    :iteration-header-fg [88 110 117]
@@ -751,9 +770,13 @@
    "--fg" :text-fg
    "--panel2" :dialog-bg
    "--code-bg" :code-block-bg
-   "--cream" :turn-separator-bg
-   "--gold" :header-tab-number-fg
-   "--gold2" :turn-separator-fg
+   ;; "--gold"/"--gold2" are LEGACY VAR NAMES the stylesheet still uses;
+   ;; they now carry the theme's ACCENT (the active-tab slab color and its
+   ;; lighter companion) — the web accent is indigo/blue, not gold, and
+   ;; "--cream" is the neutral panel ground, not beige.
+   "--cream" :dialog-bg
+   "--gold" :header-active-tab-bg
+   "--gold2" :header-active-tab-accent
    "--amber" :code-result-fg
    "--amber-deep" :warning-fg
    "--warn-bg" :warning-bg
