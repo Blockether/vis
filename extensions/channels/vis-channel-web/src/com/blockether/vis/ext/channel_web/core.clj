@@ -2689,13 +2689,13 @@
                     (for [m models]
                       [:button.model-chip {:type "button"
                                            :hx-post (str base "/add/" (name pid) "/confirm")
-                                           :hx-vals (json-text {:model m :api_key (or api-key "")})
+                                           :hx-vals (json-text {:model m :api_key (or api-key "") :base_url (or (:base-url preset) "")})
                                            :hx-target "#modal" :hx-swap "innerHTML"}
                        m])])
                  (when (and (not show-all?) (pos? hidden-count))
                    [:button.show-all {:type "button"
                                       :hx-post (str base "/add/" (name pid) "/models")
-                                      :hx-vals (json-text {:api_key (or api-key "") :show_all "1"})
+                                      :hx-vals (json-text {:api_key (or api-key "") :base_url (or (:base-url preset) "") :show_all "1"})
                                       :hx-target "#modal" :hx-swap "innerHTML"}
                     (str "Show all models… (" hidden-count " hidden)")]))))
 
@@ -2810,8 +2810,17 @@
     (if-not preset
       (providers-modal sid)
       (case (vis/provider-auth-kind pid)
+        ;; :none — local endpoint (LM Studio / Ollama). Let the user point
+        ;; Vis at whatever host:port they run it on before picking a model.
         :none
-        (add-model-picker sid preset nil false)
+        (modal-shell (str (:label preset) " Setup")
+                     (modal-back (str base "/add") "Add Provider")
+                     [:form.key-form {:hx-post (str base "/add/" (name pid) "/models")
+                                      :hx-target "#modal" :hx-swap "innerHTML"}
+                      [:input {:type "text" :name "base_url" :placeholder "Base URL"
+                               :value (or (:base-url preset) "")
+                               :autofocus true :autocomplete "off"}]
+                      [:button.send-wide {:type "submit"} "Continue"]])
 
         :oauth
         (oauth-web-view sid pid)
@@ -2829,9 +2838,10 @@
   "Persist a new provider through the core service (the exact configs
    the TUI writes): OAuth presets get their default models; everyone
    else gets the chosen model (+ the key when one was entered)."
-  [sid pid api-key model]
-  (when-let [preset (preset-by-id pid)]
-    (let [oauth? (= :oauth (vis/provider-auth-kind pid))
+  [sid pid api-key base-url model]
+  (when-let [preset0 (preset-by-id pid)]
+    (let [preset (cond-> preset0 (seq base-url) (assoc :base-url base-url))
+          oauth? (= :oauth (vis/provider-auth-kind pid))
           cfg    (if oauth?
                    (vis/provider-config-with-models preset
                                                     (vis/provider-default-model-configs preset))
@@ -3079,10 +3089,12 @@
   [request]
   (with-session request
     (fn [sid]
-      (let [pid (path-pid request)
-            api-key (get-in request [:form-params "api_key"])
+      (let [pid       (path-pid request)
+            api-key   (get-in request [:form-params "api_key"])
+            base-url  (not-empty (get-in request [:form-params "base_url"]))
             show-all? (= "1" (get-in request [:form-params "show_all"]))]
-        (if-let [preset (preset-by-id pid)]
+        (if-let [preset (some-> (preset-by-id pid)
+                                (cond-> base-url (assoc :base-url base-url)))]
           (add-model-picker sid preset (not-empty api-key) show-all?)
           (providers-modal sid))))))
 
@@ -3092,6 +3104,7 @@
     (fn [sid]
       (confirm-add-provider! sid (path-pid request)
                              (not-empty (get-in request [:form-params "api_key"]))
+                             (not-empty (get-in request [:form-params "base_url"]))
                              (get-in request [:form-params "model"])))))
 
 (defn- provider-remove-handler

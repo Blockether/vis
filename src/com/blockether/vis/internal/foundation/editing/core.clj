@@ -1150,7 +1150,6 @@
       0.0
       (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
 
-
 (defn- coerce-find-spec [args]
   (let [[a b] args
         spec (cond
@@ -1206,6 +1205,10 @@
 (defn- find-search [args]
   (let [{:keys [query paths limit is_hidden is_respect_gitignore]} (coerce-find-spec args)
         roots (resolve-search-roots paths)
+        ;; fff ranks genuine hits first but pads the page with loose subsequence
+        ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
+        ;; filter below do the real cutting (a fresh fff scan is ~11ms).
+        candidate-page (max limit 300)
         items (->> roots
                    (mapcat (fn [^File root]
                              (if (.isFile root)
@@ -1213,28 +1216,36 @@
                                  :file-name (.getName root)
                                  :size (.length root)
                                  :binary? false
-                                 :source :direct-file}]
+                                 :source :direct-file
+                                 :score 1.0}]
                                (with-open [idx (rg-fff-open root)]
                                  (let [base (.getCanonicalFile root)]
                                    ;; doall: realize hits INSIDE with-open, before the
                                    ;; fresh instance is closed.
                                    (doall
                                     (->> (:items (fff/search idx {:query query
-                                                                  :page-size limit}))
-                                         (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?] :as item}]
-                                                 (let [f (io/file base relative-path)]
-                                                   (when (and (or is_hidden (not (.isHidden f)))
+                                                                  :page-size candidate-page}))
+                                         (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?]}]
+                                                 (let [f     (io/file base relative-path)
+                                                       rel   (rel-path f)
+                                                       score (find-relevance query rel)]
+                                                   (when (and (>= score find-min-score)
+                                                              (or is_hidden (not (.isHidden f)))
                                                               (or (not is_respect_gitignore)
                                                                   (not (ignored? (load-ignore-node base) f base))))
-                                                     (cond-> {:path (rel-path f)
-                                                              :file-name (or file-name (.getName f))
-                                                              :size size
-                                                              :modified modified
-                                                              :frecency-score frecency-score
-                                                              :git-status git-status
-                                                              :binary? (boolean binary?)}
-                                                       (:score item) (assoc :score (:score item))))))))))))))
+                                                     {:path rel
+                                                      :file-name (or file-name (.getName f))
+                                                      :size size
+                                                      :modified modified
+                                                      :frecency-score frecency-score
+                                                      :git-status git-status
+                                                      :binary? (boolean binary?)
+                                                      :score score})))))))))))
                    (distinct)
+                   ;; strongest match first; frecency then path break ties deterministically.
+                   (sort-by (fn [it] [(- (double (:score it 0.0)))
+                                      (- (long (or (:frecency-score it) 0)))
+                                      (:path it)]))
                    (take limit)
                    vec)]
     {:items items
