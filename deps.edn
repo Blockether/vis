@@ -138,7 +138,7 @@
   ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
   ;; Blockether fork — antq mistakes upstream "1.10.3" for newer than the
   ;; "-blockether.N" suffix; keep this pinned to the fork line manually.
-  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.25"}
+  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.26"}
   ;; ruff (in-process Python formatter via FFM) — the gateway beautifies the
   ;; model's Python code before streaming it to the web trace. tools.deps is
   ;; kept here (NOT excluded): ruff's native lib isn't bundled, so it resolves
@@ -147,7 +147,10 @@
   ;; breakage). core.memoize backs the LRU cache in internal.pyfmt.
   com.blockether/ruff                             {:mvn/version "0.1.2"}
   org.clojure/core.memoize                        {:mvn/version "1.2.281"}
-  com.blockether/fff                              {:mvn/version "0.9.6-7"}
+  ;; 0.9.6-8: natives built from ORIGINAL upstream dmtrKovalenko/fff v0.9.6
+  ;; (Blockether/fff fork retired); binding default is now mmap-cache OFF —
+  ;; vis already passes :enable-mmap-cache? false at both fff/create sites.
+  com.blockether/fff                              {:mvn/version "0.9.6-8"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
   ;; into Telemere — kills the "No SLF4J providers were found" startup
