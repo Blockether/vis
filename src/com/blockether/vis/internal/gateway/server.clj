@@ -302,19 +302,7 @@
           q    (str (get-in request [:query-params "q"]))]
       (case kind
         "file"
-        (let [entries (try (file-picker/collect-file-picker-entries)
-                           (catch Throwable _ []))
-              items   (try (file-picker/file-picker-items entries q {:sort-mode :relevance})
-                           (catch Throwable _ []))
-              rows    (into []
-                            (comp (take 20)
-                                  (map (fn [it]
-                                         {:name   (or (:label it) (some-> (:path it) str) "")
-                                          :size   (or (:size-label it) "")
-                                          :age    (or (:age-label it) "")
-                                          :status (or (:status-label it) "")})))
-                            items)]
-          (json-response rows))
+        (json-response (file-picker/suggest-file-rows q {:limit 20}))
         (error-response 400 :invalid-request (str "unknown suggest kind: " kind))))))
 
 ;; =============================================================================

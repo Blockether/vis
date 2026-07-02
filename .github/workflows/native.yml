@@ -47,7 +47,10 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: graalvm/setup-graalvm@v1
         with:
-          java-version: '25'
+          # Exact pin on the newest GraalVM feature release (monthly 25.1+ train,
+          # Oracle 25i1 channel; GraalVM ships no JDK 26/27/28). Bump together
+          # with deps.edn's org.graalvm.* pins — Truffle/SVM refuse mismatches.
+          java-version: '25.1.3'
           distribution: 'graalvm'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # sets up the MSVC dev environment on Windows so native-image links

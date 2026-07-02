@@ -269,6 +269,7 @@
                  :port       port
                  :code       code
                  :ns         ns
+                 :pretty?    true
                  :timeout-ms (or timeout_ms 30000)})}))))
 
 (defn clj-repair+format

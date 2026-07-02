@@ -71,6 +71,9 @@
       (println "[vis/native-image] namespace pre-initialization done"))))
 
 ;; remaining lifecycle hooks: no-ops (must exist so gen-class doesn't stub-throw)
+;; onRegistration(OnRegistrationAccess) arrived in GraalVM 25.1 — without the
+;; no-op the whole build aborts with "onRegistration ... not defined?".
+(defn -onRegistration [_ _])
 (defn -afterRegistration [_ _])
 (defn -duringSetup [_ _])
 (defn -duringAnalysis [_ _])
