@@ -21,8 +21,12 @@ permissions:
   pages: write
   id-token: write
 
+# Workflow-level concurrency: a newer push SUPERSEDES a still-building older
+# run (saves CI minutes, avoids racing a stale commit onto the site). This is
+# safe because it can only cancel the cheap, stateless `build` job — the
+# `deploy` job carries its own non-cancelling group below.
 concurrency:
-  group: pages
+  group: docs-site-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -59,6 +63,15 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # NEVER cancel an in-flight deploy. GitHub Pages processes deployments one
+    # at a time on its backend; cancelling a queued/in-progress deployment
+    # wedges that pipeline and every later run then sits in `deployment_queued`
+    # forever. A separate group from the build lets a new push cancel a stale
+    # build while any deploy already talking to the Pages backend runs to
+    # completion. (Mirrors GitHub's official Pages starter workflow.)
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
