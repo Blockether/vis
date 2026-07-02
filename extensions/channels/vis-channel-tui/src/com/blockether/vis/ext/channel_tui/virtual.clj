@@ -150,10 +150,26 @@
     (.put height-cache (height-key message bubble-w settings detail-expansions session-id) h))
   h)
 
+;; Estimate memo — same key axes as the sticky height cache. `layout`
+;; pass-1 estimates every message the height cache misses ON EVERY
+;; FRAME; on a big cold session (reopen, toggle-resync, resize) that is
+;; O(session-chars) per frame while the scroll ease ticks at ~60fps.
+;; The estimate is pure in (message content, bubble-w, settings subset,
+;; expansion key), so memoizing under the SAME key turns every frame
+;; after the first into hash lookups. Entries become garbage once the
+;; real height lands (the height cache is checked FIRST) — the LRU cap
+;; simply ages them out.
+(defonce ^:private ^LinkedHashMap estimate-cache
+  (proxy [LinkedHashMap] [128 0.75 true]
+    (removeEldestEntry [_eldest]
+      (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
+
 (defn invalidate-heights!
-  "Drop the entire sticky height cache. Tests + width changes call this."
+  "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
+   busts (registry-toggle resync) call this."
   []
-  (locking height-cache (.clear height-cache)))
+  (locking height-cache (.clear height-cache))
+  (locking estimate-cache (.clear estimate-cache)))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
@@ -366,6 +382,20 @@
 (defn- estimated-height-with-turn-separator
   [_messages _settings bubble-w _idx message detail-expansions session-id]
   (estimated-height message (long bubble-w) detail-expansions session-id))
+
+(defn- estimated-height-cached
+  "Memoized `estimated-height-with-turn-separator` under the SAME key the
+   sticky height cache uses. Callers must check the height cache first -
+   a real measurement always outranks the memoized estimate. NOTE: >4 args,
+   so no primitive hints (same Clojure cap `layout` documents)."
+  [messages settings bubble-w idx message detail-expansions session-id]
+  (let [k (height-key message bubble-w settings detail-expansions session-id)]
+    (or (locking estimate-cache (.get estimate-cache k))
+      (let [h (long (estimated-height-with-turn-separator
+                      messages settings bubble-w idx message
+                      detail-expansions session-id))]
+        (locking estimate-cache (.put estimate-cache k h))
+        h))))
 
 (defn- with-turn-separator
   [message _messages _settings _idx]
@@ -671,7 +701,7 @@
         ;; click-to-position landing in the wrong row.
         est      (mapv (fn [idx m]
                          (or (height-cache-get m bubble-w settings detail-expansions session-id)
-                           (estimated-height-with-turn-separator messages settings bubble-w idx m
+                           (estimated-height-cached messages settings bubble-w idx m
                              detail-expansions session-id)))
                    (range n) messages)
         est-off  (vec (reductions + 0 (map long est)))
