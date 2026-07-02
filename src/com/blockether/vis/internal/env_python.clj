@@ -79,19 +79,44 @@
   [^String s]
   (if (re-matches key-shaped-re s) (keyword s) s))
 
+(defn- leaf->py
+  "LEAF (non-collection) conversion shared by `->py` (the real boundary) and
+   `boundary-view` (the no-context test mirror) — one fn so the mirror can
+   never drift from the boundary again:
+
+   - keywords/symbols snake to the SAME Python name the agent calls
+     (`git-fetch!` -> \"git_fetch\") so stored forms read consistently.
+   - UUIDs (workspace/session ids in ctx) and java.time instants have no
+     Python analog — GraalPy would otherwise expose them as opaque
+     `<JavaObject[...]>` host pointers. Stringify so the rendered ctx and
+     the live dict both read as plain str.
+   - `java.util.Date` is what nippy hands back for every persisted `#inst`
+     (session/turn `:created-at`s) and it is NOT a Temporal — left as a
+     host object GraalPy materialises it as a Python datetime, which needs
+     the context's datetime module data: never imported ⇒
+     `NullPointerException: Cannot read field \"utc\" because \"moduleData\"
+     is null` (session 9c829d10, `sessions()`). ISO-8601 string instead.
+   - numbers and other auto-convertible boxed types hand straight to
+     polyglot."
+  [x]
+  (cond
+    (keyword? x) (kw->snake x)
+    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
+    (instance? java.util.Date x) (str (.toInstant ^java.util.Date x))
+    (or (instance? java.util.UUID x) (instance? java.time.temporal.Temporal x))
+    (str x)
+    :else x))
+
 (defn ->py
   "Clojure value -> something GraalPy accepts as a Python value. Primitives and
    Strings pass through (the Context auto-converts Java boxed types); collections
-   become polyglot proxies so Python sees dict/list; keywords become their name."
+   become polyglot proxies so Python sees dict/list; leaves convert via
+   `leaf->py` (keywords -> snake strings, UUID/Temporal/Date -> ISO strings)."
   [x]
   (cond
     (nil? x)     nil
     (string? x)  x
     (boolean? x) x
-    (keyword? x) (kw->snake x)
-    ;; symbols (e.g. trailer form heads) snake to the SAME Python name the agent
-    ;; calls — `git-fetch!` -> "git_fetch" — so stored forms read consistently.
-    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
     ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
     ;; ordered `LinkedHashMap` a tool returns (e.g. cat's `:lines` anchor map).
     ;; The new LinkedHashMap preserves the source's ITERATION ORDER — Clojure
@@ -104,23 +129,7 @@
       (ProxyHashMap/from hm))
     (or (vector? x) (seq? x) (set? x))
     (ProxyArray/fromList (ArrayList. ^java.util.Collection (mapv ->py x)))
-    ;; UUIDs (workspace/session ids in ctx) and java.time instants have no
-    ;; Python analog — GraalPy would otherwise expose them as opaque
-    ;; `<JavaObject[...]>` host pointers (not valid Python, leaks an address).
-    ;; Stringify so the rendered ctx and the live dict both read as plain str.
-    ;; `java.util.Date` is what nippy hands back for every persisted `#inst`
-    ;; (session/turn `:created-at`s) and it is NOT a Temporal — left to the
-    ;; `:else` branch it crosses as a host object and GraalPy materialises it
-    ;; as a Python datetime, which needs the context's datetime module data:
-    ;; never imported ⇒ `NullPointerException: Cannot read field "utc" because
-    ;; "moduleData" is null` (session 9c829d10, `sessions()`). ISO-8601 string,
-    ;; same as the Temporal branch.
-    (instance? java.util.Date x)
-    (str (.toInstant ^java.util.Date x))
-    (or (instance? java.util.UUID x) (instance? java.time.temporal.Temporal x))
-    (str x)
-    ;; numbers and other auto-convertible boxed types — hand straight to polyglot
-    :else        x))
+    :else        (leaf->py x)))
 
 (defn ->clj
   "Polyglot `Value` (a Python value) -> Clojure data. Dicts -> maps with
@@ -175,9 +184,11 @@
                    x)
     (or (vector? x) (seq? x) (set? x))
     (mapv boundary-view x)
-    (keyword? x) (kw->snake x)
-    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
-    :else        x))
+    ;; Leaves convert through the SAME fn the real boundary uses — this
+    ;; mirror had drifted (Dates/UUIDs/Temporals passed through raw here
+    ;; while `->py` stringified them), which let a test assert a shape the
+    ;; model never actually sees.
+    :else        (leaf->py x)))
 
 (defn sym->py-name
   "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
