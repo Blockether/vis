@@ -746,10 +746,11 @@
                           Telegram, no voice — zero voice JNI libs).
      :profile :cross    — all channels, NO voice.
      :profile :voice    — all channels + voice ASR (the default).
-     :with-assets true  — also embed the ~465 MB voice ASR model for a
-                          fully-offline 'fat' binary (default: download on
-                          first use). Only valid with :profile :voice; not part
-                          of the shipped release matrix — build it manually."
+     :with-assets true  — embed the ~465 MB voice ASR model for a fully-offline
+                          binary (default: download on first use). Only valid
+                          with :profile :voice. The SHIPPED `vis-<os>-voice`
+                          release assets build with this ON — voice users get
+                          offline ASR out of the box (~1.1 GB asset)."
   [opts]
   (let [with-assets? (boolean (:with-assets opts))
         profile      (resolve-profile opts)

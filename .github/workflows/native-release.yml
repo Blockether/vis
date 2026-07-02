@@ -4,9 +4,9 @@ name: Native Release
 # On each `v*` tag this builds, per OS, THREE native distributions:
 #   vis-<os>-tui    — minimal: TUI channel only, no web/Telegram, no voice
 #   vis-<os>        — cross: all channels, no voice
-#   vis-<os>-voice  — cross + voice ASR (model downloads on first use; the
-#                     465 MB embedded-model build stays a manual
-#                     `:with-assets true` option, not a shipped asset)
+#   vis-<os>-voice  — cross + voice ASR with the ~465 MB Parakeet model
+#                     EMBEDDED in the binary: fully offline voice, no
+#                     first-use download (~1.1 GB asset)
 # Every variant carries ONLY the build host's native libs, never another
 # platform's. Plus the portable JVM uberjar (full/voice profile — the one
 # deliberately cross-platform artifact), attached to that tag's release.
@@ -34,13 +34,13 @@ jobs:
         include:
           - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-tui,       args: ":profile :tui" }
           - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64,           args: ":profile :cross" }
-          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-voice,     args: ":profile :voice" }
+          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-voice,     args: ":profile :voice :with-assets true" }
           - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-tui,     args: ":profile :tui" }
           - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64,         args: ":profile :cross" }
-          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-voice,   args: ":profile :voice" }
+          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-voice,   args: ":profile :voice :with-assets true" }
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-tui.exe, args: ":profile :tui" }
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe,     args: ":profile :cross" }
-          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-voice.exe, args: ":profile :voice" }
+          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-voice.exe, args: ":profile :voice :with-assets true" }
     steps:
       - uses: actions/checkout@v4
       - uses: graalvm/setup-graalvm@v1
