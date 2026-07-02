@@ -8,4 +8,7 @@
          {:file "token-optimization.md" :title "Token optimization" :section "How it works" :order 10}
          {:file "graalpython.md"        :title "GraalPython sandbox" :section "How it works" :order 20}
          {:file "jvm-native-image.md"   :title "JVM & native-image"  :section "Runtime"      :order 30}
-         {:file "distributions.md"      :title "Custom distributions" :section "Runtime"     :order 40}]}
+         {:file "distributions.md"      :title "Custom distributions" :section "Runtime"     :order 40}
+         {:file "configuration.md"      :title "Configuration"        :section "Using Vis"   :order 50}
+         {:file "extending.md"          :title "Extending Vis"        :section "Using Vis"   :order 60}
+         {:file "python-extensions.md"  :title "Python extensions"    :section "Using Vis"   :order 70}]}

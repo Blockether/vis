@@ -334,6 +334,15 @@
    results are cached so a transient registry hiccup (caught → []) can't
    poison the cell; the next call simply retries."
   (atom nil))
+;; "Session-stable" has ONE exception: a `/reload` of Python extensions can
+;; add/remove slash commands mid-session. Drop the memo when that happens so
+;; the next `/` re-harvests and the new commands show up without a restart.
+(defonce ^{:private true
+           :clj-kondo/ignore [:unused-private-var]}
+  python-extension-slash-cache-reset
+  (vis/add-python-extension-change-listener!
+    ::reset-tui-slash-cache
+    (fn [_] (reset! registry-slash-commands-cache nil))))
 (defn- registry-slash-commands
   "All slashes harvested from the engine registry for typed `/`
    suggestions / exact slash submission in the TUI. Both top-level

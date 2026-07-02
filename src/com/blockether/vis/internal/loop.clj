@@ -17,6 +17,7 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.python-extensions :as python-extensions]
    [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -6353,6 +6354,10 @@
     ;; registries as a side effect; we just care about the extension
     ;; rows here.
     (extension/discover-extensions!)
+    ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
+    ;; classpath discovery so they land in the same registry walk below.
+    ;; Idempotent by content fingerprint — a no-op when nothing changed.
+    (python-extensions/load-python-extensions!)
     (extension/register-extensions! env install-extension!)
     env))
 
@@ -6413,6 +6418,39 @@
                        (assoc entry :environment (assoc environment :router router))))
               {} m))))
   nil)
+
+;; Keep live session envs in sync with Python-extension (re)loads. Each env
+;; caches its own `:extensions` rows — slash dispatch (`active-slashes env`)
+;; and sandbox bindings read those, NOT the global registry — so a `/reload`
+;; that swaps the registry must also reseat every cached env. Otherwise a
+;; newly added extension stays invisible to running sessions and stale rows
+;; keep calling into the closed GraalPy context ("Context execution was
+;; cancelled"). Same propagation pattern as `refresh-cached-routers!`.
+(defonce ^{:private true
+           :clj-kondo/ignore [:unused-private-var]}
+  python-extensions-env-sync
+  (python-extensions/add-change-listener!
+    ::sync-cached-envs
+    (fn [{:keys [extensions removed]}]
+      (doseq [[id {:keys [environment]}] @cache]
+        (try
+          (when (seq removed)
+            (when-let [exts-atom (:extensions environment)]
+              (let [gone (set removed)]
+                (swap! exts-atom
+                       (fn [exts] (vec (remove #(gone (:ext/name %)) exts)))))))
+          ;; install-extension! replaces same-name rows and re-syncs the
+          ;; sandbox bindings, so reloaded tools point at the NEW context.
+          (doseq [ext extensions]
+            (install-extension! environment ext))
+          ;; Removals with nothing (re)loaded still need a binding re-sync
+          ;; so the dropped extension's tools leave the sandbox.
+          (when (and (seq removed) (empty? extensions))
+            (sync-active-extension-symbols! environment))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::python-ext-env-sync-failed
+                       :data {:session id :error (ex-message t)}
+                       :msg "Failed to sync Python extensions into a cached session env"})))))))
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates

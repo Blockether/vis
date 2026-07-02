@@ -59,3 +59,8 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[GraalPython sandbox](graalpython.md)**: the in-process interpreter that executes the agent's actions.
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
 - **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
+- **[Configuration](configuration.md)**: providers and models, system-prompt overrides, router tuning, the database.
+- **[Extending Vis](extending.md)**: write an extension — new tools for the model, slash commands, doc pages.
+- **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able.
+
+Vis can also answer these questions itself: ask a running `vis` how to configure or extend it and it reads these same pages through its `vis_docs` tool.
