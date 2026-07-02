@@ -2078,6 +2078,21 @@
       (not (str/blank? fallback-content))
       {:role "user" :content fallback-content})))
 
+(defn- strip-assistant-thinking
+  "Cross-provider/model-SAFE version of a canonical assistant replay: drop
+   the `thinking` / `redacted_thinking` blocks (opaque provider-native state
+   — z.ai raw text, Anthropic HMAC, Responses encrypted items — none of
+   which survive a provider/model switch) but KEEP the text and `tool_use`
+   blocks, so the paired `<results>` tool_result message still answers a
+   tool_use on the wire. Returns nil when nothing but thinking remains (an
+   empty assistant message is a 400 on every wire)."
+  [assistant-message]
+  (when assistant-message
+    (let [content (vec (remove #(contains? #{"thinking" "redacted_thinking"} (:type %))
+                               (:content assistant-message)))]
+      (when (seq content)
+        (assoc assistant-message :content content)))))
+
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
    as an `[assistant-replay, <results> user message]` PAIR, in iteration
@@ -2086,24 +2101,60 @@
    (signed Anthropic thinking / z.ai reasoning / Responses items) so the model
    keeps its reasoning session; the results message carries what running that
    iteration's code actually returned.
-   dropped, leaving the model blind to its own form outputs).
 
-   Routed through `preserved-thinking-replay-messages` for the assistant side
-   so the oversized-chain telemetry stays; the upstream filter guarantees
-   every compatible entry carries an assistant-message → 1:1 with positions."
+   A provider/model MISMATCH (mid-turn fallback, health-gate demotion making
+   selected≠actual, model-name aliasing) must NOT blind the model: the old
+   behaviour dropped the whole pair, so the model never saw its own tool
+   results and re-issued the identical call every iteration. Now only the
+   opaque THINKING is dropped (`strip-assistant-thinking`) — the tool_use +
+   results still replay. When an entry has no assistant message at all
+   (or nothing but thinking), its results degrade to a PLAIN TEXT user
+   message (a tool_result with no answering tool_use is a wire error).
+
+   Cross-turn seeds (`:preserved-thinking/replay? false`) stay fully
+   excluded — their content already rides the frozen prior-turn rendering.
+
+   Compatible entries route through `preserved-thinking-replay-messages`
+   so the oversized-chain telemetry stays."
   [trailer-iters target]
-  (let [compatible (compatible-preserved-thinking-trailer-iters trailer-iters target)
-        replays    (vec (or (preserved-thinking-replay-messages compatible) []))]
-    (vec (mapcat (fn [[_pos iter-rec] replay]
-                   (if (:collapsed? iter-rec)
-                     ;; summarize/drop collapsed this iteration: drop its
-                     ;; assistant + tool_result PAIR entirely and emit only the
-                     ;; one-line gist (plain text) — real compaction.
-                     (if-let [m (iteration-results-message iter-rec)] [m] [])
-                     (let [results (iteration-results-message iter-rec)]
-                       (cond-> [replay]
-                         results (conj results)))))
-                 compatible replays))))
+  (let [iters      (vec (or trailer-iters []))
+        compatible (into #{} (map first)
+                         (compatible-preserved-thinking-trailer-iters iters target))]
+    (vec (mapcat
+          (fn [[pos iter-rec :as entry]]
+            (let [results (iteration-results-message iter-rec)]
+              (cond
+                ;; Cross-turn seed: opted out of replay; its evidence lives in
+                ;; the frozen prior-turn context, so emitting here would
+                ;; double-render it.
+                (false? (:preserved-thinking/replay? iter-rec))
+                []
+
+                ;; summarize/drop collapsed this iteration: drop its
+                ;; assistant + tool_result PAIR entirely and emit only the
+                ;; one-line gist (plain text) — real compaction.
+                (:collapsed? iter-rec)
+                (if results [results] [])
+
+                ;; Same provider+model, valid signature → verbatim replay
+                ;; with the full thinking chain.
+                (contains? compatible pos)
+                (let [replay (first (preserved-thinking-replay-messages [entry]))]
+                  (cond-> [replay] results (conj results)))
+
+                ;; Mismatched provider/model or poisoned signature: replay
+                ;; SANS thinking so the tool_use ids stay answerable, then
+                ;; the results.
+                :else
+                (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
+                  (cond-> [stripped] results (conj results))
+                  ;; No assistant message (errored before one landed) or
+                  ;; nothing but thinking: no tool_use to answer — degrade
+                  ;; the results to plain text.
+                  (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                    [textual]
+                    [])))))
+          iters))))
 
 (defn- form-wire-chars
   "Approximate the wire SIZE (chars) one form contributes — error / native result
@@ -3822,6 +3873,15 @@
                           :last-iter-input 0 :last-iter-reasoning 0
                           :previous-request-input (long (or (:last-request-tokens previous-usage) 0))
                           :iter-count 0})
+        ;; Running SUM of per-iteration cost maps, each priced by the model
+        ;; that ACTUALLY served that iteration (svar may fall back mid-turn;
+        ;; the health gate can make selected≠actual). nil until the first
+        ;; priced iteration; a turn served entirely by an unpriced local
+        ;; model stays nil and finalize-cost falls back to the root-model
+        ;; estimate (which prices to nothing for the same reason). Without
+        ;; this, a turn served by a free local model was billed at the
+        ;; SELECTED model's pricing (e.g. gemma-on-lmstudio at Opus rates).
+        accrued-cost-atom (atom nil)
         accumulate-usage! (fn [api-usage]
                             (when api-usage
                               (swap! usage-atom
@@ -3850,36 +3910,55 @@
         ;; usage (e.g. iteration-level error before a response
         ;; landed), in which case the persistance layer leaves the
         ;; columns NULL.
-        iteration-token-cost (fn [api-usage]
-                               (when api-usage
-                                 (let [in   (long (or (:prompt_tokens api-usage) 0))
-                                       out  (long (or (:completion_tokens api-usage) 0))
-                                       reas (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
-                                       cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                                      (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
-                                                      0))
-                                       cache-created (long (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
-                                                               (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
-                                                               0))
-                                       ;; svar's `estimate-cost` returns a MAP
-                                       ;; `{:input-cost :output-cost :total-cost
-                                       ;; :model :pricing}`, NOT a bare number.
-                                       ;; Pull `:total-cost` out; nil pricing
-                                       ;; (e.g. unknown model) leaves the
-                                       ;; column NULL on disk, which the read
-                                       ;; side defaults to 0.0.
-                                       cost-map (estimate-token-cost effective-model in out {:api-usage api-usage})
-                                       total    (when (map? cost-map) (:total-cost cost-map))]
-                                   {:tokens   {:input in :output out :reasoning reas :cached cach
-                                               :cache-created cache-created}
-                                    :cost-usd (when (number? total) (double total))})))
+        iteration-token-cost (fn iteration-token-cost
+                               ([api-usage] (iteration-token-cost api-usage nil))
+                               ([api-usage actual-model]
+                                (when api-usage
+                                  (let [in   (long (or (:prompt_tokens api-usage) 0))
+                                        out  (long (or (:completion_tokens api-usage) 0))
+                                        reas (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
+                                        cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                                       (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                       0))
+                                        cache-created (long (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
+                                                                (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                                0))
+                                        ;; svar's `estimate-cost` returns a MAP
+                                        ;; `{:input-cost :output-cost :total-cost
+                                        ;; :model :pricing}`, NOT a bare number.
+                                        ;; Pull `:total-cost` out; nil pricing
+                                        ;; (e.g. unknown model) leaves the
+                                        ;; column NULL on disk, which the read
+                                        ;; side defaults to 0.0.
+                                        ;; Price by the model that ACTUALLY served
+                                        ;; the call (svar mid-turn fallback / the
+                                        ;; health gate make selected≠actual); the
+                                        ;; pre-resolved root model is the fallback
+                                        ;; pricing key only when routing metadata
+                                        ;; is absent (e.g. error before a response).
+                                        cost-map (estimate-token-cost (or (some-> actual-model str not-empty)
+                                                                          effective-model)
+                                                                      in out {:api-usage api-usage})
+                                        total    (when (map? cost-map) (:total-cost cost-map))]
+                                    (when (map? cost-map)
+                                      (swap! accrued-cost-atom #(merge-cost-maps (or % {}) cost-map)))
+                                    {:tokens   {:input in :output out :reasoning reas :cached cach
+                                                :cache-created cache-created}
+                                     :cost-usd (when (number? total) (double total))}))))
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens
                                       cached-tokens cache-creation-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
-                              cost (estimate-token-cost effective-model input-tokens output-tokens
-                                                        {:cached-tokens cached-tokens
-                                                         :cache-creation-tokens cache-creation-tokens})]
+                              ;; Prefer the SUM of per-iteration costs (each priced
+                              ;; by its actual serving model) over re-estimating the
+                              ;; whole turn at the root model's rates — a turn that
+                              ;; fell back mid-way (or was served entirely by a free
+                              ;; local model while a paid model was selected) must
+                              ;; not bill at the selected model's pricing.
+                              cost (or @accrued-cost-atom
+                                       (estimate-token-cost effective-model input-tokens output-tokens
+                                                            {:cached-tokens cached-tokens
+                                                             :cache-creation-tokens cache-creation-tokens}))]
                           {:tokens {:input input-tokens :output output-tokens
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :cache-created cache-creation-tokens
@@ -4435,7 +4514,12 @@
                         block-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                                                      (let [tc (iteration-token-cost (:api-usage iteration-result))]
+                                                                      ;; Price by the ACTUAL serving model (`:llm-model` =
+                                                                      ;; routed metadata), not the pre-resolved root — a
+                                                                      ;; fallback iteration must not bill at the selected
+                                                                      ;; model's rates.
+                                                                      (let [tc (iteration-token-cost (:api-usage iteration-result)
+                                                                                                     (:llm-model iteration-result))]
                                                                         (cond-> {:session-turn-id session-turn-id
                                                                                  :code (or block-code "")
                                                                                  :forms forms-vec

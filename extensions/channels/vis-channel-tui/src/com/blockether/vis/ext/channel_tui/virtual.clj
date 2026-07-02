@@ -202,10 +202,10 @@
               len (- end start)
               ;; First non-space char within the first 4 columns — markdown
               ;; treats deeper indents as code, not as a block marker.
-              j   (loop [k start]
-                    (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
-                      (recur (inc k))
-                      k))
+              j   (long (loop [k start]
+                          (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
+                            (recur (inc k))
+                            k)))
               marker?
               (and (< j end)
                 (let [c (.charAt s j)]
@@ -213,10 +213,10 @@
                         (or (= (inc j) end) (= \space (.charAt s (inc j)))))
                     ;; ordered list: digits then `.` then space/eol
                     (and (Character/isDigit c)
-                      (let [d (loop [k j]
-                                (if (and (< k end) (Character/isDigit (.charAt s k)))
-                                  (recur (inc k))
-                                  k))]
+                      (let [d (long (loop [k j]
+                                      (if (and (< k end) (Character/isDigit (.charAt s k)))
+                                        (recur (inc k))
+                                        k)))]
                         (and (< d end) (= \. (.charAt s d))
                           (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
               base (max 1 (quot (+ len (dec w)) w))]
@@ -281,8 +281,10 @@
                     (some-> (:ir message) ir/extract-text))]
      (cond
        (= role :user)
-       ;; label + top/bottom pad + gap = 4 chrome rows (see bubble-height*).
-       (long (+ 4 (wrapped-rows-est text prose-w)))
+       ;; label + top/bottom pad + gap (see bubble-height*) + 2 rows of
+       ;; markdown block-gap slack — pasted JSON/log blobs grow a couple of
+       ;; walker-inserted blank rows that per-line math can't see.
+       (long (+ 6 (prose-rows-est text prose-w)))
 
        (and (= role :assistant) trace)
        (let [n-iter    (long (count trace))
@@ -298,7 +300,7 @@
              ;; largest height a collapsed-or-inline section can paint.
              cap       (+ peek (long ir/reasoning-collapse-min-hidden))
              section-rows (fn ^long [s]
-                            (let [full (wrapped-rows-est s fold-w)]
+                            (let [full (prose-rows-est s fold-w)]
                               (cond (zero? full) 0
                                     expanded?    (+ full 3)
                                     :else        (+ (min full cap) 3))))
@@ -329,7 +331,7 @@
              ;; + peek/full + bottom edge ≈ content + 5 chrome rows.
              think-rows (long (reduce
                                 (fn [^long acc it]
-                                  (+ acc (long (let [full (wrapped-rows-est (:thinking it) fold-w)]
+                                  (+ acc (long (let [full (prose-rows-est (:thinking it) fold-w)]
                                                  (cond (zero? full) 0
                                                        expanded?    (+ full 5)
                                                        :else        (+ (min full cap) 5))))))
@@ -339,14 +341,14 @@
              n-iter                              ;; iteration headers
              form-rows                           ;; code + result (+ error) rows
              think-rows                          ;; per-iteration reasoning + band
-             (wrapped-rows-est text (max 1 (min 60 fold-w))))))
+             (prose-rows-est text (max 1 (min 60 fold-w))))))
 
        (= role :assistant)
        ;; label + footer + gap chrome for a plain answer bubble.
-       (long (+ 5 (wrapped-rows-est text prose-w)))
+       (long (+ 5 (prose-rows-est text prose-w)))
 
        :else
-       (long (+ 4 (wrapped-rows-est text prose-w)))))))
+       (long (+ 6 (prose-rows-est text prose-w)))))))
 
 (defn- estimated-height-with-turn-separator
   [_messages _settings bubble-w _idx message detail-expansions session-id]
