@@ -65,3 +65,6 @@ hs_err_pid*.log
 # python bytecode
 __pycache__/
 *.pyc
+
+# transient dev logs
+.docs-dev.log

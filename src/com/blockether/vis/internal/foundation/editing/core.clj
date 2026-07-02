@@ -1603,9 +1603,15 @@
               (throw (ex-info "patch grouped :edits entries must be maps"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
-            (when (contains? edit :path)
+            ;; The LLM-facing JSON schema marks :path as required, so callers
+            ;; routinely echo an EMPTY :path (""/nil) into each grouped edit
+            ;; just to satisfy it. Treat a blank per-edit :path as ABSENT and
+            ;; only refuse a genuinely conflicting NON-EMPTY path — the group's
+            ;; :path is assoc'd over it below regardless.
+            (when-let [stated (some-> edit :path str str/trim not-empty)]
               (throw (ex-info "patch grouped :edits inherit :path; do not repeat it per edit"
                        {:type :ext.foundation.editing/invalid-patch-edit
+                        :path stated
                         :edit edit})))
             (cond-> (assoc edit :path path)
               (some? expected_mtime) (assoc :expected_mtime expected_mtime)
