@@ -333,6 +333,76 @@
                      build)]
     (OfflineRecognizer. config)))
 
+(defn- u16le ^long [^bytes b ^long off]
+  (bit-or (bit-and (aget b off) 0xff)
+    (bit-shift-left (bit-and (aget b (inc off)) 0xff) 8)))
+
+(defn- u32le ^long [^bytes b ^long off]
+  (bit-or (u16le b off) (bit-shift-left (u16le b (+ off 2)) 16)))
+
+(defn validate-wav-file!
+  "Structural RIFF/WAVE check in PURE JVM code before a file reaches
+   sherpa-onnx's native WaveReader, which SIGSEGVs AND ABORTS THE WHOLE JVM
+   on malformed input — including a well-formed header whose declared chunk
+   sizes overrun the bytes actually present (a truncated upload or partial
+   write; observed live). No catchable native exception is on offer, so
+   every chunk in the table must fit inside the file, and a 16-bit PCM
+   `fmt ` chunk plus a `data` chunk must both be present (the only shape
+   either producer emits — ui.js's encoder and the TUI recorder — and the
+   only one WaveReader reads). Throws ex-info :voice-asr/invalid-wav.
+   Returns audio-path."
+  [audio-path]
+  (let [f     (io/file audio-path)
+        len   (.length f)
+        fail! (fn [reason data]
+                (throw (ex-info (str "Voice audio is not a readable WAV file - " reason)
+                         (merge {:type :voice-asr/invalid-wav
+                                 :path (str audio-path)
+                                 :reason reason
+                                 :length len}
+                           data))))]
+    (when (< len 44) (fail! "shorter than a WAV header" {}))
+    (with-open [in (java.io.DataInputStream.
+                     (java.io.BufferedInputStream. (io/input-stream f)))]
+      (let [head (byte-array 12)]
+        (.readFully in head)
+        (when-not (and (= "RIFF" (String. head 0 4 "US-ASCII"))
+                    (= "WAVE" (String. head 8 4 "US-ASCII")))
+          (fail! "missing RIFF/WAVE magic" {})))
+      (loop [pos 12 pcm16? false data? false]
+        (if (>= pos len)
+          (do (when-not pcm16? (fail! "no 16-bit PCM fmt chunk" {}))
+            (when-not data? (fail! "no data chunk" {})))
+          (do
+            (when (> (+ pos 8) len)
+              (fail! "dangling bytes after the last chunk" {:at pos}))
+            (let [hdr  (byte-array 8)
+                  _    (.readFully in hdr)
+                  id   (String. hdr 0 4 "US-ASCII")
+                  size (u32le hdr 4)
+                  end  (+ pos 8 size)]
+              (when (> end len)
+                (fail! "chunk declares more bytes than the file holds (truncated?)"
+                  {:chunk id :declared-size size :at pos}))
+              (let [fmt-read? (and (= id "fmt ") (>= size 16))
+                    pcm16?    (or pcm16?
+                                (and fmt-read?
+                                  (let [fb (byte-array 16)]
+                                    (.readFully in fb)
+                                    (and (= 1 (u16le fb 0))      ; PCM
+                                      (= 16 (u16le fb 14)))))) ; 16-bit
+                    ;; chunks are word-aligned, but a final odd-sized
+                    ;; chunk may legally arrive unpadded
+                    next-pos (min len (+ end (mod size 2)))]
+                (loop [n (- next-pos (+ pos 8 (if fmt-read? 16 0)))]
+                  (when (pos? n)
+                    (let [s (.skipBytes in (int n))]
+                      (when-not (pos? s)
+                        (fail! "unexpected EOF inside a chunk" {:chunk id}))
+                      (recur (- n s)))))
+                (recur next-pos pcm16? (or data? (= id "data"))))))))))
+  audio-path)
+
 (def min-audio-seconds
   "Minimum microphone audio length sent to Parakeet ASR.
    Very short clips either transcribe blank or trigger opaque ONNX Conv_quant
@@ -372,6 +442,7 @@
        (throw (ex-info (str "Missing audio file: " audio-path)
                 {:type :voice-asr/missing-audio-file
                  :path (str audio-path)})))
+     (validate-wav-file! audio-path)
      (let [reader (WaveReader. (str audio-file))
            _      (assert-audio-long-enough! audio-path reader)
            r      (recognizer files)

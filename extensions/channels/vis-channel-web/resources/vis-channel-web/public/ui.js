@@ -5,7 +5,8 @@
    - `/` opens slash-command suggestions, `@word` opens the file picker;
      arrows + Enter/Tab select, Esc closes
    - thread follows the newest content while you are near the bottom
-   - mic records, encodes 16-bit PCM WAV, POSTs to /voice (Parakeet) */
+   - mic records (AudioWorklet on the audio thread, screen wake lock held
+     for the duration), encodes 16-bit PCM WAV, POSTs to /voice (Parakeet) */
 (function () {
   function ready(fn) {
     if (document.readyState !== "loading") { fn(); }
@@ -663,7 +664,7 @@
         var s = Math.floor(ms / 1000);
         return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
       }
-      function buildRecUi() {
+      function buildRecUi(capturedMs) {
         var wave = document.createElement("div");
         wave.className = "wave";
         var bars = [];
@@ -688,9 +689,11 @@
         form.insertBefore(wave, composer);
         form.appendChild(cancel);
         form.appendChild(accept);
-        var startedAt = Date.now();
+        /* the clock counts CAPTURED AUDIO, not wall time — when the
+           browser pauses capture (screen lock, app switch) the timer
+           visibly freezes instead of lying about what was recorded */
         var timer = setInterval(function () {
-          time.textContent = fmtTime(Date.now() - startedAt);
+          time.textContent = fmtTime(capturedMs());
         }, 250);
         return { wave: wave, bars: bars, levels: [],
                  time: time, cancel: cancel, accept: accept,
@@ -739,21 +742,90 @@
             }).catch(function () { fail("could not start download"); });
         }).catch(function () { fail("could not reach the server"); });
       }
+      /* Capture on the AUDIO RENDERING THREAD via AudioWorklet: the
+         deprecated ScriptProcessorNode fires on the MAIN thread, so DOM
+         work (SSE swaps, markdown highlight) or a paused page silently
+         DROPPED microphone buffers — a 2-minute dictation arrived as
+         ~30s of audio. The worklet batches 4096 samples (~85ms at
+         48kHz, the old ScriptProcessor cadence). Fallback stays for
+         ancient WebViews only. Resolves to {stop}. */
+      function startCapture(ac, src, onChunk) {
+        if (ac.audioWorklet && window.AudioWorkletNode) {
+          return ac.audioWorklet.addModule("/ui/js/rec-worklet.js").then(function () {
+            var node = new AudioWorkletNode(ac, "vis-capture", {
+              numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1]
+            });
+            node.port.onmessage = function (ev) { onChunk(ev.data); };
+            src.connect(node); node.connect(ac.destination);
+            return { stop: function () { node.port.onmessage = null; node.disconnect(); } };
+          });
+        }
+        var proc = ac.createScriptProcessor(4096, 1, 1);
+        proc.onaudioprocess = function (e) {
+          onChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
+        };
+        src.connect(proc); proc.connect(ac.destination);
+        return Promise.resolve({
+          stop: function () { proc.onaudioprocess = null; proc.disconnect(); }
+        });
+      }
       function startRecording() {
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
           var ac = new AC();
           /* iOS Safari creates AudioContexts suspended — without resume()
-             onaudioprocess never fires and the recording stays empty */
+             capture never starts and the recording stays empty */
           if (ac.state === "suspended") { ac.resume(); }
           var src = ac.createMediaStreamSource(stream);
-          var proc = ac.createScriptProcessor(4096, 1, 1);
           var chunks = [];
-          var ui = buildRecUi();
+          var captured = 0; /* samples actually landed in chunks */
+          var startedAt = Date.now();
+          var cap = null;
+          var wakeLock = null;
+          /* Screen Wake Lock: phones auto-lock mid-dictation (iPhone
+             default: 30s) and a locked screen SUSPENDS the page — capture
+             stops while the speaker keeps talking. Hold a wake lock for
+             the whole recording so auto-lock never fires; re-acquire on
+             return because the browser releases it whenever the page
+             hides. (A page CANNOT capture through an actual lock — this
+             prevents the lock instead.) */
+          function acquireWakeLock() {
+            if (navigator.wakeLock && navigator.wakeLock.request) {
+              navigator.wakeLock.request("screen")
+                .then(function (l) { wakeLock = l; })
+                .catch(function () { /* denied (low battery, iframe): capture still works */ });
+            }
+          }
+          acquireWakeLock();
+          var warnedPause = false;
+          function capturePaused() {
+            if (!warnedPause && rec) {
+              warnedPause = true;
+              micNote("Recording was paused by the browser (screen lock or app switch) — the paused stretch is not captured.", "info");
+            }
+          }
+          /* a manual lock / app switch still suspends the context: warn
+             once and resume the moment the browser allows it */
+          ac.onstatechange = function () {
+            if (rec && ac.state !== "running") {
+              capturePaused();
+              if (ac.resume) { ac.resume().catch(function () {}); }
+            }
+          };
+          function onVisibility() {
+            if (document.visibilityState === "visible") {
+              acquireWakeLock();
+              if (ac.state !== "running" && ac.resume) { ac.resume().catch(function () {}); }
+            }
+          }
+          document.addEventListener("visibilitychange", onVisibility);
+          var ui = buildRecUi(function () {
+            return (captured / ac.sampleRate) * 1000;
+          });
           composer.form.classList.add("recording");
           mic.classList.add("recording");
-          proc.onaudioprocess = function (e) {
-            var data = e.inputBuffer.getChannelData(0);
-            chunks.push(new Float32Array(data));
+          function onChunk(data) {
+            chunks.push(data);
+            captured += data.length;
             /* rolling RMS -> the bars ride the voice */
             var sum = 0;
             for (var i = 0; i < data.length; i += 8) { sum += data[i] * data[i]; }
@@ -765,10 +837,13 @@
               ui.bars[j].style.height =
                 Math.max(4, Math.min(30, 4 + lv * 220)) + "px";
             }
-          };
-          src.connect(proc); proc.connect(ac.destination);
+          }
           function teardown() {
-            proc.disconnect(); src.disconnect();
+            if (cap) { cap.stop(); cap = null; }
+            document.removeEventListener("visibilitychange", onVisibility);
+            ac.onstatechange = null;
+            if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; }
+            src.disconnect();
             stream.getTracks().forEach(function (t) { t.stop(); });
             var rate = ac.sampleRate;
             ac.close();
@@ -778,6 +853,13 @@
             rec = null;
             return rate;
           }
+          startCapture(ac, src, onChunk).then(function (c) {
+            /* cancelled before the worklet module finished loading */
+            if (rec) { cap = c; } else { c.stop(); }
+          }).catch(function () {
+            micNote("Voice capture failed to start — try again.");
+            if (rec) { rec.stop(); }
+          });
           rec = { stop: teardown };
           ui.cancel.addEventListener("click", function () {
             teardown(); /* discard - no transcription */
@@ -785,6 +867,13 @@
           });
           ui.accept.addEventListener("click", function () {
             var rate = teardown();
+            /* wall clock vs captured audio: a big gap means the browser
+               paused capture — say how much is missing instead of
+               returning a mysteriously short transcript */
+            var lostMs = (Date.now() - startedAt) - (captured / rate) * 1000;
+            if (lostMs > 3000) {
+              micNote("~" + Math.round(lostMs / 1000) + "s of speech was not captured (the browser paused recording) — transcribing the rest.", "info");
+            }
             mic.disabled = true;
             /* the model is already installed by here (ensureVoiceModel gates
                recording), but transcription still takes a moment — say so */
