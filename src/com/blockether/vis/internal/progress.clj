@@ -111,10 +111,10 @@
 (defn- envelope-duration-ms
   [envelope]
   (when (and (map? envelope)
-          (nat-int? (:started-at-ms envelope))
-          (nat-int? (:finished-at-ms envelope)))
+             (nat-int? (:started-at-ms envelope))
+             (nat-int? (:finished-at-ms envelope)))
     (max 0 (- (long (:finished-at-ms envelope))
-             (long (:started-at-ms envelope))))))
+              (long (:started-at-ms envelope))))))
 
 (defn- form-result-kind
   "Classify a form chunk for the channel's `show-result?` gate.
@@ -198,8 +198,8 @@
    trace views."
   [chunk]
   (boolean
-    (or (:vis/structurally-silent? chunk)
-      (= "vis_silent" (:result chunk)))))
+   (or (:vis/structurally-silent? chunk)
+       (= "vis_silent" (:result chunk)))))
 
 (defn- chunk->form-start
   "Build the initial `:forms` entry for a `:form-start` chunk. Only the
@@ -229,24 +229,24 @@
       ;; Native-tool op-card fields (pre-rendered card + badge label + colour),
       ;; projected from the ONE canonical list so this builder can't drift from
       ;; the gateway / restore builders (see internal/form.clj).
-      (form/->display chunk)
-      {:code            (:code chunk)
-       :comment         (:comment chunk)
-       :render-segments (:render-segments chunk)
-       :scope           (or (:scope chunk) (:scope prev-form))
-       :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
-       :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
+     (form/->display chunk)
+     {:code            (:code chunk)
+      :comment         (:comment chunk)
+      :render-segments (:render-segments chunk)
+      :scope           (or (:scope chunk) (:scope prev-form))
+      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
+      :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
        ;; The SINGLE display surface the channels paint (render.clj / web both read
        ;; `(:result form)`): the pre-rendered markdown the loop built — a native
        ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
-       :result          (:result chunk)
+      :result          (:result chunk)
        ;; raw stdout kept for any model-context / resume consumer.
-       :stdout          (:stdout chunk)
-       :result-kind     (form-result-kind chunk)
-       :result-detail   (form-result-detail chunk)
-       :error           (:error chunk)
-       :success?        (not errored?)
-       :silent?         (and (not errored?) (silent-chunk? chunk))})))
+      :stdout          (:stdout chunk)
+      :result-kind     (form-result-kind chunk)
+      :result-detail   (form-result-detail chunk)
+      :error           (:error chunk)
+      :success?        (not errored?)
+      :silent?         (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
   [entry display-idx form]
@@ -258,10 +258,10 @@
    down; the channel re-numbers in display order."
   [entry idx]
   (update entry :forms
-    (fn [forms]
-      (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
-        (into (subvec forms 0 idx) (subvec forms (inc idx)))
-        forms))))
+          (fn [forms]
+            (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
+              (into (subvec forms 0 idx) (subvec forms (inc idx)))
+              forms))))
 
 (defn- insert-empty-form-at
   "Insert a placeholder form at display index `idx`, padding if needed.
@@ -269,12 +269,12 @@
    visible without overwriting later visible slots."
   [entry idx]
   (update entry :forms
-    (fn [forms]
-      (if (and (vector? forms) (integer? idx) (not (neg? idx)))
-        (let [padded (pad-forms-to forms idx)]
-          (into (conj (subvec padded 0 idx) {:position idx})
-            (subvec padded idx)))
-        forms))))
+          (fn [forms]
+            (if (and (vector? forms) (integer? idx) (not (neg? idx)))
+              (let [padded (pad-forms-to forms idx)]
+                (into (conj (subvec padded 0 idx) {:position idx})
+                      (subvec padded idx)))
+              forms))))
 
 (defn- hide-form-slot
   "Remember original form index `idx` as elided and drop its current
@@ -286,8 +286,8 @@
     entry
     (let [display-idx (display-form-idx entry idx)]
       (-> entry
-        (update :elided-form-idxs (fnil conj #{}) idx)
-        (drop-form-at display-idx)))))
+          (update :elided-form-idxs (fnil conj #{}) idx)
+          (drop-form-at display-idx)))))
 
 (defn- unhide-form-slot
   "Make original form index `idx` visible again. This happens when a block
@@ -297,8 +297,8 @@
     entry
     (let [display-idx (display-form-idx entry idx)]
       (-> entry
-        (update :elided-form-idxs disj idx)
-        (insert-empty-form-at display-idx)))))
+          (update :elided-form-idxs disj idx)
+          (insert-empty-form-at display-idx)))))
 
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
@@ -312,13 +312,13 @@
     :response-parse
     (if (= :done (:status chunk))
       (-> entry
-        (dissoc :content-stream)
-        (assoc :activity nil :response-parse chunk))
+          (dissoc :content-stream)
+          (assoc :activity nil :response-parse chunk))
       (assoc entry :activity :response-parse :response-parse chunk))
 
     :reasoning
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
-                          (normalize-thinking-text (:thinking entry)))]
+                            (normalize-thinking-text (:thinking entry)))]
       (assoc entry :thinking next-thinking :activity nil))
 
     :content
@@ -327,51 +327,65 @@
     ;; reasoning text. Cleared by :response-parse :done and
     ;; :iteration-final once the parsed block takes over.
     (let [next-content (or (normalize-thinking-text (:content chunk))
-                         (:content-stream entry))]
+                           (:content-stream entry))]
       (assoc entry :content-stream next-content :activity nil))
+
+    :assistant-prose
+    ;; Full end-of-iteration commentary (the "prose beyond the code"). The loop
+    ;; emits this AFTER the parse (content-stream already cleared) and BEFORE the
+    ;; forms run. Persist it on the entry as `:assistant-prose` so the renderer
+    ;; paints it as its OWN block between the thinking trace and the code+result
+    ;; — LIVE, not only on the DB-restored trace. Without this the prose vanished
+    ;; the moment the code block landed, because `:content-stream` is dropped
+    ;; once `:forms` exists (see render's `content-stream (when (empty? forms) …)`).
+    (assoc entry
+           :assistant-prose (or (some-> (:text chunk) str str/trim not-empty)
+                                (:assistant-prose entry))
+           :content-stream nil
+           :activity nil)
 
     :provider-fallback
     (-> entry
-      (assoc :activity :provider-call)
-      (update :provider-fallbacks conj
-        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+        (assoc :activity :provider-call)
+        (update :provider-fallbacks conj
+                (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :provider-retry-reset
     ;; Provider stream died after emitting live text. Vis retries the whole
     ;; provider call before any code eval, so rewind the live attempt: drop
     ;; stale reasoning/content/parse state and keep only the retry recap.
     (-> entry
-      (assoc :activity :provider-call)
-      (dissoc :thinking :content-stream :response-parse)
-      (update :provider-fallbacks conj
-        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+        (assoc :activity :provider-call)
+        (dissoc :thinking :content-stream :response-parse)
+        (update :provider-fallbacks conj
+                (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
     (let [entry'      (unhide-form-slot entry (:position chunk))
           display-idx (display-form-idx entry' (:position chunk))]
       (assoc (assoc-form entry' display-idx (chunk->form-start chunk))
-        :activity nil))
+             :activity nil))
 
     :form-result
     (let [silent? (structurally-silent-chunk? chunk)]
       (if silent?
         (assoc (hide-form-slot entry (:position chunk))
-          :activity nil)
+               :activity nil)
         (let [entry'      (unhide-form-slot entry (:position chunk))
               display-idx (display-form-idx entry' (:position chunk))
               prev-form   (get (:forms entry') display-idx)]
           (assoc (assoc-form entry' display-idx
-                   (chunk->form-result prev-form chunk))
-            :activity nil))))
+                             (chunk->form-result prev-form chunk))
+                 :activity nil))))
 
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
           base (assoc entry
-                 :thinking (or (normalize-thinking-text (:thinking chunk))
-                             (normalize-thinking-text (:thinking entry)))
-                 :activity nil
-                 :final    (:final chunk)
-                 :done?    (boolean (:done? chunk)))
+                      :thinking (or (normalize-thinking-text (:thinking chunk))
+                                    (normalize-thinking-text (:thinking entry)))
+                      :activity nil
+                      :final    (:final chunk)
+                      :done?    (boolean (:done? chunk)))
           ;; Structurally-silent bookkeeping blocks (e.g. title updates)
           ;; are hidden as chunks arrive. Other successful `:vis/silent`
           ;; blocks stay in the timeline with `:silent? true`; channel
@@ -382,22 +396,22 @@
           base         (reduce (fn [e engine-idx]
                                  (let [display-idx (display-form-idx e engine-idx)]
                                    (if (and (integer? display-idx)
-                                         (< display-idx (count (:forms e))))
+                                            (< display-idx (count (:forms e))))
                                      (assoc-in e [:forms display-idx :silent?] true)
                                      e)))
-                         base
-                         (sort silent-idxs))]
+                               base
+                               (sort silent-idxs))]
       (if (some? answer-idx)
         (hide-form-slot base answer-idx)
         base))
 
     :iteration-error
     (assoc entry
-      :thinking (or (normalize-thinking-text (:thinking chunk))
-                  (normalize-thinking-text (:thinking entry)))
-      :activity nil
-      :error    (:error chunk)
-      :done?    true)
+           :thinking (or (normalize-thinking-text (:thinking chunk))
+                         (normalize-thinking-text (:thinking entry)))
+           :activity nil
+           :error    (:error chunk)
+           :done?    true)
 
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))
@@ -425,8 +439,8 @@
          ;; path produces.
          canon    (fn [iteration entry]
                     (iteration/canonicalize
-                      (assoc entry :position (when (integer? iteration)
-                                               (max 0 (dec (long iteration)))))))
+                     (assoc entry :position (when (integer? iteration)
+                                              (max 0 (dec (long iteration)))))))
          as-vec   #(vec (map (fn [[it entry]] (canon it entry)) %))]
      {:on-chunk     (fn [chunk]
                       ;; Every streaming chunk carries its 1-based iteration
@@ -437,10 +451,10 @@
                       ;; real iteration and shifts live numbering by +1.
                       (when-let [iteration (:iteration chunk)]
                         (let [tl (swap! timeline update iteration
-                                   (fn [entry]
-                                     (update-entry
-                                       (or entry (empty-iteration-entry iteration))
-                                       chunk)))]
+                                        (fn [entry]
+                                          (update-entry
+                                           (or entry (empty-iteration-entry iteration))
+                                           chunk)))]
                           (when on-update
                             (on-update (as-vec tl) chunk)))))
       :get-timeline #(as-vec @timeline)})))

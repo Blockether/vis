@@ -514,22 +514,42 @@
                :else                     "linux")]
     (str o "-" a)))
 
+(defn- pack-native-token
+  "tree-sitter-language-pack native artifact suffix for the build host. The
+   pack publishes its OWN rid scheme (macos-arm64 / macos-x86_64 /
+   linux-aarch64 / linux-x86_64 / windows-x86_64) — NOT the fff/rift/ruff
+   darwin-arm64 style; both verified against the Clojars artifact list."
+  []
+  (let [os    (str/lower-case (System/getProperty "os.name"))
+        arch  (str/lower-case (System/getProperty "os.arch"))
+        arm?  (boolean (#{"aarch64" "arm64"} arch))]
+    (cond
+      (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
+      (str/includes? os "win") "windows-x86_64"
+      :else                     (str "linux-" (if arm? "aarch64" "x86_64")))))
+
 (defn- native-lib-jars
-  "Resolve the host-platform fff / rift / ruff native artifacts — at the SAME
-   version as each main jar already in `basis` — so their `prebuilds/**`
-   resources EMBED into the image (each main jar's native-image.properties carries
-   the resource glob; the binding extracts + loads at run time). A native image
-   can't download natives, so without this the FFM libs fall back to verbatim /
-   fail in the binary. Returns the resolved native-jar paths (empty if a lib isn't
-   in the basis or its native jar isn't published yet)."
+  "Resolve the host-platform native artifacts of the FFM libs (fff / rift /
+   ruff `prebuilds/**`, tree-sitter pack `natives/<rid>/**`) — at the SAME
+   version as each main jar already in `basis` — so their native libs EMBED
+   into the image (fff/rift/ruff carry a `prebuilds/**` glob in their own
+   metadata; the pack ships NO glob, so native-image-args adds a host-scoped
+   one). ONLY the build host's jar goes on the classpath — that is the whole
+   per-platform guarantee: even the broad `prebuilds/**` glob can only match
+   host libs. A native image can't download natives, so without this the FFM
+   libs fall back to verbatim / fail in the binary. Returns the resolved
+   native-jar paths (empty if a lib isn't in the basis or its native jar
+   isn't published yet)."
   [basis]
   (let [tok  (native-lib-token)
-        want (keep (fn [[main prefix]]
+        want (keep (fn [[main artifact]]
                      (when-let [v (some-> basis :libs (get main) :mvn/version)]
-                       [(symbol "com.blockether" (str prefix "-" tok)) {:mvn/version v}]))
-               {'com.blockether/fff  "fff-native"
-                'com.blockether/rift "rift-native"
-                'com.blockether/ruff "ruff-native"})
+                       [(symbol "com.blockether" artifact) {:mvn/version v}]))
+               {'com.blockether/fff  (str "fff-native-" tok)
+                'com.blockether/rift (str "rift-native-" tok)
+                'com.blockether/ruff (str "ruff-native-" tok)
+                'com.blockether/tree-sitter-language-pack
+                (str "tree-sitter-language-pack-native-" (pack-native-token))})
         deps (into {} want)]
     (when (seq deps)
       (let [b (try (b/create-basis {:project nil :extra {:deps deps}})
@@ -580,6 +600,18 @@
       (str/includes? os "win") (str "win-" a)
       :else                     (str "linux-" a))))
 
+(defn- truffle-platform-tokens
+  "[os arch] the GraalPy/Truffle internal-resource dirs use under
+   META-INF/resources/ (verified against python-resources jar layout):
+   darwin|linux|windows / aarch64|amd64."
+  []
+  (let [os   (str/lower-case (System/getProperty "os.name"))
+        arch (str/lower-case (System/getProperty "os.arch"))]
+    [(cond (str/includes? os "mac") "darwin"
+       (str/includes? os "win") "windows"
+       :else "linux")
+     (if (#{"aarch64" "arm64"} arch) "aarch64" "amd64")]))
+
 ;; Voice (ASR) assets. The model is downloaded on first use by default; the
 ;; --with-assets build vendors it INTO the image for a fully-offline binary.
 (def ^:private voice-model-url
@@ -627,7 +659,8 @@
    classpath, so the jars carrying those resources are absent anyway)."
   [basis with-assets? profile]
   (let [tok    (native-platform-token)
-        voice? (= :voice profile)]
+        voice? (= :voice profile)
+        [t-os t-arch] (truffle-platform-tokens)]
     (cond-> ["-cp" (native-classpath basis)
              "-o" (str/replace native-bin #"\.exe$" "")
              "-H:IncludeResources=META-INF/vis-extension/.*"
@@ -643,6 +676,20 @@
              ;; native binary's web UI is a blank page over 404'd assets.
              "-H:IncludeResources=vis-channel-web/public/.*"
              "-H:IncludeResources=vis-docs/assets/.*"
+             ;; tree-sitter pack FFI lib for THIS platform. The pack's own
+             ;; metadata ships NO resource glob (unlike fff/rift/ruff's
+             ;; prebuilds/**), so without this the shipped binary embeds no
+             ;; tree-sitter native at all and the runtime resolver-download
+             ;; path — which a native image cannot take — is the only hope.
+             (str "-H:IncludeResources=natives/" (pack-native-token) "/.*")
+             ;; GraalPy/Truffle per-platform internal-resource manifests.
+             ;; These used to ride in via the macOS agent trace with
+             ;; darwin/aarch64 HARDCODED — which embedded the Mac entries
+             ;; into Linux/Windows images (python-resources ships every
+             ;; platform's dirs in one jar) and left the build host's own
+             ;; manifests out everywhere else. Host-parameterized instead.
+             (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
+             (str "-H:IncludeResources=META-INF/resources/engine/libtruffleattach/" t-os "/" t-arch "/.*")
              ;; tree-sitter binding: a few pure-data classes (enums / structural
              ;; op tables) reach the image heap and must initialize at BUILD time.
              ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
