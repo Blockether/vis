@@ -770,10 +770,12 @@
              ;; Body row in the normal dialog palette (no inversion).
              (p/set-colors! g t/dialog-fg t/dialog-bg)
              (p/fill-rect! g left row inner-w 1)
-             ;; Cursor glyph at the FIRST col of the inset body, in
-             ;; the dialog palette so it visually belongs to the row.
+             ;; Cursor glyph one col IN from the inset edge (a 1-col
+             ;; left margin before the dot) in the dialog palette so it
+             ;; visually belongs to the row. The bullet then abuts the
+             ;; candidate chip directly — no wide empty gutter between.
              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-             (p/draw-selection-marker! g left row (:slash/selected? suggestion))
+             (p/draw-selection-marker! g (inc left) row (:slash/selected? suggestion))
              ;; Inline-code chip + ` - ` + italic description.
              (p/set-colors! g t/dialog-fg t/dialog-bg)
              (draw-slash-suggestion-row! g row left inner-w suggestion)))
