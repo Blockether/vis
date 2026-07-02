@@ -459,46 +459,47 @@
       (str "~" (subs path (count home)))
       path)))
 
-(defn- context-roots-section
-  "`Context roots` - the session-scoped directories vis can read and edit.
-   Mirrors the footer `+ dir` affordance onto the context rail: the add
-   button opens the SAME filesystem picker (`/dir-picker`), and each extra
-   root carries a remove control (`/dir-remove`). Backed by
-   `vis/gateway-session-workspace`'s `:context-roots`."
-  ([sid] (context-roots-section sid nil))
+(defn- filesystem-section
+  "`Filesystem` - the session's filesystem permissions: the ROOT vis works
+   in (changeable via the picker's \"Make this the session's root\" or
+   `/root <path>`) plus any additional granted directories. The manage
+   button opens the filesystem picker (`/fs-picker`); each extra root
+   carries a remove control (`/fs-remove`). Backed by
+   `vis/gateway-session-workspace`'s `:filesystem-roots`."
+  ([sid] (filesystem-section sid nil))
   ([sid notice]
    (when sid
      (let [wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
            base  (:root wi)
-           roots (:context-roots wi)
+           roots (:filesystem-roots wi)
            total (+ (if base 1 0) (count roots))]
-       [:section.rail-section.context-roots {:id "ctx-roots"}
+       [:section.rail-section.filesystem-roots {:id "fs-roots"}
         [:div.rail-head-row
-         [:h3 (str "Context roots" (when (pos? total) (str " · " total)))]
+         [:h3 (str "Filesystem" (when (pos? total) (str " · " total)))]
          [:button.ctx-action {:type "button"
-                              :hx-get (str "/ui/session/" sid "/dir-picker")
+                              :hx-get (str "/ui/session/" sid "/fs-picker")
                               :hx-target "#modal" :hx-swap "innerHTML"
-                              :aria-label "Add a directory to this session"}
-          (icon "plus") [:span "Add root"]]]
+                              :aria-label "Manage this session's filesystem permissions"}
+          (icon "plus") [:span "Manage"]]]
         (when (seq notice)
-          [:p.ctx-roots-notice (icon "check") [:span notice]])
-        [:ul.ctx-roots
-         ;; The workspace root — the directory vis was STARTED in — is always
-         ;; the first context root: vis reads/edits there by default. It is the
-         ;; session's base, so it carries a "workspace" tag and no remove
-         ;; control (you can't drop the workspace itself; added roots below
-         ;; are removable).
+          [:p.fs-roots-notice (icon "check") [:span notice]])
+        [:ul.fs-roots
+         ;; The session's ROOT is always the first filesystem root: vis
+         ;; reads/edits there by default and the shell/search work there.
+         ;; It is changeable (picker "Make this the session's root", or
+         ;; /root <path>) but never removable — a session always has a root;
+         ;; added roots below are removable grants.
          (when base
-           [:li.ctx-root.ctx-root-base
-            [:span.ctx-mono.ctx-root-path (abbrev-home base)]
-            [:span.ctx-root-tag "workspace"]])
+           [:li.fs-root.fs-root-base
+            [:span.ctx-mono.fs-root-path (abbrev-home base)]
+            [:span.fs-root-tag "root"]])
          (for [{:keys [trunk clone fork-ms]} roots]
-           [:li.ctx-root
-            [:span.ctx-mono.ctx-root-path (abbrev-home trunk)]
+           [:li.fs-root
+            [:span.ctx-mono.fs-root-path (abbrev-home trunk)]
             (when (and fork-ms (not= clone trunk))
-              [:span.ctx-root-iso "draft"])
-            [:button.ctx-root-remove {:type "button"
-                                      :hx-post (str "/ui/session/" sid "/dir-remove")
+              [:span.fs-root-iso "draft"])
+            [:button.fs-root-remove {:type "button"
+                                      :hx-post (str "/ui/session/" sid "/fs-remove")
                                       :hx-vals (json-text {:path (str trunk)})
                                       :hx-swap "none"
                                       :aria-label (str "Remove " trunk)}
@@ -550,7 +551,7 @@
 (defn- context-rail
   "Right rail for session-scoped gateway capabilities. This is where web exposes
    the same canonical controls the TUI surfaces in its footer/dialogs: routing,
-   context roots (`/dir`), and managed resources."
+   filesystem roots (`/fs`), and managed resources."
   [sid snapshot]
   [:aside.rail
    [:div.rail-head
@@ -560,8 +561,8 @@
    [:div.context-body
     ;; Routing (provider/model) moved to the bottom dock under the composer
     ;; (`routing-footer`) — it belongs next to the input, like the TUI footer.
-    [:div#ctx-roots-wrap
-     (context-roots-section sid)]
+    [:div#fs-roots-wrap
+     (filesystem-section sid)]
     (resources-section sid)]])
 
 ;; =============================================================================
@@ -1931,7 +1932,7 @@
   "Dispatch a /command through the engine's slash handling — the same
    `slash/dispatch` the TUI and Telegram ride, with this channel's id.
    The ctx carries the session-state-id + workspace-id (resolved via the
-   rehydrated env) so workspace-scoped slashes (`/dir add|remove`, `/draft
+   rehydrated env) so workspace-scoped slashes (`/fs add|remove`, `/draft
    new|apply|abandon`) can find the session's workspace — without them they
    answered \"No active workspace\" in the web."
   [sid text]
@@ -2100,7 +2101,7 @@
 (defn- slash-list-handler
   "GET /ui/slash — the slash specs the web channel actually supports, for the
    composer's `/` autocomplete. Applies `:web` availability (drops Telegram-only
-   commands) and surfaces LEAF commands (`/draft new`, `/dir list`) rather than
+   commands) and surfaces LEAF commands (`/draft new`, `/fs list`) rather than
    group roots — the same shape the TUI palette shows — plus the web-native
    `/new-session`."
   [_request]
@@ -3319,8 +3320,17 @@
              :body (json-text {:text (let [raw (str/trim (str (transcribe (str tmp))))]
                                        (if clean (clean raw) raw))})})
           (catch Throwable t
+            (tel/log! {:level :error :id ::voice-transcribe-failed
+                       :data {:error (str t)}})
             {:status 400 :headers {"Content-Type" "application/json; charset=utf-8"}
-             :body (json-text {:error (or (ex-message t) "transcription failed")})})
+             ;; null-message throwables (ExceptionInInitializerError, NPE — the
+             ;; native-image failure shapes) used to collapse into a blind
+             ;; "transcription failed"; surface the class + cause chain instead.
+             :body (json-text {:error (or (ex-message t)
+                                        (->> (iterate (fn [^Throwable x] (some-> x .getCause)) t)
+                                          (take-while some?)
+                                          (map str)
+                                          (str/join " <- ")))})})
           (finally
             (.delete tmp)))))))
 
@@ -3379,7 +3389,7 @@
   [s]
   (java.net.URLEncoder/encode (str s) "UTF-8"))
 
-(defn- dir-picker-base
+(defn- fs-picker-base
   "Directory the picker should browse: the `path` query param, else the
    session's primary workspace root, else the user's home directory."
   [sid path]
@@ -3396,7 +3406,7 @@
   [sid canon]
   (let [segs  (->> (str/split canon #"/") (remove str/blank?) vec)
         paths (rest (reductions (fn [acc s] (str acc "/" s)) "" segs))
-        hop   (fn [p] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc p))
+        hop   (fn [p] {:hx-get (str "/ui/session/" sid "/fs-picker?frag=1&path=" (dir-enc p))
                        :hx-target "#dir-browser" :hx-swap "outerHTML"})
         last-i (dec (count segs))]
     [:nav.dir-crumbs {:aria-label "Current location"}
@@ -3415,7 +3425,7 @@
    `outerHTML`, so moving around folders swaps ONLY this block - the modal
    frame never repaints (that whole-modal repaint was the flicker).
 
-   Mirrors the TUI picker: this session's CONTEXT ROOTS ride at the top as a
+   Mirrors the TUI picker: this session's FILESYSTEM ROOTS ride at the top as a
    titled list (each mark + abbreviated path + a workspace/added tag, added
    ones removable in place), then the breadcrumb, then the subfolders - each
    carrying a membership mark so you read what's in the session BEFORE you
@@ -3427,40 +3437,40 @@
         kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
         home  (System/getProperty "user.home")
         ;; Session roots: the workspace root is the implicit base; extras are the
-        ;; listed context-roots. Compare on the SAME canonical form so a folder's
+        ;; listed filesystem-roots. Compare on the SAME canonical form so a folder's
         ;; membership mark (and "already added") never lies.
         wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
         norm  (fn [p] (some-> p str not-empty
                               (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
         base  (norm (:root wi))
-        extras (:context-roots wi)
+        extras (:filesystem-roots wi)
         extra  (set (keep #(norm (:trunk %)) extras))
         root-of? (fn [p] (let [s (norm p)] (boolean (or (= s base) (contains? extra s)))))
         workspace? (= canon base)
         already?   (contains? extra canon)
         roots-total (+ (if base 1 0) (count extras))
-        nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
+        nav   (fn [path] {:hx-get (str "/ui/session/" sid "/fs-picker?frag=1&path=" (dir-enc path))
                           :hx-target "#dir-browser" :hx-swap "outerHTML"})]
     [:div#dir-browser.dir-browser
-     ;; CONTEXT ROOTS - the same session-scoped list the rail shows, promoted
+     ;; FILESYSTEM ROOTS - the same session-scoped list the rail shows, promoted
      ;; INTO the picker (like the TUI dialog) so you read membership as you
      ;; browse. Each root carries a filled mark; the workspace base can't be
      ;; removed, added ones carry an x that drops them and re-renders in place.
      [:div.dir-zone.dir-roots-zone
-      [:span.dir-zone-label (str "Context roots \u00b7 " roots-total)]
+      [:span.dir-zone-label (str "Filesystem \u00b7 " roots-total)]
       [:ul.dir-roots
        (when base
          [:li.dir-root
           [:span.dir-root-mark "\u25cf"]
-          [:span.ctx-mono.ctx-root-path (abbrev-home base)]
-          [:span.ctx-root-tag "workspace"]])
+          [:span.ctx-mono.fs-root-path (abbrev-home base)]
+          [:span.fs-root-tag "workspace"]])
        (for [{:keys [trunk]} extras]
          [:li.dir-root
           [:span.dir-root-mark "\u25cf"]
-          [:span.ctx-mono.ctx-root-path (abbrev-home trunk)]
-          [:span.ctx-root-tag "added"]
+          [:span.ctx-mono.fs-root-path (abbrev-home trunk)]
+          [:span.fs-root-tag "added"]
           [:button.dir-root-remove {:type "button"
-                                    :hx-post (str "/ui/session/" sid "/dir-remove?frag=1&at=" (dir-enc canon))
+                                    :hx-post (str "/ui/session/" sid "/fs-remove?frag=1&at=" (dir-enc canon))
                                     :hx-vals (json-text {:path (str trunk)})
                                     :hx-target "#dir-browser" :hx-swap "outerHTML"
                                     :aria-label (str "Remove " trunk)}
@@ -3492,63 +3502,81 @@
      (when err [:p.dir-err (icon "info") [:span (str err)]])
      (when notice [:p.dir-notice (icon "check") [:span (str notice)]])
      ;; ACTIONS
-     [:form.dir-create {:hx-post (str "/ui/session/" sid "/dir-create")
+     [:form.fs-create {:hx-post (str "/ui/session/" sid "/fs-create")
                         :hx-target "#dir-browser" :hx-swap "outerHTML"}
       [:input {:type "hidden" :name "parent" :value canon}]
-      [:input.dir-create-input {:type "text" :name "name" :autocomplete "off"
+      [:input.fs-create-input {:type "text" :name "name" :autocomplete "off"
                                 :placeholder (str "Name a new folder in " fname)}]
-      [:button.dir-create-btn {:type "submit"} (icon "folder-plus") [:span "Create"]]]
-     (cond
-       ;; the dir vis started in - implicit base root, can't be "added"
-       workspace?
-       [:div.dir-add-form.dir-already
-        (icon "check")
-        [:span.dir-add-text
-         [:span.dir-add-main "This is the workspace root - already a context root"]
-         [:span.dir-add-sub canon]]]
-       ;; already added as an extra context root
-       already?
-       [:div.dir-add-form.dir-already
-        (icon "check")
-        [:span.dir-add-text
-         [:span.dir-add-main "Already a context root for this session"]
-         [:span.dir-add-sub canon]]]
-       :else
-       [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add?frag=1")
-                            :hx-target "#dir-browser" :hx-swap "outerHTML"}
-        [:input {:type "hidden" :name "path" :value canon}]
-        [:button.dir-add-btn {:type "submit"}
-         (icon "check")
-         [:span.dir-add-text
-          [:span.dir-add-main "Add this folder to the session"]
-          [:span.dir-add-sub canon]]]])]))
+      [:button.fs-create-btn {:type "submit"} (icon "folder-plus") [:span "Create"]]]
+     (let [set-root-form
+           ;; Promote the browsed folder to the session's PRIMARY root —
+           ;; shell cwd, file tools, and search retarget from the next turn.
+           ;; Offered everywhere except when it already IS the root.
+           [:form.fs-root-form {:hx-post (str "/ui/session/" sid "/fs-root?frag=1")
+                                :hx-target "#dir-browser" :hx-swap "outerHTML"}
+            [:input {:type "hidden" :name "path" :value canon}]
+            [:button.fs-root-btn {:type "submit"}
+             (icon "home")
+             [:span.fs-add-text
+              [:span.fs-add-main "Make this the session's root"]
+              [:span.fs-add-sub "Shell, file tools, and search will work here"]]]]]
+       (cond
+         ;; the session's current root — nothing to add or change here
+         workspace?
+         [:div.fs-add-form.dir-already
+          (icon "check")
+          [:span.fs-add-text
+           [:span.fs-add-main "This is the session's root"]
+           [:span.fs-add-sub canon]]]
+         ;; already an ADDITIONAL filesystem root — can still be promoted
+         already?
+         [:div.fs-actions
+          [:div.fs-add-form.dir-already
+           (icon "check")
+           [:span.fs-add-text
+            [:span.fs-add-main "Already a filesystem root for this session"]
+            [:span.fs-add-sub canon]]]
+          set-root-form]
+         :else
+         [:div.fs-actions
+          [:form.fs-add-form {:hx-post (str "/ui/session/" sid "/fs-add?frag=1")
+                              :hx-target "#dir-browser" :hx-swap "outerHTML"}
+           [:input {:type "hidden" :name "path" :value canon}]
+           [:button.fs-add-btn {:type "submit"}
+            (icon "check")
+            [:span.fs-add-text
+             [:span.fs-add-main "Add this folder to the session"]
+             [:span.fs-add-sub canon]]]]
+          set-root-form]))]))
 
-(defn- dir-picker-modal
+(defn- fs-picker-modal
   "Filesystem picker overlay rooted at `dir`. SCOPED to this session —
-   `/dir add` widens only this session's context roots. The shell is
+   it manages only this session's filesystem permissions: add/remove
+   additional roots, or make a folder the session's ROOT. The shell is
    static; only `dir-browser` swaps as you navigate."
   [sid dir]
-  (modal-shell "Add a directory"
+  (modal-shell "Filesystem"
                [:p.dir-intro (icon "info")
-                [:span "Add any folder as a root vis can read and edit, for "
+                [:span "Choose the folders vis can read and edit, for "
                  [:strong "this session only"] " — inside this project or anywhere else on your computer. "
+                 "Add a folder as an extra root, or make it the session's root to work there. "
                  "The roots on this session sit up top; ● marks a folder that's already one. Tap the path to go up, a subfolder to go in, or Home to jump out."]]
                (dir-browser sid dir)))
 
-(defn- dir-picker-handler
-  "GET /ui/session/:sid/dir-picker - the filesystem picker. `?path=` selects
+(defn- fs-picker-handler
+  "GET /ui/session/:sid/fs-picker - the filesystem picker. `?path=` selects
    the directory to browse (defaults to the workspace root). `?frag=1`
    returns ONLY the `#dir-browser` fragment (navigation, no modal repaint)."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (get-in request [:query-params "path"])
         frag (= "1" (get-in request [:query-params "frag"]))
-        dir  (dir-picker-base sid path)]
+        dir  (fs-picker-base sid path)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (if frag (html (dir-browser sid dir)) (dir-picker-modal sid dir))}))
+     :body (if frag (html (dir-browser sid dir)) (fs-picker-modal sid dir))}))
 
-(defn- dir-create-handler
-  "POST /ui/session/:sid/dir-create - make a new folder under `parent` and
+(defn- fs-create-handler
+  "POST /ui/session/:sid/fs-create - make a new folder under `parent` and
    re-open the picker INSIDE it. A bad name re-renders with an inline error."
   [request]
   (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
@@ -3560,14 +3588,14 @@
                    (catch Throwable e
                      (dir-browser sid parent :err (or (ex-message e) (str e))))))}))
 
-(defn- dir-add-handler
-  "POST /ui/session/:sid/dir-add - widen THIS session to also work under
+(defn- fs-add-handler
+  "POST /ui/session/:sid/fs-add - widen THIS session to also work under
    `path`, close the modal, and OOB-refresh the rail/footer immediately. This
-   bypasses `/dir add` slash dispatch because that slash is Telegram-only."
+   mirrors the `/fs add` slash through the picker UI."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (str/trim (str (get-in request [:form-params "path"])))
-        dir  (dir-picker-base sid path)
+        dir  (fs-picker-base sid path)
         frag (= "1" (get-in request [:query-params "frag"]))]
     (try
       (let [env          (vis/env-for sid)
@@ -3581,27 +3609,27 @@
           (throw (ex-info "No active workspace for this session yet." {}))
 
           :else
-          (vis/workspace-add-context-root! db workspace-id path))
+          (vis/workspace-add-filesystem-root! db workspace-id path))
         (if frag
           ;; From the picker: keep it OPEN, re-render the browser in place
           ;; (the added folder now shows as a root), OOB-refresh rail + footer.
           {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
            :body (str (html (dir-browser sid path :notice "Added this folder to the session"))
-                      (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                             (context-roots-section sid)])
+                      (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
+                             (filesystem-section sid)])
                       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}
           {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
            :body (str (oob-modal "")
-                      (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                             (context-roots-section sid "Added context root")])
+                      (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
+                             (filesystem-section sid "Added filesystem root")])
                       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
       (catch Throwable e
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html (dir-browser sid dir :err (or (ex-message e) (str e))))}))))
 
-(defn- dir-remove-handler
-  "POST /ui/session/:sid/dir-remove {path} - narrow THIS session, dropping
-   `path` from its context roots, then OOB-refresh the rail/footer immediately."
+(defn- fs-remove-handler
+  "POST /ui/session/:sid/fs-remove {path} - narrow THIS session, dropping
+   `path` from its filesystem roots, then OOB-refresh the rail/footer immediately."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (str/trim (str (get-in request [:form-params "path"])))
@@ -3611,17 +3639,44 @@
         db   (:db-info env)
         wid  (:workspace/id env)]
     (when (and (seq path) wid)
-      (vis/workspace-remove-context-root! db wid path))
+      (vis/workspace-remove-filesystem-root! db wid path))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if frag
              ;; Removed from INSIDE the picker: re-render the browser at the
              ;; folder being viewed, plus OOB-refresh the rail + footer.
-             (str (html (dir-browser sid (dir-picker-base sid at) :notice "Removed this folder from the session"))
-                  (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
+             (str (html (dir-browser sid (fs-picker-base sid at) :notice "Removed this folder from the session"))
+                  (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"} (filesystem-section sid)])
                   (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
-             (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                         (context-roots-section sid "Removed context root")])
+             (str (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
+                         (filesystem-section sid "Removed filesystem root")])
                   (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))}))
+
+(defn- fs-root-handler
+  "POST /ui/session/:sid/fs-root {path} - change THIS session's PRIMARY
+   filesystem root: the session then works in `path` (shell cwd, file tools,
+   and search all follow from the next turn; additional roots carry over).
+   Refuses while the session is in a draft — apply/abandon it first. Renders
+   the picker back in place with the outcome, plus OOB rail/footer refresh."
+  [request]
+  (let [sid      (some-> (get-in request [:path-params :sid]) parse-uuid)
+        path     (str/trim (str (get-in request [:form-params "path"])))
+        env      (vis/env-for sid)
+        db       (:db-info env)
+        state-id (:session/state-id env)]
+    (try
+      (when (str/blank? path)
+        (throw (ex-info "No directory given." {})))
+      (when-not state-id
+        (throw (ex-info "Session not ready yet — send a message first." {})))
+      (vis/workspace-change-root! db state-id path)
+      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (str (html (dir-browser sid path :notice "This folder is now the session's root"))
+                  (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
+                         (filesystem-section sid "Root changed")])
+                  (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}
+      (catch Throwable e
+        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (html (dir-browser sid path :err (or (ex-message e) (str e))))}))))
 
 (defn- ui-not-found-handler
   "The contribution's `:on-not-found`: any unmatched `/ui/...` address renders a
@@ -3684,9 +3739,9 @@
                         :delete #'delete-session-ui-handler}]
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
-   ["/ui/session/:sid/dir-picker" {:get #'dir-picker-handler}]
-   ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
-   ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
+   ["/ui/session/:sid/fs-picker" {:get #'fs-picker-handler}]
+   ["/ui/session/:sid/fs-create" {:post #'fs-create-handler}]
+   ["/ui/session/:sid/fs-add" {:post #'fs-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
    ["/ui/session/:sid/queued/:tid/update" {:post #'queued-update-handler}]
    ["/ui/session/:sid/queued/:tid/delete" {:post #'queued-delete-handler}]
@@ -3696,7 +3751,8 @@
    ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
-   ["/ui/session/:sid/dir-remove" {:post #'dir-remove-handler}]
+   ["/ui/session/:sid/fs-remove" {:post #'fs-remove-handler}]
+   ["/ui/session/:sid/fs-root" {:post #'fs-root-handler}]
    ["/ui/session/:sid/poll" {:get #'poll-handler}]])
 
 (defn- ui-contribution
