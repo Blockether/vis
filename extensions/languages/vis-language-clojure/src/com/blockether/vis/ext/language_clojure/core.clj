@@ -43,18 +43,18 @@
     (when (and root (.isDirectory root))
       (or
         ;; (1) pre-populated env hint
-       (boolean (some #(= "clojure" (:language %))
-                      (some-> env :env/languages :languages)))
+        (boolean (some #(= "clojure" (:language %))
+                   (some-> env :env/languages :languages)))
 
         ;; (2) project-file probe
-       (some (fn [n] (.exists (io/file root n)))
-             ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn" ".nrepl-port"])
+        (some (fn [n] (.exists (io/file root n)))
+          ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn" ".nrepl-port"])
 
         ;; (3) bounded fallback scan
-       (try
-         (let [scan (languages/scan root {:max-files 2000 :deadline-ms 250})]
-           (boolean (some #(= "clojure" (:language %)) (:languages scan))))
-         (catch Throwable _ false))))))
+        (try
+          (let [scan (languages/scan root {:max-files 2000 :deadline-ms 250})]
+            (boolean (some #(= "clojure" (:language %)) (:languages scan))))
+          (catch Throwable _ false))))))
 
 (defn- activation-fn [env]
   (boolean (workspace-has-clojure? env)))
@@ -65,8 +65,8 @@
 
 (defn- env-root ^String [env]
   (or (:workspace/root env)
-      (throw (ex-info "clj/* tool fired without :workspace/root in env"
-                      {:type :clj/no-workspace}))))
+    (throw (ex-info "clj/* tool fired without :workspace/root in env"
+             {:type :clj/no-workspace}))))
 
 (defn- resolve-repl-dir
   "Resolve a `:start`/`:status` target dir against the workspace `root`. A blank
@@ -108,28 +108,28 @@
   [session dir aliases result & [id]]
   (when (and session (or (:pid result) (:port result)))
     (vis/register-resource! session
-                            {:id     (repl-resource-id dir id)
-                             :kind   :nrepl
-                             :label  (str "nREPL " (.getName (io/file dir))
-                                          (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-                             :status (or (:status result) :up)
-                             :detail (cond-> {:dir dir}
-                                       (:port result) (assoc :port (:port result))
-                                       (seq aliases)  (assoc :aliases (vec aliases)))
-                             :pid    (:pid result)
-                             :owner  :ext/language-clojure
-                             :language :clojure}
-                            {:stop-fn    (fn [] (repl-manager/stop! dir))
-                             :restart-fn (fn []
-                                           (repl-manager/stop! dir)
-                                           (let [r (repl-manager/start! dir {:aliases aliases})]
-                                             (register-repl-resource! session dir aliases r id)
-                                             r))})
+      {:id     (repl-resource-id dir id)
+       :kind   :nrepl
+       :label  (str "nREPL " (.getName (io/file dir))
+                 (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
+       :status (or (:status result) :up)
+       :detail (cond-> {:dir dir}
+                 (:port result) (assoc :port (:port result))
+                 (seq aliases)  (assoc :aliases (vec aliases)))
+       :pid    (:pid result)
+       :owner  :ext/language-clojure
+       :language :clojure}
+      {:stop-fn    (fn [] (repl-manager/stop! dir))
+       :restart-fn (fn []
+                     (repl-manager/stop! dir)
+                     (let [r (repl-manager/start! dir {:aliases aliases})]
+                       (register-repl-resource! session dir aliases r id)
+                       r))})
     ;; Surface the registration in the TUI (header toast) so a spawned REPL is
     ;; visible the moment it lands, not just as a silent ● bump in the footer.
     (vis/notify! (str "● nREPL up — " (.getName (io/file dir))
-                      (when-let [p (:port result)] (str " :" p)))
-                 :level :success :ttl-ms 4000)))
+                   (when-let [p (:port result)] (str " :" p)))
+      :level :success :ttl-ms 4000)))
 
 (defn clj-repl-fn
   "Manage a workspace nREPL. Positional op (default \"status\") + optional opts
@@ -149,8 +149,8 @@
   ([env op opts]
    (let [root    (env-root env)
          op      (cond (keyword? op) op
-                       (string? op)  (keyword op)
-                       :else         :status)
+                   (string? op)  (keyword op)
+                   :else         :status)
          opts    (when (map? opts) opts)
          id      (or (opt opts :id) (opt opts :repl_id))
          dir     (resolve-repl-dir root (opt opts :dir))
@@ -166,7 +166,7 @@
        (do
          (when-not (.isDirectory (io/file dir))
            (throw (ex-info (str "clj_repl \"" (name op) "\" target dir does not exist: " dir)
-                           {:type :clj/bad-args :dir dir})))
+                    {:type :clj/bad-args :dir dir})))
          (let [result (if (= op :restart)
                         (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
                         (repl-manager/start! dir {:aliases aliases}))]
@@ -176,10 +176,10 @@
            (register-repl-resource! (:session-id env) dir aliases result id)
            (extension/success {:result result})))
        (throw (ex-info (str "clj_repl unknown op: " (pr-str op))
-                       {:type :clj/bad-args :got op
-                        :examples ["clj_repl()" "clj_repl(\"status\")" "clj_repl(\"start\")"
-                                   "clj_repl(\"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
-                                   "clj_repl(\"stop\")" "clj_repl(\"restart\")"]}))))))
+                {:type :clj/bad-args :got op
+                 :examples ["clj_repl()" "clj_repl(\"status\")" "clj_repl(\"start\")"
+                            "clj_repl(\"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+                            "clj_repl(\"stop\")" "clj_repl(\"restart\")"]}))))))
 
 (defn ui-start-repl!
   "Channel-invokable nREPL start for the Resources UI (web modal / TUI F4).
@@ -194,7 +194,7 @@
         als  (coerce-aliases aliases)]
     (when-not (.isDirectory (io/file dir))
       (throw (ex-info (str "REPL target dir does not exist: " dir)
-                      {:type :clj/bad-args :dir dir})))
+               {:type :clj/bad-args :dir dir})))
     (let [result (repl-manager/start! dir {:aliases als})]
       (register-repl-resource! (:session-id env) dir als result)
       result)))
@@ -211,7 +211,7 @@
           f    (io/file dir "deps.edn")]
       (if (.isFile f)
         (->> (:aliases (edn/read-string (slurp f)))
-             keys (map name) sort vec)
+          keys (map name) sort vec)
         []))
     (catch Throwable _ [])))
 
@@ -226,9 +226,9 @@
     (string? arg) {:code arg}
     (map? arg)    arg
     :else (throw (ex-info "clj_eval expects a code string or opts map"
-                          {:type :clj/bad-args :got arg
-                           :examples ["clj_eval(\"(+ 1 1)\")"
-                                      "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
+                   {:type :clj/bad-args :got arg
+                    :examples ["clj_eval(\"(+ 1 1)\")"
+                               "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
 (defn- resolve-eval-port
   "Pick the nREPL port for an eval. Priority:
@@ -244,13 +244,13 @@
   (cond
     port port
     rid  (or (some-> (vis/get-resource (:session-id env) rid) (get-in [:detail :port]))
-             (throw (ex-info (str "no nREPL registered under id '" rid
-                                  "' — check session_resources for live REPL ids")
-                             {:type :clj/unknown-repl-id :id rid})))
+           (throw (ex-info (str "no nREPL registered under id '" rid
+                             "' — check session_resources for live REPL ids")
+                    {:type :clj/unknown-repl-id :id rid})))
     :else
     (let [cands (map :port (ports/discover-all root))]
       (or (some (fn [p] (when (= :up (:status (nrepl-client/probe! {:host host :port p}))) p)) cands)
-          (first cands)))))
+        (first cands)))))
 
 (defn clj-eval-fn
   ([env arg]
@@ -261,16 +261,16 @@
          port (resolve-eval-port env root host port rid)]
      (when-not port
        (throw (ex-info "no nREPL port found — call clj_repl(\"start\") to boot a project nREPL now (autostart is ON by default), or clj_repl() to inspect candidates"
-                       {:type :clj/no-port
-                        :workspace-root root})))
+                {:type :clj/no-port
+                 :workspace-root root})))
      (extension/success
-      {:result (nrepl-client/eval!
-                {:host       host
-                 :port       port
-                 :code       code
-                 :ns         ns
-                 :pretty?    true
-                 :timeout-ms (or timeout_ms 30000)})}))))
+       {:result (nrepl-client/eval!
+                  {:host       host
+                   :port       port
+                   :code       code
+                   :ns         ns
+                   :pretty?    true
+                   :timeout-ms (or timeout_ms 30000)})}))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
@@ -309,20 +309,20 @@
                 (and (map? arg) (contains? arg "code")) (str (get arg "code"))
                 path                                   (slurp (str path))
                 :else (throw (ex-info "format expects a code string, {\"code\": ...}, or {\"path\": ...}"
-                                      {:type :clj/bad-args :got arg
-                                       :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
-                                                  "format(\"clojure\", {\"code\": \"...\"})"
-                                                  "format(\"clojure\", {\"path\": \"src/foo.clj\"})"]})))
+                               {:type :clj/bad-args :got arg
+                                :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
+                                           "format(\"clojure\", {\"code\": \"...\"})"
+                                           "format(\"clojure\", {\"path\": \"src/foo.clj\"})"]})))
          out  (clj-repair+format code (or path (:workspace/root env)))]
      (when (and path (not= out code))
        (spit (str path) out))
      (extension/success
-      {:result (cond-> {:op        :clj-format
-                        :changed?  (not= out code)
-                        :repaired? (not= (or (repair/fix-delimiters code) code) code)
-                        :text      out}
-                 path (assoc :path   (relativize-path (io/file (or (:workspace/root env) ".")) path)
-                             :wrote? (not= out code)))}))))
+       {:result (cond-> {:op        :clj-format
+                         :changed?  (not= out code)
+                         :repaired? (not= (or (repair/fix-delimiters code) code) code)
+                         :text      out}
+                  path (assoc :path   (relativize-path (io/file (or (:workspace/root env) ".")) path)
+                         :wrote? (not= out code)))}))))
 
 (defn clj-lint-fn
   "clj-kondo lint via the language facade (`lint_code`). Accepts:
@@ -348,16 +348,16 @@
                 path        (lint/lint-paths [(under path)])
                 (seq paths) (lint/lint-paths (mapv under paths))
                 :else       (let [defaults (->> ["src" "test"]
-                                                (map #(io/file root %))
-                                                (filter #(.exists ^java.io.File %))
-                                                (mapv str))]
+                                             (map #(io/file root %))
+                                             (filter #(.exists ^java.io.File %))
+                                             (mapv str))]
                               (lint/lint-paths (if (seq defaults) defaults [(str root)]))))]
     (extension/success
-     {:result
-      (assoc
-       (update base :findings
-               (fn [fs] (mapv #(update % :file (partial relativize-path root)) fs)))
-       :language "clojure")})))
+      {:result
+       (assoc
+         (update base :findings
+           (fn [fs] (mapv #(update % :file (partial relativize-path root)) fs)))
+         :language "clojure")})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 (def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
@@ -421,14 +421,14 @@
       (let [m     (first args)
             path  (and (map? m) (or (:path m) (get m "path")))
             codek (cond (and (map? m) (contains? m :code))  :code
-                        (and (map? m) (contains? m "code")) "code"
-                        :else nil)
+                    (and (map? m) (contains? m "code")) "code"
+                    :else nil)
             code  (and codek (get m codek))
             fixed (when (and (clj-source-file? path) (string? code))
                     (repair/fix-delimiters code))]
         (if (and fixed (not= fixed code))
           (try (next (assoc-in (vec args) [0 codek] fixed))
-               (catch Throwable _ (throw e)))            ; repaired retry failed → original
+            (catch Throwable _ (throw e)))            ; repaired retry failed → original
           (throw e))))))
 
 (defn- clj-patch-repair-edits
@@ -440,17 +440,17 @@
   [edits-arg]
   (let [top-path (when (map? edits-arg) (or (:path edits-arg) (get edits-arg "path")))
         editsk   (cond (and (map? edits-arg) (contains? edits-arg :edits))  :edits
-                       (and (map? edits-arg) (contains? edits-arg "edits")) "edits"
-                       :else nil)
+                   (and (map? edits-arg) (contains? edits-arg "edits")) "edits"
+                   :else nil)
         edit-seq (cond editsk                     (get edits-arg editsk)
-                       (sequential? edits-arg)    edits-arg
-                       :else                       nil)
+                   (sequential? edits-arg)    edits-arg
+                   :else                       nil)
         repair-one
         (fn [ed]
           (let [ep    (or (:path ed) (get ed "path") top-path)
                 rk    (cond (and (map? ed) (contains? ed :replace))  :replace
-                            (and (map? ed) (contains? ed "replace")) "replace"
-                            :else nil)
+                        (and (map? ed) (contains? ed "replace")) "replace"
+                        :else nil)
                 rep   (and rk (get ed rk))
                 fixed (when (and (clj-source-file? ep) (string? rep))
                         (repair/fix-delimiters rep))]
@@ -464,8 +464,8 @@
         (if-not changed?
           [edits-arg false]
           [(cond editsk                  (assoc edits-arg editsk new-edits)
-                 (sequential? edits-arg) new-edits
-                 :else                   edits-arg)
+             (sequential? edits-arg) new-edits
+             :else                   edits-arg)
            true]))
       [edits-arg false])))
 
@@ -483,8 +483,8 @@
   [_env _op-kw args next]
   (let [result (next args)]
     (if (and (map? result)
-             (false? (:success? result))
-             (= :syntax-error (get-in result [:error :reason])))
+          (false? (:success? result))
+          (= :syntax-error (get-in result [:error :reason])))
       (let [[repaired changed?] (clj-patch-repair-edits (first args))]
         (if changed?
           (let [retry (next (assoc (vec args) 0 repaired))]
@@ -501,43 +501,43 @@
 ;; rides in ctx via :ext/ctx-fn.
 (def vis-extension
   (vis/extension
-   {:ext/name           "language-clojure"
-    :ext/description    "Clojure language pack: live nREPL state in ctx, generic language-surface handlers for format/test/repl, and REPL/format/paren-repair tooling. Activates only when the workspace has Clojure sources."
-    :ext/version        "0.1.0"
-    :ext/author         "Blockether"
-    :ext/owner          "vis"
-    :ext/license        "Apache-2.0"
-    :ext/activation-fn  activation-fn
-    :ext/ctx-fn            nrepl-ctx/contribute
-    :ext/language-tools [{:language :clojure
-                          :format-fn (fn [env arg]
-                                       (clj-format-fn env arg))
-                          :lint-fn clj-lint-fn
-                          :test-fn test-runner/clj-test-fn
-                          :repl-eval-fn clj-eval-fn
-                          :start-repl-fn (fn [env op opts]
-                                           (clj-repl-fn env op opts))}]
+    {:ext/name           "language-clojure"
+     :ext/description    "Clojure language pack: live nREPL state in ctx, generic language-surface handlers for format/test/repl, and REPL/format/paren-repair tooling. Activates only when the workspace has Clojure sources."
+     :ext/version        "0.1.0"
+     :ext/author         "Blockether"
+     :ext/owner          "vis"
+     :ext/license        "Apache-2.0"
+     :ext/activation-fn  activation-fn
+     :ext/ctx-fn            nrepl-ctx/contribute
+     :ext/language-tools [{:language :clojure
+                           :format-fn (fn [env arg]
+                                        (clj-format-fn env arg))
+                           :lint-fn clj-lint-fn
+                           :test-fn test-runner/clj-test-fn
+                           :repl-eval-fn clj-eval-fn
+                           :start-repl-fn (fn [env op opts]
+                                            (clj-repl-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They keep
      ;; Clojure source tidy after the foundation's struct_patch / patch / write
      ;; (an :after repair+format), and make struct_patch AND patch NOT fail on
      ;; unbalanced delimiters (an :around that repairs the code + retries). :owner is set to
      ;; this extension automatically.
-    :ext/op-hooks [{:op :struct_patch :phase :after  :fn clj-edit-repair-hook}
-                   {:op :patch        :phase :after  :fn clj-edit-repair-hook}
-                   {:op :write        :phase :after  :fn clj-edit-repair-hook}
-                   {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
-                   {:op :patch        :phase :around :fn clj-patch-no-fail-around}]
+     :ext/op-hooks [{:op :struct_patch :phase :after  :fn clj-edit-repair-hook}
+                    {:op :patch        :phase :after  :fn clj-edit-repair-hook}
+                    {:op :write        :phase :after  :fn clj-edit-repair-hook}
+                    {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
+                    {:op :patch        :phase :around :fn clj-patch-no-fail-around}]
      ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
      ;; renders this generically: its title, the proposed deps.edn aliases, and
      ;; Start. Always allowed (the self-start flag gates only the model).
-    :ext/startable-resources
-    [{:kind          :nrepl
-      :label         "nREPL"
-      :options-label "aliases"
-      :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
-      :start-fn      (fn [env selected]
-                       (ui-start-repl! env (map #(str/replace (str %) #"^:" "") selected)))}]
-    :ext/kind           "language"}))
+     :ext/startable-resources
+     [{:kind          :nrepl
+       :label         "nREPL"
+       :options-label "aliases"
+       :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
+       :start-fn      (fn [env selected]
+                        (ui-start-repl! env (map #(str/replace (str %) #"^:" "") selected)))}]
+     :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
