@@ -2510,7 +2510,7 @@
     :as detail-ctx}]
   (let [suffix (detail-id-suffix detail-ctx)
         summary (or summary "Details")
-        left (str (if collapsed? "▸ " "▾ ") summary)
+        left (str " " (if collapsed? "▸ " "▾ ") summary)
         visible (format-detail-summary-line left suffix (max 1 max-w))
         ;; Lift visible-label string through the IR walker so inline
         ;; emphasis (`**bold**`, `` `code` ``, etc.) renders with
@@ -3049,11 +3049,23 @@
                            {:marker result-marker, :max-w fill-w, :summary head-line,
                             :hidden-entries body-entries, :collapsed? (not expanded?),
                             :session-id session-id, :node-id node-id, :color-role color-role})]
-        (vec (concat header (when expanded? body-entries))))
+        ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
+        ;; badge reads as its own background BAND (not a lone colored line);
+        ;; expanded, the body already opens with its own breathing blank.
+        (vec (concat header
+               (if expanded?
+                 body-entries
+                 [{:line (str result-marker ""), :meta nil}]))))
       (let [meta {:kind :result-headline, :color-role color-role}]
-        (mapv (fn [line] {:line (str result-marker line), :meta meta})
-          (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
-            (max 1 fill-w)))))))
+        ;; Summary-only card (move/delete/exists — no expand triangle) also
+        ;; earns a trailing `result-bg` pad row so it reads as a band too. It
+        ;; also gets the SAME left margin as a chevron card's label (space +
+        ;; the `▸ ` slot) so labels line up whether or not a triangle is shown.
+        (conj
+          (mapv (fn [line] {:line (str result-marker "   " line), :meta meta})
+            (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+              (max 1 (- fill-w 3))))
+          {:line (str result-marker ""), :meta nil})))))
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],

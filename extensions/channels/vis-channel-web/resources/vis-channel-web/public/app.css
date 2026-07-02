@@ -227,7 +227,7 @@ font-size:.8rem}
 margin:0;max-height:32rem;overflow:auto}
 /* result: the human surface for a form return value, rendered as Markdown. */
 .block-result-cards{display:flex;flex-direction:column;min-width:0}
-.block-result-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--gold);color:var(--fg)}
+.block-result-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.25rem;margin:.18rem 0;padding:.1rem .6rem .1rem .8rem;border-left:2px solid var(--gold);border-radius:0 var(--r-sm) var(--r-sm) 0;background:color-mix(in srgb,var(--gold) 5%,var(--bg));color:var(--fg)}
 .block-result-label{color:var(--dim);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-result-summary{margin-left:.5rem;min-width:0;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
 /* the whole result card is a disclosure: its summary row IS the op badge, chevron in the card's gold accent. */

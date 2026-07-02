@@ -1901,6 +1901,14 @@
           ;; of the anchor-resolution `reason`s it case-matches on).
           (expect (string/includes? (:message r) "SYNTAX ERROR"))
           (expect (not (string/includes? (:message r) "failed.")))
+          ;; The refusal carries the WHOLE-BATCH candidates so a language
+          ;; pack's :around op-hook (e.g. the Clojure pack's parinfer rescue)
+          ;; can whole-source-repair the broken files and commit the batch —
+          ;; fragment repair can't fix contextual imbalance.
+          (expect (= [p] (:broken-paths r)))
+          (expect (= 1 (count (:candidate-plans r))))
+          (expect (string/includes? (:after (first (:candidate-plans r)))
+                    "(+ a b"))
           (expect (= "(defn add [a b] (+ a b))\n" (slurp p)))))    ;; untouched
     (it "a valid Clojure edit still applies"
         (let [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")

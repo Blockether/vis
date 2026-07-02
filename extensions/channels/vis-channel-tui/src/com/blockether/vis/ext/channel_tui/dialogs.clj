@@ -49,9 +49,9 @@
   (let [terminal-w (max 40 (- cols 4))
         min-w (min t/dialog-min-width terminal-w)
         box-w (-> (int (* cols t/dialog-width-ratio))
-                  (max min-w)
-                  (min t/dialog-max-width)
-                  (min terminal-w))]
+                (max min-w)
+                (min t/dialog-max-width)
+                (min terminal-w))]
     (max 1 (- box-w t/dialog-chrome-w))))
 (defn default-content-height
   "Shared content height every dialog uses, derived from `rows`.
@@ -60,9 +60,9 @@
   (let [terminal-h (max 8 (- rows 4))
         min-h (min t/dialog-min-height terminal-h)
         box-h (-> (int (* rows t/dialog-height-ratio))
-                  (max min-h)
-                  (min t/dialog-max-height)
-                  (min terminal-h))]
+                (max min-h)
+                (min t/dialog-max-height)
+                (min terminal-h))]
     (max 1 (- box-h t/dialog-chrome-h))))
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
@@ -81,9 +81,9 @@
   (let [txt (or s "")
         max-w (long max-w)]
     (cond (<= max-w 0) ""
-          (<= (p/display-width txt) max-w) txt
-          (= max-w 1) "..."
-          :else (str (p/truncate-cols txt (dec max-w)) "..."))))
+      (<= (p/display-width txt) max-w) txt
+      (= max-w 1) "..."
+      :else (str (p/truncate-cols txt (dec max-w)) "..."))))
 (def ^:private min-adaptive-content-h
   "Content-height floor for adaptive dialogs — the box never shrinks below
    this many content rows (≈ this + chrome tall), so a tiny popup still reads
@@ -129,8 +129,8 @@
   (let [last-start (max 0 (- total-count visible-count))
         start (clamp current-start 0 last-start)]
     (cond (< idx start) idx
-          (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
-          :else start)))
+      (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
+      :else start)))
 (defn modal-wheel-delta
   "Return list-selection delta for a wheel mouse event, else nil.
    Negative moves up; positive moves down."
@@ -138,8 +138,8 @@
   (when (instance? MouseAction key)
     (let [action (.getActionType ^MouseAction key)]
       (cond (= action MouseActionType/SCROLL_UP) -1
-            (= action MouseActionType/SCROLL_DOWN) 1
-            :else nil))))
+        (= action MouseActionType/SCROLL_DOWN) 1
+        :else nil))))
 (defn modal-wheel-step
   "Return wheel delta multiplied by any coalesced event count."
   [key]
@@ -215,7 +215,7 @@
       (if-let [delta (modal-wheel-delta key)]
         (loop [acc (long delta)]
           (if-let [next-key (some-> (.pollInput screen)
-                                    normalize-modal-key)]
+                              normalize-modal-key)]
             (if-let [next-delta (modal-wheel-delta next-key)]
               (recur (+ acc (long next-delta)))
               (do (reset! pending-key next-key) {:scroll-delta acc}))
@@ -227,11 +227,11 @@
   ^KeyStroke [^TerminalScreen screen]
   (let [{:keys [key scroll-delta]} (read-modal-input! screen)]
     (or key
-        (when scroll-delta
-          (MouseAction.
-           (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
-           1
-           (TerminalPosition. 0 0))))))
+      (when scroll-delta
+        (MouseAction.
+          (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
+          1
+          (TerminalPosition. 0 0))))))
 (defn drain-modal-paste!
   "After a bracketed-paste START keystroke is seen, drain `screen` until
    PASTE_END and return the pasted text (PUA markers stripped). Lets any
@@ -246,7 +246,7 @@
           (input/paste-end? k) (.toString sb)
           :else (do (when-let [ch (input/keystroke->paste-char k)]
                       (.append sb ^String ch))
-                    (recur)))))))
+                  (recur)))))))
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
    - a string: rendered as-is, left-aligned
@@ -309,10 +309,10 @@
       (string? hint) (p/display-width hint)
       (and (vector? hint) (seq hint) (vector? (first hint)))
       (+ (reduce + (map (fn [[k a]] (+ (p/display-width k) 1 (p/display-width a))) hint))
-         (* sep-w (max 0 (dec (count hint)))))
+        (* sep-w (max 0 (dec (count hint)))))
       (vector? hint)
       (+ (reduce + (map p/display-width hint))
-         (* sep-w (max 0 (dec (count hint)))))
+        (* sep-w (max 0 (dec (count hint)))))
       :else 0)))
 
 (defn footer-content-width
@@ -325,8 +325,8 @@
   ([cols hint] (footer-content-width cols hint 0))
   ([cols hint min-content]
    (-> (+ (hint-bar-width hint) 2)
-       (max (long min-content))
-       (min (max 1 (- cols 8))))))
+     (max (long min-content))
+     (min (max 1 (- cols 8))))))
 (defn- draw-list-item!
   ;; Selection visual:
   ;;   col left   : │ (frame, painted by chrome)
@@ -393,9 +393,9 @@
      (p/put-str! g field-left row prompt)
      (if (and placeholder (zero? (count text)))
        (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-           (p/put-str! g text-left row (ellipsize (str placeholder) text-w)))
+         (p/put-str! g text-left row (ellipsize (str placeholder) text-w)))
        (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-           (p/put-str! g text-left row visible)))
+         (p/put-str! g text-left row visible)))
      (p/cursor-pos (+ text-left (- cursor h-off)) row))))
 (defn draw-dialog-close-button!
   "Paint a clickable X close button at a dialog's top-right title row and
@@ -412,8 +412,8 @@
         hovered? @(.get ^ThreadLocal modal-close-hover)]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
-                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+      (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+      (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)
@@ -431,11 +431,11 @@
    Returns {:left :top :right :bottom :inner-w :inner-h}."
   ([g cols rows title content-h]
    (draw-dialog-chrome! g
-                        cols
-                        rows
-                        title
-                        (default-content-width cols)
-                        (adaptive-content-height rows content-h)))
+     cols
+     rows
+     title
+     (default-content-width cols)
+     (adaptive-content-height rows content-h)))
   ([g cols rows title content-w content-h]
    (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
          box-left (quot (- cols box-w) 2)
@@ -574,14 +574,14 @@
                      true (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
             item-w (+ 4 (reduce max 0 (map (fn [it]
                                              (+ (p/display-width (str (:label it)))
-                                                (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
-                                           items)))
+                                               (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
+                                        items)))
             content-w (footer-content-width cols footer item-w)
             bounds (if content?
                      (draw-dialog-chrome! g cols rows title
-                                          content-w (+ head-rows (min (count items) 16) 1))
+                       content-w (+ head-rows (min (count items) 16) 1))
                      (draw-dialog-chrome! g cols rows title
-                                          content-w (adaptive-content-height rows nil)))
+                       content-w (adaptive-content-height rows nil)))
             {:keys [left right inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-top (+ content-top head-rows)
@@ -594,7 +594,7 @@
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (when filter?
                            (draw-text-input-field! g left content-top inner-w @query
-                                                   (count @query) placeholder))]
+                             (count @query) placeholder))]
           (when filter?
             (p/set-colors! g t/dialog-border t/dialog-bg)
             (p/draw-separator! g left right (inc content-top)))
@@ -604,11 +604,11 @@
               (when (< idx total)
                 (let [item (nth filtered idx)]
                   (draw-list-item! g left row (if (> total list-h) (dec inner-w) inner-w)
-                                   (= idx @selected) (:label item) (:hint item))))))
+                    (= idx @selected) (:label item) (:hint item))))))
           (when (> total list-h)
             (scrollbar/draw! g
-                             {:col (+ left inner-w), :top list-top, :track-h list-h,
-                              :total-h total, :inner-h list-h, :scroll @scroll}))
+              {:col (+ left inner-w), :top list-top, :track-h list-h,
+               :total-h total, :inner-h list-h, :scroll @scroll}))
           (draw-hint-bar! g left hint-row inner-w footer)
           (.setCursorPosition screen (or cursor-pos (p/cursor-pos 0 0))))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -625,14 +625,14 @@
                 (do (when filter?
                       (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
                       (reset! selected 0))
-                    (recur))
+                  (recur))
                 KeyType/Character
                 (do (when filter?
                       (let [c (.getCharacter key)]
                         (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
                           (swap! query str c)
                           (reset! selected 0))))
-                    (recur))
+                  (recur))
                 (recur)))))))))
 (defn select-dialog!
   "Show a selection list dialog. Returns the selected item map or nil on Esc.
@@ -659,8 +659,8 @@
             footer [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
             item-w (+ 6 (reduce max 0 (map #(p/display-width (str %)) items)))
             bounds (draw-dialog-chrome! g cols rows title
-                                        (footer-content-width cols footer item-w)
-                                        (adaptive-content-height rows (max 1 total)))
+                     (footer-content-width cols footer item-w)
+                     (adaptive-content-height rows (max 1 total)))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))
             visible (min total content-h)
@@ -673,7 +673,7 @@
                   row (+ content-top i)]
               (when (< idx total)
                 (draw-checkbox-item! g left row inner-w
-                                     (= idx @selected) (contains? @checked idx) (nth items idx))))))
+                  (= idx @selected) (contains? @checked idx) (nth items idx))))))
         (draw-hint-bar! g left hint-row inner-w footer)
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -692,9 +692,9 @@
                                      (swap! checked #(if (contains? % @selected)
                                                        (disj % @selected)
                                                        (conj % @selected))))
-                                   (recur))
+                                 (recur))
                   (= c \a) (do (swap! checked #(if (= (count %) total) #{} (set (range total))))
-                               (recur))
+                             (recur))
                   :else (recur)))
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
@@ -739,8 +739,8 @@
             (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
             (p/fill-rect! g (inc left) fy inner-w 1)
             (p/put-str! g (+ left 2) fy
-                        (ellipsize (str (or (:label f) (some-> (:name f) name) "field")
-                                        (when (:required f) " *")) body-w))
+              (ellipsize (str (or (:label f) (some-> (:name f) name) "field")
+                           (when (:required f) " *")) body-w))
             ;; input line
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g (inc left) iy inner-w 1)
@@ -748,7 +748,7 @@
               (reset! cursor-screen (draw-text-input-field! g (inc left) iy inner-w val @(:cursor st)))
               (if (str/blank? val)
                 (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                    (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
+                  (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
                 (p/put-str! g (+ left 3) iy (ellipsize val body-w))))))
         ;; Start button via the shared button component.
         (let [by       (+ content-top (* n 3))
@@ -757,21 +757,21 @@
           (p/fill-rect! g (inc left) by inner-w 1)
           (draw-button! g (+ left 2) by "+ Add" focused?))
         (draw-hint-bar! g left hint-row inner-w
-                        [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
+          [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
         (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [submit! (fn []
                         (if-let [missing (first (filter #(and (:required (nth fields %))
-                                                              (str/blank? (val-of %)))
-                                                        (range n)))]
+                                                           (str/blank? (val-of %)))
+                                                  (range n)))]
                           (do (vis/notify! (str (or (:label (nth fields missing))
-                                                    (some-> (:name (nth fields missing)) name))
-                                                " is required")
-                                           :level :warn :ttl-ms 3000)
-                              (reset! focus missing)
-                              nil)
+                                                  (some-> (:name (nth fields missing)) name))
+                                             " is required")
+                                :level :warn :ttl-ms 3000)
+                            (reset! focus missing)
+                            nil)
                           (into {} (map (fn [i] [(keyword (:name (nth fields i))) (val-of i)])
-                                        (range n)))))
+                                     (range n)))))
               cur-field (when (< @focus n) (nth states @focus))
               key (read-modal-key! screen)]
           (cond
@@ -783,13 +783,13 @@
               (when (and sb cur-field (pos? (.length sb)))
                 (let [chars (vec (.toString sb))]
                   (swap! (:text cur-field) (fn [t] (into (subvec t 0 @(:cursor cur-field))
-                                                         (concat chars (subvec t @(:cursor cur-field))))))
+                                                     (concat chars (subvec t @(:cursor cur-field))))))
                   (swap! (:cursor cur-field) + (count chars))))
               (vreset! paste nil)
               (recur))
             (some? @paste) (do (when-let [ch (input/keystroke->paste-char key)]
                                  (.append ^StringBuilder @paste ch))
-                               (recur))
+                             (recur))
             :else
             (condp = (.getKeyType key)
               KeyType/Escape ::cancel
@@ -800,18 +800,18 @@
               KeyType/Character (do (when cur-field
                                       (let [c (.getCharacter key)]
                                         (swap! (:text cur-field) #(into (subvec % 0 @(:cursor cur-field))
-                                                                        (cons c (subvec % @(:cursor cur-field)))))
+                                                                    (cons c (subvec % @(:cursor cur-field)))))
                                         (swap! (:cursor cur-field) inc)))
-                                    (recur))
+                                  (recur))
               KeyType/Backspace (do (when (and cur-field (pos? @(:cursor cur-field)))
                                       (swap! (:text cur-field) #(into (subvec % 0 (dec @(:cursor cur-field)))
-                                                                      (subvec % @(:cursor cur-field))))
+                                                                  (subvec % @(:cursor cur-field))))
                                       (swap! (:cursor cur-field) dec))
-                                    (recur))
+                                  (recur))
               KeyType/ArrowLeft  (do (when cur-field (swap! (:cursor cur-field) #(max 0 (dec %)))) (recur))
               KeyType/ArrowRight (do (when cur-field
                                        (swap! (:cursor cur-field) #(min (count @(:text cur-field)) (inc %))))
-                                     (recur))
+                                   (recur))
               (recur))))))))
 
 (defn- resource-status-mark
@@ -842,7 +842,7 @@
       (let [sr (if (= 1 (count startables))
                  (first startables)
                  (select-dialog! screen "Start resource"
-                                 (mapv #(assoc % :label (str "Start " (:label %))) startables)))]
+                   (mapv #(assoc % :label (str "Start " (:label %))) startables)))]
         (when sr
           (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
                 opts (when-let [f (:options-fn sr)]
@@ -850,14 +850,14 @@
                 selected (cond
                            (seq (:fields sr)) (startable-fields-form! screen sr)
                            (:options-fn sr) (multi-select-dialog! screen
-                                                                  (str (:label sr) " — " (or (:options-label sr) "options"))
-                                                                  (or opts []))
+                                              (str (:label sr) " — " (or (:options-label sr) "options"))
+                                              (or opts []))
                            :else [])]
             (when (and (some? selected) (not= ::cancel selected))
               (try ((:start-fn sr) env (not-empty selected))
-                   (catch Throwable t
-                     (vis/notify! (str "Start failed: " (ex-message t))
-                                  :level :warn :ttl-ms 4000))))))))
+                (catch Throwable t
+                  (vis/notify! (str "Start failed: " (ex-message t))
+                    :level :warn :ttl-ms 4000))))))))
     nil))
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
@@ -881,7 +881,7 @@
             ;; clears its interior each frame, so a shrinking list leaves nothing.
             footer [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]]
             bounds (draw-dialog-chrome! g cols rows "Resources"
-                                        (footer-content-width cols footer) (max 1 total))
+                     (footer-content-width cols footer) (max 1 total))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
         (swap! selected #(clamp % 0 (max 0 (dec total))))
@@ -896,7 +896,7 @@
                   ;; kind reads as a TYPE prefix, then the readable name, then
                   ;; the dim port + status — the ● glyph already says live/errored.
                   label    (str (name (:kind r)) "  " (:label r)
-                                (when port (str "  :" port)) "  " (name (:status r)))
+                             (when port (str "  :" port)) "  " (name (:status r)))
                   actions  (if (:can-restart r) "[r] restart  [s] stop" "[s] stop")
                   action-w (count actions)]
               (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -935,7 +935,7 @@
                       (let [r (nth items (clamp @selected 0 (dec total)))]
                         (cond
                           (= c \s) (do (vis/stop-resource! session-id (:id r))
-                                       (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
+                                     (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
                           (= c \r) (when (:can-restart r)
                                      (vis/restart-resource! session-id (:id r))
                                      (vis/notify! (str "Restarted " (:label r)) :level :info :ttl-ms 3000)))))
@@ -957,7 +957,7 @@
             wrapped
             (vec (mapcat (fn [line]
                            (if (str/blank? (str line)) [""] (render/wrap-text (str line) text-w)))
-                         (or lines [])))
+                   (or lines [])))
             total (count wrapped)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
             visible (min total content-h)
@@ -971,12 +971,12 @@
               (p/fill-rect! g (inc left) row inner-w 1)
               (p/put-str! g (+ left 2) row (ellipsize (nth wrapped idx) text-w)))))
         (scrollbar/draw! g
-                         {:col (+ left inner-w),
-                          :top content-top,
-                          :track-h content-h,
-                          :total-h total,
-                          :inner-h content-h,
-                          :scroll @scroll})
+          {:col (+ left inner-w),
+           :top content-top,
+           :track-h content-h,
+           :total-h total,
+           :inner-h content-h,
+           :scroll @scroll})
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Enter/Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -992,9 +992,9 @@
 (defn- text-input-body-lines
   [body]
   (cond (nil? body) []
-        (string? body) (str/split-lines body)
-        (sequential? body) (mapv str body)
-        :else [(str body)]))
+    (string? body) (str/split-lines body)
+    (sequential? body) (mapv str body)
+    :else [(str body)]))
 (defn text-input-dialog!
   "Show a text input dialog. Returns string or nil on Esc.
    Options: :mask char (e.g. \\* for passwords), :initial string,
@@ -1016,9 +1016,9 @@
             ;; adapts to a plain prompt; a logo keeps the spacious footprint (nil).
             est-w (max 1 (- (default-content-width cols) 2))
             est-body (->> body-lines
-                          (mapcat (fn [line]
-                                    (if (str/blank? line) [""] (render/wrap-text line est-w))))
-                          vec)
+                       (mapcat (fn [line]
+                                 (if (str/blank? line) [""] (render/wrap-text line est-w))))
+                       vec)
             req-h (when-not (seq logo)
                     (+ 4 (if (seq est-body) 1 0) (count est-body)))
             bounds (if flat?
@@ -1027,14 +1027,14 @@
             {:keys [left inner-w]} bounds
             text-w (max 1 (- inner-w 2))
             wrapped-body (->> body-lines
-                              (mapcat (fn [line]
-                                        (if (str/blank? line) [""] (render/wrap-text line text-w))))
-                              vec)
+                           (mapcat (fn [line]
+                                     (if (str/blank? line) [""] (render/wrap-text line text-w))))
+                           vec)
             body-gap (if (seq wrapped-body) 1 0)
             full-h (:content-h (dialog-layout bounds))
             ;; Drop the logo before clipping the body when the terminal is short.
             logo-lines (if (and (seq logo)
-                                (<= (+ 5 body-gap (count logo)) full-h))
+                             (<= (+ 5 body-gap (count logo)) full-h))
                          (mapv str logo)
                          [])
             logo-block (if (seq logo-lines) (inc (count logo-lines)) 0)
@@ -1068,10 +1068,10 @@
         (p/fill-rect! g (inc left) label-row inner-w 1)
         (p/put-str! g (+ left 2) label-row (ellipsize label (max 0 (- inner-w 2))))
         (draw-hint-bar! g
-                        left
-                        hint-row
-                        inner-w
-                        [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
+          left
+          hint-row
+          inner-w
+          [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen cursor-pos)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -1093,28 +1093,28 @@
                                            (when-not (.isEmpty payload)
                                              (swap! text (fn [t]
                                                            (into (subvec t 0 @cursor)
-                                                                 (concat chars
-                                                                         (subvec t @cursor)))))
+                                                             (concat chars
+                                                               (subvec t @cursor)))))
                                              (swap! cursor + (count chars)))))
                                        (recur))
               ;; Accumulate chars into the paste buffer while open.
               (some? @paste-buffer) (do (when-let [ch (input/keystroke->paste-char key)]
                                           (.append ^StringBuilder @paste-buffer ch))
-                                        (recur))
+                                      (recur))
               ;; -- Regular key dispatch -------------------------
               :else (condp = (.getKeyType key)
                       KeyType/Escape nil
                       KeyType/Enter (str/trim (apply str @text))
                       KeyType/Character (let [c (.getCharacter key)]
                                           (swap! text #(into (subvec % 0 @cursor)
-                                                             (cons c (subvec % @cursor))))
+                                                         (cons c (subvec % @cursor))))
                                           (swap! cursor inc)
                                           (recur))
                       KeyType/Backspace (do (when (pos? @cursor)
                                               (swap! text #(into (subvec % 0 (dec @cursor))
-                                                                 (subvec % @cursor)))
+                                                             (subvec % @cursor)))
                                               (swap! cursor dec))
-                                            (recur))
+                                          (recur))
                       KeyType/ArrowLeft (do (swap! cursor #(max 0 (dec %))) (recur))
                       KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
                       (recur)))))))))
@@ -1167,10 +1167,10 @@
         (draw-button! g btn-start btn-row btn-yes (= @focus 0))
         (draw-button! g (+ btn-start btn-w btn-gap) btn-row btn-no (= @focus 1))
         (draw-hint-bar! g
-                        left
-                        hint-row
-                        inner-w
-                        [["<-/->" "switch"] ["Enter" "confirm"] ["Esc" "cancel"]])
+          left
+          hint-row
+          inner-w
+          [["<-/->" "switch"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -1183,8 +1183,8 @@
               KeyType/Tab (do (swap! focus #(if (zero? %) 1 0)) (recur))
               KeyType/Character (let [c (Character/toLowerCase (.getCharacter key))]
                                   (cond (= c \y) true
-                                        (= c \n) false
-                                        :else (recur)))
+                                    (= c \n) false
+                                    :else (recur)))
               (recur))))))))
 (defn- current-model-info
   []
@@ -1195,13 +1195,13 @@
   []
   (let [info (current-model-info)]
     (or (nil? info)
-        (and (boolean (:reasoning? info))
-             (not= false (:reasoning-effort? info))
-             (not= :zai-thinking (:reasoning-style info))))))
+      (and (boolean (:reasoning? info))
+        (not= false (:reasoning-effort? info))
+        (not= :zai-thinking (:reasoning-style info))))))
 (defn- theme-choice-order
   []
   (try (mapv keyword (shared-theme/available-theme-ids))
-       (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
+    (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
 (defn- settings-ui-options
   "Terminal-UI-owned settings in the Terminal UI section: the theme
    picker plus the mouse-selection auto-copy switch (a TUI-channel
@@ -1241,21 +1241,21 @@
    ;; shape the web settings modal uses (no tabs, no single "Feature Toggles"
    ;; bucket). Returns nil when nothing matches so no empty header shows.
    (let [specs (->> (vis/toggles-for-channel :tui)
-                    (filter include?))]
+                 (filter include?))]
      (when (seq specs)
        (vec
-        (mapcat
-         (fn [[group group-specs]]
-           (cons {:type :section, :label (titleize-label (name (or group :other)))}
-                 (for [{:keys [id label description owner]} (sort-by :id group-specs)]
-                   {:key (keyword (str "toggle::" id)),
-                    :type :registry-toggle,
-                    :toggle-id id,
-                    :label (or label (titleize-label (str (or (namespace id) "") " " (name id)))),
-                    :description (str (or description "")
-                                      (when (and owner (not= owner :vis))
-                                        (str "  [" (titleize-label (name owner)) "]")))})))
-         (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
+         (mapcat
+           (fn [[group group-specs]]
+             (cons {:type :section, :label (titleize-label (name (or group :other)))}
+               (for [{:keys [id label description owner]} (sort-by :id group-specs)]
+                 {:key (keyword (str "toggle::" id)),
+                  :type :registry-toggle,
+                  :toggle-id id,
+                  :label (or label (titleize-label (str (or (namespace id) "") " " (name id)))),
+                  :description (str (or description "")
+                                 (when (and owner (not= owner :vis))
+                                   (str "  [" (titleize-label (name owner)) "]")))})))
+           (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
 (def ^:private tui-contributor-slots
   #{:tui.slot/header-row :tui.slot/footer-segment})
 (def ^:private undisableable-tui-contributions
@@ -1273,22 +1273,22 @@
    returns nil so the section stays hidden — don't show an empty band."
   []
   (let [contributions (->> (vis/channel-contributions-for :tui)
-                           (filter #(contains? tui-contributor-slots (:slot %)))
-                           (remove #(contains? undisableable-tui-contributions (:id %)))
-                           (sort-by (juxt #(str (:slot %)) #(str (:id %)))))]
+                        (filter #(contains? tui-contributor-slots (:slot %)))
+                        (remove #(contains? undisableable-tui-contributions (:id %)))
+                        (sort-by (juxt #(str (:slot %)) #(str (:id %)))))]
     (when (seq contributions)
       (vec (cons {:type :section, :label "Header / Footer Contributors"}
-                 (for [{:keys [id slot]} contributions]
-                   {:key (keyword (str "contrib::" id)),
-                    :type :set-toggle,
-                    :set-key :contributors-disabled,
-                    :item-id id,
-                    :label (str id),
-                    :description (str "Toggle this extension's contribution to the TUI "
-                                      (case slot
-                                        :tui.slot/header-row "header subtitle row"
-                                        :tui.slot/footer-segment "footer"
-                                        "chrome"))}))))))
+             (for [{:keys [id slot]} contributions]
+               {:key (keyword (str "contrib::" id)),
+                :type :set-toggle,
+                :set-key :contributors-disabled,
+                :item-id id,
+                :label (str id),
+                :description (str "Toggle this extension's contribution to the TUI "
+                               (case slot
+                                 :tui.slot/header-row "header subtitle row"
+                                 :tui.slot/footer-segment "footer"
+                                 "chrome"))}))))))
 (defn- settings-content-width [cols] (default-content-width cols))
 (defn- settings-content-height [rows] (default-content-height rows))
 (defn- titleize-token
@@ -1298,9 +1298,9 @@
 (defn- titleize-label
   [s]
   (->> (str/split (str s) #"[-_\s]+")
-       (remove str/blank?)
-       (map titleize-token)
-       (str/join " ")))
+    (remove str/blank?)
+    (map titleize-token)
+    (str/join " ")))
 (def ^:private namespace-noise-segments
   ;; Trailing/marketing segments we drop when deriving a display label
   ;; from a namespace symbol. `core` / `bot` / `main` are the
@@ -1327,31 +1327,31 @@
   [sym-or-str]
   (let [raw (str sym-or-str)
         segments (->> (str/split raw #"\.")
-                      (remove str/blank?)
-                      vec)
+                   (remove str/blank?)
+                   vec)
         cleaned (vec (remove #(contains? namespace-noise-segments %) segments))
         leaf (or (last cleaned) (last (remove #{"com" "blockether"} segments)) (last segments))]
     (or leaf raw)))
 (defn- extension-kind
   [ext]
   (cond (seq (:ext/providers ext)) :provider
-        (seq (:ext/channels ext)) :channel
-        :else :extension))
+    (seq (:ext/channels ext)) :channel
+    :else :extension))
 (defn- extension-display-label
   [ext]
   (let [provider-label (some-> (first (:ext/providers ext))
-                               :provider/label
-                               (str/replace #"\s+\(.*\)$" ""))
+                         :provider/label
+                         (str/replace #"\s+\(.*\)$" ""))
         channel-label (or (some-> (first (:ext/channels ext))
-                                  :channel/cmd
-                                  titleize-label)
-                          (some-> (first (:ext/channels ext))
-                                  :channel/id
-                                  name
-                                  titleize-label))
-        alias-label (some-> (get-in ext [:ext/engine :ext.engine/alias])
-                            name
+                            :channel/cmd
                             titleize-label)
+                        (some-> (first (:ext/channels ext))
+                          :channel/id
+                          name
+                          titleize-label))
+        alias-label (some-> (get-in ext [:ext/engine :ext.engine/alias])
+                      name
+                      titleize-label)
         ;; Take the meaningful tail segment of the namespace (drop
         ;; `com.blockether.vis.ext` vendor prefix and the trailing
         ;; `core` / `bot` / `main` registrar entry-point convention)
@@ -1359,18 +1359,18 @@
         ;; `Goal`, `channel-tui` -> `Channel Tui` instead of the
         ;; previous `Com.blockether.vis.ext.voice.core`.
         ns-label (some-> (:ext/name ext)
-                         meaningful-namespace-segment
-                         titleize-label)]
+                   meaningful-namespace-segment
+                   titleize-label)]
     (or (not-empty provider-label)
-        (not-empty channel-label)
-        (not-empty alias-label)
-        (not-empty ns-label)
-        "Extension")))
+      (not-empty channel-label)
+      (not-empty alias-label)
+      (not-empty ns-label)
+      "Extension")))
 (defn- setting-key
   [v]
   (cond (keyword? v) v
-        (string? v) (let [s (str/trim v)] (when-not (str/blank? s) (keyword s)))
-        :else nil))
+    (string? v) (let [s (str/trim v)] (when-not (str/blank? s) (keyword s)))
+    :else nil))
 
 (def ^{:private true} retired-extension-setting-keys
   "Old :ext/settings rows now owned by registry toggles. Drop them rather than
@@ -1381,24 +1381,24 @@
 (defn- extension-setting-declarations
   []
   (->> (vis/registered-extensions)
-       (mapcat (fn [ext]
-                 (let [ext-id (:ext/name ext)
-                       ext-kind (extension-kind ext)
-                       ext-label (extension-display-label ext)
-                       provider-ids (set (keep :provider/id (:ext/providers ext)))]
-                   (keep-indexed (fn [idx decl]
-                                   (when-let [k (setting-key (:key decl))]
-                                     (when-not (contains? retired-extension-setting-keys k)
-                                       (assoc decl
-                                              :key k
-                                              :extension-id ext-id
-                                              :extension-kind ext-kind
-                                              :extension-label ext-label
-                                              :extension-order idx
-                                              :provider-ids provider-ids))))
-                                 (:ext/settings ext)))))
-       (sort-by (juxt :extension-kind :extension-label :extension-order :key))
-       vec))
+    (mapcat (fn [ext]
+              (let [ext-id (:ext/name ext)
+                    ext-kind (extension-kind ext)
+                    ext-label (extension-display-label ext)
+                    provider-ids (set (keep :provider/id (:ext/providers ext)))]
+                (keep-indexed (fn [idx decl]
+                                (when-let [k (setting-key (:key decl))]
+                                  (when-not (contains? retired-extension-setting-keys k)
+                                    (assoc decl
+                                      :key k
+                                      :extension-id ext-id
+                                      :extension-kind ext-kind
+                                      :extension-label ext-label
+                                      :extension-order idx
+                                      :provider-ids provider-ids))))
+                  (:ext/settings ext)))))
+    (sort-by (juxt :extension-kind :extension-label :extension-order :key))
+    vec))
 (defn- extension-setting-rows
   []
   (mapv (fn [{:keys [key type choices label description extension-id extension-kind extension-label
@@ -1413,26 +1413,26 @@
            :extension-label extension-label,
            :provider-ids provider-ids,
            :description (or description "Extension setting")})
-        (extension-setting-declarations)))
+    (extension-setting-declarations)))
 (defn- extension-env-declarations
   []
   (->> (vis/registered-extensions)
-       (mapcat (fn [ext]
-                 (let [ext-id (:ext/name ext)
-                       ext-kind (extension-kind ext)
-                       ext-label (extension-display-label ext)]
-                   (for [decl (:ext/env ext)
-                         :let [name (some-> (:name decl)
-                                            str
-                                            str/trim)]
-                         :when (not (str/blank? name))]
-                     (assoc decl
-                            :name name
-                            :extension-id ext-id
-                            :extension-kind ext-kind
-                            :extension-label ext-label)))))
-       (sort-by (juxt :extension-kind :extension-label :name))
-       vec))
+    (mapcat (fn [ext]
+              (let [ext-id (:ext/name ext)
+                    ext-kind (extension-kind ext)
+                    ext-label (extension-display-label ext)]
+                (for [decl (:ext/env ext)
+                      :let [name (some-> (:name decl)
+                                   str
+                                   str/trim)]
+                      :when (not (str/blank? name))]
+                  (assoc decl
+                    :name name
+                    :extension-id ext-id
+                    :extension-kind ext-kind
+                    :extension-label ext-label)))))
+    (sort-by (juxt :extension-kind :extension-label :name))
+    vec))
 (defn- extension-env-rows
   []
   (mapv (fn [{:keys [name label description extension-id extension-kind extension-label secret?
@@ -1447,14 +1447,14 @@
            :description (or description "Extension environment override"),
            :secret? (boolean secret?),
            :required? (boolean required?)})
-        (extension-env-declarations)))
+    (extension-env-declarations)))
 (defn- extension-option-rows [] (vec (concat (extension-setting-rows) (extension-env-rows))))
 (defn- provider-row-active?
   [active-provider {:keys [extension-kind provider-ids]}]
   (or (not= :provider extension-kind)
-      (nil? active-provider)
-      (empty? provider-ids)
-      (contains? provider-ids active-provider)))
+    (nil? active-provider)
+    (empty? provider-ids)
+    (contains? provider-ids active-provider)))
 (defn- extension-rows-of-kind
   [extension-rows kind]
   (filterv #(= kind (:extension-kind %)) extension-rows))
@@ -1466,8 +1466,8 @@
   (when (seq extension-rows)
     (mapcat (fn [[[label _] group-rows]]
               (into [{:type :subsection, :label label}]
-                    (sort-by (juxt :type :label :name) group-rows)))
-            (sort-by first (group-by extension-group-key extension-rows)))))
+                (sort-by (juxt :type :label :name) group-rows)))
+      (sort-by first (group-by extension-group-key extension-rows)))))
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
    settings modal): Terminal-UI chrome, then all feature toggles grouped by
@@ -1481,24 +1481,24 @@
          channel-rows (extension-rows-of-kind all-extension-rows :channel)
          generic-rows (extension-rows-of-kind all-extension-rows :extension)]
      (vec
-      (concat
-       [{:type :section, :label "Terminal UI"}]
-       (settings-ui-options)
+       (concat
+         [{:type :section, :label "Terminal UI"}]
+         (settings-ui-options)
          ;; ALL feature toggles, grouped by :group like the web. mouse-selection
          ;; already shows in Terminal UI above, so exclude it here.
-       (or (registry-toggle-rows #(not= :vis/mouse-selection-copy (:id %))) [])
-       (or (contributor-rows) [])
+         (or (registry-toggle-rows #(not= :vis/mouse-selection-copy (:id %))) [])
+         (or (contributor-rows) [])
          ;; Reasoning-effort moved OUT of Settings (own control: Ctrl+R); the
          ;; Models section only ever carried it, so it's gone too.
-       (when (seq channel-rows)
-         (concat [{:type :section, :label "Channel Settings"}]
-                 (settings-extension-groups channel-rows)))
-       (when (seq provider-rows)
-         (concat [{:type :section, :label "Provider Settings"}]
-                 (settings-extension-groups provider-rows)))
-       (when (seq generic-rows)
-         (concat [{:type :section, :label "Extension Settings"}]
-                 (settings-extension-groups generic-rows))))))))
+         (when (seq channel-rows)
+           (concat [{:type :section, :label "Channel Settings"}]
+             (settings-extension-groups channel-rows)))
+         (when (seq provider-rows)
+           (concat [{:type :section, :label "Provider Settings"}]
+             (settings-extension-groups provider-rows)))
+         (when (seq generic-rows)
+           (concat [{:type :section, :label "Extension Settings"}]
+             (settings-extension-groups generic-rows))))))))
 (defn- extension-env-status-label
   [source]
   (case source
@@ -1541,8 +1541,8 @@
       :registry-toggle (let [spec (vis/toggle-spec toggle-id)
                              tv   (vis/toggle-value toggle-id)]
                          (cond (= :enum (:type spec)) val
-                               (boolean tv) on
-                               :else off))
+                           (boolean tv) on
+                           :else off))
       :toggle (if (get values key false) on off)
       [" " t/dialog-fg])))
 (defn- cycle-choice
@@ -1556,15 +1556,15 @@
     :choice (update values key #(cycle-choice choices %))
     :toggle (update values key not)
     :set-toggle (update values
-                        set-key
-                        (fn [s]
-                          (let [s (or s #{})]
-                            (if (contains? s item-id) (disj s item-id) (conj s item-id)))))
+                  set-key
+                  (fn [s]
+                    (let [s (or s #{})]
+                      (if (contains? s item-id) (disj s item-id) (conj s item-id)))))
     :registry-toggle (do (if (= :enum (:type (vis/toggle-spec toggle-id)))
                            (vis/toggle-cycle-value! toggle-id)
                            (vis/toggle-set-enabled! toggle-id
-                                                    (not (vis/toggle-enabled? toggle-id))))
-                         values)
+                             (not (vis/toggle-enabled? toggle-id))))
+                       values)
     values))
 (defn- notify-settings-change!
   [callbacks values]
@@ -1581,29 +1581,29 @@
   (let [n (count rows)]
     (loop [idx (clamp (+ selected delta) 0 (max 0 (dec n)))]
       (cond (= idx selected) idx
-            (settings-selectable? (nth rows idx)) idx
-            (and (neg? delta) (zero? idx)) selected
-            (and (pos? delta) (= idx (dec n))) selected
-            :else (recur (clamp (+ idx delta) 0 (max 0 (dec n))))))))
+        (settings-selectable? (nth rows idx)) idx
+        (and (neg? delta) (zero? idx)) selected
+        (and (pos? delta) (= idx (dec n))) selected
+        :else (recur (clamp (+ idx delta) 0 (max 0 (dec n))))))))
 (defn- edit-extension-env-var!
   [^TerminalScreen screen {:keys [name label description secret?]}]
   (let [{:keys [source value]} (vis/extension-env-status name)
         raw (text-input-dialog!
-             screen
-             "Extension Environment" (str name ":")
-             :mask (when secret? \*)
-             :initial (if secret? "" (or value ""))
-             :body [(str label " - " (extension-env-status-label source)) (or description "")
-                    "Blank input clears the Vis config override; OS env still applies."])]
+              screen
+              "Extension Environment" (str name ":")
+              :mask (when secret? \*)
+              :initial (if secret? "" (or value ""))
+              :body [(str label " - " (extension-env-status-label source)) (or description "")
+                     "Blank input clears the Vis config override; OS env still applies."])]
     (when (some? raw) (vis/save-extension-env-var! name raw))))
 (defn- theme-display-label
   [theme-id]
   (let [theme-map (shared-theme/theme theme-id)]
     (or (:display-name theme-map)
-        (some-> theme-id
-                name
-                titleize-label)
-        (str theme-id))))
+      (some-> theme-id
+        name
+        titleize-label)
+      (str theme-id))))
 (defn- theme-picker-items
   [choices]
   (mapv (fn [theme-id] {:theme-id theme-id, :label (theme-display-label theme-id)}) choices))
@@ -1644,23 +1644,23 @@
                   row-y (+ content-top i)]
               (when (< idx total)
                 (draw-list-item! g
-                                 left
-                                 row-y
-                                 (if (> total content-h) (dec inner-w) inner-w)
-                                 (= idx @selected)
-                                 (:label (nth items idx))))))
+                  left
+                  row-y
+                  (if (> total content-h) (dec inner-w) inner-w)
+                  (= idx @selected)
+                  (:label (nth items idx))))))
           (scrollbar/draw! g
-                           {:col (+ left inner-w),
-                            :top content-top,
-                            :track-h content-h,
-                            :total-h total,
-                            :inner-h content-h,
-                            :scroll @scroll})
+            {:col (+ left inner-w),
+             :top content-top,
+             :track-h content-h,
+             :total-h total,
+             :inner-h content-h,
+             :scroll @scroll})
           (draw-hint-bar! g
-                          left
-                          hint-row
-                          inner-w
-                          [["↑/↓" "preview"] ["Enter" "choose"] ["Esc" "cancel"]])
+            left
+            hint-row
+            inner-w
+            [["↑/↓" "preview"] ["Enter" "choose"] ["Esc" "cancel"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
           (let [key (read-modal-key! screen)]
@@ -1669,7 +1669,7 @@
                 KeyType/Escape (do (preview! original) nil)
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                      (recur))
+                                    (recur))
                 KeyType/Enter (:theme-id (nth items @selected))
                 (recur)))))))))
 (defn- activate-theme-row!
@@ -1690,7 +1690,7 @@
     (if (= :theme-name (:key row))
       (activate-theme-row! screen values callbacks row)
       (->> (swap! values apply-settings-option row)
-           (notify-settings-change! callbacks)))))
+        (notify-settings-change! callbacks)))))
 (defn- settings-section-text
   [label inner-w]
   (let [prefix (str "── " label " ")
@@ -1716,17 +1716,17 @@
                      :section [{:row-idx idx, :part :section}]
                      :subsection [{:row-idx idx, :part :subsection}]
                      :info (let [text (str label
-                                           (when-not (str/blank? (str (or description "")))
-                                             (str "  " description)))
+                                        (when-not (str/blank? (str (or description "")))
+                                          (str "  " description)))
                                  lines (settings-wrap-lines text (max 1 (- option-w 2)))]
                              (mapv (fn [line] {:row-idx idx, :part :info-line, :text line})
-                                   (or (seq lines) [""])))
+                               (or (seq lines) [""])))
                      (let [desc-lines (settings-wrap-lines description desc-w)]
                        (into [{:row-idx idx, :part :option}]
-                             (mapv (fn [line] {:row-idx idx, :part :option-desc, :text line})
-                                   desc-lines)))))
-                 (range)
-                 rows))))
+                         (mapv (fn [line] {:row-idx idx, :part :option-desc, :text line})
+                           desc-lines)))))
+           (range)
+           rows))))
 (defn settings-dialog!
   "Show the tabbed settings dialog.
 
@@ -1756,11 +1756,11 @@
              screen-rows (.getRows size)
              g (.newTextGraphics screen)
              bounds (draw-dialog-chrome! g
-                                         cols
-                                         screen-rows
-                                         "Settings"
-                                         (settings-content-width cols)
-                                         (settings-content-height screen-rows))
+                      cols
+                      screen-rows
+                      "Settings"
+                      (settings-content-width cols)
+                      (settings-content-height screen-rows))
              {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dialog-layout bounds)
              list-top content-top
@@ -1787,14 +1787,14 @@
              visual-n (count entries)
              sel-entry-idxs (keep-indexed (fn [entry-idx {:keys [row-idx]}]
                                             (when (= row-idx @selected) entry-idx))
-                                          entries)
+                              entries)
              ;; Option line of the selected row (first non-description entry).
              selected-visual (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
                                                         (when (and (= row-idx @selected)
-                                                                   (not= part :option-desc))
+                                                                (not= part :option-desc))
                                                           entry-idx))
-                                                      entries))
-                                 0)
+                                          entries))
+                               0)
              ;; Last paint row owned by the selected option, INCLUDING its
              ;; wrapped description rows. The scroll window must be able to
              ;; reach this so the trailing desc lines (and, for the bottom-most
@@ -1810,8 +1810,8 @@
              ;; scroll to the first setting but never see its header.
              header-start (loop [i (dec selected-visual)]
                             (if (and (>= i 0)
-                                     (contains? #{:section :subsection :info-line}
-                                                (:part (nth entries i))))
+                                  (contains? #{:section :subsection :info-line}
+                                    (:part (nth entries i))))
                               (recur (dec i))
                               (inc i)))
              _ (let [start0 (visible-window-start selected-visual @scroll visible-h visual-n)
@@ -1819,7 +1819,7 @@
                      ;; option (through its last desc line) still fits in the
                      ;; viewport from `header-start`.
                      start0 (if (and (< header-start start0)
-                                     (<= (- selected-visual-end header-start) (dec visible-h)))
+                                  (<= (- selected-visual-end header-start) (dec visible-h)))
                               header-start
                               start0)
                      ;; Pull the window down to reveal the selected row's last
@@ -1846,51 +1846,51 @@
                               (p/set-fg! g t/dialog-hint-key)
                               (p/styled g [p/BOLD] (p/put-str! g (+ left 5) row-y label)))
                    :subsection (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                   (p/fill-rect! g (inc left) row-y paint-w 1)
-                                   (p/styled g
-                                             [p/BOLD]
-                                             (p/put-str! g
-                                                         (+ left 2)
-                                                         row-y
-                                                         (settings-subsection-text label paint-w))))
+                                 (p/fill-rect! g (inc left) row-y paint-w 1)
+                                 (p/styled g
+                                   [p/BOLD]
+                                   (p/put-str! g
+                                     (+ left 2)
+                                     row-y
+                                     (settings-subsection-text label paint-w))))
                    :info-line
                    (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                       (p/fill-rect! g (inc left) row-y paint-w 1)
-                       (p/put-str! g (+ left 2) row-y (ellipsize text (max 1 (- paint-w 2)))))
+                     (p/fill-rect! g (inc left) row-y paint-w 1)
+                     (p/put-str! g (+ left 2) row-y (ellipsize text (max 1 (- paint-w 2)))))
                    :option-desc (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                    (p/fill-rect! g (inc left) row-y paint-w 1)
-                                    (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                                  (p/fill-rect! g (inc left) row-y paint-w 1)
+                                  (p/put-str! g desc-x row-y (ellipsize text desc-w)))
                    ;; Selection visual: leading `> ` cursor glyph and
                    ;; BOLD label text. Descriptions wrap beneath the
                    ;; option on dim rows, so long labels no longer force
                    ;; descriptions into an ellipsis-only column.
                    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                       (p/fill-rect! g (inc left) row-y paint-w 1)
+                     (p/fill-rect! g (inc left) row-y paint-w 1)
                        ;; Cursor glyph in the dialog padding column.
-                       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                       (p/draw-selection-marker! g (inc left) row-y selected?)
+                     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                     (p/draw-selection-marker! g (inc left) row-y selected?)
                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
                        ;; which returns the col to start the label at.
-                       (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                             lbl     (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
-                         (p/set-colors! g t/dialog-fg t/dialog-bg)
-                         (if selected?
-                           (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                           (p/put-str! g label-x row-y lbl))))))
+                     (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                           lbl     (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                       (p/set-colors! g t/dialog-fg t/dialog-bg)
+                       (if selected?
+                         (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                         (p/put-str! g label-x row-y lbl))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc left) row-y paint-w 1)))))
+                 (p/fill-rect! g (inc left) row-y paint-w 1)))))
          (scrollbar/draw! g
-                          {:col (+ left inner-w),
-                           :top list-top,
-                           :track-h visible-h,
-                           :total-h visual-n,
-                           :inner-h visible-h,
-                           :scroll @scroll})
+           {:col (+ left inner-w),
+            :top list-top,
+            :track-h visible-h,
+            :total-h visual-n,
+            :inner-h visible-h,
+            :scroll @scroll})
          (draw-hint-bar! g
-                         left
-                         hint-row
-                         inner-w
-                         [["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
+           left
+           hint-row
+           inner-w
+           [["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
          (let [key (read-modal-key! screen)
@@ -1911,17 +1911,17 @@
                      ;; so the cursor stays in the visible window without
                      ;; the user having to chase it with arrow keys.
                    (or (= action MouseActionType/SCROLL_UP)
-                       (= action MouseActionType/SCROLL_DOWN))
+                     (= action MouseActionType/SCROLL_DOWN))
                    (let [step (or (modal-wheel-step key)
-                                  (if (= action MouseActionType/SCROLL_UP) -1 1))]
+                                (if (= action MouseActionType/SCROLL_UP) -1 1))]
                      (swap! selected #(move-settings-selection rows % step))
                      (recur))
                      ;; CLICK_DOWN on the scrollbar thumb — start drag,
                      ;; preserve the grip so the row under the cursor
                      ;; stays glued to the same point on the thumb.
                    (and (= action MouseActionType/CLICK_DOWN)
-                        (some? geom)
-                        (scrollbar/on-thumb? mx my {:col bar-col, :top list-top} geom))
+                     (some? geom)
+                     (scrollbar/on-thumb? mx my {:col bar-col, :top list-top} geom))
                    (let [thumb-top (+ list-top (long (:thumb-top-rel geom)))]
                      (vreset! scrollbar-drag-offset (- my thumb-top))
                      (recur))
@@ -1930,34 +1930,34 @@
                      ;; arm a drag with a centred grip so an immediate
                      ;; follow-up motion tracks naturally.
                    (and (= action MouseActionType/CLICK_DOWN)
-                        (some? geom)
-                        (scrollbar/on-track? mx
-                                             my
-                                             {:col bar-col, :top list-top, :track-h visible-h}))
+                     (some? geom)
+                     (scrollbar/on-track? mx
+                       my
+                       {:col bar-col, :top list-top, :track-h visible-h}))
                    (let [grip (long (quot (long (:thumb-h geom)) 2))]
                      (vreset! scrollbar-drag-offset grip)
                      (reset! scroll (or (scrollbar/scroll-from-mouse-y my
-                                                                       list-top
-                                                                       visible-h
-                                                                       visual-n
-                                                                       visible-h
-                                                                       grip)
-                                        0))
+                                          list-top
+                                          visible-h
+                                          visual-n
+                                          visible-h
+                                          grip)
+                                      0))
                      (recur))
                      ;; DRAG continues to track the cursor while the
                      ;; user holds the button after a thumb grab.
                    (and (= action MouseActionType/DRAG)
-                        (some? @scrollbar-drag-offset)
-                        (some? geom))
+                     (some? @scrollbar-drag-offset)
+                     (some? geom))
                    (do (reset! scroll (or (scrollbar/scroll-from-mouse-y
-                                           my
-                                           list-top
-                                           visible-h
-                                           visual-n
-                                           visible-h
-                                           (long @scrollbar-drag-offset))
-                                          0))
-                       (recur))
+                                            my
+                                            list-top
+                                            visible-h
+                                            visual-n
+                                            visible-h
+                                            (long @scrollbar-drag-offset))
+                                        0))
+                     (recur))
                    (= action MouseActionType/CLICK_RELEASE)
                    (do (vreset! scrollbar-drag-offset nil) (recur))
                    :else (recur)))
@@ -1965,17 +1965,17 @@
                (condp = (.getKeyType key)
                  KeyType/Escape @values
                  KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
-                                     (recur))
+                                   (recur))
                  KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
-                                       (recur))
+                                     (recur))
                  KeyType/Character
                  (let [c (.getCharacter key)]
                    (if (= c \space)
                      (do (activate-settings-row! screen values callbacks selected-row)
-                         (recur))
+                       (recur))
                      (recur)))
                  KeyType/Enter (do (activate-settings-row! screen values callbacks selected-row)
-                                   (recur))
+                                 (recur))
                  (recur))))))))))
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id [session] (let [id (str (:id session))] (subs id 0 (min 8 (count id)))))
@@ -1983,11 +1983,11 @@
 (defn- untitled-session-title?
   [title]
   (or (str/blank? (str title))
-      (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))
+    (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))
 (defn- empty-untitled-session?
   [{:keys [title turn-count]}]
   (and (not (pos? (long (or turn-count 0))))
-       (untitled-session-title? title)))
+    (untitled-session-title? title)))
 (defn- session-title
   [session]
   (let [title (:title session)
@@ -1998,9 +1998,9 @@
 (defn- date->millis
   [v]
   (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
-        (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
-        (number? v) (long v)
-        :else nil))
+    (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
+    (number? v) (long v)
+    :else nil))
 (defn- date-value [v] (when-let [ms (date->millis v)] (java.util.Date. ms)))
 (defn- format-session-date
   [v]
@@ -2063,13 +2063,13 @@
    stable so the picker reads as a table inside the shared dialog chrome."
   [{:keys [id turn-count modified-at created-at], :as session} active-id body-w]
   (let [active? (= (str id)
-                   (some-> active-id
-                           str))]
+                  (some-> active-id
+                    str))]
     (session-table-row-label [(if active? "●" "") (short-session-id session) (session-title session)
                               (str (long (or turn-count 0))) (format-session-day created-at)
                               (format-session-time created-at) (format-session-day modified-at)
                               (format-session-time modified-at)]
-                             body-w)))
+      body-w)))
 (defn session-dialog-header [body-w] (session-table-row-label session-table-headers body-w))
 (defn- session-dialog-sort-key
   [{:keys [modified-at created-at]}]
@@ -2084,7 +2084,7 @@
            {:action :switch,
             :id (str (:id session)), ; downstream (switch-session!) accepts full UUID strings
             :label (session-dialog-label session active-id body-w)})
-         (sort-by session-dialog-sort-key sessions))))
+     (sort-by session-dialog-sort-key sessions))))
 (defn- draw-session-row!
   [g left row inner-w selected? label]
   ;; Session picker is a TABLE — cells must NOT shift between selected
@@ -2138,9 +2138,9 @@
         (p/put-str! g table-x table-top (session-table-border-line body-w :top))
         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
         (p/styled g
-                  [p/BOLD]
-                  (p/fill-rect! g (inc left) header-row inner-w 1)
-                  (p/put-str! g table-x header-row (session-dialog-header body-w)))
+          [p/BOLD]
+          (p/fill-rect! g (inc left) header-row inner-w 1)
+          (p/put-str! g table-x header-row (session-dialog-header body-w)))
         ;; Re-paint the header's side `│` borders in the border color: the
         ;; header row was painted in dialog-hint-key, which would otherwise
         ;; leave the vertical edges a different color than the top/separator/
@@ -2159,22 +2159,22 @@
                 ;; painted the whole boxed row (borders included) in dialog-fg, which
                 ;; would otherwise leave the vertical edges (and the active `●` row's
                 ;; frame) a different color than the top/separator/bottom chrome.
-                  (p/set-colors! g t/dialog-border t/dialog-bg)
-                  (p/put-str! g table-x row "│")
-                  (p/put-str! g (+ table-x (dec body-w)) row "│")
-                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                  (p/draw-selection-marker! g (inc left) row (= idx @selected)))
+                (p/set-colors! g t/dialog-border t/dialog-bg)
+                (p/put-str! g table-x row "│")
+                (p/put-str! g (+ table-x (dec body-w)) row "│")
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/draw-selection-marker! g (inc left) row (= idx @selected)))
               (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                  (p/fill-rect! g (inc left) row inner-w 1)))))
+                (p/fill-rect! g (inc left) row inner-w 1)))))
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/fill-rect! g (inc left) bottom-row inner-w 1)
         (p/put-str! g table-x bottom-row (session-table-border-line body-w :bottom))
         (draw-hint-bar! g
-                        left
-                        hint-row
-                        inner-w
-                        [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"]
-                         ["Esc" "cancel"]])
+          left
+          hint-row
+          inner-w
+          [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"]
+           ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -2185,7 +2185,7 @@
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                      (recur))
+                                    (recur))
                 KeyType/Enter (when (pos? total) (select-keys (nth items @selected) [:action :id]))
                 KeyType/Character (let [raw-c (.getCharacter key)
                                         c (when raw-c (Character/toLowerCase raw-c))]
@@ -2258,10 +2258,10 @@
         rows (->> sessions
                ;; Keep the FOCUSED session even when it is an empty
                ;; untitled shell — you must always see "you are here".
-                  (remove #(and (not show-empty-untitled?)
-                                (empty-untitled-session? %)
-                                (not (focused? %))))
-                  (mapv #(navigator-session-row active-session-id %)))]
+               (remove #(and (not show-empty-untitled?)
+                          (empty-untitled-session? %)
+                          (not (focused? %))))
+               (mapv #(navigator-session-row active-session-id %)))]
     ;; Focused row pinned to the top; the rest keep their recency order
     ;; and read as the "switch to" list below it.
     (vec (concat (filter :focused? rows) (remove :focused? rows)))))
@@ -2273,8 +2273,8 @@
    cell text can be overlaid on a border-colored frame."
   [widths]
   (first
-   (reduce (fn [[acc off] w] [(conj acc [off (long w)]) (+ off (long w) 3)])
-           [[] 2] widths)))
+    (reduce (fn [[acc off] w] [(conj acc [off (long w)]) (+ off (long w) 3)])
+      [[] 2] widths)))
 (defn- navigator-with-selection-gutter
   "Reserve the shared selection-prefix gutter at the head of the first cell.
    `p/draw-selection-marker!` paints into that gutter on selected rows."
@@ -2292,7 +2292,7 @@
   (let [draw (fn []
                (doseq [[i [off w]] (map-indexed vector (navigator-cell-spans widths))]
                  (p/put-str! g (+ x off) row
-                             (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
+                   (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
 (defn- dir-canon
   ^java.io.File [^java.io.File f]
@@ -2303,17 +2303,17 @@
    Unreadable dirs (permission denied → nil listing) yield an empty vec."
   [^java.io.File dir]
   (->> (try (.listFiles dir) (catch Throwable _ nil))
-       (filter (fn [^java.io.File f] (and (.isDirectory f) (not (.isHidden f)))))
-       (map (fn [^java.io.File f] (.getName f)))
-       (sort String/CASE_INSENSITIVE_ORDER)
-       vec))
+    (filter (fn [^java.io.File f] (and (.isDirectory f) (not (.isHidden f)))))
+    (map (fn [^java.io.File f] (.getName f)))
+    (sort String/CASE_INSENSITIVE_ORDER)
+    vec))
 
 (defn- ctrl-letter?
   "True when `key` is Ctrl+<letter> (case-insensitive)."
   [key letter]
   (and (input/ctrl-modifier? key)
-       (= KeyType/Character (.getKeyType key))
-       (some-> (.getCharacter key) Character/toLowerCase (= letter))))
+    (= KeyType/Character (.getKeyType key))
+    (some-> (.getCharacter key) Character/toLowerCase (= letter))))
 
 (defn directory-picker-dialog!
   "Browse the filesystem like a file explorer and manage this session's
@@ -2358,10 +2358,10 @@
                    :add-root   "Add a filesystem directory"
                    :new-folder "Create a directory"
                    :remove     "Remove a filesystem directory"
-                   "Open directory")
+                   "Filesystem Permissions")
         norm     (fn [p] (some-> p str not-empty
-                                 (#(try (str (workspace/normalize-root %))
-                                        (catch Throwable _ %)))))]
+                           (#(try (str (workspace/normalize-root %))
+                               (catch Throwable _ %)))))]
     (loop []
       (let [^java.io.File dir @path
             up?      (some? (.getParentFile dir))
@@ -2383,11 +2383,11 @@
                        (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
                          (or (= s base-canon) (contains? extra-set s))))
             entries  (vec (concat
-                           (when up? [{:kind :up}])
-                           (map (fn [n] {:kind  :into
-                                         :name  n
-                                         :root? (boolean (and manager? (root-of? n)))})
-                                subdirs)))
+                            (when up? [{:kind :up}])
+                            (map (fn [n] {:kind  :into
+                                          :name  n
+                                          :root? (boolean (and manager? (root-of? n)))})
+                              subdirs)))
             total    (count entries)
             ;; C-a acts on the HIGHLIGHTED entry when it's a subfolder, so you
             ;; can add `foo/` straight from the list without stepping into it;
@@ -2408,7 +2408,7 @@
             rows-n   (.getRows size)
             g        (.newTextGraphics screen)
             bounds   (draw-dialog-chrome! g cols rows-n title
-                                          (default-content-height rows-n))
+                       (default-content-height rows-n))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-x   (+ left 2)
@@ -2423,31 +2423,31 @@
             path-w   (max 1 (- list-w tag-w 7))
             roots    (when manager?
                        (vec (concat
-                             (when base [{:path (str base) :tag "root"}])
-                             (map (fn [e] {:path (:trunk e) :tag "added"}) extras))))
+                              (when base [{:path (str base) :tag "root"}])
+                              (map (fn [e] {:path (:trunk e) :tag "added"}) extras))))
             root-row (fn [{:keys [path tag]}]
                        (table/boxed-row-line [path-w tag-w]
-                                             [(str "● " (abbreviate-home path)) tag]
-                                             [:left :left]))
+                         [(str "● " (abbreviate-home path)) tag]
+                         [:left :left]))
             filter-suffix (when-not (str/blank? @query) (str "   [filter: " @query "]"))
             header-rows
             (if manager?
               (vec (concat
-                    [{:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
-                    (if (seq roots)
-                      (concat
-                       [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
-                       (map (fn [r] {:kind :root :text (root-row r)}) roots)
-                       [{:kind :box :text (table/boxed-border-line [path-w tag-w] :bottom)}])
-                      [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                    [{:kind :rule :text (apply str (repeat list-w "─"))}
-                     {:kind :browse
-                      :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
-                    (when notice-here
-                      [{:kind   :notice
-                        :text   (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
-                        :error? (= :error (second notice-here))}])))
-              [{:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}])
+                     [{:kind :blank :text ""} {:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
+                     (if (seq roots)
+                       (concat
+                         [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
+                         (map (fn [r] {:kind :root :text (root-row r)}) roots)
+                         [{:kind :box :text (table/boxed-border-line [path-w tag-w] :bottom)}])
+                       [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
+                     [{:kind :rule :text (apply str (repeat list-w "─"))}
+                      {:kind :browse
+                       :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
+                     (when notice-here
+                       [{:kind   :notice
+                         :text   (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
+                         :error? (= :error (second notice-here))}])))
+              [{:kind :blank :text ""} {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}])
             header-n (count header-rows)
             hdr-h    (min header-n (max 1 (dec content-h)))
             list-top (+ content-top hdr-h)
@@ -2488,7 +2488,7 @@
                                :else
                                (try
                                  (let [new-ws (workspace/change-root! db-info session-state-id
-                                                                      (.getPath target-dir))]
+                                                (.getPath target-dir))]
                                    (reset! wid (:id new-ws))
                                    (reset! notice [dir-canon-str :ok
                                                    (str "Root changed — session now works in " target-name)]))
@@ -2506,7 +2506,7 @@
                            (case (:kind entry)
                              :up   (ascend!)
                              :into (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
-                                       (reset! query "") (reset-list!))
+                                     (reset! query "") (reset-list!))
                              nil)
                            nil)))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -2553,8 +2553,8 @@
                     mark      (when (and manager? (= :into (:kind entry)))
                                 (if (:root? entry) "●" "○"))
                     mark-fg   (cond selected?      t/dialog-title-fg
-                                    (:root? entry) t/dialog-hint-key
-                                    :else          t/dialog-hint)
+                                (:root? entry) t/dialog-hint-key
+                                :else          t/dialog-hint)
                     up?       (= :up (:kind entry))
                     label     (if up? "↑ Go up" (str (:name entry) "/"))
                     ;; ".." stays flush-left; browsable folders indent UNDER
@@ -2564,23 +2564,25 @@
                     ;;     ○ bar/
                     mark-x    (+ list-x 2)
                     name-x    (cond (not manager?) list-x
-                                    up?            list-x
-                                    :else          (+ list-x 4))]
+                                up?            list-x
+                                :else          (+ list-x 4))]
                 (p/set-colors! g fg bg)
                 (p/fill-rect! g (inc left) row inner-w 1)
                 (when mark
                   (p/set-colors! g mark-fg bg)
                   (p/put-str! g mark-x row mark))
                 (p/set-colors! g fg bg)
-                (p/put-str! g name-x row (ellipsize label (max 1 (- list-w (- name-x list-x)))))
+                (doto g
+                  (p/set-colors! (if (and up? (not selected?)) t/header-active-tab-accent fg) bg)
+                  (p/put-str! name-x row (ellipsize label (max 1 (- list-w (- name-x list-x))))))
                 (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
         (draw-hint-bar! g left hint-row inner-w
-                        (if manager?
-                          [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
-                           ["C-r" "set as root"] ["C-n" "new folder"]
-                           ["Tab" "open tab"] ["Esc" "close"]]
-                          [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"]
-                           ["Tab" "open tab"] ["Esc" "close"]]))
+          (if manager?
+            [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
+             ["C-r" "set as root"] ["C-n" "new folder"]
+             ["Tab" "open tab"] ["Esc" "close"]]
+            [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"]
+             ["Tab" "open tab"] ["Esc" "close"]]))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
@@ -2588,26 +2590,26 @@
               (modal-escape-key? key) nil
               (modal-wheel-step key)
               (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
-                  (recur))
+                (recur))
               ;; Actions are MODIFIER keys, never list rows, so plain typing
               ;; (incl. the letters a/n) keeps filtering the list.
               (ctrl-letter? key \a) (do (toggle-root!) (recur))
               (ctrl-letter? key \r) (do (set-root!) (recur))
               (ctrl-letter? key \n)
               (let [nm (text-input-dialog! screen "New folder"
-                                           (str "Create under " (.getPath dir)) :flat? true)]
+                         (str "Create under " (.getPath dir)) :flat? true)]
                 (when (and nm (seq (str/trim nm)))
                   (try (workspace/create-dir! (.getPath dir) nm)
-                       (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
-                       (reset! query "") (reset-list!)
-                       (catch Throwable _ nil)))
+                    (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
+                    (reset! query "") (reset-list!)
+                    (catch Throwable _ nil)))
                 (recur))
               (input/paste-start? key)
               (do (let [pasted (drain-modal-paste! screen)]
                     (when (seq pasted)
                       (swap! query str (str/replace pasted #"\s+" " "))
                       (reset-list!)))
-                  (recur))
+                (recur))
               (modal-enter-key? key) (or (enter!) (recur))
               :else
               (condp = (.getKeyType key)
@@ -2617,12 +2619,12 @@
                 KeyType/ArrowLeft  (do (ascend!) (recur))
                 KeyType/Tab        (.getPath dir)
                 KeyType/Backspace  (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                       (reset-list!) (recur))
+                                     (reset-list!) (recur))
                 KeyType/Character  (let [c (.getCharacter key)]
                                      (when (and c
-                                                (not (input/alt-modifier? key))
-                                                (not (input/ctrl-modifier? key))
-                                                (not (Character/isISOControl c)))
+                                             (not (input/alt-modifier? key))
+                                             (not (input/ctrl-modifier? key))
+                                             (not (Character/isISOControl c)))
                                        (swap! query str c) (reset-list!))
                                      (recur))
                 (recur)))))))))
@@ -2647,7 +2649,7 @@
             rows-n (.getRows size)
             g (.newTextGraphics screen)
             bounds (draw-dialog-chrome! g cols rows-n "Sessions"
-                                        (navigator-content-w cols) (default-content-height rows-n))
+                     (navigator-content-w cols) (default-content-height rows-n))
             {:keys [left right inner-w]} bounds
             ;; Input is pinned to a FIXED top position (no vertical
             ;; centering) so it never jumps as the row count changes
@@ -2705,8 +2707,8 @@
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
               (draw-navigator-row! g table-x header-row table-widths
-                                   (navigator-with-selection-gutter (mapv #(or (:label %) "") navigator-columns))
-                                   aligns t/dialog-hint-key true)
+                (navigator-with-selection-gutter (mapv #(or (:label %) "") navigator-columns))
+                aligns t/dialog-hint-key true)
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
               (dotimes [i body-h]
@@ -2720,7 +2722,7 @@
                       focused? (:focused? entry)
                       row-fg   (if focused? t/dialog-hint-key t/dialog-fg)
                       cells (navigator-with-selection-gutter
-                             (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns))]
+                              (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns))]
                   (draw-navigator-row! g table-x row table-widths cells aligns row-fg (or selected? focused?))
                   ;; Shared cursor marker, painted by the project-wide primitive into
                   ;; the reserved `p/selection-prefix` first-cell gutter.
@@ -2729,19 +2731,19 @@
               (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
               (when (> total body-h)
                 (scrollbar/draw! g
-                                 {:col scrollbar-col,
-                                  :top body-top,
-                                  :track-h body-h,
-                                  :total-h total,
-                                  :inner-h body-h,
-                                  :scroll @scroll}))))
+                  {:col scrollbar-col,
+                   :top body-top,
+                   :track-h body-h,
+                   :total-h total,
+                   :inner-h body-h,
+                   :scroll @scroll}))))
           (draw-hint-bar! g
-                          left
-                          hint-row
-                          inner-w
-                          [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"] ["C-d" "delete"]
-                           [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
-                           ["Esc" "cancel"]])
+            left
+            hint-row
+            inner-w
+            [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"] ["C-d" "delete"]
+             [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
+             ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
         (let [key (read-modal-key! screen)
@@ -2750,7 +2752,7 @@
             (cond
               (modal-wheel-step key)
               (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
-                  (recur))
+                (recur))
 
               ;; Scrollbar mouse: grab the thumb, jump on a track click, and
               ;; follow drags. The bar is the only mouse target here; row
@@ -2759,13 +2761,13 @@
               ;; render's `visible-window-start` doesn't yank scroll back to
               ;; the (now off-screen) selected row.
               (and (instance? MouseAction key) (> total body-h)
-                   (let [action (.getActionType ^MouseAction key)]
-                     (or (= action MouseActionType/DRAG)
-                         (= action MouseActionType/CLICK_RELEASE)
-                         (and (= action MouseActionType/CLICK_DOWN)
-                              (let [pos (.getPosition ^MouseAction key)]
-                                (scrollbar/on-track? (.getColumn pos) (.getRow pos)
-                                                     {:col scrollbar-col, :top body-top, :track-h body-h, :x-band 2}))))))
+                (let [action (.getActionType ^MouseAction key)]
+                  (or (= action MouseActionType/DRAG)
+                    (= action MouseActionType/CLICK_RELEASE)
+                    (and (= action MouseActionType/CLICK_DOWN)
+                      (let [pos (.getPosition ^MouseAction key)]
+                        (scrollbar/on-track? (.getColumn pos) (.getRow pos)
+                          {:col scrollbar-col, :top body-top, :track-h body-h, :x-band 2}))))))
               (let [^MouseAction ma key
                     action (.getActionType ma)
                     pos (.getPosition ma)
@@ -2774,17 +2776,17 @@
                     geom (scrollbar/geometry total body-h body-h @scroll)
                     apply-scroll! (fn [grip]
                                     (let [ns (or (scrollbar/scroll-from-mouse-y
-                                                  my body-top body-h total body-h grip)
-                                                 0)]
+                                                   my body-top body-h total body-h grip)
+                                               0)]
                                       (reset! scroll ns)
                                       (swap! selected
-                                             #(clamp % ns (min (dec total) (+ ns (dec body-h)))))))]
+                                        #(clamp % ns (min (dec total) (+ ns (dec body-h)))))))]
                 (cond
                   (= action MouseActionType/CLICK_RELEASE)
                   (do (vreset! scrollbar-drag-offset nil) (recur))
 
                   (and (= action MouseActionType/CLICK_DOWN) (some? geom)
-                       (scrollbar/on-thumb? mx my {:col scrollbar-col, :top body-top, :x-band 2} geom))
+                    (scrollbar/on-thumb? mx my {:col scrollbar-col, :top body-top, :x-band 2} geom))
                   (let [thumb-top (+ body-top (long (:thumb-top-rel geom)))]
                     (vreset! scrollbar-drag-offset (- my thumb-top))
                     (recur))
@@ -2805,22 +2807,22 @@
               ;; New session is a MODIFIER (Ctrl+N), not a list row and not a
               ;; bare key — so plain typing (incl. the letter `n`) filters.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key) Character/toLowerCase (= \n)))
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \n)))
               {:action :new}
 
               ;; Ctrl+F → fork the highlighted session into a new tab.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key) Character/toLowerCase (= \f)))
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \f)))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :fork :id id}
                 (recur))
 
               ;; Ctrl+D → delete the highlighted session.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key) Character/toLowerCase (= \d)))
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \d)))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :delete :id id}
                 (recur))
@@ -2834,7 +2836,7 @@
                     (when (seq pasted)
                       (swap! query str (str/replace pasted #"\s+" " "))
                       (reset-list!)))
-                  (recur))
+                (recur))
 
               :else
               (condp = (.getKeyType key)
@@ -2843,14 +2845,14 @@
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
                 KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                      (reset-list!) (recur))
+                                    (reset-list!) (recur))
                 ;; Plain printable character → filter query. Skip control
                 ;; chars and Alt/Ctrl-modified keys (those are commands).
                 KeyType/Character (let [c (.getCharacter key)]
                                     (when (and c
-                                               (not (input/alt-modifier? key))
-                                               (not (input/ctrl-modifier? key))
-                                               (not (Character/isISOControl c)))
+                                            (not (input/alt-modifier? key))
+                                            (not (input/ctrl-modifier? key))
+                                            (not (Character/isISOControl c)))
                                       (swap! query str c)
                                       (reset-list!))
                                     (recur))
@@ -2875,7 +2877,7 @@
    {:id :search-open,     :label "Search in Session"}
    {:id :open-resources,  :label "Managed Resources"}
    {:id :show-sessions,   :label "Switch Session"}
-   {:id :open-dirs,       :label "Filesystem"}
+   {:id :open-dirs,       :label "Filesystem Permissions"}
    {:id :pick-file,       :label "Attach File"}
    {:id :toggle-voice-recording, :label "Voice Recording"}
    {:id :new-session,     :label "New Session"}
@@ -2891,7 +2893,7 @@
    `:id` / slash keys), or nil on Esc."
   [^TerminalScreen screen title items]
   (list-dialog! screen title items
-                {:filter? true, :placeholder "Type a command…", :enter-label "run", :height :content}))
+    {:filter? true, :placeholder "Type a command…", :enter-label "run", :height :content}))
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
@@ -2932,12 +2934,12 @@
                                  :hint   (when (and (nil? cur-provider) (nil? cur-model))
                                            "● current")
                                  :reset? true}
-                                model-rows))]
+                            model-rows))]
     (list-dialog! screen "Session model" items
-                  {:filter?     true
-                   :placeholder "Type to filter models…"
-                   :enter-label "choose"
-                   :height      :content})))
+      {:filter?     true
+       :placeholder "Type to filter models…"
+       :enter-label "choose"
+       :height      :content})))
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
@@ -3025,7 +3027,7 @@
                 code?                     t/dialog-hint-key
                 (contains? style :marker) t/dialog-hint-key
                 (or (contains? style :dim)
-                    (contains? style :quote)) t/dialog-hint
+                  (contains? style :quote)) t/dialog-hint
                 :else                     t/dialog-fg)
         bold?   (or head? (contains? style :bold))
         italic? (contains? style :italic)]
@@ -3068,8 +3070,8 @@
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (p/fill-rect! g (inc left) row inner-w 1)
                 (reduce (fn [x run] (md-run-paint! g x row run))
-                        (+ left 2)
-                        (:runs line)))))
+                  (+ left 2)
+                  (:runs line)))))
           (doseq [row (range (+ content-top (count visible)) (+ content-top content-h))]
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1))
@@ -3101,18 +3103,18 @@
 (defn- message-preview
   [{:keys [role text]}]
   (str (role-label role)
-       ": "
-       (-> (or text "")
-           (str/replace #"\r?\n+" " ")
-           str/trim)))
+    ": "
+    (-> (or text "")
+      (str/replace #"\r?\n+" " ")
+      str/trim)))
 (defn- format-selected-messages
   [messages selected]
   (->> (range (count messages))
-       (filter #(contains? selected %))
-       (map (fn [idx]
-              (let [{:keys [role text]} (nth messages idx)]
-                (str (role-label role) ": " (or text "")))))
-       (str/join "\n\n")))
+    (filter #(contains? selected %))
+    (map (fn [idx]
+           (let [{:keys [role text]} (nth messages idx)]
+             (str (role-label role) ": " (or text "")))))
+    (str/join "\n\n")))
 (defn copy-dialog!
   "Show copy dialog for chat messages.
    Space toggles, A toggles all, Enter copies selected, Esc cancels."
@@ -3139,12 +3141,12 @@
                 row (+ content-top i)]
             (when (< idx total)
               (draw-checkbox-item! g
-                                   left
-                                   row
-                                   inner-w
-                                   (= idx @selected)
-                                   (contains? @checked idx)
-                                   (message-preview (nth items idx))))))
+                left
+                row
+                inner-w
+                (= idx @selected)
+                (contains? @checked idx)
+                (message-preview (nth items idx))))))
         (draw-hint-bar! g left hint-row inner-w status)
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -3154,9 +3156,9 @@
               (condp = ktype
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
-                                    (recur status))
+                                  (recur status))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                      (recur status))
+                                    (recur status))
                 KeyType/Character
                 (let [c (Character/toLowerCase (.getCharacter key))]
                   (cond (= c \space) (do (when (pos? total)
@@ -3164,11 +3166,11 @@
                                                             (if (contains? s @selected)
                                                               (disj s @selected)
                                                               (conj s @selected)))))
-                                         (recur status))
-                        (= c \a) (do (swap! checked
-                                            (fn [s] (if (= (count s) total) #{} (set (range total)))))
-                                     (recur status))
-                        :else (recur status)))
+                                       (recur status))
+                    (= c \a) (do (swap! checked
+                                   (fn [s] (if (= (count s) total) #{} (set (range total)))))
+                               (recur status))
+                    :else (recur status)))
                 KeyType/Enter (let [payload (format-selected-messages items @checked)]
                                 (if (seq payload)
                                   (do (input/clipboard-copy! payload) true)

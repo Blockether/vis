@@ -148,6 +148,22 @@
                        "print('kind='+type(acc).__name__, 'vals='+str(sorted(acc)))"))]
         (expect (re-find #"kind=set vals=\['a', 'b'\]" out))))))
 
+(defdescribe boundary-date-test
+  ;; Regression (session 9c829d10): `java.util.Date` — what nippy hands back
+  ;; for every persisted `#inst` (session/turn `:created-at`s) — fell through
+  ;; `->py`'s `:else` branch as a raw host object. GraalPy materialising it as
+  ;; a Python datetime needs the context's datetime module data, which is null
+  ;; unless `import datetime` already ran in the sandbox:
+  ;; `NullPointerException: Cannot read field "utc" because "moduleData" is
+  ;; null`. Dates now cross as ISO-8601 strings, same as Temporals/UUIDs.
+  (it "java.util.Date crosses as an ISO-8601 instant string"
+    (let [d (java.util.Date. 1782986254012)]
+      (expect (= (str (.toInstant d))
+                (:created_at (ep/boundary-view {:created-at d}))))))
+  (it "dates nested in the sessions() index shape survive"
+    (let [v (ep/boundary-view {:sessions [{:id "x" :created-at (java.util.Date. 0)}]})]
+      (expect (= "1970-01-01T00:00:00Z" (get-in v [:sessions 0 :created_at]))))))
+
 (defdescribe boundary-key-shape-test
   "The GraalPy round trip keywordizes ONLY identifier-shaped dict keys. A path,
    a `lineno:hash` anchor, or a kebab/dotted DATA key must survive as a verbatim

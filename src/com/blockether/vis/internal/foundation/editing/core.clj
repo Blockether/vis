@@ -2022,6 +2022,16 @@
              :failures fails
              :checks   (into (vec checks) fails)
              :loop-hint hint
+             ;; The WHOLE-BATCH candidates (every planned file, applied but
+             ;; unwritten) ride the refusal so a language pack's :around
+             ;; op-hook can WHOLE-SOURCE-repair the broken ones and commit the
+             ;; batch itself (fragment repair can't fix contextual imbalance —
+             ;; a locally-balanced replacement that swallows/duplicates an
+             ;; enclosing closer only shows up in the full file). Carried on
+             ;; the RESULT, never inside `:error` — the model must not be fed
+             ;; whole files in a failure message.
+             :candidate-plans (mapv #(select-keys % [:path :before :after]) plans)
+             :broken-paths (mapv :path fails)
              :message  (cond-> (patch-failure-message fails) hint (str "\n" hint))})
           (do
             (doseq [{:keys [file after]} plans]
@@ -2719,14 +2729,21 @@
         (extension/failure
          {:result   nil
           :op       :patch
-          :metadata {:target {:requested (str (or (:path first-failure) "."))
-                              :resolved nil
-                              :absolute nil
-                              :kind :file}
-                     :mode :exact-replace
-                     :started-at-ms (now-ms)
-                     :finished-at-ms (now-ms)
-                     :duration-ms 0}
+          :metadata (cond-> {:target {:requested (str (or (:path first-failure) "."))
+                                      :resolved nil
+                                      :absolute nil
+                                      :kind :file}
+                             :mode :exact-replace
+                             :started-at-ms (now-ms)
+                             :finished-at-ms (now-ms)
+                             :duration-ms 0}
+                      ;; Whole-batch candidates on a SYNTAX refusal — metadata
+                      ;; only (the model-facing throw carries `:error` alone),
+                      ;; so a language pack's :around op-hook can whole-source-
+                      ;; repair the broken files and commit the batch itself.
+                      (:candidate-plans result)
+                      (assoc :candidate-plans (:candidate-plans result)
+                             :broken-paths   (:broken-paths result)))
           :error    {:message  (:message result)
                      :reason   (:reason first-failure)
                      :failures (:failures result)

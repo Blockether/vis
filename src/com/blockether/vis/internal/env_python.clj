@@ -108,6 +108,15 @@
     ;; Python analog — GraalPy would otherwise expose them as opaque
     ;; `<JavaObject[...]>` host pointers (not valid Python, leaks an address).
     ;; Stringify so the rendered ctx and the live dict both read as plain str.
+    ;; `java.util.Date` is what nippy hands back for every persisted `#inst`
+    ;; (session/turn `:created-at`s) and it is NOT a Temporal — left to the
+    ;; `:else` branch it crosses as a host object and GraalPy materialises it
+    ;; as a Python datetime, which needs the context's datetime module data:
+    ;; never imported ⇒ `NullPointerException: Cannot read field "utc" because
+    ;; "moduleData" is null` (session 9c829d10, `sessions()`). ISO-8601 string,
+    ;; same as the Temporal branch.
+    (instance? java.util.Date x)
+    (str (.toInstant ^java.util.Date x))
     (or (instance? java.util.UUID x) (instance? java.time.temporal.Temporal x))
     (str x)
     ;; numbers and other auto-convertible boxed types — hand straight to polyglot

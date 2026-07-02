@@ -399,7 +399,7 @@
              (assoc :turn-count (count filtered))
              (assoc :in-flight-turn-id in-flight-id))))))))
 
-(defn- foundation-sessions
+(defn- foundation-sessions-data
   "List every session the DB knows about, newest-first. With no
    arg, scans every channel surfaced by `known-channels`. With a
    channel kw, filters to that channel. Returns `[]` (never nil) when
@@ -414,7 +414,7 @@
                            :else        0)
                          0)
                   identity)
-         (mapcat #(foundation-sessions env %) (known-channels))))
+         (mapcat #(foundation-sessions-data env %) (known-channels))))
      []))
   ([env channel]
    (if (:db-info env)
@@ -682,7 +682,7 @@
     {:schema-version      1
      :scope               :session
      :session-id     resolved-id
-     :session-index  (safe-call #(foundation-sessions env) [])
+     :session-index  (safe-call #(foundation-sessions-data env) [])
      :session        session-summary
      :current-turn        (safe-call #(foundation-turn env) nil)
      :failures            failures
@@ -718,6 +718,16 @@
                   (transcript/transcript->md transcript-data)
                   (str "Session not found: " (:session-id data) "\n"))]
      (session-envelope :session-report-md report))))
+
+(defn- foundation-sessions
+  "Envelope-wrapped session index (see `foundation-sessions-data`).
+   Returns a Vis tool envelope; sandbox callers receive the unwrapped
+   vector. The raw-data fn stays separate because `foundation-inspect-data`
+   EMBEDS the index inside its own envelope — the guard
+   (`assert-symbol-envelope!`) rejects a bare vector, which is exactly how
+   `sessions()` was broken for every caller (session 9c829d10)."
+  ([env] (session-envelope :sessions (foundation-sessions-data env)))
+  ([env channel] (session-envelope :sessions (foundation-sessions-data env channel))))
 
 ;; Removed extra workflow surfaces.
 

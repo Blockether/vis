@@ -23,3 +23,20 @@
       (expect (extension/tool-result? result))
       (expect (= :session-state (:symbol result)))
       (expect (map? (:result result))))))
+
+(defdescribe sessions-envelope-test
+  ;; Regression (session 9c829d10): `sessions()` was the ONE introspection
+  ;; verb without the `session-envelope` wrap — it returned the raw vector,
+  ;; so `assert-symbol-envelope!` rejected EVERY call ("Symbol 'sessions'
+  ;; must return a canonical :envelope map").
+  (it "no-arg arity returns a canonical envelope (empty index without a db)"
+    (let [sessions @#'introspection/foundation-sessions
+          result   (sessions {:session-id nil :db-info nil})]
+      (expect (extension/tool-result? result))
+      (expect (= :sessions (:symbol result)))
+      (expect (= [] (:result result)))))
+  (it "channel-filtered arity is enveloped too"
+    (let [sessions @#'introspection/foundation-sessions
+          result   (sessions {:db-info nil} :tui)]
+      (expect (extension/tool-result? result))
+      (expect (= [] (:result result))))))
