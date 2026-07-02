@@ -159,7 +159,7 @@
 @font-face{font-family:'Hanken Grotesk';font-weight:100 900;font-display:swap;font-style:normal;src:url(FONTPATH_hanken) format('woff2')}
 @font-face{font-family:'JetBrains Mono';font-weight:100 800;font-display:swap;font-style:normal;src:url(FONTPATH_jbm) format('woff2')}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
+html{scroll-behavior:smooth;scroll-padding-top:5.5rem;scrollbar-gutter:stable}
 body{margin:0;background:var(--bg);color:var(--fg-soft);font-family:var(--sans);
   font-size:1.0625rem;line-height:1.7;-webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;letter-spacing:-.005em;overflow-x:hidden;
@@ -344,7 +344,11 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 (defn- esc ^String [s]
   (-> (str s) (str/replace "&" "&amp;") (str/replace "<" "&lt;") (str/replace ">" "&gt;")))
 
-(defn- href [mode slug] (case mode :static (str slug ".html") :live (str "docs/" slug)))
+;; :static → relative ("slug.html"), so the bundle works from any host/subpath
+;; on GitHub Pages. :live → ABSOLUTE ("/docs/slug"), so nav resolves the same
+;; from the index (/docs) AND from a deep page (/docs/<slug>); a relative href
+;; would resolve to /docs/docs/<slug> on deep pages → 404 "no such doc".
+(defn- href [mode slug] (case mode :static (str slug ".html") :live (str "/docs/" slug)))
 
 (defn- nav-html [{:keys [pages]} active-slug mode]
   (let [by-sec (group-by :section pages)
