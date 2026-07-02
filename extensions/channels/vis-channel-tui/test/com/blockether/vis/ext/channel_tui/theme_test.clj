@@ -36,10 +36,13 @@
     (/ (+ hi 0.05) (+ lo 0.05))))
 
 (defdescribe heading-colours-test
-  (describe "Markdown heading gold gradient exists and has the documented values"
-    (it "H1 is rich amber"      (expect (= [150 100 0] [(.getRed t/md-h1-fg) (.getGreen t/md-h1-fg) (.getBlue t/md-h1-fg)])))
-    (it "H2 is deeper amber"    (expect (= [125 80 0]  [(.getRed t/md-h2-fg) (.getGreen t/md-h2-fg) (.getBlue t/md-h2-fg)])))
-    (it "H3 is deep bronze"     (expect (= [100 65 0]  [(.getRed t/md-h3-fg) (.getGreen t/md-h3-fg) (.getBlue t/md-h3-fg)]))))
+  (describe "Markdown heading SLATE ladder exists and has the documented values"
+    ;; Premium palette (2026-07-02): headings are an editorial slate ladder
+    ;; — near-black H1 down to slate H3 — weight/contrast carries hierarchy,
+    ;; no gold/amber ink (chrome recedes; color is for semantic states).
+    (it "H1 is near-black slate" (expect (= [15 23 42] [(.getRed t/md-h1-fg) (.getGreen t/md-h1-fg) (.getBlue t/md-h1-fg)])))
+    (it "H2 is dark slate"       (expect (= [30 41 59] [(.getRed t/md-h2-fg) (.getGreen t/md-h2-fg) (.getBlue t/md-h2-fg)])))
+    (it "H3 is mid slate"        (expect (= [51 65 85] [(.getRed t/md-h3-fg) (.getGreen t/md-h3-fg) (.getBlue t/md-h3-fg)]))))
 
   (describe "Headings are readable on every surface they're painted on (contrast >= AA 4.5)"
     (it "H1 on white assistant bg"  (expect (>= (contrast-ratio t/md-h1-fg t/ai-bubble-bg) 4.5)))
@@ -49,18 +52,17 @@
     (it "H2 on the dialed-back answer-bg"  (expect (>= (contrast-ratio t/md-h2-fg t/answer-bg) 4.5)))
     (it "H3 on the dialed-back answer-bg"  (expect (>= (contrast-ratio t/md-h3-fg t/answer-bg) 4.5))))
 
-  (describe "Visual hierarchy: H1 is more luminant than H2 is more luminant than H3"
+  (describe "Visual hierarchy: H1 carries the MOST contrast on the light ground"
     ;; Lower luminance = more contrast against the (light) background =
-    ;; visually 'heavier'. By design H1 should be the LIGHTEST gold so
-    ;; it reads as the loudest, H3 the darkest so it reads as the most
-    ;; muted heading. (This is the opposite of font-weight hierarchy in
-    ;; print but maps to terminal SGR + colour better.)
-    (it "L(H1) > L(H2) > L(H3)"
+    ;; visually 'heavier'. In the slate ladder H1 is the DARKEST (loudest)
+    ;; heading and H3 the lightest (most muted) — contrast, not hue,
+    ;; carries the hierarchy.
+    (it "L(H1) < L(H2) < L(H3)"
       (let [l1 (relative-luminance t/md-h1-fg)
             l2 (relative-luminance t/md-h2-fg)
             l3 (relative-luminance t/md-h3-fg)]
-        (expect (> l1 l2))
-        (expect (> l2 l3))))))
+        (expect (< l1 l2))
+        (expect (< l2 l3))))))
 
 (defdescribe user-bg-test
   (describe "User request background is visually identical to terminal-bg (no yellow zone)"

@@ -160,11 +160,12 @@
    :code-success-fg [40 160 60]
    :code-error-fg [220 50 50]
    :code-duration-fg [130 130 130]
-   ;; Result text inside code/output blocks: a QUIET slate ink, consistent
-   ;; across every theme (the old amber/gold read as an alarm and clashed
-   ;; per-theme — Solarized was already gray while vis-light went golden).
-   ;; Output is content, not a highlight; slate-600 keeps it legible but calm.
-   :code-result-fg [75 85 99]
+   ;; Result text inside code/output blocks: the REGULAR fully-visible ink
+   ;; (same as code text) — output is content the user reads, so it gets
+   ;; first-class contrast, not a highlight color (the old amber/gold read
+   ;; as an alarm) and not a dimmed gray. Solarized already does this
+   ;; (its result ink == its body ink).
+   :code-result-fg [30 30 30]
    :code-error-result-fg [180 40 40]
    :code-syntax-special-fg [120 70 170]
    :code-syntax-keyword-fg [25 110 120]
@@ -267,9 +268,9 @@
    :code-success-fg [74 222 128]
    :code-error-fg [248 113 113]
    :code-duration-fg [148 163 184]
-   ;; See light palette: result text is quiet slate ink in dark mode too —
-   ;; output is content, not a yellow alarm.
-   :code-result-fg [203 213 225]
+   ;; See light palette: result text is the regular fully-visible ink in
+   ;; dark mode too — content, not a yellow alarm, not dimmed gray.
+   :code-result-fg [226 232 240]
    :code-error-result-fg [252 165 165]
    :code-syntax-special-fg [216 180 254]
    :code-syntax-keyword-fg [94 234 212]
