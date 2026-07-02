@@ -160,11 +160,11 @@
               (or (= c \space) (= c \tab))
               (let [start i
                     j (long
-                       (loop [j (long (inc i))]
-                         (if (and (< j n)
-                                  (let [c2 (.charAt s j)]
-                                    (or (= c2 \space) (= c2 \tab))))
-                           (recur (unchecked-inc j)) j)))]
+                        (loop [j (long (inc i))]
+                          (if (and (< j n)
+                                (let [c2 (.charAt s j)]
+                                  (or (= c2 \space) (= c2 \tab))))
+                            (recur (unchecked-inc j)) j)))]
                 (recur j (conj! atoms {:text  (.substring s start j)
                                        :style style :href href :node node})))
 
@@ -179,11 +179,11 @@
               :else
               (let [start i
                     j (long
-                       (loop [j (long (inc i))]
-                         (if (and (< j n)
-                                  (let [c2 (.charAt s j)]
-                                    (not (Character/isWhitespace c2))))
-                           (recur (unchecked-inc j)) j)))]
+                        (loop [j (long (inc i))]
+                          (if (and (< j n)
+                                (let [c2 (.charAt s j)]
+                                  (not (Character/isWhitespace c2))))
+                            (recur (unchecked-inc j)) j)))]
                 (recur j (conj! atoms {:text  (.substring s start j)
                                        :style style :href href :node node}))))))))))
 
@@ -265,12 +265,12 @@
 
 (defn- trim-trailing-ws [line]
   (update line :runs
-          (fn [runs]
-            (loop [runs (vec runs)]
-              (let [n (count runs)]
-                (if (and (pos? n) (str/blank? (or (:text (nth runs (dec n))) "")))
-                  (recur (subvec runs 0 (dec n)))
-                  runs))))))
+    (fn [runs]
+      (loop [runs (vec runs)]
+        (let [n (count runs)]
+          (if (and (pos? n) (str/blank? (or (:text (nth runs (dec n))) "")))
+            (recur (subvec runs 0 (dec n)))
+            runs))))))
 
 ;; =============================================================================
 ;; Block walker
@@ -304,8 +304,8 @@
                   (if (>= (count acc') cap)
                     (reduced acc')
                     acc')))
-              []
-              children))
+        []
+        children))
     (vec (mapcat #(block->lines % width opts) children))))
 
 (defn- inline-block->lines
@@ -396,10 +396,10 @@
             [{:runs []}]
             (mapv (fn [seg] {:runs (runs-of seg)}) (p/fold-cols line budget))))
         body     (vec
-                  (cond
-                    fold? (mapcat fold-line (str/split-lines content))
-                    wrap? (mapcat wrap-line (str/split-lines content))
-                    :else (mapv verbatim-line (str/split-lines content))))
+                   (cond
+                     fold? (mapcat fold-line (str/split-lines content))
+                     wrap? (mapcat wrap-line (str/split-lines content))
+                     :else (mapv verbatim-line (str/split-lines content))))
         body     (if (str/ends-with? content "\n")
                    (conj body {:runs []})
                    body)
@@ -436,67 +436,67 @@
   (let [ordered? (= :ol tag)
         n        (volatile! 1)]
     (vec
-     (mapcat
-      (fn [li]
-        (let [kids (node-children li)
-              first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
-              first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
-              task-marker (task-list-marker ordered? first-runs)
-              marker (if ordered?
-                       (let [m (str @n ". ")] (vswap! n inc) m)
-                       (or (:marker task-marker) "- "))
-              indent (apply str (repeat (p/display-width marker) " "))
-              marker-run {:text marker :style #{:marker} :node li}
+      (mapcat
+        (fn [li]
+          (let [kids (node-children li)
+                first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
+                first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
+                task-marker (task-list-marker ordered? first-runs)
+                marker (if ordered?
+                         (let [m (str @n ". ")] (vswap! n inc) m)
+                         (or (:marker task-marker) "- "))
+                indent (apply str (repeat (p/display-width marker) " "))
+                marker-run {:text marker :style #{:marker} :node li}
                 ;; canonical :li children = either all blocks (post-canon
                 ;; multi-paragraph) OR exactly one wrapping :p (post-canon
                 ;; inline run). Both cases handled uniformly: lay out each
                 ;; block, indent continuation, prefix the FIRST line of the
                 ;; FIRST block with the marker.
-              block-lines
-              (loop [out [] first? true bs (seq kids)]
-                (if (nil? bs)
-                  out
-                  (let [b (first bs)
+                block-lines
+                (loop [out [] first? true bs (seq kids)]
+                  (if (nil? bs)
+                    out
+                    (let [b (first bs)
                           ;; for :p produce inline-wrapped lines with
                           ;; hanging indent equal to marker width
-                        lines
-                        (cond
-                          (and (vector? b) (= :p (node-tag b)))
-                          (let [indent-run {:text indent :style #{} :node li}
-                                raw-inline-runs (inlines->runs (node-children b) #{} nil)
-                                inline-runs (if first?
-                                              (strip-task-list-marker raw-inline-runs (:prefix task-marker))
-                                              raw-inline-runs)
-                                prefix (if first?
-                                         {:initial [marker-run]  :cont [indent-run]}
-                                         {:initial [indent-run]  :cont [indent-run]})
-                                ls (wrap-runs inline-runs width prefix)]
-                            (if first?
-                              ls
-                              (concat [{:runs []}] ls)))
+                          lines
+                          (cond
+                            (and (vector? b) (= :p (node-tag b)))
+                            (let [indent-run {:text indent :style #{} :node li}
+                                  raw-inline-runs (inlines->runs (node-children b) #{} nil)
+                                  inline-runs (if first?
+                                                (strip-task-list-marker raw-inline-runs (:prefix task-marker))
+                                                raw-inline-runs)
+                                  prefix (if first?
+                                           {:initial [marker-run]  :cont [indent-run]}
+                                           {:initial [indent-run]  :cont [indent-run]})
+                                  ls (wrap-runs inline-runs width prefix)]
+                              (if first?
+                                ls
+                                (concat [{:runs []}] ls)))
 
                             ;; nested block: recurse and indent each line
-                          :else
-                          (let [inner (block->lines b (max 1 (- width (count indent))) opts)
-                                prefixed
-                                (mapv (fn [l]
-                                        (cond-> (update l :runs
-                                                        (fn [rs]
-                                                          (into [{:text indent :style #{} :node li}] rs)))
-                                          (= :code (:block-tag l))
-                                          (assoc-in [:meta :list-nested-code?] true)))
-                                      inner)
-                                prefixed
-                                (if (and first? (seq prefixed))
-                                  (let [first-line (first prefixed)
-                                        new-runs   (into [marker-run]
-                                                         (drop 1 (:runs first-line)))]
-                                    (into [(assoc first-line :runs new-runs)] (rest prefixed)))
-                                  prefixed)]
-                            prefixed))]
-                    (recur (into out lines) false (next bs)))))]
-          block-lines))
-      children))))
+                            :else
+                            (let [inner (block->lines b (max 1 (- width (count indent))) opts)
+                                  prefixed
+                                  (mapv (fn [l]
+                                          (cond-> (update l :runs
+                                                    (fn [rs]
+                                                      (into [{:text indent :style #{} :node li}] rs)))
+                                            (= :code (:block-tag l))
+                                            (assoc-in [:meta :list-nested-code?] true)))
+                                    inner)
+                                  prefixed
+                                  (if (and first? (seq prefixed))
+                                    (let [first-line (first prefixed)
+                                          new-runs   (into [marker-run]
+                                                       (drop 1 (:runs first-line)))]
+                                      (into [(assoc first-line :runs new-runs)] (rest prefixed)))
+                                    prefixed)]
+                              prefixed))]
+                      (recur (into out lines) false (next bs)))))]
+            block-lines))
+        children))))
 
 (defn- quote->lines [children width opts]
   (let [inner (blocks->lines children (max 1 (- width 2)) opts)
@@ -517,10 +517,10 @@
    space; links keep their visible label only."
   ^String [children]
   (->> (inlines->runs children #{} nil)
-       (map (fn [{:keys [text break?]}] (if break? " " (or text ""))))
-       (apply str)
-       (#(str/replace % #"\s+" " "))
-       str/trim))
+    (map (fn [{:keys [text break?]}] (if break? " " (or text ""))))
+    (apply str)
+    (#(str/replace % #"\s+" " "))
+    str/trim))
 
 (defn- table-cell-text [cell]
   (inline-text (node-children cell)))
@@ -546,7 +546,7 @@
       :else
       (loop [ws widths]
         (if (or (<= (reduce + ws) budget)
-                (every? #(<= (long %) 1) ws))
+              (every? #(<= (long %) 1) ws))
           ws
           (let [max-w (apply max ws)
                 idx   (first (keep-indexed (fn [i w] (when (= w max-w) i)) ws))]
@@ -554,16 +554,16 @@
 
 (defn- table-border-line [left join right widths]
   (str left
-       (str/join join (map #(apply str (repeat (+ 2 (long %)) "─")) widths))
-       right))
+    (str/join join (map #(apply str (repeat (+ 2 (long %)) "─")) widths))
+    right))
 
 (defn- table-data-line [cells widths]
   (str "│"
-       (apply str
-              (map-indexed
-               (fn [i w]
-                 (str " " (pad-right-cols (nth cells i "") w) " │"))
-               widths))))
+    (apply str
+      (map-indexed
+        (fn [i w]
+          (str " " (pad-right-cols (nth cells i "") w) " │"))
+        widths))))
 
 (defn- table->lines
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
@@ -575,16 +575,16 @@
         header?     (= :th (some-> rows first node-children first node-tag))
         raw-rows     (mapv (fn [tr]
                              (mapv table-cell-text (node-children tr)))
-                           rows)
+                       rows)
         cols        (apply max 0 (map count raw-rows))
         norm-rows   (mapv (fn [row]
                             (mapv #(or (nth row % nil) "") (range cols)))
-                          raw-rows)]
+                      raw-rows)]
     (if (or (zero? cols) (empty? norm-rows))
       []
       (let [natural-widths (vec (for [i (range cols)]
                                   (apply max 1
-                                         (map #(p/display-width (nth % i "")) norm-rows))))
+                                    (map #(p/display-width (nth % i "")) norm-rows))))
             cap            (max 1 (long width))
             widths         (shrink-table-widths natural-widths cap)
             fit            (fn [s] (p/truncate-cols s cap))
@@ -605,11 +605,11 @@
           (vec (concat [top
                         (data-line (first norm-rows) :table-head)
                         mid]
-                       (map #(data-line % :table-row) (rest norm-rows))
-                       [bottom]))
+                 (map #(data-line % :table-row) (rest norm-rows))
+                 [bottom]))
           (vec (concat [top]
-                       (map #(data-line % :table-row) norm-rows)
-                       [bottom])))))))
+                 (map #(data-line % :table-row) norm-rows)
+                 [bottom])))))))
 
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
@@ -628,7 +628,7 @@
             l
             (cond-> (assoc l :block-tag block-tag)
               level (assoc :block-level level))))
-        lines))
+    lines))
 
 (defn- block->lines
   "Render one block node into a vector of lines. Each line carries a
@@ -646,7 +646,7 @@
             ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)
             ls (if (seq ls) ls [(empty-line)])]
         (conj (vec (tag-lines ls :h :level level))
-              (assoc (empty-line) :block-tag :outer-margin)))
+          (assoc (empty-line) :block-tag :outer-margin)))
 
       :code
       ;; Code blocks carry two kinds of blank rows:
@@ -657,16 +657,16 @@
       ;; outer-margin blanks regardless of which sibling block produced
       ;; them. The inner :code padding is deliberately preserved.
       (vec (concat [(assoc (empty-line) :block-tag :outer-margin)]
-                   (tag-lines (code-block->lines node width opts) :code)
-                   [(assoc (empty-line) :block-tag :outer-margin)]))
+             (tag-lines (code-block->lines node width opts) :code)
+             [(assoc (empty-line) :block-tag :outer-margin)]))
 
       :ul
       (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
-            (assoc (empty-line) :block-tag :outer-margin))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :ol
       (conj (vec (tag-lines (list->lines :ol (node-children node) width opts) :ol))
-            (assoc (empty-line) :block-tag :outer-margin))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :quote
       ;; `quote->lines` strips per-paragraph outer-margin blanks so
@@ -674,11 +674,11 @@
       ;; AFTER the whole block here so follow-up content breathes the
       ;; same way it does after `:p` / `:ul` / `:table` blocks.
       (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
-            (assoc (empty-line) :block-tag :outer-margin))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :table
       (conj (vec (table->lines node width opts))
-            (assoc (empty-line) :block-tag :outer-margin))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       ;; unknown / leftover inline at block position
       [(assoc (empty-line) :block-tag :outer-margin)])))
@@ -712,15 +712,15 @@
                       (recur (if (and blank? (= prev-blank-tag blank-tag))
                                out
                                (conj out l))
-                             blank-tag
-                             (next ls)))))
+                        blank-tag
+                        (next ls)))))
          ;; Drop leading + trailing outer-margin blanks. Preserve
          ;; `:code` blanks because they are inside-code padding; the
          ;; bookend guard below re-adds neutral outer margin when a
          ;; code block touches the answer edge.
          lines  (vec (drop-while #(and (line-blank? %) (not= :code (:block-tag %))) lines))
          lines  (vec (reverse (drop-while #(and (line-blank? %) (not= :code (:block-tag %)))
-                                          (reverse lines))))
+                                (reverse lines))))
          ;; Code-block bookend guard: when a `:code` block sits at the
          ;; very top or bottom of an answer, the trim above will have
          ;; removed every outer-margin spacer next to it, leaving the
@@ -795,7 +795,7 @@
              :else
              (let [b   (nth blocks i)
                    est (max 1 (long (Math/ceil
-                                     (/ (double (max 1 (ir-text-chars b)))
+                                      (/ (double (max 1 (ir-text-chars b)))
                                         (double content-w)))))]
                (recur (dec i) (+ accum est)))))
          tail-blocks (subvec blocks picked-from)
@@ -843,8 +843,8 @@
    clipboard fallback (preferred clipboard path: `ir/render :markdown`)."
   ^String [lines]
   (str/join "\n"
-            (map (fn [l] (apply str (map (fn [r] (or (:text r) "")) (:runs l))))
-                 lines)))
+    (map (fn [l] (apply str (map (fn [r] (or (:text r) "")) (:runs l))))
+      lines)))
 
 ;; =============================================================================
 ;; Sentinel-string adapter — bridge to the existing bubble painter
@@ -968,8 +968,8 @@
    (let [ms (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level]}]
              (str (block-marker-for ms block-tag block-level)
-                  (line-body-sentinels block-tag runs)))
-           lines))))
+               (line-body-sentinels block-tag runs)))
+       lines))))
 
 (defn ir->sentinel-strings
   "One-shot helper: canonical IR → vector of sentinel-prefixed strings
@@ -993,7 +993,7 @@
         ;; concat all runs across all lines, joining lines with single space
         line-strs (mapv (fn [{:keys [runs]}]
                           (apply str (map run->sentinel-segment runs)))
-                        lines)]
+                    lines)]
     (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
 
 (defn ir->entries
@@ -1022,6 +1022,6 @@
          ms    (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level meta]}]
              {:line (str (block-marker-for ms block-tag block-level)
-                         (line-body-sentinels block-tag runs))
+                      (line-body-sentinels block-tag runs))
               :meta meta})
-           lines))))
+       lines))))

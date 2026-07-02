@@ -492,7 +492,7 @@
     ;; `vis/VERSION` resource (git short sha) so `vis --version` has a value.
     (let [sha   (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
                                                  :out :capture})))
-                     (catch Throwable _ nil))
+                  (catch Throwable _ nil))
           vfile (io/file native-class-dir "vis" "VERSION")]
       (io/make-parents vfile)
       (spit vfile (or (not-empty sha) "dev")))
@@ -567,8 +567,8 @@
         deps (into {} want)]
     (when (seq deps)
       (let [b (try (b/create-basis {:project nil :extra {:deps deps}})
-                   (catch Exception e
-                     (println "WARN native-lib-jars:" (ex-message e)) nil))]
+                (catch Exception e
+                  (println "WARN native-lib-jars:" (ex-message e)) nil))]
         (->> (keys deps)
           (mapcat #(some-> b :libs (get %) :paths))
           (filter #(and % (str/ends-with? % ".jar"))))))))

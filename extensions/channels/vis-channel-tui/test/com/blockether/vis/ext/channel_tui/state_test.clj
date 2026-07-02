@@ -13,77 +13,77 @@
     ;; Their toggles were retired (the trace IS the transcript — nothing to
     ;; hide, same call as show-raw-code). The settings projection hardcodes
     ;; them on, and the toggles no longer exist in the registry.
-      (let [s (#'state/migrated-toggle-projection)]
-        (expect (true? (:show-thinking s)))
-        (expect (true? (:show-iterations s)))
-        (expect (true? (:show-silent s)))
-        (expect (true? (:show-timestamps s))))
-      (expect (nil? (vis/toggle-spec :vis/show-thinking)))
-      (expect (nil? (vis/toggle-spec :vis/show-timestamps)))))
+    (let [s (#'state/migrated-toggle-projection)]
+      (expect (true? (:show-thinking s)))
+      (expect (true? (:show-iterations s)))
+      (expect (true? (:show-silent s)))
+      (expect (true? (:show-timestamps s))))
+    (expect (nil? (vis/toggle-spec :vis/show-thinking)))
+    (expect (nil? (vis/toggle-spec :vis/show-timestamps)))))
 
 (defdescribe detail-toggle-test
   (it "does not cold-clear render and height caches on disclosure click"
-      (let [render-invalidations (atom 0)
-            height-invalidations (atom 0)]
-        (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
-                      virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
-          (reset! state/app-db {:detail-expansions {}
-                                :render-version 0})
-          (state/dispatch [:toggle-detail "cid" "answer:t11111111:details:d1"])
-          (expect (= {["cid" "answer:t11111111:details:d1"] true}
-                     (:detail-expansions @state/app-db)))
-          (expect (zero? @render-invalidations))
-          (expect (zero? @height-invalidations)))))
+    (let [render-invalidations (atom 0)
+          height-invalidations (atom 0)]
+      (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
+                    virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
+        (reset! state/app-db {:detail-expansions {}
+                              :render-version 0})
+        (state/dispatch [:toggle-detail "cid" "answer:t11111111:details:d1"])
+        (expect (= {["cid" "answer:t11111111:details:d1"] true}
+                  (:detail-expansions @state/app-db)))
+        (expect (zero? @render-invalidations))
+        (expect (zero? @height-invalidations)))))
 
   (it "explicitly stores collapsed for a default-expanded row (BLOCK / op-row click)"
     ;; Regression: BLOCK header + op rows default to EXPANDED. The old
     ;; absent/true-only toggle could never store \"collapsed\", so clicking to
     ;; collapse a default-expanded row was a no-op. The 3-arg explicit form
     ;; (driven by the click region's current :collapsed?) fixes it.
-      (reset! state/app-db {:detail-expansions {} :render-version 0})
+    (reset! state/app-db {:detail-expansions {} :render-version 0})
     ;; Currently expanded (region :collapsed? false) → click collapses it.
-      (state/dispatch [:toggle-detail "cid" "t1/i1:block" false])
-      (expect (= {["cid" "t1/i1:block"] false} (:detail-expansions @state/app-db)))
-      (expect (false? (#'render/detail-expanded?
-                       (:detail-expansions @state/app-db) "cid" "t1/i1:block" true)))
+    (state/dispatch [:toggle-detail "cid" "t1/i1:block" false])
+    (expect (= {["cid" "t1/i1:block"] false} (:detail-expansions @state/app-db)))
+    (expect (false? (#'render/detail-expanded?
+                     (:detail-expansions @state/app-db) "cid" "t1/i1:block" true)))
     ;; Click again (region :collapsed? true) → expands it.
-      (state/dispatch [:toggle-detail "cid" "t1/i1:block" true])
-      (expect (= {["cid" "t1/i1:block"] true} (:detail-expansions @state/app-db)))
-      (expect (true? (#'render/detail-expanded?
-                      (:detail-expansions @state/app-db) "cid" "t1/i1:block" true))))
+    (state/dispatch [:toggle-detail "cid" "t1/i1:block" true])
+    (expect (= {["cid" "t1/i1:block"] true} (:detail-expansions @state/app-db)))
+    (expect (true? (#'render/detail-expanded?
+                    (:detail-expansions @state/app-db) "cid" "t1/i1:block" true))))
 
   (it "stores preview switcher mode on the same detail-expansions bus"
-      (reset! state/app-db {:detail-expansions {}
-                            :render-version 0})
-      (state/dispatch [:select-preview-mode "cid" "iteration:t11111111:i1:b1:preview-switch" :raw])
-      (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
-                 (:detail-expansions @state/app-db))))
+    (reset! state/app-db {:detail-expansions {}
+                          :render-version 0})
+    (state/dispatch [:select-preview-mode "cid" "iteration:t11111111:i1:b1:preview-switch" :raw])
+    (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
+              (:detail-expansions @state/app-db))))
 
   (it "applies external input to an inactive recording-origin workspace"
-      (let [external-input-fn (-> #'state/event-registry deref deref (get :external-input) :fn)
-            input-state       (fn [text] {:lines [text] :crow 0 :ccol (count text)})
-            db                {:active-tab-id :second
-                               :tabs [{:id :first :label "First"}
-                                      {:id :second :label "Second" :active? true}]
-                               :input (input-state "second draft")
-                               :input-history-index :second-index
-                               :input-history-draft "second-draft"
-                               :slash-command-index 7
-                               :slash-command-hidden? true
-                               :tab-locals {:first {:input (input-state "first draft")
-                                                    :input-history-index :first-index
-                                                    :input-history-draft "first-draft"
-                                                    :slash-command-index 3
-                                                    :slash-command-hidden? true}}}
-            next-db           (external-input-fn db [:external-input :append "rewrite" :first])]
-        (expect (= "second draft" (input/input->text (:input next-db))))
-        (expect (= :second-index (:input-history-index next-db)))
-        (expect (= "first draft\nrewrite"
-                   (input/input->text (get-in next-db [:tab-locals :first :input]))))
-        (expect (nil? (get-in next-db [:tab-locals :first :input-history-index])))
-        (expect (nil? (get-in next-db [:tab-locals :first :input-history-draft])))
-        (expect (= 0 (get-in next-db [:tab-locals :first :slash-command-index])))
-        (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
+    (let [external-input-fn (-> #'state/event-registry deref deref (get :external-input) :fn)
+          input-state       (fn [text] {:lines [text] :crow 0 :ccol (count text)})
+          db                {:active-tab-id :second
+                             :tabs [{:id :first :label "First"}
+                                    {:id :second :label "Second" :active? true}]
+                             :input (input-state "second draft")
+                             :input-history-index :second-index
+                             :input-history-draft "second-draft"
+                             :slash-command-index 7
+                             :slash-command-hidden? true
+                             :tab-locals {:first {:input (input-state "first draft")
+                                                  :input-history-index :first-index
+                                                  :input-history-draft "first-draft"
+                                                  :slash-command-index 3
+                                                  :slash-command-hidden? true}}}
+          next-db           (external-input-fn db [:external-input :append "rewrite" :first])]
+      (expect (= "second draft" (input/input->text (:input next-db))))
+      (expect (= :second-index (:input-history-index next-db)))
+      (expect (= "first draft\nrewrite"
+                (input/input->text (get-in next-db [:tab-locals :first :input]))))
+      (expect (nil? (get-in next-db [:tab-locals :first :input-history-index])))
+      (expect (nil? (get-in next-db [:tab-locals :first :input-history-draft])))
+      (expect (= 0 (get-in next-db [:tab-locals :first :slash-command-index])))
+      (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
 
 (defdescribe resync-toggle-settings-test
   (it "busts BOTH render caches so a registry toggle (show-thinking) repaints without a restart"
@@ -95,157 +95,157 @@
     ;; new value only showed after a process restart cleared the caches.
     ;; The toggles-registry listener dispatches `:resync-toggle-settings`,
     ;; which must now drop both caches.
-      (let [render-invalidations (atom 0)
-            height-invalidations (atom 0)]
-        (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
-                      virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
-          (reset! state/app-db {:settings {} :render-version 0})
-          (state/dispatch [:resync-toggle-settings])
-          (expect (= 1 @render-invalidations))
-          (expect (= 1 @height-invalidations))
+    (let [render-invalidations (atom 0)
+          height-invalidations (atom 0)]
+      (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
+                    virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
+        (reset! state/app-db {:settings {} :render-version 0})
+        (state/dispatch [:resync-toggle-settings])
+        (expect (= 1 @render-invalidations))
+        (expect (= 1 @height-invalidations))
         ;; The cached :settings projection is still rebuilt from the registry.
-          (expect (contains? (:settings @state/app-db) :show-thinking))))))
+        (expect (contains? (:settings @state/app-db) :show-thinking))))))
 
 (defdescribe external-input-test
   (it "append adds transcript text without replacing draft input"
-      (reset! state/app-db {:input (input/paste-text (input/empty-input) "typed")
-                            :input-history-index :stale
-                            :input-history-draft "old"
-                            :render-version 0})
-      (state/dispatch [:external-input :append "voice text"])
-      (expect (= "typed\nvoice text"
-                 (input/input->text (:input @state/app-db))))
-      (expect (nil? (:input-history-index @state/app-db)))
-      (expect (nil? (:input-history-draft @state/app-db)))))
+    (reset! state/app-db {:input (input/paste-text (input/empty-input) "typed")
+                          :input-history-index :stale
+                          :input-history-draft "old"
+                          :render-version 0})
+    (state/dispatch [:external-input :append "voice text"])
+    (expect (= "typed\nvoice text"
+              (input/input->text (:input @state/app-db))))
+    (expect (nil? (:input-history-index @state/app-db)))
+    (expect (nil? (:input-history-draft @state/app-db)))))
 
 (defdescribe transcript-dump-guard-test
   (it "detects copied assistant trace dumps"
-      (expect (true?
-               (state/transcript-dump-input?
+    (expect (true?
+              (state/transcript-dump-input?
                 "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n...")))
-      (expect (false?
-               (state/transcript-dump-input?
+    (expect (false?
+              (state/transcript-dump-input?
                 "Dobra, wróć do (def snapshot-result (v/snapshot))"))))
 
   (it "filters poisoned transcript dumps out of resumed input history"
-      (let [poison "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
-        (reset! state/app-db {:render-version 0})
-        (state/dispatch [:init-session {:id "c1"}
-                         [{:role :user :text "safe prompt"}
-                          {:role :assistant :text "ok"}
-                          {:role :user :text poison}]])
-        (expect (= ["safe prompt"] (:input-history @state/app-db))))))
+    (let [poison "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
+      (reset! state/app-db {:render-version 0})
+      (state/dispatch [:init-session {:id "c1"}
+                       [{:role :user :text "safe prompt"}
+                        {:role :assistant :text "ok"}
+                        {:role :user :text poison}]])
+      (expect (= ["safe prompt"] (:input-history @state/app-db))))))
 
 (defdescribe channel-status-test
   (it "clears ttl-bound statuses only when the deadline still matches"
-      (reset! state/app-db {:channel-status {}
-                            :render-version 0})
-      (state/dispatch [:channel-status-set :voice/input {:text "○ Voice ready"
-                                                         :level :info
-                                                         :until 100}])
-      (state/dispatch [:channel-status-clear-if-until :voice/input 99])
-      (expect (= "○ Voice ready" (get-in @state/app-db [:channel-status :voice/input :text])))
-      (state/dispatch [:channel-status-clear-if-until :voice/input 100])
-      (expect (nil? (get-in @state/app-db [:channel-status :voice/input])))))
+    (reset! state/app-db {:channel-status {}
+                          :render-version 0})
+    (state/dispatch [:channel-status-set :voice/input {:text "○ Voice ready"
+                                                       :level :info
+                                                       :until 100}])
+    (state/dispatch [:channel-status-clear-if-until :voice/input 99])
+    (expect (= "○ Voice ready" (get-in @state/app-db [:channel-status :voice/input :text])))
+    (state/dispatch [:channel-status-clear-if-until :voice/input 100])
+    (expect (nil? (get-in @state/app-db [:channel-status :voice/input])))))
 
 (defdescribe slash-command-selection-test
   (it "cycles selected slash suggestion index for arrows and mouse wheel"
-      (reset! state/app-db {:slash-command-index 0
-                            :render-version 0})
-      (state/dispatch [:move-slash-command-selection 1 3])
-      (expect (= 1 (:slash-command-index @state/app-db)))
-      (state/dispatch [:move-slash-command-selection -1 3])
-      (expect (= 0 (:slash-command-index @state/app-db)))
-      (state/dispatch [:move-slash-command-selection -1 3])
-      (expect (= 2 (:slash-command-index @state/app-db))))
+    (reset! state/app-db {:slash-command-index 0
+                          :render-version 0})
+    (state/dispatch [:move-slash-command-selection 1 3])
+    (expect (= 1 (:slash-command-index @state/app-db)))
+    (state/dispatch [:move-slash-command-selection -1 3])
+    (expect (= 0 (:slash-command-index @state/app-db)))
+    (state/dispatch [:move-slash-command-selection -1 3])
+    (expect (= 2 (:slash-command-index @state/app-db))))
 
   (it "can hide slash suggestions after tab completion until input is cleared"
-      (reset! state/app-db {:input (input/paste-text (input/empty-input) "/new-tab ")
-                            :slash-command-hidden? false
-                            :render-version 0})
-      (state/dispatch [:hide-slash-command-suggestions])
-      (expect (true? (:slash-command-hidden? @state/app-db)))
-      (state/dispatch [:update-input (input/paste-text (input/empty-input) "/new-tab arg")])
-      (expect (true? (:slash-command-hidden? @state/app-db)))
-      (state/dispatch [:reset-input])
-      (expect (false? (:slash-command-hidden? @state/app-db)))))
+    (reset! state/app-db {:input (input/paste-text (input/empty-input) "/new-tab ")
+                          :slash-command-hidden? false
+                          :render-version 0})
+    (state/dispatch [:hide-slash-command-suggestions])
+    (expect (true? (:slash-command-hidden? @state/app-db)))
+    (state/dispatch [:update-input (input/paste-text (input/empty-input) "/new-tab arg")])
+    (expect (true? (:slash-command-hidden? @state/app-db)))
+    (state/dispatch [:reset-input])
+    (expect (false? (:slash-command-hidden? @state/app-db)))))
 
 (defdescribe tab-entries-test
   (it "adds a workspace and seeds a base workspace when none exist"
     ;; Base workspace inherits the current `:title`; the freshly-added workspace
     ;; starts as `Untitled session` because it has no title yet.
-      (reset! state/app-db {:title "Current"
-                            :render-version 0})
-      (state/dispatch [:create-tab])
-      (expect (= [{:id :main :label "Current"}
-                  {:id :tab-1 :label state/untitled-session-label :active? true}]
-                 (:tabs @state/app-db)))
-      (expect (= :tab-1 (:active-tab-id @state/app-db)))
-      (expect (= 1 (:render-version @state/app-db))))
+    (reset! state/app-db {:title "Current"
+                          :render-version 0})
+    (state/dispatch [:create-tab])
+    (expect (= [{:id :main :label "Current"}
+                {:id :tab-1 :label state/untitled-session-label :active? true}]
+              (:tabs @state/app-db)))
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
+    (expect (= 1 (:render-version @state/app-db))))
 
   (it "adds the next unique workspace and makes it active"
     ;; New workspaces default to the untitled placeholder; `:set-title`
     ;; renames the active workspace once a title is generated.
-      (reset! state/app-db {:tabs [{:id :main :label "Main"}
-                                   {:id :tab-1 :label "Tab 1" :active? true}]
-                            :active-tab-id :tab-1
-                            :render-version 0})
-      (state/dispatch [:create-tab])
-      (expect (= [{:id :main :label "Main"}
-                  {:id :tab-1 :label "Tab 1"}
-                  {:id :tab-2 :label state/untitled-session-label :active? true}]
-                 (:tabs @state/app-db)))
-      (expect (= :tab-2 (:active-tab-id @state/app-db))))
+    (reset! state/app-db {:tabs [{:id :main :label "Main"}
+                                 {:id :tab-1 :label "Tab 1" :active? true}]
+                          :active-tab-id :tab-1
+                          :render-version 0})
+    (state/dispatch [:create-tab])
+    (expect (= [{:id :main :label "Main"}
+                {:id :tab-1 :label "Tab 1"}
+                {:id :tab-2 :label state/untitled-session-label :active? true}]
+              (:tabs @state/app-db)))
+    (expect (= :tab-2 (:active-tab-id @state/app-db))))
 
   (it "attaches workspace root to the new workspace and active snapshot"
-      (let [workspace {:workspace/id "ws-1"
-                       :workspace/root "/tmp/vis-ws"
-                       :main {:branch "feature/ws"}}]
-        (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
-                              :active-tab-id :main
-                              :tab-locals {}
-                              :render-version 0})
-        (state/dispatch [:create-tab {:workspace workspace}])
-        (expect (= "/tmp/vis-ws" (get-in @state/app-db [:tabs 1 :workspace/root])))
-        (expect (= workspace (:workspace @state/app-db)))
-        (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
-        (expect (= "feature/ws" (get-in @state/app-db [:tabs 1 :label])))))
-
-  (it "caps workspaces at eight total entries"
-      (reset! state/app-db {:title "Main"
-                            :render-version 0})
-      (dotimes [_ 10]
-        (state/dispatch [:create-tab]))
-      (expect (= 8 (count (:tabs @state/app-db))))
-      (expect (= [:main :tab-1 :tab-2 :tab-3 :tab-4 :tab-5 :tab-6 :tab-7]
-                 (mapv :id (:tabs @state/app-db))))
-      (expect (= :tab-7 (:active-tab-id @state/app-db))))
-
-  (it "switches the full transcript, draft, prompt history, and session by workspace"
-      (reset! state/app-db {:session {:id "main-c"}
-                            :messages [{:role :user :text "main prompt"}]
-                            :input (input/paste-text (input/empty-input) "main draft")
-                            :input-history ["main prompt"]
-                            :pastes {}
-                            :paste-counter 0
-                            :detail-expansions {}
-                            :tabs [{:id :main :label "Main" :active? true}]
+    (let [workspace {:workspace/id "ws-1"
+                     :workspace/root "/tmp/vis-ws"
+                     :main {:branch "feature/ws"}}]
+      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
                             :active-tab-id :main
                             :tab-locals {}
                             :render-version 0})
-      (state/dispatch [:create-tab])
-      (state/dispatch [:init-session {:id "tab-c"} [{:role :user :text "tab prompt"}]])
-      (state/dispatch [:update-input (input/paste-text (input/empty-input) "tab draft")])
-      (state/dispatch [:select-tab-index 0])
-      (expect (= {:id "main-c"} (:session @state/app-db)))
-      (expect (= [{:role :user :text "main prompt"}] (:messages @state/app-db)))
-      (expect (= "main draft" (input/input->text (:input @state/app-db))))
-      (expect (= ["main prompt"] (:input-history @state/app-db)))
-      (state/dispatch [:select-tab-index 1])
-      (expect (= {:id "tab-c"} (:session @state/app-db)))
-      (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
-      (expect (= "tab draft" (input/input->text (:input @state/app-db))))
-      (expect (= ["tab prompt"] (:input-history @state/app-db))))
+      (state/dispatch [:create-tab {:workspace workspace}])
+      (expect (= "/tmp/vis-ws" (get-in @state/app-db [:tabs 1 :workspace/root])))
+      (expect (= workspace (:workspace @state/app-db)))
+      (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
+      (expect (= "feature/ws" (get-in @state/app-db [:tabs 1 :label])))))
+
+  (it "caps workspaces at eight total entries"
+    (reset! state/app-db {:title "Main"
+                          :render-version 0})
+    (dotimes [_ 10]
+      (state/dispatch [:create-tab]))
+    (expect (= 8 (count (:tabs @state/app-db))))
+    (expect (= [:main :tab-1 :tab-2 :tab-3 :tab-4 :tab-5 :tab-6 :tab-7]
+              (mapv :id (:tabs @state/app-db))))
+    (expect (= :tab-7 (:active-tab-id @state/app-db))))
+
+  (it "switches the full transcript, draft, prompt history, and session by workspace"
+    (reset! state/app-db {:session {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :input (input/paste-text (input/empty-input) "main draft")
+                          :input-history ["main prompt"]
+                          :pastes {}
+                          :paste-counter 0
+                          :detail-expansions {}
+                          :tabs [{:id :main :label "Main" :active? true}]
+                          :active-tab-id :main
+                          :tab-locals {}
+                          :render-version 0})
+    (state/dispatch [:create-tab])
+    (state/dispatch [:init-session {:id "tab-c"} [{:role :user :text "tab prompt"}]])
+    (state/dispatch [:update-input (input/paste-text (input/empty-input) "tab draft")])
+    (state/dispatch [:select-tab-index 0])
+    (expect (= {:id "main-c"} (:session @state/app-db)))
+    (expect (= [{:role :user :text "main prompt"}] (:messages @state/app-db)))
+    (expect (= "main draft" (input/input->text (:input @state/app-db))))
+    (expect (= ["main prompt"] (:input-history @state/app-db)))
+    (state/dispatch [:select-tab-index 1])
+    (expect (= {:id "tab-c"} (:session @state/app-db)))
+    (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
+    (expect (= "tab draft" (input/input->text (:input @state/app-db))))
+    (expect (= ["tab prompt"] (:input-history @state/app-db))))
 
   (it "tab switch clears the stale :layout and strips :scroll :pos (scroll-jump regression)"
     ;; The leaving tab's :layout (total-h/offsets) and the eased on-screen :pos
@@ -253,79 +253,79 @@
     ;; both so the first post-switch frame recomputes layout for THIS tab and
     ;; re-resolves the scroll offset, instead of clamping against a foreign
     ;; total-h (the visible \"jump to bottom\").
-      (reset! state/app-db {:session {:id "main-c"}
-                            :messages [{:role :user :text "main prompt"}]
-                            :scroll {:mode :at :offset 40 :pos 900}
-                            :layout {:total-h 5000 :offsets [0 100 900]}
-                            :tabs [{:id :main :label "Main" :active? true}
-                                   {:id :tab-1 :label "Tab 1"}]
-                            :active-tab-id :main
-                            :tab-locals {:tab-1 {:session {:id "tab-c"}
-                                                 :messages [{:role :user :text "tab prompt"}]
-                                                 :scroll {:mode :at :offset 5 :pos 7}}}
-                            :render-version 0})
-      (state/dispatch [:select-tab-index 1])
-      (expect (nil? (:layout @state/app-db)))
-      (expect (= {:mode :at :offset 5} (:scroll @state/app-db))))
+    (reset! state/app-db {:session {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :scroll {:mode :at :offset 40 :pos 900}
+                          :layout {:total-h 5000 :offsets [0 100 900]}
+                          :tabs [{:id :main :label "Main" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "tab-c"}
+                                               :messages [{:role :user :text "tab prompt"}]
+                                               :scroll {:mode :at :offset 5 :pos 7}}}
+                          :render-version 0})
+    (state/dispatch [:select-tab-index 1])
+    (expect (nil? (:layout @state/app-db)))
+    (expect (= {:mode :at :offset 5} (:scroll @state/app-db))))
 
   (it "selects workspaces by zero-based index and cycles to the next workspace"
-      (reset! state/app-db {:tabs [{:id :main :label "Main"}
-                                   {:id :tab-1 :label "Tab 1" :active? true}
-                                   {:id :tab-2 :label "Tab 2"}]
-                            :active-tab-id :tab-1
-                            :render-version 0})
-      (state/dispatch [:select-tab-index 0])
-      (expect (= :main (:active-tab-id @state/app-db)))
-      (expect (= [{:id :main :label "Main" :active? true}
-                  {:id :tab-1 :label "Tab 1"}
-                  {:id :tab-2 :label "Tab 2"}]
-                 (:tabs @state/app-db)))
-      (state/dispatch [:select-tab-index :next])
-      (expect (= :tab-1 (:active-tab-id @state/app-db)))
-      (state/dispatch [:select-tab-index :next])
-      (expect (= :tab-2 (:active-tab-id @state/app-db)))
-      (state/dispatch [:select-tab-index :next])
-      (expect (= :main (:active-tab-id @state/app-db)))
-      (state/dispatch [:select-tab-index :prev])
-      (expect (= :tab-2 (:active-tab-id @state/app-db)))
-      (state/dispatch [:select-tab-index 99])
-      (expect (= :tab-2 (:active-tab-id @state/app-db))))
+    (reset! state/app-db {:tabs [{:id :main :label "Main"}
+                                 {:id :tab-1 :label "Tab 1" :active? true}
+                                 {:id :tab-2 :label "Tab 2"}]
+                          :active-tab-id :tab-1
+                          :render-version 0})
+    (state/dispatch [:select-tab-index 0])
+    (expect (= :main (:active-tab-id @state/app-db)))
+    (expect (= [{:id :main :label "Main" :active? true}
+                {:id :tab-1 :label "Tab 1"}
+                {:id :tab-2 :label "Tab 2"}]
+              (:tabs @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :tab-2 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :main (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :prev])
+    (expect (= :tab-2 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index 99])
+    (expect (= :tab-2 (:active-tab-id @state/app-db))))
 
   (it "selects an already-open workspace by session id"
-      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}
-                                   {:id :tab-1 :label "Tab 1"}]
-                            :active-tab-id :main
-                            :session {:id "main-c"}
-                            :messages [{:role :user :text "main prompt"}]
-                            :input (input/paste-text (input/empty-input) "main draft")
-                            :input-history ["main prompt"]
-                            :tab-locals {:tab-1 {:session {:id "tab-c"}
-                                                 :messages [{:role :user :text "tab prompt"}]
-                                                 :input (input/paste-text (input/empty-input) "tab draft")
-                                                 :input-history ["tab prompt"]}}
-                            :render-version 0})
-      (state/dispatch [:select-tab-by-session "tab-c"])
-      (expect (= :tab-1 (:active-tab-id @state/app-db)))
-      (expect (= {:id "tab-c"} (:session @state/app-db)))
-      (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
-      (state/dispatch [:select-tab-by-session "missing"])
-      (expect (= :tab-1 (:active-tab-id @state/app-db)))))
+    (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :session {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :input (input/paste-text (input/empty-input) "main draft")
+                          :input-history ["main prompt"]
+                          :tab-locals {:tab-1 {:session {:id "tab-c"}
+                                               :messages [{:role :user :text "tab prompt"}]
+                                               :input (input/paste-text (input/empty-input) "tab draft")
+                                               :input-history ["tab prompt"]}}
+                          :render-version 0})
+    (state/dispatch [:select-tab-by-session "tab-c"])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
+    (expect (= {:id "tab-c"} (:session @state/app-db)))
+    (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
+    (state/dispatch [:select-tab-by-session "missing"])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))))
 
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"
-      (with-redefs [vis/load-config-raw (fn [] {})]
-        (state/init!)
-        (expect (= :balanced
-                   (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= :low
-                   (get-in @state/app-db [:settings :openai-codex-verbosity])))
-        (expect (= :vis-light
-                   (get-in @state/app-db [:settings :theme-name])))
-        (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-        (expect (true?
-                 (get-in @state/app-db [:settings :mouse-selection-copy])))
-        (expect (false?
-                 (get-in @state/app-db [:settings :voice/respond])))))
+    (with-redefs [vis/load-config-raw (fn [] {})]
+      (state/init!)
+      (expect (= :balanced
+                (get-in @state/app-db [:settings :reasoning-level])))
+      (expect (= :low
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (expect (= :vis-light
+                (get-in @state/app-db [:settings :theme-name])))
+      (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
+      (expect (true?
+                (get-in @state/app-db [:settings :mouse-selection-copy])))
+      (expect (false?
+                (get-in @state/app-db [:settings :voice/respond])))))
 
   (it "hydrates persisted enum toggles into the registry"
     ;; The persistence shape now lives under `:toggles`, not
@@ -333,39 +333,39 @@
     ;; projection coherent by pulling each migrated toggle's value
     ;; off the registry; toggle hydration itself runs from
     ;; `screen/run-chat!` before `init!` in production.
-      (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :deep}})
-      (try
-        (with-redefs [vis/load-config-raw (fn [] {})]
-          (state/init!)
-          (expect (= :deep
-                     (get-in @state/app-db [:settings :reasoning-level]))))
-        (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+    (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :deep}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :deep
+                  (get-in @state/app-db [:settings :reasoning-level]))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
 
   (it "hydrates Codex verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {:toggles {:openai-codex/verbosity :medium}})
-      (try
-        (with-redefs [vis/load-config-raw (fn [] {})]
-          (state/init!)
-          (expect (= :medium
-                     (get-in @state/app-db [:settings :openai-codex-verbosity]))))
-        (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))
+    (vis/toggles-hydrate-from-config! {:toggles {:openai-codex/verbosity :medium}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :medium
+                  (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+      (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))
 
   (it "drops invalid persisted enum values back to registered defaults"
     ;; `hydrate-from-config!` routes through `set-value!` which
     ;; validates against `:choices`. Invalid entries are silently
     ;; skipped — the registered default stands.
-      (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :turbo
-                                                   :openai-codex/verbosity :loud}})
-      (try
-        (with-redefs [vis/load-config-raw (fn [] {})]
-          (state/init!)
-          (expect (= :balanced
-                     (get-in @state/app-db [:settings :reasoning-level])))
-          (expect (= :low
-                     (get-in @state/app-db [:settings :openai-codex-verbosity]))))
-        (finally
-          (vis/toggle-reset-to-default! :vis/reasoning-level)
-          (vis/toggle-reset-to-default! :openai-codex/verbosity)))))
+    (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :turbo
+                                                 :openai-codex/verbosity :loud}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :balanced
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= :low
+                  (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+      (finally
+        (vis/toggle-reset-to-default! :vis/reasoning-level)
+        (vis/toggle-reset-to-default! :openai-codex/verbosity)))))
 
 (defdescribe settings-shortcut-test
   (it "commits shortcut settings before notification watchers dispatch render bumps"
@@ -373,100 +373,100 @@
     ;; `:settings` projection is rebuilt synchronously in the same
     ;; FX :db so notification listeners observe the new value the
     ;; moment they fire.
-      (vis/toggle-set-value! :vis/reasoning-level :deep)
-      (try
-        (with-redefs [vis/load-config-raw (fn [] {})
-                      vis/save-config! (fn [_])
-                      vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_] {:provider :openai
-                                                           :name "gpt-5"
-                                                           :reasoning? true})
-                      vis/notify! (fn [& _]
-                                    (state/dispatch [:bump-render-version]))]
-          (reset! state/app-db {:settings {:reasoning-level :deep
-                                           :openai-codex-verbosity :low}
-                                :render-version 0})
-          (let [result (future
-                         (state/dispatch [:cycle-reasoning-level])
-                         :done)]
-            (expect (= :done (deref result 1000 :timeout)))
-            (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
-            (expect (= :quick
-                       (get-in @state/app-db [:settings :reasoning-level])))))
-        (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
-
-  (it "wraps reasoning level from deep back to quick"
-      (vis/toggle-set-value! :vis/reasoning-level :deep)
-      (try
-        (with-redefs [vis/load-config-raw (fn [] {})
-                      vis/save-config! (fn [_])
-                      vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_] {:provider :openai
-                                                           :name "gpt-5"
-                                                           :reasoning? true})
-                      vis/notify! (fn [& _])]
-          (reset! state/app-db {:settings {:reasoning-level :deep
-                                           :openai-codex-verbosity :low}
-                                :render-version 0})
-          (state/dispatch [:cycle-reasoning-level])
-          (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
-          (expect (= :quick
-                     (get-in @state/app-db [:settings :reasoning-level]))))
-        (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
-
-  (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
-      (let [notified (atom nil)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_] {:provider :zai
-                                                           :name "glm-4.7"
-                                                           :reasoning? true
-                                                           :reasoning-style :zai-thinking
-                                                           :reasoning-effort? false})
-                      vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-          (reset! state/app-db {:settings {:reasoning-level :deep
-                                           :openai-codex-verbosity :low}
-                                :render-version 0})
-          (state/dispatch [:cycle-reasoning-level])
-          (expect (= :deep
-                     (get-in @state/app-db [:settings :reasoning-level])))
-          (expect (= ["Reasoning effort is not configurable for this model" [:level :warn :ttl-ms 1500]]
-                     @notified)))))
-
-  (it "leaves Codex verbosity unchanged for non-Codex providers"
-      (let [notified (atom nil)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_] {:provider :zai
-                                                           :name "glm-4.7"})
-                      vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-          (reset! state/app-db {:settings {:reasoning-level :balanced
-                                           :openai-codex-verbosity :high}
-                                :render-version 0})
-          (state/dispatch [:cycle-codex-verbosity])
-          (expect (= :high
-                     (get-in @state/app-db [:settings :openai-codex-verbosity])))
-          (expect (= ["Codex verbosity is only available for OpenAI Codex" [:level :warn :ttl-ms 1500]]
-                     @notified)))))
-
-  (it "cycles Codex verbosity low -> medium -> high -> low"
+    (vis/toggle-set-value! :vis/reasoning-level :deep)
+    (try
       (with-redefs [vis/load-config-raw (fn [] {})
                     vis/save-config! (fn [_])
                     vis/get-router (constantly :router)
-                    vis/resolve-effective-model (fn [_] {:provider :openai-codex
-                                                         :name "gpt-5.5"
+                    vis/resolve-effective-model (fn [_] {:provider :openai
+                                                         :name "gpt-5"
                                                          :reasoning? true})
-                    vis/notify! (fn [& _])]
-        (reset! state/app-db {:settings {:reasoning-level :balanced
+                    vis/notify! (fn [& _]
+                                  (state/dispatch [:bump-render-version]))]
+        (reset! state/app-db {:settings {:reasoning-level :deep
                                          :openai-codex-verbosity :low}
                               :render-version 0})
-        (state/dispatch [:cycle-codex-verbosity])
-        (expect (= :medium
-                   (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (let [result (future
+                       (state/dispatch [:cycle-reasoning-level])
+                       :done)]
+          (expect (= :done (deref result 1000 :timeout)))
+          (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+          (expect (= :quick
+                    (get-in @state/app-db [:settings :reasoning-level])))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+
+  (it "wraps reasoning level from deep back to quick"
+    (vis/toggle-set-value! :vis/reasoning-level :deep)
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/save-config! (fn [_])
+                    vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :openai
+                                                         :name "gpt-5"
+                                                         :reasoning? true})
+                    vis/notify! (fn [& _])]
+        (reset! state/app-db {:settings {:reasoning-level :deep
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+        (expect (= :quick
+                  (get-in @state/app-db [:settings :reasoning-level]))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+
+  (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
+    (let [notified (atom nil)]
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:settings {:reasoning-level :deep
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (expect (= :deep
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= ["Reasoning effort is not configurable for this model" [:level :warn :ttl-ms 1500]]
+                  @notified)))))
+
+  (it "leaves Codex verbosity unchanged for non-Codex providers"
+    (let [notified (atom nil)]
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"})
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :high}
+                              :render-version 0})
         (state/dispatch [:cycle-codex-verbosity])
         (expect (= :high
-                   (get-in @state/app-db [:settings :openai-codex-verbosity])))
-        (state/dispatch [:cycle-codex-verbosity])
-        (expect (= :low
-                   (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
+                  (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (expect (= ["Codex verbosity is only available for OpenAI Codex" [:level :warn :ttl-ms 1500]]
+                  @notified)))))
+
+  (it "cycles Codex verbosity low -> medium -> high -> low"
+    (with-redefs [vis/load-config-raw (fn [] {})
+                  vis/save-config! (fn [_])
+                  vis/get-router (constantly :router)
+                  vis/resolve-effective-model (fn [_] {:provider :openai-codex
+                                                       :name "gpt-5.5"
+                                                       :reasoning? true})
+                  vis/notify! (fn [& _])]
+      (reset! state/app-db {:settings {:reasoning-level :balanced
+                                       :openai-codex-verbosity :low}
+                            :render-version 0})
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :medium
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :high
+                (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (state/dispatch [:cycle-codex-verbosity])
+      (expect (= :low
+                (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
 
 (defdescribe model-shortcut-test
   ;; Ctrl+T sets the ACTIVE SESSION's persisted model preference (the shared,
@@ -474,69 +474,69 @@
   ;; config. Fresh sessions start with no explicit pref, so the first press
   ;; advances from the displayed router default to the next configured entry.
   (it "fresh session advances from displayed router default to the next configured model"
-      (let [set-calls (atom [])
-            notified  (atom nil)]
-        (with-redefs [vis/configured-providers (fn []
-                                                 [{:id :openai
-                                                   :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                                  {:id :zai
-                                                   :models [{:name "glm-4.6"}]}])
-                      vis/gateway-session-model (fn [_sid] nil)
-                      vis/gateway-set-session-model! (fn [sid provider model]
-                                                       (swap! set-calls conj [sid provider model])
-                                                       {:provider provider :model model})
-                      state/current-model-info (fn [] {:provider :openai :name "gpt-5"})
-                      vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
-          (reset! state/app-db {:session {:id "sess-1"}
-                                :render-version 0})
-          (state/dispatch [:cycle-model])
-          (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
-          (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
+    (let [set-calls (atom [])
+          notified  (atom nil)]
+      (with-redefs [vis/configured-providers (fn []
+                                               [{:id :openai
+                                                 :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                {:id :zai
+                                                 :models [{:name "glm-4.6"}]}])
+                    vis/gateway-session-model (fn [_sid] nil)
+                    vis/gateway-set-session-model! (fn [sid provider model]
+                                                     (swap! set-calls conj [sid provider model])
+                                                     {:provider provider :model model})
+                    state/current-model-info (fn [] {:provider :openai :name "gpt-5"})
+                    vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:session {:id "sess-1"}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
+        (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
 
   (it "advances from the current pref (matched by provider+model) to the next, wrapping"
-      (let [set-calls (atom [])]
-        (with-redefs [vis/configured-providers (fn []
-                                                 [{:id :openai
-                                                   :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                                  {:id :zai
-                                                   :models [{:name "glm-4.6"}]}])
-                      vis/gateway-session-model (fn [_sid] {:provider "zai" :model "glm-4.6"}) ; last -> wraps
-                      vis/gateway-set-session-model! (fn [sid provider model]
-                                                       (swap! set-calls conj [sid provider model])
-                                                       {:provider provider :model model})
-                      state/current-model-info (fn [] {:provider :openai :name "gpt-5"})
-                      vis/notify!            (fn [_ & _])]
-          (reset! state/app-db {:session {:id "sess-1"}
-                                :render-version 0})
-          (state/dispatch [:cycle-model])
-          (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
+    (let [set-calls (atom [])]
+      (with-redefs [vis/configured-providers (fn []
+                                               [{:id :openai
+                                                 :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                {:id :zai
+                                                 :models [{:name "glm-4.6"}]}])
+                    vis/gateway-session-model (fn [_sid] {:provider "zai" :model "glm-4.6"}) ; last -> wraps
+                    vis/gateway-set-session-model! (fn [sid provider model]
+                                                     (swap! set-calls conj [sid provider model])
+                                                     {:provider provider :model model})
+                    state/current-model-info (fn [] {:provider :openai :name "gpt-5"})
+                    vis/notify!            (fn [_ & _])]
+        (reset! state/app-db {:session {:id "sess-1"}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
 
   (it "with no active session, asks to open one and sets nothing"
-      (let [set-calls (atom [])
-            notified  (atom nil)]
-        (with-redefs [vis/db-info            (fn [] :db)
-                      vis/session-model-of   (fn [_db _sid] nil)
-                      vis/set-session-model! (fn [_db sid provider model]
-                                               (swap! set-calls conj [sid provider model]) model)
-                      vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
-          (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
-                                :render-version 0})
-          (state/dispatch [:cycle-model])
-          (expect (empty? @set-calls))
-          (expect (= "Open a session first to choose its model" (first @notified)))))))
+    (let [set-calls (atom [])
+          notified  (atom nil)]
+      (with-redefs [vis/db-info            (fn [] :db)
+                    vis/session-model-of   (fn [_db _sid] nil)
+                    vis/set-session-model! (fn [_db sid provider model]
+                                             (swap! set-calls conj [sid provider model]) model)
+                    vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (empty? @set-calls))
+        (expect (= "Open a session first to choose its model" (first @notified)))))))
 
 (defdescribe scrollbar-state-test
   (let [scroll-to-y-fn (-> #'state/event-registry deref deref (get :scroll-to-y) :fn)]
     (it "a scrollbar drag above the bottom parks at the mapped offset (mode :at)"
       ;; total-h 360, inner-h 56 -> max-s 304; track-h 56, denom 55;
       ;; mouse-y 28 -> fraction 28/55 -> offset round(.509*304)=155.
-        (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 28 0 56 360 56])]
-          (expect (= {:mode :at, :offset 155} (:scroll r)))))
+      (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 28 0 56 360 56])]
+        (expect (= {:mode :at, :offset 155} (:scroll r)))))
     (it "a scrollbar drag to the very bottom re-enters FOLLOW"
       ;; fraction 1.0 -> offset == max-scroll -> stick-to-bottom again, so
       ;; streamed content keeps the latest message in view.
-        (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 55 0 56 360 56])]
-          (expect (= scroll/follow (:scroll r)))))))
+      (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 55 0 56 360 56])]
+        (expect (= scroll/follow (:scroll r)))))))
 
 ;; The scroll model is ONE tagged `:scroll` value (see scroll.clj). These
 ;; cover the event wrappers + the re-pin invariant that killed the
@@ -545,118 +545,118 @@
 (defdescribe scroll-model-test
   (let [ev (fn [k] (-> #'state/event-registry deref deref (get k) :fn))]
     (it "scroll-up parks (mode :at) so streaming follow hands off"
-        (let [r ((ev :scroll-up) {:scroll scroll/follow} [:scroll-up 9 200 100])]
+      (let [r ((ev :scroll-up) {:scroll scroll/follow} [:scroll-up 9 200 100])]
         ;; max-s = 100; ease from the bottom (100) up to 100-9 = 91.
-          (expect (= :at (:mode (:scroll r))))
-          (expect (= 91 (:offset (:scroll r))))))
+        (expect (= :at (:mode (:scroll r))))
+        (expect (= 91 (:offset (:scroll r))))))
 
     (it "scroll-down landing in the bottom slack band re-arms FOLLOW"
-        (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
+      (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
         ;; max-s 100; 90+30 within slack of 100 -> follow (eases the rest).
-          (expect (= :follow (:mode (:scroll r))))))
+        (expect (= :follow (:mode (:scroll r))))))
 
     (it "scroll-down above the slack band stays parked"
-        (let [r ((ev :scroll-down) {:scroll (scroll/parked 10)} [:scroll-down 30 200 100])]
-          (expect (= :at (:mode (:scroll r))))
-          (expect (= 40 (:offset (:scroll r))))))
+      (let [r ((ev :scroll-down) {:scroll (scroll/parked 10)} [:scroll-down 30 200 100])]
+        (expect (= :at (:mode (:scroll r))))
+        (expect (= 40 (:offset (:scroll r))))))
 
     (it "ease-scroll walks FOLLOW toward the growing bottom (no teleport)"
       ;; Regression for the streamed big-block "jump jump": a turn appends
       ;; a tall bubble in one frame. FOLLOW's desired row IS the new bottom,
       ;; so ease steps the on-screen pos down toward it instead of snapping.
-        (let [r ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)}
-                                   [:ease-scroll 300 100])]
+      (let [r ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)}
+                                 [:ease-scroll 300 100])]
         ;; max-s 200; step 0.35*(200-100)=35 -> pos 135, still FOLLOW.
-          (expect (= {:mode :follow, :pos 135} (:scroll r)))))
+        (expect (= {:mode :follow, :pos 135} (:scroll r)))))
 
     (it "ease-scroll settles a parked move and drops :pos"
-        (let [r ((ev :ease-scroll) {:scroll {:mode :at, :offset 50, :pos 50}}
-                                   [:ease-scroll 150 100])]
-          (expect (= {:mode :at, :offset 50} (:scroll r)))))
+      (let [r ((ev :ease-scroll) {:scroll {:mode :at, :offset 50, :pos 50}}
+                                 [:ease-scroll 150 100])]
+        (expect (= {:mode :at, :offset 50} (:scroll r)))))
 
     (it "set-scroll snap-parks at an exact row (search jump)"
-        (let [r ((ev :set-scroll) {:scroll scroll/follow} [:set-scroll 42])]
-          (expect (= {:mode :at, :offset 42} (:scroll r)))))
+      (let [r ((ev :set-scroll) {:scroll scroll/follow} [:set-scroll 42])]
+        (expect (= {:mode :at, :offset 42} (:scroll r)))))
 
     (it "reanchor-scroll shifts the parked offset + pos by the same delta"
       ;; Content above the anchor shrank by 450 rows as estimates resolved;
       ;; the anchored message must stay visually put.
-        (let [r ((ev :reanchor-scroll) {:scroll {:mode :at, :offset 1840, :pos 1849}}
-                                       [:reanchor-scroll 1399 -450])]
-          (expect (= {:mode :at, :offset 1390, :pos 1399} (:scroll r)))))
+      (let [r ((ev :reanchor-scroll) {:scroll {:mode :at, :offset 1840, :pos 1849}}
+                                     [:reanchor-scroll 1399 -450])]
+        (expect (= {:mode :at, :offset 1390, :pos 1399} (:scroll r)))))
 
     (it "message-received re-pins to a CLEAN FOLLOW (no dangling ease target)"
       ;; Regression (/workspace list "flash to top then bottom"): a result
       ;; lands atomically while an ease was in flight. Replacing the whole
       ;; `:scroll` with FOLLOW means nothing can dangle, so the view snaps
       ;; cleanly to the bottom instead of animating up from row 0 first.
-        (let [message-received-fn (ev :message-received)
-              pending-id          "turn-1"
-              db                  {:active-tab-id :main
-                                   :session {:id "c1"}
-                                   :loading? true
-                                   :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
-                                              {:role :assistant :pending? true :client-turn-id pending-id}]
-                                   :progress {:iterations []}
+      (let [message-received-fn (ev :message-received)
+            pending-id          "turn-1"
+            db                  {:active-tab-id :main
+                                 :session {:id "c1"}
+                                 :loading? true
+                                 :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
+                                            {:role :assistant :pending? true :client-turn-id pending-id}]
+                                 :progress {:iterations []}
                                  ;; An ease was in flight from the prior frame.
-                                   :scroll {:mode :follow, :pos 80}}
-              {db' :db}           (message-received-fn db
-                                                       [:message-received :main
-                                                        [:ir {} [:p {} [:span {} "a big table"]]]
-                                                        {:client-turn-id pending-id}])]
-          (expect (= scroll/follow (:scroll db')))))
+                                 :scroll {:mode :follow, :pos 80}}
+            {db' :db}           (message-received-fn db
+                                  [:message-received :main
+                                   [:ir {} [:p {} [:span {} "a big table"]]]
+                                   {:client-turn-id pending-id}])]
+        (expect (= scroll/follow (:scroll db')))))
 
     (it "send-message re-pins to a CLEAN FOLLOW"
-        (let [send-message-fn (ev :send-message)
-              db              {:session {:id "c1"}
-                               :active-tab-id :main
-                               :messages []
-                               :input-history []
-                               :scroll {:mode :at, :offset 80, :pos 80}
-                               :settings {:reasoning-level :balanced
-                                          :openai-codex-verbosity :low}
-                               :pastes {}}]
-          (with-redefs [input/expand-paste-placeholders (fn [text _] text)
-                        input/expand-file-mentions identity
-                        vis/cancellation-token (fn [] :token)]
-            (let [{db' :db} (send-message-fn db [:send-message "hello"])]
-              (expect (= scroll/follow (:scroll db')))))))))
+      (let [send-message-fn (ev :send-message)
+            db              {:session {:id "c1"}
+                             :active-tab-id :main
+                             :messages []
+                             :input-history []
+                             :scroll {:mode :at, :offset 80, :pos 80}
+                             :settings {:reasoning-level :balanced
+                                        :openai-codex-verbosity :low}
+                             :pastes {}}]
+        (with-redefs [input/expand-paste-placeholders (fn [text _] text)
+                      input/expand-file-mentions identity
+                      vis/cancellation-token (fn [] :token)]
+          (let [{db' :db} (send-message-fn db [:send-message "hello"])]
+            (expect (= scroll/follow (:scroll db')))))))))
 
 (defdescribe cancel-turn-test
   (it "notifies cancelling instead of relying on footer status"
-      (let [cancelled (atom nil)
-            notified  (atom nil)]
-        (with-redefs [vis/cancel! (fn [token] (reset! cancelled token))
-                      vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-          (reset! state/app-db {:loading? true
-                                :cancel-token :token
-                                :cancelling? false
-                                :render-version 0})
-          (state/dispatch [:cancel-turn])
-          (expect (= :token @cancelled))
-          (expect (true? (:cancelling? @state/app-db)))
-          (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
-                     @notified))))))
+    (let [cancelled (atom nil)
+          notified  (atom nil)]
+      (with-redefs [vis/cancel! (fn [token] (reset! cancelled token))
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:loading? true
+                              :cancel-token :token
+                              :cancelling? false
+                              :render-version 0})
+        (state/dispatch [:cancel-turn])
+        (expect (= :token @cancelled))
+        (expect (true? (:cancelling? @state/app-db)))
+        (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
+                  @notified))))))
 
 (defdescribe live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events (atom [])
-            now-ms (atom 0)
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms))]
-        (update! [:t0] {:phase :reasoning})
-        (reset! now-ms 79)
-        (update! [:t79] {:phase :reasoning})
-        (reset! now-ms 80)
-        (update! [:t80] {:phase :reasoning})
-        (reset! now-ms 81)
-        (update! [:done] {:phase :iteration-final})
-        (expect (= [[:set-progress-iterations [:t0]]
-                    [:set-progress-iterations [:t80]]
-                    [:set-progress-iterations [:done]]]
-                   @events))))
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
+      (update! [:t0] {:phase :reasoning})
+      (reset! now-ms 79)
+      (update! [:t79] {:phase :reasoning})
+      (reset! now-ms 80)
+      (update! [:t80] {:phase :reasoning})
+      (reset! now-ms 81)
+      (update! [:done] {:phase :iteration-final})
+      (expect (= [[:set-progress-iterations [:t0]]
+                  [:set-progress-iterations [:t80]]
+                  [:set-progress-iterations [:done]]]
+                @events))))
 
   (it "content stream CANNOT starve reasoning frames — each phase keeps its own throttle clock"
     ;; Regression: before the per-phase clocks, every `:content`
@@ -664,47 +664,47 @@
     ;; reset the shared throttle, so after the first reasoning
     ;; frame landed the bubble froze on "I" / "The" until the
     ;; terminal `:iteration-final` chunk.
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events (atom [])
-            now-ms (atom 0)
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms))]
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
       ;; First reasoning frame lands.
-        (update! [:r 0] {:phase :reasoning})
+      (update! [:r 0] {:phase :reasoning})
       ;; Content begins streaming per-token, every 10ms.
-        (doseq [t (range 10 80 10)]
-          (reset! now-ms t)
-          (update! [:c (long t)] {:phase :content}))
+      (doseq [t (range 10 80 10)]
+        (reset! now-ms t)
+        (update! [:c (long t)] {:phase :content}))
       ;; 80ms after the first reasoning frame, a new reasoning
       ;; chunk MUST dispatch — content traffic must not have
       ;; reset the reasoning throttle clock.
-        (reset! now-ms 80)
-        (update! [:r 80] {:phase :reasoning})
-        (let [reasoning-events (filterv #(= :r (first (second %))) @events)]
-          (expect (= [[:set-progress-iterations [:r 0]]
-                      [:set-progress-iterations [:r 80]]]
-                     reasoning-events)))))
+      (reset! now-ms 80)
+      (update! [:r 80] {:phase :reasoning})
+      (let [reasoning-events (filterv #(= :r (first (second %))) @events)]
+        (expect (= [[:set-progress-iterations [:r 0]]
+                    [:set-progress-iterations [:r 80]]]
+                  reasoning-events)))))
 
   (it "content stream is throttled on its own clock and never blocks reasoning"
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events (atom [])
-            now-ms (atom 0)
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms))]
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
       ;; Hammer both streams in lockstep for 200ms.
-        (doseq [t (range 0 201 10)]
-          (reset! now-ms t)
-          (update! [:r (long t)] {:phase :reasoning})
-          (update! [:c (long t)] {:phase :content}))
-        (let [tag-counts (reduce (fn [m [_ tag]]
-                                   (update m (first tag) (fnil inc 0)))
-                                 {}
-                                 @events)]
+      (doseq [t (range 0 201 10)]
+        (reset! now-ms t)
+        (update! [:r (long t)] {:phase :reasoning})
+        (update! [:c (long t)] {:phase :content}))
+      (let [tag-counts (reduce (fn [m [_ tag]]
+                                 (update m (first tag) (fnil inc 0)))
+                         {}
+                         @events)]
         ;; 200ms / 80ms cadence → frames at t ∈ {0, 80, 160}.
-          (expect (= 3 (get tag-counts :r)))
-          (expect (= 3 (get tag-counts :c)))))))
+        (expect (= 3 (get tag-counts :r)))
+        (expect (= 3 (get tag-counts :c)))))))
 
 (defdescribe live-progress-trailing-flush-test
   ;; Regression: leading-edge-only throttling pinned the live
@@ -719,73 +719,73 @@
   ;; the latest dropped timeline reaches the screen within one
   ;; throttle interval even when the stream goes quiet.
   (it "flushes the latest dropped timeline within the throttle window when the stream stalls"
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events        (atom [])
-            now-ms        (atom 0)
-            scheduled     (atom [])
-            schedule-fn   (fn [^Runnable f ^long delay-ms]
-                            (let [token (gensym "sched")]
-                              (swap! scheduled conj {:token token :run f :delay-ms delay-ms})
-                              token))
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms)
-                     schedule-fn)]
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events        (atom [])
+          now-ms        (atom 0)
+          scheduled     (atom [])
+          schedule-fn   (fn [^Runnable f ^long delay-ms]
+                          (let [token (gensym "sched")]
+                            (swap! scheduled conj {:token token :run f :delay-ms delay-ms})
+                            token))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
       ;; First reasoning chunk lands and dispatches.
-        (update! [:t 0] {:phase :reasoning})
+      (update! [:t 0] {:phase :reasoning})
       ;; Burst of 4 more chunks, all inside the 80ms window → dropped
       ;; but stashed as pending; the FIRST drop schedules the timer,
       ;; subsequent drops only overwrite the pending timeline.
-        (doseq [t [10 20 30 40]]
-          (reset! now-ms t)
-          (update! [:t (long t)] {:phase :reasoning}))
+      (doseq [t [10 20 30 40]]
+        (reset! now-ms t)
+        (update! [:t (long t)] {:phase :reasoning}))
       ;; Exactly one trailing flush should be scheduled.
-        (expect (= 1 (count @scheduled)))
-        (let [{:keys [delay-ms run]} (first @scheduled)]
+      (expect (= 1 (count @scheduled)))
+      (let [{:keys [delay-ms run]} (first @scheduled)]
         ;; Delay is `interval - elapsed` from the dispatch at t=0.
         ;; First drop at t=10 → delay-ms = 80 - (10 - 0) = 70.
-          (expect (= 70 delay-ms))
+        (expect (= 70 delay-ms))
         ;; Stream stalls. Advance virtual clock past the schedule and
         ;; fire the timer manually.
-          (reset! now-ms 80)
-          (run))
+        (reset! now-ms 80)
+        (run))
       ;; Trailing flush carries the LATEST pending timeline ([:t 40]),
       ;; not the first dispatched one.
-        (expect (= [[:set-progress-iterations [:t 0]]
-                    [:set-progress-iterations [:t 40]]]
-                   @events))))
+      (expect (= [[:set-progress-iterations [:t 0]]
+                  [:set-progress-iterations [:t 40]]]
+                @events))))
 
   (it "a fresh chunk arriving on the trailing edge cancels the scheduled flush"
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events       (atom [])
-            now-ms       (atom 0)
-            scheduled    (atom [])
-            cancelled    (atom 0)
-            schedule-fn  (fn [^Runnable f ^long delay-ms]
-                           (let [fut (reify java.util.concurrent.Future
-                                       (cancel [_ _] (swap! cancelled inc) true)
-                                       (isCancelled [_] false)
-                                       (isDone [_] false)
-                                       (get [_] nil)
-                                       (get [_ _ _] nil))]
-                             (swap! scheduled conj {:run f :delay-ms delay-ms :fut fut})
-                             fut))
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms)
-                     schedule-fn)]
-        (update! [:t 0] {:phase :reasoning})
-        (reset! now-ms 30)
-        (update! [:t 30] {:phase :reasoning})    ;; dropped → schedules flush
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events       (atom [])
+          now-ms       (atom 0)
+          scheduled    (atom [])
+          cancelled    (atom 0)
+          schedule-fn  (fn [^Runnable f ^long delay-ms]
+                         (let [fut (reify java.util.concurrent.Future
+                                     (cancel [_ _] (swap! cancelled inc) true)
+                                     (isCancelled [_] false)
+                                     (isDone [_] false)
+                                     (get [_] nil)
+                                     (get [_ _ _] nil))]
+                           (swap! scheduled conj {:run f :delay-ms delay-ms :fut fut})
+                           fut))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
+      (update! [:t 0] {:phase :reasoning})
+      (reset! now-ms 30)
+      (update! [:t 30] {:phase :reasoning})    ;; dropped → schedules flush
       ;; Time crosses the 80ms boundary, next chunk is due. The
       ;; dispatch must cancel the trailing-edge timer so it does
       ;; not fire a duplicate frame afterwards.
-        (reset! now-ms 90)
-        (update! [:t 90] {:phase :reasoning})
-        (expect (= 1 @cancelled))
-        (expect (= [[:set-progress-iterations [:t 0]]
-                    [:set-progress-iterations [:t 90]]]
-                   @events))))
+      (reset! now-ms 90)
+      (update! [:t 90] {:phase :reasoning})
+      (expect (= 1 @cancelled))
+      (expect (= [[:set-progress-iterations [:t 0]]
+                  [:set-progress-iterations [:t 90]]]
+                @events))))
 
   (it "a lifecycle chunk arriving between drops cancels the trailing flush"
     ;; Lifecycle chunks (`:iteration-final`, `:form-result`, …)
@@ -797,235 +797,235 @@
     ;; still no-op because the latest pending state was published.
     ;; This test pins the desired behavior: the pending slot is
     ;; cleared the moment the dispatched lifecycle delivers it.
-      (let [make-progress-render-updater @#'state/make-progress-render-updater
-            events     (atom [])
-            now-ms     (atom 0)
-            scheduled  (atom [])
-            schedule-fn (fn [^Runnable f ^long delay-ms]
-                          (let [t (gensym)]
-                            (swap! scheduled conj {:token t :run f :delay-ms delay-ms})
-                            t))
-            update! (make-progress-render-updater
-                     #(swap! events conj %)
-                     #(long @now-ms)
-                     schedule-fn)]
-        (update! [:r 0] {:phase :reasoning})
-        (reset! now-ms 20)
-        (update! [:r 20] {:phase :reasoning})        ;; dropped + scheduled
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events     (atom [])
+          now-ms     (atom 0)
+          scheduled  (atom [])
+          schedule-fn (fn [^Runnable f ^long delay-ms]
+                        (let [t (gensym)]
+                          (swap! scheduled conj {:token t :run f :delay-ms delay-ms})
+                          t))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
+      (update! [:r 0] {:phase :reasoning})
+      (reset! now-ms 20)
+      (update! [:r 20] {:phase :reasoning})        ;; dropped + scheduled
       ;; Lifecycle event fires (e.g. response-parse :start).
-        (reset! now-ms 25)
-        (update! [:r 25] {:phase :response-parse})    ;; ALWAYS dispatched
+      (reset! now-ms 25)
+      (update! [:r 25] {:phase :response-parse})    ;; ALWAYS dispatched
       ;; Trailing flush still fires later (we do not cancel from a
       ;; non-throttled path — cheap), but with a stale-but-still-latest
       ;; pending it just dispatches the same shape again. That is
       ;; acceptable because the render loop coalesces by version.
       ;; Hard contract: between [r 0] and [r 25] the lifecycle
       ;; chunk DID deliver the latest pending shape immediately.
-        (expect (= [[:set-progress-iterations [:r 0]]
-                    [:set-progress-iterations [:r 25]]]
-                   @events)))))
+      (expect (= [[:set-progress-iterations [:r 0]]
+                  [:set-progress-iterations [:r 25]]]
+                @events)))))
 
 (defdescribe send-message-test
   (it "refuses copied assistant transcript dumps before provider dispatch"
-      (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
-            db              {:session {:id "c1"}
-                             :active-tab-id :main
-                             :messages []
-                             :messages-scroll 0
-                             :input-history []
-                             :settings {:reasoning-level :balanced
-                                        :openai-codex-verbosity :low}
-                             :pastes {}}
-            poison          "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
-        (with-redefs [input/expand-paste-placeholders (fn [text _] text)]
-          (let [{db' :db fx :fx} (send-message-fn db [:send-message poison])]
-            (expect (= db db'))
-            (expect (= [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]
-                       fx))))))
+    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
+          db              {:session {:id "c1"}
+                           :active-tab-id :main
+                           :messages []
+                           :messages-scroll 0
+                           :input-history []
+                           :settings {:reasoning-level :balanced
+                                      :openai-codex-verbosity :low}
+                           :pastes {}}
+          poison          "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
+      (with-redefs [input/expand-paste-placeholders (fn [text _] text)]
+        (let [{db' :db fx :fx} (send-message-fn db [:send-message poison])]
+          (expect (= db db'))
+          (expect (= [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]
+                    fx))))))
 
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
-      (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
-            db              {:session {:id "c1"}
-                             :active-tab-id :main
-                             :messages []
-                             :messages-scroll 0
-                             :input-history []
-                             :settings {:reasoning-level :deep
-                                        :openai-codex-verbosity :high}
-                             :pastes {}}]
-        (with-redefs [input/expand-paste-placeholders (fn [text _] text)
-                      input/expand-file-mentions identity
-                      vis/cancellation-token (fn [] :token)
-                      vis/get-router (fn [] :router)
-                      vis/resolve-effective-model (fn [_] {:provider :zai
-                                                           :name "glm-4.7"
-                                                           :reasoning? true
-                                                           :reasoning-style :zai-thinking
-                                                           :reasoning-effort? false})]
-          (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])
-                [event] fx]
-            (expect (= [:rlm-turn :main {:id "c1"} "hello" :token nil nil {}]
-                       (subvec event 0 8)))
-            (expect (nil? (nth event 8)))
-            (expect (string? (nth event 9)))))))
+    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
+          db              {:session {:id "c1"}
+                           :active-tab-id :main
+                           :messages []
+                           :messages-scroll 0
+                           :input-history []
+                           :settings {:reasoning-level :deep
+                                      :openai-codex-verbosity :high}
+                           :pastes {}}]
+      (with-redefs [input/expand-paste-placeholders (fn [text _] text)
+                    input/expand-file-mentions identity
+                    vis/cancellation-token (fn [] :token)
+                    vis/get-router (fn [] :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})]
+        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])
+              [event] fx]
+          (expect (= [:rlm-turn :main {:id "c1"} "hello" :token nil nil {}]
+                    (subvec event 0 8)))
+          (expect (nil? (nth event 8)))
+          (expect (string? (nth event 9)))))))
 
   (it "forwards routing trace from turn result to message metadata"
-      (let [rlm-turn-fx (-> #'state/fx-registry deref deref (get :rlm-turn))
-            received    (atom [])
-            trace       [{:provider-id :p1
-                          :model "m1"
-                          :status 429
-                          :reason :transient-error}]]
-        (with-redefs [vis/worker-future (fn [_label thunk]
-                                          (thunk)
-                                          :future)
-                      vis/cancellation-set-future! (fn [_token _future])
-                      state/dispatch (fn [event]
-                                       (swap! received conj event))
-                      chat/turn! (fn [_session _text _opts]
-                                   {:answer [:ir {} [:p {} [:span {} "ok"]]]
-                                    :model "m2"
-                                    :provider :p2
-                                    :llm-selected {:provider :p1 :model "m1"}
-                                    :llm-actual {:provider :p2 :model "m2"}
-                                    :llm-fallback? true
-                                    :llm-routing-trace trace})]
-          (rlm-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
+    (let [rlm-turn-fx (-> #'state/fx-registry deref deref (get :rlm-turn))
+          received    (atom [])
+          trace       [{:provider-id :p1
+                        :model "m1"
+                        :status 429
+                        :reason :transient-error}]]
+      (with-redefs [vis/worker-future (fn [_label thunk]
+                                        (thunk)
+                                        :future)
+                    vis/cancellation-set-future! (fn [_token _future])
+                    state/dispatch (fn [event]
+                                     (swap! received conj event))
+                    chat/turn! (fn [_session _text _opts]
+                                 {:answer [:ir {} [:p {} [:span {} "ok"]]]
+                                  :model "m2"
+                                  :provider :p2
+                                  :llm-selected {:provider :p1 :model "m1"}
+                                  :llm-actual {:provider :p2 :model "m2"}
+                                  :llm-fallback? true
+                                  :llm-routing-trace trace})]
+        (rlm-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
         ;; refreshes after the answer commits, so don't assume
         ;; :message-received is the *last* event — select it explicitly.
-          (let [[event-id workspace-id _answer metadata]
-                (->> @received (filter #(= :message-received (first %))) last)]
-            (expect (= :message-received event-id))
-            (expect (= :main workspace-id))
-            (expect (= "m2" (:model metadata)))
-            (expect (= :p2 (:provider metadata)))
-            (expect (= {:provider :p1 :model "m1"} (:llm-selected metadata)))
-            (expect (= {:provider :p2 :model "m2"} (:llm-actual metadata)))
-            (expect (true? (:llm-fallback? metadata)))
-            (expect (= trace (:llm-routing-trace metadata)))))))
+        (let [[event-id workspace-id _answer metadata]
+              (->> @received (filter #(= :message-received (first %))) last)]
+          (expect (= :message-received event-id))
+          (expect (= :main workspace-id))
+          (expect (= "m2" (:model metadata)))
+          (expect (= :p2 (:provider metadata)))
+          (expect (= {:provider :p1 :model "m1"} (:llm-selected metadata)))
+          (expect (= {:provider :p2 :model "m2"} (:llm-actual metadata)))
+          (expect (true? (:llm-fallback? metadata)))
+          (expect (= trace (:llm-routing-trace metadata)))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
-      (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
-            reset-input-fn      (-> #'state/event-registry deref deref (get :reset-input) :fn)
-            message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
-            token              (input/format-paste-placeholder {:id 1 :content "hello"})
-            text               (str "edit me " token)
-            initial-messages   [{:role :assistant :text "previous"}]
-            db                 {:session {:id "c1"}
-                                :messages initial-messages
-                                :messages-scroll 9
-                                :input-history ["prior"]
-                                :input-history-index nil
-                                :input-history-draft nil
-                                :settings {:reasoning-level :balanced
-                                           :openai-codex-verbosity :low}
-                                :pastes {1 {:id 1 :content "hello"}}
-                                :paste-counter 1}]
-        (with-redefs [vis/cancellation-token (fn [] :token)]
-          (let [sent-db      (:db (send-message-fn db [:send-message text]))
-                reset-db     (reset-input-fn sent-db [:reset-input])
-                restored-db  (:db (message-received-fn reset-db
-                                                       [:message-received
-                                                        [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                                                        {:status :cancelled}]))]
-            (expect (= initial-messages (:messages restored-db)))
-            (expect (= text (input/input->text (:input restored-db))))
-            (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
-            (expect (= 1 (:paste-counter restored-db)))
-            (expect (= ["prior"] (:input-history restored-db)))
-            (expect (false? (:loading? restored-db)))
-            (expect (not-any? #(= "Cancelled by user." (:text %))
-                              (:messages restored-db))))))))
+    (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
+          reset-input-fn      (-> #'state/event-registry deref deref (get :reset-input) :fn)
+          message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
+          token              (input/format-paste-placeholder {:id 1 :content "hello"})
+          text               (str "edit me " token)
+          initial-messages   [{:role :assistant :text "previous"}]
+          db                 {:session {:id "c1"}
+                              :messages initial-messages
+                              :messages-scroll 9
+                              :input-history ["prior"]
+                              :input-history-index nil
+                              :input-history-draft nil
+                              :settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :low}
+                              :pastes {1 {:id 1 :content "hello"}}
+                              :paste-counter 1}]
+      (with-redefs [vis/cancellation-token (fn [] :token)]
+        (let [sent-db      (:db (send-message-fn db [:send-message text]))
+              reset-db     (reset-input-fn sent-db [:reset-input])
+              restored-db  (:db (message-received-fn reset-db
+                                  [:message-received
+                                   [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                                   {:status :cancelled}]))]
+          (expect (= initial-messages (:messages restored-db)))
+          (expect (= text (input/input->text (:input restored-db))))
+          (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
+          (expect (= 1 (:paste-counter restored-db)))
+          (expect (= ["prior"] (:input-history restored-db)))
+          (expect (false? (:loading? restored-db)))
+          (expect (not-any? #(= "Cancelled by user." (:text %))
+                    (:messages restored-db))))))))
 
 (defdescribe pending-send-queue-test
   (it "keeps queued submissions on their workspace snapshot"
-      (let [enqueue-fn (-> #'state/event-registry deref deref (get :enqueue-message) :fn)
-            db         {:active-tab-id :b
-                        :input-history []
-                        :pastes {}
-                        :paste-counter 0
-                        :tab-locals {:a {:session {:id "a"}
-                                         :loading? true
-                                         :pending-sends []
-                                         :input-history []
-                                         :pastes {1 {:id 1 :content "payload"}}
-                                         :paste-counter 1}}}
-            result     (enqueue-fn db [:enqueue-message "queued" :a])
-            queued     (get-in result [:db :tab-locals :a :pending-sends])]
-        (expect (= ["queued"] (mapv :text queued)))
-        (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
-        (expect (empty? (:pending-sends (:db result))))))
+    (let [enqueue-fn (-> #'state/event-registry deref deref (get :enqueue-message) :fn)
+          db         {:active-tab-id :b
+                      :input-history []
+                      :pastes {}
+                      :paste-counter 0
+                      :tab-locals {:a {:session {:id "a"}
+                                       :loading? true
+                                       :pending-sends []
+                                       :input-history []
+                                       :pastes {1 {:id 1 :content "payload"}}
+                                       :paste-counter 1}}}
+          result     (enqueue-fn db [:enqueue-message "queued" :a])
+          queued     (get-in result [:db :tab-locals :a :pending-sends])]
+      (expect (= ["queued"] (mapv :text queued)))
+      (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
+      (expect (empty? (:pending-sends (:db result))))))
 
   (it "schedules queue drain as an effect after message commit"
-      (let [message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
-            pending-id          "turn-1"
-            db                  {:active-tab-id :main
-                                 :session {:id "c1"}
-                                 :loading? true
-                                 :messages [{:role :user :text "first" :client-turn-id pending-id}
-                                            {:role :assistant :pending? true :client-turn-id pending-id}]
-                                 :progress {:iterations []}
-                                 :pending-sends [{:text "second"
-                                                  :pastes {}
-                                                  :paste-counter 0}]}
-            {:keys [db fx]}      (message-received-fn db
-                                                      [:message-received :main
-                                                       [:ir {} [:p {} [:span {} "ok"]]]
-                                                       {:client-turn-id pending-id}])]
-        (expect (= [[:dispatch [:drain-pending :main]]] fx))
-        (expect (false? (:loading? db)))
-        (expect (= ["second"] (mapv :text (:pending-sends db))))))
+    (let [message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
+          pending-id          "turn-1"
+          db                  {:active-tab-id :main
+                               :session {:id "c1"}
+                               :loading? true
+                               :messages [{:role :user :text "first" :client-turn-id pending-id}
+                                          {:role :assistant :pending? true :client-turn-id pending-id}]
+                               :progress {:iterations []}
+                               :pending-sends [{:text "second"
+                                                :pastes {}
+                                                :paste-counter 0}]}
+          {:keys [db fx]}      (message-received-fn db
+                                 [:message-received :main
+                                  [:ir {} [:p {} [:span {} "ok"]]]
+                                  {:client-turn-id pending-id}])]
+      (expect (= [[:dispatch [:drain-pending :main]]] fx))
+      (expect (false? (:loading? db)))
+      (expect (= ["second"] (mapv :text (:pending-sends db))))))
 
   (it "drains one queued item without nested provider dispatch"
-      (let [drain-fn       (-> #'state/event-registry deref deref (get :drain-pending) :fn)
-            db             {:active-tab-id :main
-                            :pending-sends [{:text "second"
-                                             :pastes {2 {:id 2 :content "p"}}
-                                             :paste-counter 2}
-                                            {:text "third"
-                                             :pastes {}
-                                             :paste-counter 0}]}
-            {:keys [db fx]} (drain-fn db [:drain-pending :main])]
-        (expect (= [[:dispatch [:send-message "second" :main]]] fx))
-        (expect (= ["third"] (mapv :text (:pending-sends db))))
-        (expect (= {2 {:id 2 :content "p"}} (:pastes db)))
-        (expect (= 2 (:paste-counter db))))))
+    (let [drain-fn       (-> #'state/event-registry deref deref (get :drain-pending) :fn)
+          db             {:active-tab-id :main
+                          :pending-sends [{:text "second"
+                                           :pastes {2 {:id 2 :content "p"}}
+                                           :paste-counter 2}
+                                          {:text "third"
+                                           :pastes {}
+                                           :paste-counter 0}]}
+          {:keys [db fx]} (drain-fn db [:drain-pending :main])]
+      (expect (= [[:dispatch [:send-message "second" :main]]] fx))
+      (expect (= ["third"] (mapv :text (:pending-sends db))))
+      (expect (= {2 {:id 2 :content "p"}} (:pastes db)))
+      (expect (= 2 (:paste-counter db))))))
 
 (defdescribe edit-queued-via-history-up-test
   (it "ArrowUp on an empty box pulls the newest queued message back for editing"
-      (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
-            db            {:input-history ["prev-sent"]
-                           :input-history-index nil
-                           :input (input/empty-input)
-                           :pending-sends [{:text "first" :pastes {} :paste-counter 0}
-                                           {:text "queued msg"
-                                            :pastes {1 {:id 1 :content "p"}}
-                                            :paste-counter 1}]}
-            result        (:db (history-up-fn db [:history-up]))]
-        (expect (= "queued msg" (input/input->text (:input result))))
-        (expect (= ["first"] (mapv :text (:pending-sends result))))
-        (expect (= {1 {:id 1 :content "p"}} (:pastes result)))
-        (expect (= 1 (:paste-counter result)))))
+    (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
+          db            {:input-history ["prev-sent"]
+                         :input-history-index nil
+                         :input (input/empty-input)
+                         :pending-sends [{:text "first" :pastes {} :paste-counter 0}
+                                         {:text "queued msg"
+                                          :pastes {1 {:id 1 :content "p"}}
+                                          :paste-counter 1}]}
+          result        (:db (history-up-fn db [:history-up]))]
+      (expect (= "queued msg" (input/input->text (:input result))))
+      (expect (= ["first"] (mapv :text (:pending-sends result))))
+      (expect (= {1 {:id 1 :content "p"}} (:pastes result)))
+      (expect (= 1 (:paste-counter result)))))
 
   (it "ArrowUp with a non-empty box browses input-history, leaving the queue intact"
-      (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
-            db            {:input-history ["prev-sent"]
-                           :input-history-index nil
-                           :input {:lines ["typing…"] :crow 0 :ccol 6}
-                           :pending-sends [{:text "queued msg" :pastes {} :paste-counter 0}]}
-            result        (:db (history-up-fn db [:history-up]))]
-        (expect (= "prev-sent" (input/input->text (:input result))))
-        (expect (= ["queued msg"] (mapv :text (:pending-sends result))))))
+    (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
+          db            {:input-history ["prev-sent"]
+                         :input-history-index nil
+                         :input {:lines ["typing…"] :crow 0 :ccol 6}
+                         :pending-sends [{:text "queued msg" :pastes {} :paste-counter 0}]}
+          result        (:db (history-up-fn db [:history-up]))]
+      (expect (= "prev-sent" (input/input->text (:input result))))
+      (expect (= ["queued msg"] (mapv :text (:pending-sends result))))))
 
   (it "ArrowUp with an empty box and empty queue browses input-history"
-      (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
-            db            {:input-history ["prev-sent"]
-                           :input-history-index nil
-                           :input (input/empty-input)
-                           :pending-sends []}
-            result        (:db (history-up-fn db [:history-up]))]
-        (expect (= "prev-sent" (input/input->text (:input result)))))))
+    (let [history-up-fn (-> #'state/event-registry deref deref (get :history-up) :fn)
+          db            {:input-history ["prev-sent"]
+                         :input-history-index nil
+                         :input (input/empty-input)
+                         :pending-sends []}
+          result        (:db (history-up-fn db [:history-up]))]
+      (expect (= "prev-sent" (input/input->text (:input result)))))))
 
 (defdescribe set-title-background-tab-test
   (it "relabels a background tab live without touching the active tab"
@@ -1034,46 +1034,46 @@
     ;; [:set-title title session-id] for every open session; :set-title
     ;; resolves the owning tab via tab-id-for-session and relabels it in
     ;; place. The active tab's :title must stay untouched.
-      (reset! state/app-db {:session {:id "active-session"}
-                            :title "Active"
-                            :tabs [{:id :main :label "Active" :active? true}
-                                   {:id :tab-1 :label "Tab 1"}]
-                            :active-tab-id :main
-                            :tab-locals {:tab-1 {:session {:id "bg-session"}}}
-                            :render-version 0})
-      (state/dispatch [:set-title "Background Title" "bg-session"])
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Active"
+                          :tabs [{:id :main :label "Active" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "bg-session"}}}
+                          :render-version 0})
+    (state/dispatch [:set-title "Background Title" "bg-session"])
     ;; Active tab's title untouched.
-      (expect (= "Active" (:title @state/app-db)))
+    (expect (= "Active" (:title @state/app-db)))
     ;; Background tab relabeled in its tab-locals and in the strip.
-      (expect (= "Background Title"
-                 (get-in @state/app-db [:tab-locals :tab-1 :title])))
-      (expect (= "Background Title"
-                 (-> @state/app-db :tabs (nth 1) :label))))
+    (expect (= "Background Title"
+              (get-in @state/app-db [:tab-locals :tab-1 :title])))
+    (expect (= "Background Title"
+              (-> @state/app-db :tabs (nth 1) :label))))
 
   (it "renames the active tab when :set-title carries the active session-id"
-      (reset! state/app-db {:session {:id "active-session"}
-                            :title "Old"
-                            :tabs [{:id :main :label "Old" :active? true}
-                                   {:id :tab-1 :label "Tab 1"}]
-                            :active-tab-id :main
-                            :tab-locals {:tab-1 {:session {:id "bg-session"}}}
-                            :render-version 0})
-      (state/dispatch [:set-title "New" "active-session"])
-      (expect (= "New" (:title @state/app-db)))
-      (expect (= "New" (-> @state/app-db :tabs (nth 0) :label)))
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Old"
+                          :tabs [{:id :main :label "Old" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "bg-session"}}}
+                          :render-version 0})
+    (state/dispatch [:set-title "New" "active-session"])
+    (expect (= "New" (:title @state/app-db)))
+    (expect (= "New" (-> @state/app-db :tabs (nth 0) :label)))
     ;; Background tab untouched.
-      (expect (= "Tab 1" (-> @state/app-db :tabs (nth 1) :label))))
+    (expect (= "Tab 1" (-> @state/app-db :tabs (nth 1) :label))))
 
   (it "is a no-op for a session-id that owns no open tab"
-      (reset! state/app-db {:session {:id "active-session"}
-                            :title "Active"
-                            :tabs [{:id :main :label "Active" :active? true}]
-                            :active-tab-id :main
-                            :tab-locals {}
-                            :render-version 0})
-      (state/dispatch [:set-title "Ghost" "unknown-session"])
-      (expect (= "Active" (:title @state/app-db)))
-      (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Active"
+                          :tabs [{:id :main :label "Active" :active? true}]
+                          :active-tab-id :main
+                          :tab-locals {}
+                          :render-version 0})
+    (state/dispatch [:set-title "Ghost" "unknown-session"])
+    (expect (= "Active" (:title @state/app-db)))
+    (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
 
 (defdescribe progress-trailing-flush-no-regress-test
   ;; Regression ("I see thinking but no code"): a throttled :reasoning chunk
@@ -1083,29 +1083,29 @@
   ;; codeless snapshot — wiping the code. A lifecycle dispatch must cancel
   ;; pending throttled flushes so the freshest timeline wins.
   (it "a form-result dispatch cancels the stale reasoning flush; code is not wiped"
-      (let [make @#'state/make-progress-render-updater
-            dispatched   (atom [])
-            scheduled    (atom nil)
-            now          (atom 0)
-            fake-future  (reify java.util.concurrent.Future
-                           (cancel [_ _] true) (isCancelled [_] false)
-                           (isDone [_] false) (get [_] nil) (get [_ _ _] nil))
-            schedule-fn  (fn [task _delay] (reset! scheduled task) fake-future)
-            update!      (make (fn [[_ tl]] (swap! dispatched conj tl))
-                               (fn [] @now)
-                               schedule-fn)
-            thinking-only {:iterations [{:thinking "hm" :forms []}]}
-            with-code     {:iterations [{:thinking "hm"
-                                         :forms [{:code "git_status()" :success? true}]}]}]
+    (let [make @#'state/make-progress-render-updater
+          dispatched   (atom [])
+          scheduled    (atom nil)
+          now          (atom 0)
+          fake-future  (reify java.util.concurrent.Future
+                         (cancel [_ _] true) (isCancelled [_] false)
+                         (isDone [_] false) (get [_] nil) (get [_ _ _] nil))
+          schedule-fn  (fn [task _delay] (reset! scheduled task) fake-future)
+          update!      (make (fn [[_ tl]] (swap! dispatched conj tl))
+                         (fn [] @now)
+                         schedule-fn)
+          thinking-only {:iterations [{:thinking "hm" :forms []}]}
+          with-code     {:iterations [{:thinking "hm"
+                                       :forms [{:code "git_status()" :success? true}]}]}]
       ;; 1) reasoning fires immediately (first chunk, due)
-        (reset! now 0)   (update! thinking-only {:phase :reasoning})
+      (reset! now 0)   (update! thinking-only {:phase :reasoning})
       ;; 2) reasoning within the throttle window → dropped + trailing flush scheduled
-        (reset! now 10)  (update! thinking-only {:phase :reasoning})
-        (expect (some? @scheduled))
+      (reset! now 10)  (update! thinking-only {:phase :reasoning})
+      (expect (some? @scheduled))
       ;; 3) the tool call lands: form-result dispatches the timeline WITH code
-        (reset! now 20)  (update! with-code {:phase :form-result})
+      (reset! now 20)  (update! with-code {:phase :form-result})
       ;; 4) the previously-scheduled reasoning flush fires LATE
-        (@scheduled)
+      (@scheduled)
       ;; The LAST thing the bubble saw must still carry the code, not regress.
-        (expect (= with-code (last @dispatched)))
-        (expect (some #(seq (:forms %)) (:iterations (last @dispatched)))))))
+      (expect (= with-code (last @dispatched)))
+      (expect (some #(seq (:forms %)) (:iterations (last @dispatched)))))))

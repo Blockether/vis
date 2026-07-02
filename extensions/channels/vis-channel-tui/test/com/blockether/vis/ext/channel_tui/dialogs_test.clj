@@ -20,15 +20,15 @@
 
 (defdescribe smoke-test
   (it "dialogs namespace loads and text-input-dialog! is public"
-      (expect (fn? (var-get #'dlg/text-input-dialog!)))))
+    (expect (fn? (var-get #'dlg/text-input-dialog!)))))
 
 (defdescribe modal-key-normalization-test
   (it "modal helpers accept Lanterna Enter/Escape and raw terminal CR/LF/ESC strokes"
-      (expect (dlg/modal-enter-key? (KeyStroke. KeyType/Enter)))
-      (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \newline) false false false)))
-      (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \return) false false false)))
-      (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape)))
-      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 27)) false false false)))))
+    (expect (dlg/modal-enter-key? (KeyStroke. KeyType/Enter)))
+    (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \newline) false false false)))
+    (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \return) false false false)))
+    (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape)))
+    (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 27)) false false false)))))
 
 (defn- virtual-screen
   []
@@ -48,146 +48,146 @@
 
 (defdescribe modal-wheel-input-test
   (it "modal input coalesces wheel floods and preserves the next non-wheel key"
-      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-            read-modal-input! (var-get #'dlg/read-modal-input!)]
-        (try
-          (dotimes [_ 300]
-            (.addInput terminal (wheel-down)))
-          (.addInput terminal (KeyStroke. KeyType/Enter))
-          (expect (= {:scroll-delta 300}
-                     (read-modal-input! screen)))
-          (expect (= KeyType/Enter
-                     (-> (read-modal-input! screen) :key .getKeyType)))
-          (finally
-            (.stopScreen screen))))))
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          read-modal-input! (var-get #'dlg/read-modal-input!)]
+      (try
+        (dotimes [_ 300]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (expect (= {:scroll-delta 300}
+                  (read-modal-input! screen)))
+        (expect (= KeyType/Enter
+                  (-> (read-modal-input! screen) :key .getKeyType)))
+        (finally
+          (.stopScreen screen))))))
 
 (defdescribe select-dialog-wheel-test
   (it "selection menu applies a wheel burst as one scroll movement"
-      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-            items (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
-        (try
-          (dotimes [_ 5]
-            (.addInput terminal (wheel-down)))
-          (.addInput terminal (KeyStroke. KeyType/Enter))
-          (expect (= 1 (:id (dlg/select-dialog! screen "Items" items))))
-          (finally
-            (.stopScreen screen))))))
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          items (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
+      (try
+        (dotimes [_ 5]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (expect (= 1 (:id (dlg/select-dialog! screen "Items" items))))
+        (finally
+          (.stopScreen screen))))))
 
 (defdescribe session-dialog-wheel-test
   (it "session picker coalesces wheel floods and moves selection"
-      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-            sessions (mapv (fn [idx]
-                             {:id idx
-                              :title (str "Session " idx)
-                              :turn-count idx})
-                           (range 20))]
-        (try
-          (dotimes [_ 5]
-            (.addInput terminal (wheel-down)))
-          (.addInput terminal (KeyStroke. KeyType/Enter))
-          (expect (= {:action :switch :id "1"}
-                     (dlg/session-picker-dialog! screen sessions nil)))
-          (finally
-            (.stopScreen screen))))))
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          sessions (mapv (fn [idx]
+                           {:id idx
+                            :title (str "Session " idx)
+                            :turn-count idx})
+                     (range 20))]
+      (try
+        (dotimes [_ 5]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (expect (= {:action :switch :id "1"}
+                  (dlg/session-picker-dialog! screen sessions nil)))
+        (finally
+          (.stopScreen screen))))))
 
 (defdescribe startable-fields-form-test
   (it "the inline multi-field form collects every field at once (type, Tab, Enter)"
-      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-            startable-fields-form! (var-get #'dlg/startable-fields-form!)
-            sr {:label "remote HTTP MCP server"
-                :fields [{:name :name :label "Name" :required true :placeholder "remote"}
-                         {:name :url  :label "URL"  :required true :placeholder "https://…"}]}
-            type! (fn [^String s] (doseq [c s]
-                                    (.addInput terminal (KeyStroke. (Character/valueOf c) false false false))))]
-        (try
-          (type! "fs")                              ;; into field 0 (focus starts at 0)
-          (.addInput terminal (KeyStroke. KeyType/Tab))   ;; → field 1
-          (type! "http://x")                        ;; into field 1
-          (.addInput terminal (KeyStroke. KeyType/Enter)) ;; submit (both required filled)
-          (expect (= {:name "fs" :url "http://x"}
-                     (startable-fields-form! screen sr)))
-          (finally
-            (.stopScreen screen)))))
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          startable-fields-form! (var-get #'dlg/startable-fields-form!)
+          sr {:label "remote HTTP MCP server"
+              :fields [{:name :name :label "Name" :required true :placeholder "remote"}
+                       {:name :url  :label "URL"  :required true :placeholder "https://…"}]}
+          type! (fn [^String s] (doseq [c s]
+                                  (.addInput terminal (KeyStroke. (Character/valueOf c) false false false))))]
+      (try
+        (type! "fs")                              ;; into field 0 (focus starts at 0)
+        (.addInput terminal (KeyStroke. KeyType/Tab))   ;; → field 1
+        (type! "http://x")                        ;; into field 1
+        (.addInput terminal (KeyStroke. KeyType/Enter)) ;; submit (both required filled)
+        (expect (= {:name "fs" :url "http://x"}
+                  (startable-fields-form! screen sr)))
+        (finally
+          (.stopScreen screen)))))
 
   (it "Esc cancels the whole form (no per-field modals)"
-      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-            startable-fields-form! (var-get #'dlg/startable-fields-form!)
-            sr {:label "x" :fields [{:name :name :label "Name" :required true}]}]
-        (try
-          (.addInput terminal (KeyStroke. KeyType/Escape))
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          startable-fields-form! (var-get #'dlg/startable-fields-form!)
+          sr {:label "x" :fields [{:name :name :label "Name" :required true}]}]
+      (try
+        (.addInput terminal (KeyStroke. KeyType/Escape))
         ;; ::dlg/cancel resolves to the same namespaced keyword the form returns.
-          (expect (= ::dlg/cancel (startable-fields-form! screen sr)))
-          (finally
-            (.stopScreen screen))))))
+        (expect (= ::dlg/cancel (startable-fields-form! screen sr)))
+        (finally
+          (.stopScreen screen))))))
 
 (defdescribe extension-display-label-namespace-test
   (it "namespace-derived labels titleize the meaningful tail segment, NEVER the vendor prefix"
-      (let [label (var-get #'dlg/extension-display-label)]
+    (let [label (var-get #'dlg/extension-display-label)]
       ;; plain ns -> tail segment titleized; vendor prefix dropped
-        (expect (= "Voice" (label {:ext/name "voice"})))
+      (expect (= "Voice" (label {:ext/name "voice"})))
       ;; trailing 'core' segment is dropped
-        (expect (= "Goal" (label {:ext/name "goal"})))
+      (expect (= "Goal" (label {:ext/name "goal"})))
       ;; hyphenated segment is split + titleized like other labels
-        (expect (= "Channel Tui" (label {:ext/name "channel-tui"})))
+      (expect (= "Channel Tui" (label {:ext/name "channel-tui"})))
       ;; regression: was rendered as 'Com.blockether.vis.ext.voice.core'
-        (expect (not (str/starts-with? (label {:ext/name "voice"}) "Com.blockether")))))
+      (expect (not (str/starts-with? (label {:ext/name "voice"}) "Com.blockether")))))
 
   (it "provider / channel / alias labels still take precedence"
-      (let [label (var-get #'dlg/extension-display-label)]
-        (expect (= "Anthropic"
-                   (label {:ext/providers [{:provider/label "Anthropic (API Key)"}]
-                           :ext/name "provider-anthropic"})))
-        (expect (= "Tui"
-                   (label {:ext/channels [{:channel/cmd "tui"}]
-                           :ext/name "channel-tui"})))
-        (expect (= "V"
-                   (label {:ext/engine {:ext.engine/alias 'v}
-                           :ext/name "foundation"}))))))
+    (let [label (var-get #'dlg/extension-display-label)]
+      (expect (= "Anthropic"
+                (label {:ext/providers [{:provider/label "Anthropic (API Key)"}]
+                        :ext/name "provider-anthropic"})))
+      (expect (= "Tui"
+                (label {:ext/channels [{:channel/cmd "tui"}]
+                        :ext/name "channel-tui"})))
+      (expect (= "V"
+                (label {:ext/engine {:ext.engine/alias 'v}
+                        :ext/name "foundation"}))))))
 
 (defdescribe reusable-table-test
   (it "table rows keep fixed width and expose shared filtering"
-      (let [columns [{:id :kind :label "Kind" :width 8}
-                     {:id :label :label "Name" :flex 1}
-                     {:id :status :label "Status" :width 8}]
-            row     {:kind "session" :label "Untitled session" :status "active"}
-            line    (table/row-line columns row 48 nil)]
-        (expect (= 48 (p/display-width line)))
-        (expect (str/includes? line "session"))
-        (expect (str/includes? (table/header-line columns 48) "Kind"))
-        (expect (= \┌ (first (table/boxed-border-line [8 27 8] :top))))
-        (expect (= \│ (first (table/boxed-row-line [8 27 8] ["Kind" "Name" "Status"] [:left :left :left]))))
-        (expect (table/row-matches? row "untitled"))
-        (expect (not (table/row-matches? row "workspace")))
+    (let [columns [{:id :kind :label "Kind" :width 8}
+                   {:id :label :label "Name" :flex 1}
+                   {:id :status :label "Status" :width 8}]
+          row     {:kind "session" :label "Untitled session" :status "active"}
+          line    (table/row-line columns row 48 nil)]
+      (expect (= 48 (p/display-width line)))
+      (expect (str/includes? line "session"))
+      (expect (str/includes? (table/header-line columns 48) "Kind"))
+      (expect (= \┌ (first (table/boxed-border-line [8 27 8] :top))))
+      (expect (= \│ (first (table/boxed-row-line [8 27 8] ["Kind" "Name" "Status"] [:left :left :left]))))
+      (expect (table/row-matches? row "untitled"))
+      (expect (not (table/row-matches? row "workspace")))
       ;; Boolean row flags (e.g. :focused?) are never search text.
-        (expect (not (table/row-matches? (assoc row :focused? true) "true"))))))
+      (expect (not (table/row-matches? (assoc row :focused? true) "true"))))))
 
 (defdescribe session-dialog-table-model-test
   (it "session rows sort by modified-at desc and split date/time columns"
-      (let [items  (dlg/session-dialog-items
-                    [{:id "old" :title "Old" :turn-count 1
-                      :created-at #inst "2024-01-01T09:30:00.000Z"
-                      :modified-at #inst "2024-01-01T10:45:00.000Z"}
-                     {:id "new" :title "New" :turn-count 2
-                      :created-at #inst "2024-01-02T08:15:00.000Z"
-                      :modified-at #inst "2024-01-02T11:05:00.000Z"}]
-                    "new" 96)
-            header (dlg/session-dialog-header 96)]
-        (expect (= ["new" "old"] (mapv :id items)))
-        (expect (str/includes? header "Created at"))
-        (expect (str/includes? header "Modified at"))
-        (expect (str/includes? (:label (first items)) "2024-01-02"))
-        (expect (str/includes? (:label (first items)) "11:05"))))
+    (let [items  (dlg/session-dialog-items
+                   [{:id "old" :title "Old" :turn-count 1
+                     :created-at #inst "2024-01-01T09:30:00.000Z"
+                     :modified-at #inst "2024-01-01T10:45:00.000Z"}
+                    {:id "new" :title "New" :turn-count 2
+                     :created-at #inst "2024-01-02T08:15:00.000Z"
+                     :modified-at #inst "2024-01-02T11:05:00.000Z"}]
+                   "new" 96)
+          header (dlg/session-dialog-header 96)]
+      (expect (= ["new" "old"] (mapv :id items)))
+      (expect (str/includes? header "Created at"))
+      (expect (str/includes? header "Modified at"))
+      (expect (str/includes? (:label (first items)) "2024-01-02"))
+      (expect (str/includes? (:label (first items)) "11:05"))))
 
   (it "session table uses boxed dialog-style borders with fixed width"
-      (let [items       (dlg/session-dialog-items
-                         [{:id "new" :title "New" :turn-count 2
-                           :created-at #inst "2024-01-02T08:15:00.000Z"
-                           :modified-at #inst "2024-01-02T11:05:00.000Z"}]
-                         "new" 96)
-            border-line (var-get #'dlg/session-table-border-line)]
-        (expect (= \┌ (first (border-line 96 :top))))
-        (expect (= 96 (p/display-width (border-line 96 :top))))
-        (expect (= 96 (p/display-width (:label (first items))))))))
+    (let [items       (dlg/session-dialog-items
+                        [{:id "new" :title "New" :turn-count 2
+                          :created-at #inst "2024-01-02T08:15:00.000Z"
+                          :modified-at #inst "2024-01-02T11:05:00.000Z"}]
+                        "new" 96)
+          border-line (var-get #'dlg/session-table-border-line)]
+      (expect (= \┌ (first (border-line 96 :top))))
+      (expect (= 96 (p/display-width (border-line 96 :top))))
+      (expect (= 96 (p/display-width (:label (first items))))))))
 
 ;; 1:1 session<->workspace: one unified row per session, NOT a
 ;; duplicated session row + workspace row with a contradictory :kind.
@@ -198,433 +198,433 @@
                   {:id "s1" :title nil :turn-count 2 :created-at 0 :modified-at 3600000}
                   {:id "s2" :title "Second" :turn-count 5 :created-at 0 :modified-at 0}]]
     (it "one unified row per session, no :kind / :switch-workspace"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows     (all-rows {:active-session-id "s1" :sessions sessions})]
-          (expect (= 2 (count rows)))
-          (expect (every? #(not (contains? % :kind)) rows))
-          (expect (= [{:action :switch :id "s1"} {:action :switch :id "s2"}]
-                     (mapv :target rows)))))
+      (let [all-rows (var-get #'dlg/navigator-all-rows)
+            rows     (all-rows {:active-session-id "s1" :sessions sessions})]
+        (expect (= 2 (count rows)))
+        (expect (every? #(not (contains? % :kind)) rows))
+        (expect (= [{:action :switch :id "s1"} {:action :switch :id "s2"}]
+                  (mapv :target rows)))))
 
     (it "empty untitled shells hidden by default; focused session pinned to top"
-        (let [all-rows    (var-get #'dlg/navigator-all-rows)
-              rows        (all-rows {:active-session-id "s1" :sessions sessions})
-              all-visible (all-rows {:active-session-id "s1" :sessions sessions
-                                     :show-empty-untitled? true})]
-          (expect (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
+      (let [all-rows    (var-get #'dlg/navigator-all-rows)
+            rows        (all-rows {:active-session-id "s1" :sessions sessions})
+            all-visible (all-rows {:active-session-id "s1" :sessions sessions
+                                   :show-empty-untitled? true})]
+        (expect (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
         ;; Focused (s1) pinned first; the rest keep recency order below,
         ;; so all-visible is [s1 empty s2], not [empty s1 s2].
-          (expect (= ["s1" "empty" "s2"] (mapv (comp str :id :target) all-visible)))))
+        (expect (= ["s1" "empty" "s2"] (mapv (comp str :id :target) all-visible)))))
 
     (it "focused session is flagged + pinned, marked '● focused'"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows     (all-rows {:active-session-id "s1" :sessions sessions})
-              r1       (first rows)]
-          (expect (= "Untitled session" (:title r1)))
-          (expect (= "s1" (:session r1)))
-          (expect (:focused? r1))
-          (expect (= "● focused" (:status r1)))))
+      (let [all-rows (var-get #'dlg/navigator-all-rows)
+            rows     (all-rows {:active-session-id "s1" :sessions sessions})
+            r1       (first rows)]
+        (expect (= "Untitled session" (:title r1)))
+        (expect (= "s1" (:session r1)))
+        (expect (:focused? r1))
+        (expect (= "● focused" (:status r1)))))
 
     (it "non-active session is not focused and shows its turn count"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows     (all-rows {:active-session-id "s1" :sessions sessions})]
-          (expect (not (:focused? (second rows))))
-          (expect (= "5 turns" (:status (second rows))))))
+      (let [all-rows (var-get #'dlg/navigator-all-rows)
+            rows     (all-rows {:active-session-id "s1" :sessions sessions})]
+        (expect (not (:focused? (second rows))))
+        (expect (= "5 turns" (:status (second rows))))))
 
     (it "compact MM-dd HH:mm timestamps (UTC)"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows     (all-rows {:active-session-id "s1" :sessions sessions})
-              r1       (first rows)]
-          (expect (= "01-01 00:00" (:created r1)))
-          (expect (= "01-01 01:00" (:modified r1)))))
+      (let [all-rows (var-get #'dlg/navigator-all-rows)
+            rows     (all-rows {:active-session-id "s1" :sessions sessions})
+            r1       (first rows)]
+        (expect (= "01-01 00:00" (:created r1)))
+        (expect (= "01-01 01:00" (:modified r1)))))
 
     (it "visible-rows filters by query only"
-        (let [all-rows     (var-get #'dlg/navigator-all-rows)
-              visible-rows (var-get #'dlg/navigator-visible-rows)
-              rows         (all-rows {:active-session-id "s1" :sessions sessions})]
-          (expect (= 1 (count (visible-rows rows "second"))))
-          (expect (= 2 (count (visible-rows rows ""))))))))
+      (let [all-rows     (var-get #'dlg/navigator-all-rows)
+            visible-rows (var-get #'dlg/navigator-visible-rows)
+            rows         (all-rows {:active-session-id "s1" :sessions sessions})]
+        (expect (= 1 (count (visible-rows rows "second"))))
+        (expect (= 2 (count (visible-rows rows ""))))))))
 
 (defdescribe scrollbar-geometry-test
   (it "scrollbar geometry sanity (canonical primitive)"
     ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5
     ;; ⇒ 1-cell thumb halfway down the 10-row track. Overflow gone
     ;; when total ≤ inner (3 items in a 10-row view).
-      (let [scrollbar-geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
-            g (scrollbar-geom 20 10 5)]
-        (expect (= 1 (:thumb-h g)))
-        (expect (= 10 (:track-h g)))
-        (expect (= 10 (:max-scroll g)))
-        (expect (= 4 (:thumb-top-rel g)))
-        (expect (nil? (scrollbar-geom 3 10 0))))))
+    (let [scrollbar-geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
+          g (scrollbar-geom 20 10 5)]
+      (expect (= 1 (:thumb-h g)))
+      (expect (= 10 (:track-h g)))
+      (expect (= 10 (:max-scroll g)))
+      (expect (= 4 (:thumb-top-rel g)))
+      (expect (nil? (scrollbar-geom 3 10 0))))))
 
 (defdescribe settings-dialog-footprint-and-indent-test
   (it "shared dialogs use the same footprint as settings"
-      (let [settings-content-width      (var-get #'dlg/settings-content-width)
-            settings-content-height     (var-get #'dlg/settings-content-height)
-            theme-picker-content-width  (var-get #'dlg/theme-picker-content-width)
-            theme-picker-content-height (var-get #'dlg/theme-picker-content-height)]
-        (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
-        (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
-        (expect (= (settings-content-width 160) (theme-picker-content-width 160)))
-        (expect (= (settings-content-height 50) (theme-picker-content-height 50)))
-        (expect (<= (+ (dlg/default-content-width 60) 4) 60))
-        (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
+    (let [settings-content-width      (var-get #'dlg/settings-content-width)
+          settings-content-height     (var-get #'dlg/settings-content-height)
+          theme-picker-content-width  (var-get #'dlg/theme-picker-content-width)
+          theme-picker-content-height (var-get #'dlg/theme-picker-content-height)]
+      (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
+      (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
+      (expect (= (settings-content-width 160) (theme-picker-content-width 160)))
+      (expect (= (settings-content-height 50) (theme-picker-content-height 50)))
+      (expect (<= (+ (dlg/default-content-width 60) 4) 60))
+      (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
 
   (it "extension headings are flush; options are indented by renderer"
-      (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
-        (expect (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
+    (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
+      (expect (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
 
 (defdescribe apply-settings-option-test
   (it "toggle rows flip booleans"
-      (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
-        (expect (= {:show-thinking false}
-                   (apply-settings-option {:show-thinking true}
-                                          {:key :show-thinking :type :toggle})))))
+    (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
+      (expect (= {:show-thinking false}
+                (apply-settings-option {:show-thinking true}
+                  {:key :show-thinking :type :toggle})))))
 
   (it "registry-toggle rows route through the toggles registry, not the local settings map"
     ;; Use a throwaway test toggle so we don't disturb the canonical
     ;; host toggles. Settings map stays UNTOUCHED: registry rows are
     ;; side-effecting and the apply path returns `values` unchanged.
-      (let [apply-settings-option (var-get #'dlg/apply-settings-option)
-            settings-row-mark     (var-get #'dlg/settings-row-mark)
-            id :dialogs-test/registry-row
-            _  (vis/register-toggle! {:id id :label "Test" :default false})]
-        (try
-          (expect (false? (vis/toggle-enabled? id)))
-          (let [out (apply-settings-option {:something "else"}
-                                           {:type :registry-toggle :toggle-id id})]
-            (expect (= {:something "else"} out))
-            (expect (true? (vis/toggle-enabled? id))))
+    (let [apply-settings-option (var-get #'dlg/apply-settings-option)
+          settings-row-mark     (var-get #'dlg/settings-row-mark)
+          id :dialogs-test/registry-row
+          _  (vis/register-toggle! {:id id :label "Test" :default false})]
+      (try
+        (expect (false? (vis/toggle-enabled? id)))
+        (let [out (apply-settings-option {:something "else"}
+                    {:type :registry-toggle :toggle-id id})]
+          (expect (= {:something "else"} out))
+          (expect (true? (vis/toggle-enabled? id))))
         ;; Boolean state is now carried by the leading status glyph (●/○), not
         ;; "(on)/(off)" text in the label.
-          (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-            (expect (= "●" on-glyph)))
-          (vis/toggle-reset-to-default! id)
-          (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-            (expect (= "○" off-glyph)))
-          (finally
-            (vis/toggle-reset-to-default! id)))))
+        (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+          (expect (= "●" on-glyph)))
+        (vis/toggle-reset-to-default! id)
+        (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+          (expect (= "○" off-glyph)))
+        (finally
+          (vis/toggle-reset-to-default! id)))))
 
   ;; NOTE: the old "registry rows normalize fallback labels instead of
   ;; leaking raw ids" case was retired — the toggles registry now
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
   (it "registry enum rows cycle through the toggles registry"
-      (let [apply-settings-option (var-get #'dlg/apply-settings-option)
-            settings-option-label (var-get #'dlg/settings-option-label)
-            id :dialogs-test/registry-enum]
-        (vis/register-toggle! {:id id :label "Enum Test" :type :enum
-                               :choices [:low :medium :high] :default :low})
-        (try
-          (expect (= "Enum Test: low"
-                     (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"} {})))
-          (let [out (apply-settings-option {:something "else"}
-                                           {:type :registry-toggle :toggle-id id})]
-            (expect (= {:something "else"} out))
-            (expect (= :medium (vis/toggle-value id)))
-            (expect (= "Enum Test: medium"
-                       (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"} {}))))
-          (finally
-            (vis/toggle-reset-to-default! id)))))
+    (let [apply-settings-option (var-get #'dlg/apply-settings-option)
+          settings-option-label (var-get #'dlg/settings-option-label)
+          id :dialogs-test/registry-enum]
+      (vis/register-toggle! {:id id :label "Enum Test" :type :enum
+                             :choices [:low :medium :high] :default :low})
+      (try
+        (expect (= "Enum Test: low"
+                  (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"} {})))
+        (let [out (apply-settings-option {:something "else"}
+                    {:type :registry-toggle :toggle-id id})]
+          (expect (= {:something "else"} out))
+          (expect (= :medium (vis/toggle-value id)))
+          (expect (= "Enum Test: medium"
+                    (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"} {}))))
+        (finally
+          (vis/toggle-reset-to-default! id)))))
 
   (it "choice rows cycle quick -> balanced -> deep -> quick"
-      (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
-        (expect (= {:reasoning-level :balanced}
-                   (apply-settings-option {:reasoning-level :quick}
-                                          {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
-        (expect (= {:reasoning-level :quick}
-                   (apply-settings-option {:reasoning-level :deep}
-                                          {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
-        (expect (= {:openai-codex-verbosity :high}
-                   (apply-settings-option {:openai-codex-verbosity :medium}
-                                          {:key :openai-codex-verbosity :type :choice :choices [:low :medium :high]})))))
+    (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
+      (expect (= {:reasoning-level :balanced}
+                (apply-settings-option {:reasoning-level :quick}
+                  {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
+      (expect (= {:reasoning-level :quick}
+                (apply-settings-option {:reasoning-level :deep}
+                  {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
+      (expect (= {:openai-codex-verbosity :high}
+                (apply-settings-option {:openai-codex-verbosity :medium}
+                  {:key :openai-codex-verbosity :type :choice :choices [:low :medium :high]})))))
 
   (it "choice labels surface the live value"
-      (let [settings-option-label (var-get #'dlg/settings-option-label)]
-        (expect (= "Reasoning effort: deep"
-                   (settings-option-label {:key :reasoning-level :type :choice
-                                           :choices [:quick :balanced :deep]
-                                           :label "Reasoning effort"}
-                                          {:reasoning-level :deep})))
-        (expect (= "Verbosity: high"
-                   (settings-option-label {:key :openai-codex-verbosity :type :choice
-                                           :choices [:low :medium :high]
-                                           :label "Verbosity"}
-                                          {:openai-codex-verbosity :high})))))
+    (let [settings-option-label (var-get #'dlg/settings-option-label)]
+      (expect (= "Reasoning effort: deep"
+                (settings-option-label {:key :reasoning-level :type :choice
+                                        :choices [:quick :balanced :deep]
+                                        :label "Reasoning effort"}
+                  {:reasoning-level :deep})))
+      (expect (= "Verbosity: high"
+                (settings-option-label {:key :openai-codex-verbosity :type :choice
+                                        :choices [:low :medium :high]
+                                        :label "Verbosity"}
+                  {:openai-codex-verbosity :high})))))
 
   (it "choice labels do not crash when row also carries a nil name field"
-      (let [settings-option-label (var-get #'dlg/settings-option-label)]
-        (expect (= "Reasoning effort: quick"
-                   (settings-option-label {:key :reasoning-level :type :choice
-                                           :choices [:quick :balanced :deep]
-                                           :label "Reasoning effort" :name nil}
-                                          {})))))
+    (let [settings-option-label (var-get #'dlg/settings-option-label)]
+      (expect (= "Reasoning effort: quick"
+                (settings-option-label {:key :reasoning-level :type :choice
+                                        :choices [:quick :balanced :deep]
+                                        :label "Reasoning effort" :name nil}
+                  {})))))
 
   (it "settings row activation notifies on-change without redrawing behind the modal"
-      (let [activate-settings-row! (var-get #'dlg/activate-settings-row!)
-            values  (atom {:show-timestamps false})
-            changed (atom nil)
-            calls   (atom [])]
-        (activate-settings-row! nil values {:on-change #(do (reset! changed %)
-                                                            (swap! calls conj [:change %]))
-                                            :redraw-ui #(swap! calls conj [:redraw @values])}
-                                {:key :show-timestamps :type :toggle})
-        (expect (= {:show-timestamps true} @values))
-        (expect (= {:show-timestamps true} @changed))
-        (expect (= [[:change {:show-timestamps true}]] @calls))))
+    (let [activate-settings-row! (var-get #'dlg/activate-settings-row!)
+          values  (atom {:show-timestamps false})
+          changed (atom nil)
+          calls   (atom [])]
+      (activate-settings-row! nil values {:on-change #(do (reset! changed %)
+                                                        (swap! calls conj [:change %]))
+                                          :redraw-ui #(swap! calls conj [:redraw @values])}
+        {:key :show-timestamps :type :toggle})
+      (expect (= {:show-timestamps true} @values))
+      (expect (= {:show-timestamps true} @changed))
+      (expect (= [[:change {:show-timestamps true}]] @calls))))
 
   (it "settings descriptions wrap into paint rows instead of truncating inline"
-      (let [settings-render-entries (var-get #'dlg/settings-render-entries)
-            rows    [{:type :section :label "Terminal UI"}
-                     {:key :show-thinking :type :toggle :label "Show model thinking"
-                      :description "Stream reasoning deltas inside each iteration bubble without collapsing this text into ellipsis."}]
-            entries (settings-render-entries rows 24 16)]
-        (expect (< 2 (count entries)))
-        (expect (some #(= :option-desc (:part %)) entries))
-        (expect (every? #(not (str/includes? (str (:text %)) "...")) entries))))
+    (let [settings-render-entries (var-get #'dlg/settings-render-entries)
+          rows    [{:type :section :label "Terminal UI"}
+                   {:key :show-thinking :type :toggle :label "Show model thinking"
+                    :description "Stream reasoning deltas inside each iteration bubble without collapsing this text into ellipsis."}]
+          entries (settings-render-entries rows 24 16)]
+      (expect (< 2 (count entries)))
+      (expect (some #(= :option-desc (:part %)) entries))
+      (expect (every? #(not (str/includes? (str (:text %)) "...")) entries))))
 
   (it "theme picker rows label registered themes"
-      (let [theme-picker-items (var-get #'dlg/theme-picker-items)]
-        (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
-                    {:theme-id :vis-light :label "Vis Light"}]
-                   (theme-picker-items [:vis-dark :vis-light])))))
+    (let [theme-picker-items (var-get #'dlg/theme-picker-items)]
+      (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
+                  {:theme-id :vis-light :label "Vis Light"}]
+                (theme-picker-items [:vis-dark :vis-light])))))
 
   (it "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
-      (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/registered-extensions (constantly [])
-                      vis/get-router (constantly nil)]
-          (let [rows     (settings-rows)
-                sections (->> rows (filter #(= :section (:type %))) (mapv :label))]
+    (let [settings-rows (var-get #'dlg/settings-rows)]
+      (with-redefs [vis/registered-extensions (constantly [])
+                    vis/get-router (constantly nil)]
+        (let [rows     (settings-rows)
+              sections (->> rows (filter #(= :section (:type %))) (mapv :label))]
           ;; flat list, web-shaped: Terminal UI chrome always present. The
           ;; Models section was retired (it only carried reasoning-effort,
           ;; which moved to Ctrl+R).
-            (expect (some #{"Terminal UI"} sections))
-            (expect (not-any? #{"Models"} sections))
-            (expect (some #(= :theme-name (:key %)) rows))
+          (expect (some #{"Terminal UI"} sections))
+          (expect (not-any? #{"Models"} sections))
+          (expect (some #(= :theme-name (:key %)) rows))
           ;; solarized themes ship in the core registry alongside vis-dark/light
-            (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
-                       (:choices (first (filter #(= :theme-name (:key %)) rows)))))
-            (expect (some #(= :mouse-selection-copy (:key %)) rows))
+          (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
+                    (:choices (first (filter #(= :theme-name (:key %)) rows)))))
+          (expect (some #(= :mouse-selection-copy (:key %)) rows))
           ;; Remaining registry toggle (tools) shows; the retired display gates
           ;; (show-thinking/iterations/silent/timestamps) and the own-control
           ;; knobs (reasoning-effort :settings? false) are NOT in the list.
-            (expect (some #(= :shell/enabled (:toggle-id %)) rows))
-            (expect (not-any? #(= :vis/show-thinking (:toggle-id %)) rows))
-            (expect (not-any? #(= :vis/reasoning-level (:toggle-id %)) rows))
+          (expect (some #(= :shell/enabled (:toggle-id %)) rows))
+          (expect (not-any? #(= :vis/show-thinking (:toggle-id %)) rows))
+          (expect (not-any? #(= :vis/reasoning-level (:toggle-id %)) rows))
           ;; toggles group by :group now — no single "Feature Toggles" bucket;
           ;; with no declared extensions there is no "Extension Settings" section
-            (expect (not-any? #{"Feature Toggles"} sections))
-            (expect (not-any? #{"Extension Settings"} sections))))))
+          (expect (not-any? #{"Feature Toggles"} sections))
+          (expect (not-any? #{"Extension Settings"} sections))))))
 
   (it "registered extension themes appear in the channel Theme setting"
-      (let [settings-rows         (var-get #'dlg/settings-rows)
-            settings-option-label (var-get #'dlg/settings-option-label)]
-        (try
-          (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
-          (with-redefs [vis/get-router (constantly nil)]
-            (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
-              (expect (= [:THEME_NAME :solarized-dark :solarized-light :vis-dark :vis-light]
-                         (:choices row)))
-              (expect (= "Theme: THEME_NAME"
-                         (settings-option-label row {:theme-name :THEME_NAME})))))
-          (finally
-            (vis/reset-themes!)))))
+    (let [settings-rows         (var-get #'dlg/settings-rows)
+          settings-option-label (var-get #'dlg/settings-option-label)]
+      (try
+        (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
+        (with-redefs [vis/get-router (constantly nil)]
+          (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
+            (expect (= [:THEME_NAME :solarized-dark :solarized-light :vis-dark :vis-light]
+                      (:choices row)))
+            (expect (= "Theme: THEME_NAME"
+                      (settings-option-label row {:theme-name :THEME_NAME})))))
+        (finally
+          (vis/reset-themes!)))))
 
   (it "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
-      (let [settings-rows         (var-get #'dlg/settings-rows)
-            settings-option-label (var-get #'dlg/settings-option-label)]
-        (with-redefs [vis/get-router (constantly nil)
-                      vis/registered-extensions (fn [] [{:ext/name "test.ext"
-                                                         :ext/engine {:ext.engine/alias 'exa}
-                                                         :ext/env [{:name "EXA_API_KEY"
-                                                                    :label "Exa API key"
-                                                                    :description "Optional key."
-                                                                    :secret? true}]}])
-                      vis/extension-env-status (fn [name]
-                                                 {:name name :source :config :value "secret"})]
-          (let [rows (settings-rows)
-                row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
+    (let [settings-rows         (var-get #'dlg/settings-rows)
+          settings-option-label (var-get #'dlg/settings-option-label)]
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/name "test.ext"
+                                                       :ext/engine {:ext.engine/alias 'exa}
+                                                       :ext/env [{:name "EXA_API_KEY"
+                                                                  :label "Exa API key"
+                                                                  :description "Optional key."
+                                                                  :secret? true}]}])
+                    vis/extension-env-status (fn [name]
+                                               {:name name :source :config :value "secret"})]
+        (let [rows (settings-rows)
+              row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
           ;; "Extension Settings" is the LAST section in the flat list; the
           ;; env-var rows live under it.
-            (expect (= "Extension Settings"
-                       (->> rows (filter #(= :section (:type %))) (mapv :label) last)))
-            (expect (= ["Exa"]
-                       (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
-            (expect (= :env-var (:type row)))
-            (expect (= "Exa API key: set in Vis config" (settings-option-label row {})))
-            (expect (not (str/includes? (settings-option-label row {}) "UNKNOWN")))))))
+          (expect (= "Extension Settings"
+                    (->> rows (filter #(= :section (:type %))) (mapv :label) last)))
+          (expect (= ["Exa"]
+                    (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
+          (expect (= :env-var (:type row)))
+          (expect (= "Exa API key: set in Vis config" (settings-option-label row {})))
+          (expect (not (str/includes? (settings-option-label row {}) "UNKNOWN")))))))
 
   (it "retired extension setting declarations are dropped, registry owns the rows"
-      (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly nil)
+    (let [settings-rows (var-get #'dlg/settings-rows)]
+      (with-redefs [vis/get-router (constantly nil)
                     ;; hermetic: the Codex knob's :visible-fn consults the
                     ;; CONFIGURED providers — pin "none" so the assertion
                     ;; below can't flip on a dev machine that has Codex.
-                      vis/has-provider? (constantly false)
-                      vis/registered-extensions (fn [] [{:ext/name "voice"
-                                                         :ext/settings [{:key :voice/respond?
-                                                                         :type :toggle
-                                                                         :label "Voice responses"}
-                                                                        {:key :voice/tui-auto-read?
-                                                                         :type :toggle
-                                                                         :label "TUI auto-read"}]}
-                                                        {:ext/name "provider-openai-codex"
-                                                         :ext/providers [{:provider/id :openai-codex
-                                                                          :provider/label "OpenAI Codex"}]
-                                                         :ext/settings [{:key :openai-codex-verbosity
-                                                                         :type :choice
-                                                                         :choices [:low :medium :high]
-                                                                         :label "Codex verbosity"}
-                                                                        {:key :openai-codex/verbosity
-                                                                         :type :choice
-                                                                         :choices [:low :medium :high]
-                                                                         :label "Codex verbosity"}]}])]
-          (let [rows    (settings-rows)
-                ids     (set (map :id rows))
-                toggles (set (keep :toggle-id rows))]
-            (expect (contains? toggles :voice/respond))
+                    vis/has-provider? (constantly false)
+                    vis/registered-extensions (fn [] [{:ext/name "voice"
+                                                       :ext/settings [{:key :voice/respond?
+                                                                       :type :toggle
+                                                                       :label "Voice responses"}
+                                                                      {:key :voice/tui-auto-read?
+                                                                       :type :toggle
+                                                                       :label "TUI auto-read"}]}
+                                                      {:ext/name "provider-openai-codex"
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"}
+                                                                      {:key :openai-codex/verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"}]}])]
+        (let [rows    (settings-rows)
+              ids     (set (map :id rows))
+              toggles (set (keep :toggle-id rows))]
+          (expect (contains? toggles :voice/respond))
           ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
           ;; keeps it registered but out of the Settings dialog.
-            (expect (not (contains? toggles :vis/reasoning-level)))
+          (expect (not (contains? toggles :vis/reasoning-level)))
           ;; Provider-specific knob: its `:visible-fn` hides it from
           ;; Settings unless a Codex provider is CONFIGURED — this test
           ;; env has none, so it must NOT appear in the rows even
           ;; though it stays registered.
-            (expect (not (contains? toggles :openai-codex/verbosity)))
-            (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
-            (expect (not (contains? ids [:extension-setting "voice" :voice/respond?])))
-            (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
-            (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex/verbosity])))))))
+          (expect (not (contains? toggles :openai-codex/verbosity)))
+          (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
+          (expect (not (contains? ids [:extension-setting "voice" :voice/respond?])))
+          (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
+          (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex/verbosity])))))))
 
   (it "provider-declared legacy settings are ignored"
-      (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly nil)
-                      vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
-                                                         :ext/providers [{:provider/id :openai-codex
-                                                                          :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
-                                                         :ext/settings [{:key :openai-codex-verbosity
-                                                                         :type :choice
-                                                                         :choices [:low :medium :high]
-                                                                         :label "Codex verbosity"
-                                                                         :description "Output detail."}]}])]
-          (let [rows (settings-rows)]
-            (expect (not-any? #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
-                                  (:id %))
-                              rows))))))
+    (let [settings-rows (var-get #'dlg/settings-rows)]
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"
+                                                                       :description "Output detail."}]}])]
+        (let [rows (settings-rows)]
+          (expect (not-any? #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
+                               (:id %))
+                    rows))))))
 
   (it "active Z.ai hides reasoning effort and Codex-only provider settings"
-      (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-effective-model (fn [_] {:provider :zai
-                                                           :name "glm-4.7"
-                                                           :reasoning? true
-                                                           :reasoning-style :zai-thinking
-                                                           :reasoning-effort? false})
-                      vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
-                                                         :ext/providers [{:provider/id :openai-codex
-                                                                          :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
-                                                         :ext/settings [{:key :openai-codex-verbosity
-                                                                         :type :choice
-                                                                         :choices [:low :medium :high]
-                                                                         :label "Codex verbosity"
-                                                                         :description "Output detail."}]}])]
-          (let [rows (settings-rows)]
+    (let [settings-rows (var-get #'dlg/settings-rows)]
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})
+                    vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"
+                                                                       :description "Output detail."}]}])]
+        (let [rows (settings-rows)]
           ;; Reasoning-effort + verbosity are OUT of Settings entirely now
           ;; (own controls); no "unavailable" placeholder either.
-            (expect (not-any? #(= :reasoning-level (:key %)) rows))
-            (expect (not-any? #(= "Reasoning effort unavailable" (:label %)) rows))
-            (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
+          (expect (not-any? #(= :reasoning-level (:key %)) rows))
+          (expect (not-any? #(= "Reasoning effort unavailable" (:label %)) rows))
+          (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
 
   (it "channel-declared settings render under Channel Settings, once, in the flat list"
-      (let [settings-rows (var-get #'dlg/settings-rows)]
-        (with-redefs [vis/get-router (constantly nil)
-                      vis/registered-extensions (fn [] [{:ext/name "channel-telegram"
-                                                         :ext/channels [{:channel/id :telegram
-                                                                         :channel/cmd "telegram"}]
-                                                         :ext/settings [{:key :telegram-notify
-                                                                         :type :toggle
-                                                                         :label "Telegram notifications"
-                                                                         :description "Send channel notifications."}]}])]
-          (let [rows   (settings-rows)
-                row-id [:extension-setting "channel-telegram" :telegram-notify]
-                row (first (filter #(= row-id (:id %)) rows))]
-            (expect (contains?
-                     (set (->> rows (filter #(= :section (:type %))) (mapv :label)))
-                     "Channel Settings"))
-            (expect (= ["Telegram"]
-                       (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
-            (expect (= :toggle (:type row)))
+    (let [settings-rows (var-get #'dlg/settings-rows)]
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/name "channel-telegram"
+                                                       :ext/channels [{:channel/id :telegram
+                                                                       :channel/cmd "telegram"}]
+                                                       :ext/settings [{:key :telegram-notify
+                                                                       :type :toggle
+                                                                       :label "Telegram notifications"
+                                                                       :description "Send channel notifications."}]}])]
+        (let [rows   (settings-rows)
+              row-id [:extension-setting "channel-telegram" :telegram-notify]
+              row (first (filter #(= row-id (:id %)) rows))]
+          (expect (contains?
+                    (set (->> rows (filter #(= :section (:type %))) (mapv :label)))
+                    "Channel Settings"))
+          (expect (= ["Telegram"]
+                    (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
+          (expect (= :toggle (:type row)))
           ;; appears exactly once — no tab duplicated it
-            (expect (= 1 (count (filter #(= row-id (:id %)) rows))))))))
+          (expect (= 1 (count (filter #(= row-id (:id %)) rows))))))))
 
   (it "session picker keeps new/fork out of the table and renders justified cells"
-      (let [session-items dlg/session-dialog-items
-            body-w 96
-            header (dlg/session-dialog-header body-w)
-            rows (session-items [{:id "123e4567-e89b-12d3-a456-426614174000"
-                                  :title (str "Title " (apply str (repeat 80 "汉")))
-                                  :turn-count 2 :fork-count 3
-                                  :modified-at #inst "2024-01-03T04:05:00.000-00:00"
-                                  :created-at #inst "2024-01-01T01:02:00.000-00:00"}
-                                 {:id "abcdef00-e89b-12d3-a456-426614174000"
-                                  :title "" :turn-count 0 :modified-at nil
-                                  :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
-                                "123e4567-e89b-12d3-a456-426614174000" body-w)
-            active-label   (:label (nth rows 0))
-            inactive-label (:label (nth rows 1))
-            fork-label (dlg/session-dialog-label
-                        {:id "fedcba00-e89b-12d3-a456-426614174000"
-                         :title "Forkable" :turn-count 4 :fork-count 3
-                         :modified-at #inst "2024-01-04T04:05:00.000-00:00"
-                         :created-at #inst "2024-01-01T01:02:00.000-00:00"}
-                        nil body-w)]
-        (expect (= [:switch :switch] (mapv :action rows)))
-        (expect (not-any? #{:new :fork} (map :action rows)))
-        (expect (= [] (session-items [] nil body-w)))
-        (expect (= [body-w body-w body-w body-w]
-                   (mapv p/display-width [header active-label inactive-label fork-label])))
-        (expect (every? #(str/includes? % "│") [header active-label inactive-label]))
-        (expect (str/includes? header "ID"))
-        (expect (str/includes? header "Turns"))
+    (let [session-items dlg/session-dialog-items
+          body-w 96
+          header (dlg/session-dialog-header body-w)
+          rows (session-items [{:id "123e4567-e89b-12d3-a456-426614174000"
+                                :title (str "Title " (apply str (repeat 80 "汉")))
+                                :turn-count 2 :fork-count 3
+                                :modified-at #inst "2024-01-03T04:05:00.000-00:00"
+                                :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+                               {:id "abcdef00-e89b-12d3-a456-426614174000"
+                                :title "" :turn-count 0 :modified-at nil
+                                :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
+                 "123e4567-e89b-12d3-a456-426614174000" body-w)
+          active-label   (:label (nth rows 0))
+          inactive-label (:label (nth rows 1))
+          fork-label (dlg/session-dialog-label
+                       {:id "fedcba00-e89b-12d3-a456-426614174000"
+                        :title "Forkable" :turn-count 4 :fork-count 3
+                        :modified-at #inst "2024-01-04T04:05:00.000-00:00"
+                        :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+                       nil body-w)]
+      (expect (= [:switch :switch] (mapv :action rows)))
+      (expect (not-any? #{:new :fork} (map :action rows)))
+      (expect (= [] (session-items [] nil body-w)))
+      (expect (= [body-w body-w body-w body-w]
+                (mapv p/display-width [header active-label inactive-label fork-label])))
+      (expect (every? #(str/includes? % "│") [header active-label inactive-label]))
+      (expect (str/includes? header "ID"))
+      (expect (str/includes? header "Turns"))
       ;; The active marker sits in the gutter column. `●` (U+25CF) renders in
       ;; its own cell (` ● `); inactive rows leave that column blank. Assert
       ;; the marker *cell* (between the first two │) rather than the raw glyph.
-        (expect (= " ● " (second (str/split active-label #"│"))))
-        (expect (= "   " (second (str/split inactive-label #"│"))))
-        (expect (str/includes? active-label "│ 123e4567 │"))
-        (expect (str/includes? active-label "│     2 │"))
-        (expect (str/includes? active-label "2024-01-03"))
-        (expect (str/includes? active-label "04:05"))
-        (expect (str/includes? active-label "2024-01-01"))
-        (expect (str/includes? active-label "01:02"))
-        (expect (str/includes? active-label "Title"))
-        (expect (str/includes? fork-label "[forks:3]"))
-        (expect (str/includes? active-label "…"))
-        (expect (str/includes? inactive-label "│ abcdef00 │"))
-        (expect (str/includes? inactive-label "│     0 │"))
-        (expect (str/includes? inactive-label "-"))
-        (expect (str/includes? inactive-label "Untitled session"))))
+      (expect (= " ● " (second (str/split active-label #"│"))))
+      (expect (= "   " (second (str/split inactive-label #"│"))))
+      (expect (str/includes? active-label "│ 123e4567 │"))
+      (expect (str/includes? active-label "│     2 │"))
+      (expect (str/includes? active-label "2024-01-03"))
+      (expect (str/includes? active-label "04:05"))
+      (expect (str/includes? active-label "2024-01-01"))
+      (expect (str/includes? active-label "01:02"))
+      (expect (str/includes? active-label "Title"))
+      (expect (str/includes? fork-label "[forks:3]"))
+      (expect (str/includes? active-label "…"))
+      (expect (str/includes? inactive-label "│ abcdef00 │"))
+      (expect (str/includes? inactive-label "│     0 │"))
+      (expect (str/includes? inactive-label "-"))
+      (expect (str/includes? inactive-label "Untitled session"))))
 
   (it "command palette exposes the frequent app verbs, providers distinct from settings"
-      (let [palette-commands (var-get #'dlg/palette-commands)
-            labels (mapv :label palette-commands)
-            ids    (set (mapv :id palette-commands))]
+    (let [palette-commands (var-get #'dlg/palette-commands)
+          labels (mapv :label palette-commands)
+          ids    (set (mapv :id palette-commands))]
       ;; Configure Providers and Settings stay distinct entries.
-        (expect (some #{"Configure Providers"} labels))
-        (expect (some #{"Settings"} labels))
+      (expect (some #{"Configure Providers"} labels))
+      (expect (some #{"Settings"} labels))
       ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
       ;; don't survive macOS — so the frequent ones must be present + runnable.
-        (expect (every? ids [:cycle-model :cycle-reasoning :search-open
-                             :open-resources :show-sessions :open-dirs
-                             :pick-file :new-session :fork-session]))))
+      (expect (every? ids [:cycle-model :cycle-reasoning :search-open
+                           :open-resources :show-sessions :open-dirs
+                           :pick-file :new-session :fork-session]))))
 
   (it "command palette filters by a typed query (searchable)"
     ;; The palette is searchable: the filter is a case-insensitive substring
     ;; match on :label, the spine `searchable-select!` applies.
-      (let [labels (mapv :label (var-get #'dlg/palette-commands))
-            match  (fn [q] (filterv #(clojure.string/includes?
-                                      (clojure.string/lower-case %)
-                                      (clojure.string/lower-case q))
-                                    labels))]
-        (expect (some #{"Cycle Model"} (match "model")))
-        (expect (= [] (match "zzz-no-such-command"))))))
+    (let [labels (mapv :label (var-get #'dlg/palette-commands))
+          match  (fn [q] (filterv #(clojure.string/includes?
+                                     (clojure.string/lower-case %)
+                                     (clojure.string/lower-case q))
+                           labels))]
+      (expect (some #{"Cycle Model"} (match "model")))
+      (expect (= [] (match "zzz-no-such-command"))))))

@@ -27,24 +27,24 @@
 (def default-model-dir
   "~/.vis model path used when no env/config override is set."
   (str (System/getProperty "user.home")
-       "/.vis/models/sherpa-onnx-vits-piper-en_US-ryan-high"))
+    "/.vis/models/sherpa-onnx-vits-piper-en_US-ryan-high"))
 
 (defn piper-voice
   []
   (or (some-> (vis/extension-env-value voice-env) str str/trim not-empty)
-      (some-> (System/getenv voice-env) str str/trim not-empty)
-      default-piper-voice))
+    (some-> (System/getenv voice-env) str str/trim not-empty)
+    default-piper-voice))
 
 (defn model-dir
   []
   (or (some-> (vis/extension-env-value model-dir-env) str str/trim not-empty)
-      (some-> (System/getenv model-dir-env) str str/trim not-empty)
-      default-model-dir))
+    (some-> (System/getenv model-dir-env) str str/trim not-empty)
+    default-model-dir))
 
 (defn- existing-file-path
   [files fallback]
   (or (some #(when (.isFile (io/file %)) (str (io/file %))) files)
-      (str (io/file fallback))))
+    (str (io/file fallback))))
 
 (defn model-files
   ([] (model-files (model-dir)))
@@ -61,8 +61,8 @@
   ([dir]
    (let [{:keys [model tokens data]} (model-files dir)]
      (and (.isFile (io/file model))
-          (.isFile (io/file tokens))
-          (.isDirectory (io/file data))))))
+       (.isFile (io/file tokens))
+       (.isDirectory (io/file data))))))
 
 (defn- progress-text
   [label bytes-read bytes-total]
@@ -111,12 +111,12 @@
 (defn- safe-entry-name
   [entry-name]
   (let [parts (->> (str/split entry-name #"/")
-                   (remove str/blank?)
+                (remove str/blank?)
                 ;; Release archives contain a top-level directory. Strip it so
                 ;; custom VIS_PIPER_MODEL_DIR targets get the files directly.
-                   rest)]
+                rest)]
     (when (and (seq parts)
-               (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
+            (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
       (str/join File/separator parts))))
 
 (defn- extract-tar-bz2!
@@ -153,9 +153,9 @@
          (extract-tar-bz2! archive dir)
          (when-not (model-installed? dir)
            (throw (ex-info "Piper model download did not produce expected files"
-                           {:type :voice/download-incomplete
-                            :model-dir dir
-                            :expected (model-files dir)})))
+                    {:type :voice/download-incomplete
+                     :model-dir dir
+                     :expected (model-files dir)})))
          (progress-fn :ready "Piper TTS model ready" 1 1)
          dir
          (catch Throwable t
@@ -167,35 +167,35 @@
 (defn- new-instance
   [class-name & args]
   (clojure.lang.Reflector/invokeConstructor
-   (Class/forName class-name)
-   (object-array args)))
+    (Class/forName class-name)
+    (object-array args)))
 
 (defn- call!
   [target method & args]
   (clojure.lang.Reflector/invokeInstanceMethod
-   target method (object-array args)))
+    target method (object-array args)))
 
 (defn- static-call!
   [class-name method & args]
   (clojure.lang.Reflector/invokeStaticMethod
-   (Class/forName class-name) method (object-array args)))
+    (Class/forName class-name) method (object-array args)))
 
 (defn- tts-config
   [dir]
   (let [{:keys [model tokens data]} (model-files dir)
         vits-model (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig" "builder")
-                       (call! "setModel" model)
-                       (call! "setTokens" tokens)
-                       (call! "setDataDir" data)
-                       (call! "build"))
+                     (call! "setModel" model)
+                     (call! "setTokens" tokens)
+                     (call! "setDataDir" data)
+                     (call! "build"))
         model-cfg  (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig" "builder")
-                       (call! "setVits" vits-model)
-                       (call! "setNumThreads" (int (.. Runtime getRuntime availableProcessors)))
-                       (call! "setDebug" false)
-                       (call! "build"))]
+                     (call! "setVits" vits-model)
+                     (call! "setNumThreads" (int (.. Runtime getRuntime availableProcessors)))
+                     (call! "setDebug" false)
+                     (call! "build"))]
     (-> (static-call! "com.k2fsa.sherpa.onnx.OfflineTtsConfig" "builder")
-        (call! "setModel" model-cfg)
-        (call! "build"))))
+      (call! "setModel" model-cfg)
+      (call! "build"))))
 
 (defn- speech-node-tag [node] (when (vector? node) (first node)))
 
@@ -210,15 +210,15 @@
 
 (defn- clean-speech-text [s]
   (-> (str s)
-      (str/replace #"(?m)^\s*(```|~~~).*$" "")
-      (str/replace #"(?m)^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$" "")
-      (str/replace #"(?m)^\s*[-*+•]\s+" "")
-      (str/replace #"(?m)^\s*\d+[.)]\s+" "")
-      (str/replace #"\s*\|\s*" ", ")
-      (str/replace #"[ \t]+" " ")
-      (str/replace #"\s+\n" "\n")
-      (str/replace #"\n{3,}" "\n\n")
-      str/trim))
+    (str/replace #"(?m)^\s*(```|~~~).*$" "")
+    (str/replace #"(?m)^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$" "")
+    (str/replace #"(?m)^\s*[-*+•]\s+" "")
+    (str/replace #"(?m)^\s*\d+[.)]\s+" "")
+    (str/replace #"\s*\|\s*" ", ")
+    (str/replace #"[ \t]+" " ")
+    (str/replace #"\s+\n" "\n")
+    (str/replace #"\n{3,}" "\n\n")
+    str/trim))
 
 (defn- answer->speech-text [text]
   (let [ir-answer? (and (vector? text) (= :ir (first text)))
@@ -230,8 +230,8 @@
                      (string? text) text
                      :else
                      (throw (ex-info "voice/synthesize-file! accepts Markdown answers or canonical IR only"
-                                     {:type :voice/invalid-text
-                                      :got-type (some-> text class .getName)})))
+                              {:type :voice/invalid-text
+                               :got-type (some-> text class .getName)})))
         ir         (cond
                      ir-answer? (vis/->ast text)
                      (str/blank? (str md)) nil
@@ -240,28 +240,28 @@
               ([children] (children->text children ""))
               ([children sep]
                (->> children
-                    (map node->text)
-                    (remove str/blank?)
-                    (str/join sep)
-                    clean-speech-text)))
+                 (map node->text)
+                 (remove str/blank?)
+                 (str/join sep)
+                 clean-speech-text)))
             (table->text [node]
               (let [rows (mapv (fn [row]
                                  {:header? (some #(= :th (speech-node-tag %)) (speech-node-children row))
                                   :cells   (mapv #(children->text (speech-node-children %))
-                                                 (speech-node-children row))})
-                               (speech-node-children node))
+                                             (speech-node-children row))})
+                           (speech-node-children node))
                     header (when (:header? (first rows)) (:cells (first rows)))
                     data-rows (if header (subvec rows 1) rows)]
                 (->> data-rows
-                     (map (fn [{:keys [cells]}]
-                            (if (and (seq header) (= (count header) (count cells)))
-                              (->> (map vector header cells)
-                                   (map (fn [[h c]] (str h ": " c)))
-                                   (str/join "; "))
-                              (str/join "; " cells))))
-                     (remove str/blank?)
-                     (str/join "\n")
-                     clean-speech-text)))
+                  (map (fn [{:keys [cells]}]
+                         (if (and (seq header) (= (count header) (count cells)))
+                           (->> (map vector header cells)
+                             (map (fn [[h c]] (str h ": " c)))
+                             (str/join "; "))
+                           (str/join "; " cells))))
+                  (remove str/blank?)
+                  (str/join "\n")
+                  clean-speech-text)))
             (node->text [node]
               (cond
                 (string? node) node
@@ -325,7 +325,7 @@
 (defn- player-argv
   [wav-file]
   (if-let [custom (some-> (or (vis/extension-env-value player-env)
-                              (System/getenv player-env)) str str/trim not-empty)]
+                            (System/getenv player-env)) str str/trim not-empty)]
     ["sh" "-c" (str custom " " (pr-str (str wav-file)))]
     (cond
       (executable-success? "afplay") ["afplay" (str wav-file)]
@@ -340,29 +340,29 @@
     (let [p (.start (ProcessBuilder. ^java.util.List argv))]
       {:process p :argv argv})
     (throw (ex-info "No voice playback command found"
-                    {:type :voice/missing-player
-                     :tried ["VIS_VOICE_PLAYER" "afplay" "paplay" "aplay" "ffplay"]}))))
+             {:type :voice/missing-player
+              :tried ["VIS_VOICE_PLAYER" "afplay" "paplay" "aplay" "ffplay"]}))))
 
 (def ^:private tts-worker-code
   (str "(require '[clojure.edn :as edn] "
-       "'[clojure.string :as str] "
-       "'[com.blockether.vis.ext.foundation-voice.core :as voice]) "
-       "(let [reader (java.io.BufferedReader. *in*)] "
-       "(doseq [line (line-seq reader)] "
-       "(when-not (str/blank? line) "
-       "(let [{:keys [answer-file out-file response-file]} (edn/read-string line)] "
-       "(try (voice/synthesize-file! (edn/read-string (slurp answer-file)) "
-       "{:out-file (java.io.File. out-file)}) "
-       "(spit response-file (pr-str {:ok? true})) "
-       "(catch Throwable t "
-       "(spit response-file (pr-str {:ok? false :message (or (ex-message t) (str t)) :data (ex-data t)}))))))))"))
+    "'[clojure.string :as str] "
+    "'[com.blockether.vis.ext.foundation-voice.core :as voice]) "
+    "(let [reader (java.io.BufferedReader. *in*)] "
+    "(doseq [line (line-seq reader)] "
+    "(when-not (str/blank? line) "
+    "(let [{:keys [answer-file out-file response-file]} (edn/read-string line)] "
+    "(try (voice/synthesize-file! (edn/read-string (slurp answer-file)) "
+    "{:out-file (java.io.File. out-file)}) "
+    "(spit response-file (pr-str {:ok? true})) "
+    "(catch Throwable t "
+    "(spit response-file (pr-str {:ok? false :message (or (ex-message t) (str t)) :data (ex-data t)}))))))))"))
 
 (defn- java-bin []
   (str (io/file (System/getProperty "java.home")
-                "bin"
-                (if (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win")
-                  "java.exe"
-                  "java"))))
+         "bin"
+         (if (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win")
+           "java.exe"
+           "java"))))
 
 (defn- tts-worker-argv
   []
@@ -401,7 +401,7 @@
 (defonce ^:private tts-worker-shutdown-hook
   (delay
     (.addShutdownHook (Runtime/getRuntime)
-                      (Thread. ^Runnable stop-tts-worker! "vis-voice-tts-worker-shutdown"))))
+      (Thread. ^Runnable stop-tts-worker! "vis-voice-tts-worker-shutdown"))))
 
 (defn- ensure-tts-worker!
   [log-file]
@@ -411,7 +411,7 @@
       (let [_       @tts-worker-shutdown-hook
             process (start-tts-worker! log-file)
             writer  (java.io.BufferedWriter.
-                     (java.io.OutputStreamWriter. (.getOutputStream ^Process process)))]
+                      (java.io.OutputStreamWriter. (.getOutputStream ^Process process)))]
         (reset! tts-worker-state {:process process
                                   :writer writer
                                   :log-file (str log-file)})))))
@@ -424,23 +424,23 @@
       (let [{:keys [ok? message data]} (edn/read-string (slurp response-file))]
         (when-not ok?
           (throw (ex-info (str "Voice synthesis worker failed; log: " log-file)
-                          (assoc (or data {})
-                                 :type :voice/tts-worker-failed
-                                 :log-file (str log-file)
-                                 :message message))))
+                   (assoc (or data {})
+                     :type :voice/tts-worker-failed
+                     :log-file (str log-file)
+                     :message message))))
         true)
 
       (not (live-process? process))
       (do
         (reset! tts-worker-state nil)
         (throw (ex-info (str "Voice synthesis worker exited before response; log: " log-file)
-                        {:type :voice/tts-worker-exited
-                         :log-file (str log-file)})))
+                 {:type :voice/tts-worker-exited
+                  :log-file (str log-file)})))
 
       (not (pos? remaining-ms))
       (throw (ex-info (str "Voice synthesis worker timed out; log: " log-file)
-                      {:type :voice/tts-worker-timeout
-                       :log-file (str log-file)}))
+               {:type :voice/tts-worker-timeout
+                :log-file (str log-file)}))
 
       :else
       (do
@@ -481,19 +481,19 @@
   [env]
   (when (true? (get-in env [:turn/features :voice-response?]))
     (str "<voice_response_mode>\n"
-         "The user may receive your final answer through text-to-speech audio.\n\n"
-         "Still produce the canonical final answer as plain text. This text is saved to the session database.\n\n"
-         "Optimize the final answer for spoken delivery:\n"
-         "- speak like a manager update, not a developer handoff;\n"
-         "- be concise, direct, and outcome-focused;\n"
-         "- say what went wrong and what changed, but skip implementation details unless explicitly requested;\n"
-         "- do not include extra trails, info refs, verification logs, stack traces, diffs, or code blocks;\n"
-         "- do not read code aloud; summarize code changes in plain business language;\n"
-         "- avoid huge tables unless explicitly requested;\n"
-         "- when code/files changed, summarize what changed and name files clearly;\n"
-         "- do not mention that you are producing audio;\n"
-         "- do not emit SSML unless the user explicitly asks.\n"
-         "</voice_response_mode>")))
+      "The user may receive your final answer through text-to-speech audio.\n\n"
+      "Still produce the canonical final answer as plain text. This text is saved to the session database.\n\n"
+      "Optimize the final answer for spoken delivery:\n"
+      "- speak like a manager update, not a developer handoff;\n"
+      "- be concise, direct, and outcome-focused;\n"
+      "- say what went wrong and what changed, but skip implementation details unless explicitly requested;\n"
+      "- do not include extra trails, info refs, verification logs, stack traces, diffs, or code blocks;\n"
+      "- do not read code aloud; summarize code changes in plain business language;\n"
+      "- avoid huge tables unless explicitly requested;\n"
+      "- when code/files changed, summarize what changed and name files clearly;\n"
+      "- do not mention that you are producing audio;\n"
+      "- do not emit SSML unless the user explicitly asks.\n"
+      "</voice_response_mode>")))
 
 (defn speak-answer-async!
   "Synthesize and play `answer` after the caller has persisted the text answer.
@@ -501,7 +501,7 @@
    downstream `synthesize-file!` projects to plain text on its own."
   [answer]
   (when-not (or (nil? answer)
-                (and (string? answer) (str/blank? answer)))
+              (and (string? answer) (str/blank? answer)))
     (future
       (try
         (notify-progress! :synthesize "Synthesizing voice response" 0 -1)
@@ -524,9 +524,9 @@
 (defn- voice-asr-var
   [sym]
   (or (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" (name sym)))
-      (throw (ex-info "Voice ASR namespace did not expose expected var"
-                      {:type :voice-asr/missing-var
-                       :var sym}))))
+    (throw (ex-info "Voice ASR namespace did not expose expected var"
+             {:type :voice-asr/missing-var
+              :var sym}))))
 
 (defn- voice-asr-call!
   [sym & args]
@@ -546,7 +546,7 @@
 (defn- executable? [cmd]
   (try
     (zero? (:exit (process/sh {:out :string :err :string :continue true}
-                              "command" "-v" cmd)))
+                    "command" "-v" cmd)))
     (catch Throwable _ false)))
 
 (defn- resolved? [sym]
@@ -558,7 +558,7 @@
     {:level (if (or asr? tts?) :info :warn)
      :check-id ::runtime
      :message (str "Voice runtime: input=" (if asr? "loaded" "missing")
-                   ", output=" (if tts? "loaded" "missing"))
+                ", output=" (if tts? "loaded" "missing"))
      :remediation (when-not (or asr? tts?)
                     "Add/load vis-foundation-voice, then restart the channel.")}))
 
@@ -585,8 +585,8 @@
          :check-id ::piper
          :message (str "Piper model: missing - " dir)
          :remediation (str "Run `vis extensions voice models download --piper` or set "
-                           model-dir-env " to a complete Piper model directory. Expected espeak-ng-data: "
-                           data-dir)}))
+                        model-dir-env " to a complete Piper model directory. Expected espeak-ng-data: "
+                        data-dir)}))
     (catch Throwable t
       {:level :warn
        :check-id ::piper
@@ -629,8 +629,8 @@
    triggers voice."
   [ctx]
   (let [toggle (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
-                   (throw (ex-info "Voice input namespace did not expose toggle-recording!"
-                                   {:type :voice-input/missing-toggle})))]
+                 (throw (ex-info "Voice input namespace did not expose toggle-recording!"
+                          {:type :voice-input/missing-toggle})))]
     (toggle ctx)
     {:slash/status :ok
      :slash/title  "Voice recording toggled"}))
@@ -656,81 +656,81 @@
 
 (def voice-extension
   (vis/extension
-   {:ext/name      "foundation-voice"
-    :ext/description "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
-    :ext/version   "0.1.0"
-    :ext/author    "Blockether"
-    :ext/owner     "vis"
-    :ext/license   "Apache-2.0"
-    :ext/kind      "voice"
-    :ext/prompt-fn    voice-response-prompt
-    :ext/doctor-fn doctor-fn
-    :ext/settings  [{:key :voice/telegram-send-transcript?
-                     :type :toggle
-                     :label "Telegram transcript text"
-                     :description "In Telegram duplex mode, send the transcribed user request before the answer audio."}
-                    {:key :voice/telegram-send-answer-text?
-                     :type :toggle
-                     :label "Telegram answer text"
-                     :description "In Telegram duplex mode, send the plain text answer after the answer audio in a collapsible block."}
-                    {:key :voice/tui-auto-read?
-                     :type :toggle
-                     :label "TUI auto-read answers"
-                     :description "Read TUI answers aloud when voice responses are enabled. TUI still always shows text."}]
-    :ext/env       [{:name model-dir-env
-                     :label "Piper model directory"
-                     :description "Directory containing model.onnx, tokens.txt, and espeak-ng-data. Missing files can be downloaded with vis extensions voice models download --piper."
-                     :required? false}
-                    {:name voice-env
-                     :label "Piper voice"
-                     :description "Logical Piper voice id. Defaults to en_US-ryan-high."
-                     :required? false}
-                    {:name player-env
-                     :label "Voice playback command"
-                     :description "Optional local audio playback command. Defaults to afplay/paplay/aplay/ffplay discovery."
-                     :required? false}
-                    {:name parakeet-model-dir-env
-                     :label "Parakeet model directory"
-                     :description "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files can be downloaded with vis extensions voice models download --parakeet."
-                     :required? false}]
-    :ext/cli       [{:cmd/name "voice"
-                     :cmd/doc "Voice extension commands."
-                     :cmd/usage "vis extensions voice <models>"
-                     :cmd/subcommands
-                     [{:cmd/name "models"
-                       :cmd/doc "Manage local voice models."
-                       :cmd/usage "vis extensions voice models <status|download>"
-                       :cmd/subcommands
-                       [{:cmd/name "status"
-                         :cmd/doc "Show local Piper and Parakeet model status."
-                         :cmd/usage "vis extensions voice models status"
-                         :cmd/run-fn #'voice-models-status-command}
-                        {:cmd/name "download"
-                         :cmd/doc "Download local voice models. Defaults to all when no flag is supplied."
-                         :cmd/usage "vis extensions voice models download [--piper|--parakeet|--all]"
-                         :cmd/args [{:name "piper" :kind :flag :type :boolean
-                                     :doc "Download/check Piper TTS model."}
-                                    {:name "parakeet" :kind :flag :type :boolean
-                                     :doc "Download/check Parakeet ASR model."}
-                                    {:name "all" :kind :flag :type :boolean
-                                     :doc "Download/check both voice models."}]
-                         :cmd/run-fn #'voice-models-download-command}]}]}]
+    {:ext/name      "foundation-voice"
+     :ext/description "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
+     :ext/version   "0.1.0"
+     :ext/author    "Blockether"
+     :ext/owner     "vis"
+     :ext/license   "Apache-2.0"
+     :ext/kind      "voice"
+     :ext/prompt-fn    voice-response-prompt
+     :ext/doctor-fn doctor-fn
+     :ext/settings  [{:key :voice/telegram-send-transcript?
+                      :type :toggle
+                      :label "Telegram transcript text"
+                      :description "In Telegram duplex mode, send the transcribed user request before the answer audio."}
+                     {:key :voice/telegram-send-answer-text?
+                      :type :toggle
+                      :label "Telegram answer text"
+                      :description "In Telegram duplex mode, send the plain text answer after the answer audio in a collapsible block."}
+                     {:key :voice/tui-auto-read?
+                      :type :toggle
+                      :label "TUI auto-read answers"
+                      :description "Read TUI answers aloud when voice responses are enabled. TUI still always shows text."}]
+     :ext/env       [{:name model-dir-env
+                      :label "Piper model directory"
+                      :description "Directory containing model.onnx, tokens.txt, and espeak-ng-data. Missing files can be downloaded with vis extensions voice models download --piper."
+                      :required? false}
+                     {:name voice-env
+                      :label "Piper voice"
+                      :description "Logical Piper voice id. Defaults to en_US-ryan-high."
+                      :required? false}
+                     {:name player-env
+                      :label "Voice playback command"
+                      :description "Optional local audio playback command. Defaults to afplay/paplay/aplay/ffplay discovery."
+                      :required? false}
+                     {:name parakeet-model-dir-env
+                      :label "Parakeet model directory"
+                      :description "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files can be downloaded with vis extensions voice models download --parakeet."
+                      :required? false}]
+     :ext/cli       [{:cmd/name "voice"
+                      :cmd/doc "Voice extension commands."
+                      :cmd/usage "vis extensions voice <models>"
+                      :cmd/subcommands
+                      [{:cmd/name "models"
+                        :cmd/doc "Manage local voice models."
+                        :cmd/usage "vis extensions voice models <status|download>"
+                        :cmd/subcommands
+                        [{:cmd/name "status"
+                          :cmd/doc "Show local Piper and Parakeet model status."
+                          :cmd/usage "vis extensions voice models status"
+                          :cmd/run-fn #'voice-models-status-command}
+                         {:cmd/name "download"
+                          :cmd/doc "Download local voice models. Defaults to all when no flag is supplied."
+                          :cmd/usage "vis extensions voice models download [--piper|--parakeet|--all]"
+                          :cmd/args [{:name "piper" :kind :flag :type :boolean
+                                      :doc "Download/check Piper TTS model."}
+                                     {:name "parakeet" :kind :flag :type :boolean
+                                      :doc "Download/check Parakeet ASR model."}
+                                     {:name "all" :kind :flag :type :boolean
+                                      :doc "Download/check both voice models."}]
+                          :cmd/run-fn #'voice-models-download-command}]}]}]
      ;; Declarative slash registration: both TUI and Telegram channels render
      ;; the same surface via the engine slash registry. The TUI variant of
      ;; /voice toggles recording via input/toggle-recording!. The Telegram
      ;; channel has different /voice semantics (mode picker + inline keyboard)
      ;; and registers its own /voice spec on vis-channel-telegram.
-    :ext/slash-commands
-    [{:slash/name     "voice"
-      :slash/doc      "Toggle voice recording (TUI)."
-      :slash/usage    "/voice"
+     :ext/slash-commands
+     [{:slash/name     "voice"
+       :slash/doc      "Toggle voice recording (TUI)."
+       :slash/usage    "/voice"
        ;; HIDDEN from the TUI slash-suggestion box (above the input): voice
        ;; recording is driven by the C-x v keymap hint + the header status
        ;; banner, not a typed slash command. Keep the spec registered (the
        ;; keymap action dispatches it) but off the suggestion list.
-      :slash/hidden?  true
-      :slash/requires #{:channel}
-      :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))
-      :slash/run-fn   voice-toggle-recording!}]}))
+       :slash/hidden?  true
+       :slash/requires #{:channel}
+       :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))
+       :slash/run-fn   voice-toggle-recording!}]}))
 
 (vis/register-extension! voice-extension)

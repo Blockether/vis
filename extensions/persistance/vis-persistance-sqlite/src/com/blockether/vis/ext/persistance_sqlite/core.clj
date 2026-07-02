@@ -1,5 +1,5 @@
 (ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}
- com.blockether.vis.ext.persistance-sqlite.core
+  com.blockether.vis.ext.persistance-sqlite.core
   "SQLite store - V1 schema implementation.
 
    Every public defn in this file is dispatched dynamically by
@@ -40,7 +40,7 @@
    (java.util.concurrent.atomic AtomicLong)
    (javax.sql DataSource)
    (org.sqlite SQLiteConfig SQLiteConfig$JournalMode SQLiteConfig$SynchronousMode
-               SQLiteConfig$TransactionMode SQLiteDataSource)))
+     SQLiteConfig$TransactionMode SQLiteDataSource)))
 
 ;; =============================================================================
 ;; Helpers
@@ -100,7 +100,7 @@
 
 (defn- sha256-hex [^String s]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes s "UTF-8"))]
+                 (.getBytes s "UTF-8"))]
     (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
 
 (defn- raw-response-preview [^String s]
@@ -124,19 +124,19 @@
 
 (def ^:private migration-checksum-mismatch-user-message
   (str "Database schema mismatch: an applied migration was edited in place and could not be "
-       "auto-repaired. A checksum-only drift self-heals via Flyway repair (rows preserved); "
-       "if you changed a migration's STRUCTURE, add a NEW V*__ migration instead of editing an applied one."))
+    "auto-repaired. A checksum-only drift self-heals via Flyway repair (rows preserved); "
+    "if you changed a migration's STRUCTURE, add a NEW V*__ migration instead of editing an applied one."))
 
 (defn- migration-checksum-mismatch?
   "True when any throwable in the causal chain looks like Flyway's
    migration checksum validation failure."
   [^Throwable e]
   (boolean
-   (some (fn [^Throwable t]
-           (let [^String m (or (ex-message t) "")]
-             (or (.contains m "Migration checksum mismatch")
-                 (.contains m "Migrations have failed validation"))))
-         (causal-chain e))))
+    (some (fn [^Throwable t]
+            (let [^String m (or (ex-message t) "")]
+              (or (.contains m "Migration checksum mismatch")
+                (.contains m "Migrations have failed validation"))))
+      (causal-chain e))))
 
 (defn- maybe-wrap-db-open-error
   "Normalize known SQLite bootstrap failures into caller-facing user
@@ -145,21 +145,21 @@
   [^Throwable e]
   (if (migration-checksum-mismatch? e)
     (ex-info migration-checksum-mismatch-user-message
-             {:vis/user-error true
-              :type           :vis/db-migration-checksum-mismatch}
-             e)
+      {:vis/user-error true
+       :type           :vis/db-migration-checksum-mismatch}
+      e)
     e))
 
 (defn- sqlite-cantopen-message?
   "True when any link in the cause chain looks like a SQLite open failure."
   [^Throwable e]
   (boolean
-   (some (fn [^Throwable t]
-           (let [^String m (or (ex-message t) "")]
-             (or (.contains m "[SQLITE_CANTOPEN]")
-                 (.contains m "unable to open database file")
-                 (.contains m "Unable to open the database file"))))
-         (causal-chain e))))
+    (some (fn [^Throwable t]
+            (let [^String m (or (ex-message t) "")]
+              (or (.contains m "[SQLITE_CANTOPEN]")
+                (.contains m "unable to open database file")
+                (.contains m "Unable to open the database file"))))
+      (causal-chain e))))
 
 (defn db-error->user-message
   "Translate SQLite persistence exceptions into actionable user text.
@@ -173,16 +173,16 @@
           dirf   (File. dbdir)
           filef  (File. dbpath)]
       (str "Vis database is unavailable. "
-           "Expected file: " dbpath ". "
-           (cond
-             (not (.exists filef))
-             "The file is missing - likely deleted while Vis was running. Restart Vis to recreate it."
+        "Expected file: " dbpath ". "
+        (cond
+          (not (.exists filef))
+          "The file is missing - likely deleted while Vis was running. Restart Vis to recreate it."
 
-             (not (.canWrite dirf))
-             (str "The directory " dbdir " is not writable by this process.")
+          (not (.canWrite dirf))
+          (str "The directory " dbdir " is not writable by this process.")
 
-             :else
-             "The handle was lost mid-session. Restart Vis to reconnect.")))))
+          :else
+          "The handle was lost mid-session. Restart Vis to reconnect.")))))
 
 ;; =============================================================================
 ;; Schema install
@@ -299,9 +299,9 @@
 (defn- migration-monitor
   ^java.util.concurrent.locks.ReentrantLock [^String canonical-dir]
   (or (.get migration-monitors canonical-dir)
-      (let [m    (java.util.concurrent.locks.ReentrantLock.)
-            prev (.putIfAbsent migration-monitors canonical-dir m)]
-        (or prev m))))
+    (let [m    (java.util.concurrent.locks.ReentrantLock.)
+          prev (.putIfAbsent migration-monitors canonical-dir m)]
+      (or prev m))))
 
 (defn- with-migration-lock!
   "Serialize Flyway across JVMs (the cross-process file lock) AND within this JVM
@@ -339,7 +339,7 @@
     (let [file (str path "/" DB_FILENAME)
           raw  (raw-sqlite-datasource (str "jdbc:sqlite:" file))
           pool (pooled-datasource raw
-                                  (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+                 (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
       (try
         (with-migration-lock! path #(install-schema! pool))
         {:datasource pool :conn pool :path path :db-file file :backend :sqlite}
@@ -357,9 +357,9 @@
   ;; alive.
   (let [db-name (str "vis_mem_" (.incrementAndGet mem-counter))
         raw     (raw-sqlite-datasource
-                 (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))
+                  (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))
         pool    (pooled-datasource raw
-                                   (str "vis-rlm-mem-" (.incrementAndGet pool-counter)))]
+                  (str "vis-rlm-mem-" (.incrementAndGet pool-counter)))]
     (install-schema! pool)
     {:datasource pool :conn pool :path nil :db-file nil
      :backend :sqlite :owned? true :mode :memory}))
@@ -373,8 +373,8 @@
   (when-let [db-file (:db-file store)]
     (try
       (let [attrs (Files/readAttributes (Paths/get db-file (make-array String 0))
-                                        "basic:fileKey,lastModifiedTime,size"
-                                        (make-array LinkOption 0))]
+                    "basic:fileKey,lastModifiedTime,size"
+                    (make-array LinkOption 0))]
         {:db-file       db-file
          :file-key      (get attrs "fileKey")
          :last-modified (some-> (get attrs "lastModifiedTime") str)
@@ -451,12 +451,12 @@
   [store db-spec]
   (when (= :persistent (:mode store))
     (or (and (string? db-spec)
-             (not= (canonical-path db-spec) (canonical-path (:path store))))
-        (and (map? db-spec)
-             (:path db-spec)
-             (not= (canonical-path (:path db-spec)) (canonical-path (:path store))))
-        (and (:file-key-snapshot store)
-             (not= (stable-db-file-key store) (:file-key-snapshot store))))))
+          (not= (canonical-path db-spec) (canonical-path (:path store))))
+      (and (map? db-spec)
+        (:path db-spec)
+        (not= (canonical-path (:path db-spec)) (canonical-path (:path store))))
+      (and (:file-key-snapshot store)
+        (not= (stable-db-file-key store) (:file-key-snapshot store))))))
 
 ;; =============================================================================
 ;; SQLite write policy
@@ -474,11 +474,11 @@
         code    (when (instance? SQLException t)
                   (.getErrorCode ^SQLException t))]
     (or (contains? #{5 6 517} code)
-        (and message
-             (or (str/includes? message "sqlite_busy")
-                 (str/includes? message "busy_snapshot")
-                 (str/includes? message "database is locked")
-                 (str/includes? message "database table is locked"))))))
+      (and message
+        (or (str/includes? message "sqlite_busy")
+          (str/includes? message "busy_snapshot")
+          (str/includes? message "database is locked")
+          (str/includes? message "database table is locked"))))))
 
 (defn- sqlite-busy?
   [^Throwable t]
@@ -498,9 +498,9 @@
     (f db-info)
     (jdbc/with-transaction [tx (ds db-info)]
       (f (assoc db-info
-                :datasource tx
-                :conn tx
-                :sqlite-write-tx? true)))))
+           :datasource tx
+           :conn tx
+           :sqlite-write-tx? true)))))
 
 (defn- sqlite-write-tx!
   "Central SQLite write boundary. Serializes Vis writes inside this JVM,
@@ -533,19 +533,19 @@
 (defn db-log! [db-info entry]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (execute! tx-info
-                                  {:insert-into :log
-                                   :values [(cond-> {:id         (new-id)
-                                                     :level      (->kw (:level entry))
-                                                     :event      (str (:event entry))
-                                                     :created_at (now-ms)}
-                                              (:data entry)                  (assoc :data (:data entry))
-                                              (:session-soul-id entry)  (assoc :session_soul_id (->id (:session-soul-id entry)))
-                                              (:session-state-id entry) (assoc :session_state_id (->id (:session-state-id entry)))
-                                              (:session-turn-soul-id entry)         (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
-                                              (:session-turn-state-id entry)        (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
-                                              (:iteration-id entry)          (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})))))
+      (fn [tx-info]
+        (execute! tx-info
+          {:insert-into :log
+           :values [(cond-> {:id         (new-id)
+                             :level      (->kw (:level entry))
+                             :event      (str (:event entry))
+                             :created_at (now-ms)}
+                      (:data entry)                  (assoc :data (:data entry))
+                      (:session-soul-id entry)  (assoc :session_soul_id (->id (:session-soul-id entry)))
+                      (:session-state-id entry) (assoc :session_state_id (->id (:session-state-id entry)))
+                      (:session-turn-soul-id entry)         (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
+                      (:session-turn-state-id entry)        (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
+                      (:iteration-id entry)          (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})))))
 
 ;; =============================================================================
 ;; Workspace - trunk-native work units
@@ -592,26 +592,26 @@
     (let [ws-id (->id (or id (new-uuid)))
           now   (now-ms)]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:insert-into :workspace
-                                     :values [{:id          ws-id
-                                               :repo_id     repo-id
-                                               :repo_root   repo-root
-                                               :root        root
-                                               :label       label
-                                               :fork_ms     fork-ms
-                                               :apply_fork_ms apply-fork-ms
-                                               :workspace_kind (->kw (or workspace-kind
-                                                                         (if fork-ms :draft :trunk)))
-                                               :workspace_backend (->kw (or workspace-backend :live))
-                                               :parent_workspace_id (some-> parent-workspace-id ->ref)
-                                               :state       (->kw (or state :active))
-                                               :created_at  now}]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id ws-id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:insert-into :workspace
+             :values [{:id          ws-id
+                       :repo_id     repo-id
+                       :repo_root   repo-root
+                       :root        root
+                       :label       label
+                       :fork_ms     fork-ms
+                       :apply_fork_ms apply-fork-ms
+                       :workspace_kind (->kw (or workspace-kind
+                                               (if fork-ms :draft :trunk)))
+                       :workspace_backend (->kw (or workspace-backend :live))
+                       :parent_workspace_id (some-> parent-workspace-id ->ref)
+                       :state       (->kw (or state :active))
+                       :created_at  now}]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id ws-id]})))))))
 
 (defn db-workspace-update-state!
   "Transition `workspace-id` to `new-state` (`:active` | `:discarded`).
@@ -624,15 +624,15 @@
           set (cond-> {:state to}
                 (= "discarded" to) (assoc :discarded_at now))]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    set
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    set
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-workspace-update-label!
   "Set the human-friendly `:label` override. Pass nil to clear the
@@ -641,15 +641,15 @@
   (when (and (ds db-info) workspace-id)
     (let [id (->ref workspace-id)]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    {:label label}
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:label label}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-workspace-set-filesystem-roots!
   "Persist the workspace's extra filesystem roots as a JSON array of canonical
@@ -661,15 +661,15 @@
           rs    (vec (distinct (filter some? roots)))
           stored (when (seq rs) (->json rs))]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    {:filesystem_roots stored}
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:filesystem_roots stored}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
@@ -679,15 +679,15 @@
     (let [id  (->ref workspace-id)
           now (now-ms)]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    {:last_focused_at_ms now}
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:last_focused_at_ms now}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-repo-focus-get
   "Return the `workspace_id` currently pinned as the focus pointer for
@@ -695,11 +695,11 @@
   [db-info repo-id]
   (when (and (ds db-info) repo-id)
     (some-> (query-one! db-info
-                        {:select [:workspace_id :updated_at_ms]
-                         :from   :repo_focus
-                         :where  [:= :repo_id repo-id]})
-            (as-> r {:workspace-id   (->uuid (:workspace_id r))
-                     :updated-at-ms  (:updated_at_ms r)}))))
+              {:select [:workspace_id :updated_at_ms]
+               :from   :repo_focus
+               :where  [:= :repo_id repo-id]})
+      (as-> r {:workspace-id   (->uuid (:workspace_id r))
+               :updated-at-ms  (:updated_at_ms r)}))))
 
 (defn db-repo-focus-set!
   "Upsert the per-repo focus pointer to `workspace-id`. Updates
@@ -709,25 +709,25 @@
     (let [ws-id (->ref workspace-id)
           now   (now-ms)]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
+        (fn [tx-info]
           ;; SQLite UPSERT: INSERT ... ON CONFLICT REPLACE the row.
-                          (execute! tx-info
-                                    {:insert-into :repo_focus
-                                     :values [{:repo_id       repo-id
-                                               :workspace_id  ws-id
-                                               :updated_at_ms now}]
-                                     :on-conflict :repo_id
-                                     :do-update-set {:workspace_id  ws-id
-                                                     :updated_at_ms now}})
-                          {:workspace-id   (->uuid ws-id)
-                           :updated-at-ms  now})))))
+          (execute! tx-info
+            {:insert-into :repo_focus
+             :values [{:repo_id       repo-id
+                       :workspace_id  ws-id
+                       :updated_at_ms now}]
+             :on-conflict :repo_id
+             :do-update-set {:workspace_id  ws-id
+                             :updated_at_ms now}})
+          {:workspace-id   (->uuid ws-id)
+           :updated-at-ms  now})))))
 
 (defn db-workspace-get [db-info workspace-id]
   (when (and (ds db-info) workspace-id)
     (row->workspace
-     (query-one! db-info
-                 {:select [:*] :from :workspace
-                  :where  [:= :id (->ref workspace-id)]}))))
+      (query-one! db-info
+        {:select [:*] :from :workspace
+         :where  [:= :id (->ref workspace-id)]}))))
 
 (defn db-workspace-list-by-repo
   "List workspaces in `repo-id`, optionally filtered to a `state-set` of
@@ -739,11 +739,11 @@
                    (seq state-set)
                    (conj [:in :state (mapv ->kw state-set)]))]
        (mapv row->workspace
-             (query! db-info
-                     {:select   [:*]
-                      :from     :workspace
-                      :where    where
-                      :order-by [[:created_at :desc]]}))))))
+         (query! db-info
+           {:select   [:*]
+            :from     :workspace
+            :where    where
+            :order-by [[:created_at :desc]]}))))))
 
 (defn db-workspace-for-session
   "Return the workspace pinned to `session-state-id`, or nil. Always
@@ -753,11 +753,11 @@
   (when (and (ds db-info) session-state-id)
     (let [sid (->ref session-state-id)]
       (row->workspace
-       (query-one! db-info
-                   {:select [:w.*]
-                    :from   [[:session_state :s]]
-                    :join   [[:workspace :w] [:= :w.id :s.workspace_id]]
-                    :where  [:= :s.id sid]})))))
+        (query-one! db-info
+          {:select [:w.*]
+           :from   [[:session_state :s]]
+           :join   [[:workspace :w] [:= :w.id :s.workspace_id]]
+           :where  [:= :s.id sid]})))))
 
 (defn db-session-state-list-for-workspace
   "List session_state rows whose `workspace_id` = `workspace-id`,
@@ -769,18 +769,18 @@
   (when (and (ds db-info) workspace-id)
     (let [ws-id (->ref workspace-id)]
       (mapv
-       (fn [r]
-         {:id               (->uuid (:id r))
-          :session-soul-id  (->uuid (:session_soul_id r))
-          :title            (:title r)
-          :version          (:version r)
-          :workspace-id     (->uuid (:workspace_id r))
-          :created-at       (->date (:created_at r))})
-       (query! db-info
-               {:select   [:*]
-                :from     :session_state
-                :where    [:= :workspace_id ws-id]
-                :order-by [[:version :desc]]})))))
+        (fn [r]
+          {:id               (->uuid (:id r))
+           :session-soul-id  (->uuid (:session_soul_id r))
+           :title            (:title r)
+           :version          (:version r)
+           :workspace-id     (->uuid (:workspace_id r))
+           :created-at       (->date (:created_at r))})
+        (query! db-info
+          {:select   [:*]
+           :from     :session_state
+           :where    [:= :workspace_id ws-id]
+           :order-by [[:version :desc]]})))))
 
 (defn db-session-state-set-workspace!
   "Pin `session-state-id` to `workspace-id`. Caller guarantees the
@@ -789,13 +789,13 @@
   [db-info session-state-id workspace-id]
   (when (and (ds db-info) session-state-id workspace-id)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (execute! tx-info
-                                  {:update :session_state
-                                   :set    {:workspace_id (->ref workspace-id)}
-                                   :where  [:= :id (->ref session-state-id)]})
-                        {:session-state-id (->uuid session-state-id)
-                         :workspace-id     (->uuid workspace-id)}))))
+      (fn [tx-info]
+        (execute! tx-info
+          {:update :session_state
+           :set    {:workspace_id (->ref workspace-id)}
+           :where  [:= :id (->ref session-state-id)]})
+        {:session-state-id (->uuid session-state-id)
+         :workspace-id     (->uuid workspace-id)}))))
 
 ;; =============================================================================
 ;; Session - session_soul + session_state
@@ -818,46 +818,46 @@
                    workspace-id parent-state-id]}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
-                    {:type :persistance/missing-workspace-id})))
+             {:type :persistance/missing-workspace-id})))
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id  (new-uuid)
-                              state-id (new-uuid)
-                              now      (now-ms)]
-                          (execute! tx-info
-                                    {:insert-into :session_soul
-                                     :values [(cond-> {:id          (str soul-id)
-                                                       :channel     (name (->kw (or channel :tui)))
-                                                       :external_id (some-> external-id str)
-                                                       :created_at  now}
+      (fn [tx-info]
+        (let [soul-id  (new-uuid)
+              state-id (new-uuid)
+              now      (now-ms)]
+          (execute! tx-info
+            {:insert-into :session_soul
+             :values [(cond-> {:id          (str soul-id)
+                               :channel     (name (->kw (or channel :tui)))
+                               :external_id (some-> external-id str)
+                               :created_at  now}
                         ;; sub_loop child → cross-soul link to the parent state;
                         ;; keeps the child OUT of the top-level list (queryable
                         ;; sub-tree + cascade-delete with the parent).
-                                                parent-state-id (assoc :parent_state_id (->ref parent-state-id)))]})
-                          (execute! tx-info
-                                    {:insert-into :session_state
-                                     :values [(cond-> {:id                   (str state-id)
-                                                       :session_soul_id      (str soul-id)
-                                                       :workspace_id         (->ref workspace-id)
-                                                       :title                title
-                                                       :version              0
-                                                       :system_prompt        (or system-prompt "")
-                                                       :llm_root_model       (or model "")
-                                                       :created_at           now}
-                                                provider (assoc :llm_root_provider (name (->kw provider))))]})
-                          soul-id)))))
+                        parent-state-id (assoc :parent_state_id (->ref parent-state-id)))]})
+          (execute! tx-info
+            {:insert-into :session_state
+             :values [(cond-> {:id                   (str state-id)
+                               :session_soul_id      (str soul-id)
+                               :workspace_id         (->ref workspace-id)
+                               :title                title
+                               :version              0
+                               :system_prompt        (or system-prompt "")
+                               :llm_root_model       (or model "")
+                               :created_at           now}
+                        provider (assoc :llm_root_provider (name (->kw provider))))]})
+          soul-id)))))
 
 (defn- latest-state-for [db-info soul-id-s]
   (query-one! db-info
-              {:select [:*]
-               :from   :session_state
-               :where  [:and
-                        [:= :session_soul_id soul-id-s]
-                        [:= :version
-                         {:select [[[:max :version]]]
-                          :from   :session_state
-                          :where  [:= :session_soul_id soul-id-s]}]]}))
+    {:select [:*]
+     :from   :session_state
+     :where  [:and
+              [:= :session_soul_id soul-id-s]
+              [:= :version
+               {:select [[[:max :version]]]
+                :from   :session_state
+                :where  [:= :session_soul_id soul-id-s]}]]}))
 
 (defn db-get-session [db-info session-id]
   (when (and (ds db-info) session-id)
@@ -881,8 +881,8 @@
     (= :latest selector)
     (when (ds db-info)
       (when-let [row (query-one! db-info
-                                 {:select [:id] :from :session_soul
-                                  :order-by [[:created_at :desc]] :limit 1})]
+                       {:select [:id] :from :session_soul
+                        :order-by [[:created_at :desc]] :limit 1})]
         (->uuid (:id row))))
     (and (vector? selector) (= :id (first selector))) (->uuid (second selector))
     (uuid? selector) selector
@@ -908,40 +908,40 @@
                :version     (:version row)
                :fork-count  (or (:fork_count row) 0)
                :created-at  (->date (:created_at row))})
-            (query! db-info
-                    {:select [:cs.id :cs.channel :cs.external_id :cs.created_at
-                              [:s.title :state_title]
-                              :s.version
-                              [{:select [[[:count :*]]]
-                                :from   [[:session_state :child]]
-                                :where  [:and
-                                         [:= :child.session_soul_id :cs.id]
-                                         [:not= :child.parent_state_id nil]]}
-                               :fork_count]]
-                     :from   [[:session_soul :cs]]
-                     :join   [[:session_state :s]
-                              [:= :s.session_soul_id :cs.id]]
-                     :where  (into [:and
+        (query! db-info
+          {:select [:cs.id :cs.channel :cs.external_id :cs.created_at
+                    [:s.title :state_title]
+                    :s.version
+                    [{:select [[[:count :*]]]
+                      :from   [[:session_state :child]]
+                      :where  [:and
+                               [:= :child.session_soul_id :cs.id]
+                               [:not= :child.parent_state_id nil]]}
+                     :fork_count]]
+           :from   [[:session_soul :cs]]
+           :join   [[:session_state :s]
+                    [:= :s.session_soul_id :cs.id]]
+           :where  (into [:and
                           ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
                           ;; hang off their parent's sub-tree, never the session list.
-                                    [:= :cs.parent_state_id nil]
-                                    [:= :s.version
-                                     {:select [[[:max :s2.version]]]
-                                      :from   [[:session_state :s2]]
-                                      :where  [:= :s2.session_soul_id :cs.id]}]]
-                                   (when-not all? [[:= :cs.channel ch]]))
-                     :order-by [[:cs.created_at :desc]]})))))
+                          [:= :cs.parent_state_id nil]
+                          [:= :s.version
+                           {:select [[[:max :s2.version]]]
+                            :from   [[:session_state :s2]]
+                            :where  [:= :s2.session_soul_id :cs.id]}]]
+                     (when-not all? [[:= :cs.channel ch]]))
+           :order-by [[:cs.created_at :desc]]})))))
 
 (defn db-find-session-by-external [db-info channel external-id]
   (when (and (ds db-info) external-id)
     (let [ch  (name (->kw channel))
           ext (str external-id)]
       (when-let [row (query-one! db-info
-                                 {:select [:id]
-                                  :from   :session_soul
-                                  :where  [:and
-                                           [:= :channel ch]
-                                           [:= :external_id ext]]})]
+                       {:select [:id]
+                        :from   :session_soul
+                        :where  [:and
+                                 [:= :channel ch]
+                                 [:= :external_id ext]]})]
         (->uuid (:id row))))))
 
 (defn db-latest-session-state-id
@@ -959,21 +959,21 @@
 (defn db-update-session-title! [db-info session-id title]
   (when (and (ds db-info) session-id)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id-s (->ref session-id)]
-                          (when-let [state (latest-state-for tx-info soul-id-s)]
-                            (execute! tx-info
-                                      {:update :session_state
-                                       :set    {:title title}
-                                       :where  [:= :id (:id state)]})))))))
+      (fn [tx-info]
+        (let [soul-id-s (->ref session-id)]
+          (when-let [state (latest-state-for tx-info soul-id-s)]
+            (execute! tx-info
+              {:update :session_state
+               :set    {:title title}
+               :where  [:= :id (:id state)]})))))))
 
 (defn db-delete-session-tree! [db-info session-soul-id]
   (when (and (ds db-info) session-soul-id)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (execute! tx-info
-                                  {:delete-from :session_soul
-                                   :where [:= :id (->id session-soul-id)]})))))
+      (fn [tx-info]
+        (execute! tx-info
+          {:delete-from :session_soul
+           :where [:= :id (->id session-soul-id)]})))))
 
 ;; =============================================================================
 ;; Fork - branch a session at a point
@@ -998,16 +998,16 @@
   (if (and (ds db-info) session-id)
     (let [soul-id-s (->ref session-id)
           rows (query! db-info
-                       {:select [:cs.id :cs.version :cs.parent_state_id :cs.title
-                                 :cs.system_prompt :cs.llm_root_provider :cs.llm_root_model
-                                 :cs.created_at
-                                 [{:select [[[:count :*]]]
-                                   :from   :session_turn_soul
-                                   :where  [:= :session_turn_soul.session_state_id :cs.id]}
-                                  :turn_count]]
-                        :from   [[:session_state :cs]]
-                        :where  [:= :cs.session_soul_id soul-id-s]
-                        :order-by [[:cs.version :asc]]})]
+                 {:select [:cs.id :cs.version :cs.parent_state_id :cs.title
+                           :cs.system_prompt :cs.llm_root_provider :cs.llm_root_model
+                           :cs.created_at
+                           [{:select [[[:count :*]]]
+                             :from   :session_turn_soul
+                             :where  [:= :session_turn_soul.session_state_id :cs.id]}
+                            :turn_count]]
+                  :from   [[:session_state :cs]]
+                  :where  [:= :cs.session_soul_id soul-id-s]
+                  :order-by [[:cs.version :asc]]})]
       (mapv (fn [row]
               (cond-> {:state-id        (->uuid (:id row))
                        :version         (:version row)
@@ -1018,7 +1018,7 @@
                 (:system_prompt row)     (assoc :system-prompt (:system_prompt row))
                 (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
                 (:llm_root_model row)    (assoc :model (:llm_root_model row))))
-            rows))
+        rows))
     []))
 
 (defn db-list-session-turn-states
@@ -1039,17 +1039,17 @@
   (if (and (ds db-info) session-turn-id)
     (let [soul-id-s (->ref session-turn-id)
           rows (query! db-info
-                       {:select [:qst.id :qst.version :qst.forked_from_session_turn_state_id
-                                 :qst.status :qst.prior_outcome
-                                 :qst.llm_root_provider :qst.llm_root_model
-                                 :qst.created_at
-                                 [{:select [[[:count :*]]]
-                                   :from   :session_turn_iteration
-                                   :where  [:= :session_turn_iteration.session_turn_state_id :qst.id]}
-                                  :session_turn_iteration_count]]
-                        :from   [[:session_turn_state :qst]]
-                        :where  [:= :qst.session_turn_soul_id soul-id-s]
-                        :order-by [[:qst.version :asc]]})]
+                 {:select [:qst.id :qst.version :qst.forked_from_session_turn_state_id
+                           :qst.status :qst.prior_outcome
+                           :qst.llm_root_provider :qst.llm_root_model
+                           :qst.created_at
+                           [{:select [[[:count :*]]]
+                             :from   :session_turn_iteration
+                             :where  [:= :session_turn_iteration.session_turn_state_id :qst.id]}
+                            :session_turn_iteration_count]]
+                  :from   [[:session_turn_state :qst]]
+                  :where  [:= :qst.session_turn_soul_id soul-id-s]
+                  :order-by [[:qst.version :asc]]})]
       (mapv (fn [row]
               (cond-> {:state-id                    (->uuid (:id row))
                        :version                     (:version row)
@@ -1060,7 +1060,7 @@
                 (:prior_outcome row)     (assoc :prior-outcome (->kw-back (:prior_outcome row)))
                 (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
                 (:llm_root_model row)    (assoc :model (:llm_root_model row))))
-            rows))
+        rows))
     []))
 
 (defn db-fork-session!
@@ -1077,38 +1077,38 @@
   [db-info session-id {:keys [system-prompt provider model title workspace-id]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session! requires :workspace-id (1:1 invariant)"
-                    {:type :persistance/missing-workspace-id})))
+             {:type :persistance/missing-workspace-id})))
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id-s (->ref session-id)]
-                          (when-let [current (latest-state-for tx-info soul-id-s)]
-                            (let [new-id       (new-uuid)
-                                  now          (now-ms)
-                                  parent-title (:title current)
-                                  fork-title   (or title (str parent-title " (fork)"))
-                                  new-version  (inc (:version current))]
-                              (execute! tx-info
-                                        {:insert-into :session_state
-                                         :values [(cond-> {:id                   (str new-id)
-                                                           :session_soul_id      soul-id-s
-                                                           :parent_state_id      (:id current)
-                                                           :workspace_id         (->ref workspace-id)
-                                                           :title                fork-title
-                                                           :version              new-version
-                                                           :system_prompt        (or system-prompt (:system_prompt current))
-                                                           :llm_root_model       (or model (:llm_root_model current))
-                                                           :created_at           now}
-                                                    (or provider (:llm_root_provider current))
-                                                    (assoc :llm_root_provider (name (->kw (or provider (:llm_root_provider current))))))]})
+      (fn [tx-info]
+        (let [soul-id-s (->ref session-id)]
+          (when-let [current (latest-state-for tx-info soul-id-s)]
+            (let [new-id       (new-uuid)
+                  now          (now-ms)
+                  parent-title (:title current)
+                  fork-title   (or title (str parent-title " (fork)"))
+                  new-version  (inc (:version current))]
+              (execute! tx-info
+                {:insert-into :session_state
+                 :values [(cond-> {:id                   (str new-id)
+                                   :session_soul_id      soul-id-s
+                                   :parent_state_id      (:id current)
+                                   :workspace_id         (->ref workspace-id)
+                                   :title                fork-title
+                                   :version              new-version
+                                   :system_prompt        (or system-prompt (:system_prompt current))
+                                   :llm_root_model       (or model (:llm_root_model current))
+                                   :created_at           now}
+                            (or provider (:llm_root_provider current))
+                            (assoc :llm_root_provider (name (->kw (or provider (:llm_root_provider current))))))]})
               ;; Mark parent state as forked (idempotent)
-                              (when (and parent-title
-                                         (not (str/includes? parent-title "[forked]")))
-                                (execute! tx-info
-                                          {:update :session_state
-                                           :set    {:title (str parent-title " [forked]")}
-                                           :where  [:= :id (:id current)]}))
-                              new-id)))))))
+              (when (and parent-title
+                      (not (str/includes? parent-title "[forked]")))
+                (execute! tx-info
+                  {:update :session_state
+                   :set    {:title (str parent-title " [forked]")}
+                   :where  [:= :id (:id current)]}))
+              new-id)))))))
 
 ;; =============================================================================
 ;; State resolution
@@ -1128,9 +1128,9 @@
              acc      []]
         (if state-id
           (if-let [row (query-one! db-info
-                                   {:select [:id :parent_state_id]
-                                    :from   :session_state
-                                    :where  [:= :id state-id]})]
+                         {:select [:id :parent_state_id]
+                          :from   :session_state
+                          :where  [:= :id state-id]})]
             (recur (:parent_state_id row) (conj acc (:id row)))
             (vec (reverse acc)))
           (vec (reverse acc)))))))
@@ -1151,9 +1151,9 @@
    so the system knows to re-eval from the `expression` column to reconstruct them."
   [v]
   (or (fn? v)
-      (instance? clojure.lang.Var v)
-      (instance? java.util.concurrent.Future v)
-      (some-> v class .getName (str/starts-with? "org.graalvm.polyglot."))))
+    (instance? clojure.lang.Var v)
+    (instance? java.util.concurrent.Future v)
+    (some-> v class .getName (str/starts-with? "org.graalvm.polyglot."))))
 
 (defn- freeze-safe
   "Prepare `v` for nippy serialization.
@@ -1185,11 +1185,11 @@
      (map? v)                         (if (zero? depth)
                                         {:vis/ref :depth-exceeded}
                                         (persistent!
-                                         (reduce-kv
-                                          (fn [m k val]
-                                            (assoc! m k (freeze-safe val (dec depth))))
-                                          (transient {})
-                                          v)))
+                                          (reduce-kv
+                                            (fn [m k val]
+                                              (assoc! m k (freeze-safe val (dec depth))))
+                                            (transient {})
+                                            v)))
      (vector? v)                      (if (zero? depth)
                                         {:vis/ref :depth-exceeded}
                                         (mapv #(freeze-safe % (dec depth)) v))
@@ -1213,9 +1213,9 @@
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let [row (query-one! db-info
-                          {:select [:llm_pref_provider :llm_pref_model]
-                           :from   :session_soul
-                           :where  [:= :id (->ref session-id)]})
+                {:select [:llm_pref_provider :llm_pref_model]
+                 :from   :session_soul
+                 :where  [:= :id (->ref session-id)]})
           m   (:llm_pref_model row)]
       (when m {:provider (:llm_pref_provider row) :model m}))))
 
@@ -1228,9 +1228,9 @@
     (let [m (some-> model str str/trim not-empty)
           p (some-> provider str str/trim not-empty)]
       (execute! db-info
-                {:update :session_soul
-                 :set    {:llm_pref_provider (when m p) :llm_pref_model m}
-                 :where  [:= :id (->ref session-id)]}))
+        {:update :session_soul
+         :set    {:llm_pref_provider (when m p) :llm_pref_model m}
+         :where  [:= :id (->ref session-id)]}))
     nil))
 
 ;; =============================================================================
@@ -1243,45 +1243,45 @@
   [db-info {:keys [parent-session-id user-request status]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id        (new-uuid)
-                              state-id       (new-uuid)
-                              now            (now-ms)
-                              state-id-s     (latest-state-id tx-info parent-session-id)
-                              turn-position  (or (:next_position
-                                                  (query-one! tx-info
-                                                              {:select [[[:coalesce [:+ [:max :position] 1] 1]
-                                                                         :next_position]]
-                                                               :from   :session_turn_soul
-                                                               :where  [:= :session_state_id state-id-s]}))
-                                                 1)
-                              user-request-s (or user-request "")]
-                          (execute! tx-info
-                                    {:insert-into :session_turn_soul
-                                     :values [{:id                    (str soul-id)
-                                               :session_state_id state-id-s
-                                               :position              turn-position
-                                               :user_request          user-request-s
-                                               :created_at            now}]})
-                          (execute! tx-info
-                                    {:insert-into :session_turn_state
-                                     :values [{:id            (str state-id)
-                                               :session_turn_soul_id (str soul-id)
-                                               :version       0
-                                               :status        (normalize-status (or status :running))
-                                               :created_at    now}]})
-                          soul-id)))))
+      (fn [tx-info]
+        (let [soul-id        (new-uuid)
+              state-id       (new-uuid)
+              now            (now-ms)
+              state-id-s     (latest-state-id tx-info parent-session-id)
+              turn-position  (or (:next_position
+                                  (query-one! tx-info
+                                    {:select [[[:coalesce [:+ [:max :position] 1] 1]
+                                               :next_position]]
+                                     :from   :session_turn_soul
+                                     :where  [:= :session_state_id state-id-s]}))
+                               1)
+              user-request-s (or user-request "")]
+          (execute! tx-info
+            {:insert-into :session_turn_soul
+             :values [{:id                    (str soul-id)
+                       :session_state_id state-id-s
+                       :position              turn-position
+                       :user_request          user-request-s
+                       :created_at            now}]})
+          (execute! tx-info
+            {:insert-into :session_turn_state
+             :values [{:id            (str state-id)
+                       :session_turn_soul_id (str soul-id)
+                       :version       0
+                       :status        (normalize-status (or status :running))
+                       :created_at    now}]})
+          soul-id)))))
 
 (defn- latest-session-turn-state [db-info session-turn-soul-id-s]
   (query-one! db-info
-              {:select [:*]
-               :from   :session_turn_state
-               :where  [:and
-                        [:= :session_turn_soul_id session-turn-soul-id-s]
-                        [:= :version
-                         {:select [[[:max :version]]]
-                          :from   :session_turn_state
-                          :where  [:= :session_turn_soul_id session-turn-soul-id-s]}]]}))
+    {:select [:*]
+     :from   :session_turn_state
+     :where  [:and
+              [:= :session_turn_soul_id session-turn-soul-id-s]
+              [:= :version
+               {:select [[[:max :version]]]
+                :from   :session_turn_state
+                :where  [:= :session_turn_soul_id session-turn-soul-id-s]}]]}))
 
 (defn db-retry-session-turn!
   "Create a new session_turn_state (version N+1) for an existing session_turn_soul.
@@ -1290,23 +1290,23 @@
   [db-info session-turn-soul-id {:keys [status provider model]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id-s (->ref session-turn-soul-id)
-                              current   (latest-session-turn-state tx-info soul-id-s)
-                              new-id    (new-uuid)
-                              now       (now-ms)]
-                          (when current
-                            (execute! tx-info
-                                      {:insert-into :session_turn_state
-                                       :values [(cond-> {:id                         (str new-id)
-                                                         :session_turn_soul_id              soul-id-s
-                                                         :forked_from_session_turn_state_id (:id current)
-                                                         :version                    (inc (:version current))
-                                                         :status                     (normalize-status (or status :running))
-                                                         :llm_root_model             model
-                                                         :created_at                 now}
-                                                  provider (assoc :llm_root_provider (name (->kw provider))))]})
-                            new-id))))))
+      (fn [tx-info]
+        (let [soul-id-s (->ref session-turn-soul-id)
+              current   (latest-session-turn-state tx-info soul-id-s)
+              new-id    (new-uuid)
+              now       (now-ms)]
+          (when current
+            (execute! tx-info
+              {:insert-into :session_turn_state
+               :values [(cond-> {:id                         (str new-id)
+                                 :session_turn_soul_id              soul-id-s
+                                 :forked_from_session_turn_state_id (:id current)
+                                 :version                    (inc (:version current))
+                                 :status                     (normalize-status (or status :running))
+                                 :llm_root_model             model
+                                 :created_at                 now}
+                          provider (assoc :llm_root_provider (name (->kw provider))))]})
+            new-id))))))
 
 (defn db-update-session-turn!
   "Update the latest session_turn_state with final outcome.
@@ -1319,15 +1319,15 @@
                                    status tokens cost prior-outcome ctx]}]
   (when (and (ds db-info) session-turn-id)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [soul-id-s (->ref session-turn-id)
-                              state     (latest-session-turn-state tx-info soul-id-s)]
-                          (when state
-                            (execute! tx-info
-                                      {:update :session_turn_state
-                                       :set    (cond-> {:status                   (normalize-status (or status :done))
-                                                        :iteration_count          (long (or iteration-count 0))
-                                                        :duration_ms              (long (or duration-ms 0))
+      (fn [tx-info]
+        (let [soul-id-s (->ref session-turn-id)
+              state     (latest-session-turn-state tx-info soul-id-s)]
+          (when state
+            (execute! tx-info
+              {:update :session_turn_state
+               :set    (cond-> {:status                   (normalize-status (or status :done))
+                                :iteration_count          (long (or iteration-count 0))
+                                :duration_ms              (long (or duration-ms 0))
                                 ;; Phase B canonical columns. :input is TOTAL
                                 ;; (Anthropic-additive raw values summed at the
                                 ;; canonical-normalizer boundary in svar 0.6+).
@@ -1335,26 +1335,26 @@
                                 ;; invariant when the upstream map omits it
                                 ;; (older accumulators don't track it explicitly):
                                 ;;   regular = input - cache-write - cache-read
-                                                        :input_tokens             (long (or (:input tokens) 0))
-                                                        :input_regular_tokens     (long (or (:input-regular tokens)
-                                                                                            (max 0 (- (long (or (:input tokens) 0))
-                                                                                                      (long (or (:cache-created tokens) 0))
-                                                                                                      (long (or (:cached tokens) 0))))))
-                                                        :input_cache_write_tokens (long (or (:cache-created tokens) 0))
-                                                        :input_cache_read_tokens  (long (or (:cached tokens) 0))
-                                                        :output_tokens            (long (or (:output tokens) 0))
-                                                        :output_reasoning_tokens  (long (or (:reasoning tokens) 0))
-                                                        :total_cost_usd           (double (or (:total-cost cost) 0.0))}
-                                                 (:model cost)    (assoc :llm_root_model (str (:model cost)))
-                                                 (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
-                                                 (some? answer-markdown) (assoc :answer_markdown answer-markdown)
-                                                 prior-outcome    (assoc :prior_outcome (name prior-outcome))
+                                :input_tokens             (long (or (:input tokens) 0))
+                                :input_regular_tokens     (long (or (:input-regular tokens)
+                                                                  (max 0 (- (long (or (:input tokens) 0))
+                                                                           (long (or (:cache-created tokens) 0))
+                                                                           (long (or (:cached tokens) 0))))))
+                                :input_cache_write_tokens (long (or (:cache-created tokens) 0))
+                                :input_cache_read_tokens  (long (or (:cached tokens) 0))
+                                :output_tokens            (long (or (:output tokens) 0))
+                                :output_reasoning_tokens  (long (or (:reasoning tokens) 0))
+                                :total_cost_usd           (double (or (:total-cost cost) 0.0))}
+                         (:model cost)    (assoc :llm_root_model (str (:model cost)))
+                         (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
+                         (some? answer-markdown) (assoc :answer_markdown answer-markdown)
+                         prior-outcome    (assoc :prior_outcome (name prior-outcome))
                          ;; Nippy-encode the CTX snapshot as of end-of-turn.
                          ;; Live CTX = this row's ctx on the latest turn-state
                          ;; for the latest turn-soul; history = walking the
                          ;; soul chain.
-                                                 (some? ctx)      (assoc :ctx (->blob (freeze-safe ctx))))
-                                       :where  [:= :id (:id state)]})))))))
+                         (some? ctx)      (assoc :ctx (->blob (freeze-safe ctx))))
+               :where  [:= :id (:id state)]})))))))
 
 ;; Extra workflow persistence removed.
 
@@ -1366,8 +1366,8 @@
   [opts]
   (when-not (contains? opts :code)
     (throw (ex-info "db-store-iteration! requires flat :code"
-                    {:type :vis.persistence/iteration-code-required
-                     :keys (keys opts)})))
+             {:type :vis.persistence/iteration-code-required
+              :keys (keys opts)})))
   (:code opts))
 
 (defn- prepare-iteration-columns
@@ -1389,10 +1389,10 @@
   [{:keys [forms duration-ms] :as opts}]
   (let [code         (require-iteration-code! opts)
         preflight-only? (and (seq forms)
-                             (every? (fn [f]
-                                       (let [s (some-> (:src f) str clojure.string/triml)]
-                                         (and s (clojure.string/starts-with? s "(vis/preflight-error"))))
-                                     forms))
+                          (every? (fn [f]
+                                    (let [s (some-> (:src f) str clojure.string/triml)]
+                                      (and s (clojure.string/starts-with? s "(vis/preflight-error"))))
+                            forms))
         code-out (if preflight-only? "" (str code))]
     (cond-> {:code code-out}
       (seq forms)              (assoc :tool_calls (->blob (freeze-safe (vec forms))))
@@ -1453,67 +1453,67 @@
             :as opts}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [iteration-id   (new-uuid)
-                              iteration-id-s (str iteration-id)
-                              now            (now-ms)
-                              session-turn-soul-id-s (when session-turn-id (->ref session-turn-id))
+      (fn [tx-info]
+        (let [iteration-id   (new-uuid)
+              iteration-id-s (str iteration-id)
+              now            (now-ms)
+              session-turn-soul-id-s (when session-turn-id (->ref session-turn-id))
               ;; Need session_turn_state_id (iteration FK points to session_turn_state)
-                              session-turn-state (when session-turn-soul-id-s
-                                                   (latest-session-turn-state tx-info session-turn-soul-id-s))
-                              session-turn-state-id-s (:id session-turn-state)
+              session-turn-state (when session-turn-soul-id-s
+                                   (latest-session-turn-state tx-info session-turn-soul-id-s))
+              session-turn-state-id-s (:id session-turn-state)
               ;; Compute position (1-indexed within this session_turn_state).
               ;; Next position is `MAX(position)+1` (monotonic and survives
               ;; row deletions), aliased as `:next_position` so the SQL
               ;; column name and the Clojure key line up. The
               ;; `UNIQUE (session_turn_state_id, position)` constraint
               ;; rejects any duplicate.
-                              position  (or (:next_position
-                                             (query-one! tx-info
-                                                         {:select [[[:coalesce [:+ [:max :position] 1] 1]
-                                                                    :next_position]]
-                                                          :from   :session_turn_iteration
-                                                          :where  [:= :session_turn_state_id session-turn-state-id-s]}))
-                                            1)
+              position  (or (:next_position
+                             (query-one! tx-info
+                               {:select [[[:coalesce [:+ [:max :position] 1] 1]
+                                          :next_position]]
+                                :from   :session_turn_iteration
+                                :where  [:= :session_turn_state_id session-turn-state-id-s]}))
+                          1)
               ;; When the caller hands us only legacy :llm-provider /
               ;; :llm-model (no routing summary), synthesise an `actual`
               ;; routing record so the typed `llm_actual_*` columns stay
               ;; populated. This is the canonical landing spot for
               ;; "what provider/model answered".
-                              routing (or llm-routing
-                                          (when (or llm-provider llm-model)
-                                            (cond-> {}
-                                              llm-provider (assoc-in [:actual :provider] (->kw llm-provider))
-                                              llm-model    (assoc-in [:actual :model] (str llm-model)))))
-                              raw-response-s (some-> llm-raw-response str)]
+              routing (or llm-routing
+                        (when (or llm-provider llm-model)
+                          (cond-> {}
+                            llm-provider (assoc-in [:actual :provider] (->kw llm-provider))
+                            llm-model    (assoc-in [:actual :model] (str llm-model)))))
+              raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
-                          (let [iteration-cols (prepare-iteration-columns opts)]
-                            (execute! tx-info
-                                      {:insert-into :session_turn_iteration
-                                       :values [(cond-> (merge {:id                   iteration-id-s
-                                                                :session_turn_state_id session-turn-state-id-s
-                                                                :position             position
-                                                                :status               (normalize-status (cond answer :done error :error (:error iteration-cols) :error :else :done))
-                                                                :llm_system_prompt    (when (seq llm-messages)
-                                                                                        (:content (first (filter #(= "system" (:role %)) llm-messages))))
-                                                                :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
-                                                                :llm_thinking         (str/trim (or thinking ""))
-                                                                :llm_assistant_prose  (str/trim (or assistant-prose ""))
-                                                                :llm_full_duration_ms (long (or llm-full-duration-ms 0))
-                                                                :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                                                :llm_executable_code_blocks (when (some? llm-executable-blocks)
-                                                                                              (->json (vec llm-executable-blocks)))
-                                                                :llm_assistant_message (when (some? llm-assistant-message)
-                                                                                         (->json llm-assistant-message))
-                                                                :created_at           now
-                                                                :finished_at          now}
-                                                               iteration-cols)
-                                                  raw-response-s
-                                                  (assoc :llm_raw_response         raw-response-s
-                                                         :llm_raw_response_preview (raw-response-preview raw-response-s)
-                                                         :llm_raw_response_length  (count raw-response-s)
-                                                         :llm_raw_response_sha256  (sha256-hex raw-response-s))
+          (let [iteration-cols (prepare-iteration-columns opts)]
+            (execute! tx-info
+              {:insert-into :session_turn_iteration
+               :values [(cond-> (merge {:id                   iteration-id-s
+                                        :session_turn_state_id session-turn-state-id-s
+                                        :position             position
+                                        :status               (normalize-status (cond answer :done error :error (:error iteration-cols) :error :else :done))
+                                        :llm_system_prompt    (when (seq llm-messages)
+                                                                (:content (first (filter #(= "system" (:role %)) llm-messages))))
+                                        :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                                        :llm_thinking         (str/trim (or thinking ""))
+                                        :llm_assistant_prose  (str/trim (or assistant-prose ""))
+                                        :llm_full_duration_ms (long (or llm-full-duration-ms 0))
+                                        :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
+                                        :llm_executable_code_blocks (when (some? llm-executable-blocks)
+                                                                      (->json (vec llm-executable-blocks)))
+                                        :llm_assistant_message (when (some? llm-assistant-message)
+                                                                 (->json llm-assistant-message))
+                                        :created_at           now
+                                        :finished_at          now}
+                                  iteration-cols)
+                          raw-response-s
+                          (assoc :llm_raw_response         raw-response-s
+                            :llm_raw_response_preview (raw-response-preview raw-response-s)
+                            :llm_raw_response_length  (count raw-response-s)
+                            :llm_raw_response_sha256  (sha256-hex raw-response-s))
                           ;; Token / cost columns - omitted when nil so the
                           ;; row keeps NULL (the schema marks them nullable
                           ;; for exactly this reason: an LLM call that
@@ -1522,27 +1522,27 @@
                           ;; Phase B canonical columns. :input is TOTAL,
                           ;; details (regular / cache-write / cache-read)
                           ;; are subsets obeying the canonical invariant.
-                                                  (some? (:input tokens))          (assoc :input_tokens             (long (:input tokens)))
+                          (some? (:input tokens))          (assoc :input_tokens             (long (:input tokens)))
                           ;; :input-regular derived from invariant when absent
                           ;; on per-iter rows. The invariant is enforced at the
                           ;; canonical boundary in svar 0.6+, so this is a safe
                           ;; compute even when the accumulator did not surface it.
-                                                  true                             (assoc :input_regular_tokens
-                                                                                          (long (or (:input-regular tokens)
-                                                                                                    (max 0 (- (long (or (:input tokens) 0))
-                                                                                                              (long (or cache-created-tokens 0))
-                                                                                                              (long (or (:cached tokens) 0)))))))
-                                                  (some? cache-created-tokens)     (assoc :input_cache_write_tokens (long cache-created-tokens))
-                                                  (some? (:cached tokens))         (assoc :input_cache_read_tokens  (long (:cached tokens)))
-                                                  (some? (:output tokens))         (assoc :output_tokens            (long (:output tokens)))
-                                                  (some? (:reasoning tokens))      (assoc :output_reasoning_tokens  (long (:reasoning tokens)))
-                                                  (some? cost-usd)                 (assoc :cost_usd                 (double cost-usd))
-                                                  (seq routing)               (merge (routing-summary-columns routing)))]})
-                            (doseq [[idx event] (map-indexed vector (:trace routing))]
-                              (execute! tx-info
-                                        {:insert-into :llm_routing_event
-                                         :values [(routing-event-row iteration-id-s now idx event)]}))
-                            iteration-id))))))
+                          true                             (assoc :input_regular_tokens
+                                                             (long (or (:input-regular tokens)
+                                                                     (max 0 (- (long (or (:input tokens) 0))
+                                                                              (long (or cache-created-tokens 0))
+                                                                              (long (or (:cached tokens) 0)))))))
+                          (some? cache-created-tokens)     (assoc :input_cache_write_tokens (long cache-created-tokens))
+                          (some? (:cached tokens))         (assoc :input_cache_read_tokens  (long (:cached tokens)))
+                          (some? (:output tokens))         (assoc :output_tokens            (long (:output tokens)))
+                          (some? (:reasoning tokens))      (assoc :output_reasoning_tokens  (long (:reasoning tokens)))
+                          (some? cost-usd)                 (assoc :cost_usd                 (double cost-usd))
+                          (seq routing)               (merge (routing-summary-columns routing)))]})
+            (doseq [[idx event] (map-indexed vector (:trace routing))]
+              (execute! tx-info
+                {:insert-into :llm_routing_event
+                 :values [(routing-event-row iteration-id-s now idx event)]}))
+            iteration-id))))))
 
 ;; =============================================================================
 ;; Read helpers
@@ -1605,7 +1605,7 @@
 (defn db-list-session-turns-by-status [db-info status]
   (if (ds db-info)
     (mapv row->turn
-          (query! db-info (session-turn-soul+state-query [:= :qst.status (normalize-status status)])))
+      (query! db-info (session-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
 (defn- attach-prior-outcome [row->turn-map]
@@ -1621,13 +1621,13 @@
           state-rank (zipmap state-ids (range))]
       (if (seq state-ids)
         (mapv (attach-prior-outcome row->turn)
-              (sort-by (fn [r]
-                         [(get state-rank (:session_state_id r) Long/MAX_VALUE)
-                          (or (:position r) 0)
-                          (or (:soul_created_at r) 0)])
-                       (query! db-info
-                               (-> (session-turn-soul+state-query [:in :qs.session_state_id state-ids])
-                                   (update :select conj :qst.prior_outcome)))))
+          (sort-by (fn [r]
+                     [(get state-rank (:session_state_id r) Long/MAX_VALUE)
+                      (or (:position r) 0)
+                      (or (:soul_created_at r) 0)])
+            (query! db-info
+              (-> (session-turn-soul+state-query [:in :qs.session_state_id state-ids])
+                (update :select conj :qst.prior_outcome)))))
         []))
     []))
 
@@ -1656,26 +1656,26 @@
   (try
     (mapv (fn [row]
             (normalize-routing-event
-             (or (<-json (:event_json row))
-                 (cond-> {:event/type (some-> (:event_type row) keyword)}
-                   (:provider row)      (assoc :provider (->kw-back (:provider row)))
-                   (:model row)         (assoc :model (:model row))
-                   (:from_provider row) (assoc :from-provider (->kw-back (:from_provider row)))
-                   (:from_model row)    (assoc :from-model (:from_model row))
-                   (:to_provider row)   (assoc :to-provider (->kw-back (:to_provider row)))
-                   (:to_model row)      (assoc :to-model (:to_model row))
-                   (:status row)        (assoc :status (:status row))
-                   (:reason row)        (assoc :reason (->kw-back (:reason row)))
-                   (:error row)         (assoc :error (:error row))
-                   (:attempt row)       (assoc :attempt (:attempt row))
-                   (:delay_ms row)      (assoc :delay-ms (:delay_ms row))
-                   (:elapsed_ms row)    (assoc :elapsed-ms (:elapsed_ms row))
-                   (:at_ms row)         (assoc :at-ms (:at_ms row))))))
-          (query! db-info
-                  {:select [:*]
-                   :from   :llm_routing_event
-                   :where  [:= :session_turn_iteration_id (->ref iteration-id)]
-                   :order-by [[:position :asc]]}))
+              (or (<-json (:event_json row))
+                (cond-> {:event/type (some-> (:event_type row) keyword)}
+                  (:provider row)      (assoc :provider (->kw-back (:provider row)))
+                  (:model row)         (assoc :model (:model row))
+                  (:from_provider row) (assoc :from-provider (->kw-back (:from_provider row)))
+                  (:from_model row)    (assoc :from-model (:from_model row))
+                  (:to_provider row)   (assoc :to-provider (->kw-back (:to_provider row)))
+                  (:to_model row)      (assoc :to-model (:to_model row))
+                  (:status row)        (assoc :status (:status row))
+                  (:reason row)        (assoc :reason (->kw-back (:reason row)))
+                  (:error row)         (assoc :error (:error row))
+                  (:attempt row)       (assoc :attempt (:attempt row))
+                  (:delay_ms row)      (assoc :delay-ms (:delay_ms row))
+                  (:elapsed_ms row)    (assoc :elapsed-ms (:elapsed_ms row))
+                  (:at_ms row)         (assoc :at-ms (:at_ms row))))))
+      (query! db-info
+        {:select [:*]
+         :from   :llm_routing_event
+         :where  [:= :session_turn_iteration_id (->ref iteration-id)]
+         :order-by [[:position :asc]]}))
     (catch SQLException _ [])))
 
 (defn- attach-routing
@@ -1760,10 +1760,10 @@
           (let [trace   (routing-events-for-iteration db-info (:id row))
                 routing (row-routing-summary row trace)]
             (attach-routing (row->iteration row) routing)))
-        (query! db-info
-                {:select   [:*] :from :session_turn_iteration
-                 :where    [:= :session_turn_state_id state-id-s]
-                 :order-by [[:position :asc]]})))
+    (query! db-info
+      {:select   [:*] :from :session_turn_iteration
+       :where    [:= :session_turn_state_id state-id-s]
+       :order-by [[:position :asc]]})))
 
 (defn db-list-session-turn-iterations [db-info session-turn-id]
   ;; `session-turn-id` arrives as EITHER a `session_turn_soul` id (the
@@ -1810,8 +1810,8 @@
                        :status               (:status turn)
                        :iteration-count      iteration-count}
                 (:answer-markdown turn) (assoc :answer-markdown (:answer-markdown turn)))))
-          (range)
-          turns)))
+      (range)
+      turns)))
 
 ;; =============================================================================
 ;; Extension aggregate sidecars
@@ -1844,20 +1844,20 @@
              :updated_at                  now}]
     (when (str/blank? (:extension_id row))
       (throw (ex-info "extension aggregate requires extension-id"
-                      {:type :extension-aggregate/missing-required
-                       :key :extension-id})))
+               {:type :extension-aggregate/missing-required
+                :key :extension-id})))
     (when (nil? (:aggregate-key opts))
       (throw (ex-info "extension aggregate requires aggregate-key"
-                      {:type :extension-aggregate/missing-required
-                       :key :aggregate-key})))
+               {:type :extension-aggregate/missing-required
+                :key :aggregate-key})))
     (when (nil? (:kind opts))
       (throw (ex-info "extension aggregate requires kind"
-                      {:type :extension-aggregate/missing-required
-                       :key :kind})))
+               {:type :extension-aggregate/missing-required
+                :key :kind})))
     (when (and (or (:session_turn_iteration_block_index row) (:session_turn_iteration_block_id row))
-               (nil? (:session_turn_iteration_id row)))
+            (nil? (:session_turn_iteration_id row)))
       (throw (ex-info "extension aggregate block scope requires iteration-id"
-                      {:type :extension-aggregate/block-without-iteration})))
+               {:type :extension-aggregate/block-without-iteration})))
     row))
 
 (defn- row->extension-aggregate
@@ -1919,103 +1919,103 @@
   [db-info opts]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [id  (new-id)
-                              now (now-ms)]
-                          (execute! tx-info
-                                    {:insert-into :extension_aggregate
-                                     :values [(extension-aggregate-sql-row opts id now)]})
-                          (row->extension-aggregate
-                           (query-one! tx-info
-                                       {:select [:*]
-                                        :from   :extension_aggregate
-                                        :where  [:= :id id]})))))))
+      (fn [tx-info]
+        (let [id  (new-id)
+              now (now-ms)]
+          (execute! tx-info
+            {:insert-into :extension_aggregate
+             :values [(extension-aggregate-sql-row opts id now)]})
+          (row->extension-aggregate
+            (query-one! tx-info
+              {:select [:*]
+               :from   :extension_aggregate
+               :where  [:= :id id]})))))))
 
 (defn db-put-extension-aggregate!
   [db-info opts]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [id  (new-id)
-                              now (now-ms)
-                              row (extension-aggregate-sql-row opts id now)]
-                          (execute! tx-info
-                                    {:insert-into :extension_aggregate
-                                     :values [row]
-                                     :on-conflict [:extension_id :aggregate_key :kind :scope_key]
-                                     :do-update-set {:index_data                  (:index_data row)
-                                                     :content                     (:content row)
-                                                     :session_soul_id        (:session_soul_id row)
-                                                     :session_state_id       (:session_state_id row)
-                                                     :session_turn_state_id  (:session_turn_state_id row)
-                                                     :session_turn_iteration_id                (:session_turn_iteration_id row)
-                                                     :session_turn_iteration_block_index       (:session_turn_iteration_block_index row)
-                                                     :session_turn_iteration_block_id          (:session_turn_iteration_block_id row)
-                                                     :updated_at                  now}})
-                          (row->extension-aggregate
-                           (query-one! tx-info
-                                       {:select [:*]
-                                        :from   :extension_aggregate
-                                        :where  [:and
-                                                 [:= :extension_id (:extension_id row)]
-                                                 [:= :aggregate_key (:aggregate_key row)]
-                                                 [:= :kind (:kind row)]
-                                                 (if (:session_soul_id row)
-                                                   [:= :session_soul_id (:session_soul_id row)]
-                                                   [:is :session_soul_id nil])
-                                                 (if (:session_state_id row)
-                                                   [:= :session_state_id (:session_state_id row)]
-                                                   [:is :session_state_id nil])
-                                                 (if (:session_turn_state_id row)
-                                                   [:= :session_turn_state_id (:session_turn_state_id row)]
-                                                   [:is :session_turn_state_id nil])
-                                                 (if (:session_turn_iteration_id row)
-                                                   [:= :session_turn_iteration_id (:session_turn_iteration_id row)]
-                                                   [:is :session_turn_iteration_id nil])
-                                                 (if (:session_turn_iteration_block_index row)
-                                                   [:= :session_turn_iteration_block_index (:session_turn_iteration_block_index row)]
-                                                   [:is :session_turn_iteration_block_index nil])
-                                                 (if (:session_turn_iteration_block_id row)
-                                                   [:= :session_turn_iteration_block_id (:session_turn_iteration_block_id row)]
-                                                   [:is :session_turn_iteration_block_id nil])]})))))))
+      (fn [tx-info]
+        (let [id  (new-id)
+              now (now-ms)
+              row (extension-aggregate-sql-row opts id now)]
+          (execute! tx-info
+            {:insert-into :extension_aggregate
+             :values [row]
+             :on-conflict [:extension_id :aggregate_key :kind :scope_key]
+             :do-update-set {:index_data                  (:index_data row)
+                             :content                     (:content row)
+                             :session_soul_id        (:session_soul_id row)
+                             :session_state_id       (:session_state_id row)
+                             :session_turn_state_id  (:session_turn_state_id row)
+                             :session_turn_iteration_id                (:session_turn_iteration_id row)
+                             :session_turn_iteration_block_index       (:session_turn_iteration_block_index row)
+                             :session_turn_iteration_block_id          (:session_turn_iteration_block_id row)
+                             :updated_at                  now}})
+          (row->extension-aggregate
+            (query-one! tx-info
+              {:select [:*]
+               :from   :extension_aggregate
+               :where  [:and
+                        [:= :extension_id (:extension_id row)]
+                        [:= :aggregate_key (:aggregate_key row)]
+                        [:= :kind (:kind row)]
+                        (if (:session_soul_id row)
+                          [:= :session_soul_id (:session_soul_id row)]
+                          [:is :session_soul_id nil])
+                        (if (:session_state_id row)
+                          [:= :session_state_id (:session_state_id row)]
+                          [:is :session_state_id nil])
+                        (if (:session_turn_state_id row)
+                          [:= :session_turn_state_id (:session_turn_state_id row)]
+                          [:is :session_turn_state_id nil])
+                        (if (:session_turn_iteration_id row)
+                          [:= :session_turn_iteration_id (:session_turn_iteration_id row)]
+                          [:is :session_turn_iteration_id nil])
+                        (if (:session_turn_iteration_block_index row)
+                          [:= :session_turn_iteration_block_index (:session_turn_iteration_block_index row)]
+                          [:is :session_turn_iteration_block_index nil])
+                        (if (:session_turn_iteration_block_id row)
+                          [:= :session_turn_iteration_block_id (:session_turn_iteration_block_id row)]
+                          [:is :session_turn_iteration_block_id nil])]})))))))
 
 (defn db-get-extension-aggregate
   [db-info opts]
   (when (ds db-info)
     (row->extension-aggregate
-     (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
+      (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
 
 (defn db-list-extension-aggregates
   [db-info opts]
   (if (ds db-info)
     (mapv row->extension-aggregate
-          (query! db-info (extension-aggregate-select (cond-> opts
-                                                        (not (:limit opts)) (assoc :limit 100)))))
+      (query! db-info (extension-aggregate-select (cond-> opts
+                                                    (not (:limit opts)) (assoc :limit 100)))))
     []))
 
 (defn db-delete-extension-aggregates!
   [db-info opts]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [clauses (extension-aggregate-clauses opts)
-                              result  (jdbc/execute! (ds tx-info)
-                                                     (sql/format
-                                                      (cond-> {:delete-from :extension_aggregate}
-                                                        (seq clauses) (assoc :where (into [:and] clauses)))))]
-                          (or (:next.jdbc/update-count (first result)) 0))))))
+      (fn [tx-info]
+        (let [clauses (extension-aggregate-clauses opts)
+              result  (jdbc/execute! (ds tx-info)
+                        (sql/format
+                          (cond-> {:delete-from :extension_aggregate}
+                            (seq clauses) (assoc :where (into [:and] clauses)))))]
+          (or (:next.jdbc/update-count (first result)) 0))))))
 
 (defn db-swap-extension-aggregate!
   [db-info opts f args]
   (when (ds db-info)
     (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [current     (db-get-extension-aggregate tx-info opts)
-                              next-content (apply f (:content current) args)]
-                          (db-put-extension-aggregate! tx-info
-                                                       (assoc opts
-                                                              :index-data (or (:index-data opts) (:index-data current))
-                                                              :content next-content)))))))
+      (fn [tx-info]
+        (let [current     (db-get-extension-aggregate tx-info opts)
+              next-content (apply f (:content current) args)]
+          (db-put-extension-aggregate! tx-info
+            (assoc opts
+              :index-data (or (:index-data opts) (:index-data current))
+              :content next-content)))))))
 
 ;; =============================================================================
 ;; CTX snapshots (per-turn :session/* state)
@@ -2035,16 +2035,16 @@
     (let [state-ids (session-state-chain db-info session-id)]
       (when (seq state-ids)
         (when-let [row (first (query! db-info
-                                      {:select [:qts.ctx]
-                                       :from   [[:session_turn_state :qts]]
-                                       :join   [[:session_turn_soul :qs]
-                                                [:= :qs.id :qts.session_turn_soul_id]]
-                                       :where  [:and
-                                                [:in :qs.session_state_id state-ids]
-                                                [:<> :qts.ctx nil]]
-                                       :order-by [[:qs.position :desc]
-                                                  [:qts.version :desc]]
-                                       :limit  1}))]
+                                {:select [:qts.ctx]
+                                 :from   [[:session_turn_state :qts]]
+                                 :join   [[:session_turn_soul :qs]
+                                          [:= :qs.id :qts.session_turn_soul_id]]
+                                 :where  [:and
+                                          [:in :qs.session_state_id state-ids]
+                                          [:<> :qts.ctx nil]]
+                                 :order-by [[:qs.position :desc]
+                                            [:qts.version :desc]]
+                                 :limit  1}))]
           (<-blob (:ctx row)))))))
 
 (defn db-native-results-for-tool-ids
@@ -2072,38 +2072,38 @@
       (let [state-ids (session-state-chain db-info session-id)]
         (if (seq state-ids)
           (let [rows (query! db-info
-                             {:select [:qti.tool_calls]
-                              :from   [[:session_turn_iteration :qti]]
-                              :join   [[:session_turn_state :qts]
-                                       [:= :qts.id :qti.session_turn_state_id]
-                                       [:session_turn_soul :qs]
-                                       [:= :qs.id :qts.session_turn_soul_id]]
-                              :where  [:and
-                                       [:in :qs.session_state_id state-ids]
-                                       [:<> :qti.tool_calls nil]]
+                       {:select [:qti.tool_calls]
+                        :from   [[:session_turn_iteration :qti]]
+                        :join   [[:session_turn_state :qts]
+                                 [:= :qts.id :qti.session_turn_state_id]
+                                 [:session_turn_soul :qs]
+                                 [:= :qs.id :qts.session_turn_soul_id]]
+                        :where  [:and
+                                 [:in :qs.session_state_id state-ids]
+                                 [:<> :qti.tool_calls nil]]
                               ;; NEWEST first so, if the same id ever appeared
                               ;; twice, the latest write wins the `reduce`.
-                              :order-by [[:qs.position :desc]
-                                         [:qts.version :desc]
-                                         [:qti.position :desc]]})]
+                        :order-by [[:qs.position :desc]
+                                   [:qts.version :desc]
+                                   [:qti.position :desc]]})]
             (reduce
-             (fn [acc row]
-               (if (= (count acc) (count wanted))
-                 (reduced acc)                    ; found them all — stop decoding blobs
-                 (let [forms (<-blob (:tool_calls row))]
-                   (reduce
-                    (fn [m form]
-                      (let [id (:svar/tool-call-id form)]
-                        (if (and id
-                                 (contains? wanted id)
-                                 (not (contains? m id))
-                                 (contains? form :result))
-                          (assoc m id (:result form))
-                          m)))
-                    acc
-                    forms))))
-             {}
-             rows))
+              (fn [acc row]
+                (if (= (count acc) (count wanted))
+                  (reduced acc)                    ; found them all — stop decoding blobs
+                  (let [forms (<-blob (:tool_calls row))]
+                    (reduce
+                      (fn [m form]
+                        (let [id (:svar/tool-call-id form)]
+                          (if (and id
+                                (contains? wanted id)
+                                (not (contains? m id))
+                                (contains? form :result))
+                            (assoc m id (:result form))
+                            m)))
+                      acc
+                      forms))))
+              {}
+              rows))
           {}))
       {})))
 
@@ -2138,19 +2138,19 @@
     (let [state-ids (session-state-chain db-info session-id)]
       (when (seq state-ids)
         (vec
-         (for [row (query! db-info
-                           {:select [:qs.position [:qts.ctx :ctx]]
-                            :from   [[:session_turn_state :qts]]
-                            :join   [[:session_turn_soul :qs]
-                                     [:= :qs.id :qts.session_turn_soul_id]]
-                            :where  [:and
-                                     [:in :qs.session_state_id state-ids]
-                                     [:<> :qts.ctx nil]
-                                     [:= :qts.version
-                                      {:select [[[:max :version]]]
-                                       :from   [[:session_turn_state :qts2]]
-                                       :where  [:= :qts2.session_turn_soul_id :qts.session_turn_soul_id]}]]
-                            :order-by [[:qs.position :asc]]})
-               :let [decoded (<-blob (:ctx row))]
-               :when (some? decoded)]
-           [(long (:position row)) decoded]))))))
+          (for [row (query! db-info
+                      {:select [:qs.position [:qts.ctx :ctx]]
+                       :from   [[:session_turn_state :qts]]
+                       :join   [[:session_turn_soul :qs]
+                                [:= :qs.id :qts.session_turn_soul_id]]
+                       :where  [:and
+                                [:in :qs.session_state_id state-ids]
+                                [:<> :qts.ctx nil]
+                                [:= :qts.version
+                                 {:select [[[:max :version]]]
+                                  :from   [[:session_turn_state :qts2]]
+                                  :where  [:= :qts2.session_turn_soul_id :qts.session_turn_soul_id]}]]
+                       :order-by [[:qs.position :asc]]})
+                :let [decoded (<-blob (:ctx row))]
+                :when (some? decoded)]
+            [(long (:position row)) decoded]))))))

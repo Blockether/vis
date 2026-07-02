@@ -85,8 +85,8 @@
    styled painters consume them, but raw fallback paths must not show PUA tofu."
   ^String [^String s]
   (-> s
-      (.replaceAll "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " ")
-      (.replaceAll "[\\uE110-\\uE119]" "")))
+    (.replaceAll "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " ")
+    (.replaceAll "[\\uE110-\\uE119]" "")))
 
 (defn put-str!
   "Draw a string at (col, row). Control characters are sanitized."
@@ -120,7 +120,7 @@
   ([^TextGraphics g col row fg]
    (when-let [tc (.getCharacter g (int col) (int row))]
      (.setCharacter g (int col) (int row)
-                    (-> tc (.withForegroundColor fg) (.withModifier SGR/UNDERLINE))))
+       (-> tc (.withForegroundColor fg) (.withModifier SGR/UNDERLINE))))
    g))
 
 (defn dot-cell!
@@ -140,7 +140,7 @@
   (when-let [tc (.getCharacter g (int col) (int row))]
     (when (#{" " "▁"} (.getCharacterString tc))
       (.setCharacter g (int col) (int row)
-                     (-> tc (.withCharacter \▁) (.withForegroundColor fg)))))
+        (-> tc (.withCharacter \▁) (.withForegroundColor fg)))))
   g)
 
 ;;; ── Rectangles ─────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@
   ([g col row w h]    (fill-rect! g col row w h \space))
   ([^TextGraphics g col row w h ch]
    (.fillRectangle g (TerminalPosition. (int col) (int row))
-                   (TerminalSize. (int w) (int h)) (char ch))
+     (TerminalSize. (int w) (int h)) (char ch))
    g))
 
 ;;; ── Box drawing characters ────────────────────────────────────────────────
@@ -290,7 +290,7 @@
      (let [prev-fg (when marker-fg (.getForegroundColor g))]
        (when marker-fg (set-fg! g marker-fg))
        (styled g [BOLD]
-               (put-str! g col row SELECTION_GLYPH))
+         (put-str! g col row SELECTION_GLYPH))
        (when marker-fg (set-fg! g prev-fg))))
    g))
 
@@ -321,8 +321,8 @@
    span sentinels above. Cheap range check, no map lookup."
   [^String g]
   (and (= 1 (.length g))
-       (let [c (int (.charAt g 0))]
-         (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
+    (let [c (int (.charAt g 0))]
+      (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
 (defn- sanitize-control-chars
   "Replace every ASCII control character in `s` (codepoints 0x00-0x1F)
@@ -487,11 +487,11 @@
               ;; is exactly `max-cols`. Sentinels can't reach this
               ;; branch (their `w` is zero, so `next` never exceeds).
               (do (when (< used max-cols) (.append sb \space))
-                  (.toString sb))
+                (.toString sb))
               ;; In-budget OR zero-width sentinel: append, advance,
               ;; continue. For sentinels `w` is 0 so `used` stays put.
               (do (.append sb gs)
-                  (recur (inc i) next)))))))))
+                (recur (inc i) next)))))))))
 
 (defn fold-cols
   "Character-fold `s` into a vector of segments, each at most `max-cols`
@@ -592,7 +592,7 @@
                            ;; Code span: hard-override fg/bg; modifiers
                            ;; cleared so code reads as a flat zone.
                            (do (.setForegroundColor g code-fg)
-                               (.setBackgroundColor g code-bg))
+                             (.setBackgroundColor g code-bg))
                            ;; Plain span: base colors + (inherited ∪ inline) SGR.
                            (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
                              (.addAll effective inline)
@@ -667,8 +667,8 @@
       :else      (let [left-pad  (quot (- w cols) 2)
                        right-pad (- w cols left-pad)]
                    (str (apply str (repeat left-pad \space))
-                        txt
-                        (apply str (repeat right-pad \space)))))))
+                     txt
+                     (apply str (repeat right-pad \space)))))))
 
 (defn space-between
   "Distribute items across `w` terminal columns with equal gaps.
@@ -687,15 +687,15 @@
             base-gap   (max 1 (quot total-gaps gap-count))
             extra      (- total-gaps (* base-gap gap-count))]
         (apply str
-               (interleave
-                items
-                (concat
+          (interleave
+            items
+            (concat
                  ;; Distribute remainder across first gaps
-                 (map (fn [i]
-                        (apply str (repeat (+ base-gap (if (< (long i) (long extra)) 1 0)) \space)))
-                      (range gap-count))
+              (map (fn [i]
+                     (apply str (repeat (+ base-gap (if (< (long i) (long extra)) 1 0)) \space)))
+                (range gap-count))
                  ;; sentinel so interleave doesn't drop last item
-                 [""])))))))
+              [""])))))))
 
 (defn space-around
   "Distribute items across `w` terminal columns with equal space
@@ -807,13 +807,13 @@
   [{:keys [id label dirty? state]}]
   (let [base (or label id "")]
     (str (if (keyword? base) (name base) base)
-         (when dirty? " •")
-         (case state
-           :running  " ▶"
-           :verified " ✓"
-           :accepted " ✓"
-           :error    " !"
-           nil))))
+      (when dirty? " •")
+      (case state
+        :running  " ▶"
+        :verified " ✓"
+        :accepted " ✓"
+        :error    " !"
+        nil))))
 
 (defn tab-layout
   "Return tab geometry for a horizontal tab strip.
@@ -848,12 +848,12 @@
                              (true? (:active? tab)))
                    next-x  (+ x w (if (= idx (dec n)) 0 gap))]
                (recur (inc idx)
-                      next-x
-                      (conj out (assoc tab
-                                       :left x
-                                       :width w
-                                       :active? active?
-                                       :text text)))))))))))
+                 next-x
+                 (conj out (assoc tab
+                             :left x
+                             :width w
+                             :active? active?
+                             :text text)))))))))))
 
 (defn tab-at
   "Return the tab geometry under `col`, or nil. Expects `tab-layout` output."
@@ -861,10 +861,10 @@
   (let [col (long col)]
     (some (fn [{:keys [left width] :as tab}]
             (when (and (pos? (long width))
-                       (>= col (long left))
-                       (< col (+ (long left) (long width))))
+                    (>= col (long left))
+                    (< col (+ (long left) (long width))))
               tab))
-          layout)))
+      layout)))
 
 (defn draw-tabs!
   "Draw a tab strip and return its geometry.
@@ -884,9 +884,9 @@
       (clear-styles! g)
       (if active?
         (do (set-colors! g active-fg active-bg)
-            (enable! g BOLD))
+          (enable! g BOLD))
         (do (set-colors! g inactive-fg inactive-bg)
-            (enable! g ITALIC)))
+          (enable! g ITALIC)))
       (when bordered?
         (enable! g BORDERED))
       (fill-rect! g left row width 1)

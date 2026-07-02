@@ -509,7 +509,7 @@
   ;; form errors (plain + provider), form comments, and the dense
   ;; tool-card fixture.
   (let [long-thinking (str/join "\n" (map #(str "reasoning step " % " weighs the trade-offs at length")
-                                          (range 40)))
+                                       (range 40)))
         long-result   (str/join "\n" (map #(str "output row " % " of the tool run") (range 60)))
         sid           "ovs-x"
         rich-msg      (fn []

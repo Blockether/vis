@@ -58,8 +58,8 @@
         ;; cached read — the footer renders per frame; no per-paint DB hit.
         ;; pref is {:provider :model} (provider + model both come from it).
         pref     (or (:session-model-pref _db)
-                     (when-let [sid (get-in _db [:session :id])]
-                       (vis/gateway-session-model-cached sid)))
+                   (when-let [sid (get-in _db [:session :id])]
+                     (vis/gateway-session-model-cached sid)))
         info     (chosen-model-info)
         model    (or (:model pref) (:name info))
         provider (or (:provider pref) (some-> (:provider info) name))
@@ -95,8 +95,8 @@
                   ;; button's strong color. This is the DEFAULT, channel-level model
                   ;; decoration every provider reuses — no per-provider footer needed.
                   :ir       [:ir {} [:p {} [:span {} (str display
-                                                          " (" (keymap/label-for :pick-model) ")"
-                                                          " (cycle " pos (keymap/label-for :cycle-model) ")")]]]
+                                                       " (" (keymap/label-for :pick-model) ")"
+                                                       " (cycle " pos (keymap/label-for :cycle-model) ")")]]]
                   :region   :left
                   :priority 2
                   :row      0
@@ -106,7 +106,7 @@
           overload
           (conj {:ir         [:ir {} [:p {} [:span {}
                                              (str "⚠ " (:overloaded-model overload) " overloaded → "
-                                                  (or (:serving-model overload) "no provider available"))]]]
+                                               (or (:serving-model overload) "no provider available"))]]]
                  :region     :left
                  :priority   3
                  :row        0

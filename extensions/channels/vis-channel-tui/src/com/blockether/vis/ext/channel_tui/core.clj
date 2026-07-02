@@ -42,9 +42,9 @@
   ([ir opts]
    (when-not (and (vector? ir) (= :ir (first ir)))
      (throw (ex-info "render-for-tui requires canonical [:ir ...] input; build IR upstream, do not pass raw text or Hiccup here"
-                     {:got-type (some-> ir class .getName)
-                      :got-preview (let [s (pr-str ir)]
-                                     (subs s 0 (min 200 (count s))))})))
+              {:got-type (some-> ir class .getName)
+               :got-preview (let [s (pr-str ir)]
+                              (subs s 0 (min 200 (count s))))})))
    (vis/render ir :markdown opts)))
 
 (defn- parse-session-id-flag
@@ -74,12 +74,12 @@
     (when (seq cid)
       (or (when-let [session (try (vis/gateway-soul cid) (catch Throwable _ nil))]
             (:id session))
-          (let [matches (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ []))
-                             (map :id)
-                             (filter #(str/starts-with? (str %) cid))
-                             vec)]
-            (when (= 1 (count matches))
-              (str (first matches))))))))
+        (let [matches (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ []))
+                        (map :id)
+                        (filter #(str/starts-with? (str %) cid))
+                        vec)]
+          (when (= 1 (count matches))
+            (str (first matches))))))))
 
 (defn- format-session-not-found
   "Same wording as `screen/format-session-not-found` (intentional -
@@ -92,19 +92,19 @@
                      title  (let [t (:title c)] (when-not (str/blank? t) t))]
                  (str "  " id8 "  " (or title "(untitled)"))))]
     (str "Session not found: " cid
-         (if (seq available)
-           (str "\n\nAvailable sessions (most recent first):\n"
-                (str/join "\n" (map line available))
-                "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
+      (if (seq available)
+        (str "\n\nAvailable sessions (most recent first):\n"
+          (str/join "\n" (map line available))
+          "\n\nUse the 8-char prefix or full UUID with --session-id.")
+        "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
 
 (defn- require-screen-channel-main
   "Resolve the heavyweight screen channel entry point. Pulled out so the fast
    path never references the screen var until validation succeeds."
   []
   (or (requiring-resolve 'com.blockether.vis.ext.channel-tui.screen/channel-main)
-      (throw (ex-info "TUI screen channel entry point did not resolve"
-                      {:type :channel-tui/missing-screen-main}))))
+    (throw (ex-info "TUI screen channel entry point did not resolve"
+             {:type :channel-tui/missing-screen-main}))))
 
 (defn- exit-not-found!
   "Print the friendly miss message to the original stdout and exit 2.
@@ -140,7 +140,7 @@ miss path. Production `exit-not-found!` calls `System/exit`, so the
     (if (resolve-session-id cid)
       nil
       (do (exit-not-found! cid)
-          :miss))))
+        :miss))))
 
 (defn channel-main
   "Lazy channel entry point. Loading the Lanterna screen stack is deferred
@@ -153,19 +153,19 @@ miss path. Production `exit-not-found!` calls `System/exit`, so the
 
 (def tui-extension
   (vis/extension
-   {:ext/name      "channel-tui"
-    :ext/description "Lanterna-based terminal UI channel."
-    :ext/version   "0.3.0"
-    :ext/author    "Blockether"
-    :ext/owner     "vis"
-    :ext/license   "Apache-2.0"
-    :ext/channels  [{:channel/id        :tui
-                     :channel/cmd       "tui"
-                     :channel/doc       "Interactive terminal UI."
-                     :channel/usage     tui-usage
-                     :channel/owns-tty? true
-                     :channel/main-fn   #'channel-main
-                     :channel/messages-renderer-fn #'render-for-tui}]
-    :ext/channel-contributions builtin-hooks/channel-contributions}))
+    {:ext/name      "channel-tui"
+     :ext/description "Lanterna-based terminal UI channel."
+     :ext/version   "0.3.0"
+     :ext/author    "Blockether"
+     :ext/owner     "vis"
+     :ext/license   "Apache-2.0"
+     :ext/channels  [{:channel/id        :tui
+                      :channel/cmd       "tui"
+                      :channel/doc       "Interactive terminal UI."
+                      :channel/usage     tui-usage
+                      :channel/owns-tty? true
+                      :channel/main-fn   #'channel-main
+                      :channel/messages-renderer-fn #'render-for-tui}]
+     :ext/channel-contributions builtin-hooks/channel-contributions}))
 
 (vis/register-extension! tui-extension)

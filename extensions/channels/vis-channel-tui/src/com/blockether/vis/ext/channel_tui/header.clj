@@ -92,7 +92,7 @@
   [entry]
   (let [state (some-> entry :workspace :state)]
     (or (nil? state)
-        (contains? active-workspace-states state))))
+      (contains? active-workspace-states state))))
 
 (defn- tab-entries
   "Return entries to render in the centre strip, ALWAYS non-empty.
@@ -108,8 +108,8 @@
   [db]
   (let [entries   (filterv tab-strip-visible? (:tabs db))
         active-id (or (:active-tab-id db)
-                      (:id (some #(when (:active? %) %) entries))
-                      (:id (first entries)))
+                    (:id (some #(when (:active? %) %) entries))
+                    (:id (first entries)))
         ;; A tab is "running" when its session has a turn in flight. The
         ;; active tab's run-state lives at the db root; every other tab's
         ;; lives frozen in `:tab-locals` (its streaming worker keeps
@@ -125,7 +125,7 @@
                          (and (= id active-id) (boolean (:title-loading? db))))]
     (if (seq entries)
       (mapv #(assoc % :running? (running? (:id %))
-                    :title-loading? (title-loading? (:id %))) entries)
+               :title-loading? (title-loading? (:id %))) entries)
       [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
@@ -135,8 +135,8 @@
 (defn- active-tab-entry-id
   [db entries]
   (or (:active-tab-id db)
-      (:id (some #(when (:active? %) %) entries))
-      (:id (first entries))))
+    (:id (some #(when (:active? %) %) entries))
+    (:id (first entries))))
 
 (defn- contributor-disabled?
   [db contribution-id]
@@ -219,7 +219,7 @@
                  ;; own ITALIC sentinels via [:em ...] inside the IR.
                  (p/enable! g p/ITALIC)
                  (p/paint-styled-line! g x y line
-                                       fg t/terminal-bg t/code-block-fg t/code-block-bg)
+                   fg t/terminal-bg t/code-block-fg t/code-block-bg)
                  (p/clear-styles! g)
                  (recur (inc i) (next lines))))))}))))
 
@@ -235,15 +235,15 @@
    their row that frame."
   [db cols]
   (vec
-   (for [{:keys [id] f :fn} (vis/channel-contributions-for :tui :tui.slot/header-row)
-         :when (and (ifn? f)
-                    (not (contributor-disabled? db id)))
-         :let [ir   (try (f db cols) (catch Throwable _ nil))
-               spec (when (ir-root? ir)
-                      (try (ir->header-row-spec ir cols)
-                           (catch Throwable _ nil)))]
-         :when (and spec (pos? (long (or (:height spec) 0))))]
-     {:id id :spec spec})))
+    (for [{:keys [id] f :fn} (vis/channel-contributions-for :tui :tui.slot/header-row)
+          :when (and (ifn? f)
+                  (not (contributor-disabled? db id)))
+          :let [ir   (try (f db cols) (catch Throwable _ nil))
+                spec (when (ir-root? ir)
+                       (try (ir->header-row-spec ir cols)
+                         (catch Throwable _ nil)))]
+          :when (and spec (pos? (long (or (:height spec) 0))))]
+      {:id id :spec spec})))
 
 (defn header-rows
   "Rows needed by the header for this app-db. Workspace switcher lives inside
@@ -261,8 +261,8 @@
    (header-rows db 0))
   ([db cols]
    (+ header-rows-base
-      (reduce + 0 (map #(long (:height (:spec %)))
-                       (header-row-specs db cols))))))
+     (reduce + 0 (map #(long (:height (:spec %)))
+                   (header-row-specs db cols))))))
 
 (defn- short-id
   "Project a session's UUID onto the shared short-form length."
@@ -293,11 +293,11 @@
   [{:keys [channel-status]}]
   (let [now-ms (System/currentTimeMillis)]
     (->> (vals channel-status)
-         (filter #(seq (:text %)))
-         (remove #(= :ready (:phase %)))
-         (remove #(status-expired? % now-ms))
-         (sort-by #(long (or (:updated-at-ms %) 0)))
-         last)))
+      (filter #(seq (:text %)))
+      (remove #(= :ready (:phase %)))
+      (remove #(status-expired? % now-ms))
+      (sort-by #(long (or (:updated-at-ms %) 0)))
+      last)))
 
 ;; `level->fg` (notification color) + the band rule, left notification slot,
 ;; and id-copy badge now live in `components` (band-rule!, notification-slot!,
@@ -348,8 +348,8 @@
     {:overflow? overflow?
      :start start
      :entries (mapv (fn [idx entry] (assoc entry :header/original-index idx))
-                    (range start end)
-                    (subvec entries start end))}))
+                (range start end)
+                (subvec entries start end))}))
 
 ;; `truncate-with-ellipsis` + `center-padded` now live in `components` (the
 ;; tab cell that consumes them does too).
@@ -374,7 +374,7 @@
         ;; the tabs right so it reads as part of the centre tab group, sitting
         ;; just ahead of tab 1.
         _ (components/button! g left row plus-label :header-new-session
-                              {:accent? true :register? *register-click-regions?*})
+            {:accent? true :register? *register-click-regions?*})
         left  (+ (long left) plus-w plus-gap)
         width (max 0 (- (long width) plus-w plus-gap))
         multi? (> (count entries) 1)
@@ -387,7 +387,7 @@
     (when overflow?
       (components/nav-arrow! g row left vh/workspace-arrow-left :prev *register-click-regions?*)
       (components/nav-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next
-                             *register-click-regions?*))
+        *register-click-regions?*))
     (when (and (pos? n) (pos? entries-width))
       ;; Reserve a 1-col `│` divider between each adjacent pair of tabs, then
       ;; share the rest of the width across the tabs.
@@ -415,31 +415,31 @@
                                      ;; the view, so the dots would be noise.
                                      active?                            nil
                                      (and (:running? entry)
-                                          (not (:title-loading? entry)))    :running
+                                       (not (:title-loading? entry)))    :running
                                      (and (not (:running? entry))
-                                          (:unread? entry)
-                                          (not (:title-loading? entry)))    :ready
+                                       (:unread? entry)
+                                       (not (:title-loading? entry)))    :ready
                                      (:title-loading? entry)               :running
                                      :else nil)
                             label (p/tab-display-label entry)]
                         (recur (inc idx)
-                               (+ x cell-w (if (< idx (dec n)) 1 0))
-                               (conj out (assoc entry
-                                                :left x
-                                                :width cell-w
-                                                :label label
-                                                :status status
-                                                :tab-no tab-no
-                                                :active? active?
-                                                :last? (= idx (dec n))))))))]
+                          (+ x cell-w (if (< idx (dec n)) 1 0))
+                          (conj out (assoc entry
+                                      :left x
+                                      :width cell-w
+                                      :label label
+                                      :status status
+                                      :tab-no tab-no
+                                      :active? active?
+                                      :last? (= idx (dec n))))))))]
         (doseq [{:keys [left width active? label status id last? tab-no]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
           (components/tab-cell! g
-                                {:left left :row row :width width :label label :status status :tab-no tab-no
-                                 :active? active? :workspace-id id :index idx
-                                 :register? *register-click-regions?* :closable? multi?})
+            {:left left :row row :width width :label label :status status :tab-no tab-no
+             :active? active? :workspace-id id :index idx
+             :register? *register-click-regions?* :closable? multi?})
           ;; `│` divider after every tab but the last.
           (when-not last?
             (components/tab-divider! g row (+ (long left) (long width)))))
@@ -501,7 +501,7 @@
 
     ;; RIGHT 20%: stable session-id copy affordance only.
     (components/id-badge! g action-col content-row id-copy-text full-uuid
-                          *register-click-regions?*)
+      *register-click-regions?*)
 
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
     ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a
@@ -513,13 +513,13 @@
                      [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
-                       (* gap (count chips)))
+                      (* gap (count chips)))
           start     (max edge-pad (- action-col cluster-w))]
       (reduce (fn [x [kind label]]
                 (+ x gap (components/button! g x content-row label kind
-                                             {:register? *register-click-regions?*})))
-              start
-              chips))
+                           {:register? *register-click-regions?*})))
+        start
+        chips))
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)
@@ -534,7 +534,7 @@
             (p/fill-rect! g 0 row cols h)
             (when (ifn? draw!)
               (try (draw! g (long row))
-                   (catch Throwable _ nil))))
+                (catch Throwable _ nil))))
           (recur (+ row h) (next specs)))))
 
     (components/band-rule! g bottom-row cols)

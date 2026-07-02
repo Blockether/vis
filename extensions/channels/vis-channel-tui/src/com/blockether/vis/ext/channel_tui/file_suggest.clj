@@ -51,15 +51,15 @@
    flight. Non-blocking: the render thread never waits on the scan."
   []
   (let [[old _] (swap-vals! index-cache
-                            (fn [c] (if (:building? c) c (assoc c :building? true))))]
+                  (fn [c] (if (:building? c) c (assoc c :building? true))))]
     (when-not (:building? old)
       (future
         (let [new-idx (try (picker/open-fuzzy-index) (catch Throwable _ nil))
               [prev _] (swap-vals! index-cache
-                                   (fn [c] (assoc c
-                                                  :idx (or new-idx (:idx c))
-                                                  :built-at (System/currentTimeMillis)
-                                                  :building? false)))]
+                         (fn [c] (assoc c
+                                   :idx (or new-idx (:idx c))
+                                   :built-at (System/currentTimeMillis)
+                                   :building? false)))]
           (when (and new-idx (:idx prev) (not (identical? new-idx (:idx prev))))
             (close-later! (:idx prev))))))))
 
@@ -80,7 +80,7 @@
   (let [lines (vec lines)
         crow  (long crow)]
     (str/join "\n" (conj (subvec lines 0 crow)
-                         (subs (nth lines crow) 0 (long ccol))))))
+                     (subs (nth lines crow) 0 (long ccol))))))
 
 (defn mention-at
   "Return `{:query q :at start}` for an active `@` file mention ending at
@@ -101,25 +101,25 @@
   (when-let [{:keys [query]} (mention-at (head-text input-state))]
     (when-let [idx (ensure-index!)]
       (let [rows (try (picker/fuzzy-file-rows idx query {:limit max-rows})
-                      (catch Throwable _ nil))
+                   (catch Throwable _ nil))
             n    (count rows)
             sel  (max 0 (min (dec n) (long (or selected-index 0))))]
         (when (seq rows)
           (map-indexed
-           (fn [idx it]
-             (let [status (:status-label it)
-                   meta   (->> [(:size-label it)
-                                (:age-label it)
-                                (when (and status (not= "clean" status)) status)]
-                               (remove str/blank?)
-                               (str/join " · "))]
-               {:file/mention?   true
-                :file/path       (:path it)
-                :slash/name      (:path it)
-                :slash/usage     (:path it)
-                :label           meta
-                :slash/selected? (= idx sel)}))
-           rows))))))
+            (fn [idx it]
+              (let [status (:status-label it)
+                    meta   (->> [(:size-label it)
+                                 (:age-label it)
+                                 (when (and status (not= "clean" status)) status)]
+                             (remove str/blank?)
+                             (str/join " · "))]
+                {:file/mention?   true
+                 :file/path       (:path it)
+                 :slash/name      (:path it)
+                 :slash/usage     (:path it)
+                 :label           meta
+                 :slash/selected? (= idx sel)}))
+            rows))))))
 
 (defn apply-mention
   "Splice the picked `path` into `input-state`, replacing the active `@token`

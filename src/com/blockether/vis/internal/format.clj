@@ -247,7 +247,7 @@
   [result]
   (let [model    (display-model-name
                    (or (when-let [m (:model result)]       (when (string? m) m))
-                       (when-let [m (:model (:cost result))] (when (string? m) m))))
+                     (when-let [m (:model (:cost result))] (when (string? m) m))))
         provider (or (normalize-provider (:provider result))
                    (normalize-provider (:provider (:cost result))))]
     (when model

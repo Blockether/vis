@@ -145,7 +145,7 @@
               (expect (= (pos? i) (:left m)))
               (expect (= (< (inc i) pc) (:right m))))
             (do (expect (nil? (:index m)))
-                (expect (nil? (:siblings m))))))))))
+              (expect (nil? (:siblings m))))))))))
 
 ;; ── 4. the same vocabulary through the sexpr / struct_patch TOOLS ─────────────
 (defn- write-temp! [name content]
@@ -194,8 +194,8 @@
 ;; ── 5. DEEPLY NESTED edits — a node buried ~9 levels down ────────────────────
 (def ^:private deep-src
   (str "(ns deep)\n(defn handler [req]\n  (let [body (get req :body)]\n"
-       "    (when (valid? body)\n"
-       "      (process {:data {:items [{:id 1 :score (* base 2)}]}}))))\n"))
+    "    (when (valid? body)\n"
+    "      (process {:data {:items [{:id 1 :score (* base 2)}]}}))))\n"))
 
 (defdescribe deep-nesting-test
   (it "find reaches a node buried deep in nested maps/vectors; edit changes ONLY it"

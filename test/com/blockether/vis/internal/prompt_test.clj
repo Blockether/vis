@@ -10,7 +10,7 @@
     (let [ext {:ext/name "test.prompt"
                :ext/engine {:ext.engine/alias 't}
                :ext/prompt-fn (fn [_]
-                             "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
+                                "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
           env {:extensions (atom [ext])}
           messages (prompt/assemble-stable-prompt-messages env
                      {:system-prompt "\n\n    Addendum line\n\n\n\n      Nested addendum line\n"

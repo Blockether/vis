@@ -72,16 +72,16 @@
           (cond-> {:class (.getName (class x))
                    :message (or (ex-message x) (str x))}
             (:type (ex-data x)) (assoc :type (:type (ex-data x)))))
-        (throwable-chain t)))
+    (throwable-chain t)))
 
 (defn- mini-stack-trace
   [^Throwable t]
   (when t
     (let [frames (take MINI_STACK_DEPTH (.getStackTrace t))]
       (str/join "\n"
-                (map (fn [^StackTraceElement frame]
-                       (str "  at " frame))
-                     frames)))))
+        (map (fn [^StackTraceElement frame]
+               (str "  at " frame))
+          frames)))))
 
 (defn- format-exception-short [^Throwable t]
   (let [ed (ex-data t)]
@@ -95,16 +95,16 @@
 
 (defn- format-exception [^Throwable t & [{:keys [context]}]]
   (merge (format-exception-short t)
-         {:data (ex-data t) :context context}))
+    {:data (ex-data t) :context context}))
 
 (defn- interrupted-cause?
   [^Throwable t]
   (boolean
-   (some (fn [^Throwable x]
-           (or (instance? InterruptedException x)
-               (instance? CancellationException x)
-               (= "java.lang.InterruptedException" (ex-message x))))
-         (throwable-chain t))))
+    (some (fn [^Throwable x]
+            (or (instance? InterruptedException x)
+              (instance? CancellationException x)
+              (= "java.lang.InterruptedException" (ex-message x))))
+      (throwable-chain t))))
 
 (def ^:private PROVIDER_INTERRUPT_RETRIES 1)
 
@@ -159,7 +159,7 @@
    retry once instead of letting router treat it like Esc cancellation."
   [^Throwable t environment]
   (and (interrupted-cause? t)
-       (not (provider-call-cancelled? environment))))
+    (not (provider-call-cancelled? environment))))
 
 (defn- call-provider-with-interrupt-retry!
   [environment iteration-position f]
@@ -172,18 +172,18 @@
         (:value outcome)
         (let [t (:throwable outcome)]
           (if (and (< attempt PROVIDER_INTERRUPT_RETRIES)
-                   (retryable-provider-interrupt? t environment))
+                (retryable-provider-interrupt? t environment))
             (do
               ;; Router restores interrupt status before rethrowing. Clear it
               ;; before retry or next HTTP call can fail immediately.
               (Thread/interrupted)
               (tel/log! {:level :warn
                          :data (assoc (format-exception-short t)
-                                      :iteration iteration-position
-                                      :attempt (inc attempt)
-                                      :max-retries PROVIDER_INTERRUPT_RETRIES
-                                      :cancelled? (provider-call-cancelled? environment))}
-                        "Provider call interrupted without user cancel; retrying")
+                                 :iteration iteration-position
+                                 :attempt (inc attempt)
+                                 :max-retries PROVIDER_INTERRUPT_RETRIES
+                                 :cancelled? (provider-call-cancelled? environment))}
+                "Provider call interrupted without user cancel; retrying")
               (recur (inc attempt)))
             (throw t)))))))
 
@@ -194,24 +194,24 @@
         cause (ex-cause t)
         cause-lower (str/lower-case (or (some-> cause ex-message) ""))]
     (and (= :svar.core/http-error (:type data))
-         (:stream? data)
-         (not (interrupted-cause? t))
-         (or (str/includes? msg-lower "stream connection error")
-             (str/includes? msg-lower "connection reset")
-             (str/includes? msg-lower "connection closed")
-             (str/includes? msg-lower "closed")
-             (str/includes? msg-lower "eof")
-             (str/includes? msg-lower "timed out")
+      (:stream? data)
+      (not (interrupted-cause? t))
+      (or (str/includes? msg-lower "stream connection error")
+        (str/includes? msg-lower "connection reset")
+        (str/includes? msg-lower "connection closed")
+        (str/includes? msg-lower "closed")
+        (str/includes? msg-lower "eof")
+        (str/includes? msg-lower "timed out")
         ;; transient TLS blip — the server tore down the connection mid-handshake
         ;; (javax.net.ssl.SSLHandshakeException "Remote host terminated the
         ;; handshake"); retry / fall back instead of failing the turn.
-             (str/includes? msg-lower "handshake")
-             (str/includes? cause-lower "connection reset")
-             (str/includes? cause-lower "connection closed")
-             (str/includes? cause-lower "closed")
-             (str/includes? cause-lower "eof")
-             (str/includes? cause-lower "timed out")
-             (str/includes? cause-lower "handshake")))))
+        (str/includes? msg-lower "handshake")
+        (str/includes? cause-lower "connection reset")
+        (str/includes? cause-lower "connection closed")
+        (str/includes? cause-lower "closed")
+        (str/includes? cause-lower "eof")
+        (str/includes? cause-lower "timed out")
+        (str/includes? cause-lower "handshake")))))
 
 (defn- empty-content-error?
   "True for :svar.llm/empty-content anywhere in the cause chain - the provider
@@ -220,8 +220,8 @@
    instead of surfacing it."
   [^Throwable t]
   (boolean
-   (some #(= :svar.llm/empty-content (:type (ex-data %)))
-         (take-while some? (iterate ex-cause t)))))
+    (some #(= :svar.llm/empty-content (:type (ex-data %)))
+      (take-while some? (iterate ex-cause t)))))
 
 (defn- provider-retry-event
   [{:keys [provider model attempt delay-ms error]}]
@@ -245,8 +245,8 @@
   [^Throwable t retry-events]
   (if (seq retry-events)
     (ex-info (ex-message t)
-             (update (or (ex-data t) {}) :routed/trace #(vec (concat retry-events (or % []))))
-             t)
+      (update (or (ex-data t) {}) :routed/trace #(vec (concat retry-events (or % []))))
+      t)
     t))
 
 (defn- call-provider-with-stream-rewind-retry!
@@ -265,9 +265,9 @@
         (prepend-routing-trace (:value outcome) retry-events)
         (let [t (:throwable outcome)
               can-retry? (and (< attempt PROVIDER_STREAM_REWIND_RETRIES)
-                              (not (provider-call-cancelled? environment))
-                              (or (stream-transport-error? t)
-                                  (empty-content-error? t)))]
+                           (not (provider-call-cancelled? environment))
+                           (or (stream-transport-error? t)
+                             (empty-content-error? t)))]
           (if can-retry?
             (let [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
                   event (provider-retry-event {:provider provider
@@ -286,14 +286,14 @@
                            :event event}))
               (tel/log! {:level :warn
                          :data (assoc (format-exception-short t)
-                                      :iteration iteration-position
-                                      :attempt (inc attempt)
-                                      :max-retries PROVIDER_STREAM_REWIND_RETRIES
-                                      :delay-ms delay-ms
-                                      :provider provider
-                                      :model model
-                                      :rewind? true)}
-                        "Provider stream failed after live output; rewinding progress and retrying")
+                                 :iteration iteration-position
+                                 :attempt (inc attempt)
+                                 :max-retries PROVIDER_STREAM_REWIND_RETRIES
+                                 :delay-ms delay-ms
+                                 :provider provider
+                                 :model model
+                                 :rewind? true)}
+                "Provider stream failed after live output; rewinding progress and retrying")
               (when (pos? delay-ms)
                 (Thread/sleep delay-ms))
               (recur (inc attempt) (conj retry-events event)))
@@ -315,8 +315,8 @@
 (defn- github-copilot-claude-model?
   [resolved-model]
   (and (contains? #{:github-copilot-individual :github-copilot-business}
-                  (:provider resolved-model))
-       (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
+         (:provider resolved-model))
+    (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
 
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
@@ -325,9 +325,9 @@
   [s]
   (let [text (some-> s str str/trim)]
     (boolean
-     (and text
-          (<= (count text) 80)
-          (re-find casual-request-pattern text)))))
+      (and text
+        (<= (count text) 80)
+        (re-find casual-request-pattern text)))))
 
 (defn- copilot-claude-safe-reasoning-level
   "Return the reasoning level Vis is willing to send to GitHub Copilot Claude.
@@ -349,12 +349,12 @@
 (defn- copilot-provider?
   [provider-id]
   (contains? #{:github-copilot :github-copilot-individual :github-copilot-business}
-             provider-id))
+    provider-id))
 
 (defn- copilot-llm-headers
   [resolved-model initiator]
   (when (and (copilot-provider? (:provider resolved-model))
-             (#{"user" "agent"} initiator))
+          (#{"user" "agent"} initiator))
     {"X-Initiator" initiator}))
 
 (defn- copilot-initiator-for-iteration
@@ -369,9 +369,9 @@
    namespaces so the core runtime has no extension cycle."
   [v]
   (and (map? v)
-       (= :needs-input (:vis/answer-mode v))
-       (string? (:answer/text v))
-       (not (str/blank? (:answer/text v)))))
+    (= :needs-input (:vis/answer-mode v))
+    (string? (:answer/text v))
+    (not (str/blank? (:answer/text v)))))
 
 (defn markdown-answer?
   "True for the canonical final-answer VALUE: `{:answer string}`.
@@ -380,7 +380,7 @@
    the `needs-input-answer?` map."
   [v]
   (and (map? v)
-       (string? (:answer v))))
+    (string? (:answer v))))
 
 (defn answer-markdown
   "Extract the raw Markdown source from a final-answer value.
@@ -416,10 +416,10 @@
 
 (defn- markdown-fence-block? [expr]
   (let [lines (->> (str/split-lines (str expr))
-                   (map str/trim)
-                   (remove str/blank?))]
+                (map str/trim)
+                (remove str/blank?))]
     (boolean (and (seq lines)
-                  (every? markdown-fence-line? lines)))))
+               (every? markdown-fence-line? lines)))))
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -479,29 +479,29 @@
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
                               (when tool-event-fn (tool-event-fn event*))))
         exec-future (cancellation/worker-future "vis-python-eval"
-                                                (fn []
-                                                  (try
-                                                    (binding [extension/*tool-event-sink* record-tool-event]
+                      (fn []
+                        (try
+                          (binding [extension/*tool-event-sink* record-tool-event]
                             ;; One persistent interpreter per session: globals (defs,
                             ;; imports, vars) carry across calls/turns NATURALLY.
-                                                      (assoc (env/run-python-block python-context code
-                                                                                   {:form-cap (:form-cap env)})
-                                                             :lru {}))
-                                                    (catch Throwable e
-                                                      (reset! thrown e)
-                                                      {:result nil :lru {} :forms []
-                                                       :error (python-op-error e code)}))))
+                            (assoc (env/run-python-block python-context code
+                                     {:form-cap (:form-cap env)})
+                              :lru {}))
+                          (catch Throwable e
+                            (reset! thrown e)
+                            {:result nil :lru {} :forms []
+                             :error (python-op-error e code)}))))
         dispose-cancel-hook (when cancel-token
                               (cancellation/on-cancel! cancel-token
-                                                       (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                                                   (catch Throwable _ nil)))))
+                                (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
+                                         (catch Throwable _ nil)))))
         timeout-ms  (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
                              (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                  (catch Throwable _ nil))
+                               (catch Throwable _ nil))
                              {:result nil :lru {}
                               :error (python-op-error e code)})
                            (finally
@@ -512,11 +512,11 @@
         (nil? execution-result)          (env/push-eval-error! env (or @thrown (ex-info "Eval timeout" {})))
         (nil? (:error execution-result)) (env/push-eval-result! env (:result execution-result))
         :else (env/push-eval-error! env (or @thrown (ex-info (or (:message (:error execution-result))
-                                                                 "eval error") {})))))
+                                                               "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-          {:result nil :lru {}
-           :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")} :timeout? true})
+        {:result nil :lru {}
+         :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")} :timeout? true})
       execution-result)))
 
 (defn- run-with-timing [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]
@@ -528,8 +528,8 @@
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
       true (assoc :execution-started-at-ms start-time
-                  :execution-finished-at-ms finished-time
-                  :duration-ms execution-time)
+             :execution-finished-at-ms finished-time
+             :duration-ms execution-time)
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
@@ -565,16 +565,16 @@
                        ;; The Python sandbox surfaces its own syntax/empty-block
                        ;; errors via env/run-python-block.
                        (run-with-timing python-context code sandbox-ns timeout-ms
-                                        start-time tool-event-fn environment)
+                         start-time tool-event-fn environment)
                        (catch Throwable e
                          (env/push-eval-error! environment e)
                          {:result nil
                           :lru {}
                           :error (try (extension/ex->op-error e {:form-source code})
-                                      (catch Throwable _
-                                        {:message (or (ex-message e)
-                                                      (.getName (class e)))
-                                         :type (-> e ex-data :type)}))
+                                   (catch Throwable _
+                                     {:message (or (ex-message e)
+                                                 (.getName (class e)))
+                                      :type (-> e ex-data :type)}))
                           :execution-started-at-ms start-time
                           :execution-finished-at-ms (System/currentTimeMillis)
                           :duration-ms (- (System/currentTimeMillis) start-time)
@@ -605,9 +605,9 @@
    symbol/tag, so it never matches (it is excluded by construction)."
   [entry tags-by-name]
   (and (:svar/tool-call-id entry)
-       (not (:vis/native-handler entry))
-       (not (:vis/preflight-error entry))
-       (= :observation (get tags-by-name (:vis/tool-name entry)))))
+    (not (:vis/native-handler entry))
+    (not (:vis/preflight-error entry))
+    (= :observation (get tags-by-name (:vis/tool-name entry)))))
 
 (defn- observation-batch?
   "True when EVERY entry in `code-entries` is a concurrent-safe observation and
@@ -617,9 +617,9 @@
   [code-entries tags-by-name]
   (let [entries (vec code-entries)]
     (and (>= (count entries) 2)
-         (every? (fn [e] (and (not (str/blank? (str (:expr e))))
-                              (observation-entry? e tags-by-name)))
-                 entries))))
+      (every? (fn [e] (and (not (str/blank? (str (:expr e))))
+                        (observation-entry? e tags-by-name)))
+        entries))))
 
 (defn- observation-batch-program
   "Synthesize the ONE Python program that runs `exprs` (each a bare observation
@@ -630,7 +630,7 @@
    globals; the block is a host-owned batch, never model-authored code."
   [exprs]
   (str "__vis_obs_batch__ = [" (str/join ", " exprs) "]\n"
-       "__vis_par_isolated__([(lambda __x__=__x__: __vis_settle__(__x__)) for __x__ in __vis_obs_batch__])"))
+    "__vis_par_isolated__([(lambda __x__=__x__: __vis_settle__(__x__)) for __x__ in __vis_obs_batch__])"))
 
 (defn- sentinel-get
   "Read a `__vis_*` sentinel key from a batch slot. The per-call sentinels are
@@ -678,9 +678,9 @@
     ;; Any deviation (batch-level :error, wrong arity, non-map slot) → nil → the
     ;; caller runs the iteration serially instead. Never silently drop a call.
     (if (and (nil? (:error exec))
-             (sequential? slots)
-             (= (count slots) (count entries))
-             (every? map? slots))
+          (sequential? slots)
+          (= (count slots) (count entries))
+          (every? map? slots))
       (mapv (fn [slot expr]
               (let [base {:execution-started-at-ms start
                           :execution-finished-at-ms finish
@@ -691,11 +691,11 @@
                   (assoc base :result (sentinel-get slot :__vis_val__))
                   (let [exc (sentinel-get slot :__vis_exc__)]
                     (assoc base
-                           :result nil
-                           :error (if (instance? Throwable exc)
-                                    (python-op-error exc expr)
-                                    {:message (str (or exc "observation failed"))}))))))
-            slots exprs)
+                      :result nil
+                      :error (if (instance? Throwable exc)
+                               (python-op-error exc expr)
+                               {:message (str (or exc "observation failed"))}))))))
+        slots exprs)
       nil)))
 
 (defn- run-native-handler
@@ -711,7 +711,7 @@
                               :execution-started-at-ms start
                               :execution-finished-at-ms (System/currentTimeMillis)
                               :duration-ms (- (System/currentTimeMillis) start)}
-                             m))]
+                        m))]
     (try
       (let [ret (handler environment input)]
         (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
@@ -721,9 +721,9 @@
         (env/push-eval-error! environment e)
         (done {:result nil
                :error (try (extension/ex->op-error e {:form-source display-src})
-                           (catch Throwable _
-                             {:message (or (ex-message e) (.getName (class e)))
-                              :type (-> e ex-data :type)}))})))))
+                        (catch Throwable _
+                          {:message (or (ex-message e) (.getName (class e)))
+                           :type (-> e ex-data :type)}))})))))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -747,10 +747,10 @@
      (map? err) err
      (instance? Throwable err)
      (try (extension/ex->op-error err
-                                  (cond-> {}
-                                    code (assoc :form-source code)))
-          (catch Throwable _
-            {:message (or (ex-message err) (.getName (class err)))}))
+            (cond-> {}
+              code (assoc :form-source code)))
+       (catch Throwable _
+         {:message (or (ex-message err) (.getName (class err)))}))
      :else
      (cond-> {:message (str err)}
        code (assoc :block {:source code
@@ -789,21 +789,21 @@
    within-turn compaction to recover (see CONTEXT_OVERFLOW_HOPELESS_FACTOR)."
   [ex-data-map]
   (and (= :svar.tokens/context-overflow (:type ex-data-map))
-       (let [input (:input-tokens ex-data-map)
-             max-input (:max-input-tokens ex-data-map)]
-         (and (number? input) (number? max-input) (pos? max-input)
-              (>= (double input)
-                  (* CONTEXT_OVERFLOW_HOPELESS_FACTOR (double max-input)))))))
+    (let [input (:input-tokens ex-data-map)
+          max-input (:max-input-tokens ex-data-map)]
+      (and (number? input) (number? max-input) (pos? max-input)
+        (>= (double input)
+          (* CONTEXT_OVERFLOW_HOPELESS_FACTOR (double max-input)))))))
 
 (def ^:private LAST_USER_PREVIEW_CHARS 500)
 
 (defn- last-user-message-preview [messages]
   (when-let [c (some (fn [m] (when (= (:role m) "user") (:content m)))
-                     (reverse messages))]
+                 (reverse messages))]
     (let [s (str c)]
       (if (> (count s) LAST_USER_PREVIEW_CHARS)
         (str (subs s 0 LAST_USER_PREVIEW_CHARS)
-             " ...<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
+          " ...<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
         s))))
 
 (defn- exception->iteration-error-data
@@ -811,11 +811,11 @@
    Delegates to the unified `format-exception` and adds iteration context."
   [^Throwable e ctx]
   (format-exception e
-                    {:context {:iteration         (:iteration ctx)
-                               :messages-count    (count (:messages ctx))
-                               :routing           (:routing ctx)
-                               :reasoning-level   (:reasoning-level ctx)
-                               :last-user-preview (last-user-message-preview (:messages ctx))}}))
+    {:context {:iteration         (:iteration ctx)
+               :messages-count    (count (:messages ctx))
+               :routing           (:routing ctx)
+               :reasoning-level   (:reasoning-level ctx)
+               :last-user-preview (last-user-message-preview (:messages ctx))}}))
 
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.
@@ -837,13 +837,13 @@
                           (:request_id ed)        (assoc :request-id (:request_id ed))
                           (and body (not (str/blank? body)))
                           (assoc :body-snippet (truncate body 1000))))}
-              (cond
-                hopeless-overflow?
-                "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
-                fatal?
-                "Provider infrastructure error - failing turn without RLM restarts"
-                :else
-                "RLM iteration failed, feeding error to LLM"))
+      (cond
+        hopeless-overflow?
+        "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
+        fatal?
+        "Provider infrastructure error - failing turn without RLM restarts"
+        :else
+        "RLM iteration failed, feeding error to LLM"))
     (cond-> {::iteration-error iteration-error-data}
       fatal? (assoc ::fatal-iteration-error true))))
 
@@ -903,15 +903,15 @@
                                                [::native (:svar/tool-call-id b)]
                                                (:source b)))
         unique-blocks                (->> blocks
-                                          (remove #(and (str/blank? (:source %))
-                                                        (not (:vis/native-handler %))))
-                                          (reduce (fn [{:keys [seen acc]} b]
-                                                    (let [k (block-key b)]
-                                                      (if (contains? seen k)
-                                                        {:seen seen :acc acc}
-                                                        {:seen (conj seen k) :acc (conj acc b)})))
-                                                  {:seen #{} :acc []})
-                                          :acc)
+                                       (remove #(and (str/blank? (:source %))
+                                                  (not (:vis/native-handler %))))
+                                       (reduce (fn [{:keys [seen acc]} b]
+                                                 (let [k (block-key b)]
+                                                   (if (contains? seen k)
+                                                     {:seen seen :acc acc}
+                                                     {:seen (conj seen k) :acc (conj acc b)})))
+                                         {:seen #{} :acc []})
+                                       :acc)
         duplicate-blocks-normalized? (< (count unique-blocks) (count blocks))
         ;; Each block becomes one code-entry. The entry carries:
         ;;   :expr             — verbatim block source (fed to the engine as-is)
@@ -933,7 +933,7 @@
                                                  ;; native handler-tool dispatch carries through to execution
                                                  (:vis/native-handler b) (assoc :vis/native-handler (:vis/native-handler b))
                                                  (contains? b :vis/native-input) (assoc :vis/native-input (:vis/native-input b)))))
-                                           unique-blocks)
+                                       unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
@@ -941,11 +941,11 @@
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
-                                          (remove :vis/preflight-error)
-                                          (keep :expr)            ;; code-less handler entries don't contribute
-                                          (map str/trim)
-                                          (remove str/blank?)
-                                          (str/join "\n\n"))
+                                       (remove :vis/preflight-error)
+                                       (keep :expr)            ;; code-less handler entries don't contribute
+                                       (map str/trim)
+                                       (remove str/blank?)
+                                       (str/join "\n\n"))
         code-hash                    (when-not (str/blank? normalized-code)
                                        (extension/sha256-hex normalized-code))
         any-entry-error?             (boolean (some :vis/preflight-error raw-entries))
@@ -956,9 +956,9 @@
         ;; blocks) merges the survivors into a SINGLE code-entry =
         ;; `normalized-code` — gate the merge on every entry lacking a call id.
         merged-entries               (if (and (> (count raw-entries) 1)
-                                              (not any-entry-error?)
-                                              (not (str/blank? normalized-code))
-                                              (every? (complement :svar/tool-call-id) raw-entries))
+                                           (not any-entry-error?)
+                                           (not (str/blank? normalized-code))
+                                           (every? (complement :svar/tool-call-id) raw-entries))
                                        (let [segs (render/parse-block-display normalized-code)]
                                          [{:expr normalized-code
                                            :block-lang (:block-lang (first raw-entries))
@@ -980,8 +980,8 @@
   (let [message (some-> (:message hit) str str/trim not-empty)
         hint    (some-> (:hint hit) str str/trim not-empty)]
     (str "Answer validation hook " id " rejected the final answer."
-         (when message (str " " message))
-         (when hint (str " Recovery: " hint)))))
+      (when message (str " " message))
+      (when hint (str " Recovery: " hint)))))
 
 (defn- answer-validation-hook-error-message
   [ext id ^Throwable t]
@@ -1007,7 +1007,7 @@
 (defn- answer-validation-extensions
   [environment active-extensions]
   (or (seq active-extensions)
-      (some-> (:extensions environment) deref seq)))
+    (some-> (:extensions environment) deref seq)))
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1037,7 +1037,7 @@
                      :iteration iteration
                      :blocks blocks
                      :answer answer-value}
-                    extra-ctx)]
+               extra-ctx)]
      ;; Extension `:turn.answer/validate` vetoes only. An answer reply is plain
      ;; prose with no tool calls, so it carries no tool ops to gate.
      (some (fn [ext]
@@ -1055,8 +1055,8 @@
                                (answer-validation-invalid-return-message ext id hit)))
                            (catch Throwable t
                              (answer-validation-hook-error-message ext id t))))))
-                   (or (:ext/hooks ext) [])))
-           (answer-validation-extensions environment active-extensions)))))
+               (or (:ext/hooks ext) [])))
+       (answer-validation-extensions environment active-extensions)))))
 
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
@@ -1081,13 +1081,13 @@
         user-request  (some-> turn-state-atom deref :user-request)
         current-title (some-> (:session-title-atom environment) deref str str/trim not-empty)]
     (ctx-loop/finalize-turn! {:ctx-atom (:ctx-atom environment) :turn-state-atom turn-state-atom}
-                             {:answer answer-text :turn-summary turn-summary
-                              :user-request user-request :session-title current-title})
+      {:answer answer-text :turn-summary turn-summary
+       :user-request user-request :session-title current-title})
     ;; :position nil — an answer reply has no python form to attach to.
     (swap! turn-state-atom assoc :answer {:value value :position nil})
     (when-not (str/blank? (str answer-text))
       (swap! turn-state-atom assoc :best-answer
-             {:value value :answer-markdown answer-text}))
+        {:value value :answer-markdown answer-text}))
     value))
 
 (defn- iteration-start-hook-hit
@@ -1104,8 +1104,8 @@
     (do (tel/log! {:level :warn
                    :id ::iteration-start-hook-invalid-return
                    :data {:ext (:ext/name ext) :hook id :returned hit}}
-                  "Extension :turn.iteration/start hook returned non-map value; expected nil or hook-task map")
-        nil)
+          "Extension :turn.iteration/start hook returned non-map value; expected nil or hook-task map")
+      nil)
 
     :else
     (let [title         (:title hit)
@@ -1120,8 +1120,8 @@
         (do (tel/log! {:level :warn
                        :id ::iteration-start-hook-missing-title
                        :data {:ext (:ext/name ext) :hook id :returned hit}}
-                      "Hook returned map without non-blank :title (and no :emit payload); dropping")
-            nil)
+              "Hook returned map without non-blank :title (and no :emit payload); dropping")
+          nil)
 
         :else
         (cond-> {:id id
@@ -1140,7 +1140,7 @@
              :data {:ext (:ext/name ext)
                     :hook id
                     :error (ex-message t)}}
-            "Extension :turn.iteration/start hook threw")
+    "Extension :turn.iteration/start hook threw")
   nil)
 
 (defn- collect-iteration-start-hints
@@ -1148,36 +1148,36 @@
    this currently returns an empty vector after preserving hook validation/logging."
   [_environment active-extensions ctx]
   (vec
-   (mapcat (fn [ext]
-             (keep (fn [{:keys [id phase lifetime] hook-fn :fn}]
-                     (when (= :turn.iteration/start phase)
-                       (binding [extension/*current-extension* ext
-                                 extension/*current-symbol* nil]
-                         (try
-                           (iteration-start-hook-hit ext id lifetime (hook-fn ctx))
-                           (catch Throwable t
-                             (iteration-start-hook-error-hit ext id t))))))
-                   (or (:ext/hooks ext) [])))
-           active-extensions)))
+    (mapcat (fn [ext]
+              (keep (fn [{:keys [id phase lifetime] hook-fn :fn}]
+                      (when (= :turn.iteration/start phase)
+                        (binding [extension/*current-extension* ext
+                                  extension/*current-symbol* nil]
+                          (try
+                            (iteration-start-hook-hit ext id lifetime (hook-fn ctx))
+                            (catch Throwable t
+                              (iteration-start-hook-error-hit ext id t))))))
+                (or (:ext/hooks ext) [])))
+      active-extensions)))
 
 (defn- session-turn-position
   [environment session-turn-id]
   (or
-   (try
-     (when-let [session-id (:session-id environment)]
-       (some (fn [turn]
-               (when (= (str (:id turn)) (str session-turn-id))
-                 (:position turn)))
-             (persistance/db-list-session-turns (:db-info environment) session-id)))
-     (catch Throwable t
-       (tel/log! {:level :warn
-                  :id ::session-turn-position-failed
-                  :data {:session-id (:session-id environment)
-                         :session-turn-id session-turn-id
-                         :error (ex-message t)}}
-                 "Could not resolve session turn position for iteration hooks")
-       nil))
-   1))
+    (try
+      (when-let [session-id (:session-id environment)]
+        (some (fn [turn]
+                (when (= (str (:id turn)) (str session-turn-id))
+                  (:position turn)))
+          (persistance/db-list-session-turns (:db-info environment) session-id)))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :id ::session-turn-position-failed
+                   :data {:session-id (:session-id environment)
+                          :session-turn-id session-turn-id
+                          :error (ex-message t)}}
+          "Could not resolve session turn position for iteration hooks")
+        nil))
+    1))
 
 ;; Scope helpers (`iter-of-scope` / `scope-key` / `expand-through`) live further
 ;; down next to `apply-summaries`; forward-declared so the resume-context path
@@ -1206,26 +1206,26 @@
         gist-of  (into {} (mapcat (fn [s] (when (and (not (:drop? s)) (:gist s))
                                             (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))]
     (first
-     (reduce
-      (fn [[acc seen] f]
-        (let [sc  (:scope f)
-              isc (iter-of-scope sc)]
-          (cond
-            (and isc (contains? drop-of isc))                        ; dropped → ONE audit line
-            (if (contains? seen isc)
-              [acc seen]
-              [(conj acc (cond-> {:scope isc :dropped? true}
-                           (get drop-of isc) (assoc :note (get drop-of isc))))
-               (conj seen isc)])
-            (and isc (contains? gist-of isc))                        ; folded → ONE gist line
-            (if (contains? seen isc)
-              [acc seen]
-              [(conj acc {:scope isc :gist (get gist-of isc)}) (conj seen isc)])
-            (and sc (or (some? (:result f)) (some? (:stdout f)))     ; live, worth listing
-                 (not= "vis_silent" (:result f)))
-            [(conj acc {:scope sc :src (ctx-engine/compact-src (:src f))}) seen]
-            :else [acc seen])))
-      [[] #{}] forms))))
+      (reduce
+        (fn [[acc seen] f]
+          (let [sc  (:scope f)
+                isc (iter-of-scope sc)]
+            (cond
+              (and isc (contains? drop-of isc))                        ; dropped → ONE audit line
+              (if (contains? seen isc)
+                [acc seen]
+                [(conj acc (cond-> {:scope isc :dropped? true}
+                             (get drop-of isc) (assoc :note (get drop-of isc))))
+                 (conj seen isc)])
+              (and isc (contains? gist-of isc))                        ; folded → ONE gist line
+              (if (contains? seen isc)
+                [acc seen]
+                [(conj acc {:scope isc :gist (get gist-of isc)}) (conj seen isc)])
+              (and sc (or (some? (:result f)) (some? (:stdout f)))     ; live, worth listing
+                (not= "vis_silent" (:result f)))
+              [(conj acc {:scope sc :src (ctx-engine/compact-src (:src f))}) seen]
+              :else [acc seen])))
+        [[] #{}] forms))))
 
 (defn- previous-turn-context
   "ALL prior ANSWERED turns as cross-process RESUME context — the conversation a
@@ -1250,39 +1250,39 @@
             ;; running one.
             include? (fn [turn]
                        (and (not= (str (:id turn)) (str current-turn-id))
-                            (not= :running (:status turn))
-                            (or (seq (some-> (:answer-markdown turn) str str/trim))
-                                (contains? #{:interrupted :error} (:status turn)))))
+                         (not= :running (:status turn))
+                         (or (seq (some-> (:answer-markdown turn) str str/trim))
+                           (contains? #{:interrupted :error} (:status turn)))))
             turns (filter include? (persistance/db-list-session-turns d session-id))]
         (not-empty
-         (mapv (fn [turn]
-                 (let [forms  (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
-                                        (catch Throwable _ []))
-                                   (filter #(= :done (:status %)))
-                                   (mapcat :forms))
+          (mapv (fn [turn]
+                  (let [forms  (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
+                                      (catch Throwable _ []))
+                                 (filter #(= :done (:status %)))
+                                 (mapcat :forms))
                         ;; A form is worth listing if it produced EITHER a value
                         ;; (:result) OR printed output (:stdout); fold/drop intents
                         ;; reshape it (see prior-turn-scope-index). Print-only forms
                         ;; carry only :stdout (de-conflated).
-                       scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
-                   {:user-request (:user-request turn)
+                        scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
+                    {:user-request (:user-request turn)
                      ;; An interrupted/error turn's only "answer" is the orphan-sweep
                      ;; sentinel / provider fallback, or nil — never a normal
                      ;; success answer. Drop it so the turn renders as
                      ;; UNFINISHED work to continue, not as "you answered with
                      ;; a warning/error".
-                    :answer       (when-not (contains? #{:interrupted :error} (:status turn))
-                                    (:answer-markdown turn))
-                    :interrupted? (contains? #{:interrupted :error} (:status turn))
-                    :results      scopes}))
-               turns))))
+                     :answer       (when-not (contains? #{:interrupted :error} (:status turn))
+                                     (:answer-markdown turn))
+                     :interrupted? (contains? #{:interrupted :error} (:status turn))
+                     :results      scopes}))
+            turns))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-turn-context-failed
                  :data {:session-id (:session-id environment)
                         :session-turn-id current-turn-id
                         :error (ex-message t)}}
-                "Could not load previous turn context; continuing without Q/A carry")
+        "Could not load previous turn context; continuing without Q/A carry")
       nil)))
 
 (defn- previous-request-usage
@@ -1307,21 +1307,21 @@
                                            :data {:session-id session-id
                                                   :session-turn-id (:id turn)
                                                   :error (ex-message t)}}
-                                          "Could not load prior turn iterations while seeding utilization")
+                                  "Could not load prior turn iterations while seeding utilization")
                                 []))]
                   (when-let [it (last (filter #(pos? (long (or (:input-tokens %) 0))) iters))]
                     {:last-request-tokens        (long (:input-tokens it))
                      :last-request-turn-id       (:id turn)
                      :last-request-turn-position (:position turn)
                      :last-request-iteration     (:position it)})))
-              (reverse (remove #(= (str (:id %)) current-id) turns)))))
+          (reverse (remove #(= (str (:id %)) current-id) turns)))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-request-usage-failed
                  :data {:session-id (:session-id environment)
                         :session-turn-id current-turn-id
                         :error (ex-message t)}}
-                "Could not load previous request usage; first iteration will omit utilization")
+        "Could not load previous request usage; first iteration will omit utilization")
       nil)))
 
 (defn- stamp-utilization!
@@ -1340,8 +1340,8 @@
 (defn- runtime-turn-prefix
   [environment]
   (let [id-s (str (or (:session-turn-id (ctx-loop/read-turn-state environment))
-                      (:environment-id environment)
-                      "00000000"))
+                    (:environment-id environment)
+                    "00000000"))
         prefix (subs id-s 0 (min 8 (count id-s)))]
     (if (re-matches #"(?i)[0-9a-f]{8}" prefix)
       prefix
@@ -1374,16 +1374,16 @@
    trace."
   [turn-prefix iteration form-idx form-count result rendering-kind]
   (let [finished      (long (or (:execution-finished-at-ms result)
-                                (System/currentTimeMillis)))
+                              (System/currentTimeMillis)))
         duration      (long (or (:duration-ms result) 0))
         started       (long (or (:execution-started-at-ms result)
-                                (max 0 (- finished duration))))
+                              (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
     {:op             (or (:op result)
-                         (case rendering-kind
-                           :nudge  :vis/system
-                           :answer :vis/answer
-                           :python/eval))
+                       (case rendering-kind
+                         :nudge  :vis/system
+                         :answer :vis/answer
+                         :python/eval))
      :started-at-ms  started
      :finished-at-ms finished
      :status         (cond
@@ -1400,21 +1400,21 @@
 (defn- envelope-timestamps-ordered?
   [envelope]
   (<= (long (:started-at-ms envelope))
-      (long (:finished-at-ms envelope))))
+    (long (:finished-at-ms envelope))))
 
 (defn- envelope-form-position-valid?
   [envelope]
   (<= (long (:form-position envelope))
-      (long (:form-count envelope))))
+    (long (:form-count envelope))))
 
 (defn- envelope-ref-consistent?
   [envelope]
   (let [[_ iteration block] (re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/([1-9][0-9]*)/block/([1-9][0-9]*)$"
-                                        (:ref envelope))]
+                              (:ref envelope))]
     (and iteration
-         block
-         (= (Long/parseLong iteration) (long (:iteration envelope)))
-         (= (Long/parseLong block) (long (:form-position envelope))))))
+      block
+      (= (Long/parseLong iteration) (long (:iteration envelope)))
+      (= (Long/parseLong block) (long (:form-position envelope))))))
 
 (defn- envelope-has-no-derived-duration?
   [envelope]
@@ -1423,10 +1423,10 @@
 (defn- envelope-duration-ms
   [envelope]
   (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
     (max 0 (- (long (:finished-at-ms envelope))
-              (long (:started-at-ms envelope))))))
+             (long (:started-at-ms envelope))))))
 
 (defn- block-duration-ms
   [block]
@@ -1447,20 +1447,20 @@
 (s/def ::finished-at-ms nat-int?)
 (s/def ::ref
   (s/and string?
-         #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
+    #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
 (s/def ::block-envelope
   (s/and
-   (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count
-                    ::started-at-ms ::finished-at-ms ::ref]
-           :opt-un [::timeout? ::repaired?])
-   envelope-timestamps-ordered?
-   envelope-form-position-valid?
-   envelope-ref-consistent?
-   envelope-has-no-derived-duration?))
+    (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count
+                     ::started-at-ms ::finished-at-ms ::ref]
+      :opt-un [::timeout? ::repaired?])
+    envelope-timestamps-ordered?
+    envelope-form-position-valid?
+    envelope-ref-consistent?
+    envelope-has-no-derived-duration?))
 (s/def ::envelope ::block-envelope)
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::error ::envelope]
-          :opt-un [::result ::timeout? ::repaired? ::comment]))
+    :opt-un [::result ::timeout? ::repaired? ::comment]))
 
 (defn validate-iteration-blocks!
   "Fail fast if a stored/evaluated block lost mandatory envelope.
@@ -1472,15 +1472,15 @@
                        (cond-> block
                          (contains? block :error)
                          (update :error op-error
-                                 {:code (:code block)
-                                  :phase (get-in block [:envelope :op])})))
-                     (or blocks []))]
+                           {:code (:code block)
+                            :phase (get-in block [:envelope :op])})))
+                 (or blocks []))]
     (doseq [block blocks]
       (when-not (s/valid? ::iteration-block block)
         (throw (ex-info "Invalid iteration block"
-                        {:type :vis/invalid-iteration-block
-                         :block block
-                         :explain (s/explain-data ::iteration-block block)}))))
+                 {:type :vis/invalid-iteration-block
+                  :block block
+                  :explain (s/explain-data ::iteration-block block)}))))
     blocks))
 
 ;; ---------------------------------------------------------------------------
@@ -1492,7 +1492,7 @@
   (some (fn [k]
           (let [v (get tokens k)]
             (when (number? v) v)))
-        ks))
+    ks))
 
 (defn- ask-result->api-usage
   [{:keys [tokens]}]
@@ -1505,7 +1505,7 @@
                                                                                   :cache-creation
                                                                                   :cache-write
                                                                                   :cache_creation])
-                                                            0))}})
+                                                          0))}})
 
 (defn- reasoning-effort-configurable?
   "True when a model accepts a caller-selected reasoning effort.
@@ -1517,8 +1517,8 @@
    explicitly with `:reasoning-effort? false`."
   [resolved-model]
   (and (boolean (:reasoning? resolved-model))
-       (not= false (:reasoning-effort? resolved-model))
-       (not= :zai-thinking (:reasoning-style resolved-model))))
+    (not= false (:reasoning-effort? resolved-model))
+    (not= :zai-thinking (:reasoning-style resolved-model))))
 
 (defn- ^:private replay-reasoning-chars
   "Total `:thinking-signature` (or `:thinking` fallback) char count for
@@ -1527,9 +1527,9 @@
    `reasoning_content` — that is what counts against the budget."
   [assistant-message]
   (->> (get assistant-message :content)
-       (filter (fn [b] (= "thinking" (:type b))))
-       (map (fn [b] (count (or (:thinking-signature b) (:thinking b) ""))))
-       (reduce + 0)))
+    (filter (fn [b] (= "thinking" (:type b))))
+    (map (fn [b] (count (or (:thinking-signature b) (:thinking b) ""))))
+    (reduce + 0)))
 
 (defn- preserved-thinking-replay-messages
   "Provider-agnostic preserved-thinking replay. Returns every compatible
@@ -1593,7 +1593,7 @@
 (defn- anthropic-replay-context?
   [{:keys [provider model]}]
   (or (boolean (re-find #"(?i)anthropic" (str provider)))
-      (boolean (re-find #"(?i)^claude" (str model)))))
+    (boolean (re-find #"(?i)^claude" (str model)))))
 
 (defn- thinking-blocks
   [assistant-message]
@@ -1608,28 +1608,28 @@
   (let [thinking  (:thinking block)
         signature (:thinking-signature block)]
     (and (string? thinking)
-         (not (str/blank? thinking))
-         (string? signature)
-         (= thinking signature))))
+      (not (str/blank? thinking))
+      (string? signature)
+      (= thinking signature))))
 
 (defn- assistant-message-compatible-with-replay-target?
   [target assistant-message]
   (not (and (anthropic-replay-context? target)
-            (some anthropic-invalid-thinking-replay-block?
-                  (thinking-blocks assistant-message)))))
+         (some anthropic-invalid-thinking-replay-block?
+           (thinking-blocks assistant-message)))))
 
 (defn- actual-llm-provider
   "Provider that actually served an ask-result. svar may route/fallback
    inside ask-code!, so prefer routed metadata over Vis' pre-call guess."
   [resolved-model ask-result]
   (or (:routed/provider-id ask-result)
-      (:provider resolved-model)))
+    (:provider resolved-model)))
 
 (defn- actual-llm-model
   "Model that actually served an ask-result. See `actual-llm-provider`."
   [resolved-model ask-result]
   (or (:routed/model ask-result)
-      (some-> (:name resolved-model) str)))
+    (some-> (:name resolved-model) str)))
 
 (defn- llm-id
   [provider model]
@@ -1642,21 +1642,21 @@
   (let [routing-trace (vec (or (:llm-routing-trace iteration-result) []))
         fallback-ev   (first (filter #(contains? #{:llm.routing/provider-fallback
                                                    :llm.routing/format-fallback}
-                                                 (:event/type %))
-                                     routing-trace))
+                                        (:event/type %))
+                               routing-trace))
         ;; The authoritative anchors are the fallback event's from/to when a
         ;; real fallback was traced: the router may pre-resolve so the iteration
         ;; result's provider/model already reflect the FALLBACK, which would
         ;; otherwise collapse selected==actual and drop the '↳ from …' note.
         selected (llm-id (or (:from-provider fallback-ev) (:provider selected-model))
-                         (or (:from-model fallback-ev) (some-> (:name selected-model) str)))
+                   (or (:from-model fallback-ev) (some-> (:name selected-model) str)))
         actual   (llm-id (or (:to-provider fallback-ev) (:llm-provider iteration-result) (:provider selected-model))
-                         (or (:to-model fallback-ev) (:llm-model iteration-result) (some-> (:name selected-model) str)))]
+                   (or (:to-model fallback-ev) (:llm-model iteration-result) (some-> (:name selected-model) str)))]
     (cond-> {:selected selected
              :actual   actual
              :fallback? (boolean
-                         (or (not= selected actual)
-                             (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
+                          (or (not= selected actual)
+                            (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
       (seq routing-trace) (assoc :trace routing-trace))))
 
 (defn- attach-llm-routing-summary
@@ -1665,11 +1665,11 @@
         actual   (:actual routing)
         selected (:selected routing)]
     (cond-> (assoc result
-                   :provider (:provider actual)
-                   :model    (:model actual)
-                   :llm-selected selected
-                   :llm-actual actual
-                   :llm-fallback? (:fallback? routing))
+              :provider (:provider actual)
+              :model    (:model actual)
+              :llm-selected selected
+              :llm-actual actual
+              :llm-fallback? (:fallback? routing))
       (seq (:trace routing))
       (assoc :llm-routing-trace (:trace routing))
       (:cost result)
@@ -1691,12 +1691,12 @@
     (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]
                       replay? :preserved-thinking/replay?}]]
                (and (not= false replay?)
-                    assistant-message
-                    (= target-provider llm-provider)
-                    (= target-model llm-model)
-                    (assistant-message-compatible-with-replay-target?
-                     target assistant-message)))
-             (or trailer-iters []))))
+                 assistant-message
+                 (= target-provider llm-provider)
+                 (= target-model llm-model)
+                 (assistant-message-compatible-with-replay-target?
+                   target assistant-message)))
+      (or trailer-iters []))))
 
 ;; -----------------------------------------------------------------------------
 ;; Frozen result messages — prefix-cache-friendly form-result history.
@@ -1728,7 +1728,7 @@
    comprehension, arithmetic, a subscript)."
   [src]
   (or (not-empty (ctx-engine/form-head-name (str src)))
-      (ctx-engine/compact-src src)))
+    (ctx-engine/compact-src src)))
 
 (defn- iter-of-scope
   "Form scope `\"t1/i2/f3\"` → its iteration scope `\"t1/i2\"` (drops the `/fN`).
@@ -1761,15 +1761,15 @@
           (if-let [thr (:through s)]
             (let [tk (scope-key thr)]
               (-> s
-                  (dissoc :through)
-                  (assoc :scopes
-                         (into (set (:scopes s))
-                               (filter (fn [u]
-                                         (when-let [uk (scope-key u)]
-                                           (and tk (<= (compare uk tk) 0))))
-                                       universe)))))
+                (dissoc :through)
+                (assoc :scopes
+                  (into (set (:scopes s))
+                    (filter (fn [u]
+                              (when-let [uk (scope-key u)]
+                                (and tk (<= (compare uk tk) 0))))
+                      universe)))))
             s))
-        summaries))
+    summaries))
 
 (defn- supersede-summaries
   "Collapse 'summary of summary': drop any summary whose scope set is fully
@@ -1785,14 +1785,14 @@
         covered? (fn [i]
                    (let [si (set (:scopes (nth v i)))]
                      (and (seq si)
-                          (boolean
-                           (some (fn [j]
-                                   (when (not= i j)
-                                     (let [sj (set (:scopes (nth v j)))]
-                                       (and (every? sj si)              ; si ⊆ sj
-                                            (or (not (every? si sj))       ; proper subset → superset wins
-                                                (< i j))))))                 ; equal → later wins
-                                 (range n))))))]
+                       (boolean
+                         (some (fn [j]
+                                 (when (not= i j)
+                                   (let [sj (set (:scopes (nth v j)))]
+                                     (and (every? sj si)              ; si ⊆ sj
+                                       (or (not (every? si sj))       ; proper subset → superset wins
+                                         (< i j))))))                 ; equal → later wins
+                           (range n))))))]
     (vec (keep-indexed (fn [i s] (when-not (covered? i) s)) v))))
 
 (defn- compaction-verbs
@@ -1813,9 +1813,9 @@
   [ctx-atom]
   (let [->set   (fn [scopes]
                   (into #{} (comp (map str) (map str/trim) (remove str/blank?))
-                        (cond (sequential? scopes) scopes
-                              (string? scopes)     [scopes]
-                              :else                nil)))
+                    (cond (sequential? scopes) scopes
+                      (string? scopes)     [scopes]
+                      :else                nil)))
         target  (fn [scopes]
                   (if (map? scopes)
                     (when-let [thr (some-> (:through scopes) str str/trim not-empty)]
@@ -1832,7 +1832,7 @@
                intent (cond-> base g (assoc :gist g))]
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
-                     "model folded scopes")
+             "model folded scopes")
            (str "folded " label (when g (str " → " g))))
          "session_fold: nothing to fold (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))
      'session-drop
@@ -1842,7 +1842,7 @@
                intent (cond-> (assoc base :drop? true) r (assoc :gist r))]
            (record! intent)
            (tel/log! {:level :info :id ::session-drop :data {:intent intent}}
-                     "model dropped scopes")
+             "model dropped scopes")
            (str "dropped " label (when r (str " (" r ")"))))
          "session_drop: nothing to drop (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))}))
 
@@ -1869,36 +1869,36 @@
           ;; step at or before the cursor; then supersede covered summaries so a
           ;; broader re-fold replaces the finer one (one breadcrumb, not two).
           summaries  (supersede-summaries
-                      (expand-through summaries
-                                      (keep iter-scope-of (map second trailer-iters))))
+                       (expand-through summaries
+                         (keep iter-scope-of (map second trailer-iters))))
           summarized (into #{} (mapcat :scopes) summaries)   ; set of "tN/iN"
           ;; summary → earliest trailer index whose iteration scope it names
           anchors    (reduce
-                      (fn [m s]
-                        (if-let [idx (some (fn [[i [_ rec]]]
-                                             (when (contains? (set (:scopes s)) (iter-scope-of rec)) i))
-                                           (map-indexed vector trailer-iters))]
-                          (update m idx (fnil conj [])
-                                  {:gist (:gist s)
-                                   :drop? (:drop? s)
-                                   :summary-iters (vec (sort (:scopes s)))})
-                          m))
-                      {} summaries)]
+                       (fn [m s]
+                         (if-let [idx (some (fn [[i [_ rec]]]
+                                              (when (contains? (set (:scopes s)) (iter-scope-of rec)) i))
+                                        (map-indexed vector trailer-iters))]
+                           (update m idx (fnil conj [])
+                             {:gist (:gist s)
+                              :drop? (:drop? s)
+                              :summary-iters (vec (sort (:scopes s)))})
+                           m))
+                       {} summaries)]
       (vec (map-indexed
-            (fn [i [pos rec]]
-              (let [collapsed? (contains? summarized (iter-scope-of rec))
-                    gists      (get anchors i)
-                    gist-forms (when gists
-                                 (mapv (fn [g] {:scope :summary
-                                                :summary? true
-                                                :summary-gist (:gist g)
-                                                :summary-drop? (:drop? g)
-                                                :summary-iters (:summary-iters g)})
-                                       gists))]
-                [pos (cond-> rec
-                       collapsed? (assoc :collapsed? true :forms-vec [])
-                       gist-forms (assoc :forms-vec (vec gist-forms)))]))
-            trailer-iters)))))
+             (fn [i [pos rec]]
+               (let [collapsed? (contains? summarized (iter-scope-of rec))
+                     gists      (get anchors i)
+                     gist-forms (when gists
+                                  (mapv (fn [g] {:scope :summary
+                                                 :summary? true
+                                                 :summary-gist (:gist g)
+                                                 :summary-drop? (:drop? g)
+                                                 :summary-iters (:summary-iters g)})
+                                    gists))]
+                 [pos (cond-> rec
+                        collapsed? (assoc :collapsed? true :forms-vec [])
+                        gist-forms (assoc :forms-vec (vec gist-forms)))]))
+             trailer-iters)))))
 
 (def ^:private MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
@@ -1928,19 +1928,19 @@
                  (when (pos? n)
                    (if (> n MAX_FORM_WIRE_CHARS)
                      (str (subs s 0 MAX_FORM_WIRE_CHARS)
-                          "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n " chars")
+                       "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n " chars")
                      s))))
         ;; per-tool custom renderer (declared on the symbol's :native-tool :render)
         custom (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
                  (try (rf (:result result*))
-                      (catch Throwable e
+                   (catch Throwable e
                      ;; never swallow silently — a broken renderer must be visible
                      ;; in the logs; the result still shows via the pretty-print path.
-                        (tel/log! {:level :warn :id ::native-tool-render-failed
-                                   :data {:tool tool-name :error (ex-message e)}}
-                                  (str "native-tool :render for " tool-name
-                                       " threw — falling back to pretty-print"))
-                        nil)))
+                     (tel/log! {:level :warn :id ::native-tool-render-failed
+                                :data {:tool tool-name :error (ex-message e)}}
+                       (str "native-tool :render for " tool-name
+                         " threw — falling back to pretty-print"))
+                     nil)))
         ->card (fn [m]
                  (let [summary (some-> (:summary m) str str/trim not-empty)
                        body    (some-> (:body m) str clip)]
@@ -1973,7 +1973,7 @@
   (let [;; ONE scope source: the `forms-vec` (each `{:scope :result …}`).
         ;; Falls back to scoped `:blocks` forms.
         forms (or (:forms-vec iter-record)
-                  (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
+                (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
         ;; `session_fold(...)` / `session_drop(...)` folds (synthetic forms
         ;; apply-summaries injected) render FIRST as one Python comment naming the
         ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
@@ -1983,10 +1983,10 @@
         summary-lines (keep (fn [f]
                               (when (:summary? f)
                                 (str "# -- " (str/join " -- " (:summary-iters f)) " -- "
-                                     (let [g (:summary-gist f)]
-                                       (str (if (:summary-drop? f) "dropped" "folded")
-                                            (when g (str ": " g)))))))
-                            forms)
+                                  (let [g (:summary-gist f)]
+                                    (str (if (:summary-drop? f) "dropped" "folded")
+                                      (when g (str ": " g)))))))
+                        forms)
         ;; What becomes context:
         ;;   - python_execution: ONLY what the program PRINTED, shown RAW. A bare
         ;;     expression's value is NOT auto-echoed — print() to see it.
@@ -1998,8 +1998,8 @@
                     (let [s (str/trimr (str s)) n (count s)]
                       (if (> n MAX_FORM_WIRE_CHARS)
                         (str (subs s 0 MAX_FORM_WIRE_CHARS)
-                             "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n
-                             " chars — narrow next time (slice/filter before reading).")
+                          "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n
+                          " chars — narrow next time (slice/filter before reading).")
                         s)))
         ;; Each form carries exactly ONE success channel (the engine emits one or
         ;; the other, never both): `:result` = a native tool call's returned value
@@ -2036,7 +2036,7 @@
         result-handle (fn [tc own]
                         (when (and (:id tc) (some #(contains? % :result) own))
                           (str "# saved: native_tools_results[" (pr-str (str (:id tc)))
-                               "] — re-read without re-running")))
+                            "] — re-read without re-running")))
         call-content (fn [idx tc]
                        (let [own      (cond-> (vec (get forms-by-id (:id tc)))
                                         (zero? idx) (into (or orphan-forms [])))
@@ -2045,12 +2045,12 @@
                              header   (when (and iscope (seq lines)) (str "# " iscope))
                              handle   (when (seq lines) (result-handle tc own))
                              body-ls  (concat (when (zero? idx) summary-lines)
-                                              (when header [header])
-                                              (when handle [handle])
-                                              lines)
+                                        (when header [header])
+                                        (when handle [handle])
+                                        lines)
                              body     (when (seq body-ls) (str/join "\n" body-ls))]
                          (str/join "\n\n"
-                                   (remove str/blank? [body (when (zero? idx) ctx-diff)]))))
+                           (remove str/blank? [body (when (zero? idx) ctx-diff)]))))
         ;; Legacy text fallback (a record with NO tool calls): all forms joined.
         fallback-content
         (let [lines   (keep form-output forms)
@@ -2074,24 +2074,24 @@
       tool-calls
       {:role "user"
        :content (vec (map-indexed
-                      (fn [idx tc]
-                        (let [own      (cond-> (vec (get forms-by-id (:id tc)))
-                                         (zero? idx) (into (or orphan-forms [])))
+                       (fn [idx tc]
+                         (let [own      (cond-> (vec (get forms-by-id (:id tc)))
+                                          (zero? idx) (into (or orphan-forms [])))
                              ;; A tool call FAILED when any of its forms errored.
                              ;; Flag the tool_result `:is_error true` so the model
                              ;; treats it as a failure, not an empty success.
                              ;; svar passes it to Anthropic as `is_error: true`;
                              ;; on OpenAI/Gemini (no structured flag) the error TEXT
                              ;; in :content carries the signal.
-                              errored? (boolean (some :error own))
-                              c        (call-content idx tc)]
-                          (cond-> {:type "tool_result"
-                                   :tool_use_id (:id tc)
-                                   :content (if (str/blank? c)
-                                              "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
-                                              c)}
-                            errored? (assoc :is_error true))))
-                      tool-calls))}
+                               errored? (boolean (some :error own))
+                               c        (call-content idx tc)]
+                           (cond-> {:type "tool_result"
+                                    :tool_use_id (:id tc)
+                                    :content (if (str/blank? c)
+                                               "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
+                                               c)}
+                             errored? (assoc :is_error true))))
+                       tool-calls))}
       ;; Legacy text fallback (no tool calls on this record).
       (not (str/blank? fallback-content))
       {:role "user" :content fallback-content})))
@@ -2107,7 +2107,7 @@
   [assistant-message]
   (when assistant-message
     (let [content (vec (remove #(contains? #{"thinking" "redacted_thinking"} (:type %))
-                               (:content assistant-message)))]
+                         (:content assistant-message)))]
       (when (seq content)
         (assoc assistant-message :content content)))))
 
@@ -2137,42 +2137,42 @@
   [trailer-iters target]
   (let [iters      (vec (or trailer-iters []))
         compatible (into #{} (map first)
-                         (compatible-preserved-thinking-trailer-iters iters target))]
+                     (compatible-preserved-thinking-trailer-iters iters target))]
     (vec (mapcat
-          (fn [[pos iter-rec :as entry]]
-            (let [results (iteration-results-message iter-rec)]
-              (cond
+           (fn [[pos iter-rec :as entry]]
+             (let [results (iteration-results-message iter-rec)]
+               (cond
                 ;; Cross-turn seed: opted out of replay; its evidence lives in
                 ;; the frozen prior-turn context, so emitting here would
                 ;; double-render it.
-                (false? (:preserved-thinking/replay? iter-rec))
-                []
+                 (false? (:preserved-thinking/replay? iter-rec))
+                 []
 
                 ;; summarize/drop collapsed this iteration: drop its
                 ;; assistant + tool_result PAIR entirely and emit only the
                 ;; one-line gist (plain text) — real compaction.
-                (:collapsed? iter-rec)
-                (if results [results] [])
+                 (:collapsed? iter-rec)
+                 (if results [results] [])
 
                 ;; Same provider+model, valid signature → verbatim replay
                 ;; with the full thinking chain.
-                (contains? compatible pos)
-                (let [replay (first (preserved-thinking-replay-messages [entry]))]
-                  (cond-> [replay] results (conj results)))
+                 (contains? compatible pos)
+                 (let [replay (first (preserved-thinking-replay-messages [entry]))]
+                   (cond-> [replay] results (conj results)))
 
                 ;; Mismatched provider/model or poisoned signature: replay
                 ;; SANS thinking so the tool_use ids stay answerable, then
                 ;; the results.
-                :else
-                (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
-                  (cond-> [stripped] results (conj results))
+                 :else
+                 (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
+                   (cond-> [stripped] results (conj results))
                   ;; No assistant message (errored before one landed) or
                   ;; nothing but thinking: no tool_use to answer — degrade
                   ;; the results to plain text.
-                  (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
-                    [textual]
-                    [])))))
-          iters))))
+                   (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                     [textual]
+                     [])))))
+           iters))))
 
 (defn- form-wire-chars
   "Approximate the wire SIZE (chars) one form contributes — error / native result
@@ -2199,15 +2199,15 @@
   (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
         older  (vec (butlast trailer-iters))
         folded (into #{} (mapcat :scopes)
-                     (expand-through (or summaries []) (keep iter-scope-of (map second older))))]
+                 (expand-through (or summaries []) (keep iter-scope-of (map second older))))]
     (->> older
-         (keep (fn [[_ rec]]
-                 (let [isc   (iter-scope-of rec)
-                       chars (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec))))]
-                   (when (and isc (not (contains? folded isc)) (pos? chars))
-                     {:scope isc :tokens (quot (long chars) 4)}))))
-         (sort-by :tokens >)
-         vec)))
+      (keep (fn [[_ rec]]
+              (let [isc   (iter-scope-of rec)
+                    chars (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec))))]
+                (when (and isc (not (contains? folded isc)) (pos? chars))
+                  {:scope isc :tokens (quot (long chars) 4)}))))
+      (sort-by :tokens >)
+      vec)))
 
 (def ^:private OVER_UTILIZATION_FRACTION
   "SOFT trigger for the compaction nudge: once the NEXT request's input would
@@ -2246,23 +2246,23 @@
             ;; Non-essential enrichment: NEVER let ranking (which serializes
             ;; arbitrary result values) break the send — degrade to no list.
             cands   (try (take 5 (fold-candidates trailer-iters summaries))
-                         (catch Throwable _ nil))
+                      (catch Throwable _ nil))
             heavy   (when (seq cands)
                       (str " Heaviest live steps (fold the ones you've finished with): "
-                           (str/join ", "
-                                     (map #(str (:scope %) " (~" (fmt-tok (:tokens %)) " tok)") cands))
-                           "."))]
+                        (str/join ", "
+                          (map #(str (:scope %) " (~" (fmt-tok (:tokens %)) " tok)") cands))
+                        "."))]
         (str (if urgent?
                (str "# ⚠⚠ URGENT: context is at " pct "% of the window (" req "/" win
-                    " tokens) — near the ceiling. COMPACT NOW before any other work, "
-                    "or an over-limit request will be REJECTED. ")
+                 " tokens) — near the ceiling. COMPACT NOW before any other work, "
+                 "or an over-limit request will be REJECTED. ")
                (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
-                    "Before you continue, COMPACT: "))
-             "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
-             "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
-             "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter."
-             heavy
-             " This reminder clears itself once you're back under budget.")))))
+                 "Before you continue, COMPACT: "))
+          "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
+          "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
+          "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter."
+          heavy
+          " This reminder clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
   "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
@@ -2321,13 +2321,13 @@
   {:name "python_execution"
    :description
    (str "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER / "
-        "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
-        "last-expression value is NOT returned, so print() what you want back). State "
-        "(vars, imports, defs) persists across calls AND turns. The file tools are async "
-        "fns in scope — `await` them; `await gather(a, b)` runs independent calls "
-        "concurrently. Prefer the direct file tools for plain actions — reach here only "
-        "to compute over their output."
-        (when-let [cap (python-execution-capability-line caps)] (str "\n" cap)))
+     "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
+     "last-expression value is NOT returned, so print() what you want back). State "
+     "(vars, imports, defs) persists across calls AND turns. The file tools are async "
+     "fns in scope — `await` them; `await gather(a, b)` runs independent calls "
+     "concurrently. Prefer the direct file tools for plain actions — reach here only "
+     "to compute over their output."
+     (when-let [cap (python-execution-capability-line caps)] (str "\n" cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
@@ -2354,16 +2354,16 @@
     (false? v)   "False"
     (keyword? v) (py-literal (name v))
     (string? v)  (str \" (-> ^String v
-                             (str/replace "\\" "\\\\")
-                             (str/replace "\"" "\\\"")
-                             (str/replace "\n" "\\n")
-                             (str/replace "\r" "\\r")
-                             (str/replace "\t" "\\t")) \")
+                           (str/replace "\\" "\\\\")
+                           (str/replace "\"" "\\\"")
+                           (str/replace "\n" "\\n")
+                           (str/replace "\r" "\\r")
+                           (str/replace "\t" "\\t")) \")
     (map? v)     (str "{" (str/join ", "
-                                    (map (fn [[k val]]
-                                           (str (py-literal (if (keyword? k) (name k) (str k)))
-                                                ": " (py-literal val)))
-                                         v)) "}")
+                            (map (fn [[k val]]
+                                   (str (py-literal (if (keyword? k) (name k) (str k)))
+                                     ": " (py-literal val)))
+                              v)) "}")
     (sequential? v) (str "[" (str/join ", " (map py-literal v)) "]")
     (integer? v) (str v)
     (number? v)  (str v)
@@ -2396,13 +2396,13 @@
                    (seq opt-pos) (into opt-pos))
         rest-map (apply dissoc input consumed)
         args     (concat
-                  (when (and lead (contains? input lead)) [(py-literal (get input lead))])
-                  (map #(py-literal (get input %)) pos)
-                  (keep #(when (contains? input %) (py-literal (get input %))) opt-pos)
-                  (case (:rest shape)
-                    :always [(py-literal rest-map)]
-                    :opt    (when (seq rest-map) [(py-literal rest-map)])
-                    nil))]
+                   (when (and lead (contains? input lead)) [(py-literal (get input lead))])
+                   (map #(py-literal (get input %)) pos)
+                   (keep #(when (contains? input %) (py-literal (get input %))) opt-pos)
+                   (case (:rest shape)
+                     :always [(py-literal rest-map)]
+                     :opt    (when (seq rest-map) [(py-literal rest-map)])
+                     nil))]
     (str py-name "(" (str/join ", " args) ")")))
 
 (defn- tool-call->python-source
@@ -2518,7 +2518,7 @@
                                 \u (if (>= (+ i 6) n)
                                      (str sb)                ;; truncated escape
                                      (do (.append sb (char (Integer/parseInt (subs tool-input (+ i 2) (+ i 6)) 16)))
-                                         (recur (+ i 6))))
+                                       (recur (+ i 6))))
                                 (do (.append sb e) (recur (+ i 2))))))
                 :else     (do (.append sb c) (recur (inc i)))))))))))
 
@@ -2535,12 +2535,12 @@
   [prose tool-calls]
   (when-let [p (some-> prose str str/trim not-empty)]
     (let [code   (->> tool-calls
-                      (map (fn [tc] (or (:code (:input tc)) (get (:input tc) "code") "")))
-                      (str/join "\n"))
+                   (map (fn [tc] (or (:code (:input tc)) (get (:input tc) "code") "")))
+                   (str/join "\n"))
           squash #(str/replace (str %) #"\s+" "")
           fenced-stripped (-> p (str/replace #"(?s)```.*?```" "") str/trim)]
       (when-not (or (str/blank? fenced-stripped)          ;; prose was ONLY fenced code
-                    (= (squash p) (squash code)))           ;; prose IS the code verbatim
+                  (= (squash p) (squash code)))           ;; prose IS the code verbatim
         p))))
 
 (defn run-iteration
@@ -2554,22 +2554,22 @@
           form-scope (fn [idx]
                        (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
           effective-reasoning (when (and (some? reasoning-level)
-                                         (reasoning-effort-configurable? resolved-model))
+                                      (reasoning-effort-configurable? resolved-model))
                                 (or (normalize-reasoning-level reasoning-level)
-                                    (throw (ex-info "Invalid :reasoning-level."
-                                                    {:type :vis/invalid-reasoning-level
-                                                     :got reasoning-level}))))
+                                  (throw (ex-info "Invalid :reasoning-level."
+                                           {:type :vis/invalid-reasoning-level
+                                            :got reasoning-level}))))
           ;; Reasoning fallback: when the turn asked for reasoning but the model
           ;; has no native thinking channel (`:reasoning?` absent — e.g. a local
           ;; LM Studio model), give it a scratchpad in the code itself via
           ;; `;;` comments. Effort-configurable models reason natively and skip it.
           reason-via-comments? (and (some? reasoning-level)
-                                    (not (:reasoning? resolved-model)))
+                                 (not (:reasoning? resolved-model)))
           messages (cond-> messages
                      reason-via-comments? prompt/with-reasoning-comments-nudge)
           turn-state-atom (or (:turn-state-atom environment)
-                              (throw (ex-info "environment missing :turn-state-atom"
-                                              {:type :vis/missing-turn-state-atom})))
+                            (throw (ex-info "environment missing :turn-state-atom"
+                                     {:type :vis/missing-turn-state-atom})))
           ;; Reset this iteration's answer + form-index pointer on the single
           ;; turn-state-atom. finalize-answer! sets :answer during eval (an
           ;; answer reply); the FINAL path reads it back after all forms run.
@@ -2669,8 +2669,8 @@
                                                   :done?     (boolean done?)})))))))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers (not-empty
-                                 (merge (copilot-llm-headers resolved-model copilot-initiator)
-                                        llm-headers))
+                                  (merge (copilot-llm-headers resolved-model copilot-initiator)
+                                    llm-headers))
           provider-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
               (on-chunk {:phase :provider-call
@@ -2730,30 +2730,30 @@
                        ;; cancel-atom `vis/cancel!` flips.
                        (:cancel-atom environment)
                        (assoc :cancel-fn
-                              (let [ca (:cancel-atom environment)]
-                                (fn [] (boolean (deref ca)))))))
+                         (let [ca (:cancel-atom environment)]
+                           (fn [] (boolean (deref ca)))))))
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                                                 :session-turn-id (:environment-id environment)
-                                                                 :iteration iteration-position)]
+                                                            :session-turn-id (:environment-id environment)
+                                                            :iteration iteration-position)]
                            (call-provider-with-stream-rewind-retry!
-                            environment
-                            {:iteration-position iteration-position
-                             :provider (some-> (:provider resolved-model) name)
-                             :model (some-> (:name resolved-model) str)
-                             :on-chunk on-chunk
-                             :reset-stream-state! reset-stream-state!}
-                            #(call-provider-with-interrupt-retry! environment iteration-position
-                                                                  (fn []
-                                                                    (svar/ask-code! (:router environment) ask-opts)))))
+                             environment
+                             {:iteration-position iteration-position
+                              :provider (some-> (:provider resolved-model) name)
+                              :model (some-> (:name resolved-model) str)
+                              :on-chunk on-chunk
+                              :reset-stream-state! reset-stream-state!}
+                             #(call-provider-with-interrupt-retry! environment iteration-position
+                                (fn []
+                                  (svar/ask-code! (:router environment) ask-opts)))))
           ask-result ask-result-raw
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
-                        (merge {:duration-ms provider-duration-ms
-                                :raw-length (count (or (:raw ask-result-raw) ""))
-                                :tokens (:tokens ask-result-raw)
-                                :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))}
-                               code-observation))
+              (merge {:duration-ms provider-duration-ms
+                      :raw-length (count (or (:raw ask-result-raw) ""))
+                      :tokens (:tokens ask-result-raw)
+                      :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))}
+                code-observation))
           parse-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
               (on-chunk {:phase :response-parse
@@ -2767,13 +2767,13 @@
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
-                        (merge {:has-reasoning (some? model-reasoning)
-                                :raw-length    (count (or (:raw ask-result) ""))
-                                :duration-ms   (:duration-ms ask-result)
-                                :provider-duration-ms provider-duration-ms
-                                :tokens        (:tokens ask-result)
-                                :thinking      thinking}
-                               code-observation))
+              (merge {:has-reasoning (some? model-reasoning)
+                      :raw-length    (count (or (:raw ask-result) ""))
+                      :duration-ms   (:duration-ms ask-result)
+                      :provider-duration-ms provider-duration-ms
+                      :tokens        (:tokens ask-result)
+                      :thinking      thinking}
+                code-observation))
           api-usage (ask-result->api-usage ask-result)
           ;; Native tool calling: the model either CALLS `run_python`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
@@ -2790,7 +2790,7 @@
           ;; code (previously dropped — only the code rendered, the markdown lost).
           prose-md  (some-> (:content ask-result) str str/trim not-empty)
           answer-md (when (and (empty? tool-calls)
-                               (= :end (:stop-reason ask-result)))
+                            (= :end (:stop-reason ask-result)))
                       prose-md)
           ;; Show the prose ONLY when it adds something the code doesn't already
           ;; say — otherwise it's a dim duplicate of the run_python block.
@@ -2833,7 +2833,7 @@
                               ;; Carry the tool name so the render layer can paint a
                               ;; native tool nicely vs. python_execution stdout.
                               :vis/tool-name (:name tc)}))
-                         tool-calls))
+                     tool-calls))
           preflight-start-ns (System/nanoTime)
           preflight-result (if answer-md
                              {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}
@@ -2841,11 +2841,11 @@
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
-                        (merge {:duration-ms preflight-duration-ms
-                                :code-length (count normalized-code)
-                                :forms (count code-entries)
-                                :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))}
-                               code-observation))
+              (merge {:duration-ms preflight-duration-ms
+                      :code-length (count normalized-code)
+                      :forms (count code-entries)
+                      :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))}
+                code-observation))
           _ (when on-chunk
               (on-chunk {:phase :response-parse
                          :status :done
@@ -2875,8 +2875,8 @@
                                ;; `python_execution` is the engine-level tool (not an
                                ;; extension symbol), so give its eval card a colour
                                ;; too — extensions still override by wire name.
-                              {"python_execution" :tool-color/shell}
-                              (extension/native-tool-color-roles active-extensions))
+                               {"python_execution" :tool-color/shell}
+                               (extension/native-tool-color-roles active-extensions))
           ;; ALL-OBSERVATION CONCURRENCY: when every code-entry is a read-only
           ;; observation (≥2 of them, no mutation / python_execution / handler /
           ;; preflight error), run the whole batch CONCURRENTLY through
@@ -2895,9 +2895,9 @@
                                    form-repaired? :repaired?
                                    :as entry}]
                            (log-stage! :code-exec iteration
-                                       {:idx (inc idx) :total total-blocks :code expr})
+                             {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
-                                      (not suppress-form-start?))
+                                   (not suppress-form-start?))
                              (on-chunk {:phase           :form-start
                                         :iteration iteration-position
                                         :position        idx
@@ -2915,14 +2915,14 @@
                                               preflight-error
                                               {:result nil
                                                :error (op-error preflight-error
-                                                                {:code expr :phase :vis/preflight})
+                                                        {:code expr :phase :vis/preflight})
                                                :duration-ms 0
                                                :op :vis/guard}
 
                                               ;; native handler-tool → run in Clojure (run-native-handler)
                                               (:vis/native-handler entry)
                                               (run-native-handler (:vis/native-handler entry)
-                                                                  environment (:vis/native-input entry) (:vis/tool-name entry))
+                                                environment (:vis/native-input entry) (:vis/tool-name entry))
 
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
@@ -2931,7 +2931,7 @@
                                                  :duration-ms 0
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
-                                                                               (not suppress-form-start?))
+                                                                            (not suppress-form-start?))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase           :tool-start
                                                                                    :iteration iteration-position
@@ -2954,13 +2954,13 @@
                                                       batched (when batch-results
                                                                 (nth @batch-results idx nil))
                                                       r (or batched
-                                                            (if tool-event-fn
-                                                              (execute-code environment expr :tool-event-fn tool-event-fn)
-                                                              (execute-code environment expr)))]
+                                                          (if tool-event-fn
+                                                            (execute-code environment expr :tool-event-fn tool-event-fn)
+                                                            (execute-code environment expr)))]
                                                   (log-stage! :code-result iteration
-                                                              {:idx (inc idx) :total total-blocks
-                                                               :duration-ms (:duration-ms r)
-                                                               :error (:error r) :timeout? (:timeout? r) :result (:result r)})
+                                                    {:idx (inc idx) :total total-blocks
+                                                     :duration-ms (:duration-ms r)
+                                                     :error (:error r) :timeout? (:timeout? r) :result (:result r)})
                                                   r)))
                                  ;; Carry parinfer's whole-source
                                  ;; rebalance flag into the block
@@ -2978,8 +2978,8 @@
                                  block-role (eval-block-role display-result)
                                  envelope (eval-envelope turn-prefix iteration-position idx total-blocks display-result block-role)
                                  result* (assoc display-result
-                                                :envelope envelope
-                                                :role block-role)
+                                           :envelope envelope
+                                           :role block-role)
                                  ;; The rendered human display `{:summary :body}` (native-tool
                                  ;; card, pretty result, or stdout) — computed ONCE and persisted
                                  ;; so a DB-restored / post-turn trace shows the SAME card the live
@@ -3005,7 +3005,7 @@
                                                                  :result-summary  (some-> (:summary c) str not-empty)
                                                                  :result-render   (some-> (:body c) str not-empty)
                                                                  :tool-color-role (:color-role t)})))
-                                                          (:printed-results result*)))
+                                                      (:printed-results result*)))
                                  ;; Cards REPLACE the raw stdout body for display ONLY when the block printed
                                  ;; nothing but tool results — otherwise (mixed text + results, or any plain
                                  ;; print) show the full stdout so NO printed text is ever lost.
@@ -3014,7 +3014,7 @@
                                  result-render  (if cards nil (:body result-card))
                                  result-summary (if cards
                                                   (str (count cards) " printed result"
-                                                       (when (> (count cards) 1) "s"))
+                                                    (when (> (count cards) 1) "s"))
                                                   (:summary result-card))]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
@@ -3072,7 +3072,7 @@
                               :svar/tool-call-id (:svar/tool-call-id entry)
                               :vis/tool-name (:vis/tool-name entry)
                               :tool-color-role (get native-color-roles (:vis/tool-name entry))}))
-                         (range) code-entries)
+                     (range) code-entries)
           form-sources    (mapv :block executed)
           form-results  (mapv :result executed)
           form-segments (mapv :render-segments executed)
@@ -3088,52 +3088,52 @@
           ;; reads the failure on its next iteration.
           preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
                                                   (boolean preflight-error))
-                                                code-entries))
+                                             code-entries))
           blocks (validate-iteration-blocks!
-                  (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render result-summary cards]
-                          (cond-> {:id idx
-                                   :code code
-                                   :result (:result result)
+                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render result-summary cards]
+                           (cond-> {:id idx
+                                    :code code
+                                    :result (:result result)
                                     ;; What the block PRINTED — the python_execution
                                     ;; result (a native call's result is :result).
                                     ;; One block = one tool call, so this is the
                                     ;; call's whole stdout (no per-form split).
-                                   :stdout (:stdout result)
-                                   :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
-                                   :envelope (:envelope result)
-                                   :role (:role result)
-                                   :timeout? (:timeout? result)
-                                   :repaired? (:repaired? result)
+                                    :stdout (:stdout result)
+                                    :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
+                                    :envelope (:envelope result)
+                                    :role (:role result)
+                                    :timeout? (:timeout? result)
+                                    :repaired? (:repaired? result)
                                     ;; Per-block resolve-symbol* LRU stamps:
                                     ;; symbol-name -> current-turn-pos for every
                                     ;; symbol the engine hook saw resolve during
                                     ;; this block's eval. Iteration writer
                                     ;; merges into the long-lived per-env LRU.
-                                   :lru (or (:lru result) {})
+                                    :lru (or (:lru result) {})
                                     ;; If the engine auto-repaired delimiter
                                     ;; mistakes (parinferish) before eval, the
                                     ;; repaired source flows here so the trailer
                                     ;; can disclose the diff and the model can
                                     ;; correct itself if the repair was wrong.
-                                   :repaired-source (:repaired-source result)}
+                                    :repaired-source (:repaired-source result)}
                              ;; Per-block render breakdown for channel display.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
-                            (seq segments) (assoc :render-segments segments)
-                            (:vis/silent result) (assoc :vis/silent true)
+                             (seq segments) (assoc :render-segments segments)
+                             (:vis/silent result) (assoc :vis/silent true)
                              ;; Tool-call identity rides onto the block so
                              ;; `blocks->forms` stamps each form envelope with the
                              ;; tool_use it answers (per-call result pairing).
-                            tool-call-id (assoc :svar/tool-call-id tool-call-id)
-                            tool-name (assoc :vis/tool-name tool-name)
-                            tool-color-role (assoc :tool-color-role tool-color-role)
-                            result-render (assoc :result-render result-render)
-                            result-summary (assoc :result-summary result-summary)
-                            (seq cards) (assoc :cards cards)
-                            (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                        (range) form-sources form-results form-segments
-                        form-tool-ids form-tool-names form-color-roles form-result-renders
-                        form-result-summaries form-cards))]
+                             tool-call-id (assoc :svar/tool-call-id tool-call-id)
+                             tool-name (assoc :vis/tool-name tool-name)
+                             tool-color-role (assoc :tool-color-role tool-color-role)
+                             result-render (assoc :result-render result-render)
+                             result-summary (assoc :result-summary result-summary)
+                             (seq cards) (assoc :cards cards)
+                             (get preflight-by-idx idx) (assoc :vis/preflight? true)))
+                     (range) form-sources form-results form-segments
+                     form-tool-ids form-tool-names form-color-roles form-result-renders
+                     form-result-summaries form-cards))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
         ;; already finalized above by `finalize-answer!`. An answer is plain
@@ -3149,17 +3149,17 @@
         ;; `:name`/`:provider` separately so the `iteration.llm_model` column
         ;; stays clean (a stringified map would leak in otherwise).
         (let [validation-error (final-answer-gate-error environment iteration-position blocks value active-extensions
-                                                        (assoc answer-validation-context :code-entries code-entries))
+                                 (assoc answer-validation-context :code-entries code-entries))
               model-name       (actual-llm-model resolved-model ask-result)
               provider         (actual-llm-provider resolved-model ask-result)]
           (if validation-error
             {:thinking thinking
              :blocks (or (seq blocks)
-                         [{:id 0 :code "(final-answer-validation)"
-                           :result nil
-                           :error (op-error validation-error
-                                            {:code "(final-answer-validation)"
-                                             :phase :vis/final-answer-validation})}])
+                       [{:id 0 :code "(final-answer-validation)"
+                         :result nil
+                         :error (op-error validation-error
+                                  {:code "(final-answer-validation)"
+                                   :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages :llm-provider provider :llm-model model-name
@@ -3219,7 +3219,7 @@
   [err]
   (let [data (:data err)]
     (and (= :svar.core/stream-incomplete (:type data))
-         (= "max_output_tokens" (str (:reason data))))))
+      (= "max_output_tokens" (str (:reason data))))))
 
 (def ^:private stream-truncated-types
   "Error types that indicate the provider dropped the SSE stream before
@@ -3249,7 +3249,7 @@
   [^Throwable e]
   (let [data (ex-data e)]
     (and (contains? stream-truncated-types (:type data))
-         (zero? (or (:content-acc-len data) 0)))))
+      (zero? (or (:content-acc-len data) 0)))))
 
 (def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
   "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
@@ -3310,12 +3310,12 @@
                   "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."
                   max-tokens-exhaust?
                   (str "Provider truncated the response at max_tokens ("
-                       (or output-tokens "?")
-                       " tokens consumed, "
-                       (or reasoning-length "?")
-                       " went to hidden reasoning, 0 to visible content). "
-                       "Vis already retried once with a doubled budget; this iteration"
-                       " still hit the cap.")
+                    (or output-tokens "?")
+                    " tokens consumed, "
+                    (or reasoning-length "?")
+                    " went to hidden reasoning, 0 to visible content). "
+                    "Vis already retried once with a doubled budget; this iteration"
+                    " still hit the cap.")
                   :else
                   (str "LLM call failed: " (:message iteration-error-data)))
         hint (cond
@@ -3335,7 +3335,7 @@
              :hint      hint}
       max-tokens-exhaust?
       (assoc :reasoning-length reasoning-length
-             :output-tokens output-tokens)
+        :output-tokens output-tokens)
       (and (not output-overflow?) (:type iteration-error-data))
       (assoc :source-type (:type iteration-error-data)))))
 
@@ -3343,11 +3343,11 @@
   [iteration iteration-error-data user-request]
   (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)]
     (str "[Iteration " (:iteration llm-provider-error) "]\n"
-         ";; llm-provider-error =\n"
-         (pr-str llm-provider-error)
-         "\n"
-         (when (stream-output-overflow? iteration-error-data)
-           (str "Original request: " user-request)))))
+      ";; llm-provider-error =\n"
+      (pr-str llm-provider-error)
+      "\n"
+      (when (stream-output-overflow? iteration-error-data)
+        (str "Original request: " user-request)))))
 
 ;; Provider-error presentation moved to
 ;; `com.blockether.vis.internal.provider-error` (shared with the TUI trace
@@ -3392,7 +3392,7 @@
   [config]
   (let [ropts (config/router-opts config)]
     (mapv #(enrich-provider-models (config/->svar-provider %) ropts)
-          (:providers config))))
+      (:providers config))))
 
 (defn- honor-config-primary!
   "svar's `make-router` PREPENDS each known provider's catalog `:default-models`
@@ -3408,21 +3408,21 @@
    model svar dropped (unknown/excluded) — so it can never empty a provider."
   [router config]
   (let [primary (into {}
-                      (keep (fn [p]
-                              (when-let [m (first (:models p))]
-                                [(:id p) (config/model-name m)])))
-                      (:providers config))]
+                  (keep (fn [p]
+                          (when-let [m (first (:models p))]
+                            [(:id p) (config/model-name m)])))
+                  (:providers config))]
     (update router :providers
-            (fn [provs]
-              (mapv (fn [p]
-                      (let [want (get primary (:id p))
-                            hit  (and want (some #(when (= want (:name %)) %) (:models p)))]
-                        (if hit
-                          (assoc p
-                                 :models (into [hit] (remove #(= want (:name %)) (:models p)))
-                                 :root   want)
-                          p)))
-                    provs)))))
+      (fn [provs]
+        (mapv (fn [p]
+                (let [want (get primary (:id p))
+                      hit  (and want (some #(when (= want (:name %)) %) (:models p)))]
+                  (if hit
+                    (assoc p
+                      :models (into [hit] (remove #(= want (:name %)) (:models p)))
+                      :root   want)
+                    p)))
+          provs)))))
 
 (defn get-router
   "Get or create the shared LLM router.
@@ -3432,12 +3432,12 @@
    defaults apply. See `config/router-opts` for the supported keys."
   []
   (or @router-atom
-      (let [cfg (config/resolve-config)
-            r   (-> (svar/make-router (runtime-router-providers cfg)
-                                      (config/router-opts cfg))
-                    (honor-config-primary! cfg))]
-        (reset! router-atom r)
-        r)))
+    (let [cfg (config/resolve-config)
+          r   (-> (svar/make-router (runtime-router-providers cfg)
+                    (config/router-opts cfg))
+                (honor-config-primary! cfg))]
+      (reset! router-atom r)
+      r)))
 
 (defn rebuild-router!
   "Rebuild the router from the given config. Used when provider settings change.
@@ -3447,8 +3447,8 @@
    without restarting the JVM."
   [config]
   (let [r (-> (svar/make-router (runtime-router-providers config)
-                                (config/router-opts config))
-              (honor-config-primary! config))]
+                (config/router-opts config))
+            (honor-config-primary! config))]
     (reset! router-atom r)
     r))
 
@@ -3476,8 +3476,8 @@
         provider-message (perr/provider-body-message (some-> (:body d) str))
         pid              (:provider resolved-model)]
     (boolean
-     (and (perr/auth-provider-error? status provider-message (ex-message e))
-          (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)))))
+      (and (perr/auth-provider-error? status provider-message (ex-message e))
+        (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)))))
 
 (defn- try-refresh-provider-token!
   "Force an OAuth refresh for the failing provider, then rebuild + reseat
@@ -3487,21 +3487,21 @@
   (let [pid (:provider resolved-model)
         f   (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)]
     (boolean
-     (when f
-       (try
-         (f)                                   ;; force refresh-token exchange + persist
-         (let [r (rebuild-router! (config/resolve-config))]
-           (refresh-cached-routers! r))
-         (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                   (str "Auth 401 — force-refreshed OAuth token for " pid
-                        " and rebuilt router; retrying turn"))
-         true
-         (catch Throwable t
-           (tel/log! {:level :error :id ::auth-token-refresh-failed
-                      :data {:provider pid :error (ex-message t)}}
-                     (str "Auth 401 — OAuth token refresh FAILED for " pid
-                          "; surfacing provider error"))
-           false))))))
+      (when f
+        (try
+          (f)                                   ;; force refresh-token exchange + persist
+          (let [r (rebuild-router! (config/resolve-config))]
+            (refresh-cached-routers! r))
+          (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+            (str "Auth 401 — force-refreshed OAuth token for " pid
+              " and rebuilt router; retrying turn"))
+          true
+          (catch Throwable t
+            (tel/log! {:level :error :id ::auth-token-refresh-failed
+                       :data {:provider pid :error (ex-message t)}}
+              (str "Auth 401 — OAuth token refresh FAILED for " pid
+                "; surfacing provider error"))
+            false))))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
@@ -3526,22 +3526,22 @@
    :prompt."
   [{:keys [messages system prompt reasoning temperature routing] :as opts}]
   (let [messages (or messages
-                     (cond-> []
-                       (seq system) (conj {:role "system" :content system})
-                       (seq prompt) (conj {:role "user" :content prompt})))
+                   (cond-> []
+                     (seq system) (conj {:role "system" :content system})
+                     (seq prompt) (conj {:role "user" :content prompt})))
         resp     (svar/ask-code! (get-router)
-                                 (rt/with-default-ask-code-idle-timeout
-                                   (merge (dissoc opts :system :prompt :temperature)
-                                          {:messages           messages
-                                           :lang               "text"
-                                           :reasoning          (or reasoning :off)
-                                           :routing            (or routing {:optimize :cost})
-                                           :code-tail-pointer? true}
-                                          (when (some? temperature)
-                                            {:temperature temperature}))))
+                   (rt/with-default-ask-code-idle-timeout
+                     (merge (dissoc opts :system :prompt :temperature)
+                       {:messages           messages
+                        :lang               "text"
+                        :reasoning          (or reasoning :off)
+                        :routing            (or routing {:optimize :cost})
+                        :code-tail-pointer? true}
+                       (when (some? temperature)
+                         {:temperature temperature}))))
         text     (or (some-> resp :result str/trim not-empty)
-                     (some-> resp :raw str/trim not-empty)
-                     "")]
+                   (some-> resp :raw str/trim not-empty)
+                   "")]
     (assoc resp :text text)))
 
 (defn resolve-effective-model
@@ -3574,8 +3574,8 @@
    \"sonnet\"]})` (or a single `\"model\"`) — try the cheap one first, fall back."
   [router prefs]
   (let [names (->> (if (coll? prefs) prefs [prefs])
-                   (keep #(some-> % str not-empty))
-                   vec)]
+                (keep #(some-> % str not-empty))
+                vec)]
     (if (empty? names)
       router
       (let [m-name   (fn [m] (:name (if (map? m) m {:name (str m)})))
@@ -3585,7 +3585,7 @@
             p-rank   (fn [p] (reduce min Long/MAX_VALUE (map m-rank (:models p))))
             reorder  (fn [p] (update p :models #(vec (sort-by m-rank %))))]
         (assoc router :providers
-               (->> (:providers router) (map reorder) (sort-by p-rank) vec))))))
+          (->> (:providers router) (map reorder) (sort-by p-rank) vec))))))
 
 (defn- provider-root-model
   "Root model NAME for a provider id in `router`, or nil. Prefers the provider's
@@ -3593,8 +3593,8 @@
   [router pid]
   (when-let [p (first (filter #(= (:id %) pid) (:providers router)))]
     (or (some-> (:root p) str not-empty)
-        (let [m (first (:models p))]
-          (some-> (if (map? m) (:name m) m) str)))))
+      (let [m (first (:models p))]
+        (some-> (if (map? m) (:name m) m) str)))))
 
 (defn model-routing-status
   "Live routing health for the model a channel is DISPLAYING (`displayed-provider`
@@ -3699,23 +3699,23 @@
     ([model input-tokens output-tokens opts]
      (try
        (svar-router/estimate-cost model input-tokens output-tokens
-                                  svar-router/MODEL_PRICING
-                                  (or opts {}))
+         svar-router/MODEL_PRICING
+         (or opts {}))
        (catch Throwable _ nil))))
 
   (defn- merge-cost-maps
     [acc extra-cost]
     (merge-with +
-                (select-keys acc cost-map-keys)
-                (select-keys extra-cost cost-map-keys))))
+      (select-keys acc cost-map-keys)
+      (select-keys extra-cost cost-map-keys))))
 
 (def ^:private loop-give-up-text
   "Markdown surfaced when a turn is force-finalized after the model kept
    repeating without ever landing — and produced no usable answer to fall
    back on."
   (str "I kept repeating the same steps without converging on a confident "
-       "answer, so I stopped to avoid spinning. See the iteration trace above "
-       "for what I gathered."))
+    "answer, so I stopped to avoid spinning. See the iteration trace above "
+    "for what I gathered."))
 
 (defn- repetition-loop-state
   "Pure repetition-only loop detector. Given this iteration's executed `blocks`
@@ -3740,18 +3740,18 @@
    probe. `sticky-md` is the best answer so far (Markdown) or nil."
   [sticky-md]
   (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
-       "you have now looped without finalizing.\n\n"
-       (if (str/blank? (str sticky-md))
-         "You have NOT produced any answer yet.\n\n"
-         (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-       "DECIDE NOW — run NO tools/searches this iteration:\n"
-       "1. COMMIT — if the answer above is good enough, reply with it as plain prose "
-       "(no tool call) — that ends the turn (refine the wording if you must).\n"
-       "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
-       "another iteration, then fetch ONLY that. Repeating a prior search/parse "
-       "is not allowed.\n"
-       "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
-       "Pick one. Do not investigate further."))
+    "you have now looped without finalizing.\n\n"
+    (if (str/blank? (str sticky-md))
+      "You have NOT produced any answer yet.\n\n"
+      (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
+    "DECIDE NOW — run NO tools/searches this iteration:\n"
+    "1. COMMIT — if the answer above is good enough, reply with it as plain prose "
+    "(no tool call) — that ends the turn (refine the wording if you must).\n"
+    "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
+    "another iteration, then fetch ONLY that. Repeating a prior search/parse "
+    "is not allowed.\n"
+    "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
+    "Pick one. Do not investigate further."))
 
 (defn- rejection-fact-entries
   "Collect compact rejection / auto-repair summaries for one iteration.
@@ -3761,29 +3761,29 @@
                        (if (> (count s) 240) (str (subs s 0 240) " ...") s)))
         mk   (fn [tag k] (str "turn_" turn-position "_i" iteration-position "_" tag "_" k))
         preflight (keep-indexed
-                   (fn [k entry]
-                     (when-let [pe (:vis/preflight-error entry)]
-                       [(mk "preflight" k)
-                        {:status :active
-                         :content (str "## Preflight rejection (t" turn-position "/i" iteration-position ")\n\n"
-                                       "**kind:** " (clip (pr-str pe)) "\n\n"
-                                       "An engine GATE rejected this block before eval - model-facing only "
-                                       "(no user error box). Offending source:\n\n```\n"
-                                       (clip (:expr entry)) "\n```")}]))
-                   code-entries)
+                    (fn [k entry]
+                      (when-let [pe (:vis/preflight-error entry)]
+                        [(mk "preflight" k)
+                         {:status :active
+                          :content (str "## Preflight rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                     "**kind:** " (clip (pr-str pe)) "\n\n"
+                                     "An engine GATE rejected this block before eval - model-facing only "
+                                     "(no user error box). Offending source:\n\n```\n"
+                                     (clip (:expr entry)) "\n```")}]))
+                    code-entries)
         syntax (keep-indexed
-                (fn [k result]
-                  (let [err  (:error result)
-                        data (:data err)]
-                    (when (and err (= :python/syntax (:phase data)))
-                      [(mk "syntax" k)
-                       {:status :active
-                        :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
-                                      "**phase:** " (pr-str (:phase data)) "\n\n"
-                                      (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
-                                      (clip (or (:code data)
-                                                (:expr (nth code-entries k nil)))) "\n```")}])))
-                form-results)]
+                 (fn [k result]
+                   (let [err  (:error result)
+                         data (:data err)]
+                     (when (and err (= :python/syntax (:phase data)))
+                       [(mk "syntax" k)
+                        {:status :active
+                         :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                    "**phase:** " (pr-str (:phase data)) "\n\n"
+                                    (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
+                                    (clip (or (:code data)
+                                            (:expr (nth code-entries k nil)))) "\n```")}])))
+                 form-results)]
     (vec (concat preflight syntax))))
 
 (defn iteration-loop
@@ -3815,7 +3815,7 @@
                       ;; Per-turn context surfaced to engine hooks and
                       ;; render-time diagnostics.
                       true (assoc :turn/user-request user-request
-                                  :turn/system-prompt system-prompt))
+                             :turn/system-prompt system-prompt))
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
@@ -3850,23 +3850,23 @@
         standing-ctx-atom  (:standing-ctx-atom environment)
         _                  (when (and standing-ctx-atom (nil? @standing-ctx-atom))
                              (reset! standing-ctx-atom
-                                     {:block    (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
-                                      :baseline (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)}))
+                               {:block    (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
+                                :baseline (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)}))
         static-context-str (or (:block (some-> standing-ctx-atom deref))
-                               (ctx-loop/render-block! environment ctx-renderer/render-ctx-static))
+                             (ctx-loop/render-block! environment ctx-renderer/render-ctx-static))
         ;; Delta baseline = the LAST-EMITTED map, carried ACROSS turns via
         ;; standing-ctx-atom (NOT re-seeded per turn). Each iter diffs the current
         ;; util-inclusive map against it and appends `session[...] = …` on change.
         last-context-atom  (atom (or (:baseline (some-> standing-ctx-atom deref))
-                                     (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)))
+                                   (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)))
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
-                                                                       {:system-prompt     system-prompt
-                                                                        :active-extensions active-exts
-                                                                        :session-context   static-context-str})
+                                 {:system-prompt     system-prompt
+                                  :active-extensions active-exts
+                                  :session-context   static-context-str})
         initial-messages (prompt/assemble-initial-messages
-                          {:stable-prompt-messages stable-prompt-messages
-                           :initial-user-content   user-request
-                           :previous-turn-context  (previous-turn-context environment session-turn-id)})
+                           {:stable-prompt-messages stable-prompt-messages
+                            :initial-user-content   user-request
+                            :previous-turn-context  (previous-turn-context environment session-turn-id)})
         ;; The cumulative `:input-tokens` field sums `prompt_tokens`
         ;; from every iteration in this turn — useful for billing /
         ;; budget accounting but MUST NOT be passed to the
@@ -3903,23 +3903,23 @@
         accumulate-usage! (fn [api-usage]
                             (when api-usage
                               (swap! usage-atom
-                                     (fn [acc]
-                                       (let [iter-in     (long (or (:prompt_tokens api-usage) 0))
-                                             iter-reason (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))]
-                                         (-> acc
-                                             (update :input-tokens + iter-in)
-                                             (update :output-tokens + (or (:completion_tokens api-usage) 0))
-                                             (update :reasoning-tokens + iter-reason)
-                                             (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                                                          (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
-                                                                          0))
-                                             (update :cache-creation-tokens + (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
-                                                                                  (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
-                                                                                  0))
+                                (fn [acc]
+                                  (let [iter-in     (long (or (:prompt_tokens api-usage) 0))
+                                        iter-reason (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))]
+                                    (-> acc
+                                      (update :input-tokens + iter-in)
+                                      (update :output-tokens + (or (:completion_tokens api-usage) 0))
+                                      (update :reasoning-tokens + iter-reason)
+                                      (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                                                 (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                                 0))
+                                      (update :cache-creation-tokens + (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
+                                                                         (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                                         0))
                                       ;; Per-iter snapshots: overwrite, not accumulate.
-                                             (assoc :last-iter-input iter-in)
-                                             (assoc :last-iter-reasoning iter-reason)
-                                             (update :iter-count inc)))))))
+                                      (assoc :last-iter-input iter-in)
+                                      (assoc :last-iter-reasoning iter-reason)
+                                      (update :iter-count inc)))))))
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
         ;; carry one row per iteration so a future `vis report`
@@ -3936,11 +3936,11 @@
                                         out  (long (or (:completion_tokens api-usage) 0))
                                         reas (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
                                         cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                                       (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
-                                                       0))
+                                                     (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                     0))
                                         cache-created (long (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
-                                                                (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
-                                                                0))
+                                                              (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                              0))
                                         ;; svar's `estimate-cost` returns a MAP
                                         ;; `{:input-cost :output-cost :total-cost
                                         ;; :model :pricing}`, NOT a bare number.
@@ -3955,8 +3955,8 @@
                                         ;; pricing key only when routing metadata
                                         ;; is absent (e.g. error before a response).
                                         cost-map (estimate-token-cost (or (some-> actual-model str not-empty)
-                                                                          effective-model)
-                                                                      in out {:api-usage api-usage})
+                                                                        effective-model)
+                                                   in out {:api-usage api-usage})
                                         total    (when (map? cost-map) (:total-cost cost-map))]
                                     (when (map? cost-map)
                                       (swap! accrued-cost-atom #(merge-cost-maps (or % {}) cost-map)))
@@ -3974,9 +3974,9 @@
                               ;; local model while a paid model was selected) must
                               ;; not bill at the selected model's pricing.
                               cost (or @accrued-cost-atom
-                                       (estimate-token-cost effective-model input-tokens output-tokens
-                                                            {:cached-tokens cached-tokens
-                                                             :cache-creation-tokens cache-creation-tokens}))]
+                                     (estimate-token-cost effective-model input-tokens output-tokens
+                                       {:cached-tokens cached-tokens
+                                        :cache-creation-tokens cache-creation-tokens}))]
                           {:tokens {:input input-tokens :output output-tokens
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :cache-created cache-creation-tokens
@@ -3993,8 +3993,8 @@
                      ;; on-chunk only.
                      (when hook-fn
                        (try (hook-fn payload)
-                            (catch Exception e
-                              (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
+                         (catch Exception e
+                           (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
         iteration-cache-created-tokens
         (fn [token-cost]
           (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
@@ -4007,21 +4007,21 @@
     ;; ctx-loop/session-snapshot for the read-only guarantee.
     ;; Seed turn-scoped fields on the single turn-state-atom in one swap.
     (ctx-loop/set-turn-state! environment
-                              :iteration-id    nil
-                              :session-turn-id session-turn-id
-                              :user-request    user-request
-                              :turn-position   (or turn-position 1)
-                              :iteration       nil
-                              :form-idx        nil
+      :iteration-id    nil
+      :session-turn-id session-turn-id
+      :user-request    user-request
+      :turn-position   (or turn-position 1)
+      :iteration       nil
+      :form-idx        nil
       ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
       ;; The 2nd distinct file without an approved plan arms the gate.
-                              :files-mutated   #{})
+      :files-mutated   #{})
     ;; Sync context `:session/turn` to the persisted turn-position via
     ;; `eng/enter-turn`. `enter-turn` is idempotent and also clears transient
     ;; engine blockers so the new turn starts clean.
     (when-let [ctx-atom (:ctx-atom environment)]
       (swap! ctx-atom
-             (fn [c] (ctx-engine/enter-turn c (or turn-position 1)))))
+        (fn [c] (ctx-engine/enter-turn c (or turn-position 1)))))
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
@@ -4060,13 +4060,13 @@
                     ;; landed a clean result; defs from earlier exploration
                     ;; survive independently via the def restore path.
                     iters (->> queries
-                               (remove #(= (str (:id %)) current-turn-id-str))
-                               (mapcat (fn [q]
-                                         (try (persistance/db-list-session-turn-iterations d (:id q))
-                                              (catch Throwable _ []))))
-                               (filter #(= :done (:status %)))
-                               (sort-by :created-at)
-                               vec)]
+                            (remove #(= (str (:id %)) current-turn-id-str))
+                            (mapcat (fn [q]
+                                      (try (persistance/db-list-session-turn-iterations d (:id q))
+                                        (catch Throwable _ []))))
+                            (filter #(= :done (:status %)))
+                            (sort-by :created-at)
+                            vec)]
                 (mapv (fn [it]
                         [(or (:position it) 1)
                          {:thinking (:thinking it)
@@ -4085,7 +4085,7 @@
                           ;; rejects this entry before replay.
                           :assistant-message (:llm-assistant-message it)
                           :preserved-thinking/replay? false}])
-                      iters)))
+                  iters)))
             (catch Throwable t
               (tel/log! {:level :warn :id ::cross-turn-trailer-seed-failed
                          :data  {:error (ex-message t)}
@@ -4094,9 +4094,9 @@
       (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :iteration-loop})]
         (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                   :trace []}
-                                 FRESH_ITER_CARRY
-                                 (when (seq seeded-trailer-iters)
-                                   {:trailer-iters seeded-trailer-iters}))]
+                            FRESH_ITER_CARRY
+                            (when (seq seeded-trailer-iters)
+                              {:trailer-iters seeded-trailer-iters}))]
           (let [{:keys [iteration messages trace trailer-iters llm-provider]} loop-state]
             (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
@@ -4104,17 +4104,17 @@
               (do (log-stage! :error iteration {:reason :cancelled})
                 ;; Sticky best-answer: surface the latest non-blank answer
                 ;; this turn produced instead of a blank answer.
-                  (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
-                        result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
-                                       :trace trace :iteration-count iteration} (finalize-cost))]
-                    result))
+                (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
+                      result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
+                                     :trace trace :iteration-count iteration} (finalize-cost))]
+                  result))
 
               :else
               (let [raw-reasoning-level (when has-reasoning?
                                           base-reasoning-level)
                     reasoning-level (copilot-claude-safe-reasoning-level
-                                     resolved-model user-request raw-reasoning-level
-                                     {:allow-copilot-claude-deep? allow-copilot-claude-deep?})
+                                      resolved-model user-request raw-reasoning-level
+                                      {:allow-copilot-claude-deep? allow-copilot-claude-deep?})
                     _ (log-stage! :iteration/start iteration {:message-count (count messages)
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
@@ -4137,11 +4137,11 @@
                     ;; under-warned on a 128K Copilot call where the
                     ;; 50% trigger now lands at ~64K instead of 100K.
                     effective-context-limit (or max-context-tokens
-                                                (:input-limit pre-resolved-model)
-                                                (:context pre-resolved-model)
-                                                200000)
+                                              (:input-limit pre-resolved-model)
+                                              (:context pre-resolved-model)
+                                              200000)
                     _llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
-                                                                     (some-> (:name pre-resolved-model) str))
+                                                               (some-> (:name pre-resolved-model) str))
                                                    :routing  (cond-> {:fallback? false}
                                                                (seq routing) (assoc :request routing))}
                                             (:error llm-provider)
@@ -4149,15 +4149,15 @@
                     iteration-position (inc (long iteration))
                     current-session (session-snapshot)
                     iteration-hints (collect-iteration-start-hints environment active-exts
-                                                                   {:environment environment
-                                                                    :phase :turn.iteration/start
-                                                                    :session current-session
-                                                                    :iteration iteration-position
-                                                                    :session-title (:title current-session)
+                                      {:environment environment
+                                       :phase :turn.iteration/start
+                                       :session current-session
+                                       :iteration iteration-position
+                                       :session-title (:title current-session)
                                        ;; Title setup is host-owned by `maybe-auto-title!`.
                                        ;; Keep the model-facing title hook quiet.
-                                                                    :title-refresh? false
-                                                                    :turn-position turn-position
+                                       :title-refresh? false
+                                       :turn-position turn-position
                                        ;; Use `:last-iter-input` so the hint reflects the SIZE OF
                                        ;; THE NEXT REQUEST instead of the cumulative-turn total.
                                        ;; `:input-tokens` (cumulative) is kept on the snapshot for
@@ -4165,14 +4165,14 @@
                                        ;; spend separately. Falls back to the previous persisted
                                        ;; request on iter 0 (before this turn has provider usage)
                                        ;; so first-iter hints are not gated on a missing sample.
-                                                                    :input-tokens (let [u @usage-atom]
-                                                                                    (if (pos? (long (:iter-count u)))
-                                                                                      (long (:last-iter-input u))
-                                                                                      (long (:previous-request-input u))))
-                                                                    :cumulative-input-tokens (:input-tokens @usage-atom)
-                                                                    :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
-                                                                    :iter-count (:iter-count @usage-atom)
-                                                                    :context-limit effective-context-limit})
+                                       :input-tokens (let [u @usage-atom]
+                                                       (if (pos? (long (:iter-count u)))
+                                                         (long (:last-iter-input u))
+                                                         (long (:previous-request-input u))))
+                                       :cumulative-input-tokens (:input-tokens @usage-atom)
+                                       :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
+                                       :iter-count (:iter-count @usage-atom)
+                                       :context-limit effective-context-limit})
                     ;; Stamp :engine/utilization onto the ctx so the next
                     ;; render surfaces :session/utilization (how much of
                     ;; the window the LAST request used). :engine/* is
@@ -4188,9 +4188,9 @@
                                   (long (:last-iter-input u))
                                   (long (:previous-request-input u)))]
                         (stamp-utilization! ca
-                                            (ctx-engine/utilization req effective-context-limit
-                                                                    (:input-tokens u)
-                                                                    ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
+                          (ctx-engine/utilization req effective-context-limit
+                            (:input-tokens u)
+                            ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
                     ;; Standing context render + budget guard.
                     ;;
                     ;; Budget is NOT pre-estimated here: the over-utilization
@@ -4219,9 +4219,9 @@
                     ;; never repeat it. Matches z.ai's canonical preserved-thinking
                     ;; shape (user → asst → user → asst → user).
                     conversation-suffix-msgs (conversation-suffix
-                                              (apply-summaries trailer-iters
-                                                               (some-> (:ctx-atom environment) deref :session/summaries))
-                                              (replay-context pre-resolved-model))
+                                               (apply-summaries trailer-iters
+                                                 (some-> (:ctx-atom environment) deref :session/summaries))
+                                               (replay-context pre-resolved-model))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
                     ;; Over-budget compaction nudge: ephemeral, tail-only (after
                     ;; the cached suffix → cache-safe), present only while the
@@ -4230,13 +4230,13 @@
                     ;; Passes the live trailer + folds so the nudge can name the
                     ;; heaviest non-folded steps as concrete targets.
                     provider-messages (append-over-utilization-hint provider-messages
-                                                                    (let [u @usage-atom]
-                                                                      (if (pos? (long (:iter-count u)))
-                                                                        (long (:last-iter-input u))
-                                                                        (long (:previous-request-input u))))
-                                                                    effective-context-limit
-                                                                    trailer-iters
-                                                                    (some-> (:ctx-atom environment) deref :session/summaries))
+                                        (let [u @usage-atom]
+                                          (if (pos? (long (:iter-count u)))
+                                            (long (:last-iter-input u))
+                                            (long (:previous-request-input u))))
+                                        effective-context-limit
+                                        trailer-iters
+                                        (some-> (:ctx-atom environment) deref :session/summaries))
                     effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
@@ -4259,20 +4259,20 @@
                            env environment]
                       (let [result (try
                                      (run-iteration env effective-messages
-                                                    {:iteration iteration :reasoning-level reasoning-level
-                                                     :routing effective-routing
-                                                     :resolved-model resolved-model
-                                                     :on-chunk on-chunk
-                                                     :active-extensions active-exts
-                                                     :answer-validation-context
-                                                     {:user-request user-request
-                                                      :previous-iterations trailer-iters
-                                                      :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
-                                                     :extra-body current-extra-body})
+                                       {:iteration iteration :reasoning-level reasoning-level
+                                        :routing effective-routing
+                                        :resolved-model resolved-model
+                                        :on-chunk on-chunk
+                                        :active-extensions active-exts
+                                        :answer-validation-context
+                                        {:user-request user-request
+                                         :previous-iterations trailer-iters
+                                         :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
+                                        :extra-body current-extra-body})
                                      (catch Exception e
                                        (cond
                                          (and (stream-truncated-error? e)
-                                              (< attempt MAX_STREAM_TRUNCATED_RETRIES))
+                                           (< attempt MAX_STREAM_TRUNCATED_RETRIES))
                                          (do
                                            (tel/log! {:level :warn
                                                       :id ::stream-truncated-retry
@@ -4280,8 +4280,8 @@
                                                              :attempt (inc attempt)
                                                              :max-retries MAX_STREAM_TRUNCATED_RETRIES
                                                              :type (:type (ex-data e))}}
-                                                     (str "Stream truncated, transparent retry "
-                                                          (inc attempt) "/" MAX_STREAM_TRUNCATED_RETRIES))
+                                             (str "Stream truncated, transparent retry "
+                                               (inc attempt) "/" MAX_STREAM_TRUNCATED_RETRIES))
                                            ::retry-stream)
 
                                          ;; Max-tokens cap: model burnt the entire output
@@ -4292,13 +4292,13 @@
                                          ;; heavy iterations hit this when the provider's
                                          ;; finish_reason: \"length\" leaves content-acc empty.
                                          (and (max-tokens-exceeded-error? e)
-                                              (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
+                                           (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
                                          (let [data    (ex-data e)
                                                prev-max (or (:output-tokens data)
-                                                            (:max_tokens current-extra-body)
-                                                            8192)
+                                                          (:max_tokens current-extra-body)
+                                                          8192)
                                                bumped   (bumped-max-tokens-extra-body
-                                                         current-extra-body prev-max)]
+                                                          current-extra-body prev-max)]
                                            (tel/log! {:level :warn
                                                       :id ::max-tokens-exceeded-retry
                                                       :data {:iteration iteration
@@ -4307,12 +4307,12 @@
                                                              :prev-max prev-max
                                                              :new-max (:max_tokens bumped)
                                                              :reasoning-length (:reasoning-length data)}}
-                                                     (str "max_tokens exhausted on reasoning (~"
-                                                          (or (:reasoning-length data) "?")
-                                                          " reasoning tokens); retry "
-                                                          (inc max-tokens-attempt) "/"
-                                                          MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                          " with max_tokens=" (:max_tokens bumped)))
+                                             (str "max_tokens exhausted on reasoning (~"
+                                               (or (:reasoning-length data) "?")
+                                               " reasoning tokens); retry "
+                                               (inc max-tokens-attempt) "/"
+                                               MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                               " with max_tokens=" (:max_tokens bumped)))
                                            ;; Bump max-tokens-attempt so a second cap-hit
                                            ;; doesn't loop forever; keep `attempt` flat so a
                                            ;; subsequent stream-truncated still has its own
@@ -4326,14 +4326,14 @@
                                          ;; the work and returns true only when
                                          ;; a refresh actually happened.
                                          (and (< attempt MAX_AUTH_REFRESH_RETRIES)
-                                              (auth-refreshable-error? e resolved-model)
-                                              (try-refresh-provider-token! resolved-model))
+                                           (auth-refreshable-error? e resolved-model)
+                                           (try-refresh-provider-token! resolved-model))
                                          ::retry-auth-refresh
 
                                          :else
                                          (handle-iteration-exception! e
-                                                                      {:iteration iteration :messages effective-messages
-                                                                       :routing effective-routing :reasoning-level reasoning-level}))))]
+                                           {:iteration iteration :messages effective-messages
+                                            :routing effective-routing :reasoning-level reasoning-level}))))]
                         (cond
                           (= result ::retry-stream)
                           (recur (inc attempt) max-tokens-attempt current-extra-body env)
@@ -4344,7 +4344,7 @@
                           ;; reseat THIS turn's env onto the fresh router before
                           ;; re-sending (run-iteration uses (:router env)).
                           (recur (inc attempt) max-tokens-attempt current-extra-body
-                                 (assoc env :router (get-router)))
+                            (assoc env :router (get-router)))
                           :else result)))]
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
@@ -4359,19 +4359,19 @@
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
                     (do (log-stage! :error iteration {:reason :cancelled})
-                        (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
-                              result (merge {:answer sticky :status :cancelled
-                                             :status-id (status->id :cancelled)
-                                             :trace trace :iteration-count iteration}
-                                            (finalize-cost))]
-                          result))
+                      (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
+                            result (merge {:answer sticky :status :cancelled
+                                           :status-id (status->id :cancelled)
+                                           :trace trace :iteration-count iteration}
+                                     (finalize-cost))]
+                        result))
                     (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)
                           ;; Consecutive provider-generate failure streak.
                           ;; Counts only :llm-provider/generate errors (the
                           ;; model never produced usable content); any other
                           ;; error kind resets - those are RLM-correctable.
                           provider-error-streak (next-provider-error-streak
-                                                 (:provider-error-streak loop-state) llm-provider-error)
+                                                  (:provider-error-streak loop-state) llm-provider-error)
                           provider-breaker-tripped? (provider-error-breaker-tripped? provider-error-streak)
                           error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                           trace-entry {:iteration iteration :error iteration-error-data :final? false}
@@ -4403,25 +4403,25 @@
                           err-data            (:data iteration-error-data)
                           err-reasoning       (:reasoning err-data)
                           err-partial-content (or (:content err-data)
-                                                  (:partial-content err-data))
+                                                (:partial-content err-data))
                           err-api-usage       (or (:api-usage iteration-result)
-                                                  (:api-usage err-data))
+                                                (:api-usage err-data))
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                                                            (let [tc (iteration-token-cost err-api-usage)]
-                                                                              (cond-> {:session-turn-id session-turn-id :vars [] :code (or err-partial-content "")
-                                                                                       :thinking err-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
-                                                                                       :llm-messages effective-messages
-                                                                                       :llm-provider (:provider resolved-model)
-                                                                                       :llm-model (str (:name resolved-model))
-                                                                                       :llm-routing (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
-                                                                                                             :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
-                                                                                                             :fallback? false}
-                                                                                                      (seq (get-in iteration-error-data [:data :routed/trace]))
-                                                                                                      (assoc :fallback? true
-                                                                                                             :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
-                                                                                       :cache-created-tokens (iteration-cache-created-tokens tc)}
-                                                                                tc (assoc :tokens (:tokens tc)
-                                                                                          :cost-usd (:cost-usd tc)))))]
+                                             (let [tc (iteration-token-cost err-api-usage)]
+                                               (cond-> {:session-turn-id session-turn-id :vars [] :code (or err-partial-content "")
+                                                        :thinking err-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
+                                                        :llm-messages effective-messages
+                                                        :llm-provider (:provider resolved-model)
+                                                        :llm-model (str (:name resolved-model))
+                                                        :llm-routing (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                              :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                              :fallback? false}
+                                                                       (seq (get-in iteration-error-data [:data :routed/trace]))
+                                                                       (assoc :fallback? true
+                                                                         :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
+                                                        :cache-created-tokens (iteration-cache-created-tokens tc)}
+                                                 tc (assoc :tokens (:tokens tc)
+                                                      :cost-usd (:cost-usd tc)))))]
                       (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
@@ -4429,36 +4429,36 @@
                       ;; this iteration, so the channel sees a clean
                       ;; reasoning -> error transition.
                       (emit-hook! on-chunk
-                                  {:phase     :iteration-error
-                                   :iteration (inc (long iteration))
-                                   :thinking  err-reasoning
-                                   :error     iteration-error-data
-                                   :done?     true}
-                                  "on-chunk (iteration error)")
+                        {:phase     :iteration-error
+                         :iteration (inc (long iteration))
+                         :thinking  err-reasoning
+                         :error     iteration-error-data
+                         :done?     true}
+                        "on-chunk (iteration error)")
                       (if (or (::fatal-iteration-error iteration-result)
                             ;; Circuit breaker: N consecutive provider-generate
                             ;; failures - feeding the same request back cannot
                             ;; help; fail the turn as a provider error.
-                              provider-breaker-tripped?)
+                            provider-breaker-tripped?)
                         (let [trace' (conj trace trace-entry)
                               fallback (or (some-> (:error trace-entry) perr/provider-error-ir)
-                                           (render/->ast [:ir {}
-                                                          [:h {:level 2} [:span {} "Provider unavailable"]]
-                                                          [:p {} [:span {} "The model provider failed before Vis received a usable response."]]]))
+                                         (render/->ast [:ir {}
+                                                        [:h {:level 2} [:span {} "Provider unavailable"]]
+                                                        [:p {} [:span {} "The model provider failed before Vis received a usable response."]]]))
                               result (merge {:answer fallback
                                              :status :error
                                              :status-id (status->id :error)
                                              :trace trace'
                                              :iteration-count (inc iteration)}
-                                            (finalize-cost))]
+                                       (finalize-cost))]
                           result)
                         (recur (assoc loop-state
-                                      :iteration (inc iteration)
-                                      :provider-error-streak provider-error-streak
-                                      :empty-iteration-streak 0
-                                      :messages (conj messages {:role "user" :content error-feedback})
-                                      :llm-provider {:error llm-provider-error}
-                                      :trace (conj trace trace-entry))))))
+                                 :iteration (inc iteration)
+                                 :provider-error-streak provider-error-streak
+                                 :empty-iteration-streak 0
+                                 :messages (conj messages {:role "user" :content error-feedback})
+                                 :llm-provider {:error llm-provider-error}
+                                 :trace (conj trace trace-entry))))))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking assistant-prose blocks final-result]} iteration-result
@@ -4486,7 +4486,7 @@
                         ;; agree.
                         cursor      {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                      :iter (or (:iteration (ctx-loop/read-turn-state environment))
-                                               (inc (long (or iteration 0))))}
+                                             (inc (long (or iteration 0))))}
                         ;; One block = one tool call = one form: each block maps
                         ;; 1:1 to a form envelope. The block already carries its
                         ;; whole :result / :stdout / :error and its `:channel`
@@ -4536,27 +4536,27 @@
                                                                       ;; routed metadata), not the pre-resolved root — a
                                                                       ;; fallback iteration must not bill at the selected
                                                                       ;; model's rates.
-                                                                      (let [tc (iteration-token-cost (:api-usage iteration-result)
-                                                                                                     (:llm-model iteration-result))]
-                                                                        (cond-> {:session-turn-id session-turn-id
-                                                                                 :code (or block-code "")
-                                                                                 :forms forms-vec
-                                                                                 :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
-                                                                                 :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
-                                                                                 :thinking thinking
-                                                                                 :assistant-prose assistant-prose
-                                                                                 :answer (when final-result (answer-markdown (:answer final-result)))
-                                                                                 :llm-messages (:llm-messages iteration-result)
-                                                                                 :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
-                                                                                 :llm-model (:llm-model iteration-result)
-                                                                                 :llm-raw-response (:llm-raw-response iteration-result)
-                                                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
-                                                                                 :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
-                                                                                 :llm-assistant-message (:assistant-message iteration-result)
-                                                                                 :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
-                                                                                 :cache-created-tokens (iteration-cache-created-tokens tc)}
-                                                                          tc (assoc :tokens (:tokens tc)
-                                                                                    :cost-usd (:cost-usd tc)))))
+                                       (let [tc (iteration-token-cost (:api-usage iteration-result)
+                                                  (:llm-model iteration-result))]
+                                         (cond-> {:session-turn-id session-turn-id
+                                                  :code (or block-code "")
+                                                  :forms forms-vec
+                                                  :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
+                                                  :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
+                                                  :thinking thinking
+                                                  :assistant-prose assistant-prose
+                                                  :answer (when final-result (answer-markdown (:answer final-result)))
+                                                  :llm-messages (:llm-messages iteration-result)
+                                                  :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
+                                                  :llm-model (:llm-model iteration-result)
+                                                  :llm-raw-response (:llm-raw-response iteration-result)
+                                                  :llm-executable-blocks (:llm-executable-blocks iteration-result)
+                                                  :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
+                                                  :llm-assistant-message (:assistant-message iteration-result)
+                                                  :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
+                                                  :cache-created-tokens (iteration-cache-created-tokens tc)}
+                                           tc (assoc :tokens (:tokens tc)
+                                                :cost-usd (:cost-usd tc)))))
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
                         ;; =====================================================
                         ;; Context end-of-iter bookkeeping.
@@ -4564,27 +4564,27 @@
                         ctx-atom-ref (:ctx-atom environment)
                         _ (when ctx-atom-ref
                             (swap! ctx-atom-ref
-                                   (fn [c]
-                                     (ctx-engine/advance-iter
-                                      (assoc c :session/scope cursor)
-                                      forms-vec))))
+                              (fn [c]
+                                (ctx-engine/advance-iter
+                                  (assoc c :session/scope cursor)
+                                  forms-vec))))
                         _ (when ctx-atom-ref
                             (tel/log! {:level :info :id ::iter-end-ctx
                                        :data {:iteration iteration
                                               :cursor cursor
                                               :pinned-forms (count forms-vec)}}
-                                      "CTX iter-end: cursor advanced"))
+                              "CTX iter-end: cursor advanced"))
                         trace-entry {:iteration iteration :thinking thinking
                                      :assistant-prose assistant-prose
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
                       final-result
                       (do (log-stage! :final iteration
-                                      {:answer (answer-markdown (:answer final-result))
-                                       :iteration-count (inc iteration)})
-                          (log-stage! :iteration/stop iteration
-                                      {:blocks (count blocks) :errors (count (filter :error blocks))
-                                       :times (mapv block-duration-ms blocks)})
+                            {:answer (answer-markdown (:answer final-result))
+                             :iteration-count (inc iteration)})
+                        (log-stage! :iteration/stop iteration
+                          {:blocks (count blocks) :errors (count (filter :error blocks))
+                           :times (mapv block-duration-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
                         ;; Per-block chunks already streamed every block
                         ;; result; this is the trim \"iteration is
@@ -4593,31 +4593,31 @@
                         ;; whatever's already on screen. An answer is plain
                         ;; prose with no form slot, so `:answer-position`
                         ;; is nil.
-                          (when on-chunk
-                            (on-chunk {:phase            :iteration-final
-                                       :iteration        (inc (long iteration))
-                                       :thinking         thinking
-                                       :final            {:answer          (:answer final-result)
-                                                          :iteration-count (inc iteration)
-                                                          :status          :success}
-                                       :answer-position  (:answer-position final-result)
+                        (when on-chunk
+                          (on-chunk {:phase            :iteration-final
+                                     :iteration        (inc (long iteration))
+                                     :thinking         thinking
+                                     :final            {:answer          (:answer final-result)
+                                                        :iteration-count (inc iteration)
+                                                        :status          :success}
+                                     :answer-position  (:answer-position final-result)
                                      ;; Live working-memory snapshot so the F2
                                      ;; context dialog updates DURING the turn,
                                      ;; not only after it ends.
-                                       :done?            true}))
-                          (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
-                                                   :iteration-count (inc iteration)
-                                                   :utilization (let [u @usage-atom
-                                                                      req (if (pos? (long (:iter-count u)))
-                                                                            (long (:last-iter-input u))
-                                                                            (long (:previous-request-input u)))]
-                                                                  (ctx-engine/utilization req effective-context-limit
-                                                                                          (:input-tokens u)
-                                                                                          ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
-                                                  (finalize-cost))
-                                           (attach-llm-routing-summary pre-resolved-model iteration-result))]
-                            (auto-archive-hot-symbols! environment)
-                            result))
+                                     :done?            true}))
+                        (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
+                                                 :iteration-count (inc iteration)
+                                                 :utilization (let [u @usage-atom
+                                                                    req (if (pos? (long (:iter-count u)))
+                                                                          (long (:last-iter-input u))
+                                                                          (long (:previous-request-input u)))]
+                                                                (ctx-engine/utilization req effective-context-limit
+                                                                  (:input-tokens u)
+                                                                  ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                           (finalize-cost))
+                                       (attach-llm-routing-summary pre-resolved-model iteration-result))]
+                          (auto-archive-hot-symbols! environment)
+                          result))
 
                       :else
                       (if (empty? blocks)
@@ -4629,7 +4629,7 @@
                             ;; best sticky answer (give-up text if none) instead of
                             ;; re-invoking forever. Mirrors the forced-finalize shape.
                             (let [answer (or (some-> (:turn-state-atom environment) deref :best-answer :value)
-                                             {:answer loop-give-up-text})]
+                                           {:answer loop-give-up-text})]
                               (log-stage! :final iteration {:reason :empty-replies
                                                             :iteration-count (inc iteration)})
                               (when on-chunk
@@ -4648,30 +4648,30 @@
                                                                    (long (:last-iter-input u))
                                                                    (long (:previous-request-input u)))]
                                                          (ctx-engine/utilization req effective-context-limit
-                                                                                 (:input-tokens u)
-                                                                                 ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
-                                         (finalize-cost))
-                                  (attach-llm-routing-summary pre-resolved-model iteration-result)))
+                                                           (:input-tokens u)
+                                                           ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                    (finalize-cost))
+                                (attach-llm-routing-summary pre-resolved-model iteration-result)))
                             ;; Transparent auto-continue: re-invoke so a mid-task
                             ;; thinking-only blip turns into real output next round.
                             (recur (merge loop-state
-                                          {:iteration (inc iteration) :provider-error-streak 0
-                                           :empty-iteration-streak empty-streak
-                                           :trace (conj trace trace-entry)}))))
+                                     {:iteration (inc iteration) :provider-error-streak 0
+                                      :empty-iteration-streak empty-streak
+                                      :trace (conj trace trace-entry)}))))
 
                         (do (log-stage! :iteration/stop iteration
-                                        {:blocks (count blocks) :errors (count (filter :error blocks))
-                                         :times (mapv block-duration-ms blocks)})
-                            (let [_ blocks
+                              {:blocks (count blocks) :errors (count (filter :error blocks))
+                               :times (mapv block-duration-ms blocks)})
+                          (let [_ blocks
                                 ;; Repetition-only loop detection (no iteration or
                                 ;; budget counting): identical action code repeated
                                 ;; across iterations ⇒ stuck.
-                                  {:keys [stuck? action-sig]} (repetition-loop-state blocks (:stuck loop-state))
-                                  nudged?       (boolean (:nudged? (:stuck loop-state)))
-                                  sticky        (some-> (:turn-state-atom environment) deref :best-answer :value)
+                                {:keys [stuck? action-sig]} (repetition-loop-state blocks (:stuck loop-state))
+                                nudged?       (boolean (:nudged? (:stuck loop-state)))
+                                sticky        (some-> (:turn-state-atom environment) deref :best-answer :value)
                                 ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
-                                  forced?       (and nudged? stuck?)
-                                  forced-answer (or sticky {:answer loop-give-up-text})
+                                forced?       (and nudged? stuck?)
+                                forced-answer (or sticky {:answer loop-give-up-text})
                                 ;; ctx-diff for THIS iteration: the standing context
                                 ;; AFTER its code ran, captured ONLY if it changed since
                                 ;; the model last saw it (this iter started an nREPL,
@@ -4680,96 +4680,96 @@
                                 ;; `iteration-results-message`) and advances the running
                                 ;; baseline, so the change is attributed to the code that
                                 ;; caused it — append-only, no stray context messages.
-                                  iter-ctx-diff (let [;; util-inclusive: live token usage rides as a cheap
+                                iter-ctx-diff (let [;; util-inclusive: live token usage rides as a cheap
                                                     ;; appended `session["utilization"] = …` delta (the
                                                     ;; frozen block stays util-free for cache stability).
-                                                      cur  (ctx-loop/render-block!
-                                                            environment ctx-renderer/ctx-delta-map)
-                                                      prev @last-context-atom]
-                                                  (when (and cur (not= cur prev))
-                                                    (reset! last-context-atom cur)
+                                                    cur  (ctx-loop/render-block!
+                                                           environment ctx-renderer/ctx-delta-map)
+                                                    prev @last-context-atom]
+                                                (when (and cur (not= cur prev))
+                                                  (reset! last-context-atom cur)
                                                   ;; carry the baseline ACROSS turns so the next turn
                                                   ;; diffs against the last-emitted state, not a re-render.
-                                                    (some-> standing-ctx-atom (swap! assoc :baseline cur))
+                                                  (some-> standing-ctx-atom (swap! assoc :baseline cur))
                                                   ;; structural Python delta (session[…] = … / del),
                                                   ;; not the whole <context> block — append-only.
-                                                    (ctx-renderer/render-ctx-delta prev cur)))
-                                  next-recent (conj (vec (or trailer-iters []))
-                                                    [(inc (long iteration))
-                                                     {:thinking thinking
-                                                      :blocks   blocks
+                                                  (ctx-renderer/render-ctx-delta prev cur)))
+                                next-recent (conj (vec (or trailer-iters []))
+                                              [(inc (long iteration))
+                                               {:thinking thinking
+                                                :blocks   blocks
                                                 ;; The `forms-vec` (each `{:scope :result …}`) is the
                                                 ;; ONE scope source: persistence and the context
                                                 ;; wire both read it, so scopes stay consistent.
-                                                      :forms-vec forms-vec
-                                                      :ctx-diff iter-ctx-diff
-                                                      :llm-executable-blocks (:llm-executable-blocks iteration-result)
-                                                      :llm-provider (:llm-provider iteration-result)
-                                                      :llm-model    (:llm-model iteration-result)
+                                                :forms-vec forms-vec
+                                                :ctx-diff iter-ctx-diff
+                                                :llm-executable-blocks (:llm-executable-blocks iteration-result)
+                                                :llm-provider (:llm-provider iteration-result)
+                                                :llm-model    (:llm-model iteration-result)
                                                   ;; svar's canonical replay handle for this
                                                   ;; iteration. Re-emitted only within this
                                                   ;; live user turn via
                                                   ;; `append-preserved-thinking-replay`; cross-turn
                                                   ;; seeds opt out with
                                                   ;; `:preserved-thinking/replay? false`.
-                                                      :assistant-message (:assistant-message iteration-result)
+                                                :assistant-message (:assistant-message iteration-result)
                                                 ;; Native tool calls for this iteration — iteration-results-message
                                                 ;; pairs one `tool_result` block per call's :id (the API requires
                                                 ;; every tool_use be answered).
-                                                      :tool-calls (:tool-calls iteration-result)
-                                                      :preserved-thinking/replay? true}])]
+                                                :tool-calls (:tool-calls iteration-result)
+                                                :preserved-thinking/replay? true}])]
                             ;; ONE iteration-final chunk, AFTER the decision. Terminal
                             ;; (:done? true + :final answer) when force-finalizing so
                             ;; live channels render the forced answer; a non-terminal
                             ;; chunk before the force-finalize would never show it.
-                              (when on-chunk
-                                (on-chunk (if forced?
-                                            {:phase            :iteration-final
-                                             :iteration        (inc (long iteration))
-                                             :thinking         thinking
-                                             :final            {:answer          forced-answer
-                                                                :iteration-count (inc iteration)
-                                                                :status          :success}
-                                             :done?            true}
-                                            {:phase            :iteration-final
-                                             :iteration        (inc (long iteration))
-                                             :thinking         thinking
-                                             :final            nil
-                                             :done?            false})))
-                              (if forced?
-                                (do (log-stage! :final iteration {:reason :loop-forced
-                                                                  :iteration-count (inc iteration)})
+                            (when on-chunk
+                              (on-chunk (if forced?
+                                          {:phase            :iteration-final
+                                           :iteration        (inc (long iteration))
+                                           :thinking         thinking
+                                           :final            {:answer          forced-answer
+                                                              :iteration-count (inc iteration)
+                                                              :status          :success}
+                                           :done?            true}
+                                          {:phase            :iteration-final
+                                           :iteration        (inc (long iteration))
+                                           :thinking         thinking
+                                           :final            nil
+                                           :done?            false})))
+                            (if forced?
+                              (do (log-stage! :final iteration {:reason :loop-forced
+                                                                :iteration-count (inc iteration)})
                                 ;; NB: no `:status` key — mirrors the normal
                                 ;; success path so prior_outcome derives to
                                 ;; `complete` (a bare `:status :success` violates
                                 ;; the session_turn_state.prior_outcome CHECK).
-                                    (-> (merge {:answer forced-answer
-                                                :trace (conj trace trace-entry)
-                                                :iteration-count (inc iteration)
-                                                :utilization (let [u @usage-atom
-                                                                   req (if (pos? (long (:iter-count u)))
-                                                                         (long (:last-iter-input u))
-                                                                         (long (:previous-request-input u)))]
-                                                               (ctx-engine/utilization req effective-context-limit
-                                                                                       (:input-tokens u)
-                                                                                       ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
-                                               (finalize-cost))
-                                        (attach-llm-routing-summary pre-resolved-model iteration-result)))
-                                (recur (merge (dissoc loop-state :llm-provider)
-                                              {:iteration          (inc iteration)
-                                               :provider-error-streak 0
-                                               :empty-iteration-streak 0
+                                (-> (merge {:answer forced-answer
+                                            :trace (conj trace trace-entry)
+                                            :iteration-count (inc iteration)
+                                            :utilization (let [u @usage-atom
+                                                               req (if (pos? (long (:iter-count u)))
+                                                                     (long (:last-iter-input u))
+                                                                     (long (:previous-request-input u)))]
+                                                           (ctx-engine/utilization req effective-context-limit
+                                                             (:input-tokens u)
+                                                             ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                      (finalize-cost))
+                                  (attach-llm-routing-summary pre-resolved-model iteration-result)))
+                              (recur (merge (dissoc loop-state :llm-provider)
+                                       {:iteration          (inc iteration)
+                                        :provider-error-streak 0
+                                        :empty-iteration-streak 0
                                         ;; Inject ONE guidance turn when repetition
                                         ;; is detected → stern decision-checkpoint.
-                                               :messages           (cond-> messages
-                                                                     stuck?
-                                                                     (conj {:role "user"
-                                                                            :content (loop-checkpoint-message
-                                                                                      (when sticky (answer-markdown sticky)))}))
-                                               :trace              (conj trace trace-entry)
-                                               :trailer-iters      next-recent
-                                               :stuck              {:last-sig action-sig
-                                                                    :nudged?  stuck?}})))))))))))))))))
+                                        :messages           (cond-> messages
+                                                              stuck?
+                                                              (conj {:role "user"
+                                                                     :content (loop-checkpoint-message
+                                                                                (when sticky (answer-markdown sticky)))}))
+                                        :trace              (conj trace trace-entry)
+                                        :trailer-iters      next-recent
+                                        :stuck              {:last-sig action-sig
+                                                             :nudged?  stuck?}})))))))))))))))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
@@ -4777,9 +4777,9 @@
   [env user-request]
   (let [db-info  (:db-info env)
         state-id (or (:session/state-id env)
-                     (when db-info
-                       (some-> (:session-id env)
-                               (persistance/db-latest-session-state-id db-info))))]
+                   (when db-info
+                     (some-> (:session-id env)
+                       (persistance/db-latest-session-state-id db-info))))]
     (cond-> {:channel/id   (or (:channel env) :tui)
              :session/id   (:session-id env)
              :db-info      db-info
@@ -4848,28 +4848,28 @@
   [env user-request slash-result]
   (let [db-info     (:db-info env)
         turn-id     (persistance/db-store-session-turn! db-info
-                                                        {:parent-session-id (:session-id env)
-                                                         :user-request      user-request
-                                                         :status            :running})
+                      {:parent-session-id (:session-id env)
+                       :user-request      user-request
+                       :status            :running})
         turn-pos    (or (session-turn-position env turn-id) 1)]
     ;; Stamp turn-state so synthesize-scope returns the canonical
     ;; `t<N>/i1/f1` scope for any CTX mutations the slash emits.
     (ctx-loop/set-turn-state! env
-                              :iteration-id    nil
-                              :session-turn-id turn-id
-                              :user-request    user-request
-                              :turn-position   turn-pos
-                              :iteration       1
-                              :form-idx        0)
+      :iteration-id    nil
+      :session-turn-id turn-id
+      :user-request    user-request
+      :turn-position   turn-pos
+      :iteration       1
+      :form-idx        0)
     (apply-slash-mutations! env slash-result)
     (let [scope     (str "t" turn-pos "/i1/f1")
           envelope  {:scope  scope
                      :tag    :user-slash
                      :src    user-request
                      :result (or (:result slash-result)
-                                 {:slash/status :error
-                                  :slash/title  (or (:error slash-result) "slash error")
-                                  :slash/reason (:reason slash-result)})}
+                               {:slash/status :error
+                                :slash/title  (or (:error slash-result) "slash error")
+                                :slash/reason (:reason slash-result)})}
           answer-md (slash-result->answer-markdown slash-result)
           ;; Snapshot the CTX as it stands AFTER the slash mutations
           ;; so resume picks up the spec/task/fact writes. Mirrors
@@ -4879,30 +4879,30 @@
                          (let [stamped (ctx-loop/stamp-cursor env @ca)
                                gced    (ctx-engine/gc-pass stamped)
                                clean   (-> gced
-                                           (dissoc :session/scope)
-                                           ctx-engine/strip-ephemeral)]
+                                         (dissoc :session/scope)
+                                         ctx-engine/strip-ephemeral)]
                            (reset! ca clean)
                            clean))]
       (try (persistance/db-store-iteration! db-info
-                                            {:session-turn-id          turn-id
-                                             :code                     user-request
-                                             :forms                    [envelope]
-                                             :duration-ms              0
-                                             :llm-full-duration-ms     0
-                                             :thinking                 ""
-                                             :answer                   answer-md
-                                             :llm-messages             []
-                                             :llm-returned-empty-code? false})
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::slash-iter-persist-failed
-                        :data  {:error (ex-message t)}})))
+             {:session-turn-id          turn-id
+              :code                     user-request
+              :forms                    [envelope]
+              :duration-ms              0
+              :llm-full-duration-ms     0
+              :thinking                 ""
+              :answer                   answer-md
+              :llm-messages             []
+              :llm-returned-empty-code? false})
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::slash-iter-persist-failed
+                     :data  {:error (ex-message t)}})))
       (persistance/db-update-session-turn! db-info turn-id
-                                           {:answer-markdown answer-md
-                                            :iteration-count 1
-                                            :duration-ms     0
-                                            :status          :success
-                                            :prior-outcome   :complete
-                                            :ctx             ctx-snapshot})
+        {:answer-markdown answer-md
+         :iteration-count 1
+         :duration-ms     0
+         :status          :success
+         :prior-outcome   :complete
+         :ctx             ctx-snapshot})
       {:session-turn-id turn-id
        :answer          answer-md
        :iteration-count 1
@@ -4917,20 +4917,20 @@
    message was NOT a slash."
   [env user-request loop-opts]
   (let [session-turn-id (persistance/db-store-session-turn! (:db-info env)
-                                                            {:parent-session-id (:session-id env)
-                                                             :user-request user-request
-                                                             :status :running})
+                          {:parent-session-id (:session-id env)
+                           :user-request user-request
+                           :status :running})
         turn-position (session-turn-position env session-turn-id)
         _ (ctx-loop/set-turn-state! env
-                                    :session-turn-id session-turn-id
-                                    :user-request user-request
-                                    :turn-position (or turn-position 1)
-                                    :iteration nil
-                                    :form-idx nil
-                                    :iteration-id nil)
+            :session-turn-id session-turn-id
+            :user-request user-request
+            :turn-position (or turn-position 1)
+            :iteration nil
+            :form-idx nil
+            :iteration-id nil)
         _ (titling/maybe-auto-title! env user-request)
         result (iteration-loop env user-request
-                               (assoc loop-opts :session-turn-id session-turn-id))
+                 (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
         ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
         ;; so terminal-status entries past their TTL drop out of the live
@@ -4952,25 +4952,25 @@
                              ;; cursor from loop counters and starts each
                              ;; turn with empty ephemerals via empty-ctx.
                              clean   (-> gced
-                                         (dissoc :session/scope)
-                                         ctx-engine/strip-ephemeral)]
+                                       (dissoc :session/scope)
+                                       ctx-engine/strip-ephemeral)]
                          (reset! ca clean)
                          clean))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
-                                               {;; The persisted answer is the raw Markdown source the
+            {;; The persisted answer is the raw Markdown source the
              ;; model replied with (its plain prose answer). Channels
              ;; parse the Markdown into IR at render time via
              ;; `render/markdown->ir`; the database stays human-
              ;; readable and round-trips byte-for-byte through copy /
              ;; export / transcript.
-                                                :answer-markdown (when-let [a (:answer result)] (answer-markdown a))
-                                                :iteration-count (:iteration-count result)
-                                                :duration-ms     (:duration-ms result)
-                                                :status          (or (:status result) :success)
-                                                :tokens          (:tokens result)
-                                                :cost            (:cost result)
-                                                :prior-outcome   prior-outcome
-                                                :ctx             ctx-snapshot})]
+             :answer-markdown (when-let [a (:answer result)] (answer-markdown a))
+             :iteration-count (:iteration-count result)
+             :duration-ms     (:duration-ms result)
+             :status          (or (:status result) :success)
+             :tokens          (:tokens result)
+             :cost            (:cost result)
+             :prior-outcome   prior-outcome
+             :ctx             ctx-snapshot})]
     (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
 
 (defn- health-gated-router
@@ -5010,23 +5010,23 @@
         ;; the agent keeps editing trunk after entering a draft.
         env (or (when-let [db (:db-info env)]
                   (when-let [sid (or (:session/state-id env)
-                                     (some->> (:session-id env)
-                                              (persistance/db-latest-session-state-id db)))]
+                                   (some->> (:session-id env)
+                                     (persistance/db-latest-session-state-id db)))]
                     (when-let [ws (persistance/db-workspace-for-session db sid)]
                       ;; Keep the sandbox confinement's live pointer in step —
                       ;; sandbox-roots-fn derefs this on every real-fs access.
                       (some-> (:workspace-atom env) (reset! ws))
                       (assoc env
-                             :workspace      ws
-                             :workspace/id   (:id ws)
-                             :workspace/root (:root ws)
+                        :workspace      ws
+                        :workspace/id   (:id ws)
+                        :workspace/root (:root ws)
                         ;; Carry the extra filesystem roots across the mid-session
                         ;; env rebuild too — create-environment seeds them, but
                         ;; a /draft refresh re-derived the env from the row and
                         ;; dropped them, silently reverting to primary-root-only
                         ;; confinement for the rest of the session.
-                             :workspace/filesystem-roots (vec (:filesystem-roots ws))))))
-                env)
+                        :workspace/filesystem-roots (vec (:filesystem-roots ws))))))
+              env)
         ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
         ;; and sink unreachable ones to the END of this turn's router, so a
         ;; dead local endpoint can't catch the turn or an svar fallback.
@@ -5041,24 +5041,24 @@
                   env' (cond-> (assoc env :router router)
                          (and (seq dset) (seq (:available (:routing env))))
                          (update-in [:routing :available]
-                                    (fn [avail]
-                                      (vec (remove #(contains? dset (:provider %)) avail)))))]
+                           (fn [avail]
+                             (vec (remove #(contains? dset (:provider %)) avail)))))]
               (when (seq demoted)
                 (when-let [ca (:ctx-atom env)]
                   (swap! ca update :engine/warnings (fnil conj [])
-                         {:code    :provider-unreachable
-                          :anchor  [:session/routing]
-                          :message (str "Local provider(s) "
-                                        (str/join ", " (map name demoted))
-                                        " unreachable — demoted to last-resort and hidden"
-                                        " from routing for this turn.")})))
+                    {:code    :provider-unreachable
+                     :anchor  [:session/routing]
+                     :message (str "Local provider(s) "
+                                (str/join ", " (map name demoted))
+                                " unreachable — demoted to last-resort and hidden"
+                                " from routing for this turn.")})))
               env')
         slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
-                          (catch Throwable t
-                            (tel/log! {:level :warn :id ::slash-dispatch-threw
-                                       :data  {:user-request user-request
-                                               :error        (ex-message t)}})
-                            {:handled? false}))]
+                       (catch Throwable t
+                         (tel/log! {:level :warn :id ::slash-dispatch-threw
+                                    :data  {:user-request user-request
+                                            :error        (ex-message t)}})
+                         {:handled? false}))]
     (if (:handled? slash-result)
       (run-slash-turn! env user-request slash-result)
       (run-normal-turn! env user-request loop-opts))))
@@ -5117,12 +5117,12 @@
       (anomaly/incorrect! "Invalid RLM environment" {:type :vis/invalid-env}))
     (when-not (and (vector? messages) (seq messages))
       (anomaly/incorrect! "messages must be a non-empty vector of message maps, e.g. [(svar/user \"...\")]"
-                          {:type :vis/invalid-messages :got (type messages)}))
+        {:type :vis/invalid-messages :got (type messages)}))
     (when (and (some? eval-timeout-ms) (not (integer? eval-timeout-ms)))
       (anomaly/incorrect! ":eval-timeout-ms must be an integer (milliseconds)"
-                          {:type     :vis/invalid-eval-timeout
-                           :got      eval-timeout-ms
-                           :got-type (type eval-timeout-ms)}))
+        {:type     :vis/invalid-eval-timeout
+         :got      eval-timeout-ms
+         :got-type (type eval-timeout-ms)}))
     (let [;; Per-session model preference: when the caller passes no explicit
           ;; `:model`, fall back to the persisted per-session choice (set by
           ;; ANY channel — web picker or TUI — via `session-model/set-model!`).
@@ -5144,7 +5144,7 @@
           ;; `:cancel-token`. The derived atom is the lower-level
           ;; primitive every poll site checks.
           cancel-token           (or cancel-token
-                                     (cancellation/cancellation-token))
+                                   (cancellation/cancellation-token))
           cancel-atom            (cancellation/cancellation-atom cancel-token)
           ;; `user-request` = ONLY the current turn's user message.
           ;; Prior dialog transcript is dropped here — one ask, one value.
@@ -5154,23 +5154,23 @@
                                    (cond
                                      (string? c)     c
                                      (sequential? c) (str/join " "
-                                                               (keep #(when (= "text" (:type %)) (:text %)) c))
+                                                       (keep #(when (= "text" (:type %)) (:text %)) c))
                                      :else           nil))
           ;; Locate the LAST user message once. It is the only human text
           ;; sent into this turn. Prior dialog transcript is intentionally
           ;; NOT replayed to the model; durable context flows through
           ;; persisted iterations, defs, SYSTEM vars, and DB-backed tools.
           last-user-idx          (->> (map-indexed vector messages)
-                                      reverse
-                                      (some (fn [[i m]]
-                                              (when (contains? #{"user" :user} (:role m))
-                                                i))))
+                                   reverse
+                                   (some (fn [[i m]]
+                                           (when (contains? #{"user" :user} (:role m))
+                                             i))))
           last-user-message      (when last-user-idx (nth messages last-user-idx))
           user-request           (or (some-> last-user-message :content extract-text)
                                    ;; Fallback: no :user role found (malformed caller) -
                                    ;; use the last message's text. Better than an empty user request.
-                                     (some-> messages last :content extract-text)
-                                     "")
+                                   (some-> messages last :content extract-text)
+                                   "")
           ;; A `:model` preference HOISTS that model to the router root for
           ;; DISPLAY + COST: `resolve-effective-model` reads the vector head, so
           ;; root-model/root-provider (and the persisted cost label) reflect the
@@ -5183,7 +5183,7 @@
           ;; truly lands on the chosen provider+model. A caller-supplied
           ;; `:routing` (e.g. sub_loop's own pin) wins on merge.
           routing                (merge (forced-routing-for-pref (:router env) pref-provider model)
-                                        (or routing {}))
+                                   (or routing {}))
           root-resolved-model    (when env-router (resolve-effective-model env-router))
           root-model             (or (:name root-resolved-model) model)
           root-provider          (:provider root-resolved-model)
@@ -5217,12 +5217,12 @@
                                    ;; bound the actual call but never the displayed
                                    ;; routing. `:available` is preserved.
                                    (and (seq (:routing env))
-                                        (or root-model root-provider))
+                                     (or root-model root-provider))
                                    (update :routing
-                                           (fn [r]
-                                             (cond-> r
-                                               root-model    (assoc :model (str root-model))
-                                               root-provider (assoc :provider root-provider)))))
+                                     (fn [r]
+                                       (cond-> r
+                                         root-model    (assoc :model (str root-model))
+                                         root-provider (assoc :provider root-provider)))))
           environment-id         (:environment-id env)]
       {:cancel-token           cancel-token
        :cancel-atom            cancel-atom
@@ -5259,17 +5259,17 @@
            hooks cancel-atom cancel-token
            reasoning-default routing extra-body turn-features workspace-overrides]}]
   (let [iteration-result (run-turn! environment user-request
-                                    (cond-> {:output-spec            spec
-                                             :max-context-tokens     max-context-tokens
-                                             :system-prompt          system-prompt
-                                             :reasoning-default      reasoning-default
-                                             :hooks                  hooks
-                                             :cancel-atom            cancel-atom
-                                             :cancel-token           cancel-token}
-                                      routing       (assoc :routing routing)
-                                      extra-body    (assoc :extra-body extra-body)
-                                      turn-features (assoc :turn-features turn-features)
-                                      (seq workspace-overrides) (assoc :workspace-overrides workspace-overrides)))
+                           (cond-> {:output-spec            spec
+                                    :max-context-tokens     max-context-tokens
+                                    :system-prompt          system-prompt
+                                    :reasoning-default      reasoning-default
+                                    :hooks                  hooks
+                                    :cancel-atom            cancel-atom
+                                    :cancel-token           cancel-token}
+                             routing       (assoc :routing routing)
+                             extra-body    (assoc :extra-body extra-body)
+                             turn-features (assoc :turn-features turn-features)
+                             (seq workspace-overrides) (assoc :workspace-overrides workspace-overrides)))
         session-turn-id         (:session-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
@@ -5278,13 +5278,13 @@
         merge-cost!       (fn [extra-tokens extra-cost]
                             (when extra-tokens
                               (swap! total-tokens-atom
-                                     (fn [acc]
-                                       (merge-with + acc
-                                                   (select-keys extra-tokens [:input :output :reasoning :cached :total])))))
+                                (fn [acc]
+                                  (merge-with + acc
+                                    (select-keys extra-tokens [:input :output :reasoning :cached :total])))))
                             (when extra-cost
                               (swap! total-cost-atom
-                                     (fn [acc]
-                                       (merge-cost-maps acc extra-cost)))))]
+                                (fn [acc]
+                                  (merge-cost-maps acc extra-cost)))))]
     {:iteration-result  iteration-result
      :session-turn-id         session-turn-id
      :total-tokens-atom total-tokens-atom
@@ -5317,16 +5317,16 @@
       ;; we had diagnostic text ready.
       (do
         (log-stage! :turn/complete 0
-                    {:duration-ms duration-ms :iteration-count iteration-count :status status})
+          {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
             (persistance/db-update-session-turn! db-info session-turn-id
-                                                 {:answer          fallback-answer
-                                                  :iteration-count iteration-count
-                                                  :duration-ms     duration-ms
-                                                  :status          status
-                                                  :tokens          @total-tokens-atom
-                                                  :cost            cost-with-model})
+              {:answer          fallback-answer
+               :iteration-count iteration-count
+               :duration-ms     duration-ms
+               :status          status
+               :tokens          @total-tokens-atom
+               :cost            cost-with-model})
             (catch Exception e
               (tel/log! {:level :warn :data (format-exception-short e)
                          :msg   "Failed to update turn (max iterations)"})))
@@ -5342,16 +5342,16 @@
       ;; success path
       (do
         (log-stage! :turn/complete 0
-                    {:duration-ms duration-ms :iteration-count iteration-count
-                     :cost (str (:total-cost cost-with-model))})
+          {:duration-ms duration-ms :iteration-count iteration-count
+           :cost (str (:total-cost cost-with-model))})
         (try
           (persistance/db-update-session-turn! db-info session-turn-id
-                                               {:answer          answer
-                                                :iteration-count iteration-count
-                                                :duration-ms     duration-ms
-                                                :status          :success
-                                                :tokens          @total-tokens-atom
-                                                :cost            cost-with-model})
+            {:answer          answer
+             :iteration-count iteration-count
+             :duration-ms     duration-ms
+             :status          :success
+             :tokens          @total-tokens-atom
+             :cost            cost-with-model})
           (catch Exception e
             (tel/log! {:level :warn :data (format-exception-short e)
                        :msg   "Failed to update turn (success)"})))
@@ -5416,13 +5416,13 @@
                                        :db-info db-info
                                        :session-soul-id (:session-id environment)}
                rt/*eval-timeout-ms*  (rt/clamp-eval-timeout-ms
-                                      (or eval-timeout-ms rt/*eval-timeout-ms*))]
+                                       (or eval-timeout-ms rt/*eval-timeout-ms*))]
        (tel/with-ctx+ {:db-info db-info
                        :session-soul-id (:session-id environment)}
          (log-stage! :turn/open 0
-                     {:model root-model
-                      :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
-                      :user-request user-request})
+           {:model root-model
+            :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
+            :user-request user-request})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
                {:keys [iteration-result session-turn-id
@@ -5438,29 +5438,29 @@
                result
                (if status
                  (finalize-turn-result
-                  ctx
-                  {:session-turn-id          session-turn-id
-                   :start-time        start-time
-                   :iteration-count   iteration-count
-                   :status            status
-                   :status-id         status-id
-                   :trace             trace
-                   :locals            locals
-                   :answer            iteration-answer
-                   :total-tokens-atom total-tokens-atom
-                   :total-cost-atom   total-cost-atom})
+                   ctx
+                   {:session-turn-id          session-turn-id
+                    :start-time        start-time
+                    :iteration-count   iteration-count
+                    :status            status
+                    :status-id         status-id
+                    :trace             trace
+                    :locals            locals
+                    :answer            iteration-answer
+                    :total-tokens-atom total-tokens-atom
+                    :total-cost-atom   total-cost-atom})
                  (finalize-turn-result
-                  ctx
-                  {:session-turn-id          session-turn-id
-                   :start-time        start-time
-                   :iteration-count   iteration-count
-                   :trace             trace
-                   :answer            iteration-answer
-                   :confidence        confidence
-                   :reasoning         reasoning
-                   :utilization       (:utilization iteration-result)
-                   :total-tokens-atom total-tokens-atom
-                   :total-cost-atom   total-cost-atom}))]
+                   ctx
+                   {:session-turn-id          session-turn-id
+                    :start-time        start-time
+                    :iteration-count   iteration-count
+                    :trace             trace
+                    :answer            iteration-answer
+                    :confidence        confidence
+                    :reasoning         reasoning
+                    :utilization       (:utilization iteration-result)
+                    :total-tokens-atom total-tokens-atom
+                    :total-cost-atom   total-cost-atom}))]
            result))))))
 
 ;; =============================================================================
@@ -5504,9 +5504,9 @@
        (doseq [ext installed
                :let [alias  (extension/ext-alias-symbol ext)
                      by-sym (into {} (map (juxt :ext.symbol/symbol identity)
-                                          (extension/ext-symbols ext)))]
+                                       (extension/ext-symbols ext)))]
                [sym f] (try (extension/wrap-extension ext environment)
-                            (catch Throwable _ nil))]
+                         (catch Throwable _ nil))]
          ;; Aliased extensions (`:ext.engine/alias 'clj`) bind into the FLAT
          ;; Python sandbox as `<alias>_<name>` — the snake form of the
          ;; `alias/name` shape (clj_eval, git_status, search_web, br_open). Without
@@ -5523,7 +5523,7 @@
            ;; bound only when the EXTENSION is active AND the symbol's :active-fn
            ;; holds for env — one gate, native tools and Python verbs alike.
            (if (and (contains? active-set (:ext/name ext))
-                    (extension/symbol-active? (get by-sym sym) environment))
+                 (extension/symbol-active? (get by-sym sym) environment))
              (env/set-python-binding! python-context target f)
              (env/remove-python-binding! python-context target))))))
    environment))
@@ -5545,25 +5545,25 @@
   [environment ext]
   (when-not (:extensions environment)
     (anomaly/incorrect! "Invalid vis environment - missing :extensions atom"
-                        {:type :vis/invalid-env}))
+      {:type :vis/invalid-env}))
   (when-let [requires (seq (:ext/requires ext))]
     (let [registered (into #{} (map :ext/name) @(:extensions environment))
           missing    (vec (remove registered requires))]
       (when (seq missing)
         (anomaly/incorrect!
-         (str "Extension '" (:ext/name ext)
-              "' requires " missing " but they are not registered. "
-              "Register dependencies first.")
-         {:type       :extension/missing-dependencies
-          :extension  (:ext/name ext)
-          :requires   (vec requires)
-          :missing    missing
-          :registered (vec registered)}))))
+          (str "Extension '" (:ext/name ext)
+            "' requires " missing " but they are not registered. "
+            "Register dependencies first.")
+          {:type       :extension/missing-dependencies
+           :extension  (:ext/name ext)
+           :requires   (vec requires)
+           :missing    missing
+           :registered (vec registered)}))))
   (swap! (:extensions environment)
-         (fn [exts]
-           (let [ns-sym  (:ext/name ext)
-                 without (vec (remove #(= (:ext/name %) ns-sym) exts))]
-             (conj without ext))))
+    (fn [exts]
+      (let [ns-sym  (:ext/name ext)
+            without (vec (remove #(= (:ext/name %) ns-sym) exts))]
+        (conj without ext))))
   ;; Extension rows stay installed even when inactive, but callable symbol
   ;; bindings are activation-aware (sync-active-extension-symbols!). The Python
   ;; sandbox has no passive Java class/import config — the agent writes Python +
@@ -5647,7 +5647,7 @@
   [step ^Throwable t ws-id]
   (tel/log! {:level :warn :id ::subloop-lifecycle
              :data {:step step :workspace-id ws-id :error (ex-message t)}}
-            (str "sub_loop " (name step) " failed for child workspace " ws-id)))
+    (str "sub_loop " (name step) " failed for child workspace " ws-id)))
 
 (defn- guard
   "Functional resource bracket: run `(use resource)` and ALWAYS `(release
@@ -5659,7 +5659,7 @@
     (use resource)
     (finally
       (try (release resource)
-           (catch Throwable t (log-subloop-warn! step t ws-id))))))
+        (catch Throwable t (log-subloop-warn! step t ws-id))))))
 
 (defn- merge-child-edits!
   "Land the child's since-fork diff back into the parent root, serialized so
@@ -5669,7 +5669,7 @@
   [db-info child-ws]
   (locking workspace-mutation-lock
     (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
-         (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
+      (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
 
 (def child-forced-toggles
   "Toggles a `sub_loop` child has ON by DEFAULT, whatever the global state — so
@@ -5721,7 +5721,7 @@
   (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
     (when (> depth MAX-SUBLOOP-DEPTH)
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
-                      {:type :vis/subloop-depth-exceeded :depth depth})))
+               {:type :vis/subloop-depth-exceeded :depth depth})))
     (let [db-info   (:db-info parent-env)
           parent-ws (:workspace parent-env)
           ;; clone serialized (rift/init on the shared parent races otherwise)
@@ -5736,12 +5736,12 @@
           preferred (router-for-model (:router parent-env) models)
           {:keys [router demoted]} (health-gated-router preferred :sub-loop)
           rerouted  (when (and (seq demoted)
-                               (seq (if (coll? models) models (when models [models])))
+                            (seq (if (coll? models) models (when models [models])))
                             ;; router-for-model hoisted the preferred
                             ;; model's provider to the FRONT pre-demotion;
                             ;; if that very provider got demoted, the
                             ;; explicit preference was dead.
-                               (contains? (set demoted) (:id (first (:providers preferred)))))
+                            (contains? (set demoted) (:id (first (:providers preferred)))))
                       {:from        (vec (if (coll? models) models [models]))
                        :unreachable (mapv name demoted)
                        :used        (:name (resolve-effective-model router))
@@ -5751,34 +5751,34 @@
           ;; rift path = the child got its OWN clone (root differs from parent);
           ;; the shared-root fallback writes in place (nothing to merge or trash).
           rift?     (boolean (and (:root child-ws) parent-ws
-                                  (not= (:root child-ws) (:root parent-ws))))
+                               (not= (:root child-ws) (:root parent-ws))))
           ws-id     (:id child-ws)]
       ;; Nested brackets — the CLONE is released LAST (after the env), so the
       ;; order is: merge diff → dispose env → trash clone. `guard` logs any
       ;; teardown failure instead of leaking it.
       (guard child-ws
-             (fn [ws] (when rift?
-                        (locking workspace-mutation-lock
-                          (workspace/abandon! db-info {:workspace-id (:id ws)
-                                                       :reason       "subloop complete"}))))
-             :abandon ws-id
-             (fn [ws]
-               (guard (create-environment router
-                                          {:workspace-id (:id ws)
-                                           :child {:parent-db-info  db-info
-                                                   :depth           depth
+        (fn [ws] (when rift?
+                   (locking workspace-mutation-lock
+                     (workspace/abandon! db-info {:workspace-id (:id ws)
+                                                  :reason       "subloop complete"}))))
+        :abandon ws-id
+        (fn [ws]
+          (guard (create-environment router
+                   {:workspace-id (:id ws)
+                    :child {:parent-db-info  db-info
+                            :depth           depth
                             ;; link the child soul to THIS parent's session_state
                             ;; (cross-soul) → queryable sub-tree, hidden from the
                             ;; top-level session list, cascades on parent delete.
-                                                   :parent-state-id (:session/state-id parent-env)
-                                                   :seed-ctx        (subctx->seed-ctx subctx)}})
-                      dispose-environment! :dispose ws-id
-                      (fn [child-env]
-                        (cond-> (project-child-result child-env
-                                                      {:db-info db-info :child-ws ws :rift? rift?
-                                                       :subctx subctx :prompt prompt :system-prompt system-prompt})
+                            :parent-state-id (:session/state-id parent-env)
+                            :seed-ctx        (subctx->seed-ctx subctx)}})
+            dispose-environment! :dispose ws-id
+            (fn [child-env]
+              (cond-> (project-child-result child-env
+                        {:db-info db-info :child-ws ws :rift? rift?
+                         :subctx subctx :prompt prompt :system-prompt system-prompt})
                 ;; surface the health override to the coordinator
-                          rerouted (assoc :rerouted rerouted)))))))))
+                rerouted (assoc :rerouted rerouted)))))))))
 
 (defn- failed-subloop-result
   "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
@@ -5807,7 +5807,7 @@
    failure here — those are neutral; only `:failed`/`:error` count."
   [r]
   (or (some? (:error r))
-      (contains? subloop-failure-statuses (status->str (:status r)))))
+    (contains? subloop-failure-statuses (status->str (:status r)))))
 
 (defn- run-spec!
   "Run ONE child for `spec` (`{:prompt :subctx :models}`), folding a throw into
@@ -5817,7 +5817,7 @@
   (try (sub-loop! parent-env {:prompt (:prompt spec)
                               :subctx (:subctx spec)
                               :models (:models spec)})
-       (catch Throwable t (failed-subloop-result spec t))))
+    (catch Throwable t (failed-subloop-result spec t))))
 
 (defn retry-sub-loop!
   "DECORATOR (not a composite): re-run the SAME `spec` until its child SUCCEEDS,
@@ -5844,7 +5844,7 @@
             (let [r   (run-spec! parent-env spec)
                   acc (conj acc r)]
               (if (subloop-failed? r) (reduced acc) acc)))
-          [] (vec specs)))
+    [] (vec specs)))
 
 (defn selector-sub-loops!
   "`:selector` composite (a.k.a. fallback) — try `specs` IN ORDER until one
@@ -5858,7 +5858,7 @@
             (let [r   (run-spec! parent-env spec)
                   acc (conj acc r)]
               (if (subloop-failed? r) acc (reduced acc))))
-          [] (vec specs)))
+    [] (vec specs)))
 
 (defn parallel-sub-loops!
   "Run several `sub-loop!`s CONCURRENTLY on Clojure futures, bounded by
@@ -5876,12 +5876,12 @@
   (let [specs (vec specs)
         sem   (java.util.concurrent.Semaphore. MAX-PARALLEL-SUBLOOPS)
         futs  (mapv
-               (fn [spec]
-                 (future
-                   (.acquire sem)
-                   (try (run-spec! parent-env spec)
-                        (finally (.release sem)))))
-               specs)]
+                (fn [spec]
+                  (future
+                    (.acquire sem)
+                    (try (run-spec! parent-env spec)
+                      (finally (.release sem)))))
+                specs)]
     (mapv deref futs)))
 
 (defn create-environment
@@ -5920,7 +5920,7 @@
   (let [depth-atom               (atom (or (:depth child) 0))
         owns-db?                 (nil? (:parent-db-info child))
         db-info                  (or (:parent-db-info child)
-                                     (persistance/db-create-connection! db))
+                                   (persistance/db-create-connection! db))
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :session-id nil})
@@ -5951,9 +5951,9 @@
         ;; cross-process. Placeholder titles ("Untitled") still fall through to
         ;; auto-title via `usable-existing-title`.
         resolved-title           (or (not-empty (str title))
-                                     (when (and db-info session)
-                                       (when-let [rid (persistance/db-resolve-session-id db-info session)]
-                                         (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
+                                   (when (and db-info session)
+                                     (when-let [rid (persistance/db-resolve-session-id db-info session)]
+                                       (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
         session-title-atom               (atom (or resolved-title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
@@ -5966,9 +5966,9 @@
                                    root-provider (assoc :provider root-provider)
                                    (seq (:providers router))
                                    (assoc :available
-                                          (mapv (fn [p] {:provider (:id p)
-                                                         :models   (mapv :name (:models p))})
-                                                (:providers router))))
+                                     (mapv (fn [p] {:provider (:id p)
+                                                    :models   (mapv :name (:models p))})
+                                       (:providers router))))
         ;; Snapshot a base system prompt for the session row so the
         ;; sidebar / DB inspectors have something stable to display.
         ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
@@ -5987,7 +5987,7 @@
                                 ;; workspace; honour it.
                                 resolved-session-id
                                 (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
-                                         (persistance/db-workspace-for-session db-info))
+                                  (persistance/db-workspace-for-session db-info))
                                 ;; New session, caller pre-spawned a workspace
                                 ;; (e.g. /workspace slash spawn-branch path).
                                 workspace-id
@@ -5996,19 +5996,19 @@
                                 :else
                                 (workspace/ensure-workspace! db-info {})))
         session-id          (or resolved-session-id
-                                (persistance/db-store-session! db-info
-                                                               (cond-> {:channel       (or channel :tui)
-                                                                        :external-id   external-id
-                                                                        :model         root-model
-                                                                        :title         title
-                                                                        :system-prompt system-prompt
-                                                                        :workspace-id  (:id active-workspace)
+                              (persistance/db-store-session! db-info
+                                (cond-> {:channel       (or channel :tui)
+                                         :external-id   external-id
+                                         :model         root-model
+                                         :title         title
+                                         :system-prompt system-prompt
+                                         :workspace-id  (:id active-workspace)
                                          ;; sub_loop child → link this whole soul
                                          ;; to the parent's session_state (cross-
                                          ;; soul), keeping it out of the top-level
                                          ;; list; nil for a normal session.
-                                                                        :parent-state-id (:parent-state-id child)}
-                                                                 root-provider (assoc :provider root-provider))))
+                                         :parent-state-id (:parent-state-id child)}
+                                  root-provider (assoc :provider root-provider))))
         ;; Resolve the session_state row id ONCE here (reliable at env build)
         ;; and stamp it on the env, so slashes/turns don't re-query it — the
         ;; per-call re-query intermittently returns nil for fresh sessions,
@@ -6050,7 +6050,7 @@
         ;; results in order, exactly as before.
         gather-fn                (fn gather [& thunks]
                                    (let [thunks (if (and (= 1 (count thunks))
-                                                         (sequential? (first thunks)))
+                                                      (sequential? (first thunks)))
                                                   (vec (first thunks)) ; gather([f1 f2]) too
                                                   (vec thunks))
                                          call  (fn [t] (cond
@@ -6059,33 +6059,33 @@
                                                          :else               t))
                                          futs  (mapv (fn [t]
                                                        (.submit gather-executor
-                                                                ^Callable (bound-fn* (fn [] (call t)))))
-                                                     thunks)
+                                                         ^Callable (bound-fn* (fn [] (call t)))))
+                                                 thunks)
                                          ;; settle EVERY future — collect value OR error per slot
                                          outcomes (mapv (fn [^Future f]
                                                           (try {:ok (.get f)}
-                                                               (catch ExecutionException e {:err (or (.getCause e) e)})
-                                                               (catch Throwable e {:err e})))
-                                                        futs)
+                                                            (catch ExecutionException e {:err (or (.getCause e) e)})
+                                                            (catch Throwable e {:err e})))
+                                                    futs)
                                          failures (keep-indexed
-                                                   (fn [i o] (when (contains? o :err) [i (:err o)]))
-                                                   outcomes)]
+                                                    (fn [i o] (when (contains? o :err) [i (:err o)]))
+                                                    outcomes)]
                                      (if (empty? failures)
                                        (mapv :ok outcomes)
                                        ;; aggregate ALL failures into ONE error (slot index +
                                        ;; message); chain the first as cause for the traceback.
                                        (throw (ex-info
-                                               (str "gather: " (count failures) "/" (count outcomes)
-                                                    " awaitables failed — "
-                                                    (str/join "; "
-                                                              (map (fn [[i e]]
-                                                                     (str "[" i "] " (or (ex-message e) (str e))))
-                                                                   failures)))
-                                               {:vis/gather-failures
-                                                (mapv (fn [[i e]] {:index i :message (or (ex-message e) (str e))})
-                                                      failures)
-                                                :vis/gather-total (count outcomes)}
-                                               (second (first failures)))))))
+                                                (str "gather: " (count failures) "/" (count outcomes)
+                                                  " awaitables failed — "
+                                                  (str/join "; "
+                                                    (map (fn [[i e]]
+                                                           (str "[" i "] " (or (ex-message e) (str e))))
+                                                      failures)))
+                                                {:vis/gather-failures
+                                                 (mapv (fn [[i e]] {:index i :message (or (ex-message e) (str e))})
+                                                   failures)
+                                                 :vis/gather-total (count outcomes)}
+                                                (second (first failures)))))))
         ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
         ;; every thunk on the SAME virtual-thread pool with the SAME real overlap,
         ;; but NEVER throws an aggregate on failure: each slot returns a per-call
@@ -6099,7 +6099,7 @@
         ;; model never calls it (it is synthesized by the host, not advertised).
         par-isolated-fn          (fn par-isolated [& thunks]
                                    (let [thunks (if (and (= 1 (count thunks))
-                                                         (sequential? (first thunks)))
+                                                      (sequential? (first thunks)))
                                                   (vec (first thunks))
                                                   (vec thunks))
                                          call  (fn [t] (cond
@@ -6108,15 +6108,15 @@
                                                          :else               t))
                                          futs  (mapv (fn [t]
                                                        (.submit gather-executor
-                                                                ^Callable (bound-fn* (fn [] (call t)))))
-                                                     thunks)]
+                                                         ^Callable (bound-fn* (fn [] (call t)))))
+                                                 thunks)]
                                      (mapv (fn [^Future f]
                                              (try {"__vis_ok__" true "__vis_val__" (.get f)}
-                                                  (catch ExecutionException e
-                                                    {"__vis_ok__" false "__vis_exc__" (or (.getCause e) e)})
-                                                  (catch Throwable e
-                                                    {"__vis_ok__" false "__vis_exc__" e})))
-                                           futs)))
+                                               (catch ExecutionException e
+                                                 {"__vis_ok__" false "__vis_exc__" (or (.getCause e) e)})
+                                               (catch Throwable e
+                                                 {"__vis_ok__" false "__vis_exc__" e})))
+                                       futs)))
         ;; Build the ctx-loop env subset used by the engine bindings + helpers.
         ;; Just the cursor counters + the single ctx-atom. Warnings
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
@@ -6149,8 +6149,8 @@
                                    ;; `v/` alias. env resolved lazily (atom not
                                    ;; built yet). Listed FIRST so engine verbs
                                    ;; below win any accidental name collision.
-                                  (extension/builtin-sandbox-bindings
-                                   (fn [] @environment-atom))
+                                   (extension/builtin-sandbox-bindings
+                                     (fn [] @environment-atom))
                                    ;; Engine verbs (no `done` — a plain-text reply
                                    ;; finalizes the turn): the compaction verbs +
                                    ;; `__vis_par__`, the host virtual-thread pool
@@ -6159,9 +6159,9 @@
                                    ;; env_python async-runtime preamble; this is
                                    ;; the dispatcher they call to overlap awaitables
                                    ;; on real virtual threads).
-                                  (merge compaction
-                                         {(symbol "__vis_par__")          gather-fn
-                                          (symbol "__vis_par_isolated__") par-isolated-fn}
+                                   (merge compaction
+                                     {(symbol "__vis_par__")          gather-fn
+                                      (symbol "__vis_par_isolated__") par-isolated-fn}
                                          ;; native_tools_results[tool_id] host callbacks:
                                          ;; retrieve a PRIOR native tool's persisted result by
                                          ;; its provider tool_use id (`:svar/tool-call-id`) —
@@ -6170,22 +6170,22 @@
                                          ;; single-id fallback for a dynamic key. Both close
                                          ;; over db-info + the live session id and delegate to
                                          ;; the ONE batched persistence query.
-                                         {(symbol "__vis_native_result_prime__")
-                                          (fn native-result-prime [ids]
-                                            (persistance/db-native-results-for-tool-ids
-                                             db-info session-id (into #{} (filter some?) (or ids []))))
-                                          (symbol "__vis_native_result_fetch__")
-                                          (fn native-result-fetch [id]
-                                            (get (persistance/db-native-results-for-tool-ids
-                                                  db-info session-id #{id})
-                                                 id))})
+                                     {(symbol "__vis_native_result_prime__")
+                                      (fn native-result-prime [ids]
+                                        (persistance/db-native-results-for-tool-ids
+                                          db-info session-id (into #{} (filter some?) (or ids []))))
+                                      (symbol "__vis_native_result_fetch__")
+                                      (fn native-result-fetch [id]
+                                        (get (persistance/db-native-results-for-tool-ids
+                                               db-info session-id #{id})
+                                          id))})
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).
                                    ;; The runtime (sub-loop! / parallel-sub-loops! / …) stays
                                    ;; intact; re-enable by deleting the `#_`. Also unadvertised
                                    ;; in the system prompt (prompt.clj delegation section).
-                                  #_{'sub-loop (fn sub-loop [prompt subctx & more]
+                                   #_{'sub-loop (fn sub-loop [prompt subctx & more]
                                                 ;; "models" is ALWAYS a list (ordered preference,
                                                 ;; even for one: ["haiku"]) — ONE consistent surface,
                                                 ;; never a scalar. svar routes + falls back the order.
@@ -6195,31 +6195,31 @@
                                                 ;; string "models" (reading the string silently yields
                                                 ;; nil → child runs on the DEFAULT model, not the
                                                 ;; proposed one).
-                                                 (sub-loop! @environment-atom
-                                                            {:prompt prompt
-                                                             :subctx subctx
-                                                             :models (:models (first more))}))
+                                                  (sub-loop! @environment-atom
+                                                    {:prompt prompt
+                                                     :subctx subctx
+                                                     :models (:models (first more))}))
                                     ;; parallel([{prompt, subctx, models}, …]) — dispatch
                                     ;; SEVERAL children concurrently (bounded), results in
                                     ;; input order. Each spec dict crosses the boundary
                                     ;; keyword-snake (see sub_loop). Same single db-info +
                                     ;; depth-cap; failures surface per-slot, not as a throw.
-                                     'parallel (fn parallel [specs]
-                                                 (parallel-sub-loops! @environment-atom specs))
+                                      'parallel (fn parallel [specs]
+                                                  (parallel-sub-loops! @environment-atom specs))
                                     ;; :sequence composite — children IN ORDER,
                                     ;; gated on success, fail-fast.
-                                     'sequence (fn sequence [specs]
-                                                 (sequence-sub-loops! @environment-atom specs))
+                                      'sequence (fn sequence [specs]
+                                                  (sequence-sub-loops! @environment-atom specs))
                                     ;; :selector composite — try alternatives IN
                                     ;; ORDER until one succeeds.
-                                     'selector (fn selector [specs]
-                                                 (selector-sub-loops! @environment-atom specs))
+                                      'selector (fn selector [specs]
+                                                  (selector-sub-loops! @environment-atom specs))
                                     ;; retry({prompt, subctx, models}, n) — re-run ONE child
                                     ;; until its focus task succeeds, up to n attempts (default
                                     ;; 2; selector semantics). Result is stamped with :attempts.
-                                     'retry (fn retry [spec & more]
-                                              (retry-sub-loop! @environment-atom spec
-                                                               (first more)))}
+                                      'retry (fn retry [spec & more]
+                                               (retry-sub-loop! @environment-atom spec
+                                                 (first more)))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises
@@ -6227,7 +6227,7 @@
                                    ;; agent only touches THIS session's resources.
                                     ;; No context mutator or introspect
                                     ;; bindings are installed here.
-                                  (resources/sandbox-bindings session-id))
+                                   (resources/sandbox-bindings session-id))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
         ;; deny-by-default polyglot Context, wires the Clojure tools as Python
         ;; callables, and installs doc/apropos introspection).
@@ -6242,7 +6242,7 @@
         sandbox-roots-fn (when active-workspace
                            (fn [] (when-let [ws @workspace-atom]
                                     (into [(str (:root ws))]
-                                          (keep :clone (workspace/filesystem-roots ws))))))
+                                      (keep :clone (workspace/filesystem-roots ws))))))
         ;; Network capability: OFF unless the `:network/enabled` toggle is on. When
         ;; on, config.edn `:network` tunes the host policy:
         ;;   :allowed-domains [...]  confine to these (empty or ["*"] ⇒ allow all)
@@ -6255,7 +6255,7 @@
                       :denied-domains  (:denied-domains net-cfg)}
         {:keys [python-context sandbox-ns initial-ns-keys]}
         (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
-                                   sandbox-roots-fn network-opts)
+          sandbox-roots-fn network-opts)
         env (cond-> {:environment-id                    environment-id
                      :session-id                   session-id
                      :session/state-id                  session-state-id
@@ -6283,20 +6283,20 @@
               ;; root the very first time it fires.
               active-workspace
               (assoc :workspace          active-workspace
-                     :workspace/id       (:id active-workspace)
-                     :workspace/root     (:root active-workspace)
-                     :workspace/filesystem-roots (vec (:filesystem-roots active-workspace))
+                :workspace/id       (:id active-workspace)
+                :workspace/root     (:root active-workspace)
+                :workspace/filesystem-roots (vec (:filesystem-roots active-workspace))
 
                 ;; Every workspace is a rift CoW clone — always a sandbox.
                 ;; Reported on :workspace/sandbox?, NOT as a VCS. The
                 ;; model-facing :vcs/kind is the real repo VCS, computed in
                 ;; foundation.workspace-ctx/render-block.
-                     :workspace/sandbox? true))
+                :workspace/sandbox? true))
         env (assoc env
               ;; Context atoms — visible to the rest of the loop so renderer /
               ;; per-iter capture / done snapshot can read or stamp them.
-                   :ctx-atom                          ctx-atom
-                   :turn-state-atom                   turn-state-atom
+              :ctx-atom                          ctx-atom
+              :turn-state-atom                   turn-state-atom
               ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
               ;; in the cached system prefix, so it is FROZEN once per process and
               ;; reused across turns — every state change rides as an appended
@@ -6305,28 +6305,28 @@
               ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
               ;; nil until the first turn seeds it. A fresh process (resume/restart)
               ;; starts nil → renders fresh from current state (cold cache anyway).
-                   :standing-ctx-atom                 (atom nil)
-                   :state-atom                        state-atom
-                   :python-context                           python-context
-                   :sandbox-ns                        sandbox-ns
-                   :initial-ns-keys                   initial-ns-keys
+              :standing-ctx-atom                 (atom nil)
+              :state-atom                        state-atom
+              :python-context                           python-context
+              :sandbox-ns                        sandbox-ns
+              :initial-ns-keys                   initial-ns-keys
               ;; Long-lived per-env LRU map: `{var-name-string →
               ;; last-used-turn-pos}`. Merged from each iteration's
               ;; `:lru` after eval.
-                   :def-resolve-lru-atom              (atom {})
-                   :router                            router
-                   :session-title-atom           session-title-atom
-                   :extensions                        (atom [])
-                   :active-extensions                 (atom []))]
+              :def-resolve-lru-atom              (atom {})
+              :router                            router
+              :session-title-atom           session-title-atom
+              :extensions                        (atom [])
+              :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; A sub_loop CHILD seeds its in-memory ctx straight from the model-supplied
     ;; subctx (its focused bigger-picture slice) — no DB restore.
     (when-let [seed (:seed-ctx child)]
       (reset! ctx-atom (assoc seed
-                              :session/id session-id
-                              :engine/warnings          []
-                              :engine/pending-satisfies [])))
+                         :session/id session-id
+                         :engine/warnings          []
+                         :engine/pending-satisfies [])))
     ;; Restore the context state when resuming. Sandbox defs do NOT persist
     ;; across turns (the `definition_*` sidecar tables were dropped).
     (when (and resolved-session-id (nil? (:seed-ctx child)))
@@ -6340,10 +6340,10 @@
           ;; Nippy), so re-seed those empty here so swap! callers don't need
           ;; nil-guards. Read once, on resume; the live render stays in-memory.
           (reset! ctx-atom
-                  (assoc persisted-ctx
-                         :session/id session-id
-                         :engine/warnings          []
-                         :engine/pending-satisfies [])))
+            (assoc persisted-ctx
+              :session/id session-id
+              :engine/warnings          []
+              :engine/pending-satisfies [])))
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}
@@ -6411,12 +6411,12 @@
   [router]
   (when router
     (swap! cache
-           (fn [m]
-             (reduce-kv
-              (fn [acc id {:keys [environment] :as entry}]
-                (assoc acc id
-                       (assoc entry :environment (assoc environment :router router))))
-              {} m))))
+      (fn [m]
+        (reduce-kv
+          (fn [acc id {:keys [environment] :as entry}]
+            (assoc acc id
+              (assoc entry :environment (assoc environment :router router))))
+          {} m))))
   nil)
 
 ;; Keep live session envs in sync with Python-extension (re)loads. Each env
@@ -6438,7 +6438,7 @@
             (when-let [exts-atom (:extensions environment)]
               (let [gone (set removed)]
                 (swap! exts-atom
-                       (fn [exts] (vec (remove #(gone (:ext/name %)) exts)))))))
+                  (fn [exts] (vec (remove #(gone (:ext/name %)) exts)))))))
           ;; install-extension! replaces same-name rows and re-syncs the
           ;; sandbox bindings, so reloaded tools point at the NEW context.
           (doseq [ext extensions]
@@ -6463,7 +6463,7 @@
         pid     (:id provider)
         provs   (vec (:providers cfg))
         idx     (some (fn [[i p]] (when (= (:id p) pid) i))
-                      (map-indexed vector provs))
+                  (map-indexed vector provs))
         updated (if idx (assoc provs idx provider) (conj provs provider))
         prioritized (vec (cons provider (remove #(= (:id %) pid) updated)))
         new-cfg {:providers prioritized}]
@@ -6471,9 +6471,9 @@
     (reset! @#'config/active-config new-cfg)
     (try (let [r (rebuild-router! new-cfg)]
            (refresh-cached-routers! r))
-         (catch Exception e
-           (tel/log! {:level :warn :data {:error (ex-message e)}}
-                     "Failed to rebuild router after provider change")))
+      (catch Exception e
+        (tel/log! {:level :warn :data {:error (ex-message e)}}
+          "Failed to rebuild router after provider change")))
     new-cfg))
 
 (defn- open-env!
@@ -6482,12 +6482,12 @@
   [id {:keys [channel external-id title workspace-id]}]
   (let [router (get-router)
         env    (create-environment router
-                                   (cond-> {:db (config/resolve-db-spec)}
-                                     id          (assoc :session id)
-                                     channel     (assoc :channel channel)
-                                     external-id (assoc :external-id external-id)
-                                     title       (assoc :title title)
-                                     workspace-id (assoc :workspace-id workspace-id)))]
+                 (cond-> {:db (config/resolve-db-spec)}
+                   id          (assoc :session id)
+                   channel     (assoc :channel channel)
+                   external-id (assoc :external-id external-id)
+                   title       (assoc :title title)
+                   workspace-id (assoc :workspace-id workspace-id)))]
     env))
 
 (defn- ensure-env!
@@ -6497,11 +6497,11 @@
       entry
       (let [env (open-env! k {})]
         (swap! cache
-               (fn [m]
-                 (if (contains? m k)
-                   m
-                   (assoc m k {:environment env
-                               :lock (java.util.concurrent.locks.ReentrantLock.)}))))
+          (fn [m]
+            (if (contains? m k)
+              m
+              (assoc m k {:environment env
+                          :lock (java.util.concurrent.locks.ReentrantLock.)}))))
         (get @cache k)))))
 
 (defn db-info
@@ -6555,14 +6555,14 @@
            :external-id (:external-id c)
            :title       (:title c)
            :created-at  (:created-at c)})
-        (persistance/db-list-sessions (db-info) channel)))
+    (persistance/db-list-sessions (db-info) channel)))
 
 (defn for-telegram-chat!
   [chat-id]
   (let [ext (str chat-id)]
     (or (when-let [id (persistance/db-find-session-by-external (db-info) :telegram ext)]
           (by-id id))
-        (create! :telegram {:external-id ext}))))
+      (create! :telegram {:external-id ext}))))
 
 ;; =============================================================================
 ;; Host title setter + public env accessor
@@ -6580,9 +6580,9 @@
   [id title]
   (let [env (env-for id)]
     (titling/set-title-with-broadcast! (or (:db-info env) (db-info))
-                                       id
-                                       (:session-title-atom env)
-                                       title))
+      id
+      (:session-title-atom env)
+      title))
   nil)
 
 (defn send!
@@ -6615,7 +6615,7 @@
   (close! id)
   (let [d (db-info)]
     (try (persistance/db-delete-session-tree! d id)
-         (catch Exception _ nil))))
+      (catch Exception _ nil))))
 
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
   "Warning: Turn interrupted - the server was restarted before this answer could finalize. Re-send the message to retry.")
@@ -6628,15 +6628,15 @@
   ([] (db-sweep-orphaned-running-turns! (db-info)))
   ([db]
    (let [orphans (try (persistance/db-list-session-turns-by-status db :running)
-                      (catch Exception _ []))]
+                   (catch Exception _ []))]
      (doseq [{:keys [id iteration-count duration-ms]} orphans]
        (try
          (persistance/db-update-session-turn! db id
-                                              {:answer          ORPHAN_INTERRUPTED_ANSWER
-                                               :iteration-count (or iteration-count 0)
-                                               :duration-ms     (or duration-ms 0)
-                                               :status          :interrupted
-                                               :prior-outcome   :cancelled})
+           {:answer          ORPHAN_INTERRUPTED_ANSWER
+            :iteration-count (or iteration-count 0)
+            :duration-ms     (or duration-ms 0)
+            :status          :interrupted
+            :prior-outcome   :cancelled})
          (catch Exception _ nil)))
      (count orphans))))
 

@@ -33,9 +33,9 @@
   (reify CharacterPattern
     (match [_ seq]
       (when (and (= 1 (.size seq))
-                 (= (.get seq 0) ESC_CHAR))
+              (= (.get seq 0) ESC_CHAR))
         (CharacterPattern$Matching.
-         (KeyStroke. KeyType/Escape false false))))))
+          (KeyStroke. KeyType/Escape false false))))))
 
 (def alt-enter-pattern
   (reify CharacterPattern
@@ -43,15 +43,15 @@
       (let [size (.size seq)]
         (cond
           (and (= size 2)
-               (= (.get seq 0) ESC_CHAR)
-               (let [c (.get seq 1)]
-                 (or (= c (Character. \newline))
-                     (= c (Character. \return)))))
+            (= (.get seq 0) ESC_CHAR)
+            (let [c (.get seq 1)]
+              (or (= c (Character. \newline))
+                (= c (Character. \return)))))
           (CharacterPattern$Matching.
-           (KeyStroke. KeyType/Enter false true))
+            (KeyStroke. KeyType/Enter false true))
 
           (and (= size 1)
-               (= (.get seq 0) ESC_CHAR))
+            (= (.get seq 0) ESC_CHAR))
           CharacterPattern$Matching/NOT_YET
 
           :else nil)))))
@@ -66,15 +66,15 @@
       (let [size (.size seq)]
         (cond
           (and (= size 2)
-               (= (.get seq 0) ESC_CHAR)
-               (let [c (.get seq 1)]
-                 (or (= c (Character. (char 0x7f)))
-                     (= c (Character. (char 0x08))))))
+            (= (.get seq 0) ESC_CHAR)
+            (let [c (.get seq 1)]
+              (or (= c (Character. (char 0x7f)))
+                (= c (Character. (char 0x08))))))
           (CharacterPattern$Matching.
-           (KeyStroke. KeyType/Backspace false true))
+            (KeyStroke. KeyType/Backspace false true))
 
           (and (= size 1)
-               (= (.get seq 0) ESC_CHAR))
+            (= (.get seq 0) ESC_CHAR))
           CharacterPattern$Matching/NOT_YET
 
           :else nil)))))
@@ -92,9 +92,9 @@
   (reify CharacterPattern
     (match [_ seq]
       (when (and (= 1 (.size seq))
-                 (= (.get seq 0) (Character. (char 0x08))))
+              (= (.get seq 0) (Character. (char 0x08))))
         (CharacterPattern$Matching.
-         (KeyStroke. (Character. \h) true false))))))
+          (KeyStroke. (Character. \h) true false))))))
 
 ;; ── Bracketed-paste mode ────────────────────────────────────────────────
 ;;
@@ -141,8 +141,8 @@
   "True for Alt/Option + character `c`, case-insensitive."
   [^KeyStroke key c]
   (and (alt-modifier? key)
-       (= (Character/toLowerCase (char (.getCharacter key)))
-          (Character/toLowerCase (char c)))))
+    (= (Character/toLowerCase (char (.getCharacter key)))
+      (Character/toLowerCase (char c)))))
 
 (defn ctrl-char?
   "True for Ctrl + character `c`, case-insensitive. The reliable, cross-platform
@@ -151,9 +151,9 @@
    control, O=stty DISCARD), which never arrive as a Character keystroke."
   [^KeyStroke key c]
   (and (ctrl-modifier? key)
-       (let [ch (.getCharacter key)]
-         (and ch (= (Character/toLowerCase (char ch))
-                    (Character/toLowerCase (char c)))))))
+    (let [ch (.getCharacter key)]
+      (and ch (= (Character/toLowerCase (char ch))
+                (Character/toLowerCase (char c)))))))
 
 (defn reorder-modifier?
   "True when a MODIFIED arrow should reorder a list item instead of moving the
@@ -188,9 +188,9 @@
             bits (dec modifier)]
         (when (<= 2 modifier 8)
           (KeyStroke. ktype
-                      (pos? (bit-and bits 4))
-                      (pos? (bit-and bits 2))
-                      (pos? (bit-and bits 1))))))))
+            (pos? (bit-and bits 4))
+            (pos? (bit-and bits 2))
+            (pos? (bit-and bits 1))))))))
 
 (def modified-arrow-pattern
   "Decode xterm-style modified arrows (`ESC[1;<mod>A-D`) into Lanterna
@@ -227,12 +227,12 @@
   [^java.util.List s ^String target]
   (let [size (.size s)]
     (and (<= size (.length target))
-         (loop [i 0]
-           (cond
-             (>= i size)             true
-             (= (.charAt target i)
-                (char (.charValue ^Character (.get s i)))) (recur (inc i))
-             :else                   false)))))
+      (loop [i 0]
+        (cond
+          (>= i size)             true
+          (= (.charAt target i)
+            (char (.charValue ^Character (.get s i)))) (recur (inc i))
+          :else                   false)))))
 
 (defn- bracket-pattern
   "Build a CharacterPattern that matches `target` (e.g. `ESC[200~`)
@@ -244,12 +244,12 @@
       (let [size (.size s)]
         (cond
           (and (= size (.length target))
-               (bracket-pattern-prefix-match? s target))
+            (bracket-pattern-prefix-match? s target))
           (CharacterPattern$Matching.
-           (KeyStroke. (Character. (char marker)) false false))
+            (KeyStroke. (Character. (char marker)) false false))
 
           (and (< size (.length target))
-               (bracket-pattern-prefix-match? s target))
+            (bracket-pattern-prefix-match? s target))
           CharacterPattern$Matching/NOT_YET
 
           :else nil)))))
@@ -263,9 +263,9 @@
    handling runs."
   [^KeyStroke key marker]
   (and (= KeyType/Character (.getKeyType key))
-       (some? (.getCharacter key))
-       (= (long (int marker))
-          (long (int (.charValue ^Character (.getCharacter key)))))))
+    (some? (.getCharacter key))
+    (= (long (int marker))
+      (long (int (.charValue ^Character (.getCharacter key)))))))
 
 (defn paste-start? [key] (paste-marker? key PASTE_START_CHAR))
 (defn paste-end?   [key] (paste-marker? key PASTE_END_CHAR))
@@ -323,12 +323,12 @@
     (cond
       wheel?
       (if (zero? button-bits) MouseActionType/SCROLL_UP
-          MouseActionType/SCROLL_DOWN)
+        MouseActionType/SCROLL_DOWN)
       drag?
       ;; button bits 3 (0x03 == 3) means \"no button held\" -> plain
       ;; cursor movement; otherwise a drag with that button held.
       (if (= button-bits 3) MouseActionType/MOVE
-          MouseActionType/DRAG)
+        MouseActionType/DRAG)
       release? MouseActionType/CLICK_RELEASE
       :else    MouseActionType/CLICK_DOWN)))
 
@@ -366,11 +366,11 @@
 
           ;; chars[0] must be ESC (0x1B); chars[1] '['; chars[2] '<'.
           (or (and (>= n 1)
-                   (not= \u001B (.charValue ^Character (.get chars 0))))
-              (and (>= n 2)
-                   (not= \[ (.charValue ^Character (.get chars 1))))
-              (and (>= n 3)
-                   (not= \< (.charValue ^Character (.get chars 2)))))
+                (not= \u001B (.charValue ^Character (.get chars 0))))
+            (and (>= n 2)
+              (not= \[ (.charValue ^Character (.get chars 1))))
+            (and (>= n 3)
+              (not= \< (.charValue ^Character (.get chars 2)))))
           nil
 
           (< n 4) CharacterPattern$Matching/NOT_YET
@@ -394,12 +394,12 @@
                   ;; ASCII digit: accumulate current numeric field.
                   (and (>= ci 48) (<= ci 57))
                   (recur (unchecked-inc i)
-                         field
-                         (unchecked-add (unchecked-multiply acc 10)
-                                        (unchecked-subtract ci 48))
-                         true
-                         button
-                         col)
+                    field
+                    (unchecked-add (unchecked-multiply acc 10)
+                      (unchecked-subtract ci 48))
+                    true
+                    button
+                    col)
 
                   ;; Field separator. Need at least one digit collected,
                   ;; and exactly button/col separators before row.
@@ -421,9 +421,9 @@
                           btn   (sgr-button-number button)
                           ;; SGR is 1-indexed, Lanterna's 0-indexed.
                           pos   (TerminalPosition. (max 0 (dec col))
-                                                   (max 0 (dec row)))]
+                                  (max 0 (dec row)))]
                       (CharacterPattern$Matching.
-                       (MouseAction. atype (int btn) pos)))
+                        (MouseAction. atype (int btn) pos)))
                     nil)
 
                   ;; Anything else - stray byte mid-sequence - rejects
@@ -435,9 +435,9 @@
   "True for a plain Escape KeyStroke (not a MouseAction)."
   [k]
   (and k
-       (instance? KeyStroke k)
-       (not (instance? MouseAction k))
-       (= KeyType/Escape (.getKeyType ^KeyStroke k))))
+    (instance? KeyStroke k)
+    (not (instance? MouseAction k))
+    (= KeyType/Escape (.getKeyType ^KeyStroke k))))
 
 (defn drain-sgr-leak!
   "Swallow a literal SGR mouse tail that leaked past the decoder.
@@ -465,9 +465,9 @@
          digit? false]
     (let [k (poll-next)]
       (if-not (and k
-                   (instance? KeyStroke k)
-                   (not (instance? MouseAction k))
-                   (= KeyType/Character (.getKeyType ^KeyStroke k)))
+                (instance? KeyStroke k)
+                (not (instance? MouseAction k))
+                (= KeyType/Character (.getKeyType ^KeyStroke k)))
         {:swallowed? swallowed?
          :replay (if k (conj consumed k) consumed)}
         (let [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
@@ -607,15 +607,15 @@
    replacement byte."
   [^UnixTerminal terminal]
   (.addProfile (.getInputDecoder terminal)
-               (reify KeyDecodingProfile
-                 (getPatterns [_] [escape-pattern
-                                   alt-enter-pattern
-                                   alt-backspace-pattern
-                                   ctrl-h-pattern
-                                   modified-arrow-pattern
-                                   paste-start-pattern
-                                   paste-end-pattern
-                                   sgr-mouse-pattern]))))
+    (reify KeyDecodingProfile
+      (getPatterns [_] [escape-pattern
+                        alt-enter-pattern
+                        alt-backspace-pattern
+                        ctrl-h-pattern
+                        modified-arrow-pattern
+                        paste-start-pattern
+                        paste-end-pattern
+                        sgr-mouse-pattern]))))
 
 ;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
 ;;
@@ -713,13 +713,13 @@
         ok?    (not= winner :none)]
     (try
       (tel/log!
-       {:level (if ok? :info :warn)
-        :id    ::clipboard-copy
-        :data  {:winner   winner
-                :len      (count text)
-                :platform (System/getProperty "os.name")}
-        :msg   (str "clipboard-copy! winner=" winner
-                    " len=" (count text))})
+        {:level (if ok? :info :warn)
+         :id    ::clipboard-copy
+         :data  {:winner   winner
+                 :len      (count text)
+                 :platform (System/getProperty "os.name")}
+         :msg   (str "clipboard-copy! winner=" winner
+                  " len=" (count text))})
       (catch Throwable _ nil))
     ok?))
 
@@ -790,10 +790,10 @@
    `resolve-prefix-key`), not here."
   [^KeyStroke key]
   (boolean
-   (and (= KeyType/Character (.getKeyType key))
-        (.isAltDown key) (not (.isCtrlDown key))
-        (when-let [c (.getCharacter key)]
-          (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
+    (and (= KeyType/Character (.getKeyType key))
+      (.isAltDown key) (not (.isCtrlDown key))
+      (when-let [c (.getCharacter key)]
+        (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
 
 (defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
 (defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
@@ -829,9 +829,9 @@
   (cond
     (< n 1024)         (str n "B")
     (< n (* 1024 1024)) (String/format java.util.Locale/US "%.1fKB"
-                                       (into-array Object [(double (/ n 1024.0))]))
+                          (into-array Object [(double (/ n 1024.0))]))
     :else               (String/format java.util.Locale/US "%.1fMB"
-                                       (into-array Object [(double (/ n 1024.0 1024.0))]))))
+                          (into-array Object [(double (/ n 1024.0 1024.0))]))))
 
 (defn format-paste-placeholder
   "Produce the visible token text for `app-db :pastes` entry `entry`.
@@ -853,7 +853,7 @@
         char-count (count text)
         line-word  (if (= 1 line-count) "line" "lines")]
     (str "[Pasted #" id ": " line-count " " line-word ", "
-         (format-bytes char-count) "]")))
+      (format-bytes char-count) "]")))
 
 (def ^:const PASTE_INLINE_MAX_CHARS
   "Threshold below which we DON'T use a placeholder - a short
@@ -867,8 +867,8 @@
    ASCII pastes shorter than `PASTE_INLINE_MAX_CHARS` go inline."
   [^String text]
   (boolean
-   (or (.contains text "\n")
-       (> (count text) PASTE_INLINE_MAX_CHARS))))
+    (or (.contains text "\n")
+      (> (count text) PASTE_INLINE_MAX_CHARS))))
 
 (defn expand-paste-placeholders
   "Substitute every `[Pasted #N: ...]` token in `text` with its content
@@ -885,10 +885,10 @@
    double-quote here."
   [^String text pastes-map]
   (str/replace text placeholder-regex
-               (fn [[whole id-str]]
-                 (let [id (try (Integer/parseInt id-str) (catch Throwable _ nil))
-                       entry (when id (get pastes-map id))]
-                   (if entry (str (:content entry)) whole)))))
+    (fn [[whole id-str]]
+      (let [id (try (Integer/parseInt id-str) (catch Throwable _ nil))
+            entry (when id (get pastes-map id))]
+        (if entry (str (:content entry)) whole)))))
 (def ^:const PASTE_PREVIEW_HEAD_LINES
   "How many leading lines of a pasted payload the collapsed transcript
    preview shows."
@@ -924,8 +924,8 @@
     (if (<= n (+ PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES 1))
       (map clamp-preview-line lines)
       (concat (map clamp-preview-line (take PASTE_PREVIEW_HEAD_LINES lines))
-              [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
-              (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
+        [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
+        (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
 
 (defn collapse-paste-placeholders
   "Substitute every `[Pasted #N: ...]` token in `text` with the SAME token
@@ -940,14 +940,14 @@
    in `pastes-map` pass through unchanged."
   [^String text pastes-map]
   (str/replace text placeholder-regex
-               (fn [[whole id-str]]
-                 (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
-                       entry (when id (get pastes-map id))]
-                   (if entry
-                     (str whole "\n````\n"
-                          (str/join "\n" (paste-content-preview (:content entry)))
-                          "\n````")
-                     whole)))))
+    (fn [[whole id-str]]
+      (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
+            entry (when id (get pastes-map id))]
+        (if entry
+          (str whole "\n````\n"
+            (str/join "\n" (paste-content-preview (:content entry)))
+            "\n````")
+          whole)))))
 
 (defn placeholder-id-before-cursor
   "When the cursor of `state` sits IMMEDIATELY AFTER the closing `]`
@@ -986,8 +986,8 @@
       (let [new-line (str (subs before 0 match-start) after)
             new-ccol match-start]
         (-> state
-            (assoc-in [:lines crow] new-line)
-            (assoc :ccol new-ccol)))
+          (assoc-in [:lines crow] new-line)
+          (assoc :ccol new-ccol)))
       state)))
 
 (def ^:private file-mention-regex
@@ -1016,8 +1016,8 @@
           candidate   (.getCanonicalFile (io/file cwd path))
           candidate-p (.getPath candidate)]
       (when (and (.isFile candidate)
-                 (or (= candidate-p cwd-path)
-                     (str/starts-with? candidate-p prefix)))
+              (or (= candidate-p cwd-path)
+                (str/starts-with? candidate-p prefix)))
         candidate))
     (catch Throwable _ nil)))
 
@@ -1035,7 +1035,7 @@
   [path]
   (if (resolve-local-file path)
     (str "[Attached File: " path "]\n"
-         "The user attached this file. Read it (via the file/zipper tools) before answering.")
+      "The user attached this file. Read it (via the file/zipper tools) before answering.")
     (format-file-mention path)))
 
 (defn expand-file-mentions
@@ -1054,8 +1054,8 @@
    Unknown paths pass through unchanged."
   [^String text]
   (str/replace text file-mention-regex
-               (fn [[_ quoted-path bare-path]]
-                 (file-mention->prompt-block (or quoted-path bare-path)))))
+    (fn [[_ quoted-path bare-path]]
+      (file-mention->prompt-block (or quoted-path bare-path)))))
 
 (defn paste-text [{:keys [lines crow ccol] :as st} text]
   (let [paste-lines  (str/split text #"\r?\n" -1)
@@ -1064,17 +1064,17 @@
         after        (subs current-line ccol)]
     (if (= 1 (count paste-lines))
       (-> st
-          (assoc-in [:lines crow] (str before (first paste-lines) after))
-          (assoc :ccol (+ ccol (count (first paste-lines)))))
+        (assoc-in [:lines crow] (str before (first paste-lines) after))
+        (assoc :ccol (+ ccol (count (first paste-lines)))))
       (let [first-l  (str before (first paste-lines))
             last-l   (str (last paste-lines) after)
             mid      (subvec (vec paste-lines) 1 (dec (count paste-lines)))
             new-crow (+ crow (dec (count paste-lines)))]
         (-> st
-            (assoc :lines (into (conj (subvec lines 0 crow) first-l)
-                                (concat mid [last-l] (subvec lines (inc crow)))))
-            (assoc :crow new-crow)
-            (assoc :ccol (count (last paste-lines))))))))
+          (assoc :lines (into (conj (subvec lines 0 crow) first-l)
+                          (concat mid [last-l] (subvec lines (inc crow)))))
+          (assoc :crow new-crow)
+          (assoc :ccol (count (last paste-lines))))))))
 
 ;;; ── Key handling ───────────────────────────────────────────────────────────
 
@@ -1285,4 +1285,4 @@
 (defn format-message [text]
   (let [ls (str/split-lines text)]
     (into [(str "you: " (first ls))]
-          (map #(str "     " %) (rest ls)))))
+      (map #(str "     " %) (rest ls)))))

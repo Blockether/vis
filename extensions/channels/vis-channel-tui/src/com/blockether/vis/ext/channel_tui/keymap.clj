@@ -135,8 +135,8 @@
    working — the displayed hint is just the reliable one.) palette-only → nil."
   [action]
   (or (some-> (binding-by-action action) :key chord)
-      (when-let [b (prefix-binding-by-action action)]
-        (str "C-x " (str/lower-case (str (:key b)))))))
+    (when-let [b (prefix-binding-by-action action)]
+      (str "C-x " (str/lower-case (str (:key b)))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else

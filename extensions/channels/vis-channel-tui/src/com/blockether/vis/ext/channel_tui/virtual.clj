@@ -195,8 +195,8 @@
         (if (pos? seg) (+ rows (quot (+ seg (dec w)) w)) rows)
         (let [nl? (= \newline (.charAt s i))]
           (recur (inc i)
-                 (if nl? 0 (inc seg))
-                 (if nl? (+ rows (max 1 (quot (+ seg (dec w)) w))) rows)))))))
+            (if nl? 0 (inc seg))
+            (if nl? (+ rows (max 1 (quot (+ seg (dec w)) w))) rows)))))))
 
 (defn- prose-rows-est
   "Upper-bound rows for MARKDOWN-rendered text at width `w`:
@@ -318,8 +318,8 @@
              section-rows (fn ^long [s]
                             (let [full (prose-rows-est s fold-w)]
                               (cond (zero? full) 0
-                                    expanded?    (+ full 3)
-                                    :else        (+ (min full cap) 3))))
+                                expanded?    (+ full 3)
+                                :else        (+ (min full cap) 3))))
              form-rows (long (reduce
                                (fn [^long acc it]
                                  (+ acc
@@ -371,8 +371,8 @@
                                                      full (+ (prose-rows-est (:thinking it) fold-w)
                                                             (prose-rows-est live fold-w))]
                                                  (cond (zero? full) 0
-                                                       expanded?    (+ full 5)
-                                                       :else        (+ (min full cap) 5))))))
+                                                   expanded?    (+ full 5)
+                                                   :else        (+ (min full cap) 5))))))
                                 0 trace))
              ;; Per-iteration `:assistant-prose` paints as its OWN full block
              ;; (never collapsed) between thinking and code+result.

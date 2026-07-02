@@ -334,8 +334,8 @@
   (let [it->ie @#'chat/it->iteration-entry
         restore (fn [env]
                   (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
-                              {:id :iter-1 :code (:src env) :forms [env]})
-                      :forms first))]
+                        {:id :iter-1 :code (:src env) :forms [env]})
+                    :forms first))]
     (it "a restored print-many envelope keeps its per-result cards (nested colour keywords intact)"
       (let [cards [{:vis/tool-name "cat" :result-summary "read 3 lines"
                     :result-render "x" :tool-color-role :tool-color/read}

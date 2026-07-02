@@ -160,8 +160,8 @@
      (letfn [(walk [items]
                (mapcat (fn [^StructureItem it]
                          (cons (item->def lines it)
-                               (walk (or (.children it) []))))
-                       items))]
+                           (walk (or (.children it) []))))
+                 items))]
        (cond->> (walk (structure-items source language))
          (some? name) (filterv #(= name (:name %))))))))
 

@@ -92,11 +92,11 @@
        :note   (str "Already loaded earlier this session — its SKILL.md is above "
                  "in your context; follow it. Not re-injected.")}
       (do (mark-skill-loaded! env (:name s))
-          {:name        (:name s)
-           :description (:description s)
-           :body        (:body s)
-           :dir         (:dir s)
-           :resources   (mapv #(str (:dir s) "/" %) (:resources s))}))
+        {:name        (:name s)
+         :description (:description s)
+         :body        (:body s)
+         :dir         (:dir s)
+         :resources   (mapv #(str (:dir s) "/" %) (:resources s))}))
     {:error     (str "No skill named " (pr-str (str nm)) ".")
      :available (mapv :name (d/skills))}))
 
@@ -129,9 +129,9 @@
      :native-tool?  true
      :name          "skill"
      :schema        {:type "object"
-                    :properties {"name" {:type "string"
-                                         :description "Skill name from the HARNESS SKILLS list."}}
-                    :required ["name"]}
+                     :properties {"name" {:type "string"
+                                          :description "Skill name from the HARNESS SKILLS list."}}
+                     :required ["name"]}
      :handler      skill-tool
      :render       render-skill
      :color-role   :tool-color/meta}))

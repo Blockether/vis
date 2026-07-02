@@ -24,7 +24,6 @@
    transcript."
   4000)
 
-
 (defn parse-provider-body
   [body]
   (when (and (string? body) (not (str/blank? body)))

@@ -103,7 +103,7 @@
   [spec]
   (let [opts (apply hash-map (rest (s/form spec)))]
     (->> (concat (:req-un opts) (:opt-un opts))
-         (mapv (comp keyword name)))))
+      (mapv (comp keyword name)))))
 
 (def selector-keys
   "The optional selector keys a runner tool accepts on its opts dict. Derived

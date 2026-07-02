@@ -78,11 +78,11 @@
    in place, so its recorded checksum no longer matches the source."
   [^Throwable e]
   (boolean
-   (some (fn [^Throwable t]
-           (let [^String m (or (.getMessage t) "")]
-             (or (.contains m "checksum mismatch")
-                 (.contains m "failed validation"))))
-         (take-while some? (iterate (fn [^Throwable t] (.getCause t)) e)))))
+    (some (fn [^Throwable t]
+            (let [^String m (or (.getMessage t) "")]
+              (or (.contains m "checksum mismatch")
+                (.contains m "failed validation"))))
+      (take-while some? (iterate (fn [^Throwable t] (.getCause t)) e)))))
 
 (defn migrate!
   "Apply every Flyway migration found at the given classpath
@@ -106,9 +106,9 @@
         ;; only NEW V*__ files run. Leave this OFF in prod (the guard exists to
         ;; catch real schema drift).
         allow-drift? (contains? #{"1" "true" "yes"}
-                                (some-> (System/getenv "VIS_DB_ALLOW_SCHEMA_DRIFT")
-                                        str/trim
-                                        str/lower-case))
+                       (some-> (System/getenv "VIS_DB_ALLOW_SCHEMA_DRIFT")
+                         str/trim
+                         str/lower-case))
         ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
         (cond-> (-> (org.flywaydb.core.Flyway/configure)
                   (.dataSource ds)
@@ -117,8 +117,8 @@
                   (.baselineVersion "0")
                   (.mixed true))
           allow-drift? (-> (.validateOnMigrate false)
-                           (.ignoreMigrationPatterns
-                            ^"[Ljava.lang.String;" (into-array String ["*:*"])))
+                         (.ignoreMigrationPatterns
+                           ^"[Ljava.lang.String;" (into-array String ["*:*"])))
           ;; native image: serve migrations explicitly (dir listing unavailable)
           rp (.resourceProvider rp))
         ^org.flywaydb.core.Flyway flyway (.load cfg)]
@@ -137,6 +137,6 @@
         ;; off, so a mismatch never throws here).
         (if (and (not allow-drift?) (checksum-mismatch-error? e))
           (do (.repair flyway)
-              (.migrate flyway))
+            (.migrate flyway))
           (throw e))))
     ds))

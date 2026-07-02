@@ -22,11 +22,11 @@
 
   (it "one attempt formats as provider/model: status reason"
     (expect (= "anthropic/claude-opus-4: 429 rate-limit"
-               (perr/attempt->line (first (perr/provider-error-attempts exhausted-err))))))
+              (perr/attempt->line (first (perr/provider-error-attempts exhausted-err))))))
 
   (it "the summary joins every attempt with ·"
     (expect (= "anthropic/claude-opus-4: 429 rate-limit · openai/gpt-5: 401 auth"
-               (perr/provider-error-attempts-summary exhausted-err))))
+              (perr/provider-error-attempts-summary exhausted-err))))
 
   (it "no attempts (older svar / non-routing failure) → empty + nil summary"
     (let [bare {:message "All providers exhausted" :data {:type :svar.llm/all-providers-exhausted}}]

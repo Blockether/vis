@@ -63,8 +63,8 @@
   [m paths status]
   (reduce (fn [acc path]
             (update acc path merge-status status))
-          m
-          (or paths #{})))
+    m
+    (or paths #{})))
 
 (defn collect-git-status
   "Return a git-status snapshot for `repo`, or nil on timeout/failure.
@@ -84,14 +84,14 @@
         (try
           (let [^Status status (.get fut timeout-ms TimeUnit/MILLISECONDS)]
             {:path-status      (-> {}
-                                   (assoc-statuses (.getConflicting status) :conflict)
-                                   (assoc-statuses (.getRemoved status) :deleted)
-                                   (assoc-statuses (.getMissing status) :deleted)
-                                   (assoc-statuses (.getModified status) :modified)
-                                   (assoc-statuses (.getChanged status) :modified)
-                                   (assoc-statuses (.getAdded status) :added)
-                                   (assoc-statuses (.getUntracked status) :untracked)
-                                   (assoc-statuses (.getUntrackedFolders status) :untracked))
+                                 (assoc-statuses (.getConflicting status) :conflict)
+                                 (assoc-statuses (.getRemoved status) :deleted)
+                                 (assoc-statuses (.getMissing status) :deleted)
+                                 (assoc-statuses (.getModified status) :modified)
+                                 (assoc-statuses (.getChanged status) :modified)
+                                 (assoc-statuses (.getAdded status) :added)
+                                 (assoc-statuses (.getUntracked status) :untracked)
+                                 (assoc-statuses (.getUntrackedFolders status) :untracked))
              :ignored-exact    (set (.getIgnoredNotInIndex status))
              :ignored-prefixes (mapv #(str % "/") (.getIgnoredNotInIndex status))})
           (catch TimeoutException _
@@ -114,7 +114,7 @@
                 :path-status {}
                 :ignored-exact #{}
                 :ignored-prefixes []}
-               (or status {})))
+          (or status {})))
       (finally
         (try (.close repo) (catch Throwable _ nil))))
     {:repo-root nil
@@ -127,9 +127,9 @@
    from `git-status-snapshot`."
   [{:keys [ignored-exact ignored-prefixes]} repo-rel-path]
   (boolean
-   (and repo-rel-path
-        (or (contains? ignored-exact repo-rel-path)
-            (some #(str/starts-with? repo-rel-path %) ignored-prefixes)))))
+    (and repo-rel-path
+      (or (contains? ignored-exact repo-rel-path)
+        (some #(str/starts-with? repo-rel-path %) ignored-prefixes)))))
 
 (defn file-picker-entry
   "Build one picker entry from a filesystem path + attrs. `cwd` is the
@@ -148,7 +148,7 @@
                           (display-path repo-root-abs abs-path))))
         ignored?    (ignored-path? git-info repo-rel)
         git-status  (or (get path-status repo-rel)
-                        (when ignored? :ignored))]
+                      (when ignored? :ignored))]
     {:path       rel-path
      :name       (str (.getFileName abs-path))
      :parent     (if (= rel-path parent-path) "." parent-path)
@@ -166,17 +166,17 @@
         git-info (git-status-snapshot cwd)
         entries  (volatile! [])]
     (Files/walkFileTree cwd
-                        (proxy [SimpleFileVisitor] []
-                          (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-                            (if (= ".git" (some-> dir .getFileName str))
-                              FileVisitResult/SKIP_SUBTREE
-                              FileVisitResult/CONTINUE))
-                          (visitFile [^Path file ^BasicFileAttributes attrs]
-                            (when (or (.isRegularFile attrs) (.isSymbolicLink attrs))
-                              (vswap! entries conj (file-picker-entry cwd git-info file attrs)))
-                            FileVisitResult/CONTINUE)
-                          (visitFileFailed [_file _exc]
-                            FileVisitResult/CONTINUE)))
+      (proxy [SimpleFileVisitor] []
+        (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
+          (if (= ".git" (some-> dir .getFileName str))
+            FileVisitResult/SKIP_SUBTREE
+            FileVisitResult/CONTINUE))
+        (visitFile [^Path file ^BasicFileAttributes attrs]
+          (when (or (.isRegularFile attrs) (.isSymbolicLink attrs))
+            (vswap! entries conj (file-picker-entry cwd git-info file attrs)))
+          FileVisitResult/CONTINUE)
+        (visitFileFailed [_file _exc]
+          FileVisitResult/CONTINUE)))
     @entries))
 
 (defn format-bytes
@@ -243,11 +243,11 @@
   [entry now-ms query]
   (let [score (file-picker-score (:path entry) query)]
     (assoc entry
-           :label        (:path entry)
-           :score        score
-           :status-label (status-label (:git-status entry))
-           :size-label   (format-bytes (:size entry))
-           :age-label    (format-relative-age now-ms (:mtime-ms entry)))))
+      :label        (:path entry)
+      :score        score
+      :status-label (status-label (:git-status entry))
+      :size-label   (format-bytes (:size entry))
+      :age-label    (format-relative-age now-ms (:mtime-ms entry)))))
 
 (defn file-picker-items
   "Filter, score, and sort picker entries.
@@ -262,28 +262,28 @@
                          now-ms (System/currentTimeMillis)}}]
   (let [sort-mode* (resolved-sort-mode sort-mode query)]
     (->> entries
-         (filter #(or include-ignored? (not (:ignored? %))))
-         (map #(decorate-entry % now-ms query))
-         (filter #(or (str/blank? query) (some? (:score %))))
-         (sort-by (fn [entry]
-                    (case sort-mode*
-                      :recent    [(- (:mtime-ms entry))
-                                  (- (status-priority (:git-status entry)))
-                                  (:path entry)]
-                      :relevance [(- (or (:score entry) 0))
-                                  (- (:mtime-ms entry))
-                                  (- (status-priority (:git-status entry)))
-                                  (:path entry)]
-                      [(:path entry)])))
-         (take max-results)
-         vec)))
+      (filter #(or include-ignored? (not (:ignored? %))))
+      (map #(decorate-entry % now-ms query))
+      (filter #(or (str/blank? query) (some? (:score %))))
+      (sort-by (fn [entry]
+                 (case sort-mode*
+                   :recent    [(- (:mtime-ms entry))
+                               (- (status-priority (:git-status entry)))
+                               (:path entry)]
+                   :relevance [(- (or (:score entry) 0))
+                               (- (:mtime-ms entry))
+                               (- (status-priority (:git-status entry)))
+                               (:path entry)]
+                   [(:path entry)])))
+      (take max-results)
+      vec)))
 
 (defn cycle-sort-mode
   "Advance to the next picker sort mode."
   [sort-mode]
   (let [idx (.indexOf ^java.util.List sort-order sort-mode)]
     (nth sort-order
-         (mod (inc (max idx 0)) (count sort-order)))))
+      (mod (inc (max idx 0)) (count sort-order)))))
 
 (defn sort-label
   "Human label for the current sort mode."
@@ -320,17 +320,17 @@
   ([idx query {:keys [now-ms limit]
                :or   {now-ms (System/currentTimeMillis) limit max-results}}]
    (->> (:items (fff/search idx {:query (or query "") :page-size limit}))
-        (mapv (fn [{:keys [relative-path git-status size modified]}]
-                (let [status (when (and (string? git-status)
-                                        (not (str/blank? git-status))
-                                        (not= "clean" git-status))
-                               git-status)]
-                  {:path         relative-path
-                   :label        relative-path
-                   :status-label (or status "clean")
-                   :size-label   (format-bytes (or size 0))
+     (mapv (fn [{:keys [relative-path git-status size modified]}]
+             (let [status (when (and (string? git-status)
+                                  (not (str/blank? git-status))
+                                  (not= "clean" git-status))
+                            git-status)]
+               {:path         relative-path
+                :label        relative-path
+                :status-label (or status "clean")
+                :size-label   (format-bytes (or size 0))
                    ;; fff `:modified` is epoch SECONDS; the age helper wants ms.
-                   :age-label    (format-relative-age now-ms (* 1000 (long (or modified 0))))}))))))
+                :age-label    (format-relative-age now-ms (* 1000 (long (or modified 0))))}))))))
 
 (defn ->wire
   "Project ONE rich fuzzy/picker row (`:path :size-label :age-label

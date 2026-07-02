@@ -81,9 +81,9 @@
   (let [{:keys [body-top]} (rows top body-h)
         row-w (or rendered-w table-content-w)]
     (when (and (>= mx table-x)
-               (< mx (+ table-x row-w))
-               (>= my body-top)
-               (< my (+ body-top body-h)))
+            (< mx (+ table-x row-w))
+            (>= my body-top)
+            (< my (+ body-top body-h)))
       (+ scroll (- my body-top)))))
 
 (defn- empty-row-cells
@@ -148,7 +148,7 @@
     (p/put-str! g table-x border-top (table/boxed-border-line full-widths :top))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/put-str! g table-x header
-                (table/boxed-row-line full-widths (mark-first headers) aligns))
+      (table/boxed-row-line full-widths (mark-first headers) aligns))
     ;; Re-paint the side `│` borders in the border color: the header row
     ;; was painted in dialog-hint-key, which would otherwise leave the
     ;; vertical edges a different color than the top/middle/bottom chrome.
@@ -164,8 +164,8 @@
           (< idx total)
           (do
             (table/draw-line! g table-x row rendered-w
-                              (= idx selected)
-                              (table/boxed-row-line full-widths (mark-first (cell-fn idx)) aligns))
+              (= idx selected)
+              (table/boxed-row-line full-widths (mark-first (cell-fn idx)) aligns))
             ;; Re-paint the side `│` borders in the border color: draw-line!
             ;; filled the whole row in dialog-fg, which would otherwise leave the
             ;; vertical edges lighter than the top/middle/bottom chrome.
@@ -180,7 +180,7 @@
             (p/set-colors! g t/dialog-hint t/dialog-bg)
             (p/fill-rect! g table-x row rendered-w 1)
             (p/put-str! g table-x row
-                        (table/boxed-row-line full-widths empty-cells aligns))
+              (table/boxed-row-line full-widths empty-cells aligns))
             (p/set-colors! g t/dialog-border t/dialog-bg)
             (p/put-str! g table-x row "│")
             (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
@@ -190,7 +190,7 @@
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g table-x row rendered-w 1)
             (p/put-str! g table-x row
-                        (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))
+              (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))
             (p/set-colors! g t/dialog-border t/dialog-bg)
             (p/put-str! g table-x row "│")
             (p/put-str! g (+ table-x (dec rendered-w)) row "│")))))
@@ -198,13 +198,13 @@
     (when closed?
       (p/set-colors! g t/dialog-border t/dialog-bg)
       (p/put-str! g table-x (+ body-top body-h)
-                  (table/boxed-border-line full-widths :bottom)))
+        (table/boxed-border-line full-widths :bottom)))
     ;; Scrollbar (own column outside table's right `│` border)
     (scrollbar/draw! g
-                     {:col      scrollbar-col
-                      :top      body-top
-                      :track-h  body-h
-                      :total-h  total
-                      :inner-h  body-h
-                      :scroll   scroll})
+      {:col      scrollbar-col
+       :top      body-top
+       :track-h  body-h
+       :total-h  total
+       :inner-h  body-h
+       :scroll   scroll})
     (merge geom row-ix)))
