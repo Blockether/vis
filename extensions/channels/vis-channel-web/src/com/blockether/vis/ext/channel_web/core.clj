@@ -3,7 +3,7 @@
 
    Chat-first anatomy (the ChatGPT/Claude shape): the conversation is a
    centered document column - user messages as compact right-aligned
-   pills, vis answers as flat typeset prose behind a small gold avatar,
+   pills, vis answers as flat typeset prose behind a small accent avatar,
    the execution trace folded into a 'Work' disclosure, a floating
    pill composer pinned to the bottom (Enter sends, Shift+Enter breaks,
    auto-grows), a thin blurred sticky header, and CONTEXT - the same
@@ -29,7 +29,7 @@
    when the gate is on, POST /ui/auth exchanges the bearer token for an
    HttpOnly `vis_token` cookie that EventSource carries on SSE connect.
 
-   Theme: vis-light - white surfaces, gold fills, amber accent text -
+   Theme: vis-light - white surfaces, slate neutrals, one indigo accent -
    CSS variables lifted 1:1 from `internal/theme.clj` light-palette."
   (:require
    [clojure.java.io :as io]
@@ -621,7 +621,7 @@
     (str prefix ":" tid)))
 
 (defn- user-bubble
-  "TUI anatomy: 'You' role label in amber (:user-role-fg). The raw text
+  "TUI anatomy: 'You' role label in slate (:user-role-fg). The raw text
    rides in data-md; ui.js re-renders it through the vendored `marked`
    (MIT) for full markdown fidelity, falling back to the plain text."
   ([text] (user-bubble text nil nil))

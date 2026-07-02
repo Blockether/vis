@@ -12,6 +12,12 @@
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
 
+;; Reflective interop is FATAL in the native image (needs metadata per call
+;; site) — keep this ns reflection-free at compile time. The bundled-model
+;; installer's untyped `(or (resource-stream …))` with-open already shipped
+;; one such failure ("Cannot reflectively invoke ByteArrayInputStream.close").
+(set! *warn-on-reflection* true)
+
 (def model-dir-env "VIS_PARAKEET_MODEL_DIR")
 
 (def model-url
@@ -104,17 +110,21 @@
    expects. Copy it there before sherpa's LibraryLoader calls System/load."
   []
   (let [platform (native-platform)
-        dir      (native-lib-dir platform)
+        ^File dir (native-lib-dir platform)
         resource (onnxruntime-resource-name platform)
         targets  (mapv #(io/file dir %) (onnxruntime-target-names platform))]
     (.mkdirs dir)
-    (doseq [target targets]
+    (doseq [^File target targets]
       (when-not (.isFile target)
-        (with-open [in (or (resource-stream resource)
-                         (throw (ex-info "ONNX Runtime native library resource not found"
-                                  {:type :voice-asr/missing-onnxruntime-native
-                                   :resource resource
-                                   :platform platform})))
+        ;; ^InputStream: `(or …)` erases the type and with-open's `.close`
+        ;; goes REFLECTIVE — works on the JVM, but in a native image it
+        ;; needs reflection metadata and fails without it.
+        (with-open [^java.io.InputStream in
+                    (or (resource-stream resource)
+                      (throw (ex-info "ONNX Runtime native library resource not found"
+                               {:type :voice-asr/missing-onnxruntime-native
+                                :resource resource
+                                :platform platform})))
                     out (FileOutputStream. target)]
           (io/copy in out))))
     (first targets)))
@@ -154,7 +164,7 @@
    when the server reports a content length. nil `on-progress` is fine."
   [url path on-progress]
   (.mkdirs (.getParentFile (io/file path)))
-  (let [conn  (.openConnection (URL. url))
+  (let [^java.net.URLConnection conn (.openConnection (URL. url))
         total (.getContentLengthLong conn)]
     (with-open [in  (.getInputStream conn)
                 out (FileOutputStream. (io/file path))]
@@ -194,9 +204,12 @@
     (try
       (.mkdirs staging)
       (doseq [name bundled-file-names]
-        (with-open [in  (or (resource-stream (str bundled-resource-dir "/" name))
-                          (throw (ex-info "bundled model resource missing"
-                                   {:type :voice-asr/bundled-missing :resource name})))
+        ;; ^InputStream: same reflective-`.close` trap as
+        ;; ensure-onnxruntime-native! — fatal in a native image.
+        (with-open [^java.io.InputStream in
+                    (or (resource-stream (str bundled-resource-dir "/" name))
+                      (throw (ex-info "bundled model resource missing"
+                               {:type :voice-asr/bundled-missing :resource name})))
                     out (FileOutputStream. (io/file staging name))]
           (io/copy in out)))
       (when-not (model-installed? (str staging))
@@ -443,14 +456,17 @@
                 {:type :voice-asr/missing-audio-file
                  :path (str audio-path)})))
      (validate-wav-file! audio-path)
-     (let [reader (WaveReader. (str audio-file))
-           _      (assert-audio-long-enough! audio-path reader)
-           r      (recognizer files)
-           stream (.createStream r)]
+     ;; every interop call below is TYPE-HINTED: reflective calls in a native
+     ;; image only work when reflection metadata happens to cover them — the
+     ;; hot path must not depend on that.
+     (let [reader              (WaveReader. (str audio-file))
+           _                   (assert-audio-long-enough! audio-path reader)
+           ^OfflineRecognizer r (recognizer files)
+           ^OfflineStream stream (.createStream r)]
        (try
-         (.acceptWaveform ^OfflineStream stream (.getSamples reader) (.getSampleRate reader))
+         (.acceptWaveform stream (.getSamples reader) (.getSampleRate reader))
          (.decode r stream)
-         (str/trim (.. r (getResult stream) getText))
+         (str/trim (.getText (.getResult r stream)))
          (finally
            (try (.release stream) (catch Throwable _))
            (try (.release r) (catch Throwable _))))))))
