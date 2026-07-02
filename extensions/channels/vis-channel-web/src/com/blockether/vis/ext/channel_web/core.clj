@@ -1021,6 +1021,13 @@
               (block-thinking (:thinking it))
               (when (:error it)
                 (block-error (:error it)))
+               ;; The model's markdown prose returned ALONGSIDE its tool call —
+               ;; its commentary, rendered as MARKDOWN ABOVE the code+result
+               ;; ("here's what I did"), distinct from the dim thinking trace.
+               ;; Placed BETWEEN thinking and code to match the live stream
+               ;; (loop emits `:assistant-prose` before the code runs) — else a
+               ;; refresh moved it below the code and it read as missing.
+              (block-prose (:assistant-prose it))
                ;; Per form: the raw code the model wrote, then what it PRINTED
                ;; (the single display surface), then any error. No op cards,
                ;; no return-value blobs — bare values never reach context.
@@ -1031,11 +1038,7 @@
                      (block-code src)))
                  (block-result (:result form) form)
                  (when (:error form)
-                   (block-error (:error form)))))
-               ;; The model's markdown prose returned ALONGSIDE its tool call —
-               ;; its commentary, rendered as MARKDOWN BELOW the code+result
-               ;; ("here's what I did"), distinct from the dim thinking trace.
-              (block-prose (:assistant-prose it))))])))
+                   (block-error (:error form)))))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy

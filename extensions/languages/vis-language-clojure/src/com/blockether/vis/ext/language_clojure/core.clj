@@ -277,9 +277,10 @@
    parinfer delimiter repair FIRST (so unbalanced ( [ { from a raw edit are
    fixed), THEN cljfmt indentation. Total — returns `code` unchanged on any
    failure of either step."
-  [code]
-  (let [repaired (or (repair/fix-delimiters code) code)]
-    (fmt/format-string repaired)))
+  ([code] (clj-repair+format code nil))
+  ([code path]
+   (let [repaired (or (repair/fix-delimiters code) code)]
+     (fmt/format-string repaired (fmt/cljfmt-opts-for path)))))
 
 (defn- relativize-path
   "Rewrite an absolute path to one relative to workspace `root` so tool output
@@ -312,7 +313,7 @@
                                        :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
                                                   "format(\"clojure\", {\"code\": \"...\"})"
                                                   "format(\"clojure\", {\"path\": \"src/foo.clj\"})"]})))
-         out  (clj-repair+format code)]
+         out  (clj-repair+format code (or path (:workspace/root env)))]
      (when (and path (not= out code))
        (spit (str path) out))
      (extension/success
@@ -388,7 +389,7 @@
   (let [f (resolve-under-root env path)]
     (when (and (clj-source-file? path) (.isFile f))
       (let [code (slurp f)
-            out  (clj-repair+format code)]
+            out  (clj-repair+format code f)]
         (when (and (string? out) (not= out code))
           (spit f out)
           true)))))

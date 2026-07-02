@@ -453,6 +453,80 @@
         (.join ^Thread t 5000)
         (expect (nil? (virtual/stop-pre-warm! t)))))))
 
+(defdescribe overshoot-invariant-test
+  ;; THE scrollbar contract: when a real height replaces an estimate
+  ;; mid-scroll, `total-h` may only SHRINK. Growth moves the thumb toward
+  ;; the bottom while the user scrolls UP - the visible scrollbar jump
+  ;; this estimator rewrite exists to kill. Pinned against the message
+  ;; shapes that used to undershoot: long single-line code (fold-wrapped
+  ;; by the painter, newline-counted by the old estimator) and pasted
+  ;; diffs (every `+ ` line explodes into a markdown list item).
+  (let [est->real (fn [m w]
+                    (let [pm (project-message m w settings)]
+                      [(estimated-height m w)
+                       (render/bubble-height pm w)]))]
+    (describe "estimate >= painted height"
+      (it "long single-line code in a trace, across widths"
+        (doseq [w [64 104 194 254]]
+          (let [code (str "(def payload \"" (apply str (repeat 900 "y")) "\")")
+                m    (-> (trace-assistant-msg 1 1 "ok")
+                       (assoc-in [:traces 0 :forms 0 :code] code))
+                [est real] (est->real m w)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "pasted diff as a user message (list-marker block chrome)"
+        (doseq [w [84 154 254]]
+          (let [m (user-msg (str/join "\n"
+                              (repeat 20 "+        (let [rows (try ;; wide diff line")))
+                [est real] (est->real m w)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "long multi-line tool result (collapsed preview cap)"
+        (doseq [w [84 154 254]]
+          (let [result (str/join "\n" (map #(str "line " % " of output") (range 80)))
+                m      (-> (trace-assistant-msg 1 1 "ok")
+                         (assoc-in [:traces 0 :forms 0 :result-render] result))
+                [est real] (est->real m w)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "plain user / assistant prose"
+        (doseq [w [84 154 254]
+                m [(user-msg "hi")
+                   (user-msg (apply str (repeat 600 "x")))
+                   (plain-assistant-msg "Short answer.")
+                   (plain-assistant-msg (str/join "\n\n" (repeat 8 "A paragraph of answer prose.")))]]
+          (let [[est real] (est->real m w)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real))))))))
+
+(defdescribe rewarm-test
+  (describe "rewarm! owns ONE managed background warm worker"
+    (it "returns nil for empty messages and is safe to stop when idle"
+      (virtual/stop-rewarm!)
+      (expect (nil? (virtual/rewarm! [] bubble-w settings {})))
+      (expect (nil? (virtual/stop-rewarm!))))
+    (it "populates the sticky height cache (the post-invalidate re-settle)"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs [(user-msg "one") (trace-assistant-msg 2 1 "two")]
+            t (virtual/rewarm! msgs bubble-w settings {:session-id "rewarm-t"})]
+        (expect (some? t))
+        (.join ^Thread t 5000)
+        (expect (= (count msgs) (virtual/height-cache-size)))
+        (virtual/stop-rewarm!)))
+    (it "restarting replaces the previous worker without leaking cache junk"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [a (vec (repeatedly 6 #(trace-assistant-msg 3 2 "warm me")))
+            _ (virtual/rewarm! a bubble-w settings {:session-id "rewarm-a"})
+            b [(user-msg "fresh")]
+            t (virtual/rewarm! b bubble-w settings {:session-id "rewarm-b"})]
+        (.join ^Thread t 5000)
+        ;; b's single bubble is definitely warm; a's worker was stopped
+        ;; (its already-written entries are VALID, just possibly partial).
+        (expect (>= (virtual/height-cache-size) 1))
+        (virtual/stop-rewarm!)))))
+
 (defdescribe sticky-height-cache-test
   (describe "once a message has been measured, layout returns its REAL height forever"
     ;; Before the sticky cache,

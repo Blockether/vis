@@ -66,6 +66,9 @@
 (def ^:private compatible-preserved-thinking-trailer-iters
   (deref #'lp/compatible-preserved-thinking-trailer-iters))
 
+(def ^:private conversation-suffix
+  (deref #'lp/conversation-suffix))
+
 (def ^:private max-tokens-exceeded-error?
   (deref #'lp/max-tokens-exceeded-error?))
 

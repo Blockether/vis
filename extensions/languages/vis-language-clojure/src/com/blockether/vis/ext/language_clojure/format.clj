@@ -15,7 +15,9 @@
    unchanged. We never silently corrupt a file because the formatter
    choked."
   (:require
-   [cljfmt.core :as cljfmt]))
+   [cljfmt.config :as config]
+   [cljfmt.core :as cljfmt]
+   [clojure.java.io :as io]))
 
 (defn format-string
   "Return `source` with cljfmt indentation/whitespace normalization, or
@@ -30,3 +32,29 @@
          (cljfmt/reformat-string source opts)
          (cljfmt/reformat-string source))
        (catch Throwable _ source)))))
+
+(def ^:private config-cache
+  "config-file canonical path -> {:mtime <long> :opts <map>}. Keeps the edit
+   hook from re-reading + re-parsing `.cljfmt.edn` on every write."
+  (atom {}))
+
+(defn cljfmt-opts-for
+  "cljfmt options from the nearest `.cljfmt.edn`/`.cljfmt.clj` walking UP from
+   `path` (a file OR directory path), so project-local indent rules (e.g. the
+   lazytest `it`/`defdescribe` `[[:inner 0]]` overrides) are honored instead of
+   cljfmt defaults. Returns nil when no config is found or it can't be read —
+   callers then fall back to plain defaults. Cached per config-file + mtime."
+  [path]
+  (when (seq (str path))
+    (try
+      (when-let [cf (config/find-config-file (str path))]
+        (let [f     (io/file cf)
+              stamp (.lastModified f)
+              k     (.getCanonicalPath f)
+              hit   (get @config-cache k)]
+          (if (and hit (= (:mtime hit) stamp))
+            (:opts hit)
+            (let [opts (config/read-config f)]
+              (swap! config-cache assoc k {:mtime stamp :opts opts})
+              opts))))
+      (catch Throwable _ nil))))
