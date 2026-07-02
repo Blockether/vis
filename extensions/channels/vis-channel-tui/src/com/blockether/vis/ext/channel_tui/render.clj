@@ -3066,9 +3066,10 @@
    [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error repeat-count]} entry
      ;; `:content-stream` is the LIVE prose accumulation streamed alongside
      ;; reasoning (dropped after parse). `:assistant-prose` is the SAME markdown
-     ;; persisted on the trace-entry; it renders as its OWN block BELOW the
-     ;; code+result (see `prose-body` / the final layout) — a "here's what I did,
-     ;; and what I was saying about it" read, deliberately after the result.
+     ;; persisted on the trace-entry; it renders as its OWN block BETWEEN the
+     ;; thinking trace and the code+result (see `prose-body` / the final layout)
+     ;; — a "here's what I'm doing" read, placed ABOVE the code to match the
+     ;; live stream and the web channel.
      ;; `content-stream` is the LIVE stream (prose OR the tool-call code the loop
      ;; re-emits as :content). Once a real `forms` block exists it ALREADY shows the
      ;; code, and genuine prose renders below via `:assistant-prose` — so echoing
@@ -3474,11 +3475,14 @@
     body (or block-code-body [])
     trailing-errors (error-lines)
     thinking-body (or (thinking-lines thinking) [])
-     ;; The model's persisted prose renders as its OWN markdown block BELOW the
-     ;; code+result — NOT through the thinking formatter (it is the model's
-     ;; commentary/answer, not reasoning). Same `:mode :channel` markdown path
-     ;; the per-form result text uses, so a bold word / list paints normally
-     ;; instead of as a dim italic thinking trace.
+     ;; The model's persisted prose renders as its OWN markdown block BETWEEN
+     ;; the thinking trace and the code+result — NOT through the thinking
+     ;; formatter (it is the model's commentary/answer, not reasoning). Placed
+     ;; ABOVE the code to match the live stream (loop emits `:assistant-prose`
+     ;; before the code runs) and the web channel — else it read as missing/
+     ;; detached at the bottom. Same `:mode :channel` markdown path the per-form
+     ;; result text uses, so a bold word / list paints normally instead of as a
+     ;; dim italic thinking trace.
     prose-body (when-let [p (some-> assistant-prose str str/trim not-empty)]
                  (vec (ir-tui/ir->entries (vis/markdown->ir p) fill-w {:mode :channel})))
      ;; Block count headers (`1 observation · 2 mutations`) and their
@@ -3502,8 +3506,8 @@
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-        (into body)
-        (into (or prose-body [])))))
+        (into (or prose-body []))
+        (into body))))
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
