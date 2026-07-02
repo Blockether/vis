@@ -23,7 +23,7 @@
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry])
   (:import [java.net ConnectException URI]
-           [java.net.http HttpClient HttpConnectTimeoutException HttpRequest
+           [java.net.http HttpClient HttpClient$Version HttpConnectTimeoutException HttpRequest
             HttpRequest$Builder HttpResponse$BodyHandlers]
            [java.time Duration]
            [java.util Date]))
@@ -196,6 +196,12 @@
         (try
           (let [client (-> (HttpClient/newBuilder)
                          (.connectTimeout (Duration/ofMillis 1500))
+                         ;; Force HTTP/1.1: the default client negotiates h2c
+                         ;; (`Upgrade` on plain http) and LM Studio's server
+                         ;; hangs on that upgrade instead of answering — the
+                         ;; probe then times out against a perfectly live
+                         ;; endpoint and the health gate demotes it every turn.
+                         (.version HttpClient$Version/HTTP_1_1)
                          (.build))
                 ^HttpRequest$Builder rb (HttpRequest/newBuilder (URI/create url))
                 req    (-> rb (.timeout (Duration/ofMillis 2500)) (.GET) (.build))

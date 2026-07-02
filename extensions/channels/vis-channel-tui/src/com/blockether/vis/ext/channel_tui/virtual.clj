@@ -162,41 +162,78 @@
 
 ;;; ── Estimated-height heuristic ─────────────────────────────────────────────
 
-(defn- char-count ^long [s]
-  (long (count (or s ""))))
+(defn- wrapped-rows-est
+  "Rows string `s` occupies when hard-folded at width `w`: Σ per input
+   line of `ceil(len/w)`, blank interior lines counting 1. Single indexed
+   pass — no regex, no split allocation — because this runs once per COLD
+   message per layout frame. Slightly OVER-counts trailing newlines
+   (`split-lines` drops those in the painter) — overshoot is the safe
+   direction: `total-h` may shrink when the real height lands, never grow,
+   so the scroll anchor (and the scrollbar thumb) holds."
+  ^long [s ^long w]
+  (let [^String s (if (string? s) s (str (or s "")))
+        n (.length s)
+        w (max 1 w)]
+    (loop [i 0 seg 0 rows 0]
+      (if (>= i n)
+        (if (pos? seg) (+ rows (quot (+ seg (dec w)) w)) rows)
+        (let [nl? (= \newline (.charAt s i))]
+          (recur (inc i)
+                 (if nl? 0 (inc seg))
+                 (if nl? (+ rows (max 1 (quot (+ seg (dec w)) w))) rows)))))))
 
-(defn- div-ceil
-  "Ceiling division that handles 0/negative `b` gracefully (returns 0)."
-  ^long [^long a ^long b]
-  (if (or (<= b 0) (<= a 0))
-    0
-    (long (Math/ceil (double (/ (double a) (double b)))))))
+(defn- prose-rows-est
+  "Upper-bound rows for MARKDOWN-rendered text at width `w`:
+   `wrapped-rows-est` plus block-chrome slack. The IR walker renders a
+   line that STARTS with a list/quote/heading marker (`- + * > #`,
+   `1.`) as its own block with blank chrome rows around it — a pasted
+   diff (every line `+ …`) explodes ~5x that way, width-independently.
+   Charge marker lines +5 so those pastes stay on the overshoot side.
+   Single indexed pass, no regex, no split allocation."
+  ^long [s ^long w]
+  (let [^String s (if (string? s) s (str (or s "")))
+        n (.length s)
+        w (max 1 w)]
+    (loop [start 0 rows 0]
+      (if (>= start n)
+        rows
+        (let [e   (.indexOf s "\n" start)
+              end (if (neg? e) n e)
+              len (- end start)
+              ;; First non-space char within the first 4 columns — markdown
+              ;; treats deeper indents as code, not as a block marker.
+              j   (loop [k start]
+                    (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
+                      (recur (inc k))
+                      k))
+              marker?
+              (and (< j end)
+                (let [c (.charAt s j)]
+                  (or (and (case c (\- \+ \* \> \#) true false)
+                        (or (= (inc j) end) (= \space (.charAt s (inc j)))))
+                    ;; ordered list: digits then `.` then space/eol
+                    (and (Character/isDigit c)
+                      (let [d (loop [k j]
+                                (if (and (< k end) (Character/isDigit (.charAt s k)))
+                                  (recur (inc k))
+                                  k))]
+                        (and (< d end) (= \. (.charAt s d))
+                          (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
+              base (max 1 (quot (+ len (dec w)) w))]
+          (recur (inc end) (+ rows base (if marker? 5 0))))))))
 
-(def ^:const rough-expanded-op-rows
-  "Rough rows an EXPANDED op disclosure adds BEYOND its 1-line summary. The
-   real height takes over once the bubble is measured; this only stops an
-   off-screen expanded block from being estimated as collapsed (which makes
-   total-h undercount and lands the scroll mid-screen). Over-estimate is the
-   safe direction."
-  8)
-
-(defn- estimated-expansion-bonus
-  "Extra estimated rows for a trace message's EXPANDED disclosures. Uses the
-   same per-message expansion subset render keys its projection cache by, so
-   an off-screen expanded block is sized roughly expanded, not collapsed."
-  ^long [message detail-expansions session-id trace]
-  (if (or (nil? detail-expansions) (nil? trace))
-    0
-    (let [k         (render/message-detail-expansions-key session-id message detail-expansions)
-          n-results (long (reduce (fn [^long acc it]
-                                    (+ acc (long (count (filter :result (:forms it))))))
-                            0 trace))]
-      (long
-        (cond
-          (= :expand-all k) (* rough-expanded-op-rows n-results)
-          (vector? k)       (* rough-expanded-op-rows
-                              (count (filter (fn [[_ exp?]] (true? exp?)) k)))
-          :else             0)))))
+(defn- any-details-expanded?
+  "True when this message has ANY disclosure expanded (or the global
+   `:expand-all` flag is on). The estimate then sizes thinking/result
+   sections at their FULL wrapped height instead of the collapsed preview
+   cap — an expanded off-screen block must never make the estimate
+   undershoot (that is the direction that jumps the scrollbar)."
+  [message detail-expansions session-id]
+  (boolean
+    (when detail-expansions
+      (let [k (render/message-detail-expansions-key session-id message detail-expansions)]
+        (or (= :expand-all k)
+          (and (vector? k) (some (fn [[_ exp?]] (true? exp?)) k)))))))
 
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width
@@ -204,24 +241,37 @@
    authoritative for visible messages. NEVER calls `wrap-text`,
    `markdown->lines`, or `format-answer-with-thinking`.
 
-   Heuristic:
-     * label row + meta row + gap row -> chrome-rows = 3
-     * user msg -> add  text-len / content-w  rows
-     * assistant w/ trace -> add
-         iteration-headers (1 per iter)
-         + code-forms (1 per form)
-         + result-lines (1 per result)
-         + thinking-chars / 80     (rough wrap)
-         + answer-chars / 60       (rough wrap, narrower)
-     * plain assistant -> add  text-len / content-w  rows
+   INVARIANT: estimates must OVERSHOOT. When the real height replaces an
+   estimate mid-scroll, `total-h` may shrink but never grow; growth moves
+   the thumb TOWARD the bottom while the user scrolls UP — the visible
+   scrollbar jump. So every section is sized as `ceil` of its folded rows
+   (`wrapped-rows-est`) against a slightly NARROWER width than the
+   painter's, and collapsed-by-default sections (thinking peek, result
+   preview) are capped at the painter's preview limit + chrome ONLY when
+   nothing in the message is expanded.
 
-   The constants are tuned against session 954bf315; they
-   over-estimate slightly on dense bubbles and under-estimate on
-   answer-heavy bubbles, but stay within ~2x of real either way."
+   Shape mirrored from `format-iteration-entry-entries`:
+     * code       — soft-folded at the bubble edge (`p/fold-cols`), painted
+                    in full: fold rows + 2 pad rows.
+     * result     — markdown at fill-w, collapsed to a
+                    `reasoning-preview-line-limit` peek + `+N more` row
+                    (tool cards collapse to a headline — the peek cap
+                    over-estimates those by a few rows, which is fine).
+     * thinking   — ALWAYS behind the ▸ THINKING accordion: peek rows +
+                    ~5 band-chrome rows; full height when expanded.
+     * answer     — folded at min(60, fill-w): markdown chrome (headings,
+                    fences, list gaps) makes /60 the safe historical
+                    ballpark at any width ≥ 60, and narrower terminals
+                    fold at their own width.
+   User / plain-assistant text goes through the markdown walker, which
+   word-wraps and inserts block chrome — fold at 3/4 width to stay above
+   it."
   (^long [message ^long bubble-w] (estimated-height message bubble-w nil nil))
   (^long [message ^long bubble-w detail-expansions session-id]
    (let [content-w (max 1 (- bubble-w 4))
-         chrome-rows 3
+         ;; Word-wrap + markdown block chrome cost more rows than a pure
+         ;; column fold; folding at 3/4 of the real width absorbs that.
+         prose-w  (max 1 (quot (* 3 content-w) 4))
          role     (:role message)
          trace    (:traces message)
          ;; Pre-projection rough text estimate: extract plain text from
@@ -231,70 +281,72 @@
                     (some-> (:ir message) ir/extract-text))]
      (cond
        (= role :user)
-       (long
-         (+ chrome-rows
-           (div-ceil (char-count text) content-w)))
+       ;; label + top/bottom pad + gap = 4 chrome rows (see bubble-height*).
+       (long (+ 4 (wrapped-rows-est text prose-w)))
 
        (and (= role :assistant) trace)
-       (let [n-iter   (long (count trace))
-             line-count (fn ^long [s] (if (str/blank? (str s))
-                                        0
-                                        (inc (long (count (re-seq #"\n" (str s)))))))
-             ;; Per form the painter writes: the raw code lines (top + bottom
-             ;; pad), then the RETURN value (a result-marker pad + result lines),
-             ;; then any error caret. Count lines (cheap newline scan) so the
-             ;; estimate tracks the real bubble — op cards are gone, code +
-             ;; results ARE the body now. Each non-empty section gets +2 for its
-             ;; pad rows so the estimate slightly OVERSHOOTS — the safe
-             ;; direction: total-h shrinks (never grows) when the real height
-             ;; is measured, so the scroll anchor holds.
+       (let [n-iter    (long (count trace))
+             ;; The painter folds code/results at `fill-w` (≈ bubble-w - 6);
+             ;; estimate against a slightly narrower width so rounding lands
+             ;; on the overshoot side.
+             fold-w    (max 1 (- bubble-w 8))
+             expanded? (any-details-expanded? message detail-expansions session-id)
+             ;; Collapsed-default caps: preview rows + the `+N more` row.
+             peek      (long ir/reasoning-preview-line-limit)
+             ;; A collapse only fires when it hides ≥ reasoning-collapse-min-hidden
+             ;; rows; below that the section renders in full. Cap at the
+             ;; largest height a collapsed-or-inline section can paint.
+             cap       (+ peek (long ir/reasoning-collapse-min-hidden))
+             section-rows (fn ^long [s]
+                            (let [full (wrapped-rows-est s fold-w)]
+                              (cond (zero? full) 0
+                                    expanded?    (+ full 3)
+                                    :else        (+ (min full cap) 3))))
              form-rows (long (reduce
                                (fn [^long acc it]
                                  (+ acc
                                    (long (reduce
                                            (fn [^long a f]
-                                             (let [cl (long (line-count (:code f)))
-                                                   ol (long (line-count (:result f)))]
-                                               (+ a
-                                                 (if (pos? cl) (+ cl 2) 0)
-                                                 (if (pos? ol) (+ ol 2) 0)
-                                                 (long (if (:error f) 2 0)))))
+                                             (let [c  (:code f)
+                                                   cr (if (and (string? c) (not (str/blank? c)))
+                                                        (+ (wrapped-rows-est c fold-w) 2)
+                                                        0)
+                                                   rr (long (section-rows (or (:result-render f)
+                                                                            (:result f))))
+                                                   cardr (long (reduce
+                                                                 (fn [^long x card]
+                                                                   (+ x 1 (long (section-rows (:body card)))))
+                                                                 0 (:cards f)))
+                                                   comr (let [cm (:comment f)]
+                                                          (if (and (string? cm) (not (str/blank? cm)))
+                                                            (+ (wrapped-rows-est cm fold-w) 2)
+                                                            0))]
+                                               (+ a cr rr cardr comr
+                                                 (long (if (:error f) 4 0)))))
                                            0 (:forms it)))))
                                0 trace))
-             ;; Thinking renders PER iteration with its own pad rows above +
-             ;; below — estimate each block separately (+2 chrome) and wrap
-             ;; narrow (/60) so the sum overshoots rather than collapsing every
-             ;; block into one wrap calc.
-             think-rows (long (reduce (fn [^long acc it]
-                                        (+ acc (let [tc (long (char-count (:thinking it)))]
-                                                 (if (pos? tc) (+ 2 (long (div-ceil tc 60))) 0))))
-                                0 trace))
-             ;; Heuristic for answer width: `:text` is the rendered
-             ;; markdown string (assistant-message stores it eagerly
-             ;; via render-answer). The layout pipeline re-wraps from
-             ;; `:ir` IR; this size estimate just picks a
-             ;; ballpark row count.
-             ans-c    (char-count text)
-             ;; EXPANDED disclosures add rows beyond the 1-line summary
-             ;; res-fs counts — without this an expanded block off-screen
-             ;; estimates as collapsed and the scroll jumps on the next
-             ;; expand. Real height takes over once measured.
-             bonus    (estimated-expansion-bonus message detail-expansions session-id trace)]
+             ;; ▸ THINKING accordion: blank + band-top + header + band-gap
+             ;; + peek/full + bottom edge ≈ content + 5 chrome rows.
+             think-rows (long (reduce
+                                (fn [^long acc it]
+                                  (+ acc (long (let [full (wrapped-rows-est (:thinking it) fold-w)]
+                                                 (cond (zero? full) 0
+                                                       expanded?    (+ full 5)
+                                                       :else        (+ (min full cap) 5))))))
+                                0 trace))]
          (long
-           (+ chrome-rows
+           (+ 5                                  ;; label + footer + note + gap
              n-iter                              ;; iteration headers
-             form-rows                           ;; code + stdout (+ error) rows
-             think-rows                          ;; per-iteration reasoning + pads
-             (div-ceil ans-c 60)
-             bonus)))
+             form-rows                           ;; code + result (+ error) rows
+             think-rows                          ;; per-iteration reasoning + band
+             (wrapped-rows-est text (max 1 (min 60 fold-w))))))
 
        (= role :assistant)
-       (long
-         (+ chrome-rows
-           (div-ceil (char-count text) content-w)))
+       ;; label + footer + gap chrome for a plain answer bubble.
+       (long (+ 5 (wrapped-rows-est text prose-w)))
 
        :else
-       (long (+ chrome-rows (div-ceil (char-count text) content-w)))))))
+       (long (+ 4 (wrapped-rows-est text prose-w)))))))
 
 (defn- estimated-height-with-turn-separator
   [_messages _settings bubble-w _idx message detail-expansions session-id]
@@ -999,3 +1051,46 @@
        (try (.join t join-ms)
          (catch InterruptedException _
            (.interrupt (Thread/currentThread))))))))
+
+;;; ── Managed re-warm (single owner for the background warm thread) ──────────
+;;
+;; The startup path warms once, but three runtime events resurrect
+;; estimates and used to leave them cold until the user scrolled into
+;; them — which is exactly when a correction moves `total-h` and jumps
+;; the scrollbar thumb:
+;;   1. registry-toggle flips (`:resync-toggle-settings` drops the WHOLE
+;;      height cache),
+;;   2. terminal resizes (`bubble-w` is part of the cache key, so every
+;;      entry misses at the new width),
+;;   3. session/tab switches into a not-yet-warmed history.
+;; `rewarm!` gives those paths one call that stops any in-flight warm
+;; worker and starts a fresh one, so the cache re-settles while the user
+;; is still idle instead of correcting mid-scroll.
+
+(defonce ^:private rewarm-thread* (atom nil))
+
+(defn rewarm!
+  "Stop the in-flight background warm (if any) and start warming
+   `messages` at `bubble-w`. Owns ONE worker thread process-wide - callers
+   never juggle the `Thread` themselves. `opts` is passed to `pre-warm!`
+   verbatim (`:session-id`, `:detail-expansions`, `:on-warm`). Returns the
+   new worker `Thread`, or nil for an empty history.
+
+   The previous worker is interrupted fire-and-forget (join 0): callers
+   sit on the input/event thread, and a stale worker finishing one extra
+   bubble writes a VALID cache entry - unlike the invalidate-then-stop
+   test flow `stop-pre-warm!`'s docstring worries about."
+  ^Thread [messages bubble-w settings opts]
+  (let [[^Thread old _] (reset-vals! rewarm-thread* nil)]
+    (when old (stop-pre-warm! old 0)))
+  (when (seq messages)
+    (let [t (pre-warm! messages bubble-w settings opts)]
+      (reset! rewarm-thread* t)
+      t)))
+
+(defn stop-rewarm!
+  "Interrupt + briefly join the managed re-warm worker (shutdown / session
+   close). Safe when none is running."
+  []
+  (let [[^Thread old _] (reset-vals! rewarm-thread* nil)]
+    (when old (stop-pre-warm! old))))

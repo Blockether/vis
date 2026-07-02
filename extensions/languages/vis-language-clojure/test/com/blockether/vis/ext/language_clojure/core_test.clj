@@ -105,11 +105,12 @@
   (it "registers its repair/no-fail behavior DECLARATIVELY via :ext/op-hooks"
     (let [hooks (:ext/op-hooks core/vis-extension)
           ops   (set (map (juxt :op :phase) hooks))]
-      (expect (= 4 (count hooks)))
+      (expect (= 5 (count hooks)))
       (expect (contains? ops [:struct_patch :after]))
       (expect (contains? ops [:patch :after]))
       (expect (contains? ops [:write :after]))
       (expect (contains? ops [:struct_patch :around]))
+      (expect (contains? ops [:patch :around]))
       ;; every entry names a real fn — no imperative register-op-hook! at load
       (expect (every? ifn? (map :fn hooks))))))
 
@@ -201,3 +202,60 @@
                 (try (core/clj-struct-patch-no-fail-around
                        {} :struct_patch [{:path "x.clj" :code "(defn f [] (+ 1 2)"}] next-fn)
                   nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(defdescribe patch-no-fail-test
+  "The :around middleware makes a Clojure anchored `patch` repair + retry instead
+   of failing on unbalanced delimiters. Unlike struct_patch the foundation patch
+   tool RETURNS a `{:success? false … :reason :syntax-error}` envelope (it does
+   not throw), so the hook inspects the result and retries once."
+  (it "repairs each edit's :replace and retries after a :syntax-error refusal"
+    (let [seen    (atom [])
+          ;; fake patch tool: refuses unbalanced :replace, accepts balanced
+          next-fn (fn [args]
+                    (let [rep (get-in (first args) [:edits 0 :replace])]
+                      (swap! seen conj rep)
+                      (if (balanced? rep)
+                        {:success? true :result [{:path "x.clj" :changed? true}]}
+                        {:success? false
+                         :error {:reason :syntax-error :message "would leave x.clj SYNTAX ERROR"}})))
+          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
+          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
+      (expect (:success? out))
+      (expect (= 2 (count @seen)))                    ; raw attempt, then repaired retry
+      (expect (balanced? (last @seen)))))             ; the retry used balanced :replace
+  (it "handles the bare-vector (multi-file) edits form with per-edit :path"
+    (let [seen    (atom [])
+          next-fn (fn [args]
+                    (let [rep (get-in (first args) [0 :replace])]
+                      (swap! seen conj rep)
+                      (if (balanced? rep)
+                        {:success? true :result [{:path "a.clj" :changed? true}]}
+                        {:success? false :error {:reason :syntax-error}})))
+          arg [{:path "a.clj" :from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]
+          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
+      (expect (:success? out))
+      (expect (balanced? (last @seen)))))
+  (it "passes a NON-syntax failure straight through (no repair, no retry)"
+    (let [calls   (atom 0)
+          next-fn (fn [_] (swap! calls inc) {:success? false :error {:reason :stale}})
+          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
+          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
+      (expect (false? (:success? out)))
+      (expect (= :stale (get-in out [:error :reason])))
+      (expect (= 1 @calls))))                         ; never retried
+  (it "leaves a non-clj target untouched (no fragment repair)"
+    (let [calls   (atom 0)
+          next-fn (fn [_] (swap! calls inc) {:success? false :error {:reason :syntax-error}})
+          arg {:path "x.py" :edits [{:from_anchor "1:abc" :replace "def f("}]}
+          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
+      (expect (false? (:success? out)))
+      (expect (= 1 @calls))))                         ; nothing repaired → no retry
+  (it "surfaces the ORIGINAL failure when the repaired retry still won't parse"
+    (let [calls   (atom 0)
+          next-fn (fn [_] (swap! calls inc)
+                    {:success? false :error {:reason :syntax-error :message (str "orig#" @calls)}})
+          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
+          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
+      (expect (false? (:success? out)))
+      (expect (= 2 @calls))                           ; original + one repaired retry
+      (expect (= "orig#1" (get-in out [:error :message]))))))

@@ -688,9 +688,24 @@
               ;; the registry path needs the same on both caches.
                 (render/invalidate-cache!)
                 (virtual/invalidate-heights!)
-                (assoc db
-                       :settings (merge (migrated-toggle-projection)
-                                        (select-keys (:settings db) (keys default-settings))))))
+                (let [settings (merge (migrated-toggle-projection)
+                                      (select-keys (:settings db) (keys default-settings)))]
+                  ;; The invalidate above dropped EVERY sticky height - the whole
+                  ;; transcript is back on estimates. Re-warm in the background
+                  ;; (same worker the startup path uses) so total-h re-settles
+                  ;; while the user is still idle; without this the corrections
+                  ;; land mid-scroll and jump the scrollbar thumb. Width comes
+                  ;; from the last published layout; a nil layout (no frame yet)
+                  ;; skips - the startup warm is still in flight then anyway.
+                  (when-let [cols (:cols (:layout db))]
+                    (virtual/rewarm!
+                     (:messages db)
+                     (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
+                     settings
+                     {:session-id (get-in db [:session :id]),
+                      :detail-expansions (:detail-expansions db),
+                      :on-warm #(dispatch [:bump-render-version])}))
+                  (assoc db :settings settings))))
 (reg-event-fx :cycle-reasoning-level
               (fn [db _]
                 (if-not (reasoning-effort-configurable?)

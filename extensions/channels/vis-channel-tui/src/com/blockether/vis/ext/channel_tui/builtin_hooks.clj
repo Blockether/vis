@@ -63,10 +63,14 @@
         info     (chosen-model-info)
         model    (or (:model pref) (:name info))
         provider (or (:provider pref) (some-> (:provider info) name))
-        display  (cond
-                   (and provider model) (str provider "/" model)
-                   model                model
-                   :else                nil)
+        ;; DISPLAY-only model id: path-style names (google/gemma-4-12b-qat)
+        ;; flatten their slashes so the chip never reads as three segments.
+        ;; `model` (the raw id) still feeds routing-status / cycle lookups.
+        display  (let [m (vis/display-model-name model)]
+                   (cond
+                     (and provider m) (str provider "/" m)
+                     m                m
+                     :else            nil))
         ;; When the DISPLAYED provider's circuit breaker is open (provider
         ;; overloaded — repeated 5xx/529/stream failures), svar fails turns over
         ;; to the next available provider. Surface it so the footer doesn't claim

@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
- :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis {:local/root "../../.."}
         com.litongjava/sherpa-onnx-java-api {:mvn/version "1.0.1"}
         com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.17.1"}

@@ -181,21 +181,30 @@
                              status-buckets))}))
 
 (defn- diff-files-block
-  "Body for a diff/show file vector: unified patch when present, else numstat."
+  "Body for a diff/show file vector: a `+A -D  path` header per file so a
+   MULTI-file diff reads as distinct sections, each followed by its unified
+   patch when `is_patch` supplied one (else the numstat header stands alone)."
   [files]
-  (if (some :patch files)
-    (block [(str "```diff\n"
-                 (str/join "\n" (keep #(some-> (:patch %) s not-empty) files))
-                 "\n```")])
-    (block (for [f files] (str "  +" (or (:add f) 0) " -" (or (:del f) 0) "  " (s (:file f)))))))
+  (block
+   (mapcat (fn [f]
+             (cons (str "  +" (or (:add f) 0) " -" (or (:del f) 0) "  " (s (:file f)))
+                   (some-> (:patch f) s not-empty str/split-lines)))
+           files)))
 
 (defn render-diff
-  "git_diff → `diff `from`…`to` · N files +A -D` + numstat / patch."
-  [{:keys [from to stat files]}]
+  "git_diff → `diff `from`…`to` · N files +A -D` + per-file numstat / patch,
+   with any working-tree untracked files listed after the tracked diff."
+  [{:keys [from to stat files untracked]}]
   (let [fc (or (:files stat) (count files))]
     {:summary (str "diff " (code from) (when to (str "…" (code to)))
-                   " · " (plural fc "file") " +" (or (:add stat) 0) " -" (or (:del stat) 0))
-     :body    (diff-files-block files)}))
+                   " · " (plural fc "file") " +" (or (:add stat) 0) " -" (or (:del stat) 0)
+                   (when (seq untracked) (str " · " (count untracked) " untracked")))
+     :body    (not-empty
+               (str/join "\n"
+                         (remove nil?
+                                 [(diff-files-block files)
+                                  (when (seq untracked)
+                                    (block (for [u untracked] (str "  ?  " (s u)))))])))}))
 
 (defn render-log
   "git_log → `N commits on `branch`` + `sha subject` rows."

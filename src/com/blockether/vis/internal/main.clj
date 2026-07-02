@@ -492,8 +492,6 @@
                     mdl      (config-with-model-override mdl))
         local-router? (boolean (or config mdl provider))
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
-        title     (let [t (str/trim prompt-s)]
-                    (if (> (count t) 100) (str (subs t 0 97) "...") t))
         tracker   (when on-chunk
                     (progress/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
         on-chunk* (when tracker (:on-chunk tracker))
@@ -559,7 +557,14 @@
                                                        :vis/user-error true
                                                        :session-id session-id}))))
             created-session (when-not resolved-session-id
-                              (gateway-state/create-session! {:channel :cli :title title}))
+                              ;; Create title-less so the async `maybe-auto-title!`
+                              ;; side-channel (fired during the turn, same as TUI/web)
+                              ;; generates a real LLM title. Passing a crude
+                              ;; truncated-prompt title here used to satisfy
+                              ;; `usable-existing-title` and SUPPRESS auto-titling,
+                              ;; leaving every persisted CLI session stuck on the
+                              ;; raw prompt text.
+                              (gateway-state/create-session! {:channel :cli}))
             session-id (or resolved-session-id (:id created-session))]
         (try
           (let [result (gateway-state/submit-turn-sync!

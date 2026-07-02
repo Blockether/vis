@@ -1630,6 +1630,21 @@
                           ;; Publish layout back to app-db without bumping the version (see
                           ;; no-render-bump-events).
                         (when publish-layout? (state/dispatch [:set-layout layout]))
+                          ;; Terminal WIDTH change: every sticky height is keyed
+                          ;; by the old bubble-w, so the whole transcript just
+                          ;; fell back to estimates. Re-warm in the background so
+                          ;; total-h re-settles while the user is idle instead of
+                          ;; correcting - and jumping the scrollbar thumb - on
+                          ;; their next scroll-up. Skipped on the first frame
+                          ;; (last-cols -1): the startup path already warms.
+                        (when (and (not= last-cols cols) (pos? (long last-cols)))
+                          (virtual/rewarm!
+                           (:messages db)
+                           (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                           (or (:settings db) {})
+                           {:session-id (get-in db [:session :id]),
+                            :detail-expansions (:detail-expansions db),
+                            :on-warm #(state/dispatch [:bump-render-version])}))
                           ;; Cleared was-blocked? - the dialog overlay has just been painted
                           ;; over.
                         [true cols rows now-ms db layout current-hover false])
@@ -2084,11 +2099,9 @@
            ;; scope inside `finally`.)
            render-thread (volatile! nil)
            title-listeners (volatile! {})
-           ;; Daemon thread that pre-formats every assistant bubble
-           ;; in the background so the FIRST scroll-up doesn't pay
-           ;; ~500 ms / big-trace-bubble on the render thread.
-           ;; Stays nil for fresh sessions (nothing to warm).
-           prewarm-thread (volatile! nil)
+           ;; Background bubble pre-warm is owned by `virtual/rewarm!` -
+           ;; one managed worker process-wide; see its ns comment for the
+           ;; invalidation events that restart it.
            provider-limits-thread (volatile! nil)
            terminal-signal-cleanup (volatile! nil)
            ;; On a plain launch, the saved tab snapshot for this place (set
@@ -2186,8 +2199,7 @@
                                              (assoc warm-opts
                                                     :count prewarm-sync-tail-count
                                                     :budget-ms prewarm-sync-budget-ms))
-                   (vreset! prewarm-thread
-                            (virtual/pre-warm! history bubble-w settings warm-opts))))))
+                   (virtual/rewarm! history bubble-w settings warm-opts)))))
            ;; Spawn the render thread BEFORE the input loop. It will paint
            ;; the first frame as soon as `:render-version` is non-zero (every
            ;; init dispatch above bumps it).
@@ -2273,8 +2285,7 @@
                  pending-input-key (volatile! [])
                  prewarm-session!
                  (fn [{:keys [id history]}]
-                   (virtual/stop-pre-warm! @prewarm-thread)
-                   (vreset! prewarm-thread nil)
+                   (virtual/stop-rewarm!)
                    (when (seq history)
                      (let [size (screen-size screen)
                            cols (.getColumns size)
@@ -2293,8 +2304,7 @@
                                                  (assoc warm-opts
                                                         :count prewarm-sync-tail-count
                                                         :budget-ms prewarm-sync-budget-ms))
-                       (vreset! prewarm-thread
-                                (virtual/pre-warm! history bubble-w settings warm-opts)))))
+                       (virtual/rewarm! history bubble-w settings warm-opts))))
                  ;; Open (or focus) a TAB for this session. Unlike the old
                  ;; in-place install, this NEVER resets the active tab — so a
                  ;; turn streaming in another tab keeps running. Each open
@@ -3662,7 +3672,7 @@
              ;; Cancel the pre-warm worker BEFORE joining the render
              ;; thread - it might still be holding `cached*` work
              ;; that we'd rather drop than wait on.
-             (virtual/stop-pre-warm! @prewarm-thread)
+             (virtual/stop-rewarm!)
              (when-let [t @render-thread] (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @provider-limits-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))

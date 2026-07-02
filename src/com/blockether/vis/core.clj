@@ -265,6 +265,7 @@
  [format-cost fmt/format-cost]
  [format-iterations fmt/format-iterations]
  [format-meta-line fmt/format-meta-line]
+ [display-model-name fmt/display-model-name]
  [humanize-fact-key fmt/humanize-fact-key]
  [meta-summary-line fmt/meta-summary-line]
  [meta-fallback-note fmt/meta-fallback-note])
