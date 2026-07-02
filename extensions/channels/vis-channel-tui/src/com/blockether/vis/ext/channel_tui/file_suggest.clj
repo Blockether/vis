@@ -4,8 +4,12 @@
    behaviour instead of a modal on one side and an inline picker on the
    other.
 
-   Backed by the shared file index in `internal.file-picker` (the very
-   same backend behind the gateway `/v1/sessions/:sid/suggest` service).
+   Ranking is powered by fff (`internal.file-picker/fuzzy-file-rows`) — the
+   very same engine behind the `find_files` tool and the gateway
+   `/v1/sessions/:sid/suggest` service — so `@fpick` fuzzily finds
+   `file_picker.clj` (typo-tolerant subsequence match ranked by frecency),
+   not just a literal substring.
+
    The trigger rules mirror the web/JS verbatim so writing a literal `@`
    is never endangered:
 
@@ -14,43 +18,59 @@
    - `@@` escapes to a literal `@` and suppresses the popup;
    - selection is advisory — nothing is rewritten unless the user picks.
 
-   The index walk is expensive (a filesystem crawl + git status), so it
-   runs OFF the render thread and is cached with a short TTL; per-keystroke
-   filtering then reads whatever is cached and stays instant."
+   fff owns a FRESH in-memory index instance that is opened OFF the render
+   thread and cached for the session; per-keystroke `search` on the open
+   instance is sub-millisecond, so filtering stays instant. The instance is
+   NEVER closed while a search may run (fff's native search SIGSEGVs on a
+   closed handle); a periodic rebuild swaps a new instance in and closes the
+   superseded one only after a grace period."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.internal.file-picker :as picker]))
 
-(def ^:private index-ttl-ms 3000)
+(def ^:private index-ttl-ms 30000)
 (def ^:private max-rows 20)
 
-(defonce ^:private index-cache (atom {:entries nil :built-at 0 :building? false}))
+;; {:idx <Closeable fff> :built-at <ms> :building? <bool>}
+(defonce ^:private index-cache (atom {:idx nil :built-at 0 :building? false}))
 
-(defn- fresh? [{:keys [entries built-at]}]
-  (and entries (< (- (System/currentTimeMillis) (long built-at)) index-ttl-ms)))
+(defn- fresh? [{:keys [idx built-at]}]
+  (and idx (< (- (System/currentTimeMillis) (long built-at)) index-ttl-ms)))
+
+(defn- close-later!
+  "Close a superseded fff instance, but only after a grace period so no
+   in-flight synchronous search (sub-ms) touches a freed native handle."
+  [^java.io.Closeable idx]
+  (when idx
+    (future
+      (Thread/sleep 2000)
+      (try (.close idx) (catch Throwable _ nil)))))
 
 (defn- kick-refresh!
-  "Rebuild the file index in the background unless a build is already in
-   flight. Non-blocking: the render thread never waits on the crawl."
+  "Rebuild the fff index in the background unless a build is already in
+   flight. Non-blocking: the render thread never waits on the scan."
   []
   (let [[old _] (swap-vals! index-cache
                             (fn [c] (if (:building? c) c (assoc c :building? true))))]
     (when-not (:building? old)
       (future
-        (let [entries (try (picker/collect-file-picker-entries)
-                           (catch Throwable _ []))]
-          (reset! index-cache {:entries entries
-                               :built-at (System/currentTimeMillis)
-                               :building? false}))))))
+        (let [new-idx (try (picker/open-fuzzy-index) (catch Throwable _ nil))
+              [prev _] (swap-vals! index-cache
+                                   (fn [c] (assoc c
+                                                  :idx (or new-idx (:idx c))
+                                                  :built-at (System/currentTimeMillis)
+                                                  :building? false)))]
+          (when (and new-idx (:idx prev) (not (identical? new-idx (:idx prev))))
+            (close-later! (:idx prev))))))))
 
 (defn- ensure-index!
-  "Return the cached entries, kicking a background refresh when the cache
-   is missing or stale. Returns nil until the first crawl lands (callers
+  "Return the cached OPEN fff instance, kicking a background refresh when the
+   cache is missing or stale. Returns nil until the first scan lands (callers
    simply show nothing until then)."
   []
   (let [c @index-cache]
     (when-not (fresh? c) (kick-refresh!))
-    (:entries c)))
+    (:idx c)))
 
 (def ^:private trigger-regex #"(?:^|\s)@(?!@)(\S*)$")
 
@@ -70,6 +90,7 @@
   (when-let [m (re-find trigger-regex head)]
     (let [q (nth m 1)]
       {:query q :at (- (count head) (count q) 1)})))
+
 (defn suggestions
   "File-mention suggestions for `input-state`, shaped to ride the SAME
    overlay + key handling as slash suggestions: `:slash/usage` is the
@@ -78,25 +99,27 @@
    at the caret (so the slash path stays in charge)."
   [input-state selected-index]
   (when-let [{:keys [query]} (mention-at (head-text input-state))]
-    (when-let [entries (ensure-index!)]
-      (let [rows (vec (take max-rows (picker/file-picker-items entries query {:sort-mode :relevance})))
+    (when-let [idx (ensure-index!)]
+      (let [rows (try (picker/fuzzy-file-rows idx query {:limit max-rows})
+                      (catch Throwable _ nil))
             n    (count rows)
             sel  (max 0 (min (dec n) (long (or selected-index 0))))]
-        (map-indexed
-         (fn [idx it]
-           (let [status (:status-label it)
-                 meta   (->> [(:size-label it)
-                              (:age-label it)
-                              (when (and status (not= "clean" status)) status)]
-                             (remove str/blank?)
-                             (str/join " · "))]
-             {:file/mention?   true
-              :file/path       (:path it)
-              :slash/name      (:path it)
-              :slash/usage     (:path it)
-              :label           meta
-              :slash/selected? (= idx sel)}))
-         rows)))))
+        (when (seq rows)
+          (map-indexed
+           (fn [idx it]
+             (let [status (:status-label it)
+                   meta   (->> [(:size-label it)
+                                (:age-label it)
+                                (when (and status (not= "clean" status)) status)]
+                               (remove str/blank?)
+                               (str/join " · "))]
+               {:file/mention?   true
+                :file/path       (:path it)
+                :slash/name      (:path it)
+                :slash/usage     (:path it)
+                :label           meta
+                :slash/selected? (= idx sel)}))
+           rows))))))
 
 (defn apply-mention
   "Splice the picked `path` into `input-state`, replacing the active `@token`

@@ -30,14 +30,17 @@
       path)))
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
-;; Every modal in the TUI now shares ONE default WIDTH and ONE default
-;; HEIGHT. Users asked for the dialog stack to stop "breathing" as they
-;; moved between Settings / Providers / confirm / input popups, so the
-;; default arity of `draw-dialog-chrome!` ignores caller-specific body
-;; height and uses a common terminal-proportional footprint instead.
+;; Every modal in the TUI shares ONE default WIDTH. HEIGHT is now ADAPTIVE:
+;; the default arity of `draw-dialog-chrome!` sizes each box to the caller's
+;; content height (clamped to a small floor and the terminal), so a 2-line
+;; confirm is a compact card while a long list grows and then scrolls. That
+;; kills the wasted whitespace of the old uniform footprint without bringing
+;; back the "breathing" — the box tracks its content, not the cursor.
 ;;
-;; Dialogs that genuinely need a bespoke size can still call the fully
-;; explicit width+height arity, but the common path stays uniform.
+;; Callers that genuinely want the shared FULL-height footprint (spacious
+;; logo / welcome screens, long scrollable browsers) pass `nil` as the
+;; content height to opt back in; the fully explicit width+height arity is
+;; still there for a bespoke size.
 (defn default-content-width
   "Shared content width every dialog uses, derived from `cols`. Clamped
    between the theme's dialog min/max widths and bounded by the terminal so
@@ -81,6 +84,26 @@
           (<= (p/display-width txt) max-w) txt
           (= max-w 1) "..."
           :else (str (p/truncate-cols txt (dec max-w)) "..."))))
+(def ^:private min-adaptive-content-h
+  "Content-height floor for adaptive dialogs — the box never shrinks below
+   this many content rows (≈ this + chrome tall), so a tiny popup still reads
+   as a comfortable card instead of a cramped sliver."
+  3)
+(defn adaptive-content-height
+  "Clamp a dialog's REQUESTED content height so the box sizes to its own
+   content instead of the shared footprint.
+
+   - `nil` requested -> the shared full-height footprint (`default-content-height`).
+     Spacious logo / welcome screens and long browsers opt in this way.
+   - a number -> clamped between `min-adaptive-content-h` and the terminal-bounded
+     `dialog-max-height`, so short dialogs are compact and long ones still scroll."
+  [rows requested]
+  (if (nil? requested)
+    (default-content-height rows)
+    (let [terminal-box (max 8 (- rows 4))
+          max-h (max 1 (- (min t/dialog-max-height terminal-box) t/dialog-chrome-h))
+          floor (min min-adaptive-content-h max-h)]
+      (clamp (long requested) floor max-h))))
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
@@ -370,20 +393,20 @@
   "Draw dialog background, shadow, border, and title.
 
    Three arities:
-   - `(g cols rows title content-h)` - shared default width and height.
-     Caller-supplied `content-h` is ignored in this arity on purpose;
-     the whole TUI dialog stack now uses one common footprint.
+   - `(g cols rows title content-h)` - shared default width; the box HEIGHT is
+     sized to `content-h` via `adaptive-content-height`. Pass `nil` as
+     `content-h` for the shared full-height footprint.
    - `(g cols rows title content-w content-h)` - fully explicit. Use
      only when a dialog genuinely needs a non-default width.
 
    Returns {:left :top :right :bottom :inner-w :inner-h}."
-  ([g cols rows title _content-h]
+  ([g cols rows title content-h]
    (draw-dialog-chrome! g
                         cols
                         rows
                         title
                         (default-content-width cols)
-                        (default-content-height rows)))
+                        (adaptive-content-height rows content-h)))
   ([g cols rows title content-w content-h]
    (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
          box-left (quot (- cols box-w) 2)
@@ -518,7 +541,7 @@
             bounds (if content?
                      (draw-dialog-chrome! g cols rows title
                                           (default-content-width cols) (+ head-rows (min (count items) 16) 1))
-                     (draw-dialog-chrome! g cols rows title (count items)))
+                     (draw-dialog-chrome! g cols rows title nil))
             {:keys [left right inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-top (+ content-top head-rows)
@@ -949,9 +972,18 @@
             rows (.getRows size)
             g (.newTextGraphics screen)
             ;; Content: optional logo + body rows + label row + spacer + 3-row bordered input box.
+            ;; Pre-estimate the content height (at the default width) so the box
+            ;; adapts to a plain prompt; a logo keeps the spacious footprint (nil).
+            est-w (max 1 (- (default-content-width cols) 2))
+            est-body (->> body-lines
+                          (mapcat (fn [line]
+                                    (if (str/blank? line) [""] (render/wrap-text line est-w))))
+                          vec)
+            req-h (when-not (seq logo)
+                    (+ 4 (if (seq est-body) 1 0) (count est-body)))
             bounds (if flat?
                      (draw-flat-dialog-chrome! g cols rows title)
-                     (draw-dialog-chrome! g cols rows title 5))
+                     (draw-dialog-chrome! g cols rows title req-h))
             {:keys [left inner-w]} bounds
             text-w (max 1 (- inner-w 2))
             wrapped-body (->> body-lines
@@ -1923,7 +1955,6 @@
         fork-count (long (or (:fork-count session) 0))]
     (cond-> base-title (pos? fork-count) (str " [forks:" fork-count "]"))))
 (def ^:private session-dialog-content-w 96)
-(def ^:private session-dialog-content-h 14)
 (defn- date->millis
   [v]
   (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
@@ -2041,7 +2072,9 @@
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Sessions" session-dialog-content-h)
+            ;; nil content-h -> shared full-height footprint, matching the
+            ;; directory picker (both are long, scrollable browsers)
+            bounds (draw-dialog-chrome! g cols rows "Sessions" nil)
             {:keys [left inner-w]} bounds
             ;; Reserve `p/SELECTION_WIDTH` cols at start of inner area
             ;; for dot marker gutter. Table itself is boxed; marker stays
@@ -2362,7 +2395,7 @@
                        (map (fn [r] {:kind :root :text (root-row r)}) roots)
                        [{:kind :box :text (table/boxed-border-line [path-w tag-w] :bottom)}])
                       [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                    [{:kind :blank :text ""}
+                    [{:kind :rule :text (apply str (repeat list-w "─"))}
                      {:kind :browse
                       :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
                     (when notice-here
@@ -2422,6 +2455,7 @@
                       :root    t/dialog-fg
                       :box     t/dialog-border
                       :browse  t/dialog-hint-key
+                      :rule    t/dialog-border
                       :notice  (if error? t/code-error-fg t/dialog-hint-key)
                       t/dialog-hint)
                 rendered (ellipsize (str text) list-w)]
@@ -2433,8 +2467,12 @@
             ;; brighter (dialog-fg) than it — same trick as `boxed-table/render!`.
             (when (= kind :root)
               (p/set-colors! g t/dialog-border t/dialog-bg)
-              (p/put-str! g list-x row "│")
-              (p/put-str! g (+ list-x (dec (count rendered))) row "│"))))
+              ;; Re-paint EVERY box glyph (outer edges AND the inner column
+              ;; separator) in the border color so none reads brighter than
+              ;; the top/bottom chrome.
+              (dotimes [ci (count rendered)]
+                (when (= (.charAt ^String rendered ci) \│)
+                  (p/put-str! g (+ list-x ci) row "│"))))))
         ;; Navigable list zone — subfolders only, each with a ●/○ root mark.
         (dotimes [i body-h]
           (let [idx (+ @scroll i)]

@@ -111,9 +111,9 @@
 
 (defdescribe render-test-result-test
   (let [render #'language-surface/render-test-result]
-    (it "passes render as ✓ with a pass/total headline and no body"
-        (let [{:keys [summary body]} (render {:ns "foo-test" :pass 69 :total 69 :fail 0})]
-          (expect (= "✓ foo-test — 69/69 passed" summary))
+    (it "passes render has NO success glyph, a pass/total headline with the run time, and no body"
+        (let [{:keys [summary body]} (render {:ns "foo-test" :pass 69 :total 69 :fail 0 :ms 123})]
+          (expect (= "foo-test — 69/69 passed (123ms)" summary))
           (expect (nil? body))))
     (it "marks a failing run ✗ and surfaces the output"
         (let [{:keys [summary body]} (render {:ns "foo-test" :pass 60 :total 69 :fail 9 :output "9 failures"})]
