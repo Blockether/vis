@@ -277,8 +277,15 @@
           ;; The docs file watcher (`bin/dev docs`, see docs-dev.clj) uses the
           ;; JDK's own WatchService — no extra dep — so editing docs needs no
           ;; gateway restart.
-          :extra-deps  {nrepl/nrepl                {:mvn/version "1.7.0"}
-                        io.github.tonsky/clj-reload {:mvn/version "1.0.0"}}
+          :extra-deps  {nrepl/nrepl                 {:mvn/version "1.7.0"}
+                        io.github.tonsky/clj-reload  {:mvn/version "1.0.0"}
+                        ;; lazytest on the dev nREPL classpath so run_tests takes
+                        ;; the FAST in-REPL path instead of shelling a cold
+                        ;; `clojure -M:test` (~30s JVM start) every run. Without
+                        ;; it, run-via-repl throws "Could not locate lazytest/core"
+                        ;; and falls back to the CLI even with a REPL up. Matches
+                        ;; the :test alias version.
+                        io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
         ;; Keep dev nREPL / terminal-tui stderr as quiet as `bin/vis`.
         ;; Without these flags JDK native-access / Unsafe warnings can
         ;; corrupt the Lanterna screen before Vis redirects app logs.

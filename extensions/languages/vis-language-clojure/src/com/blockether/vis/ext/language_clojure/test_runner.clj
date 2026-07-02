@@ -382,14 +382,21 @@
     (if-let [{:keys [tool cmd selectors?]} (cli-command-for root sel)]
       (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
                   (catch Throwable t {:exit -1, :out "", :err (str (.getMessage t))}))
-            out (str (:out res) (:err res))]
+            out (str (:out res) (:err res))
+            cases (some-> (re-find #"Ran (\d+) test" out) second)
+            fails (some-> (re-find #"(\d+) failures?" out) second)
+            tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
         {:mode "cli", :ns ns-str, :tool (name tool), :command (str/join " " cmd)
          :exit (:exit res), :pass? (zero? (or (:exit res) -1))
-         :note (if selectors?
-                 (str "no nREPL — ran via " (name tool) "; selectors passed through to lazytest.main")
-                 (str "no nREPL — ran the whole suite via " (name tool)
-                   (when has-sel? "; selectors do NOT apply to this build tool")
-                   "; start a REPL for a fast single-ns run"))
+         ;; Lead with the RESULT, not the missing-REPL apology: a bare
+         ;; "no nREPL — ran via clj" headline read as a skipped run (it isn't —
+         ;; `clojure -M:test` runs the real suite). Surface the tally up front.
+         :note (str "ran via " (name tool) " (no live nREPL)"
+                 (when tally (str " — " tally))
+                 (if selectors?
+                   "; selectors passed through to lazytest.main"
+                   (str (when has-sel? "; selectors do NOT apply to this build tool")
+                     "; start a REPL for a fast single-ns run")))
          :output (cli-tail out)})
       {:mode "cli", :ns ns-str
        :error (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))

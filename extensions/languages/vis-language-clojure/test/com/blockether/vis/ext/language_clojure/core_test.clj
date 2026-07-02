@@ -229,58 +229,76 @@
                   nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 (defdescribe patch-no-fail-test
-  "The :around middleware makes a Clojure anchored `patch` repair + retry instead
-   of failing on unbalanced delimiters. Unlike struct_patch the foundation patch
-   tool RETURNS a `{:success? false … :reason :syntax-error}` envelope (it does
-   not throw), so the hook inspects the result and retries once."
-  (it "repairs each edit's :replace and retries after a :syntax-error refusal"
-    (let [seen    (atom [])
-          ;; fake patch tool: refuses unbalanced :replace, accepts balanced
-          next-fn (fn [args]
-                    (let [rep (get-in (first args) [:edits 0 :replace])]
-                      (swap! seen conj rep)
-                      (if (balanced? rep)
-                        {:success? true :result [{:path "x.clj" :changed? true}]}
-                        {:success? false
-                         :error {:reason :syntax-error :message "would leave x.clj SYNTAX ERROR"}})))
-          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
-          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
-      (expect (:success? out))
-      (expect (= 2 (count @seen)))                    ; raw attempt, then repaired retry
-      (expect (balanced? (last @seen)))))             ; the retry used balanced :replace
-  (it "handles the bare-vector (multi-file) edits form with per-edit :path"
-    (let [seen    (atom [])
-          next-fn (fn [args]
-                    (let [rep (get-in (first args) [0 :replace])]
-                      (swap! seen conj rep)
-                      (if (balanced? rep)
-                        {:success? true :result [{:path "a.clj" :changed? true}]}
-                        {:success? false :error {:reason :syntax-error}})))
-          arg [{:path "a.clj" :from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]
-          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
-      (expect (:success? out))
-      (expect (balanced? (last @seen)))))
-  (it "passes a NON-syntax failure straight through (no repair, no retry)"
-    (let [calls   (atom 0)
-          next-fn (fn [_] (swap! calls inc) {:success? false :error {:reason :stale}})
-          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
-          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
-      (expect (false? (:success? out)))
-      (expect (= :stale (get-in out [:error :reason])))
-      (expect (= 1 @calls))))                         ; never retried
-  (it "leaves a non-clj target untouched (no fragment repair)"
-    (let [calls   (atom 0)
-          next-fn (fn [_] (swap! calls inc) {:success? false :error {:reason :syntax-error}})
-          arg {:path "x.py" :edits [{:from_anchor "1:abc" :replace "def f("}]}
-          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
-      (expect (false? (:success? out)))
-      (expect (= 1 @calls))))                         ; nothing repaired → no retry
-  (it "surfaces the ORIGINAL failure when the repaired retry still won't parse"
-    (let [calls   (atom 0)
-          next-fn (fn [_] (swap! calls inc)
-                    {:success? false :error {:reason :syntax-error :message (str "orig#" @calls)}})
-          arg {:path "x.clj" :edits [{:from_anchor "1:abc" :replace "(defn f [] (+ 1 2)"}]}
-          out (core/clj-patch-no-fail-around {} :patch [arg] next-fn)]
-      (expect (false? (:success? out)))
-      (expect (= 2 @calls))                           ; original + one repaired retry
-      (expect (= "orig#1" (get-in out [:error :message]))))))
+  "The :around middleware rescues an anchored `patch` that the foundation's
+   re-parse guard REFUSED: the refusal's `:metadata` carries the WHOLE-BATCH
+   `:candidate-plans` + `:broken-paths`; the hook parinfer-repairs each broken
+   candidate as a WHOLE SOURCE (fragment repair can't fix contextual imbalance
+   — the session-9c829d10 class: a locally-balanced replacement with a stray
+   closer), commits the batch itself, and substitutes a success envelope."
+  (it "whole-source-repairs the broken candidate, writes the WHOLE batch, returns success"
+    (let [root (tmp-dir)]
+      (try
+        ;; the failing class from session 9c829d10: the replacement line is
+        ;; locally balanced but carries a stray `]` — only the FULL file
+        ;; shows the imbalance, so fragment repair is a no-op on it.
+        (let [broken-candidate "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
+              clean-candidate  "(def other 1)\n"
+              refusal {:success? false
+                       :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
+                       :metadata {:candidate-plans [{:path "a.clj" :after broken-candidate}
+                                                    {:path "b.clj" :after clean-candidate}]
+                                  :broken-paths ["a.clj"]}}
+              calls  (atom 0)
+              out    (core/clj-patch-no-fail-around
+                       {:workspace/root (.getPath root)} :patch
+                       [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
+                       (fn [_] (swap! calls inc) refusal))]
+          (expect (true? (:success? out)))
+          (expect (= 1 @calls))                       ; no retry — the hook commits itself
+          ;; the broken file landed REPAIRED (balanced), the clean one verbatim
+          (let [a (slurp (io/file root "a.clj"))]
+            (expect (balanced? a))
+            (expect (= (count (re-seq #"\[" a)) (count (re-seq #"\]" a)))))
+          (expect (= "(def other 1)\n" (slurp (io/file root "b.clj"))))
+          ;; the summary marks the repaired file
+          (expect (= [true nil] (mapv :repaired? (:result out)))))
+        (finally (cleanup root)))))
+  (it "surfaces the ORIGINAL refusal when a broken candidate is NOT delimiter-repairable"
+    (let [root (tmp-dir)]
+      (try
+        ;; a candidate with NO delimiter error (fix-delimiters returns it
+        ;; unchanged) — the guard flagged it for some non-delimiter reason,
+        ;; so the hook must NOT bury the refusal (and must write NOTHING).
+        (let [refusal {:success? false
+                       :error {:reason :syntax-error :message "orig"}
+                       :metadata {:candidate-plans [{:path "a.clj" :after "(def x 1)\n"}]
+                                  :broken-paths ["a.clj"]}}
+              out (core/clj-patch-no-fail-around
+                    {:workspace/root (.getPath root)} :patch
+                    [[{:path "a.clj"}]] (fn [_] refusal))]
+          (expect (false? (:success? out)))
+          (expect (= "orig" (get-in out [:error :message])))
+          (expect (not (.exists (io/file root "a.clj")))))
+        (finally (cleanup root)))))
+  (it "surfaces the ORIGINAL refusal when a broken file is NOT Clojure"
+    (let [root (tmp-dir)]
+      (try
+        (let [refusal {:success? false
+                       :error {:reason :syntax-error}
+                       :metadata {:candidate-plans [{:path "x.py" :after "def f(:\n"}]
+                                  :broken-paths ["x.py"]}}
+              out (core/clj-patch-no-fail-around
+                    {:workspace/root (.getPath root)} :patch [[{:path "x.py"}]] (fn [_] refusal))]
+          (expect (false? (:success? out)))
+          (expect (not (.exists (io/file root "x.py")))))
+        (finally (cleanup root)))))
+  (it "passes a NON-syntax failure straight through"
+    (let [out (core/clj-patch-no-fail-around
+                {} :patch [[{:path "x.clj"}]]
+                (fn [_] {:success? false :error {:reason :stale}}))]
+      (expect (= :stale (get-in out [:error :reason])))))
+  (it "passes a syntax refusal WITHOUT candidate plans straight through (old shape)"
+    (let [out (core/clj-patch-no-fail-around
+                {} :patch [[{:path "x.clj"}]]
+                (fn [_] {:success? false :error {:reason :syntax-error}}))]
+      (expect (false? (:success? out))))))
