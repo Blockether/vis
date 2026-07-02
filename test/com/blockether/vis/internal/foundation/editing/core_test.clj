@@ -1918,6 +1918,45 @@
   (it "find_files carries an observation tag (registry-resolvable)"
       (expect (= :observation (:ext.symbol/tag editing/find-symbol)))))
 
+(defdescribe find-relevance-filter-test
+  "Regression: fff's native matcher returns a full page of loose subsequence
+   matches with no score (query \"lmstudio\" alone hit 108/489 unrelated paths).
+   find-search must post-filter fff's candidates by per-token relevance so only
+   genuine hits survive — while staying typo-tolerant and word-order-insensitive."
+  (let [relevance (private-fn "find-relevance")
+        min-score (private-fn "find-min-score")
+        find-search (private-fn "find-search")]
+    (it "scores a genuine filename hit far above scattered subsequence noise"
+        (let [genuine (relevance "lmstudio" "a/b/provider_lmstudio.clj")
+              noise   (relevance "lmstudio" "extensions/common/foundation_git/src/merge_ops.clj")]
+          (expect (>= genuine min-score))
+          (expect (< noise min-score))
+          (expect (> genuine noise))))
+    (it "is word-order-INSENSITIVE across tokens (matches fff's multi-token intent)"
+        (doseq [q ["core editing" "editing core"]]
+          (expect (>= (relevance q "src/foundation/editing/core.clj") min-score)))
+        ;; blank / all-separator queries never score
+        (expect (= 0.0 (relevance "" "anything/at/all.clj")))
+        (expect (= 0.0 (relevance "   " "anything/at/all.clj"))))
+    (it "tolerates a typo (dropped char) in the query"
+        ;; "wrkspace" is a subsequence of "workspace" — tight window, kept.
+        (expect (>= (relevance "wrkspace" "src/internal/workspace.clj") min-score)))
+    (it "find-search returns only genuine hits and drops the fuzzy padding"
+        (let [_   (write-temp! "findrel/provider_lmstudio.clj" ";; genuine\n")
+              _   (write-temp! "findrel/provider_openai.clj" ";; noise\n")
+              _   (write-temp! "findrel/foundation_voice_asr.clj" ";; noise\n")
+              _   (write-temp! "findrel/foundation_git_merge_ops.clj" ";; noise\n")
+              dir (temp-dir-path "findrel")
+              out (find-search [{:query "lmstudio" :paths [dir]}])
+              names (set (map #(last (string/split % #"/")) (:paths out)))]
+          ;; the genuine file is found
+          (expect (contains? names "provider_lmstudio.clj"))
+          ;; every returned item clears the relevance floor (no fff padding)
+          (expect (every? #(>= (:score %) min-score) (:items out)))
+          ;; scattered-subsequence noise is excluded
+          (expect (not (contains? names "foundation_git_merge_ops.clj")))
+          (expect (not (contains? names "foundation_voice_asr.clj")))))))
+
 (defdescribe structural-tool-gating-test
   "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
    structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."
