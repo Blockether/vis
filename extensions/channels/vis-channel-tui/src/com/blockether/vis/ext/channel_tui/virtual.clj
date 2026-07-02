@@ -340,7 +340,24 @@
                                                             (+ (wrapped-rows-est cm fold-w) 2)
                                                             0))]
                                                (+ a cr rr cardr comr
-                                                 (long (if (:error f) 4 0)))))
+                                                 ;; Error band: pads + caret rows + the headline
+                                                 ;; WRAPPED at fill-w — a long provider/exception
+                                                 ;; message paints multiple rows, a flat charge
+                                                 ;; undershoots. PROVIDER errors additionally paint
+                                                 ;; explanation + next-step + facts + two 600-char
+                                                 ;; raw trims, all uncollapsed — bound those by the
+                                                 ;; trim budget instead of reproducing perr here.
+                                                 (long (if-let [err (:error f)]
+                                                         (let [data      (:data err)
+                                                               provider? (and (map? data)
+                                                                           (or (:status data) (:body data)
+                                                                             (:request-id data) (:request_id data)))]
+                                                           (+ 4
+                                                             (prose-rows-est (str (or (:message err) err)) fold-w)
+                                                             (if provider?
+                                                               (+ 12 (quot (+ 1200 (dec fold-w)) fold-w))
+                                                               0)))
+                                                         0)))))
                                            0 (:forms it)))))
                                0 trace))
              ;; ▸ THINKING accordion: blank + band-top + header + band-gap
