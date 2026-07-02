@@ -298,6 +298,35 @@
             start (+ text-x (max 0 (quot (- text-w (p/display-width joined)) 2)))]
         (p/set-fg! g t/dialog-hint)
         (p/styled g [p/ITALIC] (p/put-str! g start row joined))))))
+(defn hint-bar-width
+  "Natural rendered width (chars) of a `draw-hint-bar!` hint — a plain string,
+   a vec of strings, or a vec of `[key action]` pairs — using the SAME segment
+   and separator math the hint bar paints with. Lets a dialog size its box to
+   the footer instead of a fixed terminal ratio."
+  [hint]
+  (let [sep-w (p/display-width "  \u00b7  ")]
+    (cond
+      (string? hint) (p/display-width hint)
+      (and (vector? hint) (seq hint) (vector? (first hint)))
+      (+ (reduce + (map (fn [[k a]] (+ (p/display-width k) 1 (p/display-width a))) hint))
+         (* sep-w (max 0 (dec (count hint)))))
+      (vector? hint)
+      (+ (reduce + (map p/display-width hint))
+         (* sep-w (max 0 (dec (count hint)))))
+      :else 0)))
+
+(defn footer-content-width
+  "Content width for an action-footer dialog: sized so the box is EXACTLY the
+   footer's natural width plus two columns of padding on each side, never
+   narrower than `min-content` (the widest content line) nor wider than the
+   terminal. The `+2` supplies the extra pad beyond the single-column gutter
+   `draw-dialog-chrome!` already reserves inside the border, so a footer of
+   width W yields 2 blank columns between the frame and the hints on each side."
+  ([cols hint] (footer-content-width cols hint 0))
+  ([cols hint min-content]
+   (-> (+ (hint-bar-width hint) 2)
+       (max (long min-content))
+       (min (max 1 (- cols 8))))))
 (defn- draw-list-item!
   ;; Selection visual:
   ;;   col left   : │ (frame, painted by chrome)
@@ -537,11 +566,22 @@
             g (.newTextGraphics screen)
             ;; Content-sized box: query field + margin (head-rows) + every item
             ;; (so the commands FIT, not overflow) + a bottom margin row, capped
-            ;; so a huge list still scrolls inside a sane height.
+            ;; so a huge list still scrolls inside a sane height. WIDTH shrink-
+            ;; wraps to the action footer (+2 columns padding each side), never
+            ;; narrower than the widest item label.
+            footer (cond-> []
+                     filter? (conj ["type" "filter"])
+                     true (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
+            item-w (+ 4 (reduce max 0 (map (fn [it]
+                                             (+ (p/display-width (str (:label it)))
+                                                (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
+                                           items)))
+            content-w (footer-content-width cols footer item-w)
             bounds (if content?
                      (draw-dialog-chrome! g cols rows title
-                                          (default-content-width cols) (+ head-rows (min (count items) 16) 1))
-                     (draw-dialog-chrome! g cols rows title nil))
+                                          content-w (+ head-rows (min (count items) 16) 1))
+                     (draw-dialog-chrome! g cols rows title
+                                          content-w (adaptive-content-height rows nil)))
             {:keys [left right inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-top (+ content-top head-rows)
@@ -569,10 +609,7 @@
             (scrollbar/draw! g
                              {:col (+ left inner-w), :top list-top, :track-h list-h,
                               :total-h total, :inner-h list-h, :scroll @scroll}))
-          (draw-hint-bar! g left hint-row inner-w
-                          (cond-> []
-                            filter? (conj ["type" "filter"])
-                            true (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"])))
+          (draw-hint-bar! g left hint-row inner-w footer)
           (.setCursorPosition screen (or cursor-pos (p/cursor-pos 0 0))))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -619,7 +656,11 @@
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title (max 1 total))
+            footer [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
+            item-w (+ 6 (reduce max 0 (map #(p/display-width (str %)) items)))
+            bounds (draw-dialog-chrome! g cols rows title
+                                        (footer-content-width cols footer item-w)
+                                        (adaptive-content-height rows (max 1 total)))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))
             visible (min total content-h)
@@ -633,8 +674,7 @@
               (when (< idx total)
                 (draw-checkbox-item! g left row inner-w
                                      (= idx @selected) (contains? @checked idx) (nth items idx))))))
-        (draw-hint-bar! g left hint-row inner-w
-                        [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]])
+        (draw-hint-bar! g left hint-row inner-w footer)
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -839,8 +879,9 @@
             ;; live screen with a shadow — exactly like select-dialog! — so the
             ;; chat shows around it instead of a blank wipe. The box's own bg fill
             ;; clears its interior each frame, so a shrinking list leaves nothing.
+            footer [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]]
             bounds (draw-dialog-chrome! g cols rows "Resources"
-                                        (default-content-width cols) (max 1 total))
+                                        (footer-content-width cols footer) (max 1 total))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
         (swap! selected #(clamp % 0 (max 0 (dec total))))
@@ -872,8 +913,7 @@
                   (p/put-str! g label-x row-y lbl))
                 (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (p/put-str! g action-x row-y actions)))))
-        (draw-hint-bar! g left hint-row inner-w
-                        [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+        (draw-hint-bar! g left hint-row inner-w footer)
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
