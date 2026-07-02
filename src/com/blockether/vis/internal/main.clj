@@ -1669,17 +1669,17 @@
       (stdout! (str "  Model:        " model)))
     (when-let [provider (:provider session)]
       (stdout! (str "  Provider:     " (name provider))))
-    ;; Workspace: trunk vs draft, and any extra context roots (auto-cloned in
-    ;; a draft). This is the CLI/JSON surface for "what drafts + context roots
+    ;; Workspace: trunk vs draft, and any extra filesystem roots (auto-cloned in
+    ;; a draft). This is the CLI/JSON surface for "what drafts + filesystem roots
     ;; does this session have".
     (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
                     (workspace/for-session d sid))]
       (stdout! (str "  Workspace:    "
                     (if (workspace/draft? ws) "draft (isolated workspace)" "trunk (live)")))
       (stdout! (str "  Root:         " (:root ws)))
-      (let [roots (workspace/context-roots ws)]
+      (let [roots (workspace/filesystem-roots ws)]
         (when (seq roots)
-          (stdout! (str "  Context dirs (" (count roots) "):"))
+          (stdout! (str "  Filesystem dirs (" (count roots) "):"))
           (doseq [{:keys [trunk clone fork-ms]} roots]
             (stdout! (str "    " trunk
                           (when (and fork-ms (not= clone trunk))
@@ -1748,7 +1748,7 @@
   (let [d       (lp/db-info)
         session (session-or-exit! d (get parsed "session-id"))]
     ;; DELETE removes the draft too: trash the session's draft clones (primary
-    ;; + auto-cloned context roots) before the DB tree. Draft-only — a trunk
+    ;; + auto-cloned filesystem roots) before the DB tree. Draft-only — a trunk
     ;; workspace's roots are the user's real dirs and are never touched.
     (try (workspace/discard-session-clones! d (:id session)) (catch Throwable _ nil))
     (lp/delete! (:id session))
@@ -1757,8 +1757,8 @@
 
 (defn- cli-draft-session!
   "Start a DRAFT for a session using an available isolation backend
-   and pin the session to the draft, so subsequent turns (+ any `/dir add`
-   context roots) run isolated until `/draft apply` or `/draft abandon`."
+   and pin the session to the draft, so subsequent turns (+ any `/fs add`
+   filesystem roots) run isolated until `/draft apply` or `/draft abandon`."
   [parsed _residual]
   (config/init-cli!)
   (let [d        (lp/db-info)
@@ -1787,7 +1787,7 @@
             (stdout! (str "\n  Started draft for session " (:id session)))
             (stdout! (str "    Clone: " (:root draft)))
             (stdout! (str "    Trunk: " (:repo-root draft) "  (where /draft apply lands)"))
-            (stdout! "    Add context dirs: /dir add <path>  (auto-cloned into the draft)")
+            (stdout! "    Add filesystem dirs: /fs add <path>  (auto-cloned into the draft)")
             (stdout! "    Land: /draft apply   ·   Discard: /draft abandon")
             (stdout! "")
             (shutdown-agents)))))))

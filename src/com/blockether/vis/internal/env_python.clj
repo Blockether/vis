@@ -1525,7 +1525,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         ;; off the socket capability is denied outright, so no guard is needed.
         guard?     (and net? (or (seq denied) (not allow-all?)))
         ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
-        ;; REAL filesystem access CONFINED to the current context roots (Python
+        ;; REAL filesystem access CONFINED to the current filesystem roots (Python
         ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
         ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
         ;; the I/O on the Clojure side regardless.
@@ -1678,7 +1678,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    `{:python-context :sandbox-ns :initial-ns-keys}` shape as
    `create-python-context`. The caller owns the child Context's lifecycle (close
    it when the sub_loop ends). `roots-fn` (optional) confines the child's Python
-   filesystem to the current context roots, same as the parent."
+   filesystem to the current filesystem roots, same as the parent."
   ([custom-bindings] (fork-context! custom-bindings nil nil))
   ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil))
   ([custom-bindings roots-fn network-opts] (build-agent-context custom-bindings roots-fn network-opts)))

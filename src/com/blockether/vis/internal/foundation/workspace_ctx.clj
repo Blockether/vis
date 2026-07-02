@@ -48,8 +48,8 @@
              :vcs/kind           (git-core/vcs-kind root)}
       (:id workspace)        (assoc :workspace/id (:id workspace))
       (:label workspace)     (assoc :workspace/label (:label workspace))
-      (seq (:context-roots workspace))
-      (assoc :workspace/context-roots
+      (seq (:filesystem-roots workspace))
+      (assoc :workspace/filesystem-roots
         ;; Extra dirs the session may also operate on, addressed by their REAL
         ;; path (`:dir`). Edits there are transparently isolated in a draft
         ;; copy when `:isolated?` — they land on /draft apply. Surfaced so the
@@ -57,7 +57,7 @@
         (mapv (fn [{:keys [trunk clone]}]
                 (cond-> {:dir trunk}
                   (not= clone trunk) (assoc :isolated? true)))
-          (workspace/context-roots workspace)))
+          (workspace/filesystem-roots workspace)))
       changed                (assoc :workspace/changed (count changed)
                                :workspace/changed-paths (vec (take max-changed (sort changed))))
       session-state

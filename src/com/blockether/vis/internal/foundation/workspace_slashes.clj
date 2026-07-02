@@ -13,6 +13,15 @@
      /draft apply          land the draft's changes into cwd, leave the draft
      /draft abandon [why]  discard the draft, leave it
 
+   Filesystem permissions (`/fs`, `/root`) — session-scoped, every channel:
+
+     /root [path]          show / CHANGE the session's filesystem root
+     /fs                   list the session's filesystem permissions
+     /fs root <path>       same as /root <path>
+     /fs add <path>        also let the session operate under <path>
+     /fs remove <path>     drop an added directory
+     /fs create <path>     mkdir + add it
+
    Vis owns no git lifecycle — `apply` copies the changed files into the
    user's real cwd, uncommitted. Handlers are PURE w.r.t. the channel."
   (:require [clojure.java.io :as io]
@@ -133,119 +142,163 @@
              :slash/title "On trunk — your real repo",
              :slash/body
              "Editing your repo directly. /draft new <label> to start an isolated draft."})))
-(defn- telegram-only?
-  "Context roots get first-class UI on the rich channels — the TUI's file-
-   explorer picker (Alt+D) and the web rail's `Context roots` section — so the
-   `/dir` slash tree is scoped to channels WITHOUT that UI, i.e. Telegram and
-   any other text-only surface. The TUI/web filter their slash menus by this
-   predicate, so `/dir` simply never appears there."
-  [{ch :channel/id}]
-  (= :telegram ch))
+(defn- expand-home
+  "Expand a leading `~` in a typed path to the user's home dir, so
+   `/root ~/code/proj` works the way a shell user expects. Everything else
+   passes through untouched."
+  [path]
+  (let [p (str path)]
+    (cond
+      (= p "~")                 (System/getProperty "user.home")
+      (str/starts-with? p "~/") (str (System/getProperty "user.home") (subs p 1))
+      :else                     p)))
 
-(declare handle-dir-list)
-
-(defn- handle-dir
-  "Bare `/dir` (Telegram) — list the session's context directories. The TUI and
-   web manage these through their own UI, so the slash tree is Telegram-only."
+(defn- argv-path
+  "The handler's whole argv as one `~`-expanded path string, or nil."
   [ctx]
-  (handle-dir-list ctx))
+  (some-> (str/join " " (:command/argv ctx)) str/trim not-empty expand-home))
 
-(defn- handle-dir-add
-  "`/dir add <path>` - widen the session so it may also operate on files under
-   <path>, in addition to its primary workspace root."
+(declare handle-fs-list)
+
+(defn- handle-fs
+  "Bare `/fs` — show the session's filesystem permissions (the root plus any
+   additional granted directories)."
+  [ctx]
+  (handle-fs-list ctx))
+
+(defn- handle-fs-root
+  "`/fs root <path>` (also top-level `/root <path>`) — change the session's
+   PRIMARY filesystem root. The session then works in <path>: shell cwd,
+   relative paths, file tools, and search all follow. Additional filesystem
+   roots carry over. Bare (no path) shows the current root."
+  [ctx]
+  (let [db       (ctx-db ctx)
+        state-id (ctx-session-state-id ctx)
+        current  (session-workspace ctx)
+        path     (argv-path ctx)]
+    (cond
+      (nil? path)
+      {:slash/status :ok,
+       :slash/title  (str "Root: " (or (:root current) "(none)")),
+       :slash/body   "/root <path> to work in a different directory. Additional filesystem roots carry over.",
+       :slash/data   {:root (:root current)}}
+
+      (nil? state-id)
+      (err "Send a message first, then /root <path> (session not ready yet)")
+
+      :else
+      (try
+        (let [ws    (workspace/change-root! db state-id path)
+              roots (workspace/filesystem-roots ws)]
+          {:slash/status :ok,
+           :slash/title  (str "Root changed — now working in " (:root ws)),
+           :slash/body   (str "Shell, file tools, and search operate here from the next turn."
+                           (when (seq roots)
+                             (str "\nAdditional filesystem roots kept ("
+                               (count roots) "):\n"
+                               (str/join "\n" (map #(str "  " (:trunk %)) roots))))),
+           :slash/data   {:root (:root ws), :workspace-id (:id ws),
+                          :filesystem-roots roots}})
+        (catch Exception e
+          (err (str "Can't change root to '" path "': "
+                 (or (ex-message e) (str e)))))))))
+
+(defn- handle-fs-add
+  "`/fs add <path>` - widen the session so it may also operate on files under
+   <path>, in addition to its primary filesystem root."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)
-        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+        path    (argv-path ctx)]
     (cond
       (nil? current) (err "No active workspace")
-      (nil? path)    (err "Give a directory: /dir add <path>")
+      (nil? path)    (err "Give a directory: /fs add <path>")
       :else
       (try
-        (let [ws    (workspace/add-context-root! db (:id current) path)
-              roots (workspace/context-roots ws)]
+        (let [ws    (workspace/add-filesystem-root! db (:id current) path)
+              roots (workspace/filesystem-roots ws)]
           {:slash/status :ok,
-           :slash/title  "Added a context directory - the session can work there now",
-           :slash/body   (str "Context dirs (" (count roots) "):\n"
+           :slash/title  "Added a filesystem directory - the session can work there now",
+           :slash/body   (str "Filesystem dirs (" (count roots) "):\n"
                            (str/join "\n" (map #(str "  " (:trunk %)
                                                   (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
                                                     " (isolated draft copy — lands on /draft apply)"))
                                             roots))),
-           :slash/data   {:context-roots roots}})
+           :slash/data   {:filesystem-roots roots}})
         (catch Exception e
           (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
 
-(defn- handle-dir-create
-  "`/dir create <path>` - make the directory <path> (its last segment, under an
-   existing parent), then add it as a context root so the session can work
+(defn- handle-fs-create
+  "`/fs create <path>` - make the directory <path> (its last segment, under an
+   existing parent), then add it as a filesystem root so the session can work
    there. The parent must already exist; only the final segment is created."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)
-        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+        path    (argv-path ctx)]
     (cond
       (nil? current) (err "No active workspace")
-      (nil? path)    (err "Give a directory: /dir create <path>")
+      (nil? path)    (err "Give a directory: /fs create <path>")
       :else
       (try
         (let [f       (io/file path)
               parent  (or (.getParent f) ".")
               created (workspace/create-dir! parent (.getName f))
-              ws      (workspace/add-context-root! db (:id current) created)
-              roots   (workspace/context-roots ws)]
+              ws      (workspace/add-filesystem-root! db (:id current) created)
+              roots   (workspace/filesystem-roots ws)]
           {:slash/status :ok
            :slash/title  (str "Created and added '" created "'")
-           :slash/body   (str "Context dirs (" (count roots) "):\n"
+           :slash/body   (str "Filesystem dirs (" (count roots) "):\n"
                            (str/join "\n" (map #(str "  " (:trunk %)) roots)))
-           :slash/data   {:context-roots roots :created created}})
+           :slash/data   {:filesystem-roots roots :created created}})
         (catch Exception e
           (err (str "Can't create '" path "': " (or (ex-message e) (str e)))))))))
 
-(defn- handle-dir-remove
-  "`/dir remove <path>` - stop letting the session operate under <path>."
+(defn- handle-fs-remove
+  "`/fs remove <path>` - stop letting the session operate under <path>."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)
-        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+        path    (argv-path ctx)]
     (cond
       (nil? current) (err "No active workspace")
-      (nil? path)    (err "Give a directory: /dir remove <path>")
+      (nil? path)    (err "Give a directory: /fs remove <path>")
       :else
-      (let [ws    (workspace/remove-context-root! db (:id current) path)
-            roots (workspace/context-roots ws)]
+      (let [ws    (workspace/remove-filesystem-root! db (:id current) path)
+            roots (workspace/filesystem-roots ws)]
         {:slash/status :ok,
-         :slash/title  "Removed a context directory",
+         :slash/title  "Removed a filesystem directory",
          :slash/body   (if (seq roots)
-                         (str "Context dirs (" (count roots) "):\n"
+                         (str "Filesystem dirs (" (count roots) "):\n"
                            (str/join "\n" (map #(str "  " (:trunk %)
                                                   (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
                                                     " (isolated draft copy — lands on /draft apply)"))
                                             roots)))
-                         "No extra context dirs - back to the primary root only."),
-         :slash/data   {:context-roots roots}}))))
+                         "No extra filesystem dirs - back to the primary root only."),
+         :slash/data   {:filesystem-roots roots}}))))
 
-(defn- handle-dir-list
-  "`/dir list` - show the directories the session may operate on. The
-   workspace root (the dir vis was started in) is ALWAYS context root #1 —
-   vis reads/edits there by default; added roots are extras. Enumerated so
-   the listing matches the web rail's `Context roots` (workspace first)."
+(defn- handle-fs-list
+  "`/fs list` (also bare `/fs`) - show the session's filesystem permissions.
+   The ROOT (changeable via /root <path>) is always #1 — vis reads/edits
+   there by default; added roots are extra grants. Enumerated so the listing
+   matches the web rail's `Filesystem` section (root first)."
   [ctx]
   (let [current (session-workspace ctx)
         base    (:root current)
-        roots   (some-> current workspace/context-roots)
+        roots   (some-> current workspace/filesystem-roots)
         total   (+ (if base 1 0) (count roots))]
     {:slash/status :ok,
-     :slash/title  "Context directories",
-     :slash/body   (str "Context roots (" total "):\n"
+     :slash/title  "Filesystem",
+     :slash/body   (str "Filesystem roots (" total "):\n"
                      (str/join "\n"
                        (remove nil?
-                         (cons (when base (str "  " base "   (workspace — always set)"))
+                         (cons (when base (str "  " base "   (root — /root <path> to change)"))
                            (map #(str "  " (:trunk %)
                                    (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
                                      " (isolated draft copy — lands on /draft apply)"))
                              roots))))
-                     "\n\n/dir add <path> to widen, /dir remove <path> to drop one."),
-     :slash/data   {:context-roots roots :root base}}))
+                     "\n\n/fs add <path> to widen, /fs remove <path> to drop one, /root <path> to change the root."),
+     :slash/data   {:filesystem-roots roots :root base}}))
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -277,41 +330,49 @@
           :slash/usage "/draft abandon [reason]",
           :slash/requires #{:session},
           :slash/run-fn handle-abandon}]
-    ;; Telegram-only: rich channels manage context roots through their own UI
-    ;; (TUI Alt+D picker, web rail), so every `/dir` spec is gated by
-    ;; `telegram-only?` and never shows in the TUI/web slash menus.
-    [{:slash/name "dir",
-      :slash/doc "Show or manage the directories the session may operate on.",
-      :slash/usage "/dir",
-      :slash/availability-fn telegram-only?,
-      :slash/run-fn handle-dir}
+    ;; Filesystem permissions — available on EVERY channel: rich channels keep
+    ;; their pickers (TUI directory dialog, web rail), but /root and /fs work
+    ;; typed anywhere, which is how a web session moves to a different project.
+    [{:slash/name "root",
+      :slash/doc "Show or change the session's filesystem root (the directory vis works in).",
+      :slash/usage "/root [path]",
+      :slash/run-fn handle-fs-root}
+     {:slash/name "fs",
+      :slash/doc "Filesystem permissions — the directories this session may read and edit.",
+      :slash/usage "/fs",
+      ;; Rich channels realize bare `/fs` as their directory picker UI
+      ;; (the TUI's Ctrl+G dialog); text channels run the list handler.
+      :slash/ui {:kind :dir-picker},
+      :slash/run-fn handle-fs}
+     {:slash/name "root",
+      :slash/parent ["fs"],
+      :slash/doc "Change the session's filesystem root to <path>.",
+      :slash/usage "/fs root <path>",
+      :slash/requires #{:session},
+      :slash/run-fn handle-fs-root}
      {:slash/name "add",
-      :slash/parent ["dir"],
+      :slash/parent ["fs"],
       :slash/doc "Let the session also operate on files under <path>.",
-      :slash/usage "/dir add <path>",
-      :slash/availability-fn telegram-only?,
+      :slash/usage "/fs add <path>",
       :slash/requires #{:session},
-      :slash/run-fn handle-dir-add}
+      :slash/run-fn handle-fs-add}
      {:slash/name "create",
-      :slash/parent ["dir"],
+      :slash/parent ["fs"],
       :slash/doc "Create a new directory and let the session operate under it.",
-      :slash/usage "/dir create <path>",
-      :slash/availability-fn telegram-only?,
+      :slash/usage "/fs create <path>",
       :slash/requires #{:session},
-      :slash/run-fn handle-dir-create}
+      :slash/run-fn handle-fs-create}
      {:slash/name "remove",
-      :slash/parent ["dir"],
+      :slash/parent ["fs"],
       :slash/doc "Stop letting the session operate under <path>.",
-      :slash/usage "/dir remove <path>",
-      :slash/availability-fn telegram-only?,
+      :slash/usage "/fs remove <path>",
       :slash/requires #{:session},
-      :slash/run-fn handle-dir-remove}
+      :slash/run-fn handle-fs-remove}
      {:slash/name "list",
-      :slash/parent ["dir"],
-      :slash/doc "Show the directories the session may operate on.",
-      :slash/usage "/dir list",
-      :slash/availability-fn telegram-only?,
-      :slash/run-fn handle-dir-list}]))
+      :slash/parent ["fs"],
+      :slash/doc "Show the session's filesystem permissions.",
+      :slash/usage "/fs list",
+      :slash/run-fn handle-fs-list}]))
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."
   (build-specs))

@@ -1,16 +1,16 @@
 (ns com.blockether.vis.internal.sandbox-fs
   "A GraalPy `FileSystem` that gives the Python sandbox REAL filesystem access
-   CONFINED to the session's context roots.
+   CONFINED to the session's filesystem roots.
 
    Security model — every path-accessing operation canonicalizes its arguments
-   and refuses anything that does not resolve UNDER a current context root:
+   and refuses anything that does not resolve UNDER a current filesystem root:
 
      - `..` traversal is defeated by `normalize`.
      - symlink escapes are defeated by resolving the path through the REAL path
        of its nearest existing ancestor (so a symlink inside a root that points
        outside is rejected, and a symlink whose target is inside is allowed).
      - the root set is read LIVE via `roots-fn` on every check, so
-       `/dir add|remove` takes effect immediately.
+       `/fs add|remove` takes effect immediately.
 
    GraalPy's own stdlib / internal resources live OUTSIDE the roots, so the
    confined FS is wrapped with `allowLanguageHomeAccess` +
@@ -45,8 +45,8 @@
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
 (defn- current-real-roots
-  "Canonical (real) Paths of the CURRENT context roots. Reads the root STRINGS
-   fresh each call (so `/dir add|remove` applies live), but MEMOIZES the expensive
+  "Canonical (real) Paths of the CURRENT filesystem roots. Reads the root STRINGS
+   fresh each call (so `/fs add|remove` applies live), but MEMOIZES the expensive
    `toRealPath` syscall per root string in `cache` (a string→Path atom). A root
    dir's canonical path is stable, so this turns what was a stat-per-root on EVERY
    file op — an os.walk/glob over a big tree was a syscall storm — into one stat
@@ -75,12 +75,12 @@
         roots    (current-real-roots roots-fn cache)]
     (when-not (some (fn [^Path root] (.startsWith real root)) roots)
       (throw (SecurityException.
-               (str "vis sandbox: '" pp "' is outside the context roots — read/write "
-                 "files via the file tools (cat/rg/patch), or add the dir with `/dir add`."))))
+               (str "vis sandbox: '" pp "' is outside the filesystem roots — read/write "
+                 "files via the file tools (cat/rg/patch), or add the dir with `/fs add`."))))
     pp))
 
 (defn confined-filesystem
-  "A GraalPy `FileSystem` confined to the context roots returned by `roots-fn`
+  "A GraalPy `FileSystem` confined to the filesystem roots returned by `roots-fn`
    (a 0-arg fn → seq of root path strings). Delegates real I/O to the default FS
    after confining every path argument. Wrapped so GraalPy's own stdlib / bundled
    resources stay readable. Uses `proxy` (runtime dispatch) so the interface's

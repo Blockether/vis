@@ -273,7 +273,7 @@
      (do ~@body)
      (expect (not (ws/isolated-workspaces-supported? ~base)))))
 
-(defdescribe context-roots-test
+(defdescribe filesystem-roots-test
   (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
     (with-store
       (fn [store]
@@ -285,22 +285,22 @@
               a   (temp-dir "ctx-a")
               b   (temp-dir "ctx-b")]
           (try
-            (ws/add-context-root! store wid a)
-            (ws/add-context-root! store wid b)
-            (ws/add-context-root! store wid b) ;; duplicate -> no-op
-            (let [roots (ws/context-roots (ws/get store wid))]
+            (ws/add-filesystem-root! store wid a)
+            (ws/add-filesystem-root! store wid b)
+            (ws/add-filesystem-root! store wid b) ;; duplicate -> no-op
+            (let [roots (ws/filesystem-roots (ws/get store wid))]
               (expect (= [a b] (mapv :trunk roots)))
                 ;; trunk session → live, NOT cloned
               (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
-            (ws/remove-context-root! store wid a)
-            (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
+            (ws/remove-filesystem-root! store wid a)
+            (expect (= [b] (mapv :trunk (ws/filesystem-roots (ws/get store wid)))))
             (expect (= :threw
-                      (try (ws/add-context-root! store wid "/no/such/dir/zzz")
+                      (try (ws/add-filesystem-root! store wid "/no/such/dir/zzz")
                         :no-throw
                         (catch clojure.lang.ExceptionInfo _ :threw))))
             (finally (delete-tree! a) (delete-tree! b)))))))
 
-  (it "on a DRAFT session: a context root is auto-cloned, edits land on apply!, clones trashed on abandon!"
+  (it "on a DRAFT session: a filesystem root is auto-cloned, edits land on apply!, clones trashed on abandon!"
     (let [base (temp-dir "vis-ws-ctx-base")
           ext  (temp-dir "vis-ws-ctx-ext")]
       (try
@@ -313,8 +313,8 @@
                   draft    (ws/create! store {:from seed})
                   draft-id (:id draft)]
               (try
-                (ws/add-context-root! store draft-id ext)
-                (let [entry (first (ws/context-roots (ws/get store draft-id)))]
+                (ws/add-filesystem-root! store draft-id ext)
+                (let [entry (first (ws/filesystem-roots (ws/get store draft-id)))]
                   ;; auto-cloned: a real distinct working copy with a fork baseline
                   (expect (= (.getCanonicalPath (io/file ext)) (:trunk entry)))
                   (expect (not= (:trunk entry) (:clone entry)))
@@ -337,7 +337,7 @@
                   (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil))))))))
         (finally (delete-tree! base) (delete-tree! ext)))))
 
-  (it "a DRAFT with MORE THAN ONE context root clones each, and apply! lands them all"
+  (it "a DRAFT with MORE THAN ONE filesystem root clones each, and apply! lands them all"
     (let [base (temp-dir "vis-multi-base")
           e1   (temp-dir "vis-multi-e1")
           e2   (temp-dir "vis-multi-e2")]
@@ -351,9 +351,9 @@
             (let [draft (ws/create! store {:from (seed-workspace! store base)})
                   did   (:id draft)]
               (try
-                (ws/add-context-root! store did e1)
-                (ws/add-context-root! store did e2)
-                (let [roots (ws/context-roots (ws/get store did))]
+                (ws/add-filesystem-root! store did e1)
+                (ws/add-filesystem-root! store did e2)
+                (let [roots (ws/filesystem-roots (ws/get store did))]
                   (expect (= 2 (count roots)))
                   (expect (every? #(not= (:trunk %) (:clone %)) roots)) ;; both cloned
                   (Thread/sleep 8)
@@ -380,14 +380,14 @@
             (let [draft (ws/create! store {:from (seed-workspace! store base)})
                   soul  (str (random-uuid))]
               (pin-session! store soul (:id draft))
-              (ws/add-context-root! store (:id draft) ext)
-              (let [entry (first (ws/context-roots (ws/get store (:id draft))))]
+              (ws/add-filesystem-root! store (:id draft) ext)
+              (let [entry (first (ws/filesystem-roots (ws/get store (:id draft))))]
                 (expect (.exists (io/file (:root draft))))
                 (expect (.exists (io/file (:clone entry))))
                 (ws/discard-session-clones! store soul)
                 (expect (not (.exists (io/file (:root draft)))))
                 (expect (not (.exists (io/file (:clone entry)))))
-                (expect (.exists (io/file ext)))))            ;; REAL context dir untouched
+                (expect (.exists (io/file ext)))))            ;; REAL filesystem dir untouched
             ;; TRUNK session → discard must NEVER touch the user's real cwd
             (let [trunk (ws/create-trunk-at! store live)
                   soul2 (str (random-uuid))]
@@ -395,3 +395,73 @@
               (ws/discard-session-clones! store soul2)
               (expect (.exists (io/file live)))))))
         (finally (delete-tree! base) (delete-tree! ext) (delete-tree! live))))))
+
+(defdescribe change-root-test
+  (it "repoints the session to a trunk at the new path and carries extras over"
+    (let [a (temp-dir "vis-root-a") b (temp-dir "vis-root-b") ext (temp-dir "vis-root-ext")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (ws/create-trunk-at! store a)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))]
+              (ws/add-filesystem-root! store (:id trunk) ext)
+              (let [ws2 (ws/change-root! store state-id b)]
+                ;; a fresh TRUNK at b, now pinned to the session
+                (expect (= (ws/normalize-root b) (:root ws2)))
+                (expect (= (:id ws2) (:id (ws/for-session store state-id))))
+                (expect (not (ws/draft? ws2)))
+                ;; additional filesystem roots are session permissions — they carry
+                (expect (= [(ws/normalize-root ext)]
+                          (mapv :trunk (ws/filesystem-roots ws2))))))))
+        (finally (delete-tree! a) (delete-tree! b) (delete-tree! ext)))))
+
+  (it "is a no-op returning the SAME workspace when the path already is the root"
+    (let [a (temp-dir "vis-root-same")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (ws/create-trunk-at! store a)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                  ws2      (ws/change-root! store state-id a)]
+              (expect (= (:id trunk) (:id ws2))))))
+        (finally (delete-tree! a)))))
+
+  (it "drops a carried extra that equals the new root (it is the root now)"
+    (let [a (temp-dir "vis-root-promote") ext (temp-dir "vis-root-promote-ext")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (ws/create-trunk-at! store a)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))]
+              (ws/add-filesystem-root! store (:id trunk) ext)
+              (let [ws2 (ws/change-root! store state-id ext)]
+                (expect (= (ws/normalize-root ext) (:root ws2)))
+                (expect (empty? (ws/filesystem-roots ws2)))))))
+        (finally (delete-tree! a) (delete-tree! ext)))))
+
+  (it "refuses while the session is in a draft"
+    (let [a (temp-dir "vis-root-draft") b (temp-dir "vis-root-draft-b")]
+      (try
+        (with-store
+          (fn [store]
+            ;; seed-workspace! stamps fork-ms 0 → draft? true
+            (let [seed     (seed-workspace! store a)
+                  state-id (pin-session! store (str (random-uuid)) (:id seed))
+                  thrown   (try (ws/change-root! store state-id b) nil
+                             (catch Exception t t))]
+              (expect (some? thrown))
+              (expect (= :workspace/root-change-in-draft (:type (ex-data thrown)))))))
+        (finally (delete-tree! a) (delete-tree! b)))))
+
+  (it "throws on a non-directory path"
+    (let [a (temp-dir "vis-root-nodir")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (ws/create-trunk-at! store a)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                  thrown   (try (ws/change-root! store state-id (str a "/nope-missing")) nil
+                             (catch Exception t t))]
+              (expect (some? thrown))
+              (expect (= :workspace/not-a-directory (:type (ex-data thrown)))))))
+        (finally (delete-tree! a))))))

@@ -537,7 +537,7 @@ cursor:pointer;padding:.6rem .65rem;border-radius:var(--r-md);transition:backgro
 border:1px dashed var(--line2);border-radius:var(--r-md);margin:0}
 .dir-err{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--err);margin:0}
 .dir-err .icon{width:14px;height:14px;flex:none}
-/* context roots promoted INTO the picker (TUI parity) — a titled list with a
+/* filesystem roots promoted INTO the picker (TUI parity) — a titled list with a
    membership dot, workspace/added tag, and in-place remove for added roots */
 .dir-roots-zone{gap:.4rem}
 .dir-roots{list-style:none;display:flex;flex-direction:column;gap:.25rem;margin:.1rem 0 0;padding:0}
@@ -554,26 +554,36 @@ border:1px dashed var(--line2);border-radius:var(--r-md);margin:0}
 .dir-notice{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--ok);margin:0}
 .dir-notice .icon{width:14px;height:14px;flex:none}
 /* create-folder row: labelled text input + a Create button (icon + word) */
-.dir-create{display:flex;gap:.5rem;align-items:stretch}
-.dir-create-input{flex:1;min-width:0;padding:var(--field-py) var(--field-px);border:1px solid var(--line2);
+.fs-create{display:flex;gap:.5rem;align-items:stretch}
+.fs-create-input{flex:1;min-width:0;padding:var(--field-py) var(--field-px);border:1px solid var(--line2);
 border-radius:var(--r-md);background:var(--bg);color:var(--fg);font-size:max(16px,.85rem)}
-.dir-create-input:focus{outline:0;border-color:var(--gold)}
-.dir-create-btn{flex:none;display:inline-flex;align-items:center;gap:.4rem;
+.fs-create-input:focus{outline:0;border-color:var(--gold)}
+.fs-create-btn{flex:none;display:inline-flex;align-items:center;gap:.4rem;
 padding:0 .9rem;border-radius:var(--r-md);border:1px solid var(--line2);background:var(--bg);
 color:var(--fg);font-size:.84rem;font-weight:600;cursor:pointer;transition:background .1s,border-color .1s}
-.dir-create-btn:hover{background:var(--hover);border-color:var(--gold2)}
-.dir-create-btn .icon{width:15px;height:15px}
+.fs-create-btn:hover{background:var(--hover);border-color:var(--gold2)}
+.fs-create-btn .icon{width:15px;height:15px}
 /* primary action: full-width, names the folder it will add + shows the path */
-.dir-add-form{margin-top:.2rem;padding-top:.85rem;border-top:1px solid var(--line)}
-.dir-add-btn{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
+.fs-add-form{margin-top:.2rem;padding-top:.85rem;border-top:1px solid var(--line)}
+.fs-add-btn{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
 padding:.7rem .9rem;border-radius:var(--r-lg);border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);transition:filter .12s}
-.dir-add-btn:hover{filter:brightness(1.05)}
-.dir-add-btn .icon{width:18px;height:18px;flex:none}
-.dir-add-text{display:flex;flex-direction:column;gap:.05rem;min-width:0}
-.dir-add-main{font-size:.9rem;font-weight:700;line-height:1.2}
-.dir-add-sub{font-family:var(--mono);font-size:.74rem;font-weight:500;opacity:.78;
+.fs-add-btn:hover{filter:brightness(1.05)}
+.fs-add-btn .icon{width:18px;height:18px;flex:none}
+.fs-add-text{display:flex;flex-direction:column;gap:.05rem;min-width:0}
+.fs-add-main{font-size:.9rem;font-weight:700;line-height:1.2}
+.fs-add-sub{font-family:var(--mono);font-size:.74rem;font-weight:500;opacity:.78;
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* stacked picker actions: add-as-root + make-root offered together */
+.fs-actions{display:flex;flex-direction:column;gap:.45rem;margin-top:.2rem;padding-top:.85rem;border-top:1px solid var(--line)}
+.fs-actions .fs-add-form,.fs-actions .dir-already{margin-top:0;padding-top:0;border-top:0}
+/* secondary action: promote the browsed folder to the session's ROOT */
+.fs-root-form{margin:0}
+.fs-root-btn{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
+padding:.7rem .9rem;border-radius:var(--r-lg);cursor:pointer;
+border:1px solid var(--line);background:var(--panel2);color:var(--fg);transition:filter .12s}
+.fs-root-btn:hover{filter:brightness(1.05)}
+.fs-root-btn .icon{width:18px;height:18px;flex:none}
 /* already-a-root state: muted green, not a button (no add to fake) */
 .dir-already{display:flex;align-items:center;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-lg);
 background:color-mix(in srgb,var(--ok) 12%,var(--bg));color:var(--ok);cursor:default}
@@ -711,7 +721,7 @@ letter-spacing:.1em;color:var(--dim)}
 .rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
 /* ── unified rail section header + action button ───────────────────
-   Every rail section that has an action (Routing→Change, Context roots→Add,
+   Every rail section that has an action (Routing→Change, Filesystem→Manage,
    Resources→Manage) presents it the SAME way: a header row with the title on
    the left and ONE consistently-styled `.ctx-action` button on the right.
    No more "click the model value" vs "dashed Add" vs "solid Manage". */
@@ -725,18 +735,18 @@ padding:.22rem .52rem;line-height:1.2;cursor:pointer;white-space:nowrap;transiti
 .ctx-action:focus-visible{outline:0;box-shadow:0 0 0 3px var(--warn-bg)}
 
 .ctx-action .icon{width:14px;height:14px;min-width:14px;min-height:14px;stroke-width:2}
-.ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
-.ctx-roots-notice{display:flex;align-items:center;gap:.35rem;margin:.15rem 0 .35rem;color:var(--ok);font-size:.74rem}
-.ctx-roots-notice .icon{width:13px;height:13px}
-.ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.78rem;line-height:1.45}
-.ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
-.ctx-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--indigo);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 .25rem}
+.fs-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
+.fs-roots-notice{display:flex;align-items:center;gap:.35rem;margin:.15rem 0 .35rem;color:var(--ok);font-size:.74rem}
+.fs-roots-notice .icon{width:13px;height:13px}
+.fs-root{display:flex;align-items:center;gap:.4rem;font-size:.78rem;line-height:1.45}
+.fs-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
+.fs-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--indigo);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 .25rem}
 /* the workspace (base) root: gold "workspace" tag, no remove control */
-.ctx-root-tag{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--amber);background:var(--warn-bg);border-radius:var(--r-xs);padding:0 .3rem}
-.ctx-root-base .ctx-root-path{font-weight:600}
-.ctx-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
-.ctx-root-remove:hover{color:var(--err);background:var(--panel2)}
-.ctx-root-remove .icon{width:13px;height:13px}
+.fs-root-tag{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--amber);background:var(--warn-bg);border-radius:var(--r-xs);padding:0 .3rem}
+.fs-root-base .fs-root-path{font-weight:600}
+.fs-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
+.fs-root-remove:hover{color:var(--err);background:var(--panel2)}
+.fs-root-remove .icon{width:13px;height:13px}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:var(--r-2xs);background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
@@ -960,7 +970,7 @@ animation:foot-in .2s ease both}
 .foot-routing-overload{display:inline-flex;align-items:center;gap:.25rem;color:var(--err);font-weight:650}
 
 .active-model-hint{color:var(--dim);font-weight:400}
-/* footer draft / context-root isolation badge — drafts are notable, so amber */
+/* footer draft / filesystem-root isolation badge — drafts are notable, so amber */
 /* footer dirs/workspace is a button (opens the session-scoped dir picker) */
 button.foot-draft{color:var(--amber);background:none;border:0;padding:0;
 cursor:pointer;font-size:inherit;line-height:inherit;transition:filter .12s}

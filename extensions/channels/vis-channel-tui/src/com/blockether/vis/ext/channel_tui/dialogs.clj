@@ -21,7 +21,7 @@
 
 (defn- abbreviate-home
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with
-   `~`, matching the footer/navigator and web context-roots rail."
+   `~`, matching the footer/navigator and web filesystem-roots rail."
   [^String path]
   (let [path (str path)
         home (System/getProperty "user.home")]
@@ -2316,12 +2316,12 @@
        (some-> (.getCharacter key) Character/toLowerCase (= letter))))
 
 (defn directory-picker-dialog!
-  "Browse the filesystem like a file explorer and manage this session's context
-   roots. Returns the chosen absolute path (string) to OPEN IN A NEW TAB, or nil
-   on Esc.
+  "Browse the filesystem like a file explorer and manage this session's
+   filesystem permissions. Returns the chosen absolute path (string) to OPEN
+   IN A NEW TAB, or nil on Esc.
 
    The picker has TWO clearly separated zones. The read-only HEADER shows the
-   current path, the session's context roots (when `:db-info` + `:workspace-id`
+   current path, the session's filesystem roots (when `:db-info` + `:workspace-id`
    are supplied), and whether the current folder is itself a root. The navigable
    LIST below holds ONLY filesystem entries: `..`, subfolders (navigable), and
    files (dimmed, for context). Nothing in the list is an \"action\" — actions
@@ -2329,30 +2329,35 @@
 
      Up/Down       move          Enter / →   open folder (·· ascends)
      ←             up a level    Tab         open current folder in a new tab
-     Ctrl+A        add the HIGHLIGHTED subfolder as a context root (or the
+     Ctrl+A        add the HIGHLIGHTED subfolder as a filesystem root (or the
                    current folder when a file / `..` is highlighted); removes it
                    if already a root (no-op without a session)
+     Ctrl+R        make the HIGHLIGHTED folder (or the current one) the
+                   session's ROOT — shell, file tools, and search work there
+                   from the next turn (needs `:session-state-id`)
      Ctrl+N        create a new folder here, then enter it
      type / Bksp   filter the list incrementally     Esc   close
 
-   `:purpose` only sets the dialog title (`:add-root` → \"Add a context
+   `:purpose` only sets the dialog title (`:add-root` → \"Add a filesystem
    directory\", `:new-folder` → \"Create a directory\", `:remove` → \"Remove a
-   context directory\"); the controls are identical regardless — bare `/dir`
-   titles it \"Open directory\"."
-  [^TerminalScreen screen start-path & {:keys [db-info workspace-id purpose]}]
+   filesystem directory\"); the controls are identical regardless."
+  [^TerminalScreen screen start-path & {:keys [db-info workspace-id session-state-id purpose]}]
   (let [path     (atom (dir-canon (java.io.File. ^String (or start-path "."))))
         selected (atom 0)
         scroll   (atom 0)
         query    (atom "")
-        ;; Last C-a add/remove outcome, so a FAILED mutation is visible instead of
+        ;; Last C-a / C-r outcome, so a FAILED mutation is visible instead of
         ;; silently swallowed. `[dir-canon-str level text]` — shown only while the
         ;; picker still sits on the same folder (navigating away clears it).
         notice   (atom nil)
+        ;; C-r (change root) repoints the session to a NEW workspace row — the
+        ;; picker tracks the live id so the header roots stay truthful after.
+        wid      (atom workspace-id)
         manager? (boolean (and db-info workspace-id))
         title    (case purpose
-                   :add-root   "Add a context directory"
+                   :add-root   "Add a filesystem directory"
                    :new-folder "Create a directory"
-                   :remove     "Remove a context directory"
+                   :remove     "Remove a filesystem directory"
                    "Open directory")
         norm     (fn [p] (some-> p str not-empty
                                  (#(try (str (workspace/normalize-root %))
@@ -2361,9 +2366,9 @@
       (let [^java.io.File dir @path
             up?      (some? (.getParentFile dir))
             ws       (when manager?
-                       (try (workspace/get db-info workspace-id) (catch Throwable _ nil)))
+                       (try (workspace/get db-info @wid) (catch Throwable _ nil)))
             base     (:root ws)
-            extras   (when ws (try (workspace/context-roots ws) (catch Throwable _ nil)))
+            extras   (when ws (try (workspace/filesystem-roots ws) (catch Throwable _ nil)))
             dir-canon-str (norm (.getPath dir))
             base-canon    (norm base)
             extra-set     (set (keep #(norm (:trunk %)) extras))
@@ -2373,7 +2378,7 @@
             ;; The list is PURELY filesystem navigation — subfolders only.
             ;; Files are hidden (they were inert noise); every folder shows a
             ;; ●/○ membership mark (manager mode) so you can tell, before you
-            ;; act, whether it is already a context root.
+            ;; act, whether it is already a filesystem root.
             root-of? (fn [n]
                        (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
                          (or (= s base-canon) (contains? extra-set s))))
@@ -2409,7 +2414,7 @@
             list-x   (+ left 2)
             list-w   (max 1 (- inner-w 3))
             ;; ── Header zone ────────────────────────────────────────────────
-            ;; Manager mode promotes this session's context roots to a real
+            ;; Manager mode promotes this session's filesystem roots to a real
             ;; boxed section (each root a row: ● mark + abbreviated path + a
             ;; tag), then a BROWSE line for the current folder. Non-manager
             ;; mode is just the breadcrumb.
@@ -2418,7 +2423,7 @@
             path-w   (max 1 (- list-w tag-w 7))
             roots    (when manager?
                        (vec (concat
-                             (when base [{:path (str base) :tag "workspace"}])
+                             (when base [{:path (str base) :tag "root"}])
                              (map (fn [e] {:path (:trunk e) :tag "added"}) extras))))
             root-row (fn [{:keys [path tag]}]
                        (table/boxed-row-line [path-w tag-w]
@@ -2428,7 +2433,7 @@
             header-rows
             (if manager?
               (vec (concat
-                    [{:kind :section :text (str "CONTEXT ROOTS (" (count roots) ")")}]
+                    [{:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
                     (if (seq roots)
                       (concat
                        [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
@@ -2459,14 +2464,34 @@
                              (cond
                                target-base?
                                (reset! notice [dir-canon-str :error
-                                               "This is the workspace root — it can't be removed"])
+                                               "This is the session's root — C-r on another folder to change it"])
                                :else
                                (try
                                  (if target-already?
-                                   (workspace/remove-context-root! db-info workspace-id (.getPath target-dir))
-                                   (workspace/add-context-root! db-info workspace-id (.getPath target-dir)))
+                                   (workspace/remove-filesystem-root! db-info @wid (.getPath target-dir))
+                                   (workspace/add-filesystem-root! db-info @wid (.getPath target-dir)))
                                  (reset! notice [dir-canon-str :ok
                                                  (str (if target-already? "Removed " "Added ") target-name)])
+                                 (catch Throwable t
+                                   (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
+            ;; C-r: make the highlighted (or current) folder the session's
+            ;; PRIMARY root — repoints the session workspace; shell/file
+            ;; tools/search follow from the next turn.
+            set-root!    (fn []
+                           (when manager?
+                             (cond
+                               (nil? session-state-id)
+                               (reset! notice [dir-canon-str :error
+                                               "No session yet — send a message first, then set a root"])
+                               target-base?
+                               (reset! notice [dir-canon-str :ok "Already the session's root"])
+                               :else
+                               (try
+                                 (let [new-ws (workspace/change-root! db-info session-state-id
+                                                                      (.getPath target-dir))]
+                                   (reset! wid (:id new-ws))
+                                   (reset! notice [dir-canon-str :ok
+                                                   (str "Root changed — session now works in " target-name)]))
                                  (catch Throwable t
                                    (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
             enter!   (fn []
@@ -2552,7 +2577,8 @@
         (draw-hint-bar! g left hint-row inner-w
                         (if manager?
                           [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
-                           ["C-n" "new folder"] ["Tab" "open tab"] ["Esc" "close"]]
+                           ["C-r" "set as root"] ["C-n" "new folder"]
+                           ["Tab" "open tab"] ["Esc" "close"]]
                           [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"]
                            ["Tab" "open tab"] ["Esc" "close"]]))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -2566,6 +2592,7 @@
               ;; Actions are MODIFIER keys, never list rows, so plain typing
               ;; (incl. the letters a/n) keeps filtering the list.
               (ctrl-letter? key \a) (do (toggle-root!) (recur))
+              (ctrl-letter? key \r) (do (set-root!) (recur))
               (ctrl-letter? key \n)
               (let [nm (text-input-dialog! screen "New folder"
                                            (str "Create under " (.getPath dir)) :flat? true)]
@@ -2848,7 +2875,7 @@
    {:id :search-open,     :label "Search in Session"}
    {:id :open-resources,  :label "Managed Resources"}
    {:id :show-sessions,   :label "Switch Session"}
-   {:id :open-dirs,       :label "Context Roots"}
+   {:id :open-dirs,       :label "Filesystem"}
    {:id :pick-file,       :label "Attach File"}
    {:id :toggle-voice-recording, :label "Voice Recording"}
    {:id :new-session,     :label "New Session"}

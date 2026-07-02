@@ -187,9 +187,9 @@
 (defn- safe-path
   ^File [p]
   ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
-  ;; workspace cwd plus any extra context roots bound for this turn. Relative
+  ;; workspace cwd plus any extra filesystem roots bound for this turn. Relative
   ;; paths resolve against the primary root; an absolute path is taken as-is so
-  ;; it may land under an added context root. The confinement check runs on
+  ;; it may land under an added filesystem root. The confinement check runs on
   ;; CANONICAL paths (symlinks resolved, e.g. macOS /tmp -> /private/tmp) so it
   ;; matches the canonical allowed roots AND a symlink that points outside every
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
@@ -202,7 +202,7 @@
         ;; relative → under cwd; absolute → as-is. Canonical throughout so
         ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
         ^java.nio.file.Path canonical (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
-        mappings  (workspace/context-root-mappings)
+        mappings  (workspace/filesystem-root-mappings)
         ;; The model addresses a context file by its REAL (trunk) path; remap it
         ;; transparently onto the rift clone where edits land. The remapped
         ;; target is ALWAYS under an allowed clone root, so confinement holds.
@@ -250,14 +250,14 @@
                         ^java.nio.file.Path tp (canon trunk)]
                     (when (.startsWith p cp)
                       (paths/unixify (.resolve tp (.relativize cp p))))))
-                (workspace/context-root-mappings))
+                (workspace/filesystem-root-mappings))
           (str p)))))
 
 (defn- resolve-search-roots
   "Resolve rg/find `paths` to canonical root Files. The DEFAULT/unscoped
    `[\".\"]` expands to the FULL allowed-roots set — the primary cwd PLUS
-   every bound context-root clone — so an unscoped search sweeps ALL
-   context roots, not just the primary. Explicit paths resolve through
+   every bound filesystem-root clone — so an unscoped search sweeps ALL
+   filesystem roots, not just the primary. Explicit paths resolve through
    `safe-path` (confinement + trunk↔clone remap).
 
    A search is FORGIVING about a MISSING path: the model routinely lists
@@ -957,7 +957,7 @@
   "Throw `InterruptedException` when the worker thread has been interrupted
    (e.g. by `cancel!` cancelling the turn's worker future). Long recursive
    directory walks poll this so Esc aborts them promptly instead of running
-   the whole tree to completion - the symptom when `/dir add ..` widens the
+   the whole tree to completion - the symptom when `/fs add ..` widens the
    session onto a huge parent tree and the spinner hangs on 'cancelling'."
   []
   (when (.isInterrupted (Thread/currentThread))
@@ -3321,7 +3321,7 @@
                :render render-cat-result
                :color-role :tool-color/read
                :schema {:type "object"
-                        :properties {"path"   {:type "string" :description "File path (relative to a context root or absolute under one)."}
+                        :properties {"path"   {:type "string" :description "File path (relative to a filesystem root or absolute under one)."}
                                      "range"  {:type "array" :items {:type "integer"}
                                                :description "Optional [start,end] line range (1-based, inclusive)."}
                                      "ranges" {:type "array" :items {:type "array" :items {:type "integer"}}
@@ -3855,7 +3855,7 @@
                :native-tool? true
                :call {:pos ["path"]}
                :name "create_dirs"
-               :description "Ensure a directory exists (creating parents), confined to context roots. Returns {`path`, `created`, `already_existed`}."
+               :description "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
                :render render-create-dirs-result
                :color-role :tool-color/edit
                :schema {:type "object"
@@ -3871,7 +3871,7 @@
                :native-tool? true
                ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
                :call {:pos ["src" "dest"] :rest :opt}
-               :description "Copy a file or directory from `src` to `dest` (confined to context roots). Without is_overwrite an existing dest fails."
+               :description "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
                :render render-copy-result
                :color-role :tool-color/move
                :schema {:type "object"
@@ -3888,7 +3888,7 @@
               {:symbol 'move
                :native-tool? true
                :call {:pos ["src" "dest"]}
-               :description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
+               :description "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
                :render render-move-result
                :color-role :tool-color/move
                :schema {:type "object"
@@ -3904,7 +3904,7 @@
               {:symbol 'delete
                :native-tool? true
                :call {:pos ["path"]}
-               :description "Delete a file or directory at `path` (confined to context roots)."
+               :description "Delete a file or directory at `path` (confined to filesystem roots)."
                :render render-delete-result
                :color-role :tool-color/delete
                :schema {:type "object"
@@ -3936,7 +3936,7 @@
                :native-tool? true
                :name "file_exists"
                :call {:pos ["path"]}
-               :description "Check whether a file or directory `path` exists (confined to the context roots)."
+               :description "Check whether a file or directory `path` exists (confined to the filesystem roots)."
                :render render-exists-result
                :color-role :tool-color/read
                :schema {:type "object"

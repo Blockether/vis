@@ -160,10 +160,10 @@
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker): `{:id :draft? :root :repo-root :label :fork-ms
-   :context-roots}` for the session pinned to `sid` (soul id), or nil.
-   `:id` is the workspace-id every context-root mutation
-   (`add/remove-context-root!`) needs — WITHOUT it the TUI picker treats the
-   session as read-only and C-a silently no-ops. `:context-roots` is the
+   :filesystem-roots}` for the session pinned to `sid` (soul id), or nil.
+   `:id` is the workspace-id every filesystem-root mutation
+   (`add/remove-filesystem-root!`) needs — WITHOUT it the TUI picker treats the
+   session as read-only and C-a silently no-ops. `:filesystem-roots` is the
    normalized `[{:trunk :clone :fork-ms}]`. Lets the footer announce that the
    session — and its extra roots — are isolated drafts. Resolves soul → latest
    state → workspace; never throws."
@@ -178,7 +178,7 @@
            :repo-root     (:repo-root ws)
            :label         (:label ws)
            :fork-ms       (:fork-ms ws)
-           :context-roots (workspace/context-roots ws)})))
+           :filesystem-roots (workspace/filesystem-roots ws)})))
     (catch Throwable _ nil)))
 
 ;; =============================================================================
@@ -987,7 +987,7 @@
 
 (defn close-session!
   "DELETE a session: dispose the live environment, trash the session's draft
-   clones (primary + auto-cloned context roots — only DRAFTS have clones; a
+   clones (primary + auto-cloned filesystem roots — only DRAFTS have clones; a
    trunk workspace's roots are the user's real dirs and are never touched),
    then delete the session tree. Idempotent. NOTE: this is the DELETE path —
    merely quitting/closing a session (navigating away, no server call) keeps
