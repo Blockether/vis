@@ -1090,6 +1090,67 @@
 ;; find
 ;; =============================================================================
 
+(def ^:private find-min-score
+  "Minimum per-token match density (0.0–1.0) a fuzzy hit must reach to survive.
+   fff's native matcher returns a full page of loose subsequence matches with no
+   score of its own (e.g. query \"lmstudio\" matches 108/489 unrelated paths);
+   below this floor a path is treated as noise and dropped."
+  0.4)
+
+(defn- find-norm
+  "Lower-case `s` stripped to `[a-z0-9]` — separators and case removed so scoring
+   compares bare identifier characters."
+  ^String [s]
+  (-> (or s "") str/lower-case (str/replace #"[^a-z0-9]" "")))
+
+(defn- find-subseq-window
+  "Length of the SMALLEST span in `hay` that contains `needle` as an ordered
+   subsequence, or nil when `needle` is not a subsequence of `hay`. A tight span
+   (few gaps) means a strong match; a sprawling one means scattered noise."
+  [^String needle ^String hay]
+  (let [n (count needle) h (count hay)]
+    (when (pos? n)
+      (loop [s 0 best nil]
+        (if (< s h)
+          (if (= (.charAt hay s) (.charAt needle 0))
+            (let [end (loop [i (inc s) k 1]
+                        (cond (= k n)                          (dec i)
+                              (>= i h)                         nil
+                              (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
+                              :else                            (recur (inc i) k)))]
+              (recur (inc s) (if (and end (or (nil? best) (< (- end s) best)))
+                               (- end s) best)))
+            (recur (inc s) best))
+          (some-> best inc))))))
+
+(defn- find-token-score
+  "Best subsequence-window density of `token` against the file NAME (full weight)
+   or the whole PATH (0.6 weight — a directory hit is weaker than a name hit).
+   0.0 when the token is absent entirely."
+  [^String token ^String path-norm ^String name-norm]
+  (let [wp (find-subseq-window token path-norm)
+        wf (find-subseq-window token name-norm)]
+    (if (nil? wp)
+      0.0
+      (max (if wf (/ (double (count token)) wf) 0.0)
+           (* 0.6 (/ (double (count token)) wp))))))
+
+(defn- find-relevance
+  "Order-INSENSITIVE relevance of `query` to `path`, in [0.0, 1.0]. Splits the
+   query into alnum tokens, scores each by its tightest subsequence window
+   (name-weighted), and takes the MIN so EVERY token must land somewhere — this
+   is what separates the handful of genuine hits from fff's page of loose
+   subsequence noise."
+  [query path]
+  (let [toks  (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
+                   (remove str/blank?))
+        pnorm (find-norm path)
+        nnorm (find-norm (last (str/split (str path) #"/")))]
+    (if (empty? toks)
+      0.0
+      (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
+
+
 (defn- coerce-find-spec [args]
   (let [[a b] args
         spec (cond
