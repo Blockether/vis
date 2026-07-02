@@ -1,7 +1,10 @@
 (ns com.blockether.vis.ext.foundation-harness.discovery-test
   (:require
+   [clojure.java.io :as io]
    [com.blockether.vis.ext.foundation-harness.discovery :as d]
-   [lazytest.core :refer [defdescribe it expect]]))
+   [lazytest.core :refer [defdescribe it expect]])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
 (def ^:private agent-md
   (str "---\n"
@@ -70,18 +73,49 @@
       (expect (= :p (:tool (first out)))))))
 
 (defdescribe cross-tool-source-test
-  (it "agent + skill sources span multiple harnesses (claude + opencode)"
-    (expect (= #{:claude :opencode} (set (map first d/agent-sources))))
-    (expect (= #{:claude :opencode} (set (map first d/skill-sources)))))
+  (it "agent + skill sources span vis-local + every supported harness"
+    (expect (= d/known-tools (set (map first d/agent-sources))))
+    (expect (= d/known-tools (set (map first d/skill-sources)))))
+
+  (it "vis project-local .vis/skills is the FIRST (highest-precedence) skill source"
+    (let [[tool _kind & parts] (first d/skill-sources)]
+      (expect (= :vis tool))
+      (expect (= [".vis" "skills"] parts))))
+
+  (it "skill sources include pi (~/.pi/agent/skills) and the agents standard"
+    (expect (some (fn [[tool _ & parts]] (and (= :pi tool) (= [".pi" "agent" "skills"] parts)))
+              d/skill-sources))
+    (expect (some (fn [[tool _ & parts]] (and (= :agents tool) (= [".agents" "skills"] parts)))
+              d/skill-sources)))
 
   (it "resolve-source tags an existing dir with its tool and drops a missing one"
     (let [home (System/getProperty "user.home")]
       (expect (= [:opencode] (map first ((deref #'d/resolve-source) [:opencode :rel home]))))
       (expect (empty? ((deref #'d/resolve-source) [:claude :rel "/no/such/dir/xyz-zzz"])))))
 
+  (it "resolve-source expands a :home spec against the user home"
+    (let [pairs ((deref #'d/resolve-source) [:pi :home "."])] ; ~/. always exists
+      (expect (= [:pi] (map first pairs)))))
+
   (it "every discovered entry is tagged with a known harness tool"
     (let [tools (set (map :tool (concat (d/discover-agents) (d/discover-skills))))]
-      (expect (every? #{:claude :opencode} tools)))))
+      (expect (every? d/known-tools tools)))))
+
+(defdescribe skill-resources-test
+  ;; `skill-resources` is what a resolved skill dir (e.g. .vis/skills/<name>)
+  ;; hands the model: every bundled file EXCEPT SKILL.md, as `/`-relative paths.
+  (it "lists bundled resource paths recursively, excluding SKILL.md, unix-slashed"
+    (let [root (.toFile (Files/createTempDirectory "vis-skill" (make-array FileAttribute 0)))]
+      (try
+        (spit (io/file root "SKILL.md") "---\nname: demo\ndescription: d\n---\nbody")
+        (io/make-parents (io/file root "scripts" "run.sh"))
+        (spit (io/file root "scripts" "run.sh") "echo hi")
+        (spit (io/file root "template.json") "{}")
+        (let [rs ((deref #'d/skill-resources) root)]
+          (expect (= ["scripts/run.sh" "template.json"] rs))
+          (expect (not-any? #(= "SKILL.md" %) rs)))
+        (finally
+          (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe discovery-smoke-test
   ;; Environment-agnostic: the scan must NEVER throw and always returns a

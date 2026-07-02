@@ -1,7 +1,8 @@
 (ns com.blockether.vis.ext.foundation-harness.discovery
   "Cross-HARNESS discovery of agents + skills — the sibling of the shell
-   layer's POSIX compat, for the agent/skill definitions OTHER AI coding
-   harnesses (Claude Code, opencode, …) leave on disk.
+   layer's POSIX compat, for the agent/skill definitions vis' OWN project dir
+   and OTHER AI coding harnesses (Claude Code, pi, opencode, the agents
+   standard, …) leave on disk.
 
    An AGENT is a markdown file with YAML-ish `---` frontmatter
    (`name`, `description`, `model`, `tools`) + a body that IS a system
@@ -12,7 +13,8 @@
    `parse-agent`, `parse-skill-meta`, and `dedup-by-name` take strings and
    are unit-tested without the filesystem; the `discover-*` fns walk the
    known source roots. Precedence is source ORDER, first-name-wins
-   (project > user > plugin; Claude before other harnesses)."
+   (vis project-local > other harnesses' project > user > plugin; Vis and
+   Claude before pi/agents/opencode)."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -118,18 +120,32 @@
 ;; `[tool ^File dir]` pairs. Precedence = ORDER (project → user → plugins; Claude
 ;; before opencode). Supporting another harness is one more row — no code change.
 (def agent-sources
-  [[:claude   :rel     ".claude" "agents"]      ; project
+  [[:vis      :rel     ".vis" "agents"]         ; vis project-local (highest precedence)
+   [:claude   :rel     ".claude" "agents"]      ; project
    [:claude   :home    ".claude" "agents"]      ; user
    [:claude   :plugins "agents"]                ; installed plugin caches
+   [:pi       :rel     ".pi" "agents"]          ; pi project
+   [:pi       :home    ".pi" "agent" "agents"]  ; pi user
+   [:agents   :rel     ".agents" "agents"]      ; agents-standard project
+   [:agents   :home    ".agents" "agents"]      ; agents-standard user
    [:opencode :rel     ".opencode" "agent"]     ; opencode project (singular `agent`)
    [:opencode :home    ".config" "opencode" "agent"]])
 
 (def skill-sources
-  [[:claude   :rel     ".claude" "skills"]
+  [[:vis      :rel     ".vis" "skills"]         ; vis project-local (highest precedence)
+   [:claude   :rel     ".claude" "skills"]
    [:claude   :home    ".claude" "skills"]
    [:claude   :plugins "skills"]
+   [:pi       :rel     ".pi" "skills"]          ; pi project
+   [:pi       :home    ".pi" "agent" "skills"]  ; pi user (~/.pi/agent/skills)
+   [:agents   :rel     ".agents" "skills"]      ; agents-standard project
+   [:agents   :home    ".agents" "skills"]      ; agents-standard user (~/.agents/skills)
    [:opencode :rel     ".opencode" "skill"]
    [:opencode :home    ".config" "opencode" "skill"]])
+
+(def known-tools
+  "Every harness tag a source row can carry — the closed set discovery emits."
+  #{:vis :claude :pi :agents :opencode})
 
 (defn- resolve-source
   "Expand a `[tool kind & parts]` spec into existing `[tool ^File dir]` pairs."

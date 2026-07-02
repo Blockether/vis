@@ -1,8 +1,10 @@
 (ns com.blockether.vis.ext.foundation-harness.core
   "`harness` compatibility extension — a DROPPABLE classpath plug-in (drop the
-   jar, drop the feature) that exposes the AGENTS and SKILLS other AI coding
-   HARNESSES (Claude Code, opencode, …) leave on disk to the vis model. The
-   sibling of the shell layer's POSIX compat.
+   jar, drop the feature) that exposes the AGENTS and SKILLS vis' own project
+   dir and other AI coding HARNESSES (Claude Code, pi, opencode, the agents
+   standard, …) leave on disk to the vis model. The sibling of the shell
+   layer's POSIX compat. Vis reads its OWN project-local skills from
+   `.vis/skills` (highest precedence).
 
    Two bare verbs (bound like cat/rg via `:ext.engine/builtin? true`):
 
@@ -37,9 +39,11 @@
 
 (toggles/register-toggle!
   {:id :vis/harness-skills :label "Harness skills (compatibility layer)"
-   :description (str "When ON the agent can discover and load SKILLS defined by"
-                  " other AI coding harnesses (Claude Code, opencode, …) from"
-                  " .claude/skills, ~/.claude/skills, and plugin caches. The"
+   :description (str "When ON the agent can discover and load SKILLS from vis'"
+                  " own project-local .vis/skills (highest precedence) and from"
+                  " other AI coding harnesses (Claude Code, pi, opencode, the"
+                  " agents standard) — e.g. .claude/skills, ~/.claude/skills,"
+                  " plugin caches, ~/.pi/agent/skills, ~/.agents/skills. The"
                   " prompt lists each skill's name + description cheaply;"
                   " skill(name) loads the full SKILL.md + its bundled resource"
                   " paths on demand. ON by default.")
