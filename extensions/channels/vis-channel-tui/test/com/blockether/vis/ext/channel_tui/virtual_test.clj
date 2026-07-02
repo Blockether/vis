@@ -499,6 +499,81 @@
             (expect (>= (long est) (long real))
               (str "w=" w " est=" est " real=" real))))))))
 
+(defdescribe overshoot-drift-tripwire-test
+  ;; Painter-drift tripwire. The estimator mirrors painter constants
+  ;; (fold width, preview caps, chrome rows); a render refactor can
+  ;; silently re-break the overshoot invariant — 2a9cfb61 (prose above
+  ;; code) did exactly that mid-investigation. These pin est >= real for
+  ;; the shapes the collapsed-default tests don't reach: EXPANDED
+  ;; disclosures (the :expand-all flag AND a real per-node toggle),
+  ;; form errors (plain + provider), form comments, and the dense
+  ;; tool-card fixture.
+  (let [long-thinking (str/join "\n" (map #(str "reasoning step " % " weighs the trade-offs at length")
+                                          (range 40)))
+        long-result   (str/join "\n" (map #(str "output row " % " of the tool run") (range 60)))
+        sid           "ovs-x"
+        rich-msg      (fn []
+                        (-> (trace-assistant-msg 2 2 "Answer with some prose.")
+                          (assoc :session-turn-id "ovs-turn-1")
+                          (assoc-in [:traces 0 :thinking] long-thinking)
+                          (assoc-in [:traces 0 :forms 0 :result] long-result)
+                          (assoc-in [:traces 0 :forms 1 :comment] "why this form runs")))
+        est->real     (fn [m w de]
+                        (let [pm (project-message m w settings
+                                   {:session-id sid :detail-expansions de})]
+                          [(estimated-height m w de sid)
+                           (render/bubble-height pm w)]))]
+    (describe "expanded disclosures stay overshooting"
+      (it "global :expand-all flag (estimate switches to full section heights)"
+        (doseq [w [84 154 254]]
+          (let [[est real] (est->real (rich-msg) w {:vis.channel-tui/expand-all-details? true})]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "a REAL per-node toggle harvested from painter metadata (vector key branch)"
+        (let [w        104
+              m        (rich-msg)
+              pm       (project-message m w settings {:session-id sid :detail-expansions {}})
+              node-ids (->> (:line-meta pm)
+                         (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
+                         distinct
+                         vec)]
+          ;; The collapsed projection must expose at least one disclosure
+          ;; (the 40-line thinking trace guarantees it).
+          (expect (seq node-ids))
+          (doseq [nid node-ids]
+            (let [de {[(str sid) (str nid)] true}
+                  [est real] (est->real m w de)]
+              (expect (>= (long est) (long real))
+                (str "node=" nid " est=" est " real=" real)))))))
+    (describe "rich collapsed shapes stay overshooting"
+      (it "form error — plain exception with a long message"
+        (doseq [w [84 154 254]]
+          (let [m (-> (trace-assistant-msg 1 1 "ok")
+                    (assoc-in [:traces 0 :forms 0 :success?] false)
+                    (assoc-in [:traces 0 :forms 0 :error]
+                      {:message (apply str "boom: " (repeat 40 "deeply nested cause "))}))
+                [est real] (est->real m w nil)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "form error — provider error with raw body trims"
+        (doseq [w [84 154 254]]
+          (let [m (-> (trace-assistant-msg 1 1 "ok")
+                    (assoc-in [:traces 0 :forms 0 :success?] false)
+                    (assoc-in [:traces 0 :forms 0 :error]
+                      {:message "upstream 500"
+                       :data {:status 500
+                              :body (apply str (repeat 80 "provider exploded loudly "))
+                              :raw-data (apply str (repeat 80 "raw payload fragment "))
+                              :received-type "text/html"}}))
+                [est real] (est->real m w nil)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real)))))
+      (it "dense tool-card fixture (304 forms, previews, locator dumps)"
+        (doseq [w [104 194]]
+          (let [[est real] (est->real (dense-trace-shaped-message) w nil)]
+            (expect (>= (long est) (long real))
+              (str "w=" w " est=" est " real=" real))))))))
+
 (defdescribe rewarm-test
   (describe "rewarm! owns ONE managed background warm worker"
     (it "returns nil for empty messages and is safe to stop when idle"
