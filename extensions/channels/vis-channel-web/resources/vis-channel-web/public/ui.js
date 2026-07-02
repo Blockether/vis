@@ -310,6 +310,7 @@
       if (!suggest) { return; }
       Array.prototype.forEach.call(suggest.children, function (row, i) {
         row.classList.toggle("active", i === active);
+        if (i === active && row.scrollIntoView) { row.scrollIntoView({ block: "nearest" }); }
       });
     }
     function pick(i) {
