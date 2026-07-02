@@ -239,7 +239,13 @@
    every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc) — it is the
    single cross-OS `vis --jvm` distribution — but the onnxruntime macOS libs drag
    ~16.5 MB of nested *.dSYM DWARF debug bundles along; no runtime reads those."
-  ["ai/onnxruntime/native/.*\\.dSYM/.*"])
+  ["ai/onnxruntime/native/.*\\.dSYM/.*"
+   ;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
+   ;; scratch.cljs at the classpath ROOT of their published jars
+   "scratch\\.cljs?"
+   ;; oh-my-claudecode agent session state — recreated whenever an agent
+   ;; runs with its cwd inside a source tree; must never ship
+   ".*\\.omc/.*"])
 (def ^:private native-bin
   (str "target/vis" (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
 
@@ -469,6 +475,14 @@
       (str "(profile " (name profile) ")"))
     ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
     (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
+    ;; sweep agent-session state (.omc/) that lands INSIDE source trees when
+    ;; an agent runs with its cwd there — copy-dir happily copies it, and it
+    ;; once shipped agent-replay transcripts in the uberjar. Deleted here so
+    ;; neither the jar nor the image can ever carry it.
+    (doseq [^java.io.File f (file-seq (io/file native-class-dir))
+            :when (and (.isDirectory f) (= ".omc" (.getName f)))]
+      (b/delete {:path (.getPath f)})
+      (println "Swept agent-state dir from class-dir:" (.getPath f)))
     ;; collapse the per-extension manifests into ONE so discovery finds them all
     (merge-extension-manifests! native-class-dir profile)
     ;; list every namespace the native Feature must require before build-time init

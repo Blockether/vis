@@ -25,7 +25,7 @@ src:url('/ui/fonts/hanken-grotesk.woff2') format('woff2')}
 src:url('/ui/fonts/jetbrains-mono.woff2') format('woff2')}
 :root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--cream:#f8f8f8;
 --line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#8a8a8a;
---gold:#2563eb;--gold2:#2563eb;--amber:#4b5563;--amber-deep:#503c00;--warn-bg:#fff5b4;
+--gold:#2563eb;--gold2:#2563eb;--amber:#1e1e1e;--amber-deep:#503c00;--warn-bg:#fff5b4;
 --hover:#f4f4f3;
 --indigo:#2563eb;--err:#dc3232;--ok:#28a03c;
 --shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:0;--r-xs:0;--r-sm:0;--r-md:0;--r-lg:0;--r-xl:0;--r-circle:50%;--r-pill:999px;

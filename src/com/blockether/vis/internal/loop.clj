@@ -631,6 +631,23 @@
   (str "__vis_obs_batch__ = [" (str/join ", " exprs) "]\n"
        "__vis_par_isolated__([(lambda __x__=__x__: __vis_settle__(__x__)) for __x__ in __vis_obs_batch__])"))
 
+(defn- sentinel-get
+  "Read a `__vis_*` sentinel key from a batch slot. The per-call sentinels are
+   built in `par-isolated-fn` as Clojure maps `{\"__vis_ok__\" true \"__vis_val__\" …}`
+   that, once they round-trip through GraalPy and back via `execute-code`'s
+   `:result`, land as a string-keyed map (flatland OrderedMap, `__vis_ok__` is a
+   STRING key — NOT the keyword `:__vis_ok__`). Looking them up with the keyword
+   silently returned nil, which made EVERY successful slot read as a failure
+   (`{:message \"observation failed\"}`) and broke every >=2-observation iteration
+   (cat/rg/ls … all route to this batch). `contains?` (not truthiness) so a
+   `false` `__vis_ok__` failure slot still resolves correctly."
+  [slot k]
+  (let [s (name k)]
+    (cond
+      (contains? slot k) (get slot k)
+      (contains? slot s) (get slot s)
+      :else nil)))
+
 (defn- execute-observation-batch
   "Run an all-observation iteration's calls CONCURRENTLY via one `execute-code`
    of a `__vis_par_isolated__` batch, then RE-SPLIT the ordered sentinel list so
@@ -669,9 +686,9 @@
                           :duration-ms dur
                           :timeout? false
                           :lru {}}]
-                (if (:__vis_ok__ slot)
-                  (assoc base :result (:__vis_val__ slot))
-                  (let [exc (:__vis_exc__ slot)]
+                (if (sentinel-get slot :__vis_ok__)
+                  (assoc base :result (sentinel-get slot :__vis_val__))
+                  (let [exc (sentinel-get slot :__vis_exc__)]
                     (assoc base
                            :result nil
                            :error (if (instance? Throwable exc)

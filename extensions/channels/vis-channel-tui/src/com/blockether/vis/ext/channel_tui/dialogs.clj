@@ -2441,13 +2441,17 @@
                          [{:kind :box :text (table/boxed-border-line [path-w tag-w] :bottom)}])
                        [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
                      [{:kind :rule :text (apply str (repeat list-w "─"))}
+                      {:kind :blank :text ""}
                       {:kind :browse
                        :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
                      (when notice-here
                        [{:kind   :notice
                          :text   (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
-                         :error? (= :error (second notice-here))}])))
-              [{:kind :blank :text ""} {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}])
+                         :error? (= :error (second notice-here))}])
+                     [{:kind :blank :text ""}]))
+              [{:kind :blank :text ""}
+               {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}
+               {:kind :blank :text ""}])
             header-n (count header-rows)
             hdr-h    (min header-n (max 1 (dec content-h)))
             list-top (+ content-top hdr-h)
@@ -2568,14 +2572,21 @@
                                 :else          (+ list-x 4))]
                 (p/set-colors! g fg bg)
                 (p/fill-rect! g (inc left) row inner-w 1)
+                ;; Paint the selected-row marker BEFORE the label: the marker is
+                ;; two columns wide, and the up row starts at list-x, so painting
+                ;; it last overwrote the ↑ with the marker's trailing space.
+                (p/draw-selection-marker! g (inc left) row selected?
+                  (if selected? t/dialog-title-fg t/dialog-hint-key))
                 (when mark
                   (p/set-colors! g mark-fg bg)
                   (p/put-str! g mark-x row mark))
                 (p/set-colors! g fg bg)
-                (doto g
-                  (p/set-colors! (if (and up? (not selected?)) t/header-active-tab-accent fg) bg)
-                  (p/put-str! name-x row (ellipsize label (max 1 (- list-w (- name-x list-x))))))
-                (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
+                ;; ↑ "Go up" arrow: accent when unselected (visible on the light
+                ;; and dark dialog bg) and WHITE when selected/hovered (visible
+                ;; on the title slab in every theme).
+                (let [label-fg (if up? (if selected? t/dialog-title-fg t/header-active-tab-accent) fg)]
+                  (p/set-colors! g label-fg bg)
+                  (p/put-str! g name-x row (ellipsize label (max 1 (- list-w (- name-x list-x))))))))))
         (draw-hint-bar! g left hint-row inner-w
           (if manager?
             [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
