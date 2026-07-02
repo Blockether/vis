@@ -1,0 +1,69 @@
+name: 'Set up GraalVM CE 25.1.3'
+description: >-
+  Installs GraalVM Community Edition 25.1.3 (JDK 25.0.3 base) to match the
+  org.graalvm.* 25.1.3 maven pins in deps.edn. We fetch the graalvm-ce-builds
+  asset directly instead of using graalvm/setup-graalvm because:
+    * Oracle GraalVM's 25.1+ *feature train* (innovation) releases are NOT on
+      the free download.oracle.com channel -- they are GDS-token gated, so
+      `distribution: graalvm` + `java-version: 25.1.3` 404s on
+      graalvm-jdk-25.1.3_<os>_bin.tar.gz.
+    * setup-graalvm's Community resolver predates the 25.1 innovation naming
+      (release tag `graal-25.1.3`, asset `...-25i1-25.0.3...`), so
+      `distribution: graalvm-community` cannot resolve it either.
+  The embedded GraalPy (Truffle) refuses a JDK whose built-in Truffle version
+  differs from the maven python-language jar, so the JDK MUST be exactly
+  25.1.3. Bump `graal-tag` / `asset-version` together with deps.edn.
+runs:
+  using: composite
+  steps:
+    - name: Install GraalVM CE 25.1.3
+      shell: bash
+      run: |
+        set -euo pipefail
+        graal_tag="graal-25.1.3"
+        asset_version="25i1-25.0.3"
+        base="https://github.com/graalvm/graalvm-ce-builds/releases/download/${graal_tag}"
+
+        case "${RUNNER_OS}" in
+          Linux)   file="graalvm-community-jdk-${asset_version}_linux-x64_bin.tar.gz" ;;
+          macOS)   file="graalvm-community-jdk-${asset_version}_macos-aarch64_bin.tar.gz" ;;
+          Windows) file="graalvm-community-jdk-${asset_version}_windows-x64_bin.zip" ;;
+          *) echo "Unsupported RUNNER_OS=${RUNNER_OS}" >&2; exit 1 ;;
+        esac
+
+        dest="${RUNNER_TEMP}/graalvm"
+        archive="${RUNNER_TEMP}/graalvm-archive"
+        mkdir -p "${dest}"
+
+        echo "Downloading ${base}/${file}"
+        curl -fL --retry 3 --retry-delay 5 -o "${archive}" "${base}/${file}"
+
+        if [ "${RUNNER_OS}" = "Windows" ]; then
+          # git-bash ships GNU tar (no .zip support); the OS-bundled bsdtar
+          # (tar.exe) extracts .zip fine.
+          /c/Windows/System32/tar.exe -xf "${archive}" -C "${dest}"
+        else
+          tar -xzf "${archive}" -C "${dest}"
+        fi
+
+        # Locate the extracted JDK home (macOS nests it under Contents/Home).
+        java_bin="$(find "${dest}" -type f \( -name java -o -name java.exe \) -path '*/bin/*' | head -n1)"
+        if [ -z "${java_bin}" ]; then
+          echo "java executable not found after extraction" >&2
+          exit 1
+        fi
+        unix_home="$(cd "$(dirname "${java_bin}")/.." && pwd)"
+
+        if [ "${RUNNER_OS}" = "Windows" ]; then
+          graalvm_home="$(cygpath -w "${unix_home}")"
+          bin_dir="$(cygpath -w "${unix_home}/bin")"
+        else
+          graalvm_home="${unix_home}"
+          bin_dir="${unix_home}/bin"
+        fi
+
+        echo "JAVA_HOME=${graalvm_home}"       >> "${GITHUB_ENV}"
+        echo "GRAALVM_HOME=${graalvm_home}"    >> "${GITHUB_ENV}"
+        echo "${bin_dir}"                      >> "${GITHUB_PATH}"
+
+        "${java_bin}" -version
