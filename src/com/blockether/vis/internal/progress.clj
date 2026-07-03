@@ -207,12 +207,17 @@
    The form is running implicitly: `:started-at-ms` is set and
    `:success?` is nil."
   [chunk]
-  {:code            (:code chunk)
-   :comment         (:comment chunk)
-   :render-segments (:render-segments chunk)
-   :scope           (:scope chunk)
-   :started-at-ms   (:started-at-ms chunk)
-   :silent?         (silent-chunk? chunk)})
+  (merge
+    ;; Native-tool badge identity (`:vis/tool-name` + colour), projected from the
+    ;; ONE canonical list so a running form can hide its invocation code the same
+    ;; way the completed form does.
+    (form/->display chunk)
+    {:code            (:code chunk)
+     :comment         (:comment chunk)
+     :render-segments (:render-segments chunk)
+     :scope           (:scope chunk)
+     :started-at-ms   (:started-at-ms chunk)
+     :silent?         (silent-chunk? chunk)}))
 
 (defn- chunk->form-result
   "Build the completed `:forms` entry for a `:form-result` chunk.

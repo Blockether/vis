@@ -509,10 +509,14 @@
                         {:phase :content
                          :iteration iteration
                          :content text})
-      "block.started" {:phase :form-start
-                       :iteration iteration
-                       :position block-id
-                       :code code}
+      "block.started" (merge {:phase :form-start
+                              :iteration iteration
+                              :position block-id
+                              :code code}
+                        ;; Read back the native-tool badge identity (`:vis/tool-name`
+                        ;; + colour) so the live bubble can hide the redundant
+                        ;; invocation code WHILE the tool runs, not just after.
+                        (vis/form<-wire event))
       "block.output" (merge {:phase :form-result
                              :iteration iteration
                              :position block-id

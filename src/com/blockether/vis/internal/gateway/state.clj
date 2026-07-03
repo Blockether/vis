@@ -238,7 +238,11 @@
           ;; pins this one as a permanent thread block; the partials stay transient.
           :assistant-prose {:text (some-> (or text content) str str/trim not-empty)
                             :prose-final true}
-          :form-start      {:block_id position :code code}
+          :form-start      (merge
+                            ;; Carry the native-tool badge identity so a client can
+                            ;; hide the redundant invocation code WHILE the tool runs.
+                             (form/->display chunk)
+                             {:block_id position :code code})
           :form-result     (merge
                             ;; The native-tool op-card fields (pre-rendered card +
                             ;; badge label + colour) — projected from ONE canonical
