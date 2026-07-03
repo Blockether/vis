@@ -136,9 +136,13 @@
   ;; our own grammar fork). The main jar's Clojure resolver auto-selects the
   ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
   ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
-  ;; Blockether fork — antq mistakes upstream "1.10.3" for newer than the
+  ;; Blockether fork — antq mistakes bare upstream versions for newer than the
   ;; "-blockether.N" suffix; keep this pinned to the fork line manually.
-  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.26"}
+  ;; 1.12.3-blockether.4: upstream v1.12.3 core sync (34 grammar bumps, loading
+  ;; fixes, additive FFI) + Elixir structural intel; elixir/dart/zig grammars
+  ;; baked into the static dylib (dart/zig previously loaded via a runtime
+  ;; GitHub download that broke when upstream stopped publishing release assets).
+  com.blockether/tree-sitter-language-pack        {:mvn/version "1.12.3-blockether.4"}
   ;; ruff (in-process Python formatter via FFM) — the gateway beautifies the
   ;; model's Python code before streaming it to the web trace. tools.deps is
   ;; kept here (NOT excluded): ruff's native lib isn't bundled, so it resolves
