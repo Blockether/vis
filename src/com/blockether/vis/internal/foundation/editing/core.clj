@@ -95,6 +95,13 @@
     (throw (ex-info "rg fff index root must be a directory"
              {:type :ext.foundation.editing/invalid-rg-root
               :path (.getPath root)})))
+  ;; Backstop for EVERY caller: a full fff scan of $HOME or a filesystem root
+  ;; never finishes and hangs the tool (~30s wait-for-scan timeout, then a
+  ;; useless partial index). Refuse fast; callers skip the root.
+  (when (paths/pathological-index-root? root)
+    (throw (ex-info "refusing to fff-index the home directory or a filesystem root"
+             {:type :ext.foundation.editing/pathological-root
+              :path (.getPath root)})))
   (let [k (.getCanonicalPath root)]
     (let [idx (try
                 (fff/create {:base-path k
@@ -1220,13 +1227,21 @@
         candidate-page (max limit 300)
         items (->> roots
                 (mapcat (fn [^File root]
-                          (if (.isFile root)
+                          (cond
+                            (.isFile root)
                             [{:path (rel-path root)
                               :file-name (.getName root)
                               :size (.length root)
                               :binary? false
                               :source :direct-file
                               :score 1.0}]
+
+                            ;; skip $HOME / filesystem roots (never indexable);
+                            ;; other roots still contribute results
+                            (paths/pathological-index-root? root)
+                            nil
+
+                            :else
                             (with-open [idx (rg-fff-open root)]
                               (let [base (.getCanonicalFile root)]
                                    ;; doall: realize hits INSIDE with-open, before the
