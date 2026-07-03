@@ -1203,6 +1203,18 @@
             (and alt (= (Character/toLowerCase c) \v))
             {:action :scroll-up :state state}
 
+          ;; ── Emacs word motion — M-b / M-f (backward-word / forward-word).
+          ;; These are ALSO exactly what stock macOS terminals (Ghostty,
+          ;; Terminal.app, iTerm2) send for Option+←/→: their default keybinds
+          ;; translate the chord into `ESC b` / `ESC f`, NOT the xterm modified
+          ;; arrow `ESC[1;3D/C` that `modified-arrow-pattern` decodes. Lanterna
+          ;; surfaces those bytes as Alt+b / Alt+f Character keystrokes, so this
+          ;; clause is what makes Option+arrow word motion work on macOS.
+            (and alt (not ctrl) (= (Character/toLowerCase c) \b))
+            {:action :continue :state (move-word-left state)}
+            (and alt (not ctrl) (= (Character/toLowerCase c) \f))
+            {:action :continue :state (move-word-right state)}
+
           ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
           ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
           ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
