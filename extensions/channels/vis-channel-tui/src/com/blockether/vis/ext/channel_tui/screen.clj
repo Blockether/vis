@@ -3262,9 +3262,20 @@
                            (state/dispatch
                              [:update-input (file-suggest/apply-mention (:input db)
                                               (:file/path suggestion))])
-                           (state/dispatch
-                             [:update-input (input-state-from-text
-                                              (slash/completion-text suggestion))]))))
+                           (do
+                             (state/dispatch
+                               [:update-input (input-state-from-text
+                                                (slash/completion-text suggestion))])
+                             ;; Enter = complete AND run in one keystroke: re-inject
+                             ;; the Enter at the FRONT of the pending stash so the
+                             ;; next loop iteration (overlay now gone — the completed
+                             ;; token ends in a space) routes it through the normal
+                             ;; `:send` path, which resolves prompt-arg / navigator /
+                             ;; exact-slash execution. Tab stays completion-only so
+                             ;; the user can keep typing arguments.
+                             (when (= ktype KeyType/Enter)
+                               (vreset! pending-input-key
+                                 (into [key] @pending-input-key)))))))
                      (recur))
                    :else
                    (let [{:keys [action state workspace-index]} (input/handle-key key
