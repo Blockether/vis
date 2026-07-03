@@ -293,8 +293,7 @@
 
   (it "Alt+Left/Right move by whitespace-delimited words"
     ;; Word motion rides Alt+arrow (the xterm modified-arrow sequence, which
-    ;; terminals deliver). The Emacs Meta-b/f letter chords were removed —
-    ;; Option+letter is dead on stock macOS terminals.
+    ;; some terminals deliver).
     (let [state (-> (input/empty-input)
                   (input/paste-text "hello   world"))]
       (expect (= {:action :continue
@@ -303,6 +302,21 @@
       (expect (= {:action :continue
                   :state  (assoc state :ccol 5)}
                 (input/handle-key (alt-special-key KeyType/ArrowRight)
+                  (assoc state :ccol 0))))))
+
+  (it "M-b / M-f (Alt+b / Alt+f) are word motion — what macOS terminals send for Option+arrow"
+    ;; Ghostty / Terminal.app / iTerm2 default keybinds translate Option+←/→
+    ;; into the readline bytes `ESC b` / `ESC f`, NOT the xterm modified-arrow
+    ;; sequence. Lanterna decodes those as Alt+b / Alt+f Character keystrokes,
+    ;; so these chords ARE Option+arrow on a stock macOS terminal.
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "hello   world"))]
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 8)}
+                (input/handle-key (alt-key \b) state)))
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 5)}
+                (input/handle-key (alt-key \f)
                   (assoc state :ccol 0))))))
 
   (it "Home/End and Ctrl+A/E move to current line bounds"
