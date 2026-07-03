@@ -556,7 +556,9 @@
   [^TextGraphics g row left inner-w suggestion]
   (let [pad       p/SELECTION_WIDTH
         file?     (:file/mention? suggestion)
-        x0        (+ left pad)
+        ;; One space between the selection marker gutter and the chip so
+        ;; the candidate never abuts the `•` — reads as `•  chip`.
+        x0        (+ left pad 1)
         ;; Last paintable col of the inset body, keeping 1 col clear on the
         ;; right for the scrollbar thumb (no symmetric right padding).
         row-right (+ left (max 0 (dec inner-w)))
@@ -993,36 +995,38 @@
    may contain Vis inline-style sentinels (U+E110..U+E117) for spans.
    These sentinels are paint directives, not glyphs; consume them here
    before they hit Lanterna's raw putString path."
-  [^TextGraphics g x y ^String line base-fg bg]
-  (letfn [(sentinel-chunk? [^String chunk]
-            (boolean (some #(str/index-of chunk ^String %)
-                       [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF p/INLINE_ITALIC_ON
-                        p/INLINE_ITALIC_OFF p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
-                        p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
-          (paint-chunk! [col ^String chunk fg]
-            (p/set-colors! g fg bg)
-            (if (sentinel-chunk? chunk)
-              (p/paint-styled-line! g (+ x col) y chunk fg bg t/code-block-fg t/code-block-bg)
-              (p/put-str! g (+ x col) y chunk)))]
-    (loop [i 0
-           col 0
-           fg base-fg]
-      (if (>= i (.length line))
-        g
-        (let [esc-idx (str/index-of line "\u001b[" i)]
-          (if (or (nil? esc-idx) (< i esc-idx))
-            (let [end (or esc-idx (.length line))
-                  chunk (subs line i end)]
-              (paint-chunk! col chunk fg)
-              (recur end (+ col (p/display-width chunk)) fg))
-            (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
-              (if (nil? m-idx)
-                (let [chunk (subs line esc-idx)]
-                  (paint-chunk! col chunk fg)
-                  g)
-                (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
-                      fg* (ansi-codes->fg codes fg base-fg)]
-                  (recur (inc m-idx) col fg*))))))))))
+  ([^TextGraphics g x y ^String line base-fg bg]
+   (paint-ansi-line! g x y line base-fg bg t/code-block-fg t/code-block-bg))
+  ([^TextGraphics g x y ^String line base-fg bg code-fg code-bg]
+   (letfn [(sentinel-chunk? [^String chunk]
+             (boolean (some #(str/index-of chunk ^String %)
+                        [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF p/INLINE_ITALIC_ON
+                         p/INLINE_ITALIC_OFF p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
+                         p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
+           (paint-chunk! [col ^String chunk fg]
+             (p/set-colors! g fg bg)
+             (if (sentinel-chunk? chunk)
+               (p/paint-styled-line! g (+ x col) y chunk fg bg code-fg code-bg)
+               (p/put-str! g (+ x col) y chunk)))]
+     (loop [i 0
+            col 0
+            fg base-fg]
+       (if (>= i (.length line))
+         g
+         (let [esc-idx (str/index-of line "\u001b[" i)]
+           (if (or (nil? esc-idx) (< i esc-idx))
+             (let [end (or esc-idx (.length line))
+                   chunk (subs line i end)]
+               (paint-chunk! col chunk fg)
+               (recur end (+ col (p/display-width chunk)) fg))
+             (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
+               (if (nil? m-idx)
+                 (let [chunk (subs line esc-idx)]
+                   (paint-chunk! col chunk fg)
+                   g)
+                 (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
+                       fg* (ansi-codes->fg codes fg base-fg)]
+                   (recur (inc m-idx) col fg*)))))))))))
 (defn- paint-turn-stamp!
   "Overdraw canonical tN/iN/bN stamps in muted italic. Used by footer
    rows and collapsed tool badge rows so scope stays visible but dim."
@@ -1640,7 +1644,11 @@
                     (let [res-fg (or (tool-color-role->fg (:color-role meta)) t/code-result-fg)]
                       (p/set-colors! g res-fg t/result-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) res-fg t/result-bg)
+                      ;; Inline-code chips in a result body (rg per-file path
+                      ;; headers, patch/move targets) paint on the distinct
+                      ;; `result-path` accent so filenames read as headers
+                      ;; instead of blending into the neutral result ink.
+                      (paint-ansi-line! g x y (subs line 1) res-fg t/result-bg t/result-path-fg t/result-path-bg)
                       (paint-turn-stamp! g x y (subs line 1) t/result-bg)
                       (when (= :toggle-details (:kind meta))
                         (let [abs-row (+ (long viewport-top) y)
@@ -3075,6 +3083,69 @@
         (vec (concat headline
                body-rows
                [{:line (str result-marker ""), :meta nil}]))))))
+(defn- cat-form-path
+  "The file PATH a `cat` op-card read — from the raw `:result` when present,
+   else parsed out of the leading `` `path` `` chip of the summary (survives a
+   DB round-trip that flattens the anchors). nil for a non-cat / pathless form."
+  [form]
+  (when (= "cat" (:vis/tool-name form))
+    (or (get-in form [:result :path])
+      (some-> (:result-summary form) str (->> (re-find #"^`([^`]+)`")) second))))
+
+(defn- error-form?
+  "A form the gateway marked failed (`:success? false`)."
+  [form]
+  (and (some? (:success? form)) (not (:success? form))))
+
+(defn- merge-cat-summaries
+  "Fold N `cat` summaries (`` `path` · L… · N lines ``) for the SAME path into
+   ONE — the shared path chip, then every read's LINE SPAN, then the SUMMED line
+   count (only when every merged read carried one, else omitted). So two reads
+   of the same file render as `` `path` · L3086-3130 · L3340-3390 `` instead of
+   two look-alike cards."
+  [summaries]
+  (let [parts    (map #(str/split (str %) #" · ") summaries)
+        chip     (ffirst parts)
+        tails    (mapcat rest parts)
+        count-re #"^(\d+) lines?$"
+        counts   (keep #(some-> (re-matches count-re %) second parse-long) tails)
+        spans    (remove #(re-matches count-re %) tails)
+        total    (reduce + 0 counts)
+        span-str (str/join " · " spans)
+        count-str (when (and (seq counts) (= (count counts) (count summaries)))
+                    (str total " line" (when (not= 1 total) "s")))
+        tail     (str/join " · " (remove str/blank? [span-str count-str]))]
+    (if (str/blank? tail) chip (str chip " · " tail))))
+
+(defn- merge-cat-forms
+  "Collapse a RUN of adjacent `cat` op-cards on the same file into one synthesized
+   form: the combined multi-span summary plus every read's body slice stacked
+   under the single headline. The existing card machinery renders it as ONE
+   collapsible op-card."
+  [forms]
+  (let [f0        (first forms)
+        summary   (merge-cat-summaries (map :result-summary forms))
+        body      (str/join "\n" (keep (comp not-empty str :result-render) forms))
+        anchors   (reduce merge {} (map #(get-in % [:result :anchors]) forms))]
+    (assoc f0
+      :result-summary summary
+      :result-render body
+      :result (assoc (:result f0) :anchors anchors))))
+
+(defn- coalesce-cat-runs
+  "Merge each maximal run of adjacent, successful `cat` op-cards reading the SAME
+   path into a single card; every other form passes through untouched. Keeps the
+   downstream per-form flush/padding logic unchanged — a merged run is still one
+   chrome-hidden native card."
+  [forms-vec]
+  (let [key-fn (fn [f]
+                 (if-let [p (and (not (error-form? f)) (cat-form-path f))]
+                   [::cat p]
+                   [::solo (gensym)]))]
+    (into []
+      (map (fn [grp] (if (next grp) (merge-cat-forms grp) (first grp))))
+      (partition-by key-fn forms-vec))))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],
@@ -3464,7 +3535,7 @@
      ;; as block-level op rows). `forms` here = proof envelopes, the
      ;; canonical meaning; the rendered card is the display block.
      block-code-body (when (seq forms)
-                       (let [forms-vec (vec forms)
+                       (let [forms-vec (coalesce-cat-runs (vec forms))
                              ;; A code-less native op-card (cat/rg/patch/…, not
                              ;; python_execution, no error) hides its code chrome
                              ;; and paints ONLY the op rows — which already open
@@ -3480,20 +3551,44 @@
                                                 (boolean (and tn (not= tn "python_execution") (not err?)))))
                              block-code-lines (into []
                                                 (mapcat (fn [[idx form]]
-                                                              ;; ONE terminal-bg blank between
-                                                              ;; consecutive forms inside the
-                                                              ;; same iteration. The coalesce
-                                                              ;; pass keeps this gap and the
-                                                              ;; form's colored c-pad band-edge
-                                                              ;; BOTH visible (they belong to
-                                                              ;; different marker families).
-                                                          (concat (when (and (pos? idx)
-                                                                          (not (and (chrome-hidden? form)
-                                                                                 (chrome-hidden? (nth forms-vec (dec idx))))))
-                                                                    [(line-entry
-                                                                       (str iteration-pad-marker
-                                                                         ""))])
-                                                            (form-lines form (inc idx))))
+                                                          (let [;; Two adjacent code-less native op-cards
+                                                                ;; (cat/rg/patch/…) stack FLUSH — no margin
+                                                                ;; and no colored breathe/pad row between them.
+                                                                prev-native?
+                                                                (and (pos? idx)
+                                                                  (chrome-hidden? form)
+                                                                  (chrome-hidden? (nth forms-vec (dec idx))))
+                                                                next-native?
+                                                                (and (< (inc idx) (count forms-vec))
+                                                                  (chrome-hidden? form)
+                                                                  (chrome-hidden? (nth forms-vec (inc idx))))
+                                                                fl (form-lines form (inc idx))
+                                                                ;; Drop THIS card's LEADING result-bg breathe
+                                                                ;; blank when it follows another native card.
+                                                                fl (if (and prev-native?
+                                                                         (= (str result-marker "")
+                                                                           (:line (first fl))))
+                                                                     (rest fl)
+                                                                     fl)
+                                                                ;; Drop THIS card's TRAILING result-bg pad
+                                                                ;; blank when another native card follows, so
+                                                                ;; the run stacks flush — only the LAST card in
+                                                                ;; the run keeps its closing pad.
+                                                                fl (if (and next-native?
+                                                                         (= (str result-marker "")
+                                                                           (:line (last fl))))
+                                                                     (butlast fl)
+                                                                     fl)]
+                                                            ;; ONE terminal-bg blank between consecutive
+                                                            ;; forms inside the same iteration — skipped when
+                                                            ;; both are chrome-hidden native cards (they
+                                                            ;; already stack flush above).
+                                                            (concat (when (and (pos? idx)
+                                                                            (not prev-native?))
+                                                                      [(line-entry
+                                                                         (str iteration-pad-marker
+                                                                           ""))])
+                                                              fl)))
                                                   (map-indexed vector forms-vec)))]
                          ;; TRAILING iter-pad only. It separates this iteration's
                          ;; body from the NEXT iteration below by a single

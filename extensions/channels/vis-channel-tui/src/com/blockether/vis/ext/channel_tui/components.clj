@@ -540,10 +540,11 @@
 
 (defn- box-grid-lines
   "Render `sections` (each `{:title :rows}`, rows `[left-cell right-cell]`) as a
-   2-column box-drawing grid grouped under full-width section banners: a top
-   rule, then per section a bold `:title` banner, a `┬`-split header rule, the
-   `│`-framed `key-w`/`desc-w` cells with `┼` separators between rows, and a `┴`
-   rule closing the columns before the next banner. `bd` is the border color,
+   sequence of SEPARATE 2-column box-drawing tables — one self-contained box per
+   section, each with its own `┌┐` top rule, a bold full-width `:title` banner, a
+   `┬`-split header rule, the `│`-framed `key-w`/`desc-w` cells with `┼` separators
+   between rows, and its own `└┴┘` bottom rule. A blank spacer row sits BETWEEN the
+   tables so the sections read as distinct cards. `bd` is the border color,
    `key-fg`/`desc-fg` the cell text colors, `title-fg` the banner color.
 
    Descriptions WIDER than `desc-w` WRAP onto continuation lines (word-wrapped
@@ -574,14 +575,16 @@
                           ds (if (seq ds) ds [""])]
                       (map-indexed (fn [i dl] (row-line (if (zero? i) k "") dl)) ds)))
         section-lines (fn [{:keys [title rows]}]
-                        (concat [(title-row title) (cols "├" "┬" "┤")]
+                        (concat [(full "┌" "┐")
+                                 (title-row title)
+                                 (cols "├" "┬" "┤")]
                           (apply concat
                             (interpose [(cols "├" "┼" "┤")]
-                              (mapv row-block rows)))))]
-    (vec (concat [(full "┌" "┐")]
-           (apply concat (interpose [(cols "├" "┴" "┤")]
-                           (mapv section-lines sections)))
-           [(cols "└" "┴" "┘")]))))
+                              (mapv row-block rows)))
+                          [(cols "└" "┴" "┘")]))
+        blank [["" bd false]]]
+    (vec (apply concat
+           (interpose [blank] (mapv section-lines sections))))))
 
 (defn scrollable-dialog-body!
   "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:

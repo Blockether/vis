@@ -2902,6 +2902,10 @@
                                         :iteration iteration-position
                                         :position        idx
                                         :count           total-blocks
+                                        ;; Carry the native-tool name so channels can hide the
+                                        ;; redundant invocation code WHILE the tool runs (not just
+                                        ;; after the result lands). nil for a non-tool form.
+                                        :vis/tool-name   (:vis/tool-name entry)
                                         :scope           (form-scope idx)
                                         :code            expr
                                         :render-segments render-segments
