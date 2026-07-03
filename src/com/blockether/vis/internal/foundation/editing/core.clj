@@ -130,8 +130,17 @@
         (->> roots
           (mapcat
             (fn [^File root]
-              (if (.isFile root)
+              (cond
+                (.isFile root)
                 [(.getCanonicalPath root)]
+
+                ;; Never fff-scan $HOME or a filesystem root — the walk never
+                ;; finishes and hangs the tool. Skip this root; other (real
+                ;; project) roots still search normally.
+                (paths/pathological-index-root? root)
+                nil
+
+                :else
                 (with-open [idx (rg-fff-open root)]
                   (let [base (.getCanonicalFile root)]
                       ;; doall: realize the lazy hits INSIDE with-open, before

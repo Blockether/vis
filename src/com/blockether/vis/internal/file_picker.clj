@@ -301,13 +301,20 @@
    close it — but NEVER while a search may still be running on it: fff's
    native `search` crashes the JVM (SIGSEGV) on a closed handle."
   ^java.io.Closeable []
-  (let [root (.toFile (cwd-path))
-        idx  (fff/create {:base-path          (.getCanonicalPath root)
-                          :watch?             false
-                          :ai-mode?           true
-                          :enable-mmap-cache? false})]
-    (fff/wait-for-scan idx 30000)
-    idx))
+  (let [root (.toFile (cwd-path))]
+    ;; Refuse to index $HOME or a filesystem root — a full fff scan of that
+    ;; tree never finishes and freezes the picker (vis launched from `~`).
+    ;; `suggest-file-rows` catches this and degrades to no fuzzy results.
+    (when (paths/pathological-index-root? root)
+      (throw (ex-info "workspace is the home directory or a filesystem root — refusing to index the whole tree"
+               {:type :file-picker/pathological-root
+                :path (.getPath root)})))
+    (let [idx (fff/create {:base-path          (.getCanonicalPath root)
+                           :watch?             false
+                           :ai-mode?           true
+                           :enable-mmap-cache? false})]
+      (fff/wait-for-scan idx 30000)
+      idx)))
 
 (defn fuzzy-file-rows
   "Frecency-ranked, typo-tolerant fuzzy file search via fff against an already

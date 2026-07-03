@@ -12,3 +12,21 @@
    `.exists`, JGit, nio all take native paths fine. Returns nil for nil input."
   ^String [s]
   (when s (.replace (str s) "\\" "/")))
+
+(defn pathological-index-root?
+  "True when `dir` MUST NOT be recursively indexed for fuzzy file-finding or
+   content search: the user's HOME directory or a filesystem root (`/`, `C:\\`).
+   These are never project workspaces — on a real machine they carry Library/,
+   ~/.m2, node_modules, and caches with millions of files, so a full fff scan
+   never finishes and freezes the tool (observed: `vis` launched from `~`
+   hangs). Callers degrade to a no-index path instead of walking the tree.
+   `dir` is a java.io.File; comparison is canonical. Never throws."
+  [^java.io.File dir]
+  (try
+    (let [canon (.getCanonicalFile dir)
+          home  (some-> (System/getProperty "user.home")
+                  not-empty java.io.File. .getCanonicalFile)]
+      (boolean
+        (or (nil? (.getParentFile canon))   ; filesystem root
+          (and home (= canon home)))))      ; the home directory itself
+    (catch Throwable _ false)))
