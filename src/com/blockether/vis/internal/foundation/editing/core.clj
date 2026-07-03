@@ -3005,10 +3005,12 @@
          :path path
          :kind :file
          :result (cond
-                   skeleton {:skeleton skeleton :language language}
+                   skeleton {:skeleton skeleton :language language :path path}
                    language {:language language
+                             :path path
                              :note "No structural outline for this language yet — use cat(path)."}
-                   :else    {:note "Unknown language — use cat(path)."})}))))
+                   :else    {:path path
+                             :note "Unknown language — use cat(path)."})}))))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -3193,14 +3195,15 @@
                 (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
 
 (defn- render-outline-result
-  "outline → `{:summary :body}`: a `<lang> outline` headline + the skeleton string
-   (already anchored/nested). `r` is `{:skeleton str :language str}` or a
-   no-structure shape."
+  "outline → `{:summary :body}`: a path headline (like cat) + the skeleton
+   string (already anchored/nested). `r` is `{:skeleton str :language str :path str}`
+   or a no-structure shape."
   [r]
-  (if-let [sk (some-> (:skeleton r) kw->str not-empty)]
-    {:summary (str (some-> (:language r) kw->str) " outline")
-     :body    (str "\n```\n" sk "\n```")}
-    {:summary "no structural outline"}))
+  (let [loc (some-> (:path r) str not-empty (#(str "`" % "`")))]
+    (if-let [sk (some-> (:skeleton r) kw->str not-empty)]
+      {:summary (or loc "outline")
+       :body    (str "\n```\n" sk "\n```")}
+      {:summary (str (or loc "outline") " · no structural outline")})))
 
 (defn- render-occurrences-result
   "occurrences → `{:summary :body}`: a `N · K defs in M files` headline (no leading

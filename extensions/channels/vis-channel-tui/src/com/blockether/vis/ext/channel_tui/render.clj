@@ -3464,7 +3464,21 @@
      ;; as block-level op rows). `forms` here = proof envelopes, the
      ;; canonical meaning; the rendered card is the display block.
      block-code-body (when (seq forms)
-                       (let [block-code-lines (into []
+                       (let [forms-vec (vec forms)
+                             ;; A code-less native op-card (cat/rg/patch/…, not
+                             ;; python_execution, no error) hides its code chrome
+                             ;; and paints ONLY the op rows — which already open
+                             ;; with their own leading breathe blank. So when one
+                             ;; such card immediately follows another, the
+                             ;; inter-form terminal-bg pad below is a REDUNDANT
+                             ;; second margin; drop it so consecutive native calls
+                             ;; stack flush (one breathe row, not two).
+                             chrome-hidden? (fn [form]
+                                              (let [tn   (:vis/tool-name form)
+                                                    err? (and (some? (:success? form))
+                                                           (not (:success? form)))]
+                                                (boolean (and tn (not= tn "python_execution") (not err?)))))
+                             block-code-lines (into []
                                                 (mapcat (fn [[idx form]]
                                                               ;; ONE terminal-bg blank between
                                                               ;; consecutive forms inside the
@@ -3473,12 +3487,14 @@
                                                               ;; form's colored c-pad band-edge
                                                               ;; BOTH visible (they belong to
                                                               ;; different marker families).
-                                                          (concat (when (pos? idx)
+                                                          (concat (when (and (pos? idx)
+                                                                          (not (and (chrome-hidden? form)
+                                                                                 (chrome-hidden? (nth forms-vec (dec idx))))))
                                                                     [(line-entry
                                                                        (str iteration-pad-marker
                                                                          ""))])
                                                             (form-lines form (inc idx))))
-                                                  (map-indexed vector forms)))]
+                                                  (map-indexed vector forms-vec)))]
                          ;; TRAILING iter-pad only. It separates this iteration's
                          ;; body from the NEXT iteration below by a single
                          ;; terminal-bg blank (coalesces with the next iteration's
