@@ -892,7 +892,10 @@
 (defn- paint-search-bar!
   "Call-site adapter for `components/find-bar!` — the reusable find bar and its
    `button!` widgets (paint + hover + click region, together) live in
-   components.clj now, so this can't drift from the highlight/key controller."
+   components.clj now, so this can't drift from the highlight/key controller.
+
+   Returns the bar's cursor cell [col row] (nil when inactive) so callers can
+   move the terminal cursor into the query field while the bar owns typing."
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
 (defn- paint-jump-bottom!
@@ -1167,7 +1170,14 @@
       ;; (the modifier is idempotent — stacking it doesn't double-flip).
       (paint-search-hits! screen layout text-top inner-h cols db)
       ;; Find bar (top-right overlay) + its prev/next/close click regions.
-      (paint-search-bar! g cols text-top db)
+      ;; While the bar is ACTIVE it owns the keyboard, so the terminal cursor
+      ;; moves INTO its query field — overriding the prompt-input placement
+      ;; from `draw-bottom-chrome!` above. The prompt's logical cursor state
+      ;; is untouched while searching, so closing the bar restores the cursor
+      ;; to exactly where it sat in the input box.
+      (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
+        (when-not (overlay-locked? db)
+          (.setCursorPosition screen (TerminalPosition. sx sy))))
       ;; "↓ latest" jump-to-bottom chip (bottom-right) — only when the live bottom
       ;; is actually off-screen below (never in an empty/short session).
       (paint-jump-bottom! g cols messages-bottom (max 0 (- (long total-h) (long inner-h))) db)
@@ -1475,9 +1485,13 @@
       (cr/commit-frame!))
     (let [[cx cy]
           (render/draw-input-box! g input input-top text-rows cols nil)]
-      (if (scroll/scrolled-up? (:scroll db))
-        (.setCursorPosition screen nil)
-        (.setCursorPosition screen (TerminalPosition. cx cy))))
+      (if-let [[sx sy] (components/find-bar-cursor cols text-top (:search db))]
+        ;; Active find bar owns the keyboard — cursor sits in its query field
+        ;; (see the full-frame path / `find-bar-cursor` for the why).
+        (.setCursorPosition screen (TerminalPosition. sx sy))
+        (if (scroll/scrolled-up? (:scroll db))
+          (.setCursorPosition screen nil)
+          (.setCursorPosition screen (TerminalPosition. cx cy)))))
     ;; Suggestion popup (slash commands / inline `@` file picker) is drawn
     ;; just above the input box, in rows the live-bubble repaint above
     ;; overdraws. Re-paint it here every tick so it stays on top instead of
