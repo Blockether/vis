@@ -3050,11 +3050,13 @@
                             :hidden-entries body-entries, :collapsed? (not expanded?),
                             :session-id session-id, :node-id node-id, :color-role color-role})]
         ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
-        ;; badge reads as its own background BAND (not a lone colored line);
-        ;; expanded, the body already opens with its own breathing blank.
+        ;; badge reads as its own background BAND (not a lone colored line).
+        ;; Expanded, the body opens with its own breathing blank AND earns the
+        ;; SAME trailing pad row, so the bubble always closes with exactly one
+        ;; line of `result-bg` padding below the content.
         (vec (concat header
                (if expanded?
-                 body-entries
+                 (conj body-entries {:line (str result-marker ""), :meta nil})
                  [{:line (str result-marker ""), :meta nil}]))))
       (let [meta {:kind :result-headline, :color-role color-role}]
         ;; Summary-only card (move/delete/exists — no expand triangle) also
