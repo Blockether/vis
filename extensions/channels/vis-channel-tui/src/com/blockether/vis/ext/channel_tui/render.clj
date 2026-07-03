@@ -3058,16 +3058,23 @@
                (if expanded?
                  (conj body-entries {:line (str result-marker ""), :meta nil})
                  [{:line (str result-marker ""), :meta nil}]))))
-      (let [meta {:kind :result-headline, :color-role color-role}]
-        ;; Summary-only card (move/delete/exists — no expand triangle) also
-        ;; earns a trailing `result-bg` pad row so it reads as a band too. It
-        ;; also gets the SAME left margin as a chevron card's label (space +
-        ;; the `▸ ` slot) so labels line up whether or not a triangle is shown.
-        (conj
-          (mapv (fn [line] {:line (str result-marker "   " line), :meta meta})
-            (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
-              (max 1 (- fill-w 3))))
-          {:line (str result-marker ""), :meta nil})))))
+      (let [meta      {:kind :result-headline, :color-role color-role}
+            ;; No chevron to fill the slot, so the headline sits at ONE col of
+            ;; breathing room (flush-painted result-headline + a single space)
+            ;; — the SAME left column as a chevron card's body rows, not the
+            ;; deeper `▸ `-slot indent that read as a dangling left margin.
+            headline  (mapv (fn [line] {:line (str result-marker " " line), :meta meta})
+                        (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+                          (max 1 (- fill-w 1))))
+            ;; A card can carry a body yet have NO node-id (nothing to fold it
+            ;; under — e.g. a nil session-id). Never DROP that body: render it
+            ;; inline, always-expanded, so the result still produces its output.
+            body-rows (when (seq entries)
+                        (into [(->result {:line ""})] (mapv ->result entries)))]
+        ;; Trailing `result-bg` pad row so the card reads as its own band too.
+        (vec (concat headline
+               body-rows
+               [{:line (str result-marker ""), :meta nil}]))))))
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],
@@ -3396,7 +3403,15 @@
              inline-error-message-lines (when error
                                           (mapv #(line-entry (str c-marker %))
                                             (wrap-text (form-error-headline error) fill-w)))
-             hide-code-chrome? (and (str/blank? code-text) (not is-error?))
+             ;; NATIVE tool calls (cat/rg/patch/…) already render as an op-card
+             ;; (headline + result body); their synthesized invocation source is
+             ;; redundant chrome, so drop the code block. ONLY `python_execution`
+             ;; — the model's OWN program — keeps its code visible. A blank-code
+             ;; form (or any non-tool form with no code) also drops the chrome.
+             ;; Errors always keep the code so the inline caret has context.
+             native-non-python? (and tool-name* (not= tool-name* "python_execution"))
+             hide-code-chrome? (and (not is-error?)
+                                 (or (str/blank? code-text) native-non-python?))
              code-block (cond hide-code-chrome?
                                   ;; When raw code is hidden (def-wrapped tool
                                   ;; call or any successful tool form), drop the

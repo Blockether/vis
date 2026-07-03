@@ -376,10 +376,9 @@
    sentence so the RUN_TESTS headline doesn't re-list every namespace.
    `norm` is the canonical selector map {:nses :only :include :exclude}."
   [root norm]
-  (let [ns-str   (str/join " " (:nses norm))
-        sel      (select-keys norm [:nses :only :include :exclude])
-        has-sel? (boolean (some seq [(:only norm) (:include norm) (:exclude norm)]))]
-    (if-let [{:keys [tool cmd selectors?]} (cli-command-for root sel)]
+  (let [ns-str (str/join " " (:nses norm))
+        sel    (select-keys norm [:nses :only :include :exclude])]
+    (if-let [{:keys [tool cmd]} (cli-command-for root sel)]
       (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
                   (catch Throwable t {:exit -1, :out "", :err (str (.getMessage t))}))
             out (str (:out res) (:err res))
@@ -388,15 +387,10 @@
             tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
         {:mode "cli", :ns ns-str, :tool (name tool), :command (str/join " " cmd)
          :exit (:exit res), :pass? (zero? (or (:exit res) -1))
-         ;; Lead with the RESULT, not the missing-REPL apology: a bare
-         ;; "no nREPL — ran via clj" headline read as a skipped run (it isn't —
-         ;; `clojure -M:test` runs the real suite). Surface the tally up front.
-         :note (str "ran via " (name tool) " (no live nREPL)"
-                 (when tally (str " — " tally))
-                 (if selectors?
-                   "; selectors passed through to lazytest.main"
-                   (str (when has-sel? "; selectors do NOT apply to this build tool")
-                     "; start a REPL for a fast single-ns run")))
+         ;; Surface just the RESULT — the tally is all the caller needs. The
+         ;; runner mechanics (which build tool, live nREPL vs CLI, selector
+         ;; pass-through) are internal plumbing, not something to narrate.
+         :note tally
          :output (cli-tail out)})
       {:mode "cli", :ns ns-str
        :error (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))

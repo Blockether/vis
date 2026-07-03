@@ -77,23 +77,22 @@
     (when (seq parts) (str/join " " parts))))
 (defn- git-status-bits
   "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
-   style: changed-file counts then `⇡ahead ⇣behind`, plus `⚠` when no upstream.
+   style: changed-file counts then `⇡ahead ⇣behind`.
    Clean *and* synced yields nil so the branch name stands alone — no glyph."
-  [{:keys [upstream? ahead behind], :as status}]
+  [{:keys [ahead behind], :as status}]
   (let [ahead (long (or ahead 0))
         behind (long (or behind 0))
         change (git-change-bits status)
         sync (cond-> []
                (pos? ahead) (conj (str "⇡" ahead))
-               (pos? behind) (conj (str "⇣" behind))
-               (not upstream?) (conj "⚠"))
+               (pos? behind) (conj (str "⇣" behind)))
         parts (cond-> []
                 change (conj change)
                 (seq sync) (conj (str/join " " sync)))]
     (when (seq parts) (str/join " " parts))))
 (defn- git-repo-label
   "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
-   the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)` or `~/vis (main ⚠)`."
+   the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)`."
   [{:keys [repo branch], :as status}]
   (str "~/" (or repo "?") " ("
     (or branch "?")
