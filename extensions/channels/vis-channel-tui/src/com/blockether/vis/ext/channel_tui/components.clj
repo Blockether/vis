@@ -136,9 +136,13 @@
    type."
   22)
 
-(defn find-bar!
-  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as C-p / C-n). `search` is app-db's `:search` map; no-op when inactive."
-  [g cols text-top {:keys [active? query hits index case? total]}]
+(defn- find-bar-layout
+  "Geometry shared by `find-bar!` (paint) and `find-bar-cursor` (terminal
+   cursor placement): the content ops, box origin/width, and the column
+   offset of the cursor inside the white query field. nil when the bar is
+   inactive — both callers no-op on nil, so paint and cursor placement can
+   never disagree about where the bar sits."
+  [cols {:keys [active? query hits index case? total]}]
   (when active?
     (let [n     (long (count hits))
           q     (str query)
@@ -146,10 +150,10 @@
           ;; The white input field carries its OWN inner padding — a space each
           ;; side on input-field-bg — so the query text isn't jammed against the
           ;; field edge. That's padding the box border can't give.
-          qfield (let [s (truncate-with-ellipsis qshow find-input-width)]
-                   (str " " s
-                     (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))
-                     " "))
+          qtext (truncate-with-ellipsis qshow find-input-width)
+          qfield (str " " qtext
+                   (apply str (repeat (max 0 (- find-input-width (long (p/display-width qtext)))) \space))
+                   " ")
           cnt   (format " %-9s" (cond (str/blank? q) ""
                                   (zero? n)      "0/0"
                                   :else          (str (inc (long (or index 0))) "/" n
@@ -166,10 +170,38 @@
                   [[:chrome " "]])
           content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
           box-w (+ content-w 2)
-          box-l (max 0 (- (long cols) box-w 2))
-          box-t (long text-top)
+          box-l (max 0 (- (long cols) box-w 2))]
+      {:ops ops
+       :box-l box-l
+       :box-w box-w
+       ;; Border (+1), leading :chrome space (+1), field inner pad (+1), then
+       ;; the typed query — the cursor rides its end. The placeholder text
+       ;; ("type to search…") doesn't count: an empty query parks the cursor
+       ;; at the field start, exactly like an empty prompt input.
+       :cursor-dx (+ 3 (if (str/blank? q) 0 (long (p/display-width qtext))))})))
+
+(defn find-bar-cursor
+  "Screen cell [col row] where the terminal cursor belongs while the find bar
+   is ACTIVE — the end of the typed query inside the white field — or nil
+   when inactive. Both render paths (full frame + live/partial) consult this
+   AFTER placing the prompt-input cursor: while the bar owns the keyboard the
+   cursor visibly moves INTO it, and because the prompt's logical
+   `{:lines :crow :ccol}` state is never touched by the search key-loop,
+   closing the bar lands the cursor back exactly where it was."
+  [cols text-top search]
+  (when-let [{:keys [box-l cursor-dx]} (find-bar-layout cols search)]
+    [(+ (long box-l) (long cursor-dx)) (inc (long text-top))]))
+
+(defn find-bar!
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as C-p / C-n). `search` is app-db's `:search` map; no-op when inactive.
+
+   Returns the cursor cell [col row] from `find-bar-cursor` (nil when
+   inactive) so callers can park the terminal cursor in the query field."
+  [g cols text-top search]
+  (when-let [{:keys [ops box-l box-w]} (find-bar-layout cols search)]
+    (let [box-t (long text-top)
           row   (inc box-t)
-          x0    (inc box-l)]
+          x0    (inc (long box-l))]
       ;; box: fill bg, then single-line border
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -194,7 +226,8 @@
               (p/put-str! g x row (last op))
               (+ x (long (p/display-width (last op)))))))
         x0
-        ops))))
+        ops)
+      (find-bar-cursor cols text-top search))))
 
 ;; (The header help/search chips are painted inline by `header.clj` — see its
 ;; right-slot cluster — so there's no shared chip def here.)

@@ -38,6 +38,28 @@
       (expect (nil? (cr/lookup 151 31))))                     ;; a row above → miss
     (cr/reset!)))
 
+(defdescribe find-bar-cursor-test
+  (describe "terminal cursor rides the find bar's query field"
+    ;; While the find bar is open it owns the keyboard, so the blinking
+    ;; terminal cursor must sit INSIDE its white query field — not stay parked
+    ;; in the prompt input. `find-bar-cursor` is the single geometry source
+    ;; both render paths use; `find-bar!` returns the same cell by construction.
+    (it "is nil while inactive — the prompt input keeps the cursor"
+      (expect (nil? (comps/find-bar-cursor 120 5 {:active? false, :query "ab"})))
+      (expect (nil? (comps/find-bar-cursor 120 5 nil))))
+    (it "sits on the bar's content row; typing advances it cell by cell"
+      (let [s0 {:active? true, :query "", :hits [], :index 0, :case? false, :total 0}
+            [cx0 cy0] (comps/find-bar-cursor 120 5 s0)
+            [cx2 cy2] (comps/find-bar-cursor 120 5 (assoc s0 :query "ab"))]
+        (expect (= 6 cy0))            ;; text-top+1 — the row between the borders
+        (expect (= cy0 cy2))
+        (expect (= (+ cx0 2) cx2))))  ;; "ab" → 2 cells right of the empty-query start
+    (it "caps at the field's right edge once the query overflows into ellipsis"
+      (let [s0 {:active? true, :query "", :hits [], :index 0, :case? false, :total 0}
+            [cx0 _] (comps/find-bar-cursor 120 5 s0)
+            [cxl _] (comps/find-bar-cursor 120 5 (assoc s0 :query (apply str (repeat 80 \x))))]
+        (expect (<= (- cxl cx0) 22)))))) ;; never escapes the 22-cell white field
+
 (defn- well-formed-line?
   "A LINE is a non-empty vec of SEGs; a SEG is [text color bold?]."
   [line]
