@@ -331,13 +331,34 @@
     ;; The persistence shape now lives under `:toggles`, not
     ;; `:tui-settings`. `state/init!` keeps the `:settings`
     ;; projection coherent by pulling each migrated toggle's value
-    ;; off the registry; toggle hydration itself runs from
-    ;; `screen/run-chat!` before `init!` in production.
+    ;; off the registry. (In production `screen/run-chat!` runs
+    ;; hydration AFTER `init!` and then dispatches
+    ;; `:resync-toggle-settings` — see the regression test below.)
     (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :deep}})
     (try
       (with-redefs [vis/load-config-raw (fn [] {})]
         (state/init!)
         (expect (= :deep
+                  (get-in @state/app-db [:settings :reasoning-level]))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
+
+  (it "resync repairs the projection when hydration runs AFTER init! (production order)"
+    ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
+    ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
+    ;; from config, followed by a `:resync-toggle-settings` dispatch. Without
+    ;; that resync the footer keeps showing the default (`balanced`) while the
+    ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
+    ;; advances the toggle only up to the already-displayed level and appears
+    ;; to do nothing.
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)                                    ;; projects default :balanced
+        (vis/toggles-hydrate-from-config!                ;; toggle -> persisted :quick
+          {:toggles {:vis/reasoning-level :quick}})
+        (expect (= :balanced                             ;; stale projection, pre-resync
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (state/dispatch [:resync-toggle-settings])       ;; the fix
+        (expect (= :quick
                   (get-in @state/app-db [:settings :reasoning-level]))))
       (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
 
