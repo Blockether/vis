@@ -40,9 +40,11 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.notifications :as notifications]
+   [com.blockether.vis.internal.prompt-templates :as prompt-templates]
    [taoensso.telemere :as tel])
   (:import
    [java.io File]
@@ -668,11 +670,27 @@ def __vis_registration__():
 ;; =============================================================================
 
 (defn- reload-slash [_ctx]
-  (let [{:keys [loaded failed]} (reload-python-extensions!)]
-    {:slash/status (if (pos? (long failed)) :error :ok)
-     :slash/title (str "Python extensions: " loaded " loaded"
+  ;; One user-facing reload for EVERY hot-reloadable resource: Python
+  ;; extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
+  ;; templates, and any extension-owned discovery cache registered as a
+  ;; reload hook (harness skills/agents).
+  (let [{:keys [loaded failed]} (reload-python-extensions!)
+        hook-results  (extension/run-reload-hooks!)
+        failed-hooks  (into [] (keep (fn [[id r]] (when-not (:ok? r) id))) hook-results)
+        guidance      (try (agents/reload!) nil
+                        (catch Throwable t (ex-message t)))
+        template-cnt  (try (count (prompt-templates/reload!))
+                        (catch Throwable _ nil))]
+    {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance)
+                     :error :ok)
+     :slash/title (str "Reloaded — Python extensions: " loaded " loaded"
                     (when (pos? (long failed))
-                      (str ", " failed " failed — see `vis doctor`")))}))
+                      (str ", " failed " failed — see `vis doctor`"))
+                    "; skills/agents, prompt templates"
+                    (when template-cnt (str " (" template-cnt ")"))
+                    ", and context files rescanned"
+                    (when (seq failed-hooks)
+                      (str " — hook failures: " (str/join ", " (map str failed-hooks)))))}))
 
 (defn- doctor-fn [_env]
   (vec
@@ -697,6 +715,6 @@ def __vis_registration__():
        :ext/kind "host"
        :ext/source-nses ['com.blockether.vis.internal.python-extensions]
        :ext/slash-commands [{:slash/name "reload"
-                             :slash/doc "Reload Python extensions (*.py in ~/.vis/extensions and .vis/extensions)."
+                             :slash/doc "Reload Python extensions, skills/agents, prompt templates, and context files."
                              :slash/run-fn reload-slash}]
        :ext/doctor-fn doctor-fn})))

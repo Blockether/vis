@@ -21,6 +21,7 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -374,6 +375,29 @@
               (catch Throwable _t []))]
       (when (seq v) (reset! registry-slash-commands-cache v))
       v)))
+(defn- template-slash-commands
+  "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
+   `~/.vis/prompts/*.md`, and provider-contributed dynamic templates
+   (`/skill:<name>`, …). NOT memoized — the template registries are
+   marker-cached internally (stat-only when unchanged) and templates can
+   appear mid-session (a file dropped in, a skill added). Selecting one
+   submits the plain `/name` text; the engine expands it (registered
+   slashes always win over a same-named template, so shadowed names are
+   filtered by the caller)."
+  []
+  (try
+    (mapv (fn [{:keys [name description]}]
+            (let [desc (when-not (str/blank? (str description)) (str description))]
+              {:id           (keyword (str "template." name))
+               :label        (or desc name)
+               :doc          desc
+               :slash/name   name
+               :slash/path   [name]
+               :slash/text   (str "/" name)
+               :slash/usage  (str "/" name " [args]")}))
+      (prompt-templates/templates))
+    (catch Throwable _ [])))
+
 (defn- command-palette-extra-commands
   "Extra commands appended to Ctrl+K.
 
@@ -391,7 +415,11 @@
    discovers `/workspace`, `/voice`, etc. Ctrl+K itself uses
    `command-palette-extra-commands` and remains minimal."
   [_screen]
-  (vec (concat dlg/palette-commands (registry-slash-commands))))
+  (let [base   (vec (concat dlg/palette-commands (registry-slash-commands)))
+        ;; A registered slash shadows a same-named template (engine
+        ;; precedence) — drop the duplicate suggestion.
+        taken  (into #{} (keep :slash/text) base)]
+    (into base (remove #(contains? taken (:slash/text %)) (template-slash-commands)))))
 (defn- slash-command-for-input
   [screen input-state]
   (slash/exact-command (input/input->text input-state) (menu-commands screen)))

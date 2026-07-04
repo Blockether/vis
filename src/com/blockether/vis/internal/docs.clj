@@ -356,6 +356,18 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 ;; would resolve to /docs/docs/<slug> on deep pages → 404 "no such doc".
 (defn- href [mode slug] (case mode :static (str slug ".html") :live (str "/docs/" slug)))
 
+(defn- rewrite-md-links
+  "Cross-page links in rendered page BODIES. Authors write plain relative
+   markdown links (`[Skills](skills.md)`, `[X](configuration.md#router)`) —
+   commonmark emits them verbatim, which 404s in BOTH modes (live serves
+   `/docs/<slug>`, static serves `<slug>.html`). Rewrite every RELATIVE
+   `*.md` href through the same mode-aware `href` the sidebar nav uses;
+   absolute URLs (scheme or leading `/`) pass through untouched."
+  ^String [^String html mode]
+  (str/replace html #"href=\"([^\"#:/][^\":]*?)\.md(#[^\"]*)?\""
+    (fn [[_ slug frag]]
+      (str "href=\"" (href mode slug) (or frag "") "\""))))
+
 (defn- nav-html [{:keys [pages]} active-slug mode]
   (let [by-sec (group-by :section pages)
         sections (cons nil (distinct (remove nil? (map :section pages))))]
@@ -423,7 +435,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\">iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile $env:TEMP\\vis.ps1; & $env:TEMP\\vis.ps1</code>"
           "</div>"
           "</div></section>"))
-      html
+      (rewrite-md-links html mode)
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
       "<img class=\"bk-mark\" src=\"" (asset mode "blockether.png") "\" alt=\"Blockether\"></a>"
@@ -553,5 +565,15 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       (ok-html (page-html site-data
                  (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live)
         accept-encoding)
-      :else (when-let [page (first (filter #(= path (:slug %)) pages))]
-              (ok-html (page-html site-data page :live) accept-encoding)))))
+      :else
+      (or
+        (when-let [page (first (filter #(= path (:slug %)) pages))]
+          (ok-html (page-html site-data page :live) accept-encoding))
+        ;; Tolerate literal `<slug>.md` deep links (old bookmarks, raw
+        ;; markdown cross-links) — permanent-redirect to the slug route.
+        (when (str/ends-with? path ".md")
+          (let [slug (str/replace path #"\.md$" "")]
+            (when (some #(= slug (:slug %)) pages)
+              {:status 301
+               :headers {"location" (str "/docs/" slug)}
+               :body ""})))))))

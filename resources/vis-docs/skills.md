@@ -7,8 +7,10 @@ feature. It is the sibling of the shell layer's POSIX compatibility, but for the
 skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 
-Skills are exposed through one model-facing verb, **`skill(name)`**, gated by
-the `:vis/harness-skills` feature toggle (**ON** by default).
+Skills are exposed through a model-facing verb, **`skill(name)`**, and a
+user-facing invocation, **`/skill:<name> [task]`** (see
+[Context files & prompts](context-and-prompts.md)) — both gated by the
+`:vis/harness-skills` feature toggle (**ON** by default).
 
 ## What a skill is
 
@@ -76,14 +78,22 @@ harnesses' project dirs, then their user dirs, then plugin caches.
 | 4 | Claude Code | `~/.claude/plugins/cache/**/skills` | installed plugins |
 | 5 | pi | `.pi/skills` | project |
 | 6 | pi | `~/.pi/agent/skills` | user |
-| 7 | agents standard | `.agents/skills` | project |
+| 7 | agents standard | `.agents/skills` | project **+ ancestors up to the git root** |
 | 8 | agents standard | `~/.agents/skills` | user |
 | 9 | opencode | `.opencode/skill` | project |
 | 10 | opencode | `~/.config/opencode/skill` | user |
 
 Project-relative roots (`.vis/skills`, `.claude/skills`, …) resolve against the
-current working directory, so a skill checked into a repo travels with it. The
-scan is defensive: missing directories are simply skipped and it never throws.
+**active workspace root** (the directory the session works in), so a skill
+checked into a repo travels with it. The `.agents/skills` root additionally
+walks the workspace root's ancestor directories up to the git repo root
+(nearest wins) — in a monorepo, repo-level skills apply inside every
+subproject. The scan is defensive: missing directories are simply skipped and
+it never throws.
+
+Discovery is **live**: the source roots are stat-checked on each access and
+re-scanned when a `SKILL.md` (or agent file) appears, changes, or disappears —
+a skill added mid-session shows up without a restart.
 
 ### Project-local `.vis/skills`
 
@@ -100,6 +110,14 @@ removing the jar removes the toggle):
 
 When the toggle is OFF the prompt listing and the `skill(name)` verb both
 disappear, costing zero tokens.
+
+## Invoking a skill yourself
+
+The model picks skills from the prompt listing on its own, but you can force
+one: every skill is also a prompt template named `skill:<name>`, so typing
+`/skill:setup-pre-commit for husky` in any channel loads that skill's full
+`SKILL.md` (once per session) and runs your task with it. Details in
+[Context files & prompts](context-and-prompts.md).
 
 ## Using skills from other harnesses
 

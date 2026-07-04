@@ -2265,6 +2265,37 @@
   []
   (let [registry @extension-registry] (into [] (keep registry) @extension-order)))
 
+;; ---------------------------------------------------------------------------
+;; Reload hooks — the seam `/reload` uses to refresh EXTENSION-owned resource
+;; caches (harness skills/agents discovery, …) without core knowing about the
+;; extension namespaces. Core-owned resources (project guidance, prompt
+;; templates) are reloaded directly by the `/reload` slash.
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private reload-hooks (atom {}))
+
+(defn register-reload-hook!
+  "Register a zero-arg `f` to run on `/reload`. Idempotent per `id` —
+   re-registering replaces. Hooks must be cheap and safe to call at any
+   time; a throwing hook is reported, never fatal."
+  [id f]
+  (swap! reload-hooks assoc id f)
+  id)
+
+(defn run-reload-hooks!
+  "Run every registered reload hook. Returns `{id {:ok? bool :error msg}}`."
+  []
+  (reduce-kv
+    (fn [acc id f]
+      (assoc acc id
+        (try (f) {:ok? true}
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::reload-hook-failed
+                       :data  {:hook id :error (ex-message t)}})
+            {:ok? false :error (ex-message t)}))))
+    {}
+    @reload-hooks))
+
 (defn- startable-visible?
   "True when a startable should appear in a Resources UI: no `:visible-fn` means
    always visible; a throwing predicate fails OPEN (shown) so a broken predicate

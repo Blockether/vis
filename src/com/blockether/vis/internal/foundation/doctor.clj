@@ -38,15 +38,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- agents-md-diagnostics [_environment]
-  (let [{:keys [found? source path bytes]} (agents/instructions)]
+  (let [{:keys [found? source path bytes files]} (agents/instructions)]
     (if found?
-      ;; AGENTS.md / CLAUDE.md is inlined verbatim into the
+      ;; Stacked AGENTS.md / CLAUDE.md files are inlined verbatim into the
       ;; PROJECT-INSTRUCTIONS system block; no truncation, no remediation.
       [{:level   :info
-        :message (str "Project guidance loaded from " path
-                   " (" (format-bytes (long (or bytes 0))) ", source: " (name source) ")")}]
+        :message (if (> (count files) 1)
+                   (str "Project guidance loaded from " (count files)
+                     " stacked files (user-global → ancestors → workspace root), "
+                     (format-bytes (long (or bytes 0))) " total; innermost: " path)
+                   (str "Project guidance loaded from " path
+                     " (" (format-bytes (long (or bytes 0))) ", source: " (name source) ")"))}]
       [{:level       :warn
-        :message     "No project guidance found (neither AGENTS.md nor CLAUDE.md in the repo root)."
+        :message     "No project guidance found (no AGENTS.md / CLAUDE.md at the workspace root, its ancestors, or ~/.vis)."
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
 ;; ---------------------------------------------------------------------------

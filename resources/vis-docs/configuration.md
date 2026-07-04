@@ -36,7 +36,12 @@ Append project house rules to the core prompt, or replace it outright:
 {:system-prompt {:text "You are …" :replace? true}}
 ```
 
-Independently of this, Vis inlines your project's **`AGENTS.md`** (or `CLAUDE.md` as fallback) into every turn as project-owned instructions — that file, not config, is the right place for repo conventions.
+Markdown files work too — `.vis/SYSTEM.md` replaces the core prompt,
+`.vis/APPEND_SYSTEM.md` appends to it, in both the project and `~/.vis`. A
+project `SYSTEM.md` beats a global one, and both beat the config `:replace?`
+form. See [Context files & prompts](context-and-prompts.md).
+
+Independently of this, Vis stacks **`AGENTS.md`** (or `CLAUDE.md` as fallback) context files into every turn as project-owned instructions: `~/.vis/AGENTS.md` (user-global), each ancestor directory of the workspace root, then the workspace root itself — those files, not config, are the right place for repo conventions. See [Context files & prompts](context-and-prompts.md).
 
 ## Router
 

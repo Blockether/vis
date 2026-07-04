@@ -6,10 +6,12 @@
    fragments, current user message. Per-iteration user-role context is the
    engine snapshot rendered as a Python dict (`session`) by the loop."
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -316,55 +318,119 @@
           (when-not (str/blank? t)
             {:text t :replace? replace?}))))
     (catch Throwable _ nil)))
+
+(defn- read-prompt-file
+  "Slurp + normalize a markdown prompt file. nil when absent, blank, or
+   unreadable — prompt assembly never breaks on a bad file."
+  [^java.io.File f]
+  (try
+    (when (.isFile f)
+      (let [s (extension/normalize-prompt-text (slurp f))]
+        (when-not (str/blank? s) s)))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::system-prompt-file-read-failed
+                 :data  {:path (.getAbsolutePath f) :error (ex-message t)}})
+      nil)))
+
+(defn- system-prompt-file-overrides
+  "pi-style SYSTEM.md / APPEND_SYSTEM.md markdown overrides.
+
+   Replace base (first hit wins): `<workspace>/.vis/SYSTEM.md`, then
+   `~/.vis/SYSTEM.md`. Appends (both apply, global first so the project
+   file lands nearer the conversation): `~/.vis/APPEND_SYSTEM.md`, then
+   `<workspace>/.vis/APPEND_SYSTEM.md`.
+
+   Returns `{:replace <text|nil> :appends [text …]}`."
+  []
+  (let [global-dir (io/file (System/getProperty "user.home") ".vis")
+        proj-dir   (try (io/file (workspace/cwd) ".vis")
+                     (catch Throwable _ nil))]
+    {:replace (or (when proj-dir (read-prompt-file (io/file proj-dir "SYSTEM.md")))
+                (read-prompt-file (io/file global-dir "SYSTEM.md")))
+     :appends (vec (keep identity
+                     [(read-prompt-file (io/file global-dir "APPEND_SYSTEM.md"))
+                      (when proj-dir
+                        (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
+
 (defn build-system-prompt
-  "Core system prompt + optional caller addendum + project config prompt.
+  "Core system prompt + optional caller addendum + config prompt +
+   SYSTEM.md / APPEND_SYSTEM.md file overrides.
 
    Assembled in send order (later blocks positionally reinforce earlier):
-   `CORE_SYSTEM_PROMPT`, then the caller's `:system-prompt` addendum, then the
+   base, then the caller's `:system-prompt` addendum, then the
    `:system-prompt` pulled from Vis config (`vis.edn` / `.vis/config.edn` /
-   `~/.vis/config.edn`, deep-merged). The config hook lets a project append
-   house rules without any caller having to pass them.
+   `~/.vis/config.edn`, deep-merged), then `~/.vis/APPEND_SYSTEM.md`, then
+   `<workspace>/.vis/APPEND_SYSTEM.md`. The config + file hooks let a project
+   append house rules without any caller having to pass them.
 
-   Full rewrite: a config `:system-prompt` map with `:replace? true` drops
-   `CORE_SYSTEM_PROMPT` entirely and uses the config text as the base — the
-   caller addendum, if any, is still appended after it."
+   Full rewrite precedence for the base: `<workspace>/.vis/SYSTEM.md` >
+   `~/.vis/SYSTEM.md` > config `:system-prompt` map with `:replace? true` >
+   `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
+   append files are still appended after it."
   [{:keys [system-prompt]}]
-  (let [addendum   (when (string? system-prompt)
-                     (extension/normalize-prompt-text system-prompt))
-        cfg        (config-system-prompt)
-        replace?   (boolean (:replace? cfg))
-        cfg-prompt (when (and cfg (not replace?)) (:text cfg))
-        base       (if replace? (:text cfg) CORE_SYSTEM_PROMPT)
-        extras     (into []
-                     (comp (filter string?)
-                       (remove str/blank?))
-                     [addendum cfg-prompt])]
+  (let [addendum     (when (string? system-prompt)
+                       (extension/normalize-prompt-text system-prompt))
+        cfg          (config-system-prompt)
+        files        (system-prompt-file-overrides)
+        file-replace (:replace files)
+        cfg-replace? (and (nil? file-replace) (boolean (:replace? cfg)))
+        cfg-prompt   (when (and cfg (not (:replace? cfg))) (:text cfg))
+        base         (or file-replace
+                       (when cfg-replace? (:text cfg))
+                       CORE_SYSTEM_PROMPT)
+        extras       (into []
+                       (comp (filter string?)
+                         (remove str/blank?))
+                       (into [addendum cfg-prompt] (:appends files)))]
     (str/join "\n\n" (into [base] extras))))
 
 (defn- project-instructions-block
-  "Inline project rules (AGENTS.md — or CLAUDE.md fallback) as a stable
-   system block. The model sees the actual rules, not a boolean hint.
+  "Inline project rules (stacked AGENTS.md / CLAUDE.md context files) as a
+   stable system block. The model sees the actual rules, not a boolean hint.
 
-   `internal.agents` already does the read + size cap + caching; this fn
-   just labels the content for the prompt. Returns nil when no file is
-   present or the file is empty."
+   `internal.agents` already does the reads + stacking + caching; this fn
+   just labels the content for the prompt. Files render outermost first
+   (user-global → ancestor directories → workspace root) so nearer rules
+   positionally override outer ones. Returns nil when no file is present
+   or every file is empty."
   []
   (try
-    (let [{:keys [found? source path content]} (agents/instructions)]
-      (when (and found?
-              (string? content)
-              (not (str/blank? content)))
-        (let [origin (case source
-                       :repo                    "AGENTS.md"
-                       :repo:claude-md-fallback "CLAUDE.md (AGENTS.md fallback)"
-                       (str source))
-              header (str "Project rules from " origin
-                       (when path (str " (" path ")"))
-                       ". These are PROJECT-OWNED instructions; honor them "
+    (let [{:keys [found? source path content files]} (agents/instructions)
+          ;; Back-compat: a single-file legacy shape (no :files) still renders.
+          files (or (seq files)
+                  (when (and found? (string? content) (not (str/blank? content)))
+                    [{:scope   :project
+                      :source  (case source
+                                 :repo                    :agents-md
+                                 :repo:claude-md-fallback :claude-md
+                                 source)
+                      :path    path
+                      :content content}]))
+          files (filter (fn [f] (and (string? (:content f))
+                                  (not (str/blank? (:content f)))))
+                  files)]
+      (when (and found? (seq files))
+        (let [multi? (> (count files) 1)
+              header (str "Project rules from "
+                       (if multi?
+                         (str (count files) " stacked guidance files — "
+                           "user-global first, then each ancestor directory, "
+                           "then the workspace root. NEARER (later) files "
+                           "override earlier ones on conflict.")
+                         (str (agents/origin-label (first files))
+                           " (" (:path (first files)) ")."))
+                       " These are PROJECT-OWNED instructions; honor them "
                        "alongside CORE rules. On conflict with CORE engine\n"
-                       "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")]
+                       "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")
+              body   (str/join "\n\n"
+                       (map (fn [f]
+                              (if multi?
+                                (str "### " (agents/origin-label f)
+                                  " — " (:path f) "\n" (:content f))
+                                (:content f)))
+                         files))]
           (prompt-block "project-instructions"
-            (str header "\n\n" content)))))
+            (str header "\n\n" body)))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error
                  :data  {:error (ex-message t)}}
