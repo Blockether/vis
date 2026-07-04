@@ -1708,26 +1708,6 @@
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
 
-(defn- strings-only-key-hint
-  "ONE-STEP correction for the `\":from_anchor\"` habit: when a crossed dict
-   carries a key spelled with a leading colon whose bare form IS an allowed
-   key, the model wrote Clojure keyword notation into a JSON dict (easy drift
-   while it is reading keyword-heavy Clojure source). The strings-only surface
-   never accepts the coloned spelling — so the refusal must NAME the exact
-   rename, or the model retries the same spelling blind (observed live:
-   session 2026-07-04, two identical ':from_anchor' retries on a bare
-   'missing required keys')."
-  [m allowed]
-  (let [coloned (for [k (keys m)
-                      :when (and (string? k)
-                              (str/starts-with? k ":")
-                              (contains? allowed (subs k 1)))]
-                  k)]
-    (when (seq coloned)
-      (str " Keys are plain JSON strings, not Clojure keywords — drop the leading colon: "
-        (str/join ", " (map #(str "'" % "' -> '" (subs % 1) "'") coloned))
-        "."))))
-
 (def ^:private patch-group-required-keys #{"path" "edits"})
 (def ^:private patch-group-optional-keys #{"expected_mtime" "expected_size" "atomic"})
 (def ^:private patch-group-allowed-keys
@@ -1744,15 +1724,13 @@
     (when missing
       (throw (ex-info (str "patch grouped edit missing required keys: "
                         (str/join ", " (map #(str "'" % "'") missing))
-                        " (a group is {'path': ..., 'edits': [...]})."
-                        (strings-only-key-hint group patch-group-allowed-keys))
+                        " (a group is {'path': ..., 'edits': [...]}).")
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :missing (vec missing)
                 :edit group})))
     (when unknown
       (throw (ex-info (str "patch grouped edit has unknown keys: "
-                        (str/join ", " (map #(str "'" % "'") unknown)) "."
-                        (strings-only-key-hint group patch-group-allowed-keys))
+                        (str/join ", " (map #(str "'" % "'") unknown)) ".")
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :unknown (vec unknown)
                 :allowed (vec patch-group-allowed-keys)
@@ -1815,8 +1793,7 @@
                 (throw (ex-info (str "patch edit missing required keys: "
                                   (str/join ", " (map #(str "'" % "'") missing))
                                   " — every edit needs 'from_anchor' (a lineno:hash"
-                                  " from a fresh cat) plus its replacement content."
-                                  (strings-only-key-hint edit patch-allowed-keys))
+                                  " from a fresh cat) plus its replacement content.")
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
@@ -1834,15 +1811,13 @@
                           :removed (vec legacy)
                           :edit edit})))
               (when-not (contains? edit "from_anchor")
-                (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat)."
-                                  (strings-only-key-hint edit patch-allowed-keys))
+                (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
                 (throw (ex-info (str "patch edit has unknown keys: "
                                   (str/join ", " (map #(str "'" % "'") unknown))
-                                  ". Allowed: " (str/join ", " (sort patch-allowed-keys)) "."
-                                  (strings-only-key-hint edit patch-allowed-keys))
+                                  ". Allowed: " (str/join ", " (sort patch-allowed-keys)) ".")
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :unknown (vec unknown)
                           :allowed (vec patch-allowed-keys)
@@ -2269,16 +2244,14 @@
     (when missing
       (throw (ex-info (str "write missing required keys: "
                         (str/join ", " (map #(str "'" % "'") missing))
-                        " (write needs 'path' and 'content')."
-                        (strings-only-key-hint args write-allowed-keys))
+                        " (write needs 'path' and 'content').")
                {:type :ext.foundation.editing/invalid-write-args
                 :missing (vec missing)
                 :args args})))
     (when unknown
       (throw (ex-info (str "write has unknown keys: "
                         (str/join ", " (map #(str "'" % "'") unknown))
-                        ". Allowed: " (str/join ", " (sort write-allowed-keys)) "."
-                        (strings-only-key-hint args write-allowed-keys))
+                        ". Allowed: " (str/join ", " (sort write-allowed-keys)) ".")
                {:type :ext.foundation.editing/invalid-write-args
                 :unknown (vec unknown)
                 :allowed (vec write-allowed-keys)
