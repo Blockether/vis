@@ -311,8 +311,10 @@ def __vis_pp__(o, indent=0, width=100):
    trampoline `__vis_drive__`. `gather` dispatches its awaitables to the
    host virtual-thread pool `__vis_par__` (bound from Clojure) — real overlap on
    blocking tool I/O, no event loop. A NESTED `__vis_Call__` that leaks into
-   output (forgot `await` on a call you USE) repr's a loud hint instead of
-   running silently — only TOP-LEVEL bare calls auto-settle."
+   output because you forgot `await` on a call you USE still repr's a loud hint
+   rather than running silently — EXCEPT `print(...)`, which auto-settles a
+   deferred call/gather handed straight to it (so `print(rg(x))` shows the real
+   result); only TOP-LEVEL bare calls otherwise auto-settle."
   "
 import ast as __vis_ast__
 
@@ -674,7 +676,15 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
     # a model-built dict with 'op' is a plain dict and is correctly NOT captured.
     # Track whether the block printed ONLY tool results: cards may replace the raw
     # stdout for display ONLY then; otherwise show the full stdout (no text lost).
-    __vis_a__ = tuple(__vis_pyify__(__a__) for __a__ in __vis_a__)
+    # Auto-SETTLE a deferred call/gather handed to print WITHOUT `await` (e.g.
+    # `print(rg(...))`): run it and show the real result instead of the loud
+    # '<unawaited async tool call …>' repr. Only OUR OWN deferred thunks are
+    # settled (never a stray generator/coroutine the model meant to print); every
+    # other arg pyifies exactly as before.
+    __vis_a__ = tuple(
+        __vis_settle__(__a__) if isinstance(__a__, (__vis_Call__, __vis_Gather__))
+        else __vis_pyify__(__a__)
+        for __a__ in __vis_a__)
     if __vis_kw__.get('file') is None:
         for __vis_x__ in __vis_a__:
             if isinstance(__vis_x__, __VisResult__):

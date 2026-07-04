@@ -385,6 +385,36 @@
                               {:text "(C-x r)" :join-left? true}]
                   " / "))))))
 
+(defdescribe shrink-to-fit-test
+  (let [shrink   @#'footer/shrink-to-fit
+        total    @#'footer/total-width
+        fits?    (fn [[segs sepa] cols] (<= (total segs sepa) cols))
+        row      [{:text "openai-codex/gpt-5.5 (C-x o) (cycle 1/3 C-x m)" :region :left :priority 2}
+                  {:text "reasoning: deep" :region :left :priority 3}
+                  {:text " resources 0 (C-x s) " :region :right :priority 2}]
+        limits   [{:text "limits: 5h 1200/2000  7d 40000/50000 resets in 3h" :region :left :priority 1}]]
+
+    (it "keeps every segment untouched when the row already fits"
+      (expect (= [row "  /  "] (shrink row 200))))
+
+    (it "drops the least-important segment before touching the critical ones"
+      (let [[segs _] (shrink row 60)]
+        (expect (not (some #(= "reasoning: deep" (:text %)) segs)))
+        (expect (some #(str/starts-with? (:text %) "openai-codex/") segs))))
+
+    (it "truncates the most-important tier with an ellipsis rather than dropping it"
+      (doseq [cols [40 24 12 6]]
+        (let [result (shrink row cols)]
+          (expect (fits? result cols))
+          (expect (seq (first result))))))
+
+    (it "compacts a lone priority-1 segment instead of letting it overflow"
+      (doseq [cols [40 20 8]]
+        (let [[segs _ :as result] (shrink limits cols)]
+          (expect (fits? result cols))
+          (expect (= 1 (count segs)))
+          (expect (str/ends-with? (:text (first segs)) "…")))))))
+
 (defdescribe generic-limits-footer-text-test
   (it "shows a loading placeholder before the polling thread populates :provider-limits"
     (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]

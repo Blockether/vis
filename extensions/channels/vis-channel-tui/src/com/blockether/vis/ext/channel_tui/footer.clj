@@ -560,11 +560,37 @@
       (spans-width l separator)
       (spans-width c separator)
       (spans-width r separator))))
+(defn- min-priority
+  "Smallest `:priority` NUMBER present (= the MOST important tier)."
+  [segs]
+  (apply min (map :priority segs)))
+
+(defn- truncate-widest
+  "Last resort when only the most-important segments remain and the row
+   STILL overflows: shave `over` columns off the single WIDEST text
+   segment, appending `…` to mark the cut, so critical content (model
+   chip, provider limits) COMPACTS in place instead of vanishing off a
+   narrow terminal. Returns the updated vector, or nil when nothing can
+   give up the columns (every segment already minimal)."
+  [segments ^long over]
+  (let [v (vec segments)
+        [idx seg] (->> (map-indexed vector v)
+                    (apply max-key (fn [[_ s]] (p/display-width (:text s)))))
+        cur (p/display-width (:text seg))]
+    (when (> cur 1)
+      (let [budget (max 1 (dec (- cur over)))          ; leave a column for the …
+            cut    (str/trimr (p/truncate-cols (:text seg) budget))
+            text   (str cut "…")]
+        (when (< (p/display-width text) cur)
+          (assoc-in v [idx :text] text))))))
+
 (defn- shrink-to-fit
-  "Drop highest-:priority segments one at a time until the row fits.
-   Tries the wide separator first, then collapses to a narrow one
-   before sacrificing segments - looks the same on a wide terminal,
-   reads the same on a 80-col one."
+  "Fit the segment row into `cols`. Tries the wide separator, then the
+   narrow one, then DROPS the least-important segments (highest
+   `:priority` NUMBER) one at a time. Once every survivor shares the
+   most-important priority tier and it STILL overflows, the widest
+   survivor is TRUNCATED with `…` rather than dropped - a compacted
+   model/limits chip beats a blank footer."
   [segments cols]
   (let [fit? (fn [segs sepa] (<= (total-width segs sepa) cols))]
     (cond (fit? segments sep) [segments sep]
@@ -572,10 +598,20 @@
       :else (loop [segs segments]
               (cond (empty? segs) [segs sep-narrow]
                 (fit? segs sep-narrow) [segs sep-narrow]
-                :else (let [worst-priority (apply max (map :priority segs))
-                                    ;; Drop one occurrence with the worst priority.
-                            victim (some #(when (= worst-priority (:priority %)) %) segs)]
-                        (recur (vec (remove #(identical? victim %) segs)))))))))
+                :else
+                (let [worst-priority (apply max (map :priority segs))
+                      victim (some #(when (= worst-priority (:priority %)) %) segs)
+                      dropped (vec (remove #(identical? victim %) segs))]
+                  (if (> worst-priority (min-priority segs))
+                    ;; Still-droppable decoration present (a less-important
+                    ;; tier than the survivors): drop one occurrence of it.
+                    (recur dropped)
+                    ;; Only the most-important tier is left and it overflows:
+                    ;; compact the widest survivor in place instead of dropping.
+                    (let [over (- (long (total-width segs sep-narrow)) (long cols))]
+                      (if-let [smaller (truncate-widest segs over)]
+                        (recur smaller)
+                        (recur dropped))))))))))
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
 (defn- draw-spans!
   "Draw spans left-to-right starting at `col`. Each span uses its own

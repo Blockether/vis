@@ -291,11 +291,10 @@ await patch({'path': css})" "t1/i1")]
       (let [r (ep/run-python-block (mk) "echo(\"bare\")" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "<bare>" (:result r)))))
-    (it "an UNawaited nested call repr's a loud hint, not the value"
+    (it "print auto-settles an UNawaited nested call (shows the value, not the hint)"
       (let [r (ep/run-python-block (mk) "print(echo(\"oops\"))" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (clojure.string/includes?
-                  (str (:stdout r)) "unawaited async tool call"))))
+        (expect (= "<oops>" (clojure.string/trim (str (:stdout r)))))))
     (it "an awaited assignment persists in the live interpreter across calls"
       (let [ctx (mk)
             r   (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
