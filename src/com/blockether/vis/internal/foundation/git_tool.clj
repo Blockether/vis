@@ -95,9 +95,11 @@
                      :duration-ms (or duration-ms (- t1 t0))}})))))
 
 ;; =============================================================================
-;; Render — the op-card for a `git` call: `$ git <args>` headline (with an
-;; exit/timeout note) + fenced stdout / stderr. Mirrors shell_run's renderer:
-;; git writes normal output to stderr on success (progress, hints), so the
+;; Render — the op-card for a `git` call: `<args>` headline (with an
+;; exit/timeout note) + fenced stdout / stderr. The GIT badge already names
+;; the command, so the headline shows only the ARGS — no redundant `$ git`.
+;; Like shell_run's renderer, git writes normal output to stderr on success
+;; (progress, hints), so the
 ;; `stderr:` label rides along only when the command actually FAILED.
 ;; =============================================================================
 
@@ -118,7 +120,7 @@
                         (if failed? (str "stderr:\n" e) e))]
                   (remove nil?)
                   (str/join "\n\n"))]
-    {:summary (str "$ " (get r "cmd") note)
+    {:summary (str (str/join " " (get r "args")) note)
      :body    (when (seq body) body)}))
 
 ;; =============================================================================

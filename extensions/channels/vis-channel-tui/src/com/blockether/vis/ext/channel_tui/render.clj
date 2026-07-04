@@ -3719,6 +3719,136 @@
                            (recur out prev-family (next xs))
                            (recur (conj! out e) f (next xs))))
             :else (recur (conj! out e) nil (next xs))))))))
+(defn- git-only-form
+  "The lone `git` native-tool form of an iteration entry — or nil when the
+   iteration is NOT a pure single-git-call step. Thinking, streamed prose,
+   recaps, provider fallbacks, an iter-level error, a print-many `:cards`
+   block, or any non-git / multi-form shape all disqualify it, so a group
+   never swallows a causally-distinct iteration."
+  [entry]
+  (let [{:keys [thinking content-stream assistant-prose forms recaps
+                provider-fallbacks error]}
+        entry]
+    (when (and (nil? error)
+            (empty? recaps)
+            (empty? provider-fallbacks)
+            (str/blank? (str thinking))
+            (str/blank? (str content-stream))
+            (str/blank? (str assistant-prose))
+            (= 1 (count forms)))
+      (let [f (first forms)]
+        (when (and (= "git" (some-> (:vis/tool-name f)
+                              str))
+                (empty? (:cards f)))
+          f)))))
+
+(defn- git-command-parts
+  "Project one git form into the fields a grouped GIT band needs: the chip
+   `:subcommand` (first arg token), a `:failed?` flag recovered from the
+   `(exit N)` / `(timed out)` note the git renderer appends, the full
+   `:headline` (args + note) for the expanded `$ …` row, and the fenced
+   `:body` (stdout / stderr). Reads only the DB-stable card summary/body, so
+   a restored trace groups identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card)
+                  str
+                  str/trim)
+        note-re #"\s*\((?:exit \d+|timed out)\)\s*$"
+        failed? (boolean (re-find note-re (str summary)))
+        args    (str/trim (str/replace (str summary) note-re ""))
+        subcmd  (or (not-empty (first (str/split args #"\s+"))) "git")]
+    {:subcommand subcmd
+     :failed?    failed?
+     :headline   summary
+     :body       (:body card)}))
+
+(defn- git-group-entries
+  "Coalesce a RUN of consecutive git-only iterations into ONE collapsible GIT
+   band instead of N separately-stacked GIT op-cards.
+
+   Collapsed (default) — a single badge row:
+     ▸ GIT · 3 commands  `add` (success) · `commit` (success) · `push` (success)
+   Expanded — each command as a `$ <args>` row with its stdout / stderr
+   nested underneath, so the run reads as one shell log. One node-id folds
+   the whole band, so it toggles with a single triangle. A failed command
+   keeps its `(exit N)` note on both its chip and its `$` row."
+  [git-forms {:keys [fill-w session-id session-turn-id iteration-number detail-expansions]}]
+  (let [parts      (mapv git-command-parts git-forms)
+        n          (count parts)
+        chips      (str/join " · "
+                     (map (fn [{:keys [subcommand failed?]}]
+                            (str "`" subcommand "`" (if failed? " (failed)" " (success)")))
+                       parts))
+        head       (str "**GIT** · " n " command" (when (not= 1 n) "s") "  " chips)
+        color-role :tool-color/shell
+        node-id    (when session-id
+                     (detail-node-id {:session-turn-id  session-turn-id
+                                      :iteration-number iteration-number
+                                      :section          :iteration
+                                      :kind             :git-group}))
+        ->result   (fn [e]
+                     (let [l        (str (:line e))
+                           stripped (or (second (split-structural-line-marker l)) l)]
+                       (assoc e :line (str result-marker stripped))))
+        body-md    (str/join "\n\n"
+                     (map (fn [{:keys [headline body]}]
+                            (str "`$ " headline "`"
+                              (when (seq (str body)) (str "\n\n" body))))
+                       parts))
+        entries    (when (seq body-md)
+                     (tag-copy-block-body
+                       (vec (ir-tui/ir->entries (vis/markdown->ir body-md) fill-w {:mode :channel}))
+                       node-id body-md))]
+    (if (and node-id (seq entries))
+      (let [expanded?    (detail-expanded? detail-expansions session-id node-id false)
+            body-entries (into [(->result {:line ""})] (mapv ->result entries))
+            header       (detail-summary-entries
+                           {:marker result-marker, :max-w fill-w, :summary head,
+                            :collapsed? (not expanded?),
+                            :session-id session-id, :node-id node-id, :color-role color-role})]
+        (vec (concat header
+               (if expanded?
+                 (conj body-entries {:line (str result-marker ""), :meta nil})
+                 [{:line (str result-marker ""), :meta nil}]))))
+      ;; No node-id (nil session-id) — render inline, always expanded, so the
+      ;; band still shows its commands rather than vanishing.
+      (let [headline  (mapv (fn [line] {:line (str result-marker " " line),
+                                        :meta {:kind :result-headline, :color-role color-role}})
+                        (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head))
+                          (max 1 (- fill-w 1))))
+            body-rows (when (seq entries)
+                        (into [(->result {:line ""})] (mapv ->result entries)))]
+        (vec (concat headline body-rows [{:line (str result-marker ""), :meta nil}]))))))
+
+(defn- render-iteration-entries
+  "Turn the visible `[idx entry]` iteration pairs into painter entries. A
+   MAXIMAL run (>= 2) of consecutive git-only iterations collapses into one
+   `git-group-entries` band; every other iteration (including a lone git
+   call) renders through `iter-entry-fn` as before. A non-git step between
+   two git calls breaks the run, so grouping never crosses causally-distinct
+   work."
+  [visible-iterations iter-entry-fn show-silent? git-ctx]
+  (let [tagged (mapv (fn [pair]
+                       [pair (git-only-form (visible-iteration-entry (second pair) show-silent?))])
+                 visible-iterations)]
+    (loop [out (transient [])
+           xs  (seq tagged)]
+      (if (nil? xs)
+        (persistent! out)
+        (let [[pair f] (first xs)]
+          (if f
+            (let [run (take-while (fn [[_ g]] (some? g)) xs)
+                  cnt (count run)]
+              (if (>= cnt 2)
+                (let [forms     (mapv (fn [[_ g]] g) run)
+                      first-idx (first (first (first run)))
+                      iter-num  (inc (long first-idx))
+                      entries   (git-group-entries forms (assoc git-ctx :iteration-number iter-num))]
+                  (recur (reduce conj! out entries) (seq (drop cnt xs))))
+                (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))
+            (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))))))
+
 (defn- trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
@@ -3772,7 +3902,12 @@
       ;; The code blocks render flat — no TURN wrapper. The turn-level
       ;; collapsible header was removed (it only hid the blocks and carried no
       ;; information the per-block headers + op rows don't already convey).
-      (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations)))))
+      (coalesce-bubble-blanks
+        (render-iteration-entries visible-iterations iter-entry-fn show-silent?
+          {:fill-w (max 1 (dec (long content-w)))
+           :session-id session-id
+           :session-turn-id session-turn-id
+           :detail-expansions detail-expansions})))))
 (defn- queued-preview
   [text]
   (let [s (-> (str (or text ""))
