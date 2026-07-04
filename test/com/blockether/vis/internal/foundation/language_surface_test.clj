@@ -15,7 +15,7 @@
 (defdescribe language-surface-dispatch-test
   (it "dispatches format to the active language handler"
     (let [seen (atom nil)
-          env  (fake-env [{:language :clojure
+          env  (fake-env [{:language "clojure"
                            :format-fn (fn [_ arg]
                                         (reset! seen arg)
                                         {:success? true
@@ -26,17 +26,17 @@
       (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
 
   (it "uses an explicit language to disambiguate handlers"
-    (let [env (fake-env [{:language :clojure
+    (let [env (fake-env [{:language "clojure"
                           :test-fn (fn [_ arg]
-                                     {:success? true :result {:language :clojure :arg arg}})}
-                         {:language :python
+                                     {:success? true :result {:language "clojure" :arg arg}})}
+                         {:language "python"
                           :test-fn (fn [_ arg]
-                                     {:success? true :result {:language :python :arg arg}})}])]
-      (expect (= {:language :python :arg {"language" "python" "ns" "x"}}
+                                     {:success? true :result {:language "python" :arg arg}})}])]
+      (expect (= {:language "python" :arg {"language" "python" "ns" "x"}}
                 (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))))))
 
   (it "passes clj_repl-shaped repl_start op and opts to language handlers"
-    (let [env (fake-env [{:language :clojure
+    (let [env (fake-env [{:language "clojure"
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]
       (expect (= {:op "restart" :opts {"dir" "ext" "aliases" ["dev"]}}
@@ -48,7 +48,7 @@
 
   (it "accepts language-first calls for repl eval"
     (let [seen (atom nil)
-          env  (fake-env [{:language :clojure
+          env  (fake-env [{:language "clojure"
                            :repl-eval-fn (fn [_ arg]
                                            (reset! seen arg)
                                            {:success? true :result {:value "3"}})}])]
@@ -57,7 +57,7 @@
       (expect (= "(+ 1 2)" @seen))))
 
   (it "passes language-first repl_start id and opts to language handlers"
-    (let [env (fake-env [{:language :clojure
+    (let [env (fake-env [{:language "clojure"
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]
       (expect (= {:op "restart" :opts {"id" "main" "dir" "ext"}}
@@ -73,7 +73,7 @@
         (resources/register! sid
           {:id "main-repl"
            :kind :nrepl
-           :language :clojure
+           :language "clojure"
            :label "main"}
           {:stop-fn (fn [] (reset! stopped? true))})
         (expect (= ["main-repl"]
@@ -86,7 +86,7 @@
           (resources/stop-all! sid)))))
 
   (it "reports missing language handlers with available languages"
-    (let [env (fake-env [{:language :clojure
+    (let [env (fake-env [{:language "clojure"
                           :repl-eval-fn (fn [_ _]
                                           {:success? true :result :ok})}])]
       (expect (= :language-surface/no-language-handler
@@ -100,9 +100,9 @@
   (it "renders the facade verbs per ACTIVE language pack"
     (let [env {:active-extensions
                (atom [{:ext/language-tools
-                       [{:language :clojure :format-fn identity :test-fn identity
+                       [{:language "clojure" :format-fn identity :test-fn identity
                          :repl-eval-fn identity :start-repl-fn identity}
-                        {:language :python :repl-eval-fn identity :start-repl-fn identity}]}])}
+                        {:language "python" :repl-eval-fn identity :start-repl-fn identity}]}])}
           m   (language-surface/capability-matrix env)]
       (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
       (expect (str/includes? m "python : repl_eval · repl_start"))))

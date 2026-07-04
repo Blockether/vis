@@ -136,7 +136,7 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/language-tools [{:language      :python
+     :ext/language-tools [{:language      "python"
                            :repl-eval-fn  py-repl-eval-fn
                            :start-repl-fn (fn [env op opts] (py-start-repl-fn env op opts))}]
      :ext/startable-resources

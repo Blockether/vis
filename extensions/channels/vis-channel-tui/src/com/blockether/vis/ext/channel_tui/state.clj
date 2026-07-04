@@ -457,6 +457,14 @@
                                            (select-keys new-settings (keys default-settings))))
         projected (merge (migrated-toggle-projection) local-merged)]
     (tui-theme/apply-theme! (:theme-name local-merged))
+    ;; Re-emit OSC 11 so the emulator's window padding (the un-themed
+    ;; "outer" rim around the Lanterna grid) is recolored to the NEW
+    ;; theme background. `enable-terminal-escape-modes!` sets this once at
+    ;; startup; a LIVE theme switch must refresh it too, otherwise the rim
+    ;; keeps the previous theme's background.
+    (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
+      (try (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
+        (catch Throwable _ nil)))
     (persist-settings! local-merged)
     (assoc db :settings projected)))
 (defn- model-entry

@@ -13,13 +13,11 @@
    [com.blockether.vis.internal.extension :as extension]))
 
 (defn- normalize-language [x]
-  ;; STRINGS-ONLY: dispatch on a lowercase language STRING, never a minted
-  ;; keyword. A leading `:` is stripped so a keyword handed in by an internal
-  ;; caller (packs may register `:language :clojure`) still normalizes cleanly.
-  (when x
-    (-> (str x)
-      (str/replace #"^:" "")
-      (str/lower-case))))
+  ;; STRINGS-ONLY: dispatch on a lowercase language STRING. Registrations
+  ;; declare `:language "clojure"` (a string) at the source — there is NO
+  ;; colon-strip tolerance; a keyword registered here would surface as an
+  ;; unmatched ":clojure" handler immediately, which is the point.
+  (some-> x str str/lower-case))
 
 (defn- env-language [env]
   (or (normalize-language (get-in env [:env/project :primary_language]))
