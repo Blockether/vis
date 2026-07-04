@@ -45,9 +45,9 @@
 
 (defn- session-workspace-block
   "Resolve the env's pinned workspace + session-state and render the
-   canonical `:session/workspace` CTX block. If no DB / pin exists yet,
+   canonical `\"session_workspace\"` CTX block. If no DB / pin exists yet,
    render the current root as a real workspace; VCS detection inside
-   `workspace-ctx/render-block` decides `:vcs/kind` (`:git`, `:none`, ...)."
+   `workspace-ctx/render-block` decides `\"vcs_kind\"` (`\"git\"`, `\"none\"`, ...)."
   [env]
   (let [db    (:db-info env)
         ws-id (or (:workspace/id env) (some-> env :workspace :id))
@@ -58,11 +58,12 @@
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace
-   block under `:session/workspace`.
+   block under `\"session_workspace\"` (STRING-KEYED — crosses the Python
+   boundary).
 
-   The slim auto-pin `:session/env` digest (host / project / extensions)
+   The slim auto-pin `\"session_env\"` digest (host / project / extensions)
    moved to `internal.env-digest` — it's core functionality, not
-   extension-owned. Workspace/VCS truth lives in `:session/workspace`.
+   extension-owned. Workspace/VCS truth lives in `\"session_workspace\"`.
    The old redundant `(:project ctx)` contribution is gone; slim digest
    covers it."
   [env]
@@ -71,8 +72,8 @@
         ;; language pack's verbs (repl_eval/test/format) the turn it activates.
         lang-tools (language-surface/capability-data env)]
     (cond-> {}
-      ws-block   (assoc :session/workspace ws-block)
-      lang-tools (assoc :session/language-tools lang-tools))))
+      ws-block   (assoc "session_workspace" ws-block)
+      lang-tools (assoc "session_language_tools" lang-tools))))
 
 (def vis-extension
   (vis/extension

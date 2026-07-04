@@ -3,8 +3,17 @@
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.env-python :as boundary]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.ext.foundation-bridge.core :as bridge]))
+
+(defn- result-of
+  "The tool envelope's `:result` payload VIEWED through the STRINGS-ONLY
+   boundary. `boundary-view` passes string-keyed maps through verbatim and
+   THROWS on any stray keyword key/value, so reading a bridge result through it
+   also guards that the payload crosses to Python string-clean."
+  [envelope]
+  (boundary/boundary-view (:result envelope)))
 
 (defn- run-in!
   [root & args]
@@ -153,32 +162,31 @@
           check-result (bridge/check env)
           next-result (bridge/next env)
           list-result (bridge/list-evidence env)
-          run-result (bridge/run-evidence env "unit" {:is_dry_run true})]
+          run-result (bridge/run-evidence env "unit" {"is_dry_run" true})]
       (expect (true? (:success? init-result)))
-      (expect (= true (get-in init-result [:result :configured?])))
-      (expect (= false (get-in init-result [:result :already-configured?])))
-      (expect (= true (get-in init-result [:result :created?])))
+      (expect (= true (get-in (result-of init-result) ["configured"])))
+      (expect (= false (get-in (result-of init-result) ["already_configured"])))
       (expect (= [".bridge/profile.edn" ".bridge/verification-policy.yaml"]
-                (get-in init-result [:result :created])))
-      (expect (= [".gitignore"] (get-in init-result [:result :updated])))
-      (expect (= "br/check" (get-in init-result [:result :next-step :op :tool])))
-      (expect (str/includes? (or (get-in init-result [:result :profile-path]) "") ".bridge/profile.edn"))
+                (get-in (result-of init-result) ["created"])))
+      (expect (= [".gitignore"] (get-in (result-of init-result) ["updated"])))
+      (expect (= "br/check" (get-in (result-of init-result) ["next_step" "op" "tool"])))
+      (expect (str/includes? (or (get-in (result-of init-result) ["profile_path"]) "") ".bridge/profile.edn"))
 
       (expect (true? (:success? profile-result)))
-      (expect (= true (get-in profile-result [:result :configured?])))
+      (expect (= true (get-in (result-of profile-result) ["configured"])))
 
       (expect (true? (:success? check-result)))
-      (expect (not= "unconfigured" (get-in check-result [:result :status])))
+      (expect (not= "unconfigured" (get-in (result-of check-result) ["status"])))
 
       (expect (true? (:success? next-result)))
-      (expect (or (nil? (get-in next-result [:result :next-step]))
-                (= "br/run-evidence" (get-in next-result [:result :next-step :op :tool]))))
+      (expect (or (nil? (get-in (result-of next-result) ["next_step"]))
+                (= "br/run-evidence" (get-in (result-of next-result) ["next_step" "op" "tool"]))))
 
       (expect (true? (:success? list-result)))
-      (expect (vector? (get-in list-result [:result :commands])))
+      (expect (vector? (get-in (result-of list-result) ["commands"])))
 
       (expect (true? (:success? run-result)))
-      (expect (= true (get-in run-result [:result :result :dry-run?]))))))
+      (expect (= true (get-in (result-of run-result) ["result" "dry_run"]))))))
 
 (defdescribe bridge-no-profile-error-test
   (it "returns an error when no profile is configured"
@@ -186,7 +194,7 @@
                       "bridge-ext-no-profile"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
           env {:workspace/root root}
-          run-result (bridge/run-evidence env "unit" {:is_dry_run true})]
+          run-result (bridge/run-evidence env "unit" {"is_dry_run" true})]
       (expect (false? (:success? run-result)))
       (expect (not (str/includes? (or (get-in run-result [:error :hint]) "") "bb bridge")))
       (expect (str/includes? (or (get-in run-result [:error :hint]) "") "br_init()")))))
@@ -199,13 +207,12 @@
           first-result (bridge/init env)
           second-result (bridge/init env)]
       (expect (true? (:success? first-result)))
-      (expect (= true (get-in first-result [:result :created?])))
+      (expect (= false (get-in (result-of first-result) ["already_configured"])))
       (expect (true? (:success? second-result)))
-      (expect (= true (get-in second-result [:result :already-configured?])))
-      (expect (= false (get-in second-result [:result :created?])))
-      (expect (= [] (get-in second-result [:result :created])))
-      (expect (= [] (get-in second-result [:result :updated])))
-      (expect (str/includes? (get-in second-result [:result :message]) "already configured")))))
+      (expect (= true (get-in (result-of second-result) ["already_configured"])))
+      (expect (= [] (get-in (result-of second-result) ["created"])))
+      (expect (= [] (get-in (result-of second-result) ["updated"])))
+      (expect (str/includes? (get-in (result-of second-result) ["message"]) "already configured")))))
 
 (defdescribe bridge-next-suggests-extension-ops-test
   (it "next suggests extension ops"
@@ -217,21 +224,21 @@
           _ (spit (str root "/src/core.clj") "(ns core)")
           env {:workspace/root root}
           _ (bridge/init env)
-          check-result (bridge/check env {:changed_files ["src/core.clj"]})
-          next-result (bridge/next env {:changed_files ["src/core.clj"]})
-          open-obligation (first (get-in check-result [:result :required-obligations]))
-          suggestion (get-in next-result [:result :next-step])]
+          check-result (bridge/check env {"changed_files" ["src/core.clj"]})
+          next-result (bridge/next env {"changed_files" ["src/core.clj"]})
+          open-obligation (first (get-in (result-of check-result) ["required_obligations"]))
+          suggestion (get-in (result-of next-result) ["next_step"])]
       (expect (true? (:success? check-result)))
-      (expect (= "attention-required" (get-in check-result [:result :status])))
-      (expect (= 1 (get-in check-result [:result :counts :required-obligations])))
-      (expect (= "open" (:state open-obligation)))
-      (expect (= ["unit-tests"] (get-in open-obligation [:required-evidence])))
+      (expect (= "attention-required" (get-in (result-of check-result) ["status"])))
+      (expect (= 1 (get-in (result-of check-result) ["counts" "required_obligations"])))
+      (expect (= "open" (get open-obligation "state")))
+      (expect (= ["unit-tests"] (get-in open-obligation ["required_evidence"])))
       (expect (true? (:success? next-result)))
-      (expect (= "attention-required" (get-in next-result [:result :status])))
-      (expect (= :extension-op (:kind suggestion)))
-      (expect (= "br/run-evidence" (get-in suggestion [:op :tool])))
-      (expect (= ["unit"] (get-in suggestion [:op :args])))
-      (expect (not (str/includes? (or (get-in suggestion [:op :call]) "") "bb bridge"))))))
+      (expect (= "attention-required" (get-in (result-of next-result) ["status"])))
+      (expect (= "extension_op" (get suggestion "kind")))
+      (expect (= "br/run-evidence" (get-in suggestion ["op" "tool"])))
+      (expect (= ["unit"] (get-in suggestion ["op" "args"])))
+      (expect (not (str/includes? (or (get-in suggestion ["op" "call"]) "") "bb bridge"))))))
 
 (defdescribe bridge-check-flattens-status-test
   (it "check returns flattened status summary"
@@ -253,17 +260,18 @@
                :execution-status "execution-failed"
                :finished-at "2026-05-20T19:01:06.340575Z"
                :command "clojure -M:test"})
-          result (bridge/check env {:changed_files ["src/core.clj"]})]
+          result (bridge/check env {"changed_files" ["src/core.clj"]})
+          r (result-of result)]
       (expect (true? (:success? result)))
-      (expect (= "attention-required" (get-in result [:result :status])))
-      (expect (= 1 (get-in result [:result :summary-version])))
-      (expect (= 1 (get-in result [:result :counts :required-obligations])))
-      (expect (= 1 (get-in result [:result :counts :receipts])))
-      (expect (= "bridge/run-evidence" (get-in result [:result :next-action :op])))
-      (expect (= "unit" (get-in result [:result :next-action :args :id])))
-      (expect (= "unit" (get-in result [:result :next-action :evidence-id])))
-      (expect (= "failed" (get-in result [:result :evidence-receipts 0 :status])))
-      (expect (= "unit-tests" (get-in result [:result :required-obligations 0 :evidence-kind]))))))
+      (expect (= "attention-required" (get-in r ["status"])))
+      (expect (= 1 (get-in r ["summary_version"])))
+      (expect (= 1 (get-in r ["counts" "required_obligations"])))
+      (expect (= 1 (get-in r ["counts" "receipts"])))
+      (expect (= "bridge/run-evidence" (get-in r ["next_action" "op"])))
+      (expect (= "unit" (get-in r ["next_action" "args" "id"])))
+      (expect (= "unit" (get-in r ["next_action" "evidence_id"])))
+      (expect (= "failed" (get-in r ["evidence_receipts" 0 "status"])))
+      (expect (= "unit-tests" (get-in r ["required_obligations" 0 "evidence_kind"]))))))
 
 (defdescribe bridge-hint-hook-test
   (it "hinting suggests the next action"

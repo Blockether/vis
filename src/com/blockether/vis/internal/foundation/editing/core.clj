@@ -347,13 +347,13 @@
                 (map? edits) [edits]
                 (sequential? edits) edits
                 :else [])]
-    (keep :path edits)))
+    (keep #(get % "path") edits)))
 
 (defn- write-arg-paths
   [args]
   (let [a (first args)]
     (cond
-      (map? a)    (when-let [path (:path a)] [path])
+      (map? a)    (when-let [path (get a "path")] [path])
       (string? a) [a]
       :else       nil)))
 
@@ -366,8 +366,8 @@
                (map? opts) opts
                :else nil)
         paths (cond
-                (contains? spec :paths) (:paths spec)
-                (contains? spec :path)  (:path spec)
+                (contains? spec "paths") (get spec "paths")
+                (contains? spec "path")  (get spec "path")
                 :else nil)]
     (cond
       (nil? paths) ["."]
@@ -379,8 +379,8 @@
   (let [spec (first args)]
     (when (map? spec)
       (let [paths (cond
-                    (contains? spec :paths) (:paths spec)
-                    (contains? spec :files) (:files spec)
+                    (contains? spec "paths") (get spec "paths")
+                    (contains? spec "files") (get spec "files")
                     :else nil)]
         (cond
           (nil? paths) ["."]
@@ -1050,8 +1050,9 @@
         (ensure! path)
         (let [d (entry-parent-dir path root-rel)]
           (ensure! d)
-          (vswap! files update d conj! {:name (entry-base-name path) :size size}))))
-    (mapv (fn [d] {:dir d :files (persistent! (get @files d))}) @order)))
+          (vswap! files update d conj! {"name" (entry-base-name path) "size" size}))))
+    ;; This vector is the model-facing `ls` "groups" payload — string keys.
+    (mapv (fn [d] {"dir" d "files" (persistent! (get @files d))}) @order)))
 
 (defn- list-files
   ;; Internal helper — always called with a real map (or nil).
@@ -1060,7 +1061,7 @@
   ;; trivial.
   ([path] (list-files path nil))
   ([path opts]
-   (let [{:keys [depth limit is_hidden is_respect_gitignore is_files_only is_dirs_only]
+   (let [{:strs [depth limit is_hidden is_respect_gitignore is_files_only is_dirs_only]
           :or {depth default-list-depth
                limit default-list-limit
                is_hidden false
@@ -1091,16 +1092,17 @@
          (collect-flat-entries f opts* depth limit is_files_only is_dirs_only)
          file-count (count (filter #(= :file (:type %)) entries))
          dir-count  (count (filter #(= :dir  (:type %)) entries))]
-     {:path          (rel-path f)
-      :absolute-path (.getAbsolutePath f)
-      :root-type     (if (.isDirectory f) :dir :file)
-      :groups        (group-entries-by-dir entries (rel-path f))
-      :entry-count   (count entries)
-      :file-count    file-count
-      :dir-count     dir-count
-      :truncated?    truncated?
-      :depth         depth
-      :limit         limit})))
+     ;; This map is the model-facing `ls` result — string keys, no keyword values.
+     {"path"          (rel-path f)
+      "absolute_path" (.getAbsolutePath f)
+      "root_type"     (if (.isDirectory f) "dir" "file")
+      "groups"        (group-entries-by-dir entries (rel-path f))
+      "entry_count"   (count entries)
+      "file_count"    file-count
+      "dir_count"     dir-count
+      "truncated"     truncated?
+      "depth"         depth
+      "limit"         limit})))
 
 ;; =============================================================================
 ;; find
@@ -1169,35 +1171,35 @@
 (defn- coerce-find-spec [args]
   (let [[a b] args
         spec (cond
-               (and (= 1 (count args)) (string? a)) {:query a}
-               (and (= 2 (count args)) (string? a) (map? b)) (assoc b :query a)
+               (and (= 1 (count args)) (string? a)) {"query" a}
+               (and (= 2 (count args)) (string? a) (map? b)) (assoc b "query" a)
                (and (= 1 (count args)) (map? a)) a
                :else (throw (ex-info
                               "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
                               {:type :ext.foundation.editing/invalid-find-args
                                :expected '([query] [query opts] [spec-map])
                                :got args})))
-        allowed-keys #{:query :paths :path :limit :is_hidden :is_respect_gitignore}
+        allowed-keys #{"query" "paths" "path" "limit" "is_hidden" "is_respect_gitignore"}
         unknown-keys (seq (remove allowed-keys (keys spec)))]
     (when unknown-keys
       (throw (ex-info (str "find spec has unknown keys: "
-                        (str/join ", " (map #(if (keyword? %) (name %) (str %)) unknown-keys))
+                        (str/join ", " (map str unknown-keys))
                         ". Allowed: query, paths, limit, is_hidden, is_respect_gitignore.")
                {:type :ext.foundation.editing/invalid-find-args
                 :unknown (vec unknown-keys)
                 :allowed (vec (sort allowed-keys))})))
-    (let [query (:query spec)
+    (let [query (get spec "query")
           _ (when-not (and (string? query) (not (str/blank? query)))
               (throw (ex-info "find :query must be a non-blank string"
                        {:type :ext.foundation.editing/invalid-find-args
                         :query query})))
-          _ (when (and (contains? spec :paths) (contains? spec :path))
+          _ (when (and (contains? spec "paths") (contains? spec "path"))
               (throw (ex-info "find spec must use only one of canonical :paths or alias :path."
                        {:type :ext.foundation.editing/invalid-find-args
                         :spec spec})))
           raw-paths (cond
-                      (contains? spec :paths) (:paths spec)
-                      (contains? spec :path)  (:path spec)
+                      (contains? spec "paths") (get spec "paths")
+                      (contains? spec "path")  (get spec "path")
                       :else ["."])
           paths (cond
                   (string? raw-paths) [raw-paths]
@@ -1207,7 +1209,7 @@
               (throw (ex-info "find :paths must be a non-empty vector of strings"
                        {:type :ext.foundation.editing/invalid-find-args
                         :paths raw-paths})))
-          limit (or (:limit spec) default-find-limit)
+          limit (or (get spec "limit") default-find-limit)
           _ (when-not (and (integer? limit) (pos? limit))
               (throw (ex-info "find :limit must be a positive integer"
                        {:type :ext.foundation.editing/invalid-find-args
@@ -1215,8 +1217,8 @@
       {:query query
        :paths paths
        :limit limit
-       :is_hidden (boolean (:is_hidden spec))
-       :is_respect_gitignore (get spec :is_respect_gitignore true)})))
+       :is_hidden (boolean (get spec "is_hidden"))
+       :is_respect_gitignore (get spec "is_respect_gitignore" true)})))
 
 (defn- find-scan
   "Scan `roots` for ONE `query` string via fff and keep candidates whose
@@ -1351,16 +1353,30 @@
         ;; The query terms that actually landed a file (fuzzy pass only) — so
         ;; the card/model can see WHICH words matched, e.g. "render, native".
         matched-terms (when fuzzy?
-                        (->> items (mapcat :terms) distinct (sort-by (comp - count)) vec))]
-    (cond-> {:items (mapv #(dissoc % :terms) items)
-             :item-count (count items)
-             :paths (mapv :path items)
-             :query query
-             :searched-paths paths
-             :limit limit
-             :truncated-by (if (>= (count items) limit) :limit :end-of-results)}
-      fuzzy?              (assoc :fuzzy true)
-      (seq matched-terms) (assoc :matched-terms matched-terms))))
+                        (->> items (mapcat :terms) distinct (sort-by (comp - count)) vec))
+        ;; Project each internal (keyword-keyed) item onto the model-facing
+        ;; string-keyed row — snake_case keys, keyword values stringified.
+        ->item (fn [it]
+                 (cond-> {"path"  (:path it)
+                          "score" (:score it)}
+                   (contains? it :file-name)      (assoc "file_name" (:file-name it))
+                   (contains? it :size)           (assoc "size" (:size it))
+                   (contains? it :modified)       (assoc "modified" (:modified it))
+                   (contains? it :frecency-score) (assoc "frecency_score" (:frecency-score it))
+                   (contains? it :git-status)     (assoc "git_status" (let [g (:git-status it)]
+                                                                        (if (keyword? g) (name g) g)))
+                   (contains? it :binary?)        (assoc "binary" (boolean (:binary? it)))
+                   (:source it)                   (assoc "source" (name (:source it)))))]
+    ;; Model-facing find_files result — string keys, no keyword values.
+    (cond-> {"items" (mapv ->item items)
+             "item_count" (count items)
+             "paths" (mapv :path items)
+             "query" query
+             "searched_paths" paths
+             "limit" limit
+             "truncated_by" (if (>= (count items) limit) "limit" "end_of_results")}
+      fuzzy?              (assoc "fuzzy" true)
+      (seq matched-terms) (assoc "matched_terms" matched-terms))))
 
 (defn- find-tool
   "Find files by NAME/PATH — fuzzy subsequence match over the file TREE (fff;
@@ -1381,15 +1397,15 @@
    \"item_count\", \"query\", \"searched_paths\", \"limit\"} — plus a \"hint\" when
    nothing matched."
   [& args]
-  (let [{:keys [query searched-paths limit item-count truncated-by] :as out} (find-search args)
+  (let [{:strs [query searched_paths limit item_count truncated_by] :as out} (find-search args)
         ;; A 0-result find is almost always a MISUSE: the model passed a
         ;; content/concept phrase to a FILENAME matcher. Steer it — a bare
         ;; "0 matches" just makes it retry the same wrong query (the exact loop
         ;; the user hit). Only fires on empty so a normal hit set stays lean.
         multiword? (> (count (str/split (str/trim (str query)) #"\s+")) 2)
         out (cond-> out
-              (zero? (long (or item-count 0)))
-              (assoc :hint
+              (zero? (long (or item_count 0)))
+              (assoc "hint"
                 (str "No FILENAME/PATH matched \"" query "\". find_files matches file "
                   "NAMES, not contents. "
                   (if multiword?
@@ -1399,14 +1415,14 @@
                     "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
     (tool-success
       {:op :find_files
-       :path (first searched-paths)
+       :path (first searched_paths)
        :kind :dir
        :result out
        :metadata {:query query
-                  :paths searched-paths
+                  :paths searched_paths
                   :limit limit
-                  :item-count item-count
-                  :truncated-by truncated-by}})))
+                  :item-count item_count
+                  :truncated-by truncated_by}})))
 
 ;; =============================================================================
 ;; rg
@@ -1440,7 +1456,7 @@
                                          {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
                               v))
         ;; `query` canonical; `any`/`all` are accepted aliases (all mean OR now).
-        query-key (some #(when (contains? spec %) %) [:query :any :all])
+        query-key (some #(when (contains? spec %) %) ["query" "any" "all"])
         _ (when-not query-key
             (throw (ex-info "rg needs `query`: a term or a list of terms."
                      {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
@@ -1459,24 +1475,24 @@
                     (throw (ex-info "rg query has no non-blank terms."
                              {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
                   ns)
-        paths   (vector-of-strings :paths (get spec :paths ["."]))
-        include (when (contains? spec :include)
-                  (vector-of-strings :include (get spec :include)))
+        paths   (vector-of-strings :paths (get spec "paths" ["."]))
+        include (when (contains? spec "include")
+                  (vector-of-strings :include (get spec "include")))
         nonneg-int! (fn [label v]
                       (when (and (some? v) (not (and (integer? v) (not (neg? v)))))
                         (throw (ex-info (str "rg " label " must be a non-negative integer")
                                  {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
-        _ (nonneg-int! ":context" (:context spec))
-        is_files_only (boolean (:is_files_only spec))
+        _ (nonneg-int! ":context" (get spec "context"))
+        is_files_only (boolean (get spec "is_files_only"))
         ;; `context` is a CONTENT-mode concept — in files-only mode there are no
         ;; per-line hits to surround, so a stray `context` is simply IGNORED (never
         ;; a hard error: the model harmlessly set both, so honor `is_files_only`).
-        context (if is_files_only 0 (or (:context spec) 0))]
+        context (if is_files_only 0 (or (get spec "context") 0))]
     {:needles needles
      :paths paths
      :include (or include [])
-     :is_hidden (boolean (:is_hidden spec))
-     :is_respect_gitignore (get spec :is_respect_gitignore true)
+     :is_hidden (boolean (get spec "is_hidden"))
+     :is_respect_gitignore (get spec "is_respect_gitignore" true)
      :limit default-grep-limit
      :context context
      :is_files_only is_files_only}))
@@ -1669,40 +1685,40 @@
 ;; Thin babashka.fs wrappers
 ;; =============================================================================
 
-(def ^:private patch-required-keys #{:path :replace})
+(def ^:private patch-required-keys #{"path" "replace"})
 (def ^:private patch-locator-keys
-  "Every edit needs the `:from_anchor` locator (a `lineno:hash` hashline —
+  "Every edit needs the `from_anchor` locator (a `lineno:hash` hashline —
    content-addressed by the per-line hash `cat` prints). It re-resolves against
    LIVE content on every edit, so it stays correct under line drift (insertions
    above, or earlier edits in the same grouped batch) where raw line numbers
-   would silently target the wrong line. (The old `:search` text matcher was
+   would silently target the wrong line. (The old `search` text matcher was
    removed — anchors only.)"
-  #{:from_anchor})
+  #{"from_anchor"})
 (def ^:private patch-optional-keys
   "Optional keys recognised on an anchor edit map.
-   - :to_anchor        end of a hashline range; defaults to :from_anchor (single line)
-   - :expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
-   - :expected_size    bytes;    fail if file size differs (staleness guard)
-   - :atomic/:atomic?  multi-file escape flag (read by `mutation-atomic?` from
-                       the RAW args before this validation; allowed here so a
-                       documented `\"atomic\": True` edit isn't refused as an
-                       unknown key)."
-  #{:to_anchor :expected_mtime :expected_size :atomic :atomic?})
+   - to_anchor        end of a hashline range; defaults to from_anchor (single line)
+   - expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
+   - expected_size    bytes;    fail if file size differs (staleness guard)
+   - atomic           multi-file escape flag (read by `mutation-atomic?` from
+                      the RAW args before this validation; allowed here so a
+                      documented `\"atomic\": True` edit isn't refused as an
+                      unknown key)."
+  #{"to_anchor" "expected_mtime" "expected_size" "atomic"})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
 
-(def ^:private patch-group-required-keys #{:path :edits})
-(def ^:private patch-group-optional-keys #{:expected_mtime :expected_size :atomic :atomic?})
+(def ^:private patch-group-required-keys #{"path" "edits"})
+(def ^:private patch-group-optional-keys #{"expected_mtime" "expected_size" "atomic"})
 (def ^:private patch-group-allowed-keys
   (set/union patch-group-required-keys patch-group-optional-keys))
 
 (defn- grouped-patch-edit?
   [edit]
-  (and (map? edit) (contains? edit :edits)))
+  (and (map? edit) (contains? edit "edits")))
 
 (defn- expand-patch-group
-  [{:keys [path edits expected_mtime expected_size] :as group}]
+  [{:strs [path edits expected_mtime expected_size] :as group}]
   (let [missing (seq (remove #(contains? group %) patch-group-required-keys))
         unknown (seq (remove patch-group-allowed-keys (keys group)))]
     (when missing
@@ -1734,14 +1750,14 @@
             ;; just to satisfy it. Treat a blank per-edit :path as ABSENT and
             ;; only refuse a genuinely conflicting NON-EMPTY path — the group's
             ;; :path is assoc'd over it below regardless.
-            (when-let [stated (some-> edit :path str str/trim not-empty)]
+            (when-let [stated (some-> (get edit "path") str str/trim not-empty)]
               (throw (ex-info "patch grouped :edits inherit :path; do not repeat it per edit"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :path stated
                         :edit edit})))
-            (cond-> (assoc edit :path path)
-              (some? expected_mtime) (assoc :expected_mtime expected_mtime)
-              (some? expected_size) (assoc :expected_size expected_size)))
+            (cond-> (assoc edit "path" path)
+              (some? expected_mtime) (assoc "expected_mtime" expected_mtime)
+              (some? expected_size) (assoc "expected_size" expected_size)))
       edits)))
 
 (defn- normalize-patch-edits-input
@@ -1779,17 +1795,17 @@
               ;; carrying `search`) keeps getting re-hallucinated. Name it
               ;; explicitly so the model corrects to anchors in ONE step
               ;; instead of staring at a generic ":from_anchor missing".
-              (when-let [legacy (seq (filter #(contains? edit %) #{:search :nth :replace_all}))]
+              (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
                 (throw (ex-info (str "patch is ANCHOR-ONLY — `"
-                                  (str/join "`/`" (map name legacy))
+                                  (str/join "`/`" legacy)
                                   "` was removed; there is no text search/replace. "
                                   "cat the file, then pass `from_anchor` (a lineno:hash from the "
                                   "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :removed (vec legacy)
                           :edit edit})))
-              (when-not (contains? edit :from_anchor)
-                (throw (ex-info "patch edit needs a :from_anchor (lineno:hash from cat)"
+              (when-not (contains? edit "from_anchor")
+                (throw (ex-info "patch edit needs a from_anchor (lineno:hash from cat)"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
@@ -1798,7 +1814,7 @@
                           :unknown (vec unknown)
                           :allowed (vec patch-allowed-keys)
                           :edit edit}))))
-            (update edit :path str))
+            (update edit "path" str))
       edits)))
 
 ;; -----------------------------------------------------------------------------
@@ -1841,7 +1857,7 @@
   "Return nil when the file's on-disk mtime/size matches the edit's
    expectations (or no expectations were given), else a structured
    `:stale` failure carrying the actual vs. expected values."
-  [^java.io.File file {:keys [expected_mtime expected_size]}]
+  [^java.io.File file {:strs [expected_mtime expected_size]}]
   (let [actual-mtime (.lastModified file)
         actual-size  (.length file)]
     (cond
@@ -1913,7 +1929,7 @@
         ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
         {:keys [origs spans checks failures]}
         (loop [idx 0, remaining edits, origs {}, spans {}, checks [], failures []]
-          (if-let [{:keys [path replace from_anchor to_anchor] :as edit}
+          (if-let [{:strs [path replace from_anchor to_anchor] :as edit}
                    (first remaining)]
             (let [resolved (resolve-edit-target path)]
               (if-let [path-error (:error resolved)]
@@ -2201,11 +2217,11 @@
 ;; read-modify-write on existing files.
 ;; =============================================================================
 
-(def ^:private write-required-keys #{:path :content})
+(def ^:private write-required-keys #{"path" "content"})
 (def ^:private write-optional-keys
-  ;; :atomic/:atomic? = the documented multi-file escape flag (read from raw
-  ;; args by `mutation-atomic?`); allowed here so it isn't refused as unknown.
-  #{:expected_mtime :expected_size :is_overwrite :atomic :atomic? :allow_dirty})
+  ;; "atomic" = the documented multi-file escape flag (read from raw args by
+  ;; `mutation-atomic?`); allowed here so it isn't refused as unknown.
+  #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "allow_dirty"})
 (def ^:private write-allowed-keys
   (set/union write-required-keys write-optional-keys))
 
@@ -2228,11 +2244,11 @@
                 :unknown (vec unknown)
                 :allowed (vec write-allowed-keys)
                 :args args})))
-    (when-not (string? (:content args))
+    (when-not (string? (get args "content"))
       (throw (ex-info "write :content must be a string"
                {:type :ext.foundation.editing/invalid-write-args
-                :got (type (:content args))}))))
-  (update args :path str))
+                :got (type (get args "content"))}))))
+  (update args "path" str))
 
 (defn write-safe
   "Whole-file write primitive: create a new file OR overwrite an
@@ -2260,12 +2276,12 @@
       :message  <human-readable>}"
   [args]
   (let [args (coerce-write-args args)
-        path (:path args)
-        content (str (:content args))
-        is_overwrite (if (contains? args :is_overwrite) (:is_overwrite args) true)
-        allow_dirty (boolean (:allow_dirty args))
-        expected_mtime (:expected_mtime args)
-        expected_size  (:expected_size  args)
+        path (get args "path")
+        content (str (get args "content"))
+        is_overwrite (if (contains? args "is_overwrite") (get args "is_overwrite") true)
+        allow_dirty (boolean (get args "allow_dirty"))
+        expected_mtime (get args "expected_mtime")
+        expected_size  (get args "expected_size")
         resolved (try {:file (safe-path path) :rel (rel-path (safe-path path))}
                    (catch clojure.lang.ExceptionInfo e
                      {:error {:reason (case (:type (ex-data e))
@@ -2404,12 +2420,19 @@
    keeps working on tuples — this is the single boundary where the model
    payload is built."
   [out]
-  (letfn [(->anchors [m] (-> m
-                           (assoc :anchors (patch/lines->anchor-map (:lines m)))
-                           (dissoc :lines)))]
-    (cond-> out
-      (contains? out :lines) ->anchors
-      (seq (:ranges out))    (update :ranges (fn [ws] (mapv ->anchors ws))))))
+  ;; The internal read pipeline works on keyword-keyed maps (`:lines` tuples);
+  ;; this is the single boundary where the string-keyed MODEL payload is built.
+  (letfn [(->win [m]
+            (cond-> {"anchors" (patch/lines->anchor-map (:lines m))}
+              (contains? m :path)        (assoc "path" (:path m))
+              (contains? m :next-offset) (assoc "next_offset" (:next-offset m))
+              (contains? m :eof?)        (assoc "eof" (:eof? m))
+              (contains? m :truncated?)  (assoc "truncated" (:truncated? m))
+              (contains? m :mtime)       (assoc "mtime" (:mtime m))
+              (contains? m :size)        (assoc "size" (:size m))
+              (contains? m :range)       (assoc "range" (:range m))))]
+    (cond-> (->win out)
+      (seq (:ranges out)) (assoc "ranges" (mapv ->win (:ranges out))))))
 
 (defn- cat-tool
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
@@ -2442,10 +2465,10 @@
      ;; Delegated to the keyword arities below so internal Clojure callers
      ;; (which pass bare keyword args) keep working unchanged.
      (map? arg)
-     (let [rng    (:range arg)
-           ranges (:ranges arg)
-           anc    (:anchor arg)
-           tail   (:tail arg)]
+     (let [rng    (get arg "range")
+           ranges (get arg "ranges")
+           anc    (get arg "anchor")
+           tail   (get arg "tail")]
        (cond
          rng            (cat-tool path :range (first rng) (second rng))
          ranges         (cat-tool path :ranges ranges)
@@ -2558,14 +2581,14 @@
         :path path
         :kind :dir
         :result listing
-        :metadata  {:depth (:depth listing)
-                    :limit (:limit listing)
-                    :entry-count (:entry-count listing)
-                    :file-count  (:file-count listing)
-                    :dir-count   (:dir-count listing)
-                    :truncated?  (:truncated? listing)
-                    :is_hidden (:is_hidden opts)
-                    :is_respect_gitignore (get opts :is_respect_gitignore true)}}))))
+        :metadata  {:depth (get listing "depth")
+                    :limit (get listing "limit")
+                    :entry-count (get listing "entry_count")
+                    :file-count  (get listing "file_count")
+                    :dir-count   (get listing "dir_count")
+                    :truncated?  (get listing "truncated")
+                    :is_hidden (get opts "is_hidden")
+                    :is_respect_gitignore (get opts "is_respect_gitignore" true)}}))))
 
 (defn- rg-tool
   "Search file CONTENT — smart-case, loose. (For file NAMES use find_files; it's fuzzy.)
@@ -2602,25 +2625,19 @@
                              (and (sequential? x) (seq x) (every? string? x))))
         ->query    (fn [x] (if (string? x) [x] (vec x)))
         spec (cond
-               ;; rg({...}) — a full spec map.
+               ;; rg({...}) — a full spec map (string-keyed from the boundary).
                (and (= 1 (count args)) (map? a)) a
                ;; rg("x") / rg(["a" "b"]) — bare query.
-               (and (= 1 (count args)) (query-arg? a)) {:query (->query a)}
+               (and (= 1 (count args)) (query-arg? a)) {"query" (->query a)}
                ;; rg("x", {opts}) — query + an options MAP.
                (and (= 2 (count args)) (query-arg? a) (map? (first more)))
-               (assoc (first more) :query (->query a))
-               ;; rg("x", paths=[...], …) — query + trailing kwargs.
-               (and (query-arg? a) (even? (count more)) (every? keyword? (take-nth 2 more)))
-               (assoc (apply hash-map more) :query (->query a))
-               ;; rg(query=[...], …) — pure kwargs.
-               (and (even? (count args)) (every? keyword? (take-nth 2 args)))
-               (apply hash-map args)
+               (assoc (first more) "query" (->query a))
 
                :else
                (throw (ex-info
                         "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
                         {:type :ext.foundation.editing/invalid-rg-arity
-                         :expected '([query] [query opts] [spec-map] [& kwargs])
+                         :expected '([query] [query opts] [spec-map])
                          :got args})))
         {:keys [needles paths include is_files_only context limit]} (coerce-rg-spec spec)
         out (rg-search spec)
@@ -2633,11 +2650,13 @@
         ;; op-card HEADLINE can name WHAT was searched (a bare "N hits in M
         ;; files" is useless without it). Model-facing but harmless — it is the
         ;; query the model itself sent, echoed back as data it can re-read.
-        shared {:mode         mode
-                :needles      needles
-                :truncated-by (:truncated-by out)
-                :paths        paths
-                :limit        limit}
+        ;; `shared` and everything assoc'd onto it below is the model-facing rg
+        ;; result — string keys, no keyword values (mode/truncated_by stringified).
+        shared {"mode"         (if is_files_only "files_only" "content")
+                "needles"      needles
+                "truncated_by" (str/replace (name (:truncated-by out)) "-" "_")
+                "paths"        paths
+                "limit"        limit}
         result (case mode
                  :content
                  (let [hits          (vec (:hits out))
@@ -2658,25 +2677,25 @@
                                            (doseq [{:keys [line text before after]} (get by-path p)]
                                              (.put fm (patch/line-anchor line text)
                                                (if ctx?
-                                                 (cond-> {:text text}
-                                                   (seq before) (assoc :before (patch/lines->anchor-map before))
-                                                   (seq after)  (assoc :after  (patch/lines->anchor-map after)))
+                                                 (cond-> {"text" text}
+                                                   (seq before) (assoc "before" (patch/lines->anchor-map before))
+                                                   (seq after)  (assoc "after"  (patch/lines->anchor-map after)))
                                                  text)))
                                            (.put mm p fm)))
                                        mm)]
                    (assoc shared
-                     :matches matches
-                     :hit-count (count hits)
-                     :file-count (count ordered-paths)
-                     :first-hit (when (pos? (count hits))
-                                  (let [{:keys [path line]} (nth hits 0)]
-                                    (str path ":" line)))
-                     :context (when (pos? context) {:before context :after context})))
+                     "matches" matches
+                     "hit_count" (count hits)
+                     "file_count" (count ordered-paths)
+                     "first_hit" (when (pos? (count hits))
+                                   (let [{:keys [path line]} (nth hits 0)]
+                                     (str path ":" line)))
+                     "context" (when (pos? context) {"before" context "after" context})))
                  :files-only
                  (let [files (vec (:files out))]
                    (assoc shared
-                     :files files
-                     :file-count (count files))))]
+                     "files" files
+                     "file_count" (count files))))]
     (tool-success
       {:op :rg
        :path (if (= 1 (count paths))
@@ -2690,9 +2709,9 @@
                           :mode mode
                           :truncated-by (:truncated-by out)}
                    (= mode :content)
-                   (assoc :hit-count (:hit-count result))
+                   (assoc :hit-count (get result "hit_count"))
                    (= mode :files-only)
-                   (assoc :file-count (:file-count result)))})))
+                   (assoc :file-count (get result "file_count")))})))
 
 (def ^:private patch-diff-context-lines 3)
 (def ^:private patch-diff-max-render-lines 240)
@@ -2824,13 +2843,15 @@
    intentionally dropped: the `:diff` carries the exact change and the
    scalars duplicated that information at the cost of trailer bloat."
   [{:keys [op path before after passes indent-delta]}]
+  ;; Model-facing per-file summary (patch/write/struct_patch result) — string
+  ;; keys, enum values stringified to snake_case.
   (let [diff-text (unified-diff-text before after)]
-    (cond-> {:path     path
-             :op       (or op :update)
-             :changed? (not= before after)}
-      diff-text     (assoc :diff diff-text)
-      (seq passes)  (assoc :passes (vec passes))
-      indent-delta  (assoc :indent-delta indent-delta))))
+    (cond-> {"path"    path
+             "op"      (name (or op :update))
+             "changed" (not= before after)}
+      diff-text     (assoc "diff" diff-text)
+      (seq passes)  (assoc "passes" (mapv #(str/replace (name %) "-" "_") passes))
+      indent-delta  (assoc "indent_delta" indent-delta))))
 
 (defn- patch-tool
   "Edit files by ANCHOR (no text search/replace).
@@ -2858,7 +2879,7 @@
            :result summaries
            :metadata  {:mode          :exact-replace
                        :file-count    (count summaries)
-                       :changed-count (count (filter :changed? summaries))}}))
+                       :changed-count (count (filter #(get % "changed") summaries))}}))
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
@@ -2900,7 +2921,7 @@
     (first args)
     ;; positional: path, content, optional trailing opts map
     (and (>= (count args) 2) (string? (first args)) (string? (second args)))
-    (merge {:path (first args) :content (second args)}
+    (merge {"path" (first args) "content" (second args)}
       (let [extra (nth args 2 nil)] (when (map? extra) extra)))
     ;; legacy Clojure-style trailing kwargs (even k/v count)
     (and (pos? (count args)) (even? (count args)))
@@ -2936,7 +2957,7 @@
            :result [summary]
            :metadata  {:mode :write
                        :file-count 1
-                       :changed-count (if (:changed? summary) 1 0)
+                       :changed-count (if (get summary "changed") 1 0)
                        :op (:op plan)}}))
       (let [first-failure (first (:failures result))]
         (extension/failure
@@ -2970,9 +2991,9 @@
       {:op :create-dirs
        :path path
        :kind :dir
-       :result {:path out
-                :created? (not before)
-                :already-existed? before}
+       :result {"path" out
+                "created" (not before)
+                "already_existed" before}
        :metadata {:created? (not before)
                   :already-existed? before}})))
 
@@ -2989,9 +3010,9 @@
        {:op :copy
         :path dest
         :kind :path
-        :result {:src    src
-                 :dest   dest
-                 :path   out}
+        :result {"src"  src
+                 "dest" dest
+                 "path" out}
         :metadata {:src (path->target src :path)
                    :dest (path->target dest :path)
                    :opts opts}}))))
@@ -3009,9 +3030,9 @@
        {:op :move
         :path dest
         :kind :path
-        :result {:src    src
-                 :dest   dest
-                 :path   out}
+        :result {"src"  src
+                 "dest" dest
+                 "path" out}
         :metadata {:src (path->target src :path)
                    :dest (path->target dest :path)
                    :opts opts}}))))
@@ -3028,7 +3049,7 @@
     {:op :delete
      :path path
      :kind :path
-     :result {:path path :deleted? true}
+     :result {"path" path "deleted" true}
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
@@ -3043,7 +3064,7 @@
       {:op :delete-if-exists
        :path path
        :kind :path
-       :result {:path path :deleted? deleted?}
+       :result {"path" path "deleted" deleted?}
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
@@ -3058,8 +3079,8 @@
       {:op :file-exists
        :path path
        :kind :path
-       :result {:path   (str path)
-                :exists? exists?}
+       :result {"path"   (str path)
+                "exists" exists?}
        :metadata {:exists? exists?}})))
 
 ;; =============================================================================
@@ -3097,7 +3118,7 @@
   ;; tool-call path synthesizes the dict form.
   (let [a    (first args)
         path (cond (string? a) a
-               (map? a)    (or (:path a) (get a "path"))
+               (map? a)    (get a "path")
                :else       a)]
   ;; Resolve through safe-path (workspace-cwd confinement) like every other file
   ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
@@ -3112,12 +3133,12 @@
          :path path
          :kind :file
          :result (cond
-                   skeleton {:skeleton skeleton :language language :path path}
-                   language {:language language
-                             :path path
-                             :note "No structural outline for this language yet — use cat(path)."}
-                   :else    {:path path
-                             :note "Unknown language — use cat(path)."})}))))
+                   skeleton {"skeleton" skeleton "language" language "path" path}
+                   language {"language" language
+                             "path" path
+                             "note" "No structural outline for this language yet — use cat(path)."}
+                   :else    {"path" path
+                             "note" "Unknown language — use cat(path)."})}))))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -3126,11 +3147,11 @@
 ;; without a renderer fall back to a pretty-printed result (see the loop).
 ;;
 ;; CONTRACT: a renderer receives the tool's UNWRAPPED result value (the inner
-;; `:result` the tool returns, e.g. cat's `{:path :anchors …}`) AFTER it has
-;; round-tripped the GraalPy boundary — so keys are KEYWORDS in snake_case with a
-;; trailing `?`/`!` stripped (`:exists?` → `:exists`), and even nested DATA keys
-;; are keywordized (cat's anchor keys arrive as `:1:5ad`, not `"1:5ad"`). Write
-;; renderers against THAT shape, not the tool's raw Clojure return.
+;; `:result` the tool returns, e.g. cat's `{"path" ... "anchors" ...}`). The
+;; strings-only boundary means keys are VERBATIM STRINGS in snake_case — both the
+;; top-level result keys (`"exists"`, `"next_offset"`) AND nested DATA keys (cat's
+;; anchor keys are `"1:5ad"`, never `:1:5ad`). Read string keys throughout; the
+;; renderer still RETURNS the internal keyword-keyed `{:summary :body}` IR.
 ;; -----------------------------------------------------------------------------
 
 (defn- anchor-line-spans
@@ -3139,7 +3160,7 @@
    caller can fall back to a count-only summary instead of lying."
   [anchors]
   (let [nums (mapv (fn [k]
-                     (parse-long (first (str/split (if (keyword? k) (name k) (str k)) #":"))))
+                     (parse-long (first (str/split (str k) #":"))))
                (keys anchors))]
     (when (and (seq nums) (every? some? nums))
       (reduce (fn [acc ^long x]
@@ -3161,10 +3182,10 @@
    contiguous run shows just `L<a>-<b>` — the count is implied; multi-run
    shows the overall extent + run count + line total."
   [r]
-  (let [line-no (fn [k] (first (str/split (if (keyword? k) (name k) (str k)) #":")))
-        rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))
+  (let [line-no (fn [k] (first (str/split (str k) #":")))
+        rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (get r "anchors"))
         n       (count rows)
-        spans   (anchor-line-spans (:anchors r))
+        spans   (anchor-line-spans (get r "anchors"))
         span-str (fn [[a b]] (if (= a b) (str "L" a) (str "L" a "-" b)))
         loc     (cond
                   (nil? spans)        nil
@@ -3172,7 +3193,7 @@
                   :else               (str "L" (ffirst spans) "-" (second (peek spans))
                                         " (" (count spans) " ranges)"))
         counted (str n " line" (when (not= 1 n) "s"))]
-    {:summary (str "`" (:path r) "` · "
+    {:summary (str "`" (get r "path") "` · "
                 (cond
                   (nil? loc)              counted
                   (= 1 (count spans))     loc
@@ -3181,17 +3202,16 @@
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
-   `{:path :exists}` (the `?` is stripped by the boundary)."
+   `{\"path\" \"exists\"}`."
   [r]
-  {:summary (str "`" (:path r) "` " (if (:exists r) "exists ✓" "missing ✗"))})
+  {:summary (str "`" (get r "path") "` " (if (get r "exists") "exists ✓" "missing ✗"))})
 
 (defn- kw->str
-  "A round-tripped map KEY back to its string form, rebuilding a namespaced
-   keyword (a path with `/`, e.g. `:src/foo.clj`) into the full path."
+  "Coerce a result map KEY/VALUE to its string form. The strings-only boundary
+   already hands renderers plain strings (paths, anchors), so this is now just
+   `str`; kept as a named helper so the render call sites stay readable."
   [k]
-  (cond
-    (keyword? k) (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
-    :else        (str k)))
+  (str k))
 
 (defn- rg-anchor-lineno
   "The leading line number from an `<lineno>:<hash>` anchor key (string form)."
@@ -3219,9 +3239,9 @@
   (if (map? v)
     (let [ctx-rows (fn [m] (map (fn [[ck cv]] (rg-row ck cv))
                              (sort-by (comp rg-anchor-lineno-long key) m)))]
-      (concat (ctx-rows (:before v))
-        [(rg-row k (:text v))]
-        (ctx-rows (:after v))))
+      (concat (ctx-rows (get v "before"))
+        [(rg-row k (get v "text"))]
+        (ctx-rows (get v "after"))))
     [(rg-row k v)]))
 
 (defn- render-rg-result
@@ -3237,26 +3257,25 @@
    Paths/anchors are keywords; a content VALUE is the bare matched line OR a
    `{:text :before :after}` context map (see `rg-hit-rows`)."
   [r]
-  (let [fc    (or (:file_count r) 0)
+  (let [fc    (or (get r "file_count") 0)
         files-word (str fc " file" (when (not= 1 fc) "s"))
         ;; NAME what was searched on the headline — a bare "N hits in M files"
         ;; is useless without the term(s). Each OR needle is backtick-quoted
         ;; (the same chip style paths use); multiple terms join with " OR ".
-        ;; `:needles` is snake-safe (no hyphen) across the render boundary.
-        needles (seq (:needles r))
+        needles (seq (get r "needles"))
         query-chip (when needles
                      (str/join " OR " (map #(str "`" % "`") needles)))
         with-query (fn [tail] (if query-chip (str query-chip " · " tail) tail))]
     (cond
       ;; files-only — the matching FILES are the result; there are no per-line hits.
-      (contains? r :files)
+      (contains? r "files")
       {:summary (with-query files-word)
-       :body    (when-let [files (seq (:files r))]
+       :body    (when-let [files (seq (get r "files"))]
                   (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
       ;; content (default) — per-line hits grouped by file.
       :else
-      (let [hc    (or (:hit_count r) 0)
-            files (for [[path hits] (:matches r)]
+      (let [hc    (or (get r "hit_count") 0)
+            files (for [[path hits] (get r "matches")]
                     (str "`" (kw->str path) "`\n\n```\n"
                       (str/join "\n"
                         (mapcat (fn [[k v]] (rg-hit-rows k v))
@@ -3275,10 +3294,10 @@
    vector of per-file summaries `[{:path :op :changed :diff}]`."
   [r]
   (let [summaries (if (sequential? r) r [r])
-        changed   (filterv :changed summaries)
+        changed   (filterv #(get % "changed") summaries)
         n         (count summaries)
-        file-label (fn [{:keys [path op changed]}]
-                     (str (if changed (str (name (or op :update)) " ") "(no change) ")
+        file-label (fn [{:strs [path op changed]}]
+                     (str (if changed (str (or op "update") " ") "(no change) ")
                        "`" path "`"))
         labels    (mapv file-label summaries)]
     {:summary (if (<= n 3)
@@ -3287,13 +3306,13 @@
                   " · +" (- n 2) " more ("
                   (count changed) "/" n " changed)"))
      :body    (some->> (str/join "\n\n"
-                         (for [{:keys [path op changed diff]} summaries]
+                         (for [{:strs [path op changed diff]} summaries]
                            (let [diff-block (when (and changed (seq (str diff)))
                                               (str "```diff\n" (str diff) "\n```"))]
                              (if (= n 1)
                                ;; single file: summary already names it — show just the diff
                                (or diff-block "")
-                               (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+                               (str (if changed (str (or op "update") " ") "(no change) ") "`" path "`"
                                  (when diff-block (str "\n" diff-block)))))))
                 not-empty
                        ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
@@ -3303,21 +3322,21 @@
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
    `{:paths [path…] :item_count :query}`."
   [r]
-  (let [n (or (:item_count r) (count (:paths r)) 0)
-        q (some-> (:query r) str not-empty)
-        hint (some-> (:hint r) kw->str not-empty)
+  (let [n (or (get r "item_count") (count (get r "paths")) 0)
+        q (some-> (get r "query") str not-empty)
+        hint (some-> (get r "hint") kw->str not-empty)
         ;; When the strict whole-query pass found nothing, find_files fell back
         ;; to per-TERM matching (see `find-search`). Name the terms that landed
         ;; so a fuzzy result reads honestly — `3 matches for "…" · terms: render,
         ;; native` — instead of implying an exact whole-query hit.
-        terms (when (:fuzzy r)
-                (seq (keep #(some-> % kw->str not-empty) (:matched_terms r))))]
+        terms (when (get r "fuzzy")
+                (seq (keep #(some-> % kw->str not-empty) (get r "matched_terms"))))]
     {:summary (str n " match" (when (not= 1 n) "es")
                 (when q (str " for \"" q "\""))
                 (when terms (str " · terms: " (str/join ", " terms))))
      :body    (cond
-                (seq (:paths r))
-                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```")
+                (seq (get r "paths"))
+                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (get r "paths"))) "\n```")
                 ;; 0 results: show the steer (filename-vs-content) instead of a
                 ;; blank card — the same hint the model reads, so the user sees
                 ;; WHY it found nothing.
@@ -3328,8 +3347,8 @@
    string (already anchored/nested). `r` is `{:skeleton str :language str :path str}`
    or a no-structure shape."
   [r]
-  (let [loc (some-> (:path r) str not-empty (#(str "`" % "`")))]
-    (if-let [sk (some-> (:skeleton r) kw->str not-empty)]
+  (let [loc (some-> (get r "path") str not-empty (#(str "`" % "`")))]
+    (if-let [sk (some-> (get r "skeleton") kw->str not-empty)]
       {:summary (or loc "outline")
        :body    (str "\n```\n" sk "\n```")}
       {:summary (str (or loc "outline") " · no structural outline")})))
@@ -3342,11 +3361,11 @@
    wire-shaped: `{:name :files [{:path :occurrences [{:anchor :is_definition :kind
    :visibility :signature :end_anchor}]}] :count :definition_count}`."
   [r]
-  (let [files (:files r)
-        total (or (:count r) 0)
-        defs  (or (:definition_count r) 0)
+  (let [files (get r "files")
+        total (or (get r "count") 0)
+        defs  (or (get r "definition_count") 0)
         fc    (count files)
-        nm    (some-> (:name r) kw->str)]
+        nm    (some-> (get r "name") kw->str)]
     {:summary (str total
                 (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
                 " in " fc " file" (when (not= 1 fc) "s")
@@ -3354,78 +3373,78 @@
      :body (when (seq files)
              (str "\n" (str/join "\n\n"
                          (for [f files]
-                           (let [occ (:occurrences f)
-                                 ds  (filter :is_definition occ)
-                                 us  (remove :is_definition occ)]
-                             (str "`" (kw->str (:path f)) "`\n```\n"
+                           (let [occ (get f "occurrences")
+                                 ds  (filter #(get % "is_definition") occ)
+                                 us  (remove #(get % "is_definition") occ)]
+                             (str "`" (kw->str (get f "path")) "`\n```\n"
                                (str/join "\n"
                                  (concat
                                    (for [d ds]
                                      (str "  def "
-                                       (some-> (:kind d) kw->str)
-                                       (when-let [v (:visibility d)] (str " " (kw->str v)))
-                                       (when-let [s (:signature d)] (str "  " (kw->str s)))
-                                       "  @" (kw->str (:anchor d)) ".." (kw->str (:end_anchor d))))
+                                       (some-> (get d "kind") kw->str)
+                                       (when-let [v (get d "visibility")] (str " " (kw->str v)))
+                                       (when-let [s (get d "signature")] (str "  " (kw->str s)))
+                                       "  @" (kw->str (get d "anchor")) ".." (kw->str (get d "end_anchor"))))
                                    (when (seq us)
-                                     [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (:anchor %)) us)))])))
+                                     [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (get % "anchor")) us)))])))
                                "\n```"))))))}))
 
 (defn- render-symbol-rename-result
   "symbol_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
    the changed paths. `r` is `{:files [{:path :changed}] :file_count :failed}`."
   [r]
-  (let [files  (:files r)
-        fc     (or (:file_count r) (count files))
-        failed (:failed r)]
+  (let [files  (get r "files")
+        fc     (or (get r "file_count") (count files))
+        failed (get r "failed")]
     {:summary (str "renamed in " fc " file" (when (not= 1 fc) "s")
                 (when (seq failed) (str " · " (count failed) " failed")))
      :body    (when (seq files)
-                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (:path %))) files)) "\n```"))}))
+                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (get % "path"))) files)) "\n```"))}))
 
 (defn- render-ls-result
   "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
    get a trailing `/`). `r` is `{:path :entries [{:type :name}] :entry_count}`."
   [r]
-  (let [n     (or (:entry_count r) (count (:entries r)) 0)
-        path  (some-> (:path r) kw->str)
-        row   (fn [e] (str "  " (:name e) (when (= "dir" (some-> (:type e) name)) "/")))]
+  (let [n     (or (get r "entry_count") (count (get r "entries")) 0)
+        path  (some-> (get r "path") kw->str)
+        row   (fn [e] (str "  " (get e "name") (when (= "dir" (get e "type")) "/")))]
     {:summary (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`")))
-     :body    (when (seq (:entries r))
-                (str "\n```\n" (str/join "\n" (map row (:entries r))) "\n```"))}))
+     :body    (when (seq (get r "entries"))
+                (str "\n```\n" (str/join "\n" (map row (get r "entries"))) "\n```"))}))
 
 (defn- render-move-result
   "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
   [r]
-  {:summary (str "moved `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`")})
+  {:summary (str "moved `" (kw->str (get r "src")) "` → `" (kw->str (get r "dest")) "`")})
 
 (defn- render-delete-result
   "delete → `{:summary}` only: `deleted `path`` (or a no-op note). `r` is
    `{:path :deleted}`."
   [r]
-  {:summary (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
-              (kw->str (:path r)) "`")})
+  {:summary (str (if (false? (get r "deleted")) "nothing to delete at `" "deleted `")
+              (kw->str (get r "path")) "`")})
 
 (defn- render-copy-result
   "copy → `{:summary}` only: `copied `src` → `dest``. `r` is `{:src :dest :path}`."
   [r]
-  {:summary (str "copied `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`")})
+  {:summary (str "copied `" (kw->str (get r "src")) "` → `" (kw->str (get r "dest")) "`")})
 
 (defn- render-create-dirs-result
   "create_dirs → `{:summary}` only: created / already-existed note. `r` is
    `{:path :created :already_existed}`."
   [r]
-  {:summary (str (if (:created r) "created dir `" "dir already exists `")
-              (kw->str (:path r)) "`")})
+  {:summary (str (if (get r "created") "created dir `" "dir already exists `")
+              (kw->str (get r "path")) "`")})
 
 (defn- render-sexpr-result
   "sexpr → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
    text as a code block. `r` is the zip shape `{:path :kind :line :end_line :text
    :children :can}`."
   [r]
-  (let [kind (some-> (:kind r) kw->str)
-        line (:line r)
-        eol  (:end_line r)
-        txt  (some-> (:text r) kw->str)]
+  (let [kind (some-> (get r "kind") kw->str)
+        line (get r "line")
+        eol  (get r "end_line")
+        txt  (some-> (get r "text") kw->str)]
     {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
      :body    (when (seq txt) (str "\n```\n" txt "\n```"))}))
 
@@ -3649,6 +3668,24 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
+(def ^:private struct-op->kw
+  "Bounded snake_case op string (as the model writes it) → the internal kebab
+   keyword the `structural`/`zipper` edit fns dispatch on. A fixed allowlist so
+   no keyword is ever MINTED from model-supplied data (strings-only boundary)."
+  {"replace"        :replace
+   "delete"         :delete
+   "insert_before"  :insert-before
+   "insert_after"   :insert-after
+   "append"         :append
+   "add_doc"        :add-doc
+   "replace_doc"    :replace-doc
+   "replace_node"   :replace-node
+   "rename"         :rename
+   "move_before"    :move-before
+   "move_after"     :move-after
+   "append_child"   :append-child
+   "prepend_child"  :prepend-child})
+
 (defn- struct-patch-tool
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
@@ -3678,8 +3715,11 @@
    Locate targets with outline(path) / sexpr(path) / occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
-  (let [path        (:path args)
-        raw-op      (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
+  (let [path        (get args "path")
+        raw-op      (or (struct-op->kw (or (get args "op") "replace"))
+                      (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
+                               {:type :ext.foundation.editing/struct-unknown-op
+                                :op (get args "op")})))
         ;; LENIENCY — do the obvious thing instead of erroring:
         ;;  • `delete` (by name OR path) = replace the located node with "" (there was
         ;;    no name-based delete op, so a model wanting to drop a dead def was stuck).
@@ -3690,18 +3730,18 @@
         op          (cond
                       delete? :replace
                       (and (= raw-op :replace-node)
-                        (str/blank? (str (:match args)))
-                        (not (str/blank? (str (:target args))))) :replace
+                        (str/blank? (str (get args "match")))
+                        (not (str/blank? (str (get args "target"))))) :replace
                       :else raw-op)
-        code        (if delete? "" (:code args))
+        code        (if delete? "" (get args "code"))
         new-content
-        (if (contains? args :at)
+        (if (contains? args "at")
           ;; PATH-based (the zipper): locate by named-child index path + moves.
           (let [lang   (or (zipper/detect-language path)
                          (throw (ex-info (str "Unknown language for " path " — use patch(...).")
                                   {:type :ext.foundation.editing/struct-unknown-language :path path})))
                 source (slurp (safe-path path))
-                nav    (zipper/navigate lang source (:at args) (:nav args))
+                nav    (zipper/navigate lang source (get args "at") (get args "nav"))
                 at     (if (:ok? nav)
                          (:path nav)
                          (throw (ex-info (get-in nav [:error :message] "navigation failed")
@@ -3716,14 +3756,14 @@
           ;; NAME/MATCH-based (the original StructuralApi surface).
           (structural/edit-source path (slurp (safe-path path))
             {:op op
-             :target (:target args)
-             :kind (some-> (:kind args) keyword)
+             :target (get args "target")
+             :kind (get args "kind")
              :code code
-             :match (:match args)
-             :anchor (:anchor args)}))
+             :match (get args "match")
+             :anchor (get args "anchor")}))
         ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
         ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
-        result      (write-safe {:path path :content new-content :allow_dirty true})]
+        result      (write-safe {"path" path "content" new-content "allow_dirty" true})]
     (if (:success? result)
       (let [plan (:plan result)
             summary (patch-result-file-summary plan)]
@@ -3734,7 +3774,7 @@
            :result [summary]
            :metadata {:mode :struct_patch
                       :file-count 1
-                      :changed-count (if (:changed? summary) 1 0)
+                      :changed-count (if (get summary "changed") 1 0)
                       :op (:op plan)}}))
       (extension/failure
         {:result nil
@@ -3789,17 +3829,20 @@
 (defn- zip-clip [s n]
   (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
 
-(defn- zip-shape [r]
-  {:path (:path r)
-   :kind (:kind r)
-   :line (:start-line r)
-   :end_line (:end-line r)
-   :named_child_count (:named-child-count r)
-   :has_error (:has-error? r)
-   :text (zip-clip (:text r) 2000)
-   :sexp (zip-clip (:sexp r) 1200)
-   :children (mapv (fn [c] {:idx (:idx c) :kind (:kind c) :head (zip-clip (:head c) 120)})
-               (:children r))})
+(defn- zip-shape
+  ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
+  ;; the model-facing sexpr result — string keys, no keyword values.
+  [r]
+  {"path" (:path r)
+   "kind" (:kind r)
+   "line" (:start-line r)
+   "end_line" (:end-line r)
+   "named_child_count" (:named-child-count r)
+   "has_error" (:has-error? r)
+   "text" (zip-clip (:text r) 2000)
+   "sexp" (zip-clip (:sexp r) 1200)
+   "children" (mapv (fn [c] {"idx" (:idx c) "kind" (:kind c) "head" (zip-clip (:head c) 120)})
+                (:children r))})
 
 (defn- sexpr-tool
   "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
@@ -3823,7 +3866,7 @@
   [path & [opts]]
   (let [lang   (zipper/detect-language path)
         source (slurp (safe-path path))
-        nav    (zipper/navigate lang source (:at opts) (:nav opts))]
+        nav    (zipper/navigate lang source (get opts "at") (get opts "nav"))]
     (if (:error nav)
       (extension/failure
         {:result nil :op :sexpr
@@ -3840,7 +3883,7 @@
                      :reason (get-in r [:error :reason]) :mode :sexpr}})
           (tool-success {:op :sexpr :path path :kind :file
                          :result (assoc (zip-shape r)
-                                   :can (zipper/moves-available lang source at))}))))))
+                                   "can" (zipper/moves-available lang source at))}))))))
 
 (def sexpr-symbol
   (vis/symbol #'sexpr-tool
@@ -3878,11 +3921,12 @@
    redundant `line`/`column`/byte fields, which unbounded would bloat the wire until
    it clips). A DEFINITION additionally carries its metadata + span (`end_anchor`)."
   [o]
-  (cond-> {:anchor (:anchor o)}
-    (:is-definition o) (assoc :is_definition true
-                         :kind (:kind o) :visibility (:visibility o)
-                         :signature (:signature o) :doc (:doc o)
-                         :end_anchor (:end-anchor o))))
+  ;; Model-facing occurrence row — string keys, no keyword values.
+  (cond-> {"anchor" (:anchor o)}
+    (:is-definition o) (assoc "is_definition" true
+                         "kind" (:kind o) "visibility" (:visibility o)
+                         "signature" (:signature o) "doc" (:doc o)
+                         "end_anchor" (:end-anchor o))))
 
 (defn- occurrences-tool
   "Every OCCURRENCE of an identifier across the project (or within `paths`), via
@@ -3904,39 +3948,37 @@
   [& args]
   (let [[a & more] args
         spec (cond
-               (and (= 1 (count args)) (string? a)) {:name a}
+               (and (= 1 (count args)) (string? a)) {"name" a}
                (and (= 1 (count args)) (map? a)) a
-               (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) :name a)
-               (and (string? a) (even? (count more)) (every? keyword? (take-nth 2 more)))
-               (assoc (apply hash-map more) :name a)
-               (and (even? (count args)) (every? keyword? (take-nth 2 args))) (apply hash-map args)
+               (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
                :else (throw (ex-info "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
                               {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
-        name (:name spec)
+        name (get spec "name")
         _ (when-not (and (string? name) (not (str/blank? name)))
             (throw (ex-info "occurrences needs a non-blank `name`."
                      {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
-        paths (let [p (or (:paths spec) ["."])] (if (string? p) [p] (vec p)))
+        paths (let [p (or (get spec "paths") ["."])] (if (string? p) [p] (vec p)))
         ;; rg prefilters the files that mention the name (smart-case would over-
         ;; match casing, but a definition keeps the name's case, so a case-
         ;; sensitive identifier still lands among these files); each is parsed.
-        files (vec (or (:files (rg-search {:query [name] :is_files_only true :paths paths})) []))
+        files (vec (or (:files (rg-search {"query" [name] "is_files_only" true "paths" paths})) []))
+        ;; `per`/`failed` entries are the model-facing result payload — string keys.
         {:keys [per failed]}
         (reduce (fn [acc path]
                   (try
                     (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
                       (cond-> acc
-                        (seq occ) (update :per conj {:path path :occurrences (mapv occurrence->wire occ)})))
+                        (seq occ) (update :per conj {"path" path "occurrences" (mapv occurrence->wire occ)})))
                     (catch Exception e
-                      (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
+                      (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
           {:per [] :failed []} files)
-        total (reduce + 0 (map #(count (:occurrences %)) per))
-        defs  (reduce + 0 (map (fn [f] (count (filter :is_definition (:occurrences f)))) per))]
+        total (reduce + 0 (map #(count (get % "occurrences")) per))
+        defs  (reduce + 0 (map (fn [f] (count (filter #(get % "is_definition") (get f "occurrences")))) per))]
     (tool-success
       {:op :occurrences
        :kind :dir
-       :result {:name name :files per :count total :definition_count defs
-                :scanned (count files) :failed failed}
+       :result {"name" name "files" per "count" total "definition_count" defs
+                "scanned" (count files) "failed" failed}
        :metadata {:name name :paths paths :count total :definition_count defs}})))
 
 (def occurrences-symbol
@@ -3974,17 +4016,16 @@
   [& args]
   (let [spec (cond
                (and (= 2 (count args)) (string? (first args)) (string? (second args)))
-               {:name (first args) :new_name (second args)}
+               {"name" (first args) "new_name" (second args)}
                (and (= 1 (count args)) (map? (first args))) (first args)
-               (and (even? (count args)) (every? keyword? (take-nth 2 args))) (apply hash-map args)
                :else (throw (ex-info "symbol_rename takes symbol_rename(name, new_name)."
                               {:type :ext.foundation.editing/invalid-symbol-rename-args :got args})))
-        name (:name spec)
-        new_name (:new_name spec)
+        name (get spec "name")
+        new_name (get spec "new_name")
         _ (when-not (and (string? name) (not (str/blank? name)) (string? new_name) (not (str/blank? new_name)))
             (throw (ex-info "symbol_rename needs non-blank `name` and `new_name`."
                      {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
-        files (vec (or (:files (rg-search {:query [name] :is_files_only true})) []))
+        files (vec (or (:files (rg-search {"query" [name] "is_files_only" true})) []))
         out (reduce
               (fn [acc path]
                 (try
@@ -3993,19 +4034,20 @@
                     (if (seq hits)
                       (let [renamed (structural/edit-source path src
                                       {:op :rename :target name :kind nil :code new_name :match nil})]
-                        (write-safe {:path path :content renamed :allow_dirty true})
+                        (write-safe {"path" path "content" renamed "allow_dirty" true})
                         (update acc :changed conj path))
                       acc))
                   (catch Exception e
-                    (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
+                    (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
               {:changed [] :failed []}
               files)]
     (tool-success
       {:op :symbol_rename
        :kind :dir
-       :result {:files (mapv (fn [p] {:path p :changed true}) (:changed out))
-                :file_count (count (:changed out))
-                :failed (:failed out)}})))
+       ;; Model-facing result — string keys, no keyword values.
+       :result {"files" (mapv (fn [p] {"path" p "changed" true}) (:changed out))
+                "file_count" (count (:changed out))
+                "failed" (:failed out)}})))
 
 (def symbol-rename-symbol
   (vis/symbol #'symbol-rename-tool

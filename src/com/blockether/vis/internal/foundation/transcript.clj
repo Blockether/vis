@@ -444,7 +444,9 @@
       (seq blocks)
       (assoc :executable-blocks blocks
         :form-count (count blocks)
-        :block-langs (mapv :lang blocks)))))
+        ;; `:llm-executable-blocks` is a `<-json` DB column -> STRING-keyed
+        ;; ({"lang" ..., "source" ...}); read the lang by string key.
+        :block-langs (mapv #(get % "lang") blocks)))))
 
 (defn- llm-diagnostic-row
   [turn iteration]
@@ -654,8 +656,11 @@
       :else nil)))
 
 (defn- render-prompt-message
-  [idx {:keys [role content]}]
-  (let [role (or role "?")
+  ;; `:llm-user-prompt` messages are a `<-json` DB column -> STRING-keyed
+  ;; ({"role" ..., "content" ...}); read by string key.
+  [idx message]
+  (let [role    (or (get message "role") "?")
+        content (get message "content")
         purpose (prompt-message-purpose role content)]
     (str "[" idx "] role=" role
       (when purpose (str " - " purpose))
@@ -681,7 +686,7 @@
                  (apply str (map-indexed render-prompt-message messages)))]
       (render-collapsible
         (str "LLM messages (" (count messages) " messages, "
-          (reduce + 0 (map #(count (str (:content %))) messages)) " chars total)")
+          (reduce + 0 (map #(count (str (get % "content"))) messages)) " chars total)")
         body))))
 
 (defn- raw-diagnostic-rows
@@ -708,7 +713,8 @@
                            :raw-sha256        (:llm-raw-response-sha256 iter)
                            :executable-blocks executable-blocks
                            :form-count       (count executable-blocks)
-                           :block-langs       (mapv :lang executable-blocks)})))
+                           ;; STRING-keyed `<-json` blocks — lang by string key.
+                           :block-langs       (mapv #(get % "lang") executable-blocks)})))
                 (:iterations turn)))
       turns)))
 
@@ -793,7 +799,7 @@
                " | " (or (some-> provider name) "-") "/" (or model "-")
                " | " (count (str system-prompt))
                " | " (count messages)
-               " | " (reduce + 0 (map #(count (str (:content %))) messages))
+               " | " (reduce + 0 (map #(count (str (get % "content"))) messages))
                " |\n"))
         rows))
     "\n"))

@@ -469,6 +469,17 @@
 
 (def ^:private code-fence-re #"^\s*```")
 
+(defn- kw->snake
+  "Keyword -> snake_case string, mirroring the Clojure->Python boundary
+   (`env-python/kw->snake`): kebab -> snake, trailing `?`/`!` stripped,
+   namespace folded with `_`. Used to stringify the enum values (`:op`,
+   `:source`, citation `:type`) the model-facing `:result` payload carries,
+   so those maps cross the STRINGS-ONLY boundary already string-clean."
+  ^String [k]
+  (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
+    (str/replace "-" "_")
+    (str/replace #"[?!]$" "")))
+
 (defn- normalize-exa-excerpt
   "Exa stitches non-contiguous page fragments together with a bare
    `[...]` truncation marker on its OWN line. Between block-level
@@ -649,31 +660,37 @@
                   excerpt (-> (str/trim (str/join "\n" excerpt-lines))
                             normalize-exa-excerpt
                             unwrap-doc-fences)]]
-        (cond-> {:type    citation-type
-                 :title   title
-                 :url     (or url "")
-                 :excerpt excerpt
-                 :source  :exa}
-          published (assoc :published published)
-          authors   (assoc :authors authors))))))
+        (cond-> {"type"    (kw->snake citation-type)
+                 "title"   title
+                 "url"     (or url "")
+                 "excerpt" excerpt
+                 "source"  "exa"}
+          published (assoc "published" published)
+          authors   (assoc "authors" authors))))))
 
-(defn- kw-get
-  [m & ks]
-  (some #(when (contains? m %) (get m %)) ks))
-
+;; READ side: `opts` arrives from the model as a STRING-keyed dict (native tool
+;; input). Read the ONE canonical snake_case key per option — no camelCase
+;; fallback, no dual-read, no alias tolerance.
+;;
+;; WRITE side: the map returned here is Exa's `web_search_exa` / `get_code_context_exa`
+;; MCP tool-argument object. `:numResults` / `:contextMaxCharacters` / `:tokensNum`
+;; are Exa's OWN camelCase HTTP API field names (charred serializes this to the
+;; JSON-RPC `arguments` payload) — a third-party wire contract, NOT vis aliases.
+;; They never cross the GraalPy boundary; renaming them to snake_case would make
+;; Exa silently ignore the option.
 (defn- web-args
   [query opts]
   (cond-> {:query query}
-    (kw-get opts :num_results :numResults) (assoc :numResults (kw-get opts :num_results :numResults))
-    (kw-get opts :type) (assoc :type (name (kw-get opts :type)))
-    (kw-get opts :livecrawl :live_crawl) (assoc :livecrawl (name (kw-get opts :livecrawl :live_crawl)))
-    (kw-get opts :context_max_characters :contextMaxCharacters)
-    (assoc :contextMaxCharacters (kw-get opts :context_max_characters :contextMaxCharacters))))
+    (get opts "num_results") (assoc :numResults (get opts "num_results"))
+    (get opts "type") (assoc :type (str (get opts "type")))
+    (get opts "livecrawl") (assoc :livecrawl (str (get opts "livecrawl")))
+    (get opts "context_max_characters")
+    (assoc :contextMaxCharacters (get opts "context_max_characters"))))
 
 (defn- code-args
   [query opts]
   (cond-> {:query query}
-    (kw-get opts :tokens_num :tokensNum) (assoc :tokensNum (kw-get opts :tokens_num :tokensNum))))
+    (get opts "tokens_num") (assoc :tokensNum (get opts "tokens_num"))))
 
 ;; ----------------------------------------------------------------------------
 ;; Envelope helpers
@@ -685,15 +702,17 @@
 ;; ----------------------------------------------------------------------------
 
 (defn- search-result-payload
-  "Canonical Python-facing :result map for a successful search call."
+  "Canonical Python-facing :result map for a successful search call.
+   STRINGS-ONLY: string keys, enum values (`op`, `source`) snake-cased so the
+   map crosses the boundary already string-clean."
   [{:keys [op query citations source endpoint truncated?]}]
-  (cond-> {:op         op
-           :query          (str query)
-           :citations      (vec citations)
-           :citation-count (count citations)
-           :truncated?     (boolean truncated?)
-           :source         source}
-    endpoint (assoc :endpoint endpoint)))
+  (cond-> {"op"             (kw->snake op)
+           "query"          (str query)
+           "citations"      (vec citations)
+           "citation_count" (count citations)
+           "truncated"      (boolean truncated?)
+           "source"         (kw->snake source)}
+    endpoint (assoc "endpoint" endpoint)))
 
 (defn- search-success
   "Wrap a successful search call in the canonical tool envelope so it
@@ -707,8 +726,8 @@
        :op       op
        :metadata (cond-> {:tool           (str tool)
                           :source         source
-                          :citation-count (:citation-count payload)
-                          :truncated?     (:truncated? payload)
+                          :citation-count (get payload "citation_count")
+                          :truncated?     (get payload "truncated")
                           :query          (str query)}
                    endpoint (assoc :endpoint endpoint))})))
 
@@ -720,18 +739,18 @@
    from the envelope side."
   [{:keys [op tool query source endpoint citation-type ^Throwable throwable]}]
   (let [msg          (or (some-> throwable ex-message) "search failed")
-        error-entry  (cond-> {:type    citation-type
-                              :title   (str "search failed: " query)
-                              :url     ""
-                              :excerpt msg
-                              :source  source
-                              :error   true}
+        error-entry  (cond-> {"type"    (kw->snake citation-type)
+                              "title"   (str "search failed: " query)
+                              "url"     ""
+                              "excerpt" msg
+                              "source"  (kw->snake source)
+                              "error"   true}
                        (some-> throwable ex-data :type)
-                       (assoc :error-type (-> throwable ex-data :type)))
+                       (assoc "error_type" (kw->snake (-> throwable ex-data :type))))
         payload      (-> (search-result-payload
                            {:op op :query query :citations [error-entry]
                             :source source :endpoint endpoint :truncated? false})
-                       (assoc :error? true))]
+                       (assoc "error" true))]
     (extension/failure
       {:result   payload
        :op       op
@@ -822,21 +841,21 @@
                              first :content first
                              (#(when (string? %) (str/trim %)))))]
       (mapv (fn [e]
-              {:type    :paper
-               :title   (or (extract e :title) "")
-               :url     (or (extract e :id) "")
-               :excerpt (or (extract e :summary) "")
-               :authors (or (extract-author e) "")
-               :published (or (extract e :published) "")
-               :source  :arxiv})
+              {"type"    "paper"
+               "title"   (or (extract e :title) "")
+               "url"     (or (extract e :id) "")
+               "excerpt" (or (extract e :summary) "")
+               "authors" (or (extract-author e) "")
+               "published" (or (extract e :published) "")
+               "source"  "arxiv"})
         entries))
     (catch Throwable t
-      [{:type :paper
-        :title "arxiv parse failed"
-        :url ""
-        :excerpt (or (ex-message t) "")
-        :source :arxiv
-        :error true}])))
+      [{"type" "paper"
+        "title" "arxiv parse failed"
+        "url" ""
+        "excerpt" (or (ex-message t) "")
+        "source" "arxiv"
+        "error" true}])))
 
 (defn search-papers
   "await search_papers(\"diffusion models for protein folding\")
@@ -848,22 +867,21 @@
    Gotcha: \"excerpt\" is the abstract (plain text); on failure \"citations\"[0] has \"error\": True."
   ([query] (search-papers query {}))
   ([query opts]
-   (let [{:keys [max_results sort timeout_ms]
-          :or {max_results ARXIV_DEFAULT_MAX_RESULTS
-               sort        :relevance
-               timeout_ms  ARXIV_DEFAULT_TIMEOUT_MS}} opts
+   (let [max-results (or (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
+         sort-key    (or (get opts "sort") "relevance")
+         timeout-ms  (or (get opts "timeout_ms") ARXIV_DEFAULT_TIMEOUT_MS)
          url (str ARXIV_API_BASE
                "?search_query=" (URLEncoder/encode (str "all:" query) "UTF-8")
                "&start=0"
-               "&max_results=" max_results
-               "&sortBy=" (case sort
-                            :lastUpdatedDate "lastUpdatedDate"
-                            :submittedDate   "submittedDate"
-                            :relevance       "relevance"
+               "&max_results=" max-results
+               "&sortBy=" (case sort-key
+                            "lastUpdatedDate" "lastUpdatedDate"
+                            "submittedDate"   "submittedDate"
+                            "relevance"       "relevance"
                             "relevance")
                "&sortOrder=descending")]
      (try
-       (let [resp (http/get url {:timeout timeout_ms
+       (let [resp (http/get url {:timeout timeout-ms
                                  :headers {"User-Agent" "vis-foundation-search/0.1"}})
              body (:body resp)
              body-bytes (cond
@@ -904,7 +922,7 @@
               :required ["query"]}
      :handler (fn [_env input]
                 (search-web (str (get input "query"))
-                  (update-keys (dissoc input "query") keyword)))}))
+                  (dissoc input "query")))}))
 
 (def code-symbol
   (vis/symbol #'search-code
@@ -922,7 +940,7 @@
               :required ["query"]}
      :handler (fn [_env input]
                 (search-code (str (get input "query"))
-                  (update-keys (dissoc input "query") keyword)))}))
+                  (dissoc input "query")))}))
 
 (def papers-symbol
   (vis/symbol #'search-papers
@@ -942,7 +960,7 @@
               :required ["query"]}
      :handler (fn [_env input]
                 (search-papers (str (get input "query"))
-                  (update-keys (dissoc input "query") keyword)))}))
+                  (dissoc input "query")))}))
 
 (def search-symbols
   [web-symbol

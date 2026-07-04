@@ -200,7 +200,9 @@
 (defn status
   "Current managed-process + discovered-port view for `dir`. Always safe.
    Reflects the persistent registry, so a REPL vis started before a restart
-   still reports as managed + running (re-attached by PID)."
+   still reports as managed + running (re-attached by PID). Model-facing:
+   STRING keys + STRING enum values (crosses the strings-only boundary as a
+   tool `:result`)."
   [dir]
   (let [reg-info (get (read-registry) dir)
         running? (dir-alive? dir reg-info)
@@ -208,13 +210,14 @@
         aliases  (:aliases reg-info)
         pid      (or (some-> ^Process (:process (get @processes dir)) .pid)
                    (:pid reg-info))]
-    {:result        :status
-     :dir           dir
-     :managed       (cond-> {:running running?}
-                      tool          (assoc :tool tool)
-                      (seq aliases) (assoc :aliases (vec aliases))
-                      (and running? pid) (assoc :pid pid))
-     :ports         (vec (ports/discover-all dir))}))
+    {"result"        "status"
+     "dir"           dir
+     "managed"       (cond-> {"running" running?}
+                       tool          (assoc "tool" (name tool))
+                       (seq aliases) (assoc "aliases" (mapv name aliases))
+                       (and running? pid) (assoc "pid" pid))
+     "ports"         (mapv (fn [{:keys [port source]}] {"port" port "source" source})
+                       (ports/discover-all dir))}))
 
 (defn start!
   "Self-start a project nREPL subprocess in `dir` with optional `:aliases`.
@@ -226,7 +229,8 @@
    - A stale `.nrepl-port` is cleared so we wait for the fresh one.
 
    Waits briefly for the fresh port; returns :started (with port + liveness)
-   when it appears, else :starting (ctx surfaces it next turn)."
+   when it appears, else :starting (ctx surfaces it next turn). Model-facing:
+   STRING keys + STRING enum values (crosses as a tool `:result`)."
   ([dir] (start! dir nil))
   ([dir {:keys [aliases]}]
    (let [reg-info (get (read-registry) dir)]
@@ -234,7 +238,7 @@
        ;; already ours and alive — same session, or re-attached across restart
        (or (alive? (:process (get @processes dir)))
          (and reg-info (pid-alive? (:pid reg-info))))
-       (assoc (status dir) :result :already-running)
+       (assoc (status dir) "result" "already-running")
 
        :else
        (let [existing (read-port-file dir)
@@ -243,8 +247,8 @@
          (cond
            ;; a live REPL we don't own (no registry entry) — don't double-start
            live?
-           {:result :already-running :is_external true :dir dir :port existing
-            :message "An nREPL is already running in this directory."}
+           {"result" "already-running" "is_external" true "dir" dir "port" existing
+            "message" "An nREPL is already running in this directory."}
 
            :else
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases)]
@@ -266,13 +270,14 @@
                                  :started-at (System/currentTimeMillis)})
                  (let [port  (wait-for-port dir 15000)
                        probe (when port (nrepl-client/probe! {:port port :timeout-ms 500}))]
-                   (cond-> {:tool tool :dir dir :aliases (vec aliases) :cmd cmd
-                            :log  (.getAbsolutePath log) :pid pid}
-                     port       (assoc :result :started :port port :status (:status probe))
-                     (not port) (assoc :result :starting
-                                  :message "nREPL launching; the port will appear in ctx shortly.")))))
-             {:result  :no-launcher :dir dir
-              :message "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
+                   (cond-> {"tool" (name tool) "dir" dir "aliases" (mapv name aliases) "cmd" cmd
+                            "log"  (.getAbsolutePath log) "pid" pid}
+                     port       (assoc "result" "started" "port" port
+                                  "status" (some-> (:status probe) name))
+                     (not port) (assoc "result" "starting"
+                                  "message" "nREPL launching; the port will appear in ctx shortly.")))))
+             {"result"  "no-launcher" "dir" dir
+              "message" "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
 
 (defn stop!
   "Stop the Vis-managed nREPL for `dir` (graceful, then forced). Uses this
@@ -290,6 +295,6 @@
           (:pid reg-info) (kill-pid! (:pid reg-info)))
         (swap! processes dissoc dir)
         (unregister! dir)
-        {:result :stopped :dir dir})
-      {:result  :not-managed :dir dir
-       :message "No Vis-managed nREPL for this directory."})))
+        {"result" "stopped" "dir" dir})
+      {"result"  "not-managed" "dir" dir
+       "message" "No Vis-managed nREPL for this directory."})))

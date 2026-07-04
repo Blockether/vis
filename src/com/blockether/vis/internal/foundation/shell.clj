@@ -10,10 +10,10 @@
    `clj_eval`, `search_web`):
 
    1. SYNC `shell_run(cmd)` / `shell_run(cmd, opts)` — `bash -lc` in the
-      workspace root, waits up to a timeout, and returns a LEAN payload
-      {:cmd :stdout :duration_ms} + conditional keys (:exit when finished;
-      :timed_out/:timeout_secs on timeout; :stderr when non-empty; truncation
-      flags when true; :cwd when narrowed) — results ride every later prompt
+      workspace root, waits up to a timeout, and returns a LEAN payload with
+      string keys cmd/stdout/duration_ms + conditional keys (exit when finished;
+      timed_out/timeout_secs on timeout; stderr when non-empty; truncation
+      flags when true; cwd when narrowed) — results ride every later prompt
       as frozen <results> pins, so dead fields never ship. Output is bounded
       at read time to a head+tail budget per stream — only the MIDDLE of a huge
       stream is dropped, never its start or end (memory can't balloon on a
@@ -98,12 +98,6 @@
 ;; Small helpers
 ;; =============================================================================
 
-(defn- opt-get
-  "Read an option from a GraalPy-crossed dict. The boundary keywordizes dict
-   keys snake-verbatim (:timeout_secs), but be lenient to raw string keys."
-  [opts k sk]
-  (when (map? opts) (or (get opts k) (get opts sk))))
-
 (defn- read-capped
   "Drain a Reader keeping the HEAD and the TAIL of the stream, dropping only the
    MIDDLE when output exceeds `head-limit`+`tail-limit` — so neither the opening
@@ -163,7 +157,7 @@
    stay inside the root — same containment rule the editing tools enforce."
   ^File [opts]
   (let [root (.getCanonicalFile (workspace/cwd))
-        rel  (let [c (opt-get opts :cwd "cwd")]
+        rel  (let [c (get opts "cwd")]
                (when-not (str/blank? (str (or c ""))) (str c)))]
     (if-not rel
       root
@@ -278,8 +272,8 @@
      (when (str/blank? cmd)
        (throw (ex-info "shell_run needs a non-blank command string."
                 {:type ::blank-command})))
-     (let [timeout-secs (clamp-timeout-secs (opt-get opts :timeout_secs "timeout_secs"))
-           cwd-opt?     (not (str/blank? (str (or (opt-get opts :cwd "cwd") ""))))
+     (let [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
+           cwd-opt?     (not (str/blank? (str (or (get opts "cwd") ""))))
            dir   (resolve-cwd opts)
            t0    (now-ms)
            p     (spawn! cmd dir false)
@@ -312,17 +306,17 @@
            ;; <results> pin, so optional keys appear ONLY when they carry
            ;; signal (model reads them with .get). :op / echoes of the call
            ;; args (cwd default, timeout default) never ship.
-           {:result (cond-> {:cmd cmd
-                             :stdout (lf (:text out))
-                             :duration_ms (- t1 t0)}
-                      finished?         (assoc :exit exit)
-                      (not finished?)   (assoc :timed_out true
-                                          :timeout_secs timeout-secs)
-                      (:truncated out)  (assoc :stdout_truncated true)
-                      (not (str/blank? (:text err))) (assoc :stderr (lf (:text err)))
-                      (:truncated err)  (assoc :stderr_truncated true)
+           {:result (cond-> {"cmd" cmd
+                             "stdout" (lf (:text out))
+                             "duration_ms" (- t1 t0)}
+                      finished?         (assoc "exit" exit)
+                      (not finished?)   (assoc "timed_out" true
+                                          "timeout_secs" timeout-secs)
+                      (:truncated out)  (assoc "stdout_truncated" true)
+                      (not (str/blank? (:text err))) (assoc "stderr" (lf (:text err)))
+                      (:truncated err)  (assoc "stderr_truncated" true)
                       ;; Relative cwd is `/`-separated on every OS (Windows `\`).
-                      cwd-opt?          (assoc :cwd (paths/unixify (.getPath dir))))
+                      cwd-opt?          (assoc "cwd" (paths/unixify (.getPath dir))))
             :op :shell/run
             :metadata {:command cmd
                        :exit exit
@@ -473,10 +467,10 @@
       (extension/success
         ;; No :op / :cwd — shell_bg always runs at the workspace root and the
         ;; result rides every later prompt as a frozen <results> pin.
-        {:result {:id id
-                  :pid (.pid p)
-                  :cmd cmd
-                  :status "running"}
+        {:result {"id" id
+                  "pid" (.pid p)
+                  "cmd" cmd
+                  "status" "running"}
          :op :shell/bg
          :metadata {:command cmd
                     :pid (.pid p)
@@ -506,13 +500,13 @@
          ;; already carries process identity) and no :shown_count (it's
          ;; len(lines)). :exit only once exited, :dropped only when the ring
          ;; buffer actually evicted — absent keys read as None via .get.
-         {:result (cond-> {:id id
-                           :status (if (some? exit) "exited" "running")
-                           :lines shown
-                           :line_count total
-                           :uptime_ms (- t (:started-at entry))}
-                    (some? exit)    (assoc :exit exit)
-                    (pos? (long (or dropped 0))) (assoc :dropped dropped))
+         {:result (cond-> {"id" id
+                           "status" (if (some? exit) "exited" "running")
+                           "lines" shown
+                           "line_count" total
+                           "uptime_ms" (- t (:started-at entry))}
+                    (some? exit)    (assoc "exit" exit)
+                    (pos? (long (or dropped 0))) (assoc "dropped" dropped))
           :op :shell/logs
           :metadata {:id id
                      :started-at-ms t
@@ -609,8 +603,10 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
   shell-logs shell-logs-impl)
 
 ;; =============================================================================
-;; Native op-card renderers — `:result` → `{:summary :body}`. Keys arrive
-;; keywordized snake_case; the injected env first arg is already gone.
+;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
+;; string-keyed snake_case (strings-only boundary); the injected env first arg is
+;; already gone. Renderers read string keys but still RETURN the keyword `{:summary
+;; :body}` IR (that part is internal).
 ;; =============================================================================
 
 (defn- fence
@@ -624,33 +620,33 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
    failed — plenty of tools (git, curl, …) write normal output to stderr on
    success, so labelling that as an error is misleading."
   [r]
-  (let [exit    (:exit r)
-        failed? (or (:timed_out r) (and exit (not (zero? exit))))
-        note    (cond (:timed_out r)               " (timed out)"
+  (let [exit    (get r "exit")
+        failed? (or (get r "timed_out") (and exit (not (zero? exit))))
+        note    (cond (get r "timed_out")           " (timed out)"
                   (and exit (not (zero? exit))) (str " (exit " exit ")")
                   :else                         "")
-        body    (->> [(fence (:stdout r))
-                      (when-let [e (fence (:stderr r))]
+        body    (->> [(fence (get r "stdout"))
+                      (when-let [e (fence (get r "stderr"))]
                         (if failed? (str "stderr:\n" e) e))]
                   (remove nil?)
                   (str/join "\n\n"))]
-    {:summary (str "$ " (:cmd r) note)
+    {:summary (str "$ " (get r "cmd") note)
      :body    (when (seq body) body)}))
 
 (defn- render-shell-bg-result
   "shell_bg → `bg `<id>` started (pid N)` headline only."
   [r]
-  {:summary (str "bg `" (:id r) "` " (or (:status r) "started")
-              (when-let [pid (:pid r)] (str " (pid " pid ")")))})
+  {:summary (str "bg `" (get r "id") "` " (or (get r "status") "started")
+              (when-let [pid (get r "pid")] (str " (pid " pid ")")))})
 
 (defn- render-shell-logs-result
   "shell_logs → `<id> <status> — N lines` headline + the captured lines."
   [r]
-  (let [lines (:lines r)
+  (let [lines (get r "lines")
         text  (->> lines (map (fn [pair] (if (sequential? pair) (second pair) pair)))
                 (str/join "\n"))]
-    {:summary (str "`" (:id r) "` " (or (:status r) "?") " — " (count lines) " lines"
-                (when-let [d (:dropped r)] (str " (" d " dropped)")))
+    {:summary (str "`" (get r "id") "` " (or (get r "status") "?") " — " (count lines) " lines"
+                (when-let [d (get r "dropped")] (str " (" d " dropped)")))
      :body    (fence text)}))
 
 ;; =============================================================================

@@ -115,7 +115,8 @@
   (it "makes collections available without an import in run_python code"
     (let [r (ep/run-python-block @py-ctx "dict(collections.Counter('aab'))")]
       (expect (nil? (:error r)))
-      (expect (= {:a 2 :b 1} (:result r)))))
+      ;; strings-only boundary: dict keys come back as VERBATIM strings
+      (expect (= {"a" 2 "b" 1} (:result r)))))
 
   (it "makes pathlib and Path available without an import in run_python code"
     (let [r (ep/run-python-block @py-ctx "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
@@ -169,13 +170,12 @@
         "t1/i1")
       (let [{:keys [prompt subctx opts]} @captured]
         (expect (= "go" prompt))
-        ;; subctx: top + nested keys keywordized, leaf string values intact
-        (expect (= #{:tasks :focus} (set (keys subctx))))
-        (expect (= "oauth" (:focus subctx)))
-        (expect (= "doing" (get-in subctx [:tasks :oauth :status])))
-        ;; opts: the THING the bug missed — keyword key, NOT the string
-        (expect (= ["haiku" "sonnet"] (:models opts)))
-        (expect (nil? (get opts "models")))))))
+        ;; strings-only boundary: every dict key crosses as a VERBATIM string
+        (expect (= #{"tasks" "focus"} (set (keys subctx))))
+        (expect (= "oauth" (get subctx "focus")))
+        (expect (= "doing" (get-in subctx ["tasks" "oauth" "status"])))
+        (expect (= ["haiku" "sonnet"] (get opts "models")))
+        (expect (nil? (:models opts)))))))
 
 (defdescribe verb-kwargs-boundary-test
   ;; Regression: the host tool callables are foreign ProxyExecutables (POSITIONAL
@@ -188,21 +188,21 @@
         {:keys [python-context]}
         (ep/create-python-context
           {'capture_args (fn [& args] (reset! captured (vec args)) "ok")})]
-    (it "a positional arg + a kwarg folds to (arg, {kw…}) with keyword-snake keys"
+    (it "a positional arg + a kwarg folds to (arg, {kw…}) with VERBATIM STRING keys"
       (reset! captured nil)
       (ep/run-python-block python-context
         "capture_args('shell', paths=['src', 'extensions'])" "t1/i1")
       (let [[a opts] @captured]
         (expect (= "shell" a))
-        (expect (= ["src" "extensions"] (:paths opts)))
-        (expect (nil? (get opts "paths")))))
+        (expect (= ["src" "extensions"] (get opts "paths")))
+        (expect (nil? (:paths opts)))))
     (it "all-kwargs collapse to a single spec map"
       (reset! captured nil)
       (ep/run-python-block python-context
         "capture_args(query='shell', is_files_only=True)" "t1/i2")
       (let [[spec] @captured]
-        (expect (= "shell" (:query spec)))
-        (expect (= true (:is_files_only spec)))))
+        (expect (= "shell" (get spec "query")))
+        (expect (= true (get spec "is_files_only")))))
     (it "no kwargs = positional only, unchanged (no stray trailing dict)"
       (reset! captured nil)
       (ep/run-python-block python-context "capture_args('a', 'b')" "t1/i3")
@@ -429,24 +429,26 @@ await patch({'path': css})" "t1/i1")]
   (it "exposes file_exists and NOT the old is_exists name"
     (let [ctx (:python-context
                (ep/create-python-context
+                 ;; strings-only boundary: tool results are built with STRING
+                 ;; keys at the source (a keyword-keyed result now throws).
                  {'file-exists (fn [path]
-                                 {:path path
-                                  :exists? (= path "present.txt")})}))
+                                 {"path" path
+                                  "exists" (= path "present.txt")})}))
           via-file    (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
           via-missing (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
           via-old     (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
       (expect (nil? (:error via-file)))
       (expect (nil? (:error via-missing)))
-      (expect (= {:path "present.txt" :exists true}
+      (expect (= {"path" "present.txt" "exists" true}
                 (:result via-file)))
-      (expect (= {:path "missing.txt" :exists false}
+      (expect (= {"path" "missing.txt" "exists" false}
                 (:result via-missing)))
       (expect (str/includes? (get-in via-old [:error :message])
                 "`is_exists` is not defined"))))
   (it "removing the binding makes file_exists undefined"
     (let [ctx (:python-context (ep/create-python-context {}))]
-      (ep/set-python-binding! ctx 'file-exists (fn [path] {:path path :exists? true}))
-      (expect (= {:path "dynamic.txt" :exists true}
+      (ep/set-python-binding! ctx 'file-exists (fn [path] {"path" path "exists" true}))
+      (expect (= {"path" "dynamic.txt" "exists" true}
                 (:result (ep/run-python-block ctx "await file_exists('dynamic.txt')" "t1/i3"))))
       (ep/remove-python-binding! ctx 'file-exists)
       (expect (str/includes? (get-in (ep/run-python-block ctx "file_exists('dynamic.txt')" "t1/i4")

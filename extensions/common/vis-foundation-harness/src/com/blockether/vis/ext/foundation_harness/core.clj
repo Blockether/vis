@@ -92,18 +92,18 @@
     (if (contains? (loaded-skill-names env) (:name s))
       ;; PROGRESSIVE + once-only: the SKILL.md body is already above in this
       ;; session's context — ack WITHOUT re-injecting it (a re-call is cheap).
-      {:name   (:name s)
-       :status "already-loaded"
-       :note   (str "Already loaded earlier this session — its SKILL.md is above "
-                 "in your context; follow it. Not re-injected.")}
+      {"name"   (:name s)
+       "status" "already-loaded"
+       "note"   (str "Already loaded earlier this session — its SKILL.md is above "
+                  "in your context; follow it. Not re-injected.")}
       (do (mark-skill-loaded! env (:name s))
-        {:name        (:name s)
-         :description (:description s)
-         :body        (:body s)
-         :dir         (:dir s)
-         :resources   (mapv #(str (:dir s) "/" %) (:resources s))}))
-    {:error     (str "No skill named " (pr-str (str nm)) ".")
-     :available (mapv :name (d/skills))}))
+        {"name"        (:name s)
+         "description" (:description s)
+         "body"        (:body s)
+         "dir"         (:dir s)
+         "resources"   (mapv #(str (:dir s) "/" %) (:resources s))}))
+    {"error"     (str "No skill named " (pr-str (str nm)) ".")
+     "available" (mapv :name (d/skills))}))
 
 (defn skill-tool
   "Load a harness SKILL on demand — its full SKILL.md. Names are in the HARNESS
@@ -115,11 +115,11 @@
 (defn- render-skill
   [r]
   (cond
-    (:error r)                       {:summary (str "skill not found — " (:error r))}
-    (= "already-loaded" (:status r)) {:summary (str "`" (:name r) "` already loaded")}
-    :else                            {:summary (str "loaded skill `" (:name r) "`")
-                                      :body    (when-let [b (not-empty (str (:body r)))]
-                                                 (str "```\n" b "\n```"))}))
+    (get r "error")                        {:summary (str "skill not found — " (get r "error"))}
+    (= "already-loaded" (get r "status"))  {:summary (str "`" (get r "name") "` already loaded")}
+    :else                                  {:summary (str "loaded skill `" (get r "name") "`")
+                                            :body    (when-let [b (not-empty (str (get r "body")))]
+                                                       (str "```\n" b "\n```"))}))
 
 (def skill-symbol
   ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`
@@ -207,9 +207,16 @@
           ;; ran to completion → done.
           status (or (not-empty (str (:status res)))
                    (if (:error res) "failed" "done"))]
-      (assoc res :status status :agent (:name a)))
-    {:error     (str "No agent named " (pr-str (str nm)) ".")
-     :available (mapv :name (d/agents))}))
+      ;; Model-facing result crosses the strings-only boundary — build it with
+      ;; string keys straight from the (internal, keyword-keyed) sub_loop result.
+      (cond-> {"agent"         (:name a)
+               "task_id"       (:task_id res)
+               "status"        status
+               "answer"        (:answer res)
+               "changed_files" (vec (:changed_files res))}
+        (:error res) (assoc "error" (:error res))))
+    {"error"     (str "No agent named " (pr-str (str nm)) ".")
+     "available" (mapv :name (d/agents))}))
 
 (def ^{:doc (str "await agent(name, prompt)\n"
               "Delegate `prompt` to a harness sub-agent as a child loop (names "

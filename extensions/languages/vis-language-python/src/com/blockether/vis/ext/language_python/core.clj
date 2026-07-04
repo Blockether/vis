@@ -44,8 +44,6 @@
         (.isAbsolute (io/file d))  (io/file d)
         :else                      (io/file root d)))))
 
-(defn- opt [m k] (when (map? m) (or (get m k) (get m (name k)))))
-
 (defn- repl-resource-id [dir id]
   (let [id (some-> id str str/trim)]
     (if (seq id) id (str "pyrepl:" dir))))
@@ -54,14 +52,18 @@
   "Mirror a managed Python REPL into the session resource registry (ctx + footer
    + stop/restart by id). No-op without a session or a live pid."
   [session dir result & [id]]
-  (when (and session (:pid result))
+  ;; `result` is repl/start!'s STRING-keyed lifecycle map. The resource map is
+  ;; the CENTRAL resources.clj DATA shape (keyword keys — ->data stringifies its
+  ;; own keys + kind/status/owner/language enums), but `:detail` is passed
+  ;; THROUGH verbatim, so it must already be STRING-keyed for the boundary.
+  (when (and session (get result "pid"))
     (vis/register-resource! session
       {:id       (repl-resource-id dir id)
        :kind     :repl
        :label    (str "python REPL " (.getName (io/file dir)))
-       :status   (or (:status result) :up)
-       :detail   {:dir dir :cmd (:cmd result)}
-       :pid      (:pid result)
+       :status   (or (get result "status") :up)
+       :detail   {"dir" dir "cmd" (get result "cmd")}
+       :pid      (get result "pid")
        :owner    :ext/language-python
        :language :python}
       {:stop-fn    (fn [] (repl/stop! dir))
@@ -78,20 +80,22 @@
 ;; =============================================================================
 
 (defn py-start-repl-fn
-  "repl_start handler for Python. Positional `op` (default :start) + opts
-   `{dir, id}`. Lifecycle: :start / :restart / :stop / :status."
+  "repl_start handler for Python. Positional `op` (default \"start\") + opts
+   `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as a
+   STRING from the model (strings-only boundary) — dispatch on it, no keyword
+   minting."
   [env op opts]
   (let [root (env-root env)
-        op   (cond (keyword? op) op (string? op) (keyword op) :else :start)
-        id   (or (opt opts :id) (opt opts :repl_id))
-        dir  (resolve-dir root (opt opts :dir))]
+        op   (if (string? op) op "start")
+        id   (or (get opts "id") (get opts "repl_id"))
+        dir  (resolve-dir root (get opts "dir"))]
     (case op
-      :status (extension/success {:result (repl/status dir)})
-      :stop   (let [r (repl/stop! dir)]
-                (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-                (extension/success {:result r}))
-      (:start :restart)
-      (do (when (= op :restart) (repl/stop! dir))
+      "status" (extension/success {:result (repl/status dir)})
+      "stop"   (let [r (repl/stop! dir)]
+                 (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+                 (extension/success {:result r}))
+      ("start" "restart")
+      (do (when (= op "restart") (repl/stop! dir))
         (let [r (repl/start! dir (or opts {}))]
           (register-repl-resource! (:session-id env) dir r id)
           (extension/success {:result r})))
@@ -105,12 +109,12 @@
   [env arg]
   (let [root (env-root env)
         code (cond (string? arg) arg
-               (map? arg) (str (or (opt arg :code) (opt arg :source)))
+               (map? arg) (str (or (get arg "code") (get arg "source")))
                :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
                               {:type :py/bad-args :got arg})))
-        dir  (resolve-dir root (opt arg :dir))
-        tmo  (opt arg :timeout_ms)]
-    (when-not (= :up (:status (repl/status dir)))
+        dir  (resolve-dir root (and (map? arg) (get arg "dir")))
+        tmo  (and (map? arg) (get arg "timeout_ms"))]
+    (when-not (= "up" (get (repl/status dir) "status"))
       (let [r (repl/start! dir {})]
         (register-repl-resource! (:session-id env) dir r nil)))
     (extension/success {:result (repl/eval! dir code tmo)})))

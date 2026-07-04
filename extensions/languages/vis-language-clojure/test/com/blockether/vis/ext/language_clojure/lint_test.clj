@@ -21,30 +21,32 @@
 ;; ── low-level lint/* helpers ────────────────────────────────────────────────
 
 (defdescribe lint-code-test
-  (it "returns the uniform :clj-lint shape"
+  ;; run-lint returns a STRING-keyed uniform map (crosses the strings-only
+  ;; boundary as a tool `:result`).
+  (it "returns the uniform clj-lint shape"
     (let [r (lint/lint-code "(ns a) (defn h [x] x)")]
-      (expect (= :clj-lint (:op r)))
-      (expect (number? (:error r)))
-      (expect (number? (:warning r)))
-      (expect (number? (:info r)))
-      (expect (vector? (:findings r)))))
+      (expect (= "clj-lint" (get r "op")))
+      (expect (number? (get r "error")))
+      (expect (number? (get r "warning")))
+      (expect (number? (get r "info")))
+      (expect (vector? (get r "findings")))))
 
   (it "flags an unused binding as a warning"
     (let [r        (lint/lint-code "(ns a) (defn h [a b] a)")
-          findings (:findings r)]
-      (expect (pos? (:warning r)))
+          findings (get r "findings")]
+      (expect (pos? (get r "warning")))
       ;; the finding carries the uniform per-item shape
-      (expect (some #(= "unused-binding" (:type %)) findings))
-      (let [f (first (filter #(= "unused-binding" (:type %)) findings))]
-        (expect (= "warning" (:level f)))
-        (expect (number? (:row f)))
-        (expect (number? (:col f)))
-        (expect (string? (:message f))))))
+      (expect (some #(= "unused-binding" (get % "type")) findings))
+      (let [f (first (filter #(= "unused-binding" (get % "type")) findings))]
+        (expect (= "warning" (get f "level")))
+        (expect (number? (get f "row")))
+        (expect (number? (get f "col")))
+        (expect (string? (get f "message"))))))
 
   (it "reports clean code with zero warnings and errors"
     (let [r (lint/lint-code "(ns a) (defn h [x] x)")]
-      (expect (zero? (:error r)))
-      (expect (zero? (:warning r))))))
+      (expect (zero? (get r "error")))
+      (expect (zero? (get r "warning"))))))
 
 (defdescribe lint-paths-test
   (it "lints a file on disk and reports its findings"
@@ -53,9 +55,9 @@
       (try
         (spit f "(ns bad) (defn h [a b] a)")
         (let [r (lint/lint-paths [(.getAbsolutePath f)])]
-          (expect (= :clj-lint (:op r)))
-          (expect (pos? (:warning r)))
-          (expect (some #(= "unused-binding" (:type %)) (:findings r))))
+          (expect (= "clj-lint" (get r "op")))
+          (expect (pos? (get r "warning")))
+          (expect (some #(= "unused-binding" (get % "type")) (get r "findings"))))
         (finally (cleanup dir))))))
 
 ;; ── facade adapter: core/clj-lint-fn ────────────────────────────────────────
@@ -68,39 +70,37 @@
 (defdescribe clj-lint-fn-test
   (it "lints a raw code string argument"
     (let [res (lint-result {} "(ns a) (defn h [a b] a)")]
-      (expect (= :clj-lint (:op res)))
-      (expect (= "clojure" (:language res)))
-      (expect (pos? (:warning res)))))
+      (expect (= "clj-lint" (get res "op")))
+      (expect (= "clojure" (get res "language")))
+      (expect (pos? (get res "warning")))))
 
-  (it "lints a {:code ...} map"
-    (let [res (lint-result {} {:code "(ns a) (defn h [a b] a)"})]
-      (expect (pos? (:warning res)))))
-
-  (it "accepts stringified snake_case keys ({\"code\" ...})"
+  ;; Model args are STRING-keyed (strings-only boundary); the tool reads only
+  ;; string keys.
+  (it "lints a {\"code\" ...} map"
     (let [res (lint-result {} {"code" "(ns a) (defn h [a b] a)"})]
-      (expect (pos? (:warning res)))))
+      (expect (pos? (get res "warning")))))
 
-  (it "lints a {:path ...} file resolved under :workspace/root"
+  (it "lints a {\"path\" ...} file resolved under the workspace root"
     (let [dir (tmp-dir)]
       (try
         (let [src (io/file dir "src" "x.clj")]
           (.mkdirs (.getParentFile src))
           (spit src "(ns x) (defn h [a b] a)"))
         (let [res (lint-result {:workspace/root (.getAbsolutePath dir)}
-                    {:path "src/x.clj"})]
-          (expect (pos? (:warning res)))
-          (expect (some #(= "unused-binding" (:type %)) (:findings res))))
+                    {"path" "src/x.clj"})]
+          (expect (pos? (get res "warning")))
+          (expect (some #(= "unused-binding" (get % "type")) (get res "findings"))))
         (finally (cleanup dir)))))
 
-  (it "lints {:paths [...]} resolved under :workspace/root"
+  (it "lints {\"paths\" [...]} resolved under the workspace root"
     (let [dir (tmp-dir)]
       (try
         (let [src (io/file dir "src" "y.clj")]
           (.mkdirs (.getParentFile src))
           (spit src "(ns y) (defn h [a b] a)"))
         (let [res (lint-result {:workspace/root (.getAbsolutePath dir)}
-                    {:paths ["src"]})]
-          (expect (pos? (:warning res))))
+                    {"paths" ["src"]})]
+          (expect (pos? (get res "warning"))))
         (finally (cleanup dir)))))
 
   (it "with no arg, defaults to the workspace's src (and test) dirs"
@@ -110,7 +110,7 @@
           (.mkdirs (.getParentFile src))
           (spit src "(ns z) (defn h [a b] a)"))
         (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} nil)]
-          (expect (= :clj-lint (:op res)))
-          (expect (pos? (:files res)))
-          (expect (pos? (:warning res))))
+          (expect (= "clj-lint" (get res "op")))
+          (expect (pos? (get res "files")))
+          (expect (pos? (get res "warning"))))
         (finally (cleanup dir))))))

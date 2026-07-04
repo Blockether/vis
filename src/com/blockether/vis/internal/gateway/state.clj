@@ -312,7 +312,8 @@
 
 (defn- emit-context-updated! [sid]
   (let [snapshot (try (context-snapshot sid) (catch Throwable _ nil))]
-    (when-let [utilization (:session/utilization snapshot)]
+    ;; `snapshot` is the STRING-KEYED session-view (`eng/session-view`).
+    (when-let [utilization (get snapshot "session_utilization")]
       (append-event! sid "context.updated" {:utilization utilization}))))
 
 ;; =============================================================================

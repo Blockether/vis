@@ -41,101 +41,102 @@
 
 (declare ->py ->clj)
 
-(defn kw->snake
-  "Keyword -> FULL-SNAKE string: namespace folded in with `_`, kebab -> snake,
-   trailing `?`/`!` stripped. `:session/utilization` -> \"session_utilization\",
-   `:files-only?` -> \"files_only\", `:add-bcrypt` -> \"add_bcrypt\". The ONE
-   transform used for BOTH dict keys AND keyword values, so the same id reads
-   identically whether it is a key or appears inside a value (e.g. depends_on)."
-  ^String [k]
-  (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
-    (str/replace "-" "_")
-    (str/replace #"[?!]$" "")))
+(defn boundary-violation!
+  "Throw on a keyword/symbol trying to cross the Clojure->Python boundary.
+   The boundary is STRINGS-ONLY: every map that crosses (tool results, ctx,
+   verb payloads) is built with string keys and string enum values at the
+   SOURCE — there is no silent keyword->string conversion, so a keyword here
+   means a producer bug, not data. `path` is the key path down from the value
+   handed to `->py`, so the offending producer field is nameable."
+  [kind x path]
+  (throw (ex-info (str "STRINGS-ONLY boundary violation: " (name kind) " "
+                    (pr-str x)
+                    (when (seq path) (str " at path " (pr-str (vec path))))
+                    " cannot cross Clojure->Python. Build boundary maps with"
+                    " string keys and stringify enum values at the source.")
+           {:vis/boundary-violation kind
+            :value                  x
+            :path                   (vec path)})))
 
 (defn- key->py
-  "Map key -> a Python-side string key. Keywords full-snake via `kw->snake`;
-   symbols kebab -> snake; everything else stringified."
-  ^String [k]
-  (cond
-    (keyword? k) (kw->snake k)
-    (symbol? k)  (str/replace (str k) "-" "_")
-    :else        (str k)))
-
-(def ^:private key-shaped-re
-  "A Python dict key that maps BACK to a Clojure keyword: an identifier —
-   a letter, then letters/digits/underscores. Every option key (`from_anchor`),
-   result key (`hit_count`), and git status code (`M`/`A`/`D`) matches; a path
-   (`src/a-b.clj`), a `lineno:hash` anchor (`44:f14`), and any kebab/dotted data
-   key do NOT — keywordizing those would corrupt the value (`/`->namespace,
-   `-`->`_`) or mint an unreadable keyword, so they must stay strings."
-  #"[A-Za-z][A-Za-z0-9_]*")
-
-(defn- py-key->clj
-  "Python dict key string -> Clojure key. An IDENTIFIER-shaped key
-   (`key-shaped-re`: `\"files_only\"` -> `:files_only`, `\"M\"` -> `:M`) becomes a
-   verbatim snake_case keyword the foundation tools natively destructure — FULL
-   SNAKE end to end, no kebab translation. Anything NOT keyword-shaped — a path,
-   a `lineno:hash` anchor, a kebab/dotted data key — stays a VERBATIM string."
-  [^String s]
-  (if (re-matches key-shaped-re s) (keyword s) s))
+  "Map key -> the Python-side dict key. STRINGS-ONLY: a string key passes
+   verbatim; anything else (keyword, symbol, number, ...) is a producer bug
+   and throws `boundary-violation!`."
+  ^String [k path]
+  (if (string? k)
+    k
+    (boundary-violation! :non-string-key k path)))
 
 (defn- leaf->py
   "LEAF (non-collection) conversion shared by `->py` (the real boundary) and
    `boundary-view` (the no-context test mirror) — one fn so the mirror can
    never drift from the boundary again:
 
-   - keywords/symbols snake to the SAME Python name the agent calls
-     (`git-fetch!` -> \"git_fetch\") so stored forms read consistently.
+   - keywords/symbols are FORBIDDEN — strings-only boundary; throw with the
+     key path so the producer that leaked one is directly nameable.
    - UUIDs (workspace/session ids in ctx) and java.time instants have no
      Python analog — GraalPy would otherwise expose them as opaque
      `<JavaObject[...]>` host pointers. Stringify so the rendered ctx and
      the live dict both read as plain str.
    - `java.util.Date` is what nippy hands back for every persisted `#inst`
-     (session/turn `:created-at`s) and it is NOT a Temporal — left as a
+     (session/turn created_at) and it is NOT a Temporal — left as a
      host object GraalPy materialises it as a Python datetime, which needs
      the context's datetime module data: never imported ⇒
      `NullPointerException: Cannot read field \"utc\" because \"moduleData\"
      is null` (session 9c829d10, `sessions()`). ISO-8601 string instead.
    - numbers and other auto-convertible boxed types hand straight to
      polyglot."
-  [x]
+  [x path]
   (cond
-    (keyword? x) (kw->snake x)
-    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
+    (keyword? x) (boundary-violation! :keyword-value x path)
+    (symbol? x)  (boundary-violation! :symbol-value x path)
     (instance? java.util.Date x) (str (.toInstant ^java.util.Date x))
     (or (instance? java.util.UUID x) (instance? java.time.temporal.Temporal x))
     (str x)
     :else x))
 
-(defn ->py
-  "Clojure value -> something GraalPy accepts as a Python value. Primitives and
-   Strings pass through (the Context auto-converts Java boxed types); collections
-   become polyglot proxies so Python sees dict/list; leaves convert via
-   `leaf->py` (keywords -> snake strings, UUID/Temporal/Date -> ISO strings)."
-  [x]
+(defn- ->py*
+  "Recursive worker for `->py`, threading the key `path` so a strings-only
+   violation names the exact producer field."
+  [x path]
   (cond
     (nil? x)     nil
     (string? x)  x
     (boolean? x) x
     ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
-    ;; ordered `LinkedHashMap` a tool returns (e.g. cat's `:lines` anchor map).
-    ;; The new LinkedHashMap preserves the source's ITERATION ORDER — Clojure
-    ;; array-map canonical key order, or a LinkedHashMap's insertion order — so
-    ;; the live `ctx` dict and the rendered text agree, and ordered tool maps
-    ;; reach Python as ordered dicts (not opaque host objects).
+    ;; ordered `LinkedHashMap` a tool returns (e.g. cat's anchor map). The new
+    ;; LinkedHashMap preserves the source's ITERATION ORDER — Clojure array-map
+    ;; canonical key order, or a LinkedHashMap's insertion order — so the live
+    ;; `ctx` dict and the rendered text agree, and ordered tool maps reach
+    ;; Python as ordered dicts (not opaque host objects).
     (instance? java.util.Map x)
     (let [^LinkedHashMap hm (LinkedHashMap.)]
-      (doseq [[k v] x] (.put hm (key->py k) (->py v)))
+      (doseq [[k v] x]
+        (let [^String ks (key->py k path)]
+          (.put hm ks (->py* v (conj path ks)))))
       (ProxyHashMap/from hm))
     (or (vector? x) (seq? x) (set? x))
-    (ProxyArray/fromList (ArrayList. ^java.util.Collection (mapv ->py x)))
-    :else        (leaf->py x)))
+    (ProxyArray/fromList (ArrayList. ^java.util.Collection (mapv #(->py* % path) x)))
+    :else        (leaf->py x path)))
+
+(defn ->py
+  "Clojure value -> something GraalPy accepts as a Python value. STRINGS-ONLY
+   boundary: map keys must be strings and no keyword/symbol may appear at any
+   depth — a violation throws `boundary-violation!` naming the key path.
+   Primitives and Strings pass through (the Context auto-converts Java boxed
+   types); collections become polyglot proxies so Python sees dict/list;
+   leaves convert via `leaf->py` (UUID/Temporal/Date -> ISO strings)."
+  [x]
+  (->py* x []))
 
 (defn ->clj
-  "Polyglot `Value` (a Python value) -> Clojure data. Dicts -> maps with
-   keyword keys, lists/tuples -> vectors, host objects (Java values that
-   crossed the boundary, e.g. UUIDs) -> their underlying Java value via
-   `asHostObject`, callables/opaque objects -> the raw `Value`."
+  "Polyglot `Value` (a Python value) -> Clojure data. STRINGS-ONLY boundary:
+   dicts -> maps with VERBATIM STRING keys (exactly what Python held — no
+   keywordizing, no regex key-shape sniffing), lists/tuples -> vectors, host
+   objects (Java values that crossed the boundary, e.g. UUIDs) -> their
+   underlying Java value via `asHostObject`, callables/opaque objects -> the
+   raw `Value`. A non-string Python dict key (int, tuple, ...) stringifies via
+   its Clojure conversion so the map stays string-keyed and total."
   [^Value v]
   (cond
     (nil? v)            nil
@@ -148,47 +149,49 @@
     ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
     ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
     ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
-    ;; tool result (cat's `:anchors` LinkedHashMap) comes back HASH-ordered and
+    ;; tool result (cat's anchors LinkedHashMap) comes back HASH-ordered and
     ;; the model reads the file out of line order. ordered-map is still a
-    ;; persistent Clojure map (assoc/dissoc/keyword-lookup all work downstream).
+    ;; persistent Clojure map (assoc/dissoc/string-lookup all work downstream).
     (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
                           (loop [m (omap/ordered-map)]
                             (if (.hasIteratorNextElement it)
-                              (let [k (.getIteratorNextElement it)]
-                                (recur (assoc m
-                                         (py-key->clj (.asString k))
-                                         (->clj (.getHashValue v k)))))
+                              (let [k  (.getIteratorNextElement it)
+                                    ks (if (.isString k)
+                                         (.asString k)
+                                         (str (->clj k)))]
+                                (recur (assoc m ks (->clj (.getHashValue v k)))))
                               m)))
     (.isHostObject v)   (.asHostObject v)
     :else               v))
 
 (defn boundary-view
   "What a plain-data Clojure value LOOKS LIKE after the GraalPy round trip —
-   the mechanical composition of `->py` then `->clj` without a Python context:
-   map keys -> snake KEYWORDS (`:short-sha` -> `:short_sha`, and DATA-string
-   keys keywordize verbatim: `\"M\"` -> `:M`), keyword/symbol VALUES -> snake
-   strings, sets/seqs -> vectors. Idempotent.
+   the mechanical composition of `->py` then `->clj` without a Python context.
+   STRINGS-ONLY: string map keys pass VERBATIM, sets/seqs -> vectors,
+   UUID/Temporal/Date leaves -> ISO strings. A keyword/symbol anywhere (key or
+   value, any depth) throws `boundary-violation!` exactly like the real
+   boundary — fix the producer fixture, never catch it. Idempotent.
 
    Every tool result the model sees in production (serialized structurally
    by `ctx-renderer/render-form-value`) has already crossed this boundary,
    so assertions about what the model reads MUST be written against THIS
    shape. Tests feed `(boundary-view raw-result)` to pin that contract
    without booting GraalPy."
-  [x]
-  (cond
-    (map? x)     (into {}
-                   (map (fn [[k v]]
-                          (let [pk (key->py k)]
-                            [(if (re-matches key-shaped-re pk) (keyword pk) pk)
-                             (boundary-view v)])))
-                   x)
-    (or (vector? x) (seq? x) (set? x))
-    (mapv boundary-view x)
-    ;; Leaves convert through the SAME fn the real boundary uses — this
-    ;; mirror had drifted (Dates/UUIDs/Temporals passed through raw here
-    ;; while `->py` stringified them), which let a test assert a shape the
-    ;; model never actually sees.
-    :else        (leaf->py x)))
+  ([x] (boundary-view x []))
+  ([x path]
+   (cond
+     (map? x)     (into {}
+                    (map (fn [[k v]]
+                           (let [pk (key->py k path)]
+                             [pk (boundary-view v (conj path pk))])))
+                    x)
+     (or (vector? x) (seq? x) (set? x))
+     (mapv #(boundary-view % path) x)
+     ;; Leaves convert through the SAME fn the real boundary uses — this
+     ;; mirror had drifted (Dates/UUIDs/Temporals passed through raw here
+     ;; while `->py` stringified them), which let a test assert a shape the
+     ;; model never actually sees.
+     :else        (leaf->py x path))))
 
 (defn sym->py-name
   "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:

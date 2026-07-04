@@ -60,28 +60,28 @@
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
-            (expect (= "out\n" (:stdout r)))
-            (expect (= "err\n" (:stderr r)))
-            (expect (= 3 (:exit r)))
-            (expect (number? (:duration_ms r)))
+            (expect (= "out\n" (get r "stdout")))
+            (expect (= "err\n" (get r "stderr")))
+            (expect (= 3 (get r "exit")))
+            (expect (number? (get r "duration_ms")))
             ;; lean contract: echoes / always-false flags never ship
-            (expect (nil? (:op r)))
-            (expect (not (contains? r :timed_out)))
-            (expect (not (contains? r :timeout_secs)))
-            (expect (not (contains? r :stdout_truncated)))
-            (expect (not (contains? r :stderr_truncated)))
-            (expect (not (contains? r :cwd))))))))
+            (expect (nil? (get r "op")))
+            (expect (not (contains? r "timed_out")))
+            (expect (not (contains? r "timeout_secs")))
+            (expect (not (contains? r "stdout_truncated")))
+            (expect (not (contains? r "stderr_truncated")))
+            (expect (not (contains? r "cwd"))))))))
 
   (it "omits :stderr when the stream is empty and :cwd unless narrowed"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [r (:result (shell-run* {} "echo only-out"))]
-            (expect (= "only-out\n" (:stdout r)))
-            (expect (not (contains? r :stderr))))
-          (let [r (:result (shell-run* {} "pwd" {:cwd "src"}))]
-            (expect (string? (:cwd r)))
-            (expect (str/ends-with? (:cwd r) "/src")))))))
+            (expect (= "only-out\n" (get r "stdout")))
+            (expect (not (contains? r "stderr"))))
+          (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
+            (expect (string? (get r "cwd")))
+            (expect (str/ends-with? (get r "cwd") "/src")))))))
 
   (it "treats a non-zero exit as a SUCCESS envelope (data, not a tool error)"
     (with-shell-on
@@ -89,17 +89,17 @@
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [env (shell-run* {} "exit 42")]
             (expect (extension/envelope-success? env))
-            (expect (= 42 (:exit (:result env)))))))))
+            (expect (= 42 (get (:result env) "exit"))))))))
 
   (it "kills the process tree on timeout and reports timed_out with nil exit"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [t0 (System/currentTimeMillis)
-                r  (:result (shell-run* {} "sleep 30" {:timeout_secs 1}))
+                r  (:result (shell-run* {} "sleep 30" {"timeout_secs" 1}))
                 dt (- (System/currentTimeMillis) t0)]
-            (expect (true? (:timed_out r)))
-            (expect (nil? (:exit r)))
+            (expect (true? (get r "timed_out")))
+            (expect (nil? (get r "exit")))
             (expect (< dt 15000)))))))
 
   (it "keeps BOTH the head and the tail of huge output, dropping only the middle"
@@ -111,8 +111,8 @@
                                               "for i in $(seq 1 2000); do "
                                               "echo 'filler-filler-filler-filler-filler'; done; "
                                               "echo TAIL_MARKER")))
-                out (:stdout r)]
-            (expect (true? (:stdout_truncated r)))
+                out (get r "stdout")]
+            (expect (true? (get r "stdout_truncated")))
             ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
             (expect (str/includes? out "HEAD_MARKER"))
             ;; the closing summary still survives
@@ -133,23 +133,23 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [r (:result (shell-run* {} "sleep 30" {:timeout_secs 1}))]
-            (expect (true? (:timed_out r)))
-            (expect (= 1 (:timeout_secs r)))
-            (expect (not (contains? r :exit))))))))
+          (let [r (:result (shell-run* {} "sleep 30" {"timeout_secs" 1}))]
+            (expect (true? (get r "timed_out")))
+            (expect (= 1 (get r "timeout_secs")))
+            (expect (not (contains? r "exit"))))))))
 
   (it "rejects a cwd that escapes the workspace root"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (expect (threw? #(shell-run* {} "pwd" {:cwd "../.."})))))))
+          (expect (threw? #(shell-run* {} "pwd" {"cwd" "../.."})))))))
 
   (it "accepts a float timeout but rejects a non-numeric one with a typed error"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (expect (extension/envelope-success? (shell-run* {} "true" {:timeout_secs 1.0})))
-          (let [thrown (try (shell-run* {} "true" {:timeout_secs "30"}) nil
+          (expect (extension/envelope-success? (shell-run* {} "true" {"timeout_secs" 1.0})))
+          (let [thrown (try (shell-run* {} "true" {"timeout_secs" "30"}) nil
                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
             (expect (= ::shell/bad-option (:type thrown)))))))))
 
@@ -162,17 +162,17 @@
                 env {:session-id sid}]
             (try
               (let [reg (:result (shell-bg* env "worker" "echo l1; echo l2; sleep 60"))]
-                (expect (= "running" (:status reg)))
-                (expect (pos? (:pid reg))))
+                (expect (= "running" (get reg "status")))
+                (expect (pos? (get reg "pid"))))
               (let [rs (resources/list-resources sid)]
                 (expect (= 1 (count rs)))
-                (expect (= "worker" (:id (first rs))))
-                (expect (= :shell (:kind (first rs))))
-                (expect (true? (:can-stop (first rs)))))
+                (expect (= "worker" (get (first rs) "id")))
+                (expect (= "shell" (get (first rs) "kind")))
+                (expect (true? (get (first rs) "can_stop"))))
               (let [r (poll #(:result (shell-logs* env "worker"))
-                        #(>= (count (:lines %)) 2))]
-                (expect (= [1 "l1"] (vec (first (:lines r)))))
-                (expect (= "running" (:status r))))
+                        #(>= (count (get % "lines")) 2))]
+                (expect (= [1 "l1"] (vec (first (get r "lines")))))
+                (expect (= "running" (get r "status"))))
               (let [stop (resources/stop! sid "worker")]
                 (expect (= :stopped (:result stop)))
                 (expect (empty? (resources/list-resources sid)))
@@ -188,12 +188,12 @@
             (try
               (shell-bg* env "quick" "echo done; exit 7")
               (let [r (poll #(:result (shell-logs* env "quick"))
-                        #(= "exited" (:status %)))]
-                (expect (= 7 (:exit r)))
-                (expect (= [[1 "done"]] (mapv vec (:lines r)))))
+                        #(= "exited" (get % "status")))]
+                (expect (= 7 (get r "exit")))
+                (expect (= [[1 "done"]] (mapv vec (get r "lines")))))
               (let [res (first (resources/list-resources sid))]
                 (expect (some? res))
-                (expect (= :exited (:status res))))
+                (expect (= "exited" (get res "status"))))
               (finally (resources/stop-all! sid))))))))
 
   (it "refuses a duplicate id while the first is still running"
@@ -216,15 +216,15 @@
             (try
               (shell-bg* env "m" "sleep 60")
               (let [r (:result (shell-logs* env "m"))]
-                (expect (>= (:uptime_ms r) 0))
+                (expect (>= (get r "uptime_ms") 0))
                 ;; lean contract: echoes / derivables / zero-counters are out
-                (expect (not (contains? r :op)))
-                (expect (not (contains? r :cmd)))
-                (expect (not (contains? r :cwd)))
-                (expect (not (contains? r :pid)))
-                (expect (not (contains? r :shown_count)))
-                (expect (not (contains? r :dropped)))
-                (expect (not (contains? r :exit))))
+                (expect (not (contains? r "op")))
+                (expect (not (contains? r "cmd")))
+                (expect (not (contains? r "cwd")))
+                (expect (not (contains? r "pid")))
+                (expect (not (contains? r "shown_count")))
+                (expect (not (contains? r "dropped")))
+                (expect (not (contains? r "exit"))))
               (finally (resources/stop-all! sid))))))))
 
   (it "stops promptly even when the command double-forks a detached daemon"

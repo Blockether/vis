@@ -23,6 +23,49 @@
   (or (:workspace/root env)
     (System/getProperty "user.dir")))
 
+(defn- kw->snake
+  "Keyword -> snake_case string, mirroring the Clojure->Python boundary
+   (`env-python/kw->snake`): kebab -> snake, trailing `?`/`!` stripped,
+   namespace folded with `_`."
+  ^String [k]
+  (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
+    (str/replace "-" "_")
+    (str/replace #"[?!]$" "")))
+
+(defn- boundary-key
+  [k]
+  (cond
+    (string? k)  k
+    (keyword? k) (kw->snake k)
+    (symbol? k)  (kw->snake (keyword k))
+    :else        (str k)))
+
+(defn- deep-stringify
+  "Recursively rebuild a tool-result value into the STRINGS-ONLY shape the
+   Clojure->Python boundary requires: map KEYS and keyword/symbol VALUES become
+   snake_case strings (mirroring env-python/kw->snake), collections recurse.
+   Bridge merges bridge.api's keyword-keyed status summary verbatim into its
+   results, so this is the single source-stringification pass applied at each
+   public tool-fn exit — internal builders (`bridge-check`, `next-result`, the
+   `profile-discovery`/protected-path structures) stay idiomatic keyword Clojure
+   because `next`/`bridge-hint`/the sandbox layer read them back by keyword."
+  [x]
+  (cond
+    (map? x)     (reduce-kv (fn [m k v] (assoc m (boundary-key k) (deep-stringify v))) {} x)
+    (or (vector? x) (seq? x) (set? x)) (mapv deep-stringify x)
+    (keyword? x) (kw->snake x)
+    (symbol? x)  (kw->snake (keyword x))
+    :else        x))
+
+(defn- stringify-result
+  "Apply `deep-stringify` to a tool envelope's `:result` payload — the only part
+   that crosses to Python. Envelope keys, `:metadata`, and `:error` stay
+   internal keyword-keyed."
+  [envelope]
+  (if (map? (:result envelope))
+    (update envelope :result deep-stringify)
+    envelope))
+
 (defn- normalize-opts
   [opts]
   (cond
@@ -80,7 +123,7 @@
 
 (defn- profile-discovery
   [root opts]
-  (let [explicit-path (:profile opts)
+  (let [explicit-path (get opts "profile")
         searched (mapv #(br/resolve-path root %) default-profile-paths)
         discovered (or explicit-path
                      (some (fn [path]
@@ -125,7 +168,7 @@
                 :bridge/discovery discovery})))
     (let [profile-path* (:profile-path discovery)
           profile (br/load-profile profile-path*)
-          policy-path (or (:policy opts)
+          policy-path (or (get opts "policy")
                         (:verification-policy-path profile)
                         (let [default-path (br/resolve-path (:root-path profile)
                                              ".bridge/verification-policy.yaml")]
@@ -237,8 +280,8 @@
 
 (defn- selected-opts
   [opts]
-  (select-keys opts [:profile :policy :changed_files :subject :out_dir
-                     :out :timeout_seconds :is_dry_run]))
+  (select-keys opts ["profile" "policy" "changed_files" "subject" "out_dir"
+                     "out" "timeout_seconds" "is_dry_run"]))
 
 (defn- tool-success
   [op started-at-ms result opts]
@@ -286,7 +329,7 @@
     opts
     (fn [opts]
       (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)
-            summary (br/check profile {:changed-files (ensure-vector (:changed_files opts))
+            summary (br/check profile {:changed-files (ensure-vector (get opts "changed_files"))
                                        :policy policy})]
         (assoc summary
           :configured? true
@@ -357,123 +400,127 @@
 (defn init
   "Bootstrap Bridge in this workspace. `await br_init()` (opts `{\"root\": path}`). Returns the existing config if already set up."
   [env & [opts]]
-  (bridge-tool
-    :br/init
-    env
-    opts
-    (fn [opts]
-      (let [root (or (:root opts) (workspace-root env))
-            discovery (profile-discovery root opts)]
-        (if (:configured? discovery)
-          {:configured? true
-           :already-configured? true
-           :created? false
-           :workspace-root root
-           :profile-path (some-> (:profile-path discovery) normalize-path-fragment)
-           :created []
-           :updated []
-           :message "Bridge is already configured for this workspace."}
-          (let [result (br/init! {:root root})
-                refreshed (profile-discovery root opts)]
+  (stringify-result
+    (bridge-tool
+      :br/init
+      env
+      opts
+      (fn [opts]
+        (let [root (or (get opts "root") (workspace-root env))
+              discovery (profile-discovery root opts)]
+          (if (:configured? discovery)
             {:configured? true
-             :already-configured? false
-             :created? true
+             :already-configured? true
              :workspace-root root
-             :profile-path (some-> (:profile-path refreshed) normalize-path-fragment)
-             :created (mapv normalize-path-fragment (:created result))
-             :updated (:updated result)
-             :next-step {:kind :extension-op
-                         :op (tool-call "br/check" [])}}))))))
+             :profile-path (some-> (:profile-path discovery) normalize-path-fragment)
+             :created []
+             :updated []
+             :message "Bridge is already configured for this workspace."}
+            (let [result (br/init! {:root root})
+                  refreshed (profile-discovery root opts)]
+              {:configured? true
+               :already-configured? false
+               :workspace-root root
+               :profile-path (some-> (:profile-path refreshed) normalize-path-fragment)
+               :created (mapv normalize-path-fragment (:created result))
+               :updated (:updated result)
+               :next-step {:kind :extension-op
+                           :op (tool-call "br/check" [])}})))))))
 
 (defn profile
   "Active Bridge project profile summary. `await br_profile()` (opts `{\"profile\": path, \"policy\": path}`)."
   [env & [opts]]
-  (bridge-tool
-    :br/profile
-    env
-    opts
-    (fn [opts]
-      (let [discovery (profile-discovery (workspace-root env) opts)]
-        (if-not (:configured? discovery)
-          (no-profile-result discovery)
-          (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)]
-            {:configured? true
-             :summary (br/profile-summary profile)
-             :profile-path profile-path
-             :policy-path policy-path
-             :policy-loaded? (boolean policy)}))))))
+  (stringify-result
+    (bridge-tool
+      :br/profile
+      env
+      opts
+      (fn [opts]
+        (let [discovery (profile-discovery (workspace-root env) opts)]
+          (if-not (:configured? discovery)
+            (no-profile-result discovery)
+            (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)]
+              {:configured? true
+               :summary (br/profile-summary profile)
+               :profile-path profile-path
+               :policy-path policy-path
+               :policy-loaded? (boolean policy)})))))))
 
 (defn check
   "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_action\", ...}` (an unconfigured project returns `\"next_step\"` guidance instead) — summarize it, don't paste raw."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
-    (if-not (:configured? discovery)
-      (tool-success :br/check (now-ms)
-        (assoc (no-profile-result discovery)
-          :status "unconfigured"
-          :issue-count 1
-          :next-step (unconfigured-next-step)
-          :changed-files (ensure-vector (:changed_files opts*)))
-        opts*)
-      (bridge-check env opts*))))
+    (stringify-result
+      (if-not (:configured? discovery)
+        (tool-success :br/check (now-ms)
+          (assoc (no-profile-result discovery)
+            :status "unconfigured"
+            :issue-count 1
+            :next-step (unconfigured-next-step)
+            :changed-files (ensure-vector (get opts* "changed_files")))
+          opts*)
+        (bridge-check env opts*)))))
 
 (defn next
   "Next suggested Bridge action(s). `await br_next({\"changed_files\": [path, ...]})`. Returns `{\"status\", \"suggestions\": [...], \"next_step\"}`."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
-    (if-not (:configured? discovery)
-      (tool-success :br/next (now-ms)
-        (assoc (no-profile-result discovery)
-          :status "unconfigured"
-          :issue-count 1
-          :next-step (unconfigured-next-step)
-          :suggestions [(unconfigured-next-step)]
-          :changed-files (ensure-vector (:changed_files opts*)))
-        opts*)
-      (tool-success :br/next (now-ms)
-        (next-result (:result (bridge-check env opts*)))
-        opts*))))
+    (stringify-result
+      (if-not (:configured? discovery)
+        (tool-success :br/next (now-ms)
+          (assoc (no-profile-result discovery)
+            :status "unconfigured"
+            :issue-count 1
+            :next-step (unconfigured-next-step)
+            :suggestions [(unconfigured-next-step)]
+            :changed-files (ensure-vector (get opts* "changed_files")))
+          opts*)
+        (tool-success :br/next (now-ms)
+          (next-result (:result (bridge-check env opts*)))
+          opts*)))))
 
 (defn list-evidence
   "List the active profile's evidence commands. `await br_list_evidence()`. Returns `{\"commands\": [...]}`."
   [env & [opts]]
-  (bridge-tool
-    :br/list-evidence
-    env
-    opts
-    (fn [opts]
-      (let [discovery (profile-discovery (workspace-root env) opts)]
-        (if-not (:configured? discovery)
-          (assoc (no-profile-result discovery) :commands [])
-          (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
-            {:configured? true
-             :profile-path profile-path
-             :commands (br/list-commands profile)}))))))
+  (stringify-result
+    (bridge-tool
+      :br/list-evidence
+      env
+      opts
+      (fn [opts]
+        (let [discovery (profile-discovery (workspace-root env) opts)]
+          (if-not (:configured? discovery)
+            (assoc (no-profile-result discovery) :commands [])
+            (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
+              {:configured? true
+               :profile-path profile-path
+               :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
   "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"subject\": s, \"out\": path, \"out_dir\": path, \"timeout_seconds\": n, \"is_dry_run\": True})`. `is_dry_run` previews the plan without writing."
   [env id & [opts]]
-  (bridge-tool
-    :br/run-evidence
-    env
-    opts
-    (fn [opts]
-      (let [discovery (profile-discovery (workspace-root env) opts)]
-        (when-not (:configured? discovery)
-          (throw (ex-info "Bridge profile not configured."
-                   {:type :vis.bridge/profile-not-found
-                    :bridge/discovery discovery})))
-        (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
-          {:profile-path profile-path
-           :result (br/run-command profile
-                     (str id)
-                     {:out-dir (:out_dir opts)
-                      :out-path (:out opts)
-                      :subject (:subject opts)
-                      :timeout-seconds (:timeout_seconds opts)
-                      :dry-run? (boolean (:is_dry_run opts))})})))))
+  (stringify-result
+    (bridge-tool
+      :br/run-evidence
+      env
+      opts
+      (fn [opts]
+        (let [discovery (profile-discovery (workspace-root env) opts)]
+          (when-not (:configured? discovery)
+            (throw (ex-info "Bridge profile not configured."
+                     {:type :vis.bridge/profile-not-found
+                      :bridge/discovery discovery})))
+          (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
+            {:profile-path profile-path
+             :result (br/run-command profile
+                       (str id)
+                       {:out-dir (get opts "out_dir")
+                        :out-path (get opts "out")
+                        :subject (get opts "subject")
+                        :timeout-seconds (get opts "timeout_seconds")
+                        :dry-run? (boolean (get opts "is_dry_run"))})}))))))
 
 (defn- inject-env
   [env f args]
@@ -553,10 +600,10 @@
   [result]
   (let [tool-result (:result result)]
     (cond
-      (= :error (:status result))                       1
-      (= "unconfigured" (:status tool-result))          1
-      (pos? (long (or (:issue-count tool-result) 0)))   1
-      :else                                             0)))
+      (= :error (:status result))                          1
+      (= "unconfigured" (get tool-result "status"))        1
+      (pos? (long (or (get tool-result "issue_count") 0))) 1
+      :else                                                0)))
 
 (defn- emit-result!
   "Print the tool result (EDN) and exit with the derived status."
@@ -578,24 +625,24 @@
         (nil? head) opts
 
         (= "--dry-run" head)
-        (recur (vec tail) (assoc opts :is_dry_run true))
+        (recur (vec tail) (assoc opts "is_dry_run" true))
 
         (#{"--profile" "--policy" "--subject" "--out" "--out-dir"} head)
         (let [k (case head
-                  "--profile" :profile
-                  "--policy"  :policy
-                  "--subject" :subject
-                  "--out"     :out
-                  "--out-dir" :out_dir)]
+                  "--profile" "profile"
+                  "--policy"  "policy"
+                  "--subject" "subject"
+                  "--out"     "out"
+                  "--out-dir" "out_dir")]
           (recur (vec (rest tail)) (assoc opts k (first tail))))
 
         (= "--changed-file" head)
         (recur (vec (rest tail))
-          (update opts :changed_files (fnil conj []) (first tail)))
+          (update opts "changed_files" (fnil conj []) (first tail)))
 
         (= "--timeout-seconds" head)
         (recur (vec (rest tail))
-          (assoc opts :timeout_seconds (parse-long (str (first tail)))))
+          (assoc opts "timeout_seconds" (parse-long (str (first tail)))))
 
         (str/starts-with? (str head) "--")
         (throw (ex-info (str "Unknown bridge flag: " head)

@@ -121,14 +121,14 @@
 
 (defn- ->str-vec
   "Coerce nil / a single scalar / a sequential into a vec of trimmed,
-   non-blank strings. Keywords stringify dropping the leading colon."
+   non-blank strings. Selector values arrive as strings (strings-only
+   boundary), so `str` is total - no keyword branch."
   [x]
-  (let [one (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
-        xs  (cond
-              (nil? x)        []
-              (sequential? x) x
-              :else           [x])]
-    (->> xs (map one) (map str/trim) (remove str/blank?) vec)))
+  (let [xs (cond
+             (nil? x)        []
+             (sequential? x) x
+             :else           [x])]
+    (->> xs (map str) (map str/trim) (remove str/blank?) vec)))
 
 (defn normalize-selectors
   "Normalize a raw selector map (the Python dict the tool received) into the

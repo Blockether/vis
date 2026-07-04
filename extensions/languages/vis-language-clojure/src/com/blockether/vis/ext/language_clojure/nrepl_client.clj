@@ -13,18 +13,19 @@
        message stream) and the entry is evicted; the next call
        re-dials.
 
-   Returned shape (success):
-     {:value      \"42\"          ; pr-str of the LAST form's value, or nil
-      :values     [\"1\" \"42\"]   ; pr-str of every emitted value
-      :out        \"hello\\n\"     ; stdout aggregated
-      :err        \"\"             ; stderr aggregated
-      :ns         \"user\"         ; final *ns* name
-      :status     #{\"done\"}      ; nREPL status set
-      :ex         nil              ; exception class name, when status :ex
-      :root-ex    nil              ; root exception class name
-      :ms         12               ; wall-clock duration
-      :port       7888
-      :timed_out false}
+   Returned shape (success) — STRING keys (crosses the strings-only boundary
+   as a tool `:result`; enrichment adds \"error_message\"/\"error_data\"/\"trace\"):
+     {\"value\"      \"42\"          ; pr-str of the LAST form's value, or nil
+      \"values\"     [\"1\" \"42\"]   ; pr-str of every emitted value
+      \"out\"        \"hello\\n\"     ; stdout aggregated
+      \"err\"        \"\"             ; stderr aggregated
+      \"ns\"         \"user\"         ; final *ns* name
+      \"status\"     #{\"done\"}      ; nREPL status set (strings)
+      \"ex\"         nil              ; exception class name, when status :ex
+      \"root_ex\"    nil              ; root exception class name
+      \"ms\"         12               ; wall-clock duration
+      \"port\"       7888
+      \"timed_out\" false}
 
    Failure paths throw `ex-info` with `:type :clj/nrepl-*` so the
    Vis tool wrapper can surface a clean error to the model."
@@ -114,31 +115,32 @@
          root-ex  nil]
     (cond
       (> (System/currentTimeMillis) deadline)
-      {:timed_out true
-       :value      (peek values)
-       :values     values
-       :out        (.toString out-acc)
-       :err        (.toString err-acc)
-       :ns         ns*
-       :status     (conj status "timeout")
-       :ex         ex
-       :root-ex    root-ex}
+      {"timed_out" true
+       "value"      (peek values)
+       "values"     values
+       "out"        (.toString out-acc)
+       "err"        (.toString err-acc)
+       "ns"         ns*
+       "status"     (conj status "timeout")
+       "ex"         ex
+       "root_ex"    root-ex}
 
       (empty? rs)
-      {:timed_out false
-       :value      (peek values)
-       :values     values
-       :out        (.toString out-acc)
-       :err        (.toString err-acc)
-       :ns         ns*
-       :status     status
-       :ex         ex
-       :root-ex    root-ex}
+      {"timed_out" false
+       "value"      (peek values)
+       "values"     values
+       "out"        (.toString out-acc)
+       "err"        (.toString err-acc)
+       "ns"         ns*
+       "status"     (vec status)
+       "ex"         ex
+       "root_ex"    root-ex}
 
       :else
       ;; nREPL keys are *strings* over bencode; some clients keywordize.
       ;; Read both shapes so we don't silently lose value / status / out
-      ;; depending on transport wiring.
+      ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
+      ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
       (let [msg (first rs)
             mg  (fn [k] (or (get msg k) (get msg (keyword k))))
             v   (mg "value")
@@ -165,15 +167,15 @@
             ;; Drain no further. Once "done" arrived the eval is complete; for
             ;; terminal errors nREPL may never send done, and waiting for it
             ;; turns a useful syntax error into a timeout.
-            {:timed_out false
-             :value      (peek values')
-             :values     values'
-             :out        (.toString out-acc)
-             :err        (.toString err-acc)
-             :ns         ns''
-             :status     (cond-> new-status terminal-error? (conj "eval-error"))
-             :ex         ex''
-             :root-ex    rx''}
+            {"timed_out" false
+             "value"      (peek values')
+             "values"     values'
+             "out"        (.toString out-acc)
+             "err"        (.toString err-acc)
+             "ns"         ns''
+             "status"     (cond-> new-status terminal-error? (conj "eval-error"))
+             "ex"         ex''
+             "root_ex"    rx''}
             (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
 ;; ---------------------------------------------------------------------------
@@ -181,11 +183,12 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- eval-error?
-  "True when a combined eval result carries a runtime/eval error worth enriching."
+  "True when a combined eval result carries a runtime/eval error worth enriching.
+   Reads the string-keyed combined map (post strings-only boundary shape)."
   [combined]
-  (boolean (or (contains? (:status combined) "eval-error")
-             (:ex combined)
-             (:root-ex combined))))
+  (boolean (or (contains? (get combined "status") "eval-error")
+             (get combined "ex")
+             (get combined "root_ex"))))
 
 (defn- sget
   "Read an nREPL response key that may arrive as a string or a keyword."
@@ -230,9 +233,9 @@
                  (last causes))
         heads  (map #(cause->headline {:class (sget % "class") :message (sget % "message")})
                  causes)]
-    {:error_message (str/join "\n  ← caused by " heads)
-     :error_data    (some-> (sget root "data") not-empty)
-     :trace         (pick-frames (sget root "stacktrace") 16)}))
+    {"error_message" (str/join "\n  ← caused by " heads)
+     "error_data"    (some-> (sget root "data") not-empty)
+     "trace"         (pick-frames (sget root "stacktrace") 16)}))
 
 (defn- collect-op
   "Drive an op on `session` to `done`, returning `{:status #{..} :msgs [..]}`.
@@ -254,13 +257,14 @@
 
 (def ^:private e-fetch-code
   "Portable fallback (no cider-nrepl): read `*e` in-session and hand back a
-   readable `{:error_message :error_data :trace}` map — demunged user frames,
-   JVM/nREPL plumbing filtered out."
+   readable `{\"error_message\" \"error_data\" \"trace\"}` map — demunged user
+   frames, JVM/nREPL plumbing filtered out. STRING keys so the parsed map merges
+   cleanly into the string-keyed eval result (crosses the strings-only boundary)."
   (str "(when-let [e *e]"
-    "  {:error_message (str (.getSimpleName (class e))"
+    "  {\"error_message\" (str (.getSimpleName (class e))"
     "                       (let [m (.getMessage e)] (when (seq (str m)) (str \": \" m))))"
-    "   :error_data (when (instance? clojure.lang.IExceptionInfo e) (pr-str (ex-data e)))"
-    "   :trace (let [fs (map (fn [^StackTraceElement el]"
+    "   \"error_data\" (when (instance? clojure.lang.IExceptionInfo e) (pr-str (ex-data e)))"
+    "   \"trace\" (let [fs (map (fn [^StackTraceElement el]"
     "                          [(.getClassName el) (.getFileName el) (.getLineNumber el)])"
     "                        (.getStackTrace e))"
     "                fmt (fn [xs] (->> xs (map (fn [[c f l]] (str (clojure.lang.Compiler/demunge c) \"  (\" f \":\" l \")\"))) distinct vec))"
@@ -302,7 +306,7 @@
                       (stacktrace->result msgs))))
             ["stacktrace" "analyze-last-stacktrace"])
           (let [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
-                v (:value r)]
+                v (get r "value")]
             (when (and (string? v) (not= "nil" v))
               (let [m (try (edn/read-string v) (catch Throwable _ nil))]
                 (when (map? m) (not-empty m)))))))
@@ -348,7 +352,7 @@
                        (merge combined (fetch-stacktrace! session responses))
                        combined)
             elapsed  (- (System/currentTimeMillis) start)]
-        (assoc combined :ms elapsed :port (int port) :host host))
+        (assoc combined "ms" elapsed "port" (int port) "host" host))
       (catch IOException ioe
         (evict! host port)
         (throw (ex-info (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
@@ -408,7 +412,7 @@
     (let [r (eval! {:host host :port port
                     :code "(System/getProperty \"user.dir\")"
                     :timeout-ms timeout-ms})
-          v (:value r)]
+          v (get r "value")]
       (when (string? v)
         (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
           (when (and (string? parsed) (seq parsed)) parsed))))

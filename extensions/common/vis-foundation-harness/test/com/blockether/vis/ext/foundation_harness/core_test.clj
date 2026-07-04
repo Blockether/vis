@@ -10,10 +10,10 @@
 (def ^:private skill-result @#'core/skill-result)
 
 (defdescribe skill-result-test
-  (it "an unknown name returns {:error :available}"
+  (it "an unknown name returns {\"error\" \"available\"}"
     (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
-      (expect (string? (:error r)))
-      (expect (vector? (:available r)))))
+      (expect (string? (get r "error")))
+      (expect (vector? (get r "available")))))
   (it "loads a skill body ONCE per session, then acks already-loaded (tracked on the ctx, no atom)"
     (with-redefs [d/skill-by-name (fn [_] {:name "demo" :description "d"
                                            :body "BODY" :dir "/x" :resources []})]
@@ -21,10 +21,10 @@
             env {:ctx-atom ca}
             r1  (skill-result env "demo")
             r2  (skill-result env "demo")]
-        (expect (= "BODY" (:body r1)))
+        (expect (= "BODY" (get r1 "body")))
         (expect (= #{"demo"} (:session/loaded-skills @ca)))
-        (expect (= "already-loaded" (:status r2)))
-        (expect (not (contains? r2 :body)))))))
+        (expect (= "already-loaded" (get r2 "status")))
+        (expect (not (contains? r2 "body")))))))
 
 (defdescribe skill-native-tool-test
   (let [exts [core/vis-extension]]
@@ -53,8 +53,8 @@
               ca (atom {})
               r1 (h {:ctx-atom ca} {"name" "demo"})
               r2 (h {:ctx-atom ca} {"name" "demo"})]
-          (expect (= "B" (:body r1)))
-          (expect (= "already-loaded" (:status r2))))))
+          (expect (= "B" (get r1 "body")))
+          (expect (= "already-loaded" (get r2 "status"))))))
     (it ":active-fn gates advertising + dispatch on the skills toggle"
       (with-redefs [toggles/enabled? (fn [id] (= id :vis/harness-skills))]
         (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil)))
@@ -77,12 +77,12 @@
 ;; ── agents surface (slice 3) ──────────────────────────────────────────────
 
 (defdescribe agent-verb-test
-  (it "an unknown agent returns a success envelope with :error + :available (no sub_loop run)"
+  (it "an unknown agent returns a success envelope with \"error\" + \"available\" (no sub_loop run)"
     (let [env (core/agent {} "definitely-not-a-real-agent-zzz" "do x")
           r (:result env)]
       (expect (extension/envelope-success? env))
-      (expect (string? (:error r)))
-      (expect (vector? (:available r)))))
+      (expect (string? (get r "error")))
+      (expect (vector? (get r "available")))))
 
   (it "dispatch threads the agent's BODY as the child system prompt and its MODEL as a vector"
     (let [captured (atom nil)]
@@ -92,9 +92,9 @@
                                     :status "done" :answer "child done"
                                     :changed_files ["f.txt"] :facts {} :evidence "ok"})]
         (let [r (:result (core/agent {} "code-reviewer" "review this"))]
-          (expect (= "code-reviewer" (:agent r)))
-          (expect (= "done" (:status r)))
-          (expect (= ["f.txt"] (:changed_files r)))
+          (expect (= "code-reviewer" (get r "agent")))
+          (expect (= "done" (get r "status")))
+          (expect (= ["f.txt"] (get r "changed_files")))
           ;; the child got the agent's markdown body as :system-prompt
           (expect (seq (str (:system-prompt @captured))))
           ;; model preference is ALWAYS A VECTOR
@@ -104,12 +104,12 @@
 
   (it "a completed child with no status string reports done; an errored one failed"
     (with-redefs [lp/sub-loop! (fn [_ _] {:status "" :answer "OK" :changed_files []})]
-      (expect (= "done" (:status (:result (core/agent {} "code-reviewer" "x"))))))
+      (expect (= "done" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
     (with-redefs [lp/sub-loop! (fn [_ _] {:status "" :error "boom"})]
-      (expect (= "failed" (:status (:result (core/agent {} "code-reviewer" "x"))))))
+      (expect (= "failed" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
     (with-redefs [lp/sub-loop! (fn [_ _] {:status "rejected"})]
       ;; an explicit child status is preserved, never overwritten
-      (expect (= "rejected" (:status (:result (core/agent {} "code-reviewer" "x"))))))))
+      (expect (= "rejected" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))))
 
 (defdescribe per-verb-gating-test
   ;; both verbs share one extension; each :active-fn gates its OWN toggle, so a

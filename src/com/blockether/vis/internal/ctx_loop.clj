@@ -21,7 +21,7 @@
 
 (defn make-ctx-atom
   "Initialize the CTX atom for a session. Uses the canonical empty scaffold.
-   The scaffold carries an empty `:engine/warnings` vec so every swap!
+   The scaffold carries an empty `\"engine_warnings\"` vec so every swap!
    path can `update` it without nil-puncturing."
   ([] (atom (eng/empty-ctx)))
   ([session-id] (atom (eng/empty-ctx session-id))))
@@ -102,14 +102,14 @@
       "/f" (inc (or form-idx 0)))))
 
 (defn cursor-snapshot
-  "Build a `:session/scope` map from `:turn-state-atom`. Mirrors the
-   engine's `{:turn :iter :next-form}` shape used by `classify-scope`
-   and the renderer."
+  "Build a `\"session_scope\"` map from `:turn-state-atom`. Mirrors the
+   engine's `{\"turn\" \"iter\" \"next_form\"}` shape (STRING keys — the ctx
+   crosses the Python boundary) used by `classify-scope` and the renderer."
   [env]
   (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
-    {:turn      (or turn-position 1)
-     :iter      (normalize-iteration iteration)
-     :next-form (inc (or form-idx 0))}))
+    {"turn"      (or turn-position 1)
+     "iter"      (normalize-iteration iteration)
+     "next_form" (inc (or form-idx 0))}))
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
@@ -131,12 +131,12 @@
     (when ctx-atom
       (swap! ctx-atom
         (fn [c]
-          (let [c+cur (assoc c :session/scope cursor)
+          (let [c+cur (assoc c "session_scope" cursor)
                 {ctx' :ctx} (eng/finalize-turn c+cur scope
                               {:answer answer
                                :user-request user-request
                                :turn-summary turn-summary})]
-            (dissoc ctx' :session/scope))))
+            (dissoc ctx' "session_scope"))))
       (tel/log! {:level :info :id ::finalize-turn
                  :data {:answer-present? (boolean (not (clojure.string/blank? (str answer))))}}
         "finalize-turn completed"))
@@ -145,16 +145,16 @@
      :warnings []}))
 
 (defn stamp-cursor
-  "Return a ctx map with both `:session/turn` and `:session/scope` synced
+  "Return a ctx map with both `\"session_turn\"` and `\"session_scope\"` synced
    from the loop's running counters. Render path + every engine derivation
    call goes through this so the model never sees a stale top-level
-   `:session/turn` (e.g. after a resume that loaded turn N's snapshot but
+   `\"session_turn\"` (e.g. after a resume that loaded turn N's snapshot but
    the current loop is on turn N+1)."
   [env ctx]
   (let [cursor (cursor-snapshot env)]
     (-> ctx
-      (assoc :session/turn  (:turn cursor))
-      (assoc :session/scope cursor))))
+      (assoc "session_turn"  (get cursor "turn"))
+      (assoc "session_scope" cursor))))
 
 (defn current-ctx
   "Deref the CTX atom with both `:session/turn` and `:session/scope`
@@ -174,7 +174,7 @@
    load-bearing: when the two paths computed different shapes, the model saw
    keys in the text that KeyError'd in code. That is exactly how
    `session[\"workspace\"]` (and `workspace[\"filesystem_roots\"]`) went missing
-   from the bound dict — the ext-contributed `:session/workspace` block was
+   from the bound dict — the ext-contributed `\"session_workspace\"` block was
    merged into the TEXT but not into the binding. Merge ALL ext-ctx so no
    future contributed key can drift the same way.
 
@@ -189,7 +189,7 @@
                         {}))
         env-block   (try (env-digest/deep-merge
                            (env-digest/base-digest env)
-                           (:session/env ext-ctx))
+                           (get ext-ctx "session_env"))
                       (catch Throwable t
                         (tel/log! {:level :warn :id ::env-digest-failed
                                    :data  {:error (ex-message t)}})
@@ -197,12 +197,13 @@
         ;; Session-scoped live resources — same registry the footer reads, so
         ;; `session["resources"]` and the footer can never disagree.
         rsrc        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
-    (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
-      (seq env-block)      (assoc :session/env env-block)
-      (seq rsrc)           (assoc :session/resources rsrc)
+    (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
+      (seq env-block)      (assoc "session_env" env-block)
+      (seq rsrc)           (assoc "session_resources" rsrc)
       ;; current model + available models, so the agent can route a sub_loop
-      ;; child by cost (read-only).
-      (seq (:routing env)) (assoc :session/routing (:routing env)))))
+      ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE
+      ;; is built string-keyed at the loop because it crosses the boundary.
+      (seq (:routing env)) (assoc "session_routing" (:routing env)))))
 
 (defn session-snapshot
   "Read-only data mirror of the Python `session` dict bound in the sandbox.

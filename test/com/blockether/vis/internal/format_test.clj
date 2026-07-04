@@ -22,10 +22,11 @@
     str/trim))
 
 (defdescribe humanize-fact-key-test
-  (it "renders turn_<N> as Turn <N> (string or keyword), capitalizing other keys"
+  (it "renders turn_<N> as Turn <N>, capitalizing other keys"
+    ;; Fact keys are model-authored strings (strings-only boundary).
     (expect (= "Turn 1"  (fmt/humanize-fact-key "turn_1")))
     (expect (= "Turn 12" (fmt/humanize-fact-key "turn_12")))
-    (expect (= "Turn 3"  (fmt/humanize-fact-key :turn_3)))
+    (expect (= "Turn 3"  (fmt/humanize-fact-key "turn_3")))
     ;; non-turn keys: first letter capitalized, rest untouched
     (expect (= "Oauth"   (fmt/humanize-fact-key "oauth")))
     (expect (= "T3/auth" (fmt/humanize-fact-key "t3/auth")))

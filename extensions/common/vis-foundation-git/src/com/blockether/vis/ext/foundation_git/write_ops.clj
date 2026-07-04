@@ -140,8 +140,8 @@
     ;; Dict form from the tool bridge: git_add({"paths": [...]}) /
     ;; git_add({"path": "x"}) / git_add({"all": true}). The model reaches
     ;; for the dict shape by habit, so unwrap it to the value coerce handles.
-    (map? arg)                                    (recur (or (some #(get arg %) [:paths :path])
-                                                           (when (contains? arg :all) :all)))
+    (map? arg)                                    (recur (or (some #(get arg %) ["paths" "path"])
+                                                           (when (contains? arg "all") :all)))
     :else (throw (ex-info (str "git/add expects :all, a path string, or vec of strings, got " (pr-str arg))
                    {:type :foundation-git/invalid-opts :arg arg}))))
 
@@ -161,7 +161,7 @@
         (let [cmd (.. (.add git) (setUpdate update?))]
           (doseq [p paths] (.addFilepattern cmd p))
           (.call cmd))))
-    {:op :git/add :paths paths}))
+    {"op" "git_add" "paths" paths}))
 
 (defn- head-message [^Git git]
   (some-> (.. git log (setMaxCount 1) call) first .getFullMessage))
@@ -170,7 +170,7 @@
   "Create a commit. Opts: {\"message\": ..., \"is_all\": bool, \"is_allow_empty\": bool, \"is_amend\": bool, \"is_no_edit\": bool}.
    is_all    stages every modified TRACKED file first (git commit -a).
    is_amend  rewrites HEAD; is_no_edit keeps its message verbatim."
-  [{:keys [message is_all is_allow_empty is_amend is_no_edit]}]
+  [{:strs [message is_all is_allow_empty is_amend is_no_edit]}]
   (when (and is_no_edit (not is_amend))
     (throw (ex-info "git_commit is_no_edit requires is_amend true"
              {:type :foundation-git/invalid-opts})))
@@ -189,24 +189,24 @@
                    (setAllowEmpty (boolean is_allow_empty))
                    call)
           sha    (.getName commit)]
-      {:op        (if is_amend :git/amend :git/commit)
-       :sha       sha
-       :short-sha (short-sha sha)
-       :message   msg
-       :amend?    (boolean is_amend)})))
+      {"op"        (if is_amend "git_amend" "git_commit")
+       "sha"       sha
+       "short_sha" (short-sha sha)
+       "message"   msg
+       "amend"     (boolean is_amend)})))
 
 (defn amend!
   "Amend HEAD. () keeps the existing message; {\"message\": \"...\"} rewrites it.
    Pass {\"is_all\": true} to restage every tracked modification before amending."
   ([] (amend! {}))
   ([opts]
-   (let [opts (assoc opts :is_amend true)
-         opts (if (some-> (:message opts) str str/trim seq)
+   (let [opts (assoc opts "is_amend" true)
+         opts (if (some-> (get opts "message") str str/trim seq)
                 opts
-                (assoc opts :is_no_edit true))]
+                (assoc opts "is_no_edit" true))]
      (commit! opts))))
 
-(defn- ->credentials [{:keys [username password token]}]
+(defn- ->credentials [{:strs [username password token]}]
   (when (or username password token)
     (UsernamePasswordCredentialsProvider.
       ^String (or username (when token "x-access-token") "")
@@ -225,7 +225,7 @@
    first call; from then on JGit reads ~/.ssh/config the way `git`
    itself does (IdentityFile, HostName, User, agent, ed25519,
    rsa-sha2-512). HTTPS remotes use the supplied credentials."
-  [{:keys [remote branch is_force is_tags is_delete credentials]}]
+  [{:strs [remote branch is_force is_tags is_delete credentials]}]
   (install-sshd-session-factory!)
   (with-open [git (open-git)]
     (let [remote (or remote "origin")
@@ -240,18 +240,18 @@
       (let [results (.call cmd)
             updates (vec (mapcat (fn [r]
                                    (map (fn [u]
-                                          {:remote-name (.getRemoteName u)
-                                           :status      (str (.getStatus u))
-                                           :message     (.getMessage u)})
+                                          {"remote_name" (.getRemoteName u)
+                                           "status"      (str (.getStatus u))
+                                           "message"     (.getMessage u)})
                                      (.getRemoteUpdates r)))
                            results))]
-        {:op      :git/push
-         :remote  remote
-         :branch  branch
-         :force?  (boolean is_force)
-         :tags?   (boolean is_tags)
-         :delete? (boolean is_delete)
-         :updates updates}))))
+        {"op"      "git_push"
+         "remote"  remote
+         "branch"  branch
+         "force"   (boolean is_force)
+         "tags"    (boolean is_tags)
+         "delete"  (boolean is_delete)
+         "updates" updates}))))
 
 (defn- object-id->sha
   [^ObjectId oid]
@@ -263,52 +263,52 @@
 
 (defn- tracking-update->map
   [^org.eclipse.jgit.transport.TrackingRefUpdate update]
-  {:local-name    (.getLocalName update)
-   :remote-name   (.getRemoteName update)
-   :result        (str (.getResult update))
-   :old-sha       (object-id->sha (.getOldObjectId update))
-   :old-short-sha (object-id->short-sha (.getOldObjectId update))
-   :new-sha       (object-id->sha (.getNewObjectId update))
-   :new-short-sha (object-id->short-sha (.getNewObjectId update))})
+  {"local_name"    (.getLocalName update)
+   "remote_name"   (.getRemoteName update)
+   "result"        (str (.getResult update))
+   "old_sha"       (object-id->sha (.getOldObjectId update))
+   "old_short_sha" (object-id->short-sha (.getOldObjectId update))
+   "new_sha"       (object-id->sha (.getNewObjectId update))
+   "new_short_sha" (object-id->short-sha (.getNewObjectId update))})
 
 (defn- update-kind
   [result]
   (case (str result)
-    "NEW" :new
-    "FAST_FORWARD" :fast-forward
-    "FORCED" :forced
-    "NO_CHANGE" :unchanged
-    "IO_FAILURE" :error
-    "LOCK_FAILURE" :error
-    "REJECTED" :rejected
-    "RENAMED" :renamed
-    :updated))
+    "NEW" "new"
+    "FAST_FORWARD" "fast_forward"
+    "FORCED" "forced"
+    "NO_CHANGE" "unchanged"
+    "IO_FAILURE" "error"
+    "LOCK_FAILURE" "error"
+    "REJECTED" "rejected"
+    "RENAMED" "renamed"
+    "updated"))
 
 (defn- fetch-summary
   [updates]
-  (let [freqs (frequencies (map :kind updates))]
-    {:updated       (count updates)
-     :new           (long (get freqs :new 0))
-     :fast-forward  (long (get freqs :fast-forward 0))
-     :forced        (long (get freqs :forced 0))
-     :rejected      (long (get freqs :rejected 0))
-     :errors        (long (get freqs :error 0))
-     :up-to-date?   (empty? updates)}))
+  (let [freqs (frequencies (map #(get % "kind") updates))]
+    {"updated"      (count updates)
+     "new"          (long (get freqs "new" 0))
+     "fast_forward" (long (get freqs "fast_forward" 0))
+     "forced"       (long (get freqs "forced" 0))
+     "rejected"     (long (get freqs "rejected" 0))
+     "errors"       (long (get freqs "error" 0))
+     "up_to_date"   (empty? updates)}))
 
 (defn- tracking-status
   [^Repository repo branch]
   (try
     (when-let [^BranchTrackingStatus tracking (and branch (BranchTrackingStatus/of repo branch))]
-      {:upstream? true
-       :upstream  (.getRemoteTrackingBranch tracking)
-       :ahead     (.getAheadCount tracking)
-       :behind    (.getBehindCount tracking)})
+      {"has_upstream" true
+       "upstream"     (.getRemoteTrackingBranch tracking)
+       "ahead"        (.getAheadCount tracking)
+       "behind"       (.getBehindCount tracking)})
     (catch Throwable _ nil)))
 
 (defn fetch!
   "Fetch from a remote. Opts: {:remote :credentials}. Returns porcelain-ish
    EDN: compact update summary plus current-branch ahead/behind after fetch."
-  [{:keys [remote credentials]}]
+  [{:strs [remote credentials]}]
   (install-sshd-session-factory!)
   (with-open [git (open-git)]
     (let [remote (or remote "origin")
@@ -321,21 +321,21 @@
             updates (mapv (fn [u]
                             (let [m (tracking-update->map u)]
                               (assoc m
-                                :ref (some-> (:local-name m)
-                                       (str/replace #"^refs/remotes/" ""))
-                                :kind (update-kind (:result m))
-                                :range (when (and (:old-short-sha m) (:new-short-sha m))
-                                         (str (:old-short-sha m) ".." (:new-short-sha m))))))
+                                "ref" (some-> (get m "local_name")
+                                        (str/replace #"^refs/remotes/" ""))
+                                "kind" (update-kind (get m "result"))
+                                "range" (when (and (get m "old_short_sha") (get m "new_short_sha"))
+                                          (str (get m "old_short_sha") ".." (get m "new_short_sha"))))))
                       (.getTrackingRefUpdates res))]
-        (cond-> {:op       :git/fetch
-                 :remote   remote
-                 :status   (if (seq updates) :updated :up-to-date)
-                 :branch   branch
-                 :tracking (tracking-status repo branch)
-                 :summary  (fetch-summary updates)
-                 :updates  updates}
+        (cond-> {"op"       "git_fetch"
+                 "remote"   remote
+                 "status"   (if (seq updates) "updated" "up_to_date")
+                 "branch"   branch
+                 "tracking" (tracking-status repo branch)
+                 "summary"  (fetch-summary updates)
+                 "updates"  updates}
           (not (str/blank? (.getMessages res)))
-          (assoc :remote-messages (.getMessages res)))))))
+          (assoc "remote_messages" (.getMessages res)))))))
 
 ;; ============================================================================
 ;; History rewrite ops: reset!, branch!, checkout!, cherry-pick!, rebase!
@@ -379,11 +379,11 @@
 (defn- reset-mode ^ResetCommand$ResetType
   [mode]
   (case mode
-    :soft   ResetCommand$ResetType/SOFT
-    :mixed  ResetCommand$ResetType/MIXED
-    :hard   ResetCommand$ResetType/HARD
-    :keep   ResetCommand$ResetType/KEEP
-    :merge  ResetCommand$ResetType/MERGE
+    "soft"   ResetCommand$ResetType/SOFT
+    "mixed"  ResetCommand$ResetType/MIXED
+    "hard"   ResetCommand$ResetType/HARD
+    "keep"   ResetCommand$ResetType/KEEP
+    "merge"  ResetCommand$ResetType/MERGE
     (throw (ex-info (str "git_reset mode must be one of \"soft\" \"mixed\" \"hard\" \"keep\" \"merge\", got "
                       (pr-str mode))
              {:type :foundation-git/invalid-opts :mode mode}))))
@@ -410,7 +410,7 @@
 
    Use as the building block for \"reword 40 commits\": reset --soft to
    the parent of the oldest bad commit, then re-commit one by one."
-  [{:keys [mode to paths]}]
+  [{:strs [mode to paths]}]
   (when (str/blank? (str to))
     (throw (ex-info "git_reset requires \"to\" (revision)"
              {:type :foundation-git/invalid-opts})))
@@ -431,21 +431,21 @@
         (do (.setMode cmd (reset-mode mode))
           (.call cmd)))
       (let [head-after (some-> (.resolve repo "HEAD") .getName)]
-        {:op           :git/reset
-         :mode         (when (empty? path-strs) mode)
-         :to           (str to)
-         :resolved-sha resolved
-         :short-sha    (short-sha resolved)
-         :head-before  head-before
-         :head-after   head-after
-         :paths        path-strs}))))
+        {"op"           "git_reset"
+         "mode"         (when (empty? path-strs) mode)
+         "to"           (str to)
+         "resolved_sha" resolved
+         "short_sha"    (short-sha resolved)
+         "head_before"  head-before
+         "head_after"   head-after
+         "paths"        path-strs}))))
 
 (defn- list-branches-impl
   [^Git git list-mode]
   (let [^ListBranchCommand$ListMode mode (case list-mode
-                                           :local   nil
-                                           :remote  ListBranchCommand$ListMode/REMOTE
-                                           :all     ListBranchCommand$ListMode/ALL
+                                           "local"   nil
+                                           "remote"  ListBranchCommand$ListMode/REMOTE
+                                           "all"     ListBranchCommand$ListMode/ALL
                                            (throw (ex-info
                                                     "git_branch list mode must be \"local\" \"remote\" or \"all\""
                                                     {:type :foundation-git/invalid-opts :mode list-mode})))
@@ -455,10 +455,10 @@
     (mapv (fn [ref]
             (let [name (.getName ref)
                   obj  (.getObjectId ref)]
-              {:name      name
-               :short     (str/replace name #"^refs/(heads|remotes)/" "")
-               :sha       (when obj (.getName obj))
-               :short-sha (when obj (short-sha (.getName obj)))}))
+              {"name"      name
+               "short"     (str/replace name #"^refs/(heads|remotes)/" "")
+               "sha"       (when obj (.getName obj))
+               "short_sha" (when obj (short-sha (.getName obj)))}))
       refs)))
 
 (defn branch!
@@ -482,17 +482,17 @@
      rename  {:op :git/branch-rename :old :new}
      list    {:op :git/branch-list :mode :branches [{:name :short :sha :short-sha}]}"
   [opts]
-  (let [op (or (:op opts)
-             (cond (contains? opts :create) :create
-               (contains? opts :delete) :delete
-               (contains? opts :rename) :rename
-               (contains? opts :list)   :list))]
+  (let [op (or (get opts "op")
+             (cond (contains? opts "create") "create"
+               (contains? opts "delete") "delete"
+               (contains? opts "rename") "rename"
+               (contains? opts "list")   "list"))]
     (with-open [git (open-git)]
       (case op
-        :create
-        (let [name     (or (:name opts) (:create opts))
-              from     (or (:from opts) "HEAD")
-              is_force (boolean (:is_force opts))]
+        "create"
+        (let [name     (or (get opts "name") (get opts "create"))
+              from     (or (get opts "from") "HEAD")
+              is_force (boolean (get opts "is_force"))]
           (when (str/blank? (str name))
             (throw (ex-info "git_branch create requires name" {:type :foundation-git/invalid-opts})))
           (let [repo (.getRepository git)
@@ -503,32 +503,32 @@
                        (setForce is_force)
                        call)
                 sha  (some-> (.getObjectId ref) .getName)]
-            {:op        :git/branch-create
-             :name      name
-             :from      from
-             :sha       sha
-             :short-sha (short-sha sha)
-             :force?    is_force}))
+            {"op"        "git_branch_create"
+             "name"      name
+             "from"      from
+             "sha"       sha
+             "short_sha" (short-sha sha)
+             "force"     is_force}))
 
-        :delete
-        (let [arg      (or (:name opts) (:delete opts))
+        "delete"
+        (let [arg      (or (get opts "name") (get opts "delete"))
               names    (cond
                          (string? arg) [arg]
                          (and (sequential? arg) (every? string? arg)) (vec arg)
                          :else (throw (ex-info "git_branch delete requires name (string or list)"
                                         {:type :foundation-git/invalid-opts})))
-              is_force (boolean (:is_force opts))
+              is_force (boolean (get opts "is_force"))
               deleted  (vec (.. git branchDelete
                               (setBranchNames (into-array String names))
                               (setForce is_force)
                               call))]
-          {:op      :git/branch-delete
-           :deleted (mapv #(str/replace % #"^refs/heads/" "") deleted)
-           :force?  is_force})
+          {"op"      "git_branch_delete"
+           "deleted" (mapv #(str/replace % #"^refs/heads/" "") deleted)
+           "force"   is_force})
 
-        :rename
-        (let [pair    (or (:rename opts) [(:old opts) (:new opts)])
-              [old-n new-n] (if (sequential? pair) pair [(:old opts) (:new opts)])]
+        "rename"
+        (let [pair    (or (get opts "rename") [(get opts "old") (get opts "new")])
+              [old-n new-n] (if (sequential? pair) pair [(get opts "old") (get opts "new")])]
           (when (or (str/blank? (str old-n)) (str/blank? (str new-n)))
             (throw (ex-info "git_branch rename requires old + new (or rename [old new])"
                      {:type :foundation-git/invalid-opts})))
@@ -536,13 +536,13 @@
             (setOldName old-n)
             (setNewName new-n)
             call)
-          {:op :git/branch-rename :old old-n :new new-n})
+          {"op" "git_branch_rename" "old" old-n "new" new-n})
 
-        :list
-        (let [mode (or (:mode opts) (:list opts) :local)]
-          {:op       :git/branch-list
-           :mode     mode
-           :branches (list-branches-impl git mode)})
+        "list"
+        (let [mode (or (get opts "mode") (get opts "list") "local")]
+          {"op"       "git_branch_list"
+           "mode"     mode
+           "branches" (list-branches-impl git mode)})
 
         (throw (ex-info
                  "git_branch requires op in #{\"create\" \"delete\" \"rename\" \"list\"} (or the short-form key)"
@@ -569,7 +569,7 @@
      paths  → {:op :git/checkout :paths :files-restored :start-point}
      branch → {:op :git/checkout :branch :head :short-head :created?}
      sha    → {:op :git/checkout :sha :head :short-head :detached?}"
-  [{:keys [branch sha paths is_create is_force start_point]}]
+  [{:strs [branch sha paths is_create is_force start_point]}]
   (with-open [git (open-git)]
     (let [repo  (.getRepository git)
           cmd   (.checkout git)]
@@ -583,10 +583,10 @@
           (.setStartPoint cmd ^String (or sha branch "HEAD"))
           (doseq [p path-strs] (.addPath cmd p))
           (.call cmd)
-          {:op             :git/checkout
-           :paths          path-strs
-           :files-restored (count path-strs)
-           :start-point    (or sha branch "HEAD")})
+          {"op"             "git_checkout"
+           "paths"          path-strs
+           "files_restored" (count path-strs)
+           "start_point"    (or sha branch "HEAD")})
 
         (some? branch)
         (do
@@ -597,11 +597,11 @@
             (when start_point (.setStartPoint cmd ^String start_point)))
           (.call cmd)
           (let [head (some-> (.resolve repo "HEAD") .getName)]
-            {:op         :git/checkout
-             :branch     branch
-             :head       head
-             :short-head (short-sha head)
-             :created?   (boolean is_create)}))
+            {"op"         "git_checkout"
+             "branch"     branch
+             "head"       head
+             "short_head" (short-sha head)
+             "created"    (boolean is_create)}))
 
         (some? sha)
         (do
@@ -609,11 +609,11 @@
           (.setForceRefUpdate cmd (boolean is_force))
           (.call cmd)
           (let [head (some-> (.resolve repo "HEAD") .getName)]
-            {:op         :git/checkout
-             :sha        sha
-             :head       head
-             :short-head (short-sha head)
-             :detached?  true}))
+            {"op"         "git_checkout"
+             "sha"        sha
+             "head"       head
+             "short_head" (short-sha head)
+             "detached"   true}))
 
         :else
         (throw (ex-info "git_checkout requires branch, sha, or paths"
@@ -630,7 +630,7 @@
      is_no_commit leave changes staged; don't commit per pick.
 
    Returns: {:op :git/cherry-pick :status :picked [{...}] :failing-paths}"
-  [{:keys [commits mainline is_no_commit]}]
+  [{:strs [commits mainline is_no_commit]}]
   (when (or (nil? commits) (and (sequential? commits) (empty? commits)))
     (throw (ex-info "git_cherry_pick requires commits"
              {:type :foundation-git/invalid-opts})))
@@ -660,25 +660,25 @@
                               (mapv (fn [r]
                                       (let [obj (.getObjectId r)
                                             sha (some-> obj .getName)]
-                                        {:ref       (.getName r)
-                                         :sha       sha
-                                         :short-sha (short-sha sha)}))))
+                                        {"ref"       (.getName r)
+                                         "sha"       sha
+                                         "short_sha" (short-sha sha)}))))
             failing-paths   (some-> result .getFailingPaths)
             new-head        (some-> result .getNewHead .getName)]
-        {:op            :git/cherry-pick
-         :status        status
-         :picked        (or picked-commits [])
-         :failing-paths (when failing-paths (vec (.keySet failing-paths)))
-         :new-head      new-head
-         :short-head    (short-sha new-head)}))))
+        {"op"            "git_cherry_pick"
+         "status"        status
+         "picked"        (or picked-commits [])
+         "failing_paths" (when failing-paths (vec (.keySet failing-paths)))
+         "new_head"      new-head
+         "short_head"    (short-sha new-head)}))))
 
 (defn- rebase-operation
   ^RebaseCommand$Operation [op]
   (case op
-    :begin    RebaseCommand$Operation/BEGIN
-    :continue RebaseCommand$Operation/CONTINUE
-    :skip     RebaseCommand$Operation/SKIP
-    :abort    RebaseCommand$Operation/ABORT
+    "begin"    RebaseCommand$Operation/BEGIN
+    "continue" RebaseCommand$Operation/CONTINUE
+    "skip"     RebaseCommand$Operation/SKIP
+    "abort"    RebaseCommand$Operation/ABORT
     (throw (ex-info (str "git_rebase operation must be one of \"begin\" \"continue\" \"skip\" \"abort\", got "
                       (pr-str op))
              {:type :foundation-git/invalid-opts :operation op}))))
@@ -706,18 +706,18 @@
   (let [status (.getStatus result)
         sname  (.name status)
         new-head (.getCurrentCommit result)]
-    {:status            sname
-     :successful?       (.isSuccessful status)
-     :conflicts         (when-let [cs (.getConflicts result)] (vec cs))
-     :failing-paths     (when-let [fp (.getFailingPaths result)]
-                          (vec (.keySet fp)))
-     ;; JGit hands back the exact paths that block a :begin rebase; surfacing
+    {"status"            sname
+     "successful"        (.isSuccessful status)
+     "conflicts"         (when-let [cs (.getConflicts result)] (vec cs))
+     "failing_paths"     (when-let [fp (.getFailingPaths result)]
+                           (vec (.keySet fp)))
+     ;; JGit hands back the exact paths that block a "begin" rebase; surfacing
      ;; them here is what lets the model skip the extra `git/status` call.
-     :uncommitted-changes (when-let [u (.getUncommittedChanges result)]
-                            (vec u))
-     :current-commit    (when new-head (.getName new-head))
-     :short-current     (short-sha (some-> new-head .getName))
-     :hint              (rebase-hint sname)}))
+     "uncommitted_changes" (when-let [u (.getUncommittedChanges result)]
+                             (vec u))
+     "current_commit"    (when new-head (.getName new-head))
+     "short_current"     (short-sha (some-> new-head .getName))
+     "hint"              (rebase-hint sname)}))
 
 (defn rebase!
   "Rewind onto an upstream, re-applying commits. Use for non-interactive
@@ -744,19 +744,27 @@
 
    Returns: {:op :git/rebase :status :successful? :conflicts :failing-paths
              :current-commit :short-current}"
-  [{:keys [operation upstream onto is_preserve_merges edit-todos-fn reword-message-fn is_autostash]
-    :or   {reword-message-fn (fn [_sha msg] msg)}}]
-  (with-open [git (open-git)]
-    (let [op    (or operation (when upstream :begin))
-          cmd   (.rebase git)]
-      (when (nil? op)
-        (throw (ex-info "git_rebase requires operation (or upstream which implies begin)"
-                 {:type :foundation-git/invalid-opts})))
-      (.setOperation cmd (rebase-operation op))
-      (when (and (= op :begin) upstream)
-        (.setUpstream cmd ^String upstream))
-      (when (and (= op :begin) onto)
-        (.setUpstreamName cmd ^String onto))
+  [opts]
+  (let [operation          (get opts "operation")
+        upstream           (get opts "upstream")
+        onto               (get opts "onto")
+        is_preserve_merges (get opts "is_preserve_merges")
+        is_autostash       (get opts "is_autostash")
+        ;; INTERNAL Clojure callbacks — not passable from Python, so they
+        ;; ride keyword keys (the model can never supply them).
+        edit-todos-fn      (:edit-todos-fn opts)
+        reword-message-fn  (or (:reword-message-fn opts) (fn [_sha msg] msg))]
+    (with-open [git (open-git)]
+      (let [op    (or operation (when upstream "begin"))
+            cmd   (.rebase git)]
+        (when (nil? op)
+          (throw (ex-info "git_rebase requires operation (or upstream which implies begin)"
+                   {:type :foundation-git/invalid-opts})))
+        (.setOperation cmd (rebase-operation op))
+        (when (and (= op "begin") upstream)
+          (.setUpstream cmd ^String upstream))
+        (when (and (= op "begin") onto)
+          (.setUpstreamName cmd ^String onto))
       (when is_preserve_merges
         (.setPreserveMerges cmd true))
       (when edit-todos-fn
@@ -802,41 +810,41 @@
       ;; version, so we drive stashCreate/Apply/Drop here — the supported
       ;; replacement for the manual "WIP commit + mixed reset" dance. A clean
       ;; tree makes stashCreate return nil, so the gate is "got a stash back".
-      (let [stash (when (and is_autostash (= op :begin))
+      (let [stash (when (and is_autostash (= op "begin"))
                     (.call (.stashCreate git)))
             ref   (some-> ^org.eclipse.jgit.revwalk.RevCommit stash .getName)
             base  (assoc (rebase-result->map (.call cmd))
-                    :op :git/rebase :operation op)]
+                    "op" "git_rebase" "operation" op)]
         (cond
           (nil? stash)
           base
 
-          (:successful? base)
+          (get base "successful")
           ;; Rebase landed; replay the parked changes on top.
           (try
             (.call (doto (.stashApply git) (.setStashRef ^String ref)))
             (.call (.stashDrop git))
-            (assoc base :autostash-applied? true)
+            (assoc base "autostash_applied" true)
             (catch Exception _
               ;; Rebase OK but parked changes don't re-apply cleanly. Keep the
               ;; stash (don't drop) so the work stays recoverable.
-              (assoc base :autostash-applied? false
-                :autostash-ref ref
-                :status "STASH_APPLY_CONFLICTS"
-                :hint (rebase-hint "STASH_APPLY_CONFLICTS"))))
+              (assoc base "autostash_applied" false
+                "autostash_ref" ref
+                "status" "STASH_APPLY_CONFLICTS"
+                "hint" (rebase-hint "STASH_APPLY_CONFLICTS"))))
 
           :else
           ;; Rebase couldn't complete (conflicts / stopped). Roll it back and
-          ;; restore the tree so :autostash? is fully reversible — nothing is
+          ;; restore the tree so is_autostash is fully reversible — nothing is
           ;; left half-applied or stranded in a stash the model can't reach.
           (do
             (.call (.setOperation (.rebase git) RebaseCommand$Operation/ABORT))
             (.call (doto (.stashApply git) (.setStashRef ^String ref)))
             (.call (.stashDrop git))
-            (assoc base :autostash-applied? true
-              :hint (str "Auto-stash restored and rebase aborted — it could not "
-                      "complete cleanly (" (:status base) "). Commit your changes "
-                      "first, then rebase, so conflicts surface against committed work."))))))))
+            (assoc base "autostash_applied" true
+              "hint" (str "Auto-stash restored and rebase aborted — it could not "
+                       "complete cleanly (" (get base "status") "). Commit your changes "
+                       "first, then rebase, so conflicts surface against committed work.")))))))))
 
 ;; ============================================================================
 ;; Tool wrappers

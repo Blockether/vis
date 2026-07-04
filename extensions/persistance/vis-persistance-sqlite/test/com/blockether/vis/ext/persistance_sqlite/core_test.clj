@@ -1068,9 +1068,10 @@
         (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                   (:llm-raw-response-sha256 iter)))
         ;; :llm-executable-code was removed during the per-block-eval cut;
-        ;; :llm-executable-blocks is the single source of truth.
+        ;; :llm-executable-blocks is the single source of truth. JSON columns
+        ;; round-trip with STRING keys (`<-json` never keywordizes).
         (expect (nil? (:llm-executable-code iter)))
-        (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
+        (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
                   (:llm-executable-blocks iter))))))
 
   (it "rejects negative token counts via the schema CHECK"

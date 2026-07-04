@@ -392,7 +392,7 @@
 ;; --- Turn history (read-only projection) ---
 (defdelegate db-turn-history [db-info session-ref])
 
-;; --- CTX snapshots (per-turn :session/* state, Nippy in session_turn_state.ctx) ---
+;; --- CTX snapshots (per-turn string-keyed session_* state, Nippy in session_turn_state.ctx) ---
 (defdelegate db-load-latest-ctx [db-info session-id])
 (defdelegate db-load-ctx-history [db-info session-id])
 

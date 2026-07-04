@@ -49,22 +49,24 @@
       (expect (some #(= "+dev,+test" %) cmd)))))
 
 (defdescribe status+stop-test
+  ;; status/stop return STRING-keyed lifecycle maps (they cross the strings-only
+  ;; boundary as tool `:result`s).
   (it "status reports no managed process and a port vector for a fresh root"
     (let [s (rm/status (tmp-dir))]
-      (expect (= :status (:result s)))
-      (expect (false? (:running (:managed s))))
-      (expect (vector? (:ports s)))))
+      (expect (= "status" (get s "result")))
+      (expect (false? (get-in s ["managed" "running"])))
+      (expect (vector? (get s "ports")))))
 
   (it "stop is a safe no-op when nothing is managed"
-    (expect (= :not-managed (:result (rm/stop! (tmp-dir)))))))
+    (expect (= "not-managed" (get (rm/stop! (tmp-dir)) "result")))))
 
 (defdescribe clj-repl-tool-gating-test
 
-  (it ":status always succeeds (start/stop are never flag-gated)"
-    (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir)} :status))))
+  (it "\"status\" always succeeds (start/stop are never flag-gated)"
+    (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir)} "status"))))
 
   (it "rejects an unknown op"
-    (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir)} :frobnicate)
+    (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir)} "frobnicate")
               :no-throw
               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
       (expect (= :clj/bad-args t)))))

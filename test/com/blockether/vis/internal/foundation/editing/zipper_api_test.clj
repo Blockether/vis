@@ -82,7 +82,7 @@
              {:lang "rust"       :needle "fn b"}
              {:lang "go"         :needle "return x"}]]
       (let [src (:src (first (filter #(= lang (:lang %)) cases)))
-            r   (nav lang src [] [{:find needle}])]
+            r   (nav lang src [] [{"find" needle}])]
         (expect (:ok? r) (str lang ": find " (pr-str needle) " not found"))
         (expect (str/includes? (:text (z/inspect lang src (:path r))) needle)))))
 
@@ -91,7 +91,7 @@
       (let [paths   (all-paths lang src)
             k       (:kind (z/inspect lang src (second paths)))   ; some non-root kind
             first-k (first (filter #(= k (:kind (z/inspect lang src %))) (rest paths)))
-            r       (nav lang src [] [{:find_kind k}])]
+            r       (nav lang src [] [{"find_kind" k}])]
         (expect (:ok? r) (str lang ": no node of kind " k))
         (expect (= k (:kind (z/inspect lang src (:path r)))))
         (expect (= first-k (:path r)) (str lang ": find_kind " k " not the first")))))
@@ -99,11 +99,11 @@
   (it "find has find-NEXT semantics — it starts AFTER the cursor, never returns it"
     (let [src "(a)\n(b)\n(a)\n"]                ; two identical (a) forms
       ;; from the FIRST (a) at [0], finding \"(a)\" must skip to the SECOND at [2]
-      (expect (= [2] (pathOf (nav "clojure" src [0] [{:find "(a)"}]))))))
+      (expect (= [2] (pathOf (nav "clojure" src [0] [{"find" "(a)"}]))))))
 
   (it "a find with no match FAILS CLOSED (not a silent no-op)"
     (doseq [{:keys [lang src]} cases]
-      (expect (= :bad-move (get-in (nav lang src [] [{:find "zzz_no_such_token"}])
+      (expect (= :bad-move (get-in (nav lang src [] [{"find" "zzz_no_such_token"}])
                              [:error :reason]))))))
 
 ;; ── 3. append_child / prepend_child + lefts/rights ───────────────────────────
@@ -139,13 +139,13 @@
           (if (seq p)
             (let [i  (peek p)
                   pc (:named-child-count (z/inspect lang src (vec (butlast p))))]
-              (expect (= i (:index m)) (str lang " @" p ": index"))
-              (expect (= pc (:siblings m)) (str lang " @" p ": siblings"))
+              (expect (= i (get m "index")) (str lang " @" p ": index"))
+              (expect (= pc (get m "siblings")) (str lang " @" p ": siblings"))
               ;; lefts = index, rights = siblings-1-index — and they agree with `can`
-              (expect (= (pos? i) (:left m)))
-              (expect (= (< (inc i) pc) (:right m))))
-            (do (expect (nil? (:index m)))
-              (expect (nil? (:siblings m))))))))))
+              (expect (= (pos? i) (get m "left")))
+              (expect (= (< (inc i) pc) (get m "right"))))
+            (do (expect (nil? (get m "index")))
+              (expect (nil? (get m "siblings"))))))))))
 
 ;; ── 4. the same vocabulary through the sexpr / struct_patch TOOLS ─────────────
 (defn- write-temp! [name content]
@@ -159,18 +159,18 @@
     (let [sexpr @#'editing/sexpr-tool
           path  (write-temp! "apifind.clj"
                   "(ns z)\n(defn target [x] (+ x 1))\n(defn other [] 9)\n")
-          r     (:result (sexpr path {:nav [{:find "defn other"}]}))]
-      (expect (str/includes? (:text r) "defn other"))
+          r     (:result (sexpr path {"nav" [{"find" "defn other"}]}))]
+      (expect (str/includes? (get r "text") "defn other"))
       ;; the `can` map now carries next/prev + index/siblings
-      (expect (contains? (:can r) :next))
-      (expect (contains? (:can r) :siblings))))
+      (expect (contains? (get r "can") "next"))
+      (expect (contains? (get r "can") "siblings"))))
 
   (it "struct_patch edits the node reached by at + nav (find then replace)"
     (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apiedit.clj"
                  "(ns z)\n(defn target [x] (+ x 1))\n(defn other [] 9)\n")
-          ed   (struct-patch :path path :at [] :nav [{:find "defn target"}]
-                 :op "replace" :code "(defn target [x] (* x 5))")]
+          ed   (struct-patch "path" path "at" [] "nav" [{"find" "defn target"}]
+                 "op" "replace" "code" "(defn target [x] (* x 5))")]
       (expect (:success? ed))
       (expect (str/includes? (slurp (fs/file path)) "(* x 5)"))
       (expect (not (str/includes? (slurp (fs/file path)) "(+ x 1)")))))
@@ -178,15 +178,15 @@
   (it "struct_patch append_child via a path adds a child node through the tool"
     (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apiappend.clj" "(ns z)\n(defn g [a b] (+ a b))\n")
-          ed   (struct-patch :path path :at [1 3] :op "append_child" :code " c")]
+          ed   (struct-patch "path" path "at" [1 3] "op" "append_child" "code" " c")]
       (expect (:success? ed))
       (expect (str/includes? (slurp (fs/file path)) "(+ a b c)"))))
 
   (it "a struct_patch nav that can't resolve fails with a nav error (no write)"
     (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apibad.clj" "(ns z)\n(defn g [] 1)\n")]
-      (expect (try (struct-patch :path path :at [] :nav [{:find "nope_xyz"}]
-                     :op "replace" :code "X")
+      (expect (try (struct-patch "path" path "at" [] "nav" [{"find" "nope_xyz"}]
+                     "op" "replace" "code" "X")
                 false (catch clojure.lang.ExceptionInfo _ true)))
       ;; file untouched
       (expect (str/includes? (slurp (fs/file path)) "(defn g [] 1)")))))
@@ -199,7 +199,7 @@
 
 (defdescribe deep-nesting-test
   (it "find reaches a node buried deep in nested maps/vectors; edit changes ONLY it"
-    (let [r (z/navigate "clojure" deep-src [] [{:find "(* base 2)"}])
+    (let [r (z/navigate "clojure" deep-src [] [{"find" "(* base 2)"}])
           p (:path r)]
       (expect (:ok? r))
       (expect (= "(* base 2)" (:text (z/inspect "clojure" deep-src p))))
@@ -215,7 +215,7 @@
         (expect (not (:has-error? (z/inspect "clojure" (:new-source e) [])))))))
 
   (it "the cursor descends arbitrarily deep by stepping, matching the find path"
-    (let [byfind (:path (z/navigate "clojure" deep-src [] [{:find "(* base 2)"}]))
+    (let [byfind (:path (z/navigate "clojure" deep-src [] [{"find" "(* base 2)"}]))
           ;; independently re-derive the path by descending child-by-child,
           ;; always following the child whose text still contains the target
           stepwise (loop [p []]

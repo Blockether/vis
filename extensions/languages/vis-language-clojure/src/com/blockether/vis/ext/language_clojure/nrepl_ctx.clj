@@ -6,11 +6,11 @@
    into context as standing knowledge, nested UNDER the active language so a
    polyglot repo accumulates `:languages {:clojure {...} :typescript {...}}`:
 
-     :session/env {:languages {:clojure {:nrepl {:default <int|nil>
-                                                 :ports [{:port :source :via
-                                                          :status :managed
-                                                          [:dialect :cwd :versions]
-                                                          [:tool :pid :aliases]} ...]}}}}
+     {\"session_env\" {\"languages\" {\"clojure\" {\"nrepl\" {\"default\" <int|nil>
+                                                 \"ports\" [{\"port\" \"source\" \"via\"
+                                                          \"status\" \"managed\"
+                                                          [\"dialect\" \"cwd\" \"versions\"]
+                                                          [\"tool\" \"pid\" \"aliases\"]} ...]}}}}}
 
    `:via` is the SOURCE/scope of the port (not the build tool we can't know for
    an external REPL): `:project` (a `.nrepl-port` in the project tree),
@@ -99,25 +99,30 @@
    `:cwd`, and `:managed` (did vis start it). Managed ports also carry the
    handle to act on them: `:tool`, `:pid`, `:aliases`."
   [hits statuses managed]
-  {:default (some-> hits first :port)
-   :ports   (mapv (fn [{:keys [port source]}]
-                    (let [st  (get statuses port {:status :unknown})
-                          via (via-of source)
-                          m   (get managed port)
-                          cwd (or (:cwd st)
-                                (when (= :project via) (source-dir source)))]
-                      (cond-> {:port    port
-                               :source  source
-                               :via     via
-                               :status  (:status st)
-                               :managed (boolean m)}
-                        (seq (:versions st)) (assoc :versions (:versions st))
-                        (:dialect st)        (assoc :dialect (:dialect st))
-                        cwd                  (assoc :cwd cwd)
-                        (:tool m)            (assoc :tool (:tool m))
-                        (:pid m)             (assoc :pid (:pid m))
-                        (seq (:aliases m))   (assoc :aliases (:aliases m)))))
-              hits)})
+  ;; This block crosses the strings-only Clojure->Python boundary (as
+  ;; session["env"]["languages"]["clojure"]["nrepl"]), so it is built with STRING
+  ;; keys + STRING enum values. Its SOURCES (`statuses` from probe!, `managed`
+  ;; from managed-ports, `hits` from discover-all) stay idiomatic keyword maps —
+  ;; internal — and are stringified here at the crossing seam.
+  {"default" (some-> hits first :port)
+   "ports"   (mapv (fn [{:keys [port source]}]
+                     (let [st  (get statuses port {:status :unknown})
+                           via (via-of source)
+                           m   (get managed port)
+                           cwd (or (:cwd st)
+                                 (when (= :project via) (source-dir source)))]
+                       (cond-> {"port"    port
+                                "source"  source
+                                "via"     (name via)
+                                "status"  (name (:status st))
+                                "managed" (boolean m)}
+                         (seq (:versions st)) (assoc "versions" (update-keys (:versions st) name))
+                         (:dialect st)        (assoc "dialect" (name (:dialect st)))
+                         cwd                  (assoc "cwd" cwd)
+                         (:tool m)            (assoc "tool" (name (:tool m)))
+                         (:pid m)             (assoc "pid" (:pid m))
+                         (seq (:aliases m))   (assoc "aliases" (mapv name (:aliases m))))))
+               hits)})
 
 (defn- under-root?
   "True when `dir` is the workspace `root` or nested beneath it. Keeps one
@@ -208,8 +213,10 @@
                :label  (str "nREPL " (.getName (io/file dir))
                          (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
                :status :up
-               :detail (cond-> {:dir dir :port port}
-                         (seq aliases) (assoc :aliases (vec aliases)))
+               ;; STRING-keyed `:detail` — resources.clj/->data passes it through
+               ;; verbatim, so it must be boundary-safe already.
+               :detail (cond-> {"dir" dir "port" port}
+                         (seq aliases) (assoc "aliases" (mapv name aliases)))
                :pid    (:pid mgd)
                :owner  :ext/language-clojure}
               {:stop-fn    (fn [] (repl-manager/stop! dir))
@@ -225,7 +232,7 @@
                :language :clojure
                :label  (str "nREPL " (.getName (io/file dir)) " (external)")
                :status :up
-               :detail {:dir dir :port port :external true}
+               :detail {"dir" dir "port" port "external" true}
                :pid    pid
                :owner  :ext/language-clojure}
               {:stop-fn (fn [] (shutdown-repl! port))})))))))
@@ -246,10 +253,12 @@
             "Failed to mirror nREPL port into the session resource registry"))))))
 
 (defn contribute
-  "`:ext/ctx-fn` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`
-   slice (and MIRRORS every live nREPL into the session resource registry so the
-   TUI footer / F4 dialog show externally-started REPLs too), or `{}` when no
-   workspace root is on env. Never throws — degrades to an empty contribution."
+  "`:ext/ctx-fn` fn. Returns the `{\"session_env\" {\"languages\" {\"clojure\"
+   {\"nrepl\" ...}}}}` slice (STRING-keyed — the contribution contract key is
+   \"session_env\", and the env tree crosses the strings-only boundary), and
+   MIRRORS every live nREPL into the session resource registry so the TUI footer
+   / F4 dialog show externally-started REPLs too, or `{}` when no workspace root
+   is on env. Never throws — degrades to an empty contribution."
   [env]
   (try
     (if-let [root (:workspace/root env)]
@@ -261,7 +270,13 @@
         ;; Register the live REPLs as session resources → footer badge + F4 dialog,
         ;; so a REPL the user (or another session) started shows in the footer here.
         (sync-session-resources! (:session-id env) hits statuses managed)
-        {:session/env {:languages {:clojure {:nrepl (nrepl-block hits statuses managed)}}}})
+        ;; The contribution is STRING-keyed all the way from the top:
+        ;; ctx_loop/enrich-ctx + env_digest/extension-contributions now read the
+        ;; top-level key as "session_env" (a keyword :session/env is silently
+        ;; dropped). Its value is the env tree that crosses via ->py, so
+        ;; "languages"/"clojure"/"nrepl" are strings too — matching the
+        ;; string-keyed env tree the core workspace-ctx already landed.
+        {"session_env" {"languages" {"clojure" {"nrepl" (nrepl-block hits statuses managed)}}}})
       {})
     (catch Throwable e
       (tel/log! {:level :warn :id ::contribute-failed :data {:error (ex-message e)}}

@@ -128,7 +128,7 @@ vis.extension(
         (let [bump (symbol-fn (registered "counter") 'bump)
               result (bump 5)]
           (expect (extension/envelope-success? result))
-          (expect (= 5 (get-in result [:result :count])))))))
+          (expect (= 5 (get-in result [:result "count"])))))))
 
   (it "a raised Python exception = failure envelope with the Python message"
     (with-loaded {"counter.py" counter-py}
@@ -147,11 +147,11 @@ vis.extension(
     (with-loaded {"counter.py" counter-py}
       (fn [_ {:keys [ext-dir]}]
         (let [bump (symbol-fn (registered "counter") 'bump)]
-          (expect (= 7 (get-in (bump 7) [:result :count])))
+          (expect (= 7 (get-in (bump 7) [:result "count"])))
           ;; full teardown + fresh contexts
           (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
           (let [read (symbol-fn (registered "counter") 'read)]
-            (expect (= 7 (get-in (read) [:result :count])))))))))
+            (expect (= 7 (get-in (read) [:result "count"])))))))))
 
 ;; =============================================================================
 ;; Prompt + slash
@@ -174,7 +174,8 @@ vis.extension(
           (expect (= "count" (:slash/name spec)))
           (expect (= :ok (:slash/status res)))
           (expect (str/includes? (:slash/title res) "count is"))
-          (expect (= ["a" "b"] (get-in res [:slash/data :args]))))))))
+          ;; :slash/data holds the Python-crossed dict — STRING keys
+          (expect (= ["a" "b"] (get-in res [:slash/data "args"]))))))))
 
 ;; =============================================================================
 ;; Dynamic prompt + activation callables
