@@ -1971,3 +1971,33 @@
       (expect (not= (fp {:error "a"}) (fp {:error "b"}))))
     (it "nil :error is fine"
       (expect (vector? (fp {:error nil}))))))
+
+(defdescribe message-detail-expansions-key-test
+  ;; The height/estimate/projection caches key a message to ONLY its own
+  ;; disclosure state. User bubbles have no disclosures, so their key must be
+  ;; CONSTANT — otherwise (no turn token) every session expansion leaks into
+  ;; the key and one fold click busts every user bubble's cached height.
+  (let [sid "s1"
+        expansions {["s1" "iteration:tabc12345:i1:result"] true}]
+    (it "user message key is constant regardless of expansions"
+      (expect (= (render/message-detail-expansions-key sid {:role :user :text "hi"} {})
+                (render/message-detail-expansions-key sid {:role :user :text "hi"} expansions))))
+    (it "user message key ignores expand-all"
+      (expect (= []
+                (render/message-detail-expansions-key sid {:role :user :text "hi"}
+                  {:vis.channel-tui/expand-all-details? true}))))
+    (it "assistant message with matching turn token picks up its expansions"
+      (expect (= [["iteration:tabc12345:i1:result" true]]
+                (render/message-detail-expansions-key sid
+                  {:role :assistant :session-turn-id "abc12345-0000-0000"}
+                  expansions))))
+    (it "assistant message of ANOTHER turn is not affected"
+      (expect (= []
+                (render/message-detail-expansions-key sid
+                  {:role :assistant :session-turn-id "def456-0000-0000"}
+                  expansions))))
+    (it "expand-all still keys assistant messages"
+      (expect (= :expand-all
+                (render/message-detail-expansions-key sid
+                  {:role :assistant :session-turn-id "abc12345-0000-0000"}
+                  {:vis.channel-tui/expand-all-details? true}))))))
