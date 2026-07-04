@@ -146,6 +146,16 @@ border-radius:var(--r-md,6px);cursor:pointer;transition:color .12s,border-color 
 .prose-collapsed{position:relative;max-height:360px;overflow:hidden}
 .prose-collapsed::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3.2rem;
 pointer-events:none;background:linear-gradient(to bottom,transparent,var(--bg))}
+/* ── collapsed paste chip (vis-paste fence): mirrors the TUI's ▸ [Pasted #N] disclosure */
+.paste-fold{margin:.4rem 0}
+.paste-fold-summary{display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;line-height:1.4;color:var(--dim);
+  background:color-mix(in srgb,var(--fg) 5%,transparent);border:1px solid var(--line);
+  border-radius:var(--r-md,6px);padding:.22rem .6rem;cursor:pointer;
+  transition:color .12s,border-color .12s}
+.paste-fold-summary:hover{color:var(--fg);border-color:color-mix(in srgb,var(--fg) 30%,var(--line))}
+.paste-fold .paste-chevron{color:var(--gold2);font-size:.7rem;width:.7rem;text-align:center}
+.paste-fold-body{margin:.35rem 0 0}
 /* ── .md: ONE complete markdown typography system. Styles BOTH the
    server-side IR fallback and marked's client-rendered output, in
    bubbles AND Context-rail fact contents. Headings stay close to body
