@@ -20,9 +20,9 @@
                                         (reset! seen arg)
                                         {:success? true
                                          :result {:op :fake-format
-                                                  :text (:code arg)}})}])
-          r    (language-surface/format-code env {:code "(+ 1 2)"})]
-      (expect (= {:code "(+ 1 2)"} @seen))
+                                                  :text (get arg "code")}})}])
+          r    (language-surface/format-code env {"code" "(+ 1 2)"})]
+      (expect (= {"code" "(+ 1 2)"} @seen))
       (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
 
   (it "uses an explicit language to disambiguate handlers"
@@ -32,18 +32,18 @@
                          {:language :python
                           :test-fn (fn [_ arg]
                                      {:success? true :result {:language :python :arg arg}})}])]
-      (expect (= {:language :python :arg {:language "python" :ns "x"}}
-                (:result (language-surface/run-tests env {:language "python" :ns "x"}))))))
+      (expect (= {:language :python :arg {"language" "python" "ns" "x"}}
+                (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))))))
 
   (it "passes clj_repl-shaped repl_start op and opts to language handlers"
     (let [env (fake-env [{:language :clojure
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]
-      (expect (= {:op "restart" :opts {:dir "ext" :aliases ["dev"]}}
-                (:result (language-surface/start-repl env "restart" {:dir "ext" :aliases ["dev"]}))))
-      (expect (= {:op :start :opts {:aliases ["dev"]}}
-                (:result (language-surface/start-repl env {:aliases ["dev"]}))))
-      (expect (= {:op :start :opts {}}
+      (expect (= {:op "restart" :opts {"dir" "ext" "aliases" ["dev"]}}
+                (:result (language-surface/start-repl env "restart" {"dir" "ext" "aliases" ["dev"]}))))
+      (expect (= {:op "start" :opts {"aliases" ["dev"]}}
+                (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
+      (expect (= {:op "start" :opts {}}
                 (:result (language-surface/start-repl env))))))
 
   (it "accepts language-first calls for repl eval"
@@ -60,10 +60,10 @@
     (let [env (fake-env [{:language :clojure
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]
-      (expect (= {:op "restart" :opts {:id "main" :dir "ext"}}
-                (:result (language-surface/start-repl env "clojure" "main" "restart" {:dir "ext"}))))
-      (expect (= {:op :start :opts {:id "main" :aliases ["dev"]}}
-                (:result (language-surface/start-repl env "clojure" {:id "main" :aliases ["dev"]}))))))
+      (expect (= {:op "restart" :opts {"id" "main" "dir" "ext"}}
+                (:result (language-surface/start-repl env "clojure" "main" "restart" {"dir" "ext"}))))
+      (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
+                (:result (language-surface/start-repl env "clojure" {"id" "main" "aliases" ["dev"]}))))))
 
   (it "reports and stops repl resources through the resource model"
     (let [stopped? (atom false)
@@ -77,9 +77,9 @@
            :label "main"}
           {:stop-fn (fn [] (reset! stopped? true))})
         (expect (= ["main-repl"]
-                  (mapv :id (get-in (language-surface/repl-status env "clojure") [:result :resources]))))
-        (expect (= :stopped
-                  (get-in (language-surface/repl-stop env "main-repl") [:result :result])))
+                  (mapv #(get % "id") (get-in (language-surface/repl-status env "clojure") [:result "resources"]))))
+        (expect (= "stopped"
+                  (get-in (language-surface/repl-stop env "main-repl") [:result "result"])))
         (expect (true? @stopped?))
         (expect (empty? (resources/list-resources sid)))
         (finally
@@ -91,7 +91,7 @@
                                           {:success? true :result :ok})}])]
       (expect (= :language-surface/no-language-handler
                 (try
-                  (language-surface/repl-eval env {:language "python" :code "1"})
+                  (language-surface/repl-eval env {"language" "python" "code" "1"})
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (-> e ex-data :type))))))))
@@ -112,21 +112,21 @@
 (defdescribe render-test-result-test
   (let [render #'language-surface/render-test-result]
     (it "passes render has NO success glyph, a pass/total headline with the run time, and no body"
-      (let [{:keys [summary body]} (render {:ns "foo-test" :pass 69 :total 69 :fail 0 :ms 123})]
+      (let [{:keys [summary body]} (render {"ns" "foo-test" "pass" 69 "total" 69 "fail" 0 "ms" 123})]
         (expect (= "foo-test — 69/69 passed (123ms)" summary))
         (expect (nil? body))))
     (it "marks a failing run ✗ and surfaces the output"
-      (let [{:keys [summary body]} (render {:ns "foo-test" :pass 60 :total 69 :fail 9 :output "9 failures"})]
+      (let [{:keys [summary body]} (render {"ns" "foo-test" "pass" 60 "total" 69 "fail" 9 "output" "9 failures"})]
         (expect (str/starts-with? summary "✗"))
         (expect (str/includes? summary "9 failed"))
         (expect (str/includes? body "9 failures"))))
     (it "surfaces the error text when the run could not produce a result"
-      (let [{:keys [summary body]} (render {:error "could not parse test result"})]
+      (let [{:keys [summary body]} (render {"error" "could not parse test result"})]
         (expect (str/starts-with? summary "✗"))
         (expect (str/includes? summary "error"))
         (expect (str/includes? body "could not parse test result"))))
     (it "NEVER renders a blank card — even a degenerate empty result surfaces something"
-      (doseq [r [{} {:ns nil :output ""} {:mode "repl" :port 7888}]]
+      (doseq [r [{} {"ns" nil "output" ""} {"mode" "repl" "port" 7888}]]
         (let [{:keys [summary body]} (render r)]
           (expect (str/starts-with? summary "✗"))
           (expect (seq body)))))))

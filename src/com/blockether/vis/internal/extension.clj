@@ -1392,24 +1392,26 @@
           n (name op)
           n (str/replace n #"!$" "")]
       (if ns-part (keyword ns-part n) (keyword n)))))
-(defn- stamp-public-result-op
-  "Public Python value is the envelope's `:result`, not the envelope. If the
-   payload is a map, stamp the canonical tool op so extension implementations
-   do not hand-maintain it. Tool-specific operation details must use a
-   different key (`:edit-op`, `:action`, etc.)."
-  [result]
-  (if (and (tool-result? result) (:success? result) (:symbol result) (map? (:result result)))
-    (update result :result assoc :op (public-op-keyword (:symbol result)))
-    result))
-
 (defn- op-kw->str
-  "The string a tool op-keyword takes on the Python boundary (mirrors
-   env_python/kw->snake): namespace folded with `_`, kebab→snake, trailing `?`/`!`
-   stripped. The SAME transform the result's `:op` value undergoes, so a render
-   lookup keyed by it matches (`cat`→\"cat\", `exists?`→\"exists\")."
+  "The STRING a tool op-keyword takes on the Python boundary: namespace folded
+   with `_`, kebab→snake, trailing `?`/`!` stripped (`cat`→\"cat\",
+   `exists?`→\"exists\", `:git/push!`→\"git_push\"). The boundary is
+   strings-only, so this is applied AT THE STAMP — no keyword ever rides a
+   result map."
   [op-kw]
   (let [s (if (namespace op-kw) (str (namespace op-kw) "_" (name op-kw)) (name op-kw))]
     (-> s (str/replace "-" "_") (str/replace #"[?!]$" ""))))
+
+(defn- stamp-public-result-op
+  "Public Python value is the envelope's `:result`, not the envelope. If the
+   payload is a map, stamp the canonical tool op — as the STRING key `\"op\"`
+   with a STRING value (strings-only boundary) — so extension implementations
+   do not hand-maintain it. Tool-specific operation details must use a
+   different key (`\"edit_op\"`, `\"action\"`, etc.)."
+  [result]
+  (if (and (tool-result? result) (:success? result) (:symbol result) (map? (:result result)))
+    (update result :result assoc "op" (op-kw->str (public-op-keyword (:symbol result))))
+    result))
 
 (defn native-tool-renderers-by-op
   "Map op-STRING (the value `stamp-public-result-op` writes into a result's `:op`,
@@ -1518,6 +1520,11 @@
   "Return merged structured `ctx` contributions for active extensions.
 
    Each active extension may declare `:ext/ctx-fn` as `(fn [env] -> map)`.
+   The contribution CONTRACT is STRING-KEYED: top-level keys are the
+   folded `session_*` strings (`\"session_env\"`, `\"session_workspace\"`, ...)
+   and values are string-keyed all the way down — the merged map crosses the
+   Python boundary as the model's `session` dict, which throws on any keyword
+   key/value. This fn only aggregates (deep-merge); producers own the keys.
    Exceptions and non-map returns are logged and ignored so bad optional
    context never blocks a turn."
   [environment active-extensions]

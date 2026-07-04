@@ -25,14 +25,14 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-ctx
-  {:session/id        "s1"
-   :session/workspace {:workspace/root "/repo" :workspace/sandbox? false :vcs/kind :git}
-   :session/env       {:host {:os "macos"} :project {:kind "single"}}
-   :session/routing   {:model "gpt-5.5"}})
+  {"session_id"        "s1"
+   "session_workspace" {"root" "/repo" "sandbox" false "vcs_kind" "git"}
+   "session_env"       {"host" {"os" "macos"} "project" {"kind" "single"}}
+   "session_routing"   {"model" "gpt-5.5"}})
 
 ;; A realistic cross-turn state change: the user added a filesystem root.
 (def ^:private changed-ctx
-  (assoc-in base-ctx [:session/workspace :workspace/filesystem-roots] [{:dir "/repo/src"}]))
+  (assoc-in base-ctx ["session_workspace" "filesystem_roots"] [{"dir" "/repo/src"}]))
 
 (defdescribe ctx-cache-stability-test
   ;; --- THE BUG: re-rendering the static block per turn changes the SYSTEM
@@ -65,10 +65,10 @@
    against the baseline CARRIED across turns. Proves the cached system prefix
    stays byte-identical while changes ride as appended deltas."
   ;; A turn-2 ctx that BOTH gained a filesystem root AND measured utilization.
-  ;; `:engine/utilization` is the engine-stamped key `session-view` derives
-  ;; `:session/utilization` from (ctx_engine/session-view) — same as the live loop.
-  (let [util-ctx (assoc changed-ctx :engine/utilization
-                   {:last-request-tokens 1200 :saturation 1})]
+  ;; `"engine_utilization"` is the engine-stamped key `session-view` derives
+  ;; `"session_utilization"` from (ctx_engine/session-view) — same as the live loop.
+  (let [util-ctx (assoc changed-ctx "engine_utilization"
+                   {"last_request_tokens" 1200 "saturation" 1})]
     (it "the standing block is byte-identical across turns even after state changed (cache holds)"
       (let [standing (atom nil)]
         ;; TURN 1 seeds the frozen block + baseline (as iteration-loop does once)
@@ -91,8 +91,8 @@
         (expect (every? #(str/starts-with? % "session[") (str/split-lines delta)))))
 
     (it "ctx-delta-map carries utilization but ctx-static-map (the frozen block) does NOT"
-      (expect (contains? (cr/ctx-delta-map {:ctx util-ctx}) :utilization))
-      (expect (not (contains? (cr/ctx-static-map {:ctx util-ctx}) :utilization))))))
+      (expect (contains? (cr/ctx-delta-map {:ctx util-ctx}) "utilization"))
+      (expect (not (contains? (cr/ctx-static-map {:ctx util-ctx}) "utilization"))))))
 
 (defdescribe cache-breakpoints-test
   "The two prompt-cache breakpoints: the last `:role \"system\"` message (the

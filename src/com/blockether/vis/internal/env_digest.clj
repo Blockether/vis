@@ -1,15 +1,17 @@
 (ns com.blockether.vis.internal.env-digest
-  "Slim `:session/env` digest. Internal, not extension-owned.
+  "Slim `\"session_env\"` digest. Internal, not extension-owned. STRING-KEYED —
+   crosses the Python boundary as `session[\"env\"]`, so keys AND enum values
+   (os/shell/kind/primary_language) are strings, never keywords.
 
    Produces a bounded map the model reads each iter:
 
-     {:host       {:os :shell :clock}   ; cwd lives in :session/workspace :workspace/root
-      :project    {:kind :primary-language? :extension-count? :agents-md?}
-      :extensions {:active-count :aliases}}
+     {\"host\"       {\"os\" \"shell\" \"clock\"}   ; cwd lives in session[\"workspace\"][\"root\"]
+      \"project\"    {\"kind\" \"primary_language\"}
+      \"extensions\" {\"active_count\" \"aliases\"}}
 
    Each slice is small (~50 bytes), so the section costs <200 bytes/turn.
    Extensions deep-merge their own slices via `:ext/ctx-fn` returning
-   `{:session/env {their-key {…}}}`; the merge happens in
+   `{\"session_env\" {their-key {…}}}`; the merge happens in
    `ctx-loop/render-block!` so internal owns the base section, extensions
    layer on top.
 
@@ -74,11 +76,11 @@
     (let [os    (normalize-os (System/getProperty "os.name"))
           shell (normalize-shell (System/getenv "SHELL"))
           clock (iso-clock)]
-      ;; No :cwd — it duplicates :session/workspace :workspace/root (both the
+      ;; No "cwd" — it duplicates session["workspace"]["root"] (both the
       ;; active workspace dir). The model reads the cwd from the workspace block.
-      (cond-> {:os os}
-        shell (assoc :shell shell)
-        clock (assoc :clock clock)))
+      (cond-> {"os" (name os)}
+        shell (assoc "shell" (name shell))
+        clock (assoc "clock" clock)))
     (catch Throwable _ nil)))
 
 (def ^:private monorepo-markers
@@ -136,17 +138,19 @@
     (let [cwd     (.getPath (workspace/cwd))
           kind    (project-kind cwd)
           primary (primary-language-guess cwd)]
-      (cond-> {:kind kind}
-        primary (assoc :primary-language primary)))
+      (cond-> {"kind" (name kind)}
+        primary (assoc "primary_language" (name primary))))
     (catch Throwable _ nil)))
 
 (defn- extensions-digest
   [environment]
   (try
     (let [active  (or (prompt/active-extensions environment) [])
-          aliases (into (sorted-set) (keep extension/ext-alias-symbol) active)]
-      {:active-count (count active)
-       :aliases      aliases})
+          ;; ext-alias-symbol yields a Clojure SYMBOL — forbidden as a boundary
+          ;; value; stringify each alias so the set carries plain strings.
+          aliases (into (sorted-set) (comp (keep extension/ext-alias-symbol) (map str)) active)]
+      {"active_count" (count active)
+       "aliases"      aliases})
     (catch Throwable _ nil)))
 
 (defn deep-merge
@@ -168,23 +172,23 @@
         project (project-digest)
         exts    (when environment (extensions-digest environment))]
     (cond-> {}
-      host    (assoc :host host)
-      project (assoc :project project)
-      exts    (assoc :extensions exts))))
+      host    (assoc "host" host)
+      project (assoc "project" project)
+      exts    (assoc "extensions" exts))))
 
 (defn extension-contributions
-  "Collect `:session/env` slices from every active extension's `:ext/ctx-fn`
+  "Collect `\"session_env\"` slices from every active extension's `:ext/ctx-fn`
    fn. Returns a single deep-merged map. Extensions that contribute
-   under other top-level keys (e.g. their own `:session/voice`) are
+   under other top-level keys (e.g. their own `\"session_voice\"`) are
    silently ignored here — those go straight onto ctx through the
    broader `:ext/ctx-fn` merge path."
   [environment active-extensions]
   (let [full (extension/ctx-contributions environment (or active-extensions []))]
-    (or (:session/env full) {})))
+    (or (get full "session_env") {})))
 
 (defn session-env
   "Top-level helper: compose internal base + extension contributions
-   into the final `:session/env` value that the renderer pins into the
+   into the final `\"session_env\"` value that the renderer pins into the
    ctx text."
   [environment active-extensions]
   (deep-merge (base-digest environment)

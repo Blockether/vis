@@ -93,7 +93,7 @@
           (spit-rel root "src/f1.clj" "(ns f1) ;; edited\n")
           (spit-rel root "src/new.clj" "(ns new)\n")
           (let [res (wo/add ".")]
-            (expect (= :git/add (:op res)))
+            (expect (= "git_add" (get res "op")))
             (with-open [g (Git/open root)]
               (let [s (.. g status call)]
                 ;; The single-pass (update=false) bug left the deletion
@@ -110,14 +110,14 @@
       (try
         (init-repo! root 3)
         (with-workspace root
-          (let [res (wo/reset! {:mode :soft :to "HEAD~1"})]
-            (expect (= :git/reset (:op res)))
-            (expect (= :soft  (:mode res)))
-            (expect (= "HEAD~1" (:to res)))
-            (expect (some? (:resolved-sha res)))
-            (expect (= 7 (count (:short-sha res))))
-            (expect (some? (:head-before res)))
-            (expect (= (:resolved-sha res) (:head-after res)))
+          (let [res (wo/reset! {"mode" "soft" "to" "HEAD~1"})]
+            (expect (= "git_reset" (get res "op")))
+            (expect (= "soft"  (get res "mode")))
+            (expect (= "HEAD~1" (get res "to")))
+            (expect (some? (get res "resolved_sha")))
+            (expect (= 7 (count (get res "short_sha"))))
+            (expect (some? (get res "head_before")))
+            (expect (= (get res "resolved_sha") (get res "head_after")))
             ;; Worktree file from the dropped commit must still exist
             ;; (soft = keep index + worktree).
             (expect (.exists (io/file root "src/f2.clj")))))
@@ -129,7 +129,7 @@
         (init-repo! root 1)
         (with-workspace root
           (let [thrown (try
-                         (wo/reset! {:mode :soft :to "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
+                         (wo/reset! {"mode" "soft" "to" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
                          nil
                          (catch clojure.lang.ExceptionInfo e
                            (ex-data e)))]
@@ -141,7 +141,7 @@
       (try
         (init-repo! root 1)
         (with-workspace root
-          (let [thrown (try (wo/reset! {:mode :soft})
+          (let [thrown (try (wo/reset! {"mode" "soft"})
                          nil
                          (catch clojure.lang.ExceptionInfo e
                            (ex-data e)))]
@@ -154,26 +154,26 @@
       (try
         (init-repo! root 2)
         (with-workspace root
-          (let [created (wo/branch! {:op :create :name "feature/x"})
-                listed  (wo/branch! {:op :list :mode :local})]
-            (expect (= :git/branch-create (:op created)))
-            (expect (= "feature/x" (:name created)))
-            (expect (= "HEAD" (:from created)))
-            (expect (some? (:short-sha created)))
-            (let [names (set (map :short (:branches listed)))]
+          (let [created (wo/branch! {"op" "create" "name" "feature/x"})
+                listed  (wo/branch! {"op" "list" "mode" "local"})]
+            (expect (= "git_branch_create" (get created "op")))
+            (expect (= "feature/x" (get created "name")))
+            (expect (= "HEAD" (get created "from")))
+            (expect (some? (get created "short_sha")))
+            (let [names (set (map #(get % "short") (get listed "branches")))]
               (expect (contains? names "feature/x")))))
         (finally (cleanup root)))))
 
-  (it "deletes a branch (force? required when unmerged)"
+  (it "deletes a branch (is_force required when unmerged)"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root 1)
         (with-workspace root
-          (wo/branch! {:op :create :name "throwaway"})
-          (let [del (wo/branch! {:op :delete :name "throwaway" :is_force true})]
-            (expect (= :git/branch-delete (:op del)))
-            (expect (= ["throwaway"] (:deleted del)))
-            (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
+          (wo/branch! {"op" "create" "name" "throwaway"})
+          (let [del (wo/branch! {"op" "delete" "name" "throwaway" "is_force" true})]
+            (expect (= "git_branch_delete" (get del "op")))
+            (expect (= ["throwaway"] (get del "deleted")))
+            (let [names (set (map #(get % "short") (get (wo/branch! {"op" "list"}) "branches")))]
               (expect (not (contains? names "throwaway"))))))
         (finally (cleanup root)))))
 
@@ -182,12 +182,12 @@
       (try
         (init-repo! root 1)
         (with-workspace root
-          (wo/branch! {:op :create :name "old-name"})
-          (let [r (wo/branch! {:op :rename :old "old-name" :new "new-name"})]
-            (expect (= :git/branch-rename (:op r)))
-            (expect (= "old-name" (:old r)))
-            (expect (= "new-name" (:new r)))
-            (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
+          (wo/branch! {"op" "create" "name" "old-name"})
+          (let [r (wo/branch! {"op" "rename" "old" "old-name" "new" "new-name"})]
+            (expect (= "git_branch_rename" (get r "op")))
+            (expect (= "old-name" (get r "old")))
+            (expect (= "new-name" (get r "new")))
+            (let [names (set (map #(get % "short") (get (wo/branch! {"op" "list"}) "branches")))]
               (expect (contains? names "new-name"))
               (expect (not (contains? names "old-name"))))))
         (finally (cleanup root)))))
@@ -197,7 +197,7 @@
       (try
         (init-repo! root 1)
         (with-workspace root
-          (let [thrown (try (wo/branch! {:op :garbage})
+          (let [thrown (try (wo/branch! {"op" "garbage"})
                          nil
                          (catch clojure.lang.ExceptionInfo e
                            (ex-data e)))]
@@ -210,24 +210,24 @@
       (try
         (init-repo! root 2)
         (with-workspace root
-          (wo/branch! {:op :create :name "feature/y"})
-          (let [r (wo/checkout! {:branch "feature/y"})]
-            (expect (= :git/checkout (:op r)))
-            (expect (= "feature/y" (:branch r)))
-            (expect (some? (:head r)))
-            (expect (= 7 (count (:short-head r))))
-            (expect (not (:created? r)))))
+          (wo/branch! {"op" "create" "name" "feature/y"})
+          (let [r (wo/checkout! {"branch" "feature/y"})]
+            (expect (= "git_checkout" (get r "op")))
+            (expect (= "feature/y" (get r "branch")))
+            (expect (some? (get r "head")))
+            (expect (= 7 (count (get r "short_head"))))
+            (expect (not (get r "created")))))
         (finally (cleanup root)))))
 
-  (it "creates and switches in one call when :create? true"
+  (it "creates and switches in one call when is_create true"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root 1)
         (with-workspace root
-          (let [r (wo/checkout! {:branch "feature/z" :is_create true})]
-            (expect (= "feature/z" (:branch r)))
-            (expect (true? (:created? r)))
-            (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
+          (let [r (wo/checkout! {"branch" "feature/z" "is_create" true})]
+            (expect (= "feature/z" (get r "branch")))
+            (expect (true? (get r "created")))
+            (let [names (set (map #(get % "short") (get (wo/branch! {"op" "list"}) "branches")))]
               (expect (contains? names "feature/z")))))
         (finally (cleanup root)))))
 
@@ -251,17 +251,17 @@
         (with-workspace root
           ;; Create a branch off HEAD~1 so we can cherry-pick the
           ;; second commit onto it.
-          (wo/branch! {:op :create :name "side" :from "HEAD~1"})
-          (wo/checkout! {:branch "side"})
-          ;; Resolve trunk HEAD via :list (short-sha of the latest).
-          (let [trunk-sha (->> (wo/branch! {:op :list :mode :local})
-                            :branches
-                            (some (fn [b] (when (= trunk-branch (:short b)) (:sha b)))))
+          (wo/branch! {"op" "create" "name" "side" "from" "HEAD~1"})
+          (wo/checkout! {"branch" "side"})
+          ;; Resolve trunk HEAD via list (short-sha of the latest).
+          (let [trunk-sha (->> (wo/branch! {"op" "list" "mode" "local"})
+                            (#(get % "branches"))
+                            (some (fn [b] (when (= trunk-branch (get b "short")) (get b "sha")))))
                 _         (expect (some? trunk-sha))
-                res       (wo/cherry-pick! {:commits trunk-sha})]
-            (expect (= :git/cherry-pick (:op res)))
-            (expect (= "OK" (:status res)))
-            (expect (seq (:picked res)))
+                res       (wo/cherry-pick! {"commits" trunk-sha})]
+            (expect (= "git_cherry_pick" (get res "op")))
+            (expect (= "OK" (get res "status")))
+            (expect (seq (get res "picked")))
             (expect (.exists (io/file root "src/f1.clj")))))
         (finally (cleanup root))))))
 
@@ -282,33 +282,33 @@
           (-> g .commit (.setMessage "remote commit") .call))
         (with-workspace local
           (let [res      (wo/fetch! {})
-                update   (first (:updates res))
-                tracking (:tracking res)]
-            (expect (= :git/fetch (:op res)))
-            (expect (= "origin" (:remote res)))
-            (expect (= :updated (:status res)))
-            (expect (= "master" (:branch res)))
-            (expect (not (contains? res :messages)))
-            (expect (not (contains? res :remote-messages)))
-            (expect (not (contains? res :uri)))
-            (expect (not (contains? res :peer-user-agent)))
-            (expect (not (contains? res :advertised-ref-count)))
-            (expect (= 1 (get-in res [:summary :updated])))
-            (expect (false? (get-in res [:summary :up-to-date?])))
-            (expect (= 0 (:ahead tracking)))
-            (expect (= 1 (:behind tracking)))
-            (expect (seq (:updates res)))
+                update   (first (get res "updates"))
+                tracking (get res "tracking")]
+            (expect (= "git_fetch" (get res "op")))
+            (expect (= "origin" (get res "remote")))
+            (expect (= "updated" (get res "status")))
+            (expect (= "master" (get res "branch")))
+            (expect (not (contains? res "messages")))
+            (expect (not (contains? res "remote_messages")))
+            (expect (not (contains? res "uri")))
+            (expect (not (contains? res "peer_user_agent")))
+            (expect (not (contains? res "advertised_ref_count")))
+            (expect (= 1 (get-in res ["summary" "updated"])))
+            (expect (false? (get-in res ["summary" "up_to_date"])))
+            (expect (= 0 (get tracking "ahead")))
+            (expect (= 1 (get tracking "behind")))
+            (expect (seq (get res "updates")))
             (expect (map? update))
-            (expect (string? (:ref update)))
-            (expect (keyword? (:kind update)))
-            (expect (string? (:range update)))
-            (expect (string? (:local-name update)))
-            (expect (string? (:remote-name update)))
-            (expect (string? (:result update)))
-            (expect (string? (:old-sha update)))
-            (expect (string? (:new-sha update)))
-            (expect (= 7 (count (:old-short-sha update))))
-            (expect (= 7 (count (:new-short-sha update))))))
+            (expect (string? (get update "ref")))
+            (expect (string? (get update "kind")))
+            (expect (string? (get update "range")))
+            (expect (string? (get update "local_name")))
+            (expect (string? (get update "remote_name")))
+            (expect (string? (get update "result")))
+            (expect (string? (get update "old_sha")))
+            (expect (string? (get update "new_sha")))
+            (expect (= 7 (count (get update "old_short_sha"))))
+            (expect (= 7 (count (get update "new_short_sha"))))))
         (finally
           (cleanup local)
           (cleanup remote))))))
@@ -321,13 +321,13 @@
         (with-workspace root
           ;; Create a feature branch and add one commit; rebase onto
           ;; main (no divergence \u2192 UP_TO_DATE).
-          (wo/branch! {:op :create :name "feature/r"})
-          (wo/checkout! {:branch "feature/r"})
-          (let [r (wo/rebase! {:operation :begin :upstream trunk-branch})]
-            (expect (= :git/rebase (:op r)))
+          (wo/branch! {"op" "create" "name" "feature/r"})
+          (wo/checkout! {"branch" "feature/r"})
+          (let [r (wo/rebase! {"operation" "begin" "upstream" trunk-branch})]
+            (expect (= "git_rebase" (get r "op")))
             ;; Status is JGit's enum name; UP_TO_DATE / FAST_FORWARD /
             ;; OK all count as success.
-            (expect (true? (:successful? r)))))
+            (expect (true? (get r "successful")))))
         (finally (cleanup root)))))
 
   (it "edit-todos-fn observes the todo list and survives a no-op edit"
@@ -338,13 +338,16 @@
           ;; Branch off HEAD~2, add a commit, rebase onto current main
           ;; with an :edit-todos-fn that just records what it sees.
           (let [seen (atom nil)]
-            (wo/branch! {:op :create :name "feature/todo" :from "HEAD~2"})
-            (wo/checkout! {:branch "feature/todo"})
+            (wo/branch! {"op" "create" "name" "feature/todo" "from" "HEAD~2"})
+            (wo/checkout! {"branch" "feature/todo"})
             (spit-rel root "extra.txt" "hello")
             (with-open [g (Git/open root)]
               (-> g .add (.addFilepattern "extra.txt") .call)
               (-> g .commit (.setMessage "feature commit") .call))
-            (wo/rebase! {:operation :begin :upstream trunk-branch
+            ;; :edit-todos-fn is an INTERNAL Clojure callback (keyword key \u2014
+            ;; the model can never supply it); the todo maps it sees stay
+            ;; idiomatic keyword Clojure (they never cross the boundary).
+            (wo/rebase! {"operation" "begin" "upstream" trunk-branch
                          :edit-todos-fn (fn [todos]
                                           (clojure.core/reset! seen todos)
                                           todos)})
@@ -368,8 +371,8 @@
    UNCOMMITTED_CHANGES. Returns the dirty file's rel path + content."
   [^java.io.File root]
   ;; trunk = f0,f1 ; feature branches off f0 and adds a commit → diverged.
-  (wo/branch! {:op :create :name "feature/as" :from "HEAD~1"})
-  (wo/checkout! {:branch "feature/as"})
+  (wo/branch! {"op" "create" "name" "feature/as" "from" "HEAD~1"})
+  (wo/checkout! {"branch" "feature/as"})
   (spit-rel root "feature.txt" "feature work")
   (with-open [g (Git/open root)]
     (-> g .add (.addFilepattern "feature.txt") .call)
@@ -386,45 +389,45 @@
         (init-repo! root 2)
         (with-workspace root
           (diverge-and-dirty! root)
-          (let [r (wo/rebase! {:operation :begin :upstream trunk-branch})]
-            (expect (= "UNCOMMITTED_CHANGES" (:status r)))
-            (expect (false? (:successful? r)))
+          (let [r (wo/rebase! {"operation" "begin" "upstream" trunk-branch})]
+            (expect (= "UNCOMMITTED_CHANGES" (get r "status")))
+            (expect (false? (get r "successful")))
             ;; The exact dirty paths ride along — no separate git/status needed.
-            (expect (seq (:uncommitted-changes r)))
-            (expect (some #(str/includes? % "f0.clj") (:uncommitted-changes r)))
+            (expect (seq (get r "uncommitted_changes")))
+            (expect (some #(str/includes? % "f0.clj") (get r "uncommitted_changes")))
             ;; The hint points at the fix the model otherwise has to invent.
-            (expect (string? (:hint r)))
-            (expect (str/includes? (:hint r) "is_autostash"))))
+            (expect (string? (get r "hint")))
+            (expect (str/includes? (get r "hint") "is_autostash"))))
         (finally (cleanup root)))))
 
-  (it ":autostash? true stashes, rebases, and restores the dirty file"
+  (it "is_autostash true stashes, rebases, and restores the dirty file"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root 2)
         (with-workspace root
           (let [{:keys [rel content]} (diverge-and-dirty! root)
-                r (wo/rebase! {:operation :begin :upstream trunk-branch
-                               :is_autostash true})]
-            (expect (true? (:successful? r)))
-            (expect (true? (:autostash-applied? r)))
+                r (wo/rebase! {"operation" "begin" "upstream" trunk-branch
+                               "is_autostash" true})]
+            (expect (true? (get r "successful")))
+            (expect (true? (get r "autostash_applied")))
             ;; Rebase actually moved (feature.txt from trunk now present)…
             (expect (.exists (io/file root "src/f1.clj")))
             ;; …and the parked uncommitted change is back on disk untouched.
             (expect (= content (slurp (io/file root rel))))))
         (finally (cleanup root)))))
 
-  (it ":autostash? is a no-op gate on a clean tree"
+  (it "is_autostash is a no-op gate on a clean tree"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root 1)
         (with-workspace root
-          (wo/branch! {:op :create :name "feature/clean"})
-          (wo/checkout! {:branch "feature/clean"})
-          (let [r (wo/rebase! {:operation :begin :upstream trunk-branch
-                               :is_autostash true})]
-            (expect (true? (:successful? r)))
+          (wo/branch! {"op" "create" "name" "feature/clean"})
+          (wo/checkout! {"branch" "feature/clean"})
+          (let [r (wo/rebase! {"operation" "begin" "upstream" trunk-branch
+                               "is_autostash" true})]
+            (expect (true? (get r "successful")))
             ;; Nothing was stashed, so no restore flag is set.
-            (expect (nil? (:autostash-applied? r)))))
+            (expect (nil? (get r "autostash_applied")))))
         (finally (cleanup root))))))
 
 ;; ----------------------------------------------------------------------------

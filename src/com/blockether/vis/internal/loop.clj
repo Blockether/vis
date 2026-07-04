@@ -636,19 +636,10 @@
 (defn- sentinel-get
   "Read a `__vis_*` sentinel key from a batch slot. The per-call sentinels are
    built in `par-isolated-fn` as Clojure maps `{\"__vis_ok__\" true \"__vis_val__\" …}`
-   that, once they round-trip through GraalPy and back via `execute-code`'s
-   `:result`, land as a string-keyed map (flatland OrderedMap, `__vis_ok__` is a
-   STRING key — NOT the keyword `:__vis_ok__`). Looking them up with the keyword
-   silently returned nil, which made EVERY successful slot read as a failure
-   (`{:message \"observation failed\"}`) and broke every >=2-observation iteration
-   (cat/rg/ls … all route to this batch). `contains?` (not truthiness) so a
-   `false` `__vis_ok__` failure slot still resolves correctly."
+   and the boundary is STRINGS-ONLY, so a round-tripped slot is always a
+   string-keyed map — one plain string lookup, no keyword fallback."
   [slot k]
-  (let [s (name k)]
-    (cond
-      (contains? slot k) (get slot k)
-      (contains? slot s) (get slot s)
-      :else nil)))
+  (get slot (name k)))
 
 (defn- execute-observation-batch
   "Run an all-observation iteration's calls CONCURRENTLY via one `execute-code`
@@ -1202,10 +1193,12 @@
   [forms summaries]
   (let [universe (distinct (keep #(iter-of-scope (:scope %)) forms))
         sums     (supersede-summaries (expand-through (or summaries []) universe))
-        drop-of  (into {} (mapcat (fn [s] (when (:drop? s)
-                                            (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))
-        gist-of  (into {} (mapcat (fn [s] (when (and (not (:drop? s)) (:gist s))
-                                            (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))]
+        ;; Summary intents are STRING-KEYED ({"scopes" "gist" "drop" "through"})
+        ;; — they persist inside the ctx nippy blob, and the DB is strings-only.
+        drop-of  (into {} (mapcat (fn [s] (when (get s "drop")
+                                            (map (fn [sc] [sc (get s "gist")]) (get s "scopes")))) sums))
+        gist-of  (into {} (mapcat (fn [s] (when (and (not (get s "drop")) (get s "gist"))
+                                            (map (fn [sc] [sc (get s "gist")]) (get s "scopes")))) sums))]
     (first
       (reduce
         (fn [[acc seen] f]
@@ -1242,7 +1235,7 @@
             ;; (persisted on the ctx blob) reshape the scope index UNIFORMLY via
             ;; `prior-turn-scope-index`, so a prior turn renders the same here as
             ;; it did live — dropped scopes vanish, folded scopes carry their gist.
-            summaries  (some-> (:ctx-atom environment) deref :session/summaries)
+            summaries  (some-> (:ctx-atom environment) deref (get "session_summaries"))
             ;; Include every prior turn the model must reconstruct to continue:
             ;; ANSWERED turns (Q/A carry) AND INTERRUPTED ones — a turn the
             ;; process was killed mid-flight (e.g. a gateway restart) still
@@ -1326,7 +1319,7 @@
       nil)))
 
 (defn- stamp-utilization!
-  "Monotonic update of `:engine/utilization` on the ctx-atom. UPGRADES when a
+  "Monotonic update of `\"engine_utilization\"` on the ctx-atom. UPGRADES when a
    real measurement (`util`) exists; NEVER removes an existing value. A
    transient nil — iter-1 seed miss, or an errored iteration that returned no
    usage — must not BLANK an already-shown utilization; that flicker is the
@@ -1336,7 +1329,7 @@
    nothing was ever stamped."
   [ctx-atom util]
   (when (and ctx-atom util)
-    (swap! ctx-atom assoc :engine/utilization util)))
+    (swap! ctx-atom assoc "engine_utilization" util)))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -1759,12 +1752,12 @@
    forms), so the SAME intent expands consistently wherever summaries are read."
   [summaries universe]
   (mapv (fn [s]
-          (if-let [thr (:through s)]
+          (if-let [thr (get s "through")]
             (let [tk (scope-key thr)]
               (-> s
-                (dissoc :through)
-                (assoc :scopes
-                  (into (set (:scopes s))
+                (dissoc "through")
+                (assoc "scopes"
+                  (into (set (get s "scopes"))
                     (filter (fn [u]
                               (when-let [uk (scope-key u)]
                                 (and tk (<= (compare uk tk) 0))))
@@ -1784,12 +1777,12 @@
   (let [v (vec summaries)
         n (count v)
         covered? (fn [i]
-                   (let [si (set (:scopes (nth v i)))]
+                   (let [si (set (get (nth v i) "scopes"))]
                      (and (seq si)
                        (boolean
                          (some (fn [j]
                                  (when (not= i j)
-                                   (let [sj (set (:scopes (nth v j)))]
+                                   (let [sj (set (get (nth v j) "scopes"))]
                                      (and (every? sj si)              ; si ⊆ sj
                                        (or (not (every? si sj))       ; proper subset → superset wins
                                          (< i j))))))                 ; equal → later wins
@@ -1805,12 +1798,13 @@
 
    First positional arg selects the target: a list/string of explicit scopes, or
    a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
-   `->clj` keywordizes the key, so `:through` is the accessor). Intents:
-     fold → {:scopes #{…}|:through \"tN/iN\", :gist <takeaway>}
-     drop → {…, :drop? true, :gist <why-dropped>}   ; reason kept so the
+   `->clj` keeps dict keys as VERBATIM STRINGS, so `\"through\"` is the accessor).
+   Intents are STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
+     fold → {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>}
+     drop → {…, \"drop\" true, \"gist\" <why-dropped>}   ; reason kept so the
             `dropped: why` audit breadcrumb (and introspection) never loses it.
-   `:drop?` — not gist presence — is the fold-vs-drop discriminator, since a drop
-   now carries a reason in `:gist` too."
+   `\"drop\"` — not gist presence — is the fold-vs-drop discriminator, since a drop
+   now carries a reason in `\"gist\"` too."
   [ctx-atom]
   (let [->set   (fn [scopes]
                   (into #{} (comp (map str) (map str/trim) (remove str/blank?))
@@ -1819,18 +1813,18 @@
                       :else                nil)))
         target  (fn [scopes]
                   (if (map? scopes)
-                    (when-let [thr (some-> (:through scopes) str str/trim not-empty)]
-                      [{:through thr} (str "through " thr)])
+                    (when-let [thr (some-> (get scopes "through") str str/trim not-empty)]
+                      [{"through" thr} (str "through " thr)])
                     (let [ss (->set scopes)]
-                      (when (seq ss) [{:scopes ss} (str/join ", " (sort ss))]))))
+                      (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))]))))
         record! (fn [intent]
                   (when ctx-atom
-                    (swap! ctx-atom update :session/summaries (fnil conj []) intent)))]
+                    (swap! ctx-atom update "session_summaries" (fnil conj []) intent)))]
     {'session-fold
      (fn session-fold [scopes & [gist]]
        (if-let [[base label] (target scopes)]
          (let [g      (some-> gist str str/trim not-empty)
-               intent (cond-> base g (assoc :gist g))]
+               intent (cond-> base g (assoc "gist" g))]
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
              "model folded scopes")
@@ -1840,7 +1834,7 @@
      (fn session-drop [scopes & [reason]]
        (if-let [[base label] (target scopes)]
          (let [r      (some-> reason str str/trim not-empty)
-               intent (cond-> (assoc base :drop? true) r (assoc :gist r))]
+               intent (cond-> (assoc base "drop" true) r (assoc "gist" r))]
            (record! intent)
            (tel/log! {:level :info :id ::session-drop :data {:intent intent}}
              "model dropped scopes")
@@ -1850,8 +1844,8 @@
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
    `session_drop` intents at ITERATION granularity. Each summary is
-   `{:scopes #{\"tN/iN\" …} :gist <string|nil>}` (drop = nil gist), or a range
-   `{:through \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
+   `{\"scopes\" #{\"tN/iN\" …} \"gist\" <string|nil>}` (drop = nil gist), or a range
+   `{\"through\" \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
    iteration scopes ≤ the cursor. Every iteration whose `tN/iN` scope is
    summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
    so `conversation-suffix` drops its assistant + tool_result pair entirely; at
@@ -1872,17 +1866,17 @@
           summaries  (supersede-summaries
                        (expand-through summaries
                          (keep iter-scope-of (map second trailer-iters))))
-          summarized (into #{} (mapcat :scopes) summaries)   ; set of "tN/iN"
+          summarized (into #{} (mapcat #(get % "scopes")) summaries)   ; set of "tN/iN"
           ;; summary → earliest trailer index whose iteration scope it names
           anchors    (reduce
                        (fn [m s]
                          (if-let [idx (some (fn [[i [_ rec]]]
-                                              (when (contains? (set (:scopes s)) (iter-scope-of rec)) i))
+                                              (when (contains? (set (get s "scopes")) (iter-scope-of rec)) i))
                                         (map-indexed vector trailer-iters))]
                            (update m idx (fnil conj [])
-                             {:gist (:gist s)
-                              :drop? (:drop? s)
-                              :summary-iters (vec (sort (:scopes s)))})
+                             {:gist (get s "gist")
+                              :drop? (get s "drop")
+                              :summary-iters (vec (sort (get s "scopes")))})
                            m))
                        {} summaries)]
       (vec (map-indexed
@@ -1900,6 +1894,32 @@
                         collapsed? (assoc :collapsed? true :forms-vec [])
                         gist-forms (assoc :forms-vec (vec gist-forms)))]))
              trailer-iters)))))
+
+(defn- error->wire
+  "Model-facing projection of an INTERNAL error envelope at its ONE wire
+   crossing (`form-output`): keyword keys fold to the snake strings the model
+   reads (namespace folded with `_`, kebab -> snake, trailing `?`/`!`
+   stripped), keyword/symbol values become their name strings. The internal
+   envelope itself stays idiomatic ex-info shape everywhere else (persisted
+   forms, ctx-engine projections, channel display) — this is a wire
+   constructor at the seam, same pattern as the git extension's."
+  [e]
+  (cond
+    (map? e)     (into {}
+                   (map (fn [[k v]]
+                          [(if (keyword? k)
+                             (-> (if (namespace k)
+                                   (str (namespace k) "_" (name k))
+                                   (name k))
+                               (str/replace "-" "_")
+                               (str/replace #"[?!]$" ""))
+                             (str k))
+                           (error->wire v)]))
+                   e)
+    (keyword? e) (name e)
+    (symbol? e)  (str e)
+    (or (vector? e) (sequential? e) (set? e)) (mapv error->wire e)
+    :else e))
 
 (def ^:private MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
@@ -2006,11 +2026,14 @@
         ;; the other, never both): `:result` = a native tool call's returned value
         ;; (rendered), `:stdout` = what python_execution print()ed. An `:error`
         ;; replaces the return. So no tool-family branch is needed — surface
-        ;; whichever is present.
+        ;; whichever is present. The ERROR envelope is the one internal
+        ;; keyword-keyed shape rendered here — `error->wire` is its wire
+        ;; constructor at this single crossing (results/ctx are string-keyed
+        ;; at the source and need none).
         form-output (fn [f]
                       (cond
                         (:summary? f) nil
-                        (:error f) (str "⚠ error: " (env/ctx->python-str (:error f)))
+                        (:error f) (str "⚠ error: " (env/ctx->python-str (error->wire (:error f))))
                         (some? (:result f)) (clip-wire (env/ctx->python-str (:result f)))
                         (not (str/blank? (str (:stdout f)))) (clip-wire (:stdout f))
                         :else nil))
@@ -2199,7 +2222,7 @@
   [trailer-iters summaries]
   (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
         older  (vec (butlast trailer-iters))
-        folded (into #{} (mapcat :scopes)
+        folded (into #{} (mapcat #(get % "scopes"))
                  (expand-through (or summaries []) (keep iter-scope-of (map second older))))]
     (->> older
       (keep (fn [[_ rec]]
@@ -2347,13 +2370,17 @@
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
    quoted strings, lists, dicts) so a native tool-call's structured arguments can
    be synthesized into a call to the bound Python tool fn. JSON's lowercase
-   true/false/null are NOT valid Python, hence this rather than raw JSON."
+   true/false/null are NOT valid Python, hence this rather than raw JSON.
+   STRINGS-ONLY: a keyword/symbol here means a producer leaked one past
+   `normalize-tool-input` / a `:call` shape fn — throw, never render `:kw`
+   into Python source."
   [v]
   (cond
     (nil? v)     "None"
     (true? v)    "True"
     (false? v)   "False"
-    (keyword? v) (py-literal (name v))
+    (or (keyword? v) (symbol? v))
+    (env/boundary-violation! :keyword-value v ["py-literal"])
     (string? v)  (str \" (-> ^String v
                            (str/replace "\\" "\\\\")
                            (str/replace "\"" "\\\"")
@@ -2362,8 +2389,7 @@
                            (str/replace "\t" "\\t")) \")
     (map? v)     (str "{" (str/join ", "
                             (map (fn [[k val]]
-                                   (str (py-literal (if (keyword? k) (name k) (str k)))
-                                     ": " (py-literal val)))
+                                   (str (py-literal (str k)) ": " (py-literal val)))
                               v)) "}")
     (sequential? v) (str "[" (str/join ", " (map py-literal v)) "]")
     (integer? v) (str v)
@@ -2371,7 +2397,10 @@
     :else        (py-literal (str v))))
 
 (defn- normalize-tool-input
-  "svar may hand tool args with keyword OR string keys; normalize to strings."
+  "EXTERNAL-EDGE ADAPTER (svar wire): svar's JSON parse may hand tool args with
+   keyword OR string keys depending on the provider adapter. This is the ONE
+   sanctioned conversion point — everything downstream (synth-call, py-literal,
+   the sandbox) is strings-only."
   [input]
   (into {} (map (fn [[k v]] [(if (keyword? k) (name k) (str k)) v])) (or input {})))
 
@@ -3003,10 +3032,11 @@
                                  ;;   {:vis/tool-name "cat", :result-summary "…", :result-render "…md…",
                                  ;;    :tool-color-role :tool-color/read}
                                  printed-cards (vec (keep (fn [pr]
-                                                            (when-let [t (get printed-renderers (some-> (:op pr) str))]
+                                                            ;; `pr` crossed the boundary — STRING keys ("op").
+                                                            (when-let [t (get printed-renderers (some-> (get pr "op") str))]
                                                               (let [c ((:render t) pr)
                                                                     c (if (map? c) c {:body (str c)})]
-                                                                {:vis/tool-name   (some-> (:op pr) str)
+                                                                {:vis/tool-name   (some-> (get pr "op") str)
                                                                  :result-summary  (some-> (:summary c) str not-empty)
                                                                  :result-render   (some-> (:body c) str not-empty)
                                                                  :tool-color-role (:color-role t)})))
@@ -4225,7 +4255,7 @@
                     ;; shape (user → asst → user → asst → user).
                     conversation-suffix-msgs (conversation-suffix
                                                (apply-summaries trailer-iters
-                                                 (some-> (:ctx-atom environment) deref :session/summaries))
+                                                 (some-> (:ctx-atom environment) deref (get "session_summaries")))
                                                (replay-context pre-resolved-model))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
                     ;; Over-budget compaction nudge: ephemeral, tail-only (after
@@ -4241,7 +4271,7 @@
                                             (long (:previous-request-input u))))
                                         effective-context-limit
                                         trailer-iters
-                                        (some-> (:ctx-atom environment) deref :session/summaries))
+                                        (some-> (:ctx-atom environment) deref (get "session_summaries")))
                     effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
@@ -4570,8 +4600,15 @@
                         _ (when ctx-atom-ref
                             (swap! ctx-atom-ref
                               (fn [c]
+                                ;; `cursor` is the loop-internal keyword shape
+                                ;; ({:turn :iter} — blocks->forms destructures
+                                ;; it); the ctx is STRING-KEYED, so project to
+                                ;; the "session_scope" shape at the seam.
                                 (ctx-engine/advance-iter
-                                  (assoc c :session/scope cursor)
+                                  (assoc c "session_scope"
+                                    {"turn"      (:turn cursor)
+                                     "iter"      (:iter cursor)
+                                     "next_form" 1})
                                   forms-vec))))
                         _ (when ctx-atom-ref
                             (tel/log! {:level :info :id ::iter-end-ctx
@@ -4884,7 +4921,7 @@
                          (let [stamped (ctx-loop/stamp-cursor env @ca)
                                gced    (ctx-engine/gc-pass stamped)
                                clean   (-> gced
-                                         (dissoc :session/scope)
+                                         (dissoc "session_scope")
                                          ctx-engine/strip-ephemeral)]
                            (reset! ca clean)
                            clean))]
@@ -4951,13 +4988,13 @@
         ctx-snapshot (when-let [ca (:ctx-atom env)]
                        (let [stamped (ctx-loop/stamp-cursor env @ca)
                              gced    (ctx-engine/gc-pass stamped)
-                             ;; Strip cursor + every `:engine/*` ephemeral
+                             ;; Strip cursor + every `"engine_*"` ephemeral
                              ;; key (warnings, pending-satisfies) before
                              ;; persisting. The next resume rebuilds the
                              ;; cursor from loop counters and starts each
                              ;; turn with empty ephemerals via empty-ctx.
                              clean   (-> gced
-                                       (dissoc :session/scope)
+                                       (dissoc "session_scope")
                                        ctx-engine/strip-ephemeral)]
                          (reset! ca clean)
                          clean))
@@ -5048,17 +5085,20 @@
         ;; raises an engine warning so the user knows. Remote providers
         ;; are not network-checked here.
         env (let [{:keys [router demoted]} (health-gated-router (:router env) :turn)
-                  dset (set demoted)
+                  ;; Digest entries are string-keyed/string-valued (they cross
+                  ;; the boundary); demoted ids are internal keywords — compare
+                  ;; on the stringified id.
+                  dset (into #{} (map name) demoted)
                   env' (cond-> (assoc env :router router)
-                         (and (seq dset) (seq (:available (:routing env))))
-                         (update-in [:routing :available]
+                         (and (seq dset) (seq (get (:routing env) "available")))
+                         (update-in [:routing "available"]
                            (fn [avail]
-                             (vec (remove #(contains? dset (:provider %)) avail)))))]
+                             (vec (remove #(contains? dset (get % "provider")) avail)))))]
               (when (seq demoted)
                 (when-let [ca (:ctx-atom env)]
-                  (swap! ca update :engine/warnings (fnil conj [])
+                  (swap! ca update "engine_warnings" (fnil conj [])
                     {:code    :provider-unreachable
-                     :anchor  [:session/routing]
+                     :anchor  ["session_routing"]
                      :message (str "Local provider(s) "
                                 (str/join ", " (map name demoted))
                                 " unreachable — demoted to last-resort and hidden"
@@ -5240,8 +5280,8 @@
                                    (update :routing
                                      (fn [r]
                                        (cond-> r
-                                         root-model    (assoc :model (str root-model))
-                                         root-provider (assoc :provider root-provider)))))
+                                         root-model    (assoc "model" (str root-model))
+                                         root-provider (assoc "provider" (name root-provider))))))
           environment-id         (:environment-id env)]
       {:cancel-token           cancel-token
        :cancel-atom            cancel-atom
@@ -5717,11 +5757,13 @@
                              (into toggles/*forced-on* child-forced-toggles)]
                      (run-turn! child-env (str prompt) turn-opts))
         merged     (when rift? (merge-child-edits! db-info child-ws))
-        focus      (some-> (:focus subctx) str not-empty)]
-    {:task_id       focus
-     :status        (status->str (:status result))
-     :answer        (:answer result)
-     :changed_files (vec (:changed merged))}))
+        ;; `subctx` is a Python dict — STRING keys. The projected result crosses
+        ;; BACK into Python, so its keys/values are strings too.
+        focus      (some-> (get subctx "focus") str not-empty)]
+    {"task_id"       focus
+     "status"        (status->str (:status result))
+     "answer"        (:answer result)
+     "changed_files" (vec (:changed merged))}))
 
 (defn sub-loop!
   "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
@@ -5761,10 +5803,11 @@
                             ;; if that very provider got demoted, the
                             ;; explicit preference was dead.
                             (contains? (set demoted) (:id (first (:providers preferred)))))
-                      {:from        (vec (if (coll? models) models [models]))
-                       :unreachable (mapv name demoted)
-                       :used        (:name (resolve-effective-model router))
-                       :reason      "preferred model's provider unreachable; auto-routed to the next healthy provider"})
+                      ;; Crosses into Python on the child result — strings.
+                      {"from"        (vec (if (coll? models) models [models]))
+                       "unreachable" (mapv name demoted)
+                       "used"        (:name (resolve-effective-model router))
+                       "reason"      "preferred model's provider unreachable; auto-routed to the next healthy provider"})
           child-ws  (locking workspace-mutation-lock
                       (child-workspace! db-info parent-ws))
           ;; rift path = the child got its OWN clone (root differs from parent);
@@ -5797,7 +5840,7 @@
                         {:db-info db-info :child-ws ws :rift? rift?
                          :subctx subctx :prompt prompt :system-prompt system-prompt})
                 ;; surface the health override to the coordinator
-                rerouted (assoc :rerouted rerouted)))))))))
+                rerouted (assoc "rerouted" rerouted)))))))))
 
 (defn- failed-subloop-result
   "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
@@ -5805,13 +5848,14 @@
    The throw is surfaced TWO ways — as this `:status \"failed\"` result the
    coordinator sees, AND a logged warning — so the failure is never silent."
   [spec ^Throwable t]
-  (let [focus (some-> (:subctx spec) :focus str not-empty)]
+  (let [focus (some-> (get spec "subctx") (get "focus") str not-empty)]
     (log-subloop-warn! :run t focus)
-    {:task_id       focus
-     :status        "failed"
-     :error         (ex-message t)
-     :answer        nil
-     :changed_files []}))
+    ;; Crosses into Python — string keys, matching `project-child-result`.
+    {"task_id"       focus
+     "status"        "failed"
+     "error"         (ex-message t)
+     "answer"        nil
+     "changed_files" []}))
 
 (def ^:private subloop-failure-statuses
   "A child whose focus task landed in one of these (or threw → `:error`) is a
@@ -5825,17 +5869,18 @@
    branch on. A `:skipped`-mapped status (cancelled/rejected/deferred) is NOT a
    failure here — those are neutral; only `:failed`/`:error` count."
   [r]
-  (or (some? (:error r))
-    (contains? subloop-failure-statuses (status->str (:status r)))))
+  (or (some? (get r "error"))
+    (contains? subloop-failure-statuses (status->str (get r "status")))))
 
 (defn- run-spec!
-  "Run ONE child for `spec` (`{:prompt :subctx :models}`), folding a throw into
-   the uniform `failed-subloop-result`. The shared per-child step under every
-   composite runner (parallel/sequence/selector) + retry."
+  "Run ONE child for `spec` (a Python dict `{\"prompt\" \"subctx\" \"models\"}` —
+   STRING keys), folding a throw into the uniform `failed-subloop-result`. The
+   shared per-child step under every composite runner
+   (parallel/sequence/selector) + retry."
   [parent-env spec]
-  (try (sub-loop! parent-env {:prompt (:prompt spec)
-                              :subctx (:subctx spec)
-                              :models (:models spec)})
+  (try (sub-loop! parent-env {:prompt (get spec "prompt")
+                              :subctx (get spec "subctx")
+                              :models (get spec "models")})
     (catch Throwable t (failed-subloop-result spec t))))
 
 (defn retry-sub-loop!
@@ -5846,7 +5891,7 @@
   [parent-env spec n]
   (let [attempts (max 1 (long (or n 2)))]
     (loop [i 1]
-      (let [r (assoc (run-spec! parent-env spec) :attempts i)]
+      (let [r (assoc (run-spec! parent-env spec) "attempts" i)]
         (if (or (not (subloop-failed? r)) (>= i attempts))
           r
           (recur (inc i)))))))
@@ -5981,12 +6026,14 @@
         ;; the agent can SEE its current model + what's available, and pick a
         ;; cheaper/faster one for an easy `sub_loop` (the `model` arg). Read-only;
         ;; the agent never reconfigures routing, it just routes children by cost.
-        routing-digest           (cond-> {:model root-model}
-                                   root-provider (assoc :provider root-provider)
+        ;; STRING-KEYED: this digest lands in ctx as `session_routing` and
+        ;; crosses the Python boundary. Provider ids stringify at the source.
+        routing-digest           (cond-> {"model" root-model}
+                                   root-provider (assoc "provider" (name root-provider))
                                    (seq (:providers router))
-                                   (assoc :available
-                                     (mapv (fn [p] {:provider (:id p)
-                                                    :models   (mapv :name (:models p))})
+                                   (assoc "available"
+                                     (mapv (fn [p] {"provider" (name (:id p))
+                                                    "models"   (mapv :name (:models p))})
                                        (:providers router))))
         ;; Snapshot a base system prompt for the session row so the
         ;; sidebar / DB inspectors have something stable to display.
@@ -6209,15 +6256,12 @@
                                                 ;; even for one: ["haiku"]) — ONE consistent surface,
                                                 ;; never a scalar. svar routes + falls back the order.
                                                 ;; The opts dict crosses the GraalPy boundary via
-                                                ;; `env-python/->clj`, which KEYWORDIZES every dict key
-                                                ;; (snake verbatim) — so the key is `:models`, NOT the
-                                                ;; string "models" (reading the string silently yields
-                                                ;; nil → child runs on the DEFAULT model, not the
-                                                ;; proposed one).
+                                                ;; `env-python/->clj`, which keeps dict keys as
+                                                ;; VERBATIM STRINGS — the accessor is "models".
                                                   (sub-loop! @environment-atom
                                                     {:prompt prompt
                                                      :subctx subctx
-                                                     :models (:models (first more))}))
+                                                     :models (get (first more) "models")}))
                                     ;; parallel([{prompt, subctx, models}, …]) — dispatch
                                     ;; SEVERAL children concurrently (bounded), results in
                                     ;; input order. Each spec dict crosses the boundary
@@ -6343,9 +6387,9 @@
     ;; subctx (its focused bigger-picture slice) — no DB restore.
     (when-let [seed (:seed-ctx child)]
       (reset! ctx-atom (assoc seed
-                         :session/id session-id
-                         :engine/warnings          []
-                         :engine/pending-satisfies [])))
+                         "session_id" session-id
+                         "engine_warnings"          []
+                         "engine_pending_satisfies" [])))
     ;; Restore the context state when resuming. Sandbox defs do NOT persist
     ;; across turns (the `definition_*` sidecar tables were dropped).
     (when (and resolved-session-id (nil? (:seed-ctx child)))
@@ -6355,14 +6399,14 @@
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
           ;; The Nippy blob IS the whole ctx now (no separate task/fact/archive
-          ;; tables). It has no `:engine/*` ephemeral keys (stripped before
+          ;; tables). It has no `"engine_*"` ephemeral keys (stripped before
           ;; Nippy), so re-seed those empty here so swap! callers don't need
           ;; nil-guards. Read once, on resume; the live render stays in-memory.
           (reset! ctx-atom
             (assoc persisted-ctx
-              :session/id session-id
-              :engine/warnings          []
-              :engine/pending-satisfies [])))
+              "session_id" session-id
+              "engine_warnings"          []
+              "engine_pending_satisfies" [])))
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}

@@ -111,12 +111,12 @@
           without ((:ext/prompt-fn foundation/vis-extension) (env-with-langs []))]
       (expect (str/includes? with-py "python : repl_eval"))
       (expect (not (str/includes? without "python : repl_eval")))))
-  (it "ctx surfaces :session/language-tools, recomputed each turn from activation"
+  (it "ctx surfaces \"session_language_tools\", recomputed each turn from activation"
     (let [ctx ((:ext/ctx-fn foundation/vis-extension) (env-with-langs clj-pack))]
       (expect (= ["format_code" "run_tests" "repl_eval" "repl_start"]
-                (get-in ctx [:session/language-tools "clojure"])))))
+                (get-in ctx ["session_language_tools" "clojure"])))))
   (it "ctx GAINS a language the turn its pack activates, drops it when it deactivates"
     (let [active   ((:ext/ctx-fn foundation/vis-extension) (env-with-langs py-pack))
           inactive ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
-      (expect (= ["repl_eval" "repl_start"] (get-in active [:session/language-tools "python"])))
-      (expect (nil? (:session/language-tools inactive))))))
+      (expect (= ["repl_eval" "repl_start"] (get-in active ["session_language_tools" "python"])))
+      (expect (nil? (get inactive "session_language_tools"))))))

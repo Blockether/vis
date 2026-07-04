@@ -60,7 +60,7 @@
             plain (ep/run-python-block ctx "print('just text')")
             two   (ep/run-python-block ctx "print(tp); print(tp)")]
         (expect (= 1 (count (:printed-results real))))
-        (expect (= "cat" (:op (first (:printed-results real)))))   ;; origin = (:op result)
+        (expect (= "cat" (get (first (:printed-results real)) "op")))   ;; origin = result "op" (strings-only)
         (expect (empty? (:printed-results faked)))                 ;; robustness: model 'op' dict ignored
         (expect (empty? (:printed-results plain)))
         (expect (= 2 (count (:printed-results two))))
@@ -159,38 +159,47 @@
   (it "java.util.Date crosses as an ISO-8601 instant string"
     (let [d (java.util.Date. 1782986254012)]
       (expect (= (str (.toInstant d))
-                (:created_at (ep/boundary-view {:created-at d}))))))
+                (get (ep/boundary-view {"created_at" d}) "created_at")))))
   (it "dates nested in the sessions() index shape survive"
-    (let [v (ep/boundary-view {:sessions [{:id "x" :created-at (java.util.Date. 0)}]})]
-      (expect (= "1970-01-01T00:00:00Z" (get-in v [:sessions 0 :created_at]))))))
+    (let [v (ep/boundary-view {"sessions" [{"id" "x" "created_at" (java.util.Date. 0)}]})]
+      (expect (= "1970-01-01T00:00:00Z"
+                (get (first (get v "sessions")) "created_at"))))))
 
 (defdescribe boundary-key-shape-test
-  "The GraalPy round trip keywordizes ONLY identifier-shaped dict keys. A path,
-   a `lineno:hash` anchor, or a kebab/dotted DATA key must survive as a verbatim
-   STRING key — keywordizing it collapses `/`->namespace and `-`->`_`, which is
-   exactly how an rg `:matches` path or a cat `:anchors` key used to come back
-   corrupted (`extensions/channels/vis-channel-tui` -> `extensions_channels/...`).
-   Pure `boundary-view`, no context needed."
-  (it "path + lineno:hash keys stay verbatim strings; option/result keys keywordize"
-    (let [raw {:matches {"extensions/channels/vis-channel-tui/src/a.clj" {"2361:abc" "x"}
-                         "src/com/foo-bar.clj" {"44:f14" "y"}}
-               :hit_count 2
-               :files ["a-b/c.clj"]}
+  "STRINGS-ONLY boundary: every dict key is a VERBATIM string in BOTH
+   directions — no keywordizing, no regex key-shape sniffing. A path, a
+   `lineno:hash` anchor, an option key, a git status code: all plain strings.
+   A keyword or symbol ANYWHERE (key or value, any depth) is a producer bug
+   and throws. Pure `boundary-view`, no context needed."
+  (it "every key stays a verbatim string — paths, anchors, option keys alike"
+    (let [raw {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361:abc" "x"}
+                          "src/com/foo-bar.clj" {"44:f14" "y"}}
+               "hit_count" 2
+               "files" ["a-b/c.clj"]}
           v   (ep/boundary-view raw)]
-        ;; result/option keys DO keywordize (destructuring contract intact)
-      (expect (= 2 (:hit_count v)))
-      (expect (contains? v :matches))
-        ;; path keys stay strings, VERBATIM (no ns/kebab collapse)
-      (expect (= #{"extensions/channels/vis-channel-tui/src/a.clj"
-                   "src/com/foo-bar.clj"}
-                (set (keys (:matches v)))))
-        ;; nested lineno:hash anchor keys stay strings
-      (expect (every? string? (mapcat keys (vals (:matches v)))))
-        ;; a kebab/dotted string VALUE in a vector is untouched
-      (expect (= ["a-b/c.clj"] (:files v)))))
-  (it "git status codes M/A/D still keywordize (documented contract)"
-    (expect (= {:changes {:M 1 :A 2 :D 3}}
-              (ep/boundary-view {:changes {"M" 1 "A" 2 "D" 3}}))))
-  (it "boundary-view is idempotent over path/anchor-keyed results"
-    (let [v (ep/boundary-view {:matches {"a/b-c.clj" {"1:h" "z"}} :hit_count 1})]
-      (expect (= v (ep/boundary-view v))))))
+      (expect (= raw v))
+      (expect (every? string? (keys v)))
+      (expect (every? string? (mapcat keys (vals (get v "matches")))))))
+  (it "git status codes M/A/D stay verbatim strings"
+    (expect (= {"changes" {"M" 1 "A" 2 "D" 3}}
+              (ep/boundary-view {"changes" {"M" 1 "A" 2 "D" 3}}))))
+  (it "boundary-view is idempotent"
+    (let [v (ep/boundary-view {"matches" {"a/b-c.clj" {"1:h" "z"}} "hit_count" 1})]
+      (expect (= v (ep/boundary-view v)))))
+  (it "a keyword MAP KEY throws with the offending path"
+    (let [e (try (ep/boundary-view {"outer" {:hit-count 1}}) nil
+              (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? e))
+      (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
+      (expect (= [ "outer" ] (:path (ex-data e))))))
+  (it "a keyword VALUE throws at any depth"
+    (let [e (try (ep/boundary-view {"changes" [{"status" :added}]}) nil
+              (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? e))
+      (expect (= :keyword-value (:vis/boundary-violation (ex-data e))))
+      (expect (= :added (:value (ex-data e))))))
+  (it "a symbol VALUE throws"
+    (let [e (try (ep/boundary-view {"sym" 'git-fetch!}) nil
+              (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? e))
+      (expect (= :symbol-value (:vis/boundary-violation (ex-data e)))))))

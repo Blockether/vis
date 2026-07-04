@@ -13,10 +13,13 @@
    [com.blockether.vis.internal.extension :as extension]))
 
 (defn- normalize-language [x]
+  ;; STRINGS-ONLY: dispatch on a lowercase language STRING, never a minted
+  ;; keyword. A leading `:` is stripped so a keyword handed in by an internal
+  ;; caller (packs may register `:language :clojure`) still normalizes cleanly.
   (when x
-    (keyword (-> (str x)
-               (str/replace #"^:" "")
-               (str/lower-case)))))
+    (-> (str x)
+      (str/replace #"^:" "")
+      (str/lower-case))))
 
 (defn- env-language [env]
   (or (normalize-language (get-in env [:env/project :primary_language]))
@@ -62,7 +65,7 @@
     (when (seq by-lang)
       (into (sorted-map)
         (for [[lang tools] by-lang]
-          [(name lang) (vec (filter tools tool-order))])))))
+          [lang (vec (filter tools tool-order))])))))
 
 (defn capability-matrix
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
@@ -80,8 +83,7 @@
       "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
 
 (defn- language-like? [x]
-  (or (keyword? x)
-    (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x))))
+  (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
 (defn- coerce-opts [arg]
   (cond
@@ -90,7 +92,7 @@
     :else {:arg arg}))
 
 (defn- opts-language [opts]
-  (or (:language opts) (get opts "language")))
+  (get opts "language"))
 
 (defn- target-language [env opts]
   (or (normalize-language (opts-language opts))
@@ -125,7 +127,7 @@
          :payload arg})
     2 (let [[language payload] args]
         (if (language-like? language)
-          {:opts (assoc (coerce-opts payload) :language language)
+          {:opts (assoc (coerce-opts payload) "language" language)
            :payload payload}
           (throw (ex-info "Expected language as first arg, e.g. repl_eval(language, ...)."
                    {:type :language-surface/bad-args
@@ -139,27 +141,27 @@
         handler (choose-handler env capability opts)]
     ((:handler handler) env payload)))
 
-(def ^:private repl-ops #{:status :start :stop :restart})
+(def ^:private repl-ops #{"status" "start" "stop" "restart"})
 
 (defn- repl-op? [x]
-  (contains? repl-ops (keyword x)))
+  (and (string? x) (contains? repl-ops x)))
 
 (defn- start-repl-payload [args]
   (let [[language more] (if (and (seq args) (language-like? (first args)) (not (repl-op? (first args))))
                           [(first args) (next args)]
                           [nil args])]
     (case (count more)
-      0 {:language language :id nil :op :start :opts {}}
+      0 {:language language :id nil :op "start" :opts {}}
       1 (let [arg (first more)]
           (cond
-            (nil? arg) {:language language :id nil :op :start :opts {}}
-            (map? arg) {:language (or language (opts-language arg)) :id (or (:id arg) (:repl_id arg) (get arg "id") (get arg "repl_id")) :op :start :opts arg}
+            (nil? arg) {:language language :id nil :op "start" :opts {}}
+            (map? arg) {:language (or language (opts-language arg)) :id (or (get arg "id") (get arg "repl_id")) :op "start" :opts arg}
             :else      {:language language :id nil :op arg :opts nil}))
       2 (let [[a b] more]
           (if (map? b)
             {:language (or language (opts-language b))
              :id (when-not (repl-op? a) a)
-             :op (if (repl-op? a) a :start)
+             :op (if (repl-op? a) a "start")
              :opts b}
             {:language language :id a :op b :opts nil}))
       3 (let [[id op opts] more]
@@ -175,19 +177,20 @@
 (defn- dispatch-start-repl! [env args]
   (let [{:keys [language id op opts]} (start-repl-payload args)
         dispatch-opts (cond-> (coerce-opts opts)
-                        language (assoc :language language)
-                        id       (assoc :id id))
+                        language (assoc "language" language)
+                        id       (assoc "id" id))
         handler (choose-handler env :start-repl-fn dispatch-opts)
-        opts    (cond-> (or opts {}) id (assoc :id id))]
+        opts    (cond-> (or opts {}) id (assoc "id" id))]
     ((:handler handler) env op opts)))
 
 (defn- repl-resources [env language]
   (let [lang (normalize-language language)]
+    ;; `list-resources` returns string-keyed DATA maps with string enum VALUES
+    ;; ("kind" "nrepl", "status" "up"), so filter on strings.
     (->> (vis/list-resources (:session-id env))
-      (filter #(or (= :repl (:kind %))
-                 (= :nrepl (:kind %))
-                 (str/ends-with? (str (:kind %)) "repl")))
-      (filter #(or (nil? lang) (= lang (normalize-language (:language %)))))
+      (filter #(let [kind (str (get % "kind"))]
+                 (or (= "repl" kind) (= "nrepl" kind) (str/ends-with? kind "repl"))))
+      (filter #(or (nil? lang) (= lang (normalize-language (get % "language")))))
       vec)))
 
 (defn repl-status
@@ -196,23 +199,30 @@
   ([env arg]
    (let [opts (coerce-opts arg)
          lang (or (opts-language opts) (when (language-like? arg) arg))
-         id   (or (:id opts) (:repl_id opts) (get opts "id") (get opts "repl_id"))]
+         id   (or (get opts "id") (get opts "repl_id"))]
      (extension/success
-       {:result {:resources (cond->> (repl-resources env lang)
-                              id (filter #(= (str id) (:id %)))
-                              true vec)}}))))
+       {:result {"resources" (cond->> (repl-resources env lang)
+                               id (filter #(= (str id) (get % "id")))
+                               true vec)}}))))
 
 (defn repl-stop
   "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
   [env id]
-  (extension/success {:result (vis/stop-resource! (:session-id env) id)}))
+  ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
+  ;; :id ...}); project it to a strings-only model payload (enum value stringified
+  ;; at the source) so nothing keyword crosses the boundary.
+  (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
+    (extension/success
+      {:result (cond-> {"result" (name result) "id" (str id)}
+                 message (assoc "message" message))})))
 
 (defn- inject-env [env f args]
   {:env env :fn f :args (into [env] args)})
 
 ;; =============================================================================
-;; Native op-card renderers — `:result` → `{:summary :body}`. Keys arrive
-;; keywordized snake_case (trailing ?/! stripped), the injected env gone.
+;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
+;; string-keyed snake_case (strings-only boundary), the injected env gone.
+;; Renderers read string keys but still RETURN the keyword `{:summary :body}` IR.
 ;; Defensive: language results vary per pack, so every access is nil-safe.
 ;; =============================================================================
 
@@ -223,29 +233,29 @@
   "format_code → `` `path` (changed) `` when writing a file (the FORMAT_CODE
    badge already names the tool), else the formatted text as a code block."
   [r]
-  (let [changed (:changed r)
+  (let [changed (get r "changed")
         note    (if changed "(changed)" "(no change)")]
-    (if-let [path (:path r)]
+    (if-let [path (get r "path")]
       {:summary (str "`" path "` " note)}
       {:summary note
-       :body    (fence nil (:text r))})))
+       :body    (fence nil (get r "text"))})))
 
 (defn- render-lint-result
   "lint_code → `N files — E errors, W warnings` headline (the LINT_CODE badge
    already names the tool); the findings (`file:row:col level message`) in the body."
   [r]
-  (let [errors   (or (:error r) 0)
-        warnings (or (:warning r) 0)
-        infos    (or (:info r) 0)
-        findings (:findings r)
+  (let [errors   (or (get r "error") 0)
+        warnings (or (get r "warning") 0)
+        infos    (or (get r "info") 0)
+        findings (get r "findings")
         clean?   (and (zero? errors) (zero? warnings) (zero? infos))
         lines    (for [f findings]
-                   (str (:file f) ":" (:row f) ":" (:col f)
-                     " " (:level f) ": " (:message f)))]
+                   (str (get f "file") ":" (get f "row") ":" (get f "col")
+                     " " (get f "level") ": " (get f "message")))]
     {:summary (not-empty
-                (str (when-let [n (:files r)] (str n " file" (when (not= 1 n) "s")))
+                (str (when-let [n (get r "files")] (str n " file" (when (not= 1 n) "s")))
                   (if clean?
-                    (when (:files r) " — clean")
+                    (when (get r "files") " — clean")
                     (str " — " errors " error" (when (not= 1 errors) "s")
                       ", " warnings " warning" (when (not= 1 warnings) "s")
                       (when (pos? infos) (str ", " infos " info"))))))
@@ -262,21 +272,21 @@
    the raw result so the user always sees *something* went wrong, never an
    empty card."
   [r]
-  (let [pass    (:pass r)
-        fail    (:fail r)
-        total   (:total r)
-        error   (:error r)
+  (let [pass    (get r "pass")
+        fail    (get r "fail")
+        total   (get r "total")
+        error   (get r "error")
         ok      (and (not error)
                   (cond
-                    (number? fail)       (zero? fail)
-                    (contains? r :pass?) (boolean (:pass? r)) ; CLI fallback: exit-code verdict
-                    :else                (boolean (:pass r))))
-        parts   (some-> (:ns r) str str/trim not-empty (str/split #"\s+"))
+                    (number? fail)         (zero? fail)
+                    (contains? r "pass?")  (boolean (get r "pass?")) ; CLI fallback: exit-code verdict
+                    :else                  (boolean (get r "pass"))))
+        parts   (some-> (get r "ns") str str/trim not-empty (str/split #"\s+"))
         ns-disp (cond
                   (empty? parts)      nil
                   (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
                   :else               (first parts))
-        detail  (or (not-empty (str (:output r)))
+        detail  (or (not-empty (str (get r "output")))
                   (not-empty (str error))
                   (when-not ok (str "no test result returned — " (pr-str r))))]
     {:summary (str (when-not ok "✗ ")
@@ -284,8 +294,8 @@
                 (when total (str " — " pass "/" total " passed"
                               (when (and (number? fail) (pos? fail)) (str ", " fail " failed"))))
                 (when (and (not ok) (not total)) " — error")
-                (when-let [ms (:ms r)] (str " (" ms "ms)"))
-                (when (:note r) (str " · " (:note r))))
+                (when-let [ms (get r "ms")] (str " (" ms "ms)"))
+                (when (get r "note") (str " · " (get r "note"))))
      :body    (when-not ok (fence nil detail))}))
 
 (defn- short-error
@@ -305,47 +315,47 @@
    *where*. `:error_message`/`:trace` come enriched from the nREPL client; we fall
    back to the raw `:err` one-liner when no structured trace was available."
   [r]
-  (let [emsg   (not-empty (str (:error_message r)))
-        trace  (:trace r)
-        err    (or (:err r) (:ex r) (:root_ex r))
+  (let [emsg   (not-empty (str (get r "error_message")))
+        trace  (get r "trace")
+        err    (or (get r "err") (get r "ex") (get r "root_ex"))
         error? (boolean (or emsg (seq (str err))))
         blocks (if error?
                  [(fence nil (or emsg (str err)))
                   (fence "trace" (when (seq trace) (str/join "\n" trace)))
-                  (fence "data" (:error_data r))
-                  (fence "out" (:out r))]
-                 [(fence nil (:value r))
-                  (fence "out" (:out r))])
+                  (fence "data" (get r "error_data"))
+                  (fence "out" (get r "out"))]
+                 [(fence nil (get r "value"))
+                  (fence "out" (get r "out"))])
         body   (->> blocks (remove nil?) (str/join "\n\n"))]
     {:summary (not-empty
-                (str (when (:ms r) (str "(" (:ms r) "ms)"))
+                (str (when (get r "ms") (str "(" (get r "ms") "ms)"))
                   (when error?
-                    (str (when (:ms r) " ") "— "
+                    (str (when (get r "ms") " ") "— "
                       (if emsg (short-error emsg) "error")))))
      :body    (when (seq body) (str "\n" body))}))
 
 (defn- render-repl-status-result
   "repl_status → `N REPLs: id (status), …`."
   [r]
-  (let [res (:resources r)]
+  (let [res (get r "resources")]
     {:summary (str (count res) " REPL" (when (not= 1 (count res)) "s")
                 (when (seq res)
                   (str ": " (str/join ", "
-                              (map #(str (:id %) " (" (:status %) ")") res)))))}))
+                              (map #(str (get % "id") " (" (get % "status") ")") res)))))}))
 
 (defn- render-repl-start-result
   "repl_start → a short lifecycle line (id + status / port when present)."
   [r]
-  (if (contains? r :resources)
+  (if (contains? r "resources")
     (render-repl-status-result r)
-    {:summary (str "REPL " (or (:id r) (:language r) "")
-                " " (or (:status r) "ready")
-                (when-let [p (:port r)] (str " :" p)))}))
+    {:summary (str "REPL " (or (get r "id") (get r "language") "")
+                " " (or (get r "status") "ready")
+                (when-let [p (get r "port")] (str " :" p)))}))
 
 (defn- render-repl-stop-result
   "repl_stop → `stopped REPL <id>`."
   [r]
-  {:summary (str "stopped REPL" (when-let [id (:id r)] (str " " id)))})
+  {:summary (str "stopped REPL" (when-let [id (get r "id")] (str " " id)))})
 
 (defn format-code
   "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.

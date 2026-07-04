@@ -43,9 +43,9 @@
           (ep/create-python-context {'shell-run (fake-shell-run calls)})]
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30)")
-      ;; wrap-ifn/->clj keywordizes the crossed dict's keys, so the recorded
-      ;; opts key is :timeout_secs (shell_run's opt-get checks the keyword first)
-      (expect (= 30 (get (:opts (last @calls)) :timeout_secs)))))
+      ;; strings-only boundary: the crossed opts dict keeps VERBATIM string
+      ;; keys, so the recorded key is "timeout_secs"
+      (expect (= 30 (get (:opts (last @calls)) "timeout_secs")))))
 
   (it "check_output returns stdout and raises on a non-zero exit"
     (let [calls (atom [])

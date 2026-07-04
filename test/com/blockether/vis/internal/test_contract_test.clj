@@ -89,8 +89,8 @@
     (it "drops blank / nil entries and trims"
       (expect (= {:nses [] :only [] :include [] :exclude []}
                 (contract/normalize-selectors {:ns ["  " ""] :only nil}))))
-    (it "stringifies keyword tags dropping the leading colon"
-      (expect (= ["slow"] (:exclude (contract/normalize-selectors {:exclude [:slow]})))))
+    (it "keeps string tags verbatim (strings-only boundary)"
+      (expect (= ["slow"] (:exclude (contract/normalize-selectors {:exclude ["slow"]})))))
     (it "produces selector keys that round-trip through the ::selectors spec"
       (let [norm (contract/normalize-selectors {:ns "a-test" :only ["x"]})]
         (expect (s/valid? ::contract/selectors

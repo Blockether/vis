@@ -84,7 +84,13 @@
     (->kw (or status :done))))
 
 (defn- ->json [m] (when m (json/write-json-str m)))
-(defn- <-json [s] (when s (json/read-json s :key-fn keyword)))
+(defn- <-json
+  "Parse a JSON TEXT column. STRINGS-ONLY: keys come back as VERBATIM STRINGS —
+   no `:key-fn keyword` re-keywordizing. Whatever needs an internal keyword
+   shape converts at ONE named adapter (e.g. `normalize-routing-event`), never
+   here."
+  [s]
+  (when s (json/read-json s)))
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
@@ -551,6 +557,20 @@
 ;; Workspace - trunk-native work units
 ;; =============================================================================
 
+(defn- normalize-fs-root-entry
+  "ADAPTER (named, single): a persisted `filesystem_roots` entry parses with
+   STRING keys (`<-json` never keywordizes); the workspace facade's internal
+   confinement shape is `{:trunk :clone :fork-ms :backend}` (host-only, never
+   crosses the Python boundary). Key spellings match exactly what `->json`
+   writes from that internal shape."
+  [e]
+  (if-not (map? e)
+    e
+    {:trunk   (get e "trunk")
+     :clone   (get e "clone")
+     :fork-ms (get e "fork-ms")
+     :backend (some-> (get e "backend") str keyword)}))
+
 (defn- row->workspace
   "Project a `workspace` row from SQLite into the canonical Clojure shape
    used by the workspace facade. Keys mirror `db-get-session` style
@@ -577,7 +597,9 @@
       ;; last-focused → created_at).
       (:label row)               (assoc :label (:label row))
       (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row))
-      (:filesystem_roots row)       (assoc :filesystem-roots (or (<-json (:filesystem_roots row)) [])))))
+      (:filesystem_roots row)       (assoc :filesystem-roots
+                                      (mapv normalize-fs-root-entry
+                                        (or (<-json (:filesystem_roots row)) []))))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
@@ -1632,10 +1654,20 @@
     []))
 
 (defn- normalize-routing-event
+  "THE one adapter between `event_json` (parsed with STRING keys — `<-json`
+   never keywordizes) and the INTERNAL svar routing-event shape (keyword keys,
+   keyword `:event/type`/`:reason`) that live traces use. DB-loaded events must
+   render exactly like live ones; this is svar-telemetry internal shape, it
+   never crosses the Python boundary."
   [event]
-  (cond-> event
-    (string? (:event/type event)) (assoc :event/type (keyword (:event/type event)))
-    (string? (:reason event))     (assoc :reason (keyword (:reason event)))))
+  (if-not (map? event)
+    event
+    (let [kv (into {}
+               (map (fn [[k v]] [(if (string? k) (keyword k) k) v]))
+               event)]
+      (cond-> kv
+        (string? (:event/type kv)) (assoc :event/type (keyword (:event/type kv)))
+        (string? (:reason kv))     (assoc :reason (keyword (:reason kv)))))))
 
 (defn- row-routing-summary
   [row trace]
@@ -2025,6 +2057,7 @@
   "Load the CTX snapshot (Nippy BLOB) from the latest session_turn_state
    that has a non-NULL ctx column, scoped to this session_state. Returns
    the decoded CTX map or nil when the session has no persisted CTX yet.
+   STRING-KEYED: ctx blobs are frozen string-keyed (strings-only end to end).
 
    This is the resume path: on a new turn, the loop reads this back into
    the ctx-atom so the model picks up where (done …) left off. The cursor

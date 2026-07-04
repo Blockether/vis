@@ -183,18 +183,19 @@
    "next" :dfs-next, "n" :dfs-next
    "prev" :dfs-prev, "previous" :dfs-prev, "p" :dfs-prev})
 
-(defn- mget [m k] (if (contains? m k) (get m k) (get m (keyword k))))
-
 (defn- norm-move [m]
+  ;; Move specs arrive from Python: a scalar move string ("up", "d") or a dict
+  ;; with string keys ({"child": 2}, {"find": "text"}). No keywords cross the
+  ;; boundary, so read string keys directly — no keyword fallback.
   (cond
-    (map? m)  (let [c (mget m "child") f (mget m "find")
-                    fk (or (mget m "find_kind") (mget m "kind"))]
+    (map? m)  (let [c (get m "child") f (get m "find")
+                    fk (or (get m "find_kind") (get m "kind"))]
                 (cond
                   (some? c)  [:child (int c)]
                   (some? f)  [:find (str f)]
                   (some? fk) [:find-kind (str fk)]
                   :else      nil))
-    (some? m) (when-let [k (move-aliases (str/lower-case (name m)))] [k])
+    (some? m) (when-let [k (move-aliases (str/lower-case (str m)))] [k])
     :else     nil))
 
 (defn- named-count
@@ -295,6 +296,9 @@
                    :find      (or (find-text lang source path (str arg)) :err-find)
                    :find-kind (or (dfs-find lang source path
                                     #(= (str arg) (:kind %))) :err-find))]
+        ;; `step` is INTERNAL: `case op` yields either a path vector or an
+        ;; `:err-*` sentinel keyword minted right here (never model/Python data),
+        ;; so this keyword? check stays — it is not a boundary read.
         (if (keyword? step)
           {:error {:reason :bad-move :at path
                    :message (str "nav " (name op) " from " path ": "
@@ -313,15 +317,17 @@
    exists), next / prev (depth-first) — plus its `index` among siblings and the
    sibling count (so `lefts` = index, `rights` = siblings-1-index)."
   [lang source path]
+  ;; This map is embedded verbatim into the model-facing sexpr `"can"` result,
+  ;; so it crosses the strings-only boundary — build it with string keys.
   (let [path (vec (or path []))
         own  (named-count lang source path)
         i    (when (seq path) (peek path))
         pc   (when (seq path) (named-count lang source (pop path)))]
-    {:down     (boolean (and own (pos? (long own))))
-     :up       (boolean (seq path))
-     :left     (boolean (and i (pos? (long i))))
-     :right    (boolean (and pc i (< (inc (long i)) (long pc))))
-     :next     (boolean (dfs-next lang source path))
-     :prev     (boolean (seq path))
-     :index    (when i (long i))
-     :siblings (when pc (long pc))}))
+    {"down"     (boolean (and own (pos? (long own))))
+     "up"       (boolean (seq path))
+     "left"     (boolean (and i (pos? (long i))))
+     "right"    (boolean (and pc i (< (inc (long i)) (long pc))))
+     "next"     (boolean (dfs-next lang source path))
+     "prev"     (boolean (seq path))
+     "index"    (when i (long i))
+     "siblings" (when pc (long pc))}))

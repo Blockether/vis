@@ -54,6 +54,47 @@
              {:type :foundation-git/no-workspace}))))
 
 ;; =============================================================================
+;; Boundary wire constructors
+;; =============================================================================
+;;
+;; The Clojure↔GraalPy boundary is strings-only: every map a tool returns
+;; crosses to Python and MUST be built with STRING keys and carry NO
+;; keyword/symbol values. `com.blockether.vis.internal.git` (git-core) is an
+;; internal library that speaks idiomatic keyword Clojure — its maps only
+;; cross because THIS extension embeds them in tool results, so we stringify
+;; them here, at the point they enter the crossing value.
+
+(defn- numstat->wire
+  "git-core per-file numstat `{:file :add :del :binary? :patch}` -> the
+   string-keyed shape the model reads. `binary`/`patch` are present only
+   when git-core supplied them."
+  [{:keys [file add del binary? patch]}]
+  (cond-> {"file" file "add" add "del" del}
+    binary?       (assoc "binary" true)
+    (some? patch) (assoc "patch" patch)))
+
+(defn- show->wire
+  "git-core `show-commit` canonical map -> the string-keyed shape the model
+   reads. Keeps the full canonical commit surface (git_show is the DETAIL
+   view, unlike git_log's slimmed rows), with `files`/`stat` as string-keyed
+   numstat."
+  [{:keys [sha short-sha author email at committer committer-email committed-at
+           subject body parents files stat]}]
+  {"sha"             sha
+   "short_sha"       short-sha
+   "author"          author
+   "email"           email
+   "at"              at
+   "committer"       committer
+   "committer_email" committer-email
+   "committed_at"    committed-at
+   "subject"         subject
+   "body"            body
+   "parents"         (vec parents)
+   "files"           (mapv numstat->wire files)
+   "stat"            {"files" (:files stat) "add" (:add stat) "del" (:del stat)}})
+
+;; =============================================================================
 ;; Tools
 ;; =============================================================================
 
@@ -100,8 +141,10 @@
                           "git_diff({\"from\": \"main\", \"to\": \"feature\"})"
                           "git_diff({\"path\": \"src/foo.clj\"})"
                           "git_diff({\"from\": \"HEAD~1\", \"is_patch\": True})"]})))
-   (let [{:keys [from to path]} (or opts {})
-         _ (doseq [[k v] {:from from :to to :path path}]
+   (let [from (get opts "from")
+         to   (get opts "to")
+         path (get opts "path")
+         _ (doseq [[k v] {"from" from "to" to "path" path}]
              (when (and (some? v) (not (string? v)))
                (throw (ex-info (str "git_diff " k " must be a string, got " (pr-str v))
                         {:type :foundation-git/invalid-opts :opts opts :key k :value v}))))
@@ -120,7 +163,7 @@
                        (and from (not ws-base)) nil  ;; :from + no :to -> base..WT
                        ws-base                  "HEAD"  ;; default workspace shape
                        :else                    nil)
-         patch?      (boolean (:is_patch opts))
+         patch?      (boolean (get opts "is_patch"))
          status      (git-core/status-snapshot root-file)
          files       (vec (or (git-core/diff-numstat root-file base new-rev path patch?) []))
          ;; WT diffs only: status entries the numstat didn't already cover
@@ -138,31 +181,32 @@
          kind        (cond from :range :else (:kind ws))
          range-mode? (= kind :range)]
      (extension/success
-       {:result (cond-> {:from  base
-                         :stat  {:files (count files) :add +sum :del -sum}
-                         :files files}
-                  head (assoc :head (let [h (str head)]
-                                      (if (> (count h) 10) (subs h 0 10) h)))
-                  kind (assoc :kind kind)
-                  new-rev (assoc :to new-rev)
-                  (seq untracked) (assoc :untracked untracked)
+       {:result (cond-> {"from"  base
+                         "stat"  {"files" (count files) "add" +sum "del" -sum}
+                         "files" (mapv numstat->wire files)}
+                  head (assoc "head" (let [h (str head)]
+                                       (if (> (count h) 10) (subs h 0 10) h)))
+                  kind (assoc "kind" (name kind))
+                  new-rev (assoc "to" new-rev)
+                  (seq untracked) (assoc "untracked" untracked)
                   (and (not range-mode?) (:branch ws))
-                  (assoc :branch (:branch ws))
-                  path (assoc :path path)
-                  patch? (assoc :patch (->> files (keep :patch) (str/join "\n"))))}))))
+                  (assoc "branch" (:branch ws))
+                  path (assoc "path" path)
+                  patch? (assoc "patch" (->> files (keep :patch) (str/join "\n"))))}))))
 
 (defn- group-status-by-bucket
-  "Fold flat porcelain `[{:status CODE :file PATH} ...]` into a map keyed by
-   BUCKET keyword → vec of file paths — the bucket is stated ONCE per group
-   instead of on every file. Buckets are single snake-safe words (:added
-   :modified :deleted :untracked :conflicted) so the map round-trips the
-   GraalPy boundary VERBATIM; porcelain codes as map keys (\"M\", \"??\")
-   came back keywordized (`:M`, `:??`) and the model-facing pin rendered a
-   dirty tree as a bare header the model read as CLEAN."
+  "Fold flat porcelain `[{:status CODE :file PATH} ...]` (git-core's
+   keyword-keyed entries) into a STRING-keyed map of bucket -> vec of file
+   paths — the bucket is stated ONCE per group instead of on every file.
+   Buckets are single snake-safe words (\"added\" \"modified\" \"deleted\"
+   \"untracked\" \"conflicted\"): shipping the raw porcelain code as the key
+   (\"M\", \"??\") made the model-facing pin render a dirty tree as a bare
+   header it read as CLEAN. The value crosses the strings-only boundary, so
+   the bucket keys are plain strings."
   [entries]
   (let [g (group-by :status entries)
-        bucket-order [[:added "A"] [:modified "M"] [:deleted "D"]
-                      [:untracked "??"] [:conflicted "UU"]]]
+        bucket-order [["added" "A"] ["modified" "M"] ["deleted" "D"]
+                      ["untracked" "??"] ["conflicted" "UU"]]]
     (reduce (fn [m [bucket code]]
               (if-let [fs (seq (get g code))]
                 (assoc m bucket (mapv :file fs))
@@ -189,10 +233,10 @@
                 (.getCanonicalPath ^java.io.File primary-work-tree))))
       (let [snapshot (git-core/status-snapshot (io/file root))]
         (when (seq (:entries snapshot))
-          {:root    root
-           :branch  (:branch snapshot)
-           :head    (short-head snapshot)
-           :changes (group-status-by-bucket (:entries snapshot))})))))
+          {"root"    root
+           "branch"  (:branch snapshot)
+           "head"    (short-head snapshot)
+           "changes" (group-status-by-bucket (:entries snapshot))})))))
 
 (defn git-status-fn
   "Working-tree status of the active workspace, GROUPED BY CHANGE KIND.
@@ -228,12 +272,12 @@
                              (keep #(context-repo-status primary-work-tree %))
                              seq)]
      (extension/success
-       {:result (cond-> {:branch  (:branch snapshot)
-                         :changes (group-status-by-bucket (:entries snapshot))}
+       {:result (cond-> {"branch"  (:branch snapshot)
+                         "changes" (group-status-by-bucket (:entries snapshot))}
                   (:head snapshot)
-                  (assoc :head (short-head snapshot))
+                  (assoc "head" (short-head snapshot))
                   context-repos
-                  (assoc :context-repos (vec context-repos)))}))))
+                  (assoc "context_repos" (vec context-repos)))}))))
 
 (defn- coerce-log-limit
   "Normalize the git_log() argument into a 1..200 integer.
@@ -245,7 +289,7 @@
   ^long [arg]
   (let [v   (cond
               (nil? arg) 20
-              (map? arg) (or (:limit arg) (:n arg) 20)
+              (map? arg) (or (get arg "limit") (get arg "n") 20)
               :else      arg)
         raw (cond
               (integer? v) v
@@ -261,11 +305,11 @@
                 :examples ["git_log()" "git_log(50)" "git_log({\"limit\": 50})"]})))
     (max 1 (min 200 (long raw)))))
 
-(defn- coerce-log-opts "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for\n   commit selection, `:since/:until/:author` for time + author filters, and\n   the field selectors `:subject_only` (one-line scan: only short_sha +\n   subject) and `:is_body` (opt-in full body; default DROPS it).\n   Returns a normalised opts map; anything not-a-map throws the same\n   :foundation-git/invalid-opts shape as `coerce-log-limit`." [m] (when-not (map? m) (throw (ex-info (str "git_log expected a dict, got " (pr-str m)) {:type :foundation-git/invalid-opts, :opts m}))) {:limit (coerce-log-limit (or (:limit m) (:n m))), :path (when-let [p (:path m)] (when (string? p) p)), :ref (when-let [r (:ref m)] (when (string? r) r)), :since (:since m), :until (:until m), :author (when-let [a (:author m)] (when (string? a) a)), :subject-only (boolean (:subject_only m)), :is-body (boolean (:is_body m))})
+(defn- coerce-log-opts "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for\n   commit selection, `:since/:until/:author` for time + author filters, and\n   the field selectors `:subject_only` (one-line scan: only short_sha +\n   subject) and `:is_body` (opt-in full body; default DROPS it).\n   Returns a normalised opts map; anything not-a-map throws the same\n   :foundation-git/invalid-opts shape as `coerce-log-limit`." [m] (when-not (map? m) (throw (ex-info (str "git_log expected a dict, got " (pr-str m)) {:type :foundation-git/invalid-opts, :opts m}))) {:limit (coerce-log-limit (or (get m "limit") (get m "n"))), :path (when-let [p (get m "path")] (when (string? p) p)), :ref (when-let [r (get m "ref")] (when (string? r) r)), :since (get m "since"), :until (get m "until"), :author (when-let [a (get m "author")] (when (string? a) a)), :subject-only (boolean (get m "subject_only")), :is-body (boolean (get m "is_body"))})
 
-(defn- slim-commit "Drop redundant/derivable fields from a canonical commit map so a log of\n   N commits doesn't repeat author==committer / at==committed-at / empty\n   bodies / single-parent lists N times.\n\n   `opts`:\n     :subject-only?  -> return ONLY {:short_sha :subject} (one-line scan mode)\n     :is-body?       -> include :body (opt-in; default DROPS it - :subject\n                        already carries the headline, the multi-KB body is\n                        what bloats context)\n     :body-cap       -> when included + set, hard-cap the body to that many\n                        chars (used for multi-commit logs)\n\n   Otherwise ALWAYS keeps :sha :short-sha :author :email :at :subject;\n   :committer / :committer-email / :committed-at only when they DIFFER from\n   :author / :email / :at; :parents only for a merge commit (>1 parent)." [{:keys [sha short-sha author email at subject body committer committer-email committed-at parents]} {:keys [subject-only? is-body? body-cap]}] (if subject-only? {:short_sha short-sha, :subject subject} (cond-> {:sha sha, :short_sha short-sha, :author author, :email email, :at at, :subject subject} (and is-body? (string? body) (seq (str/trim body))) (assoc :body (if (and body-cap (> (count body) body-cap)) (str (subs body 0 body-cap) "\n[...body truncated...]") body)) (not= committer author) (assoc :committer committer) (not= committer-email email) (assoc :committer_email committer-email) (not= committed-at at) (assoc :committed_at committed-at) (> (count parents) 1) (assoc :parents (vec parents)))))
+(defn- slim-commit "Drop redundant/derivable fields from a canonical commit map so a log of\n   N commits doesn't repeat author==committer / at==committed-at / empty\n   bodies / single-parent lists N times.\n\n   `opts`:\n     :subject-only?  -> return ONLY {:short_sha :subject} (one-line scan mode)\n     :is-body?       -> include :body (opt-in; default DROPS it - :subject\n                        already carries the headline, the multi-KB body is\n                        what bloats context)\n     :body-cap       -> when included + set, hard-cap the body to that many\n                        chars (used for multi-commit logs)\n\n   Otherwise ALWAYS keeps :sha :short-sha :author :email :at :subject;\n   :committer / :committer-email / :committed-at only when they DIFFER from\n   :author / :email / :at; :parents only for a merge commit (>1 parent)." [{:keys [sha short-sha author email at subject body committer committer-email committed-at parents]} {:keys [subject-only? is-body? body-cap]}] (if subject-only? {"short_sha" short-sha, "subject" subject} (cond-> {"sha" sha, "short_sha" short-sha, "author" author, "email" email, "at" at, "subject" subject} (and is-body? (string? body) (seq (str/trim body))) (assoc "body" (if (and body-cap (> (count body) body-cap)) (str (subs body 0 body-cap) "\n[...body truncated...]") body)) (not= committer author) (assoc "committer" committer) (not= committer-email email) (assoc "committer_email" committer-email) (not= committed-at at) (assoc "committed_at" committed-at) (> (count parents) 1) (assoc "parents" (vec parents)))))
 
-(defn git-log-fn "Recent commits in the active workspace. Default limit is 20; max 200.\n\n   Signatures:\n     git_log()                                              ; default 20\n     git_log(50)                                            ; integer limit\n     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"\n     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path\n     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha\n     git_log({\"subject_only\": True, \"limit\": 40})          ; one-line scan: short_sha + subject only\n     git_log({\"limit\": 1, \"is_body\": True})                ; include the full commit body\n\n   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,\n   subject. To keep a history scan cheap, the rest are present ONLY when\n   they add information:\n     body          -> ONLY when you pass is_body True (opt-in; the full\n                      message body is what bloats context). Capped per-commit;\n                      a multi-commit log caps each body harder than a single one.\n     committer / committer_email / committed_at\n                   -> only when they DIFFER from author / email / at\n     parents       -> only for a merge commit (more than one parent)\n   So a normal commit is just {sha, short_sha, author, email, at, subject}.\n   Pass subject_only True for the leanest scan: each commit is ONLY\n   {short_sha, subject}.\n   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the\n   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))." ([env] (git-log-fn env nil)) ([env arg] (let [root (io/file (env-root env)) {:keys [limit path ref since until author subject-only is-body]} (cond (nil? arg) {:limit 20} (map? arg) (coerce-log-opts arg) :else {:limit (coerce-log-limit arg)}) body-cap (when (and is-body (> (or limit 1) 1)) 256) status (git-core/status-snapshot root) commits (->> (or (git-core/recent-commits root limit {:path path, :ref ref, :since since, :until until, :author author}) []) (mapv (fn* [p1__44706#] (slim-commit p1__44706# {:subject-only? subject-only, :is-body? is-body, :body-cap body-cap}))))] (extension/success {:result {:branch (:branch status), :commits commits}}))))
+(defn git-log-fn "Recent commits in the active workspace. Default limit is 20; max 200.\n\n   Signatures:\n     git_log()                                              ; default 20\n     git_log(50)                                            ; integer limit\n     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"\n     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path\n     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha\n     git_log({\"subject_only\": True, \"limit\": 40})          ; one-line scan: short_sha + subject only\n     git_log({\"limit\": 1, \"is_body\": True})                ; include the full commit body\n\n   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,\n   subject. To keep a history scan cheap, the rest are present ONLY when\n   they add information:\n     body          -> ONLY when you pass is_body True (opt-in; the full\n                      message body is what bloats context). Capped per-commit;\n                      a multi-commit log caps each body harder than a single one.\n     committer / committer_email / committed_at\n                   -> only when they DIFFER from author / email / at\n     parents       -> only for a merge commit (more than one parent)\n   So a normal commit is just {sha, short_sha, author, email, at, subject}.\n   Pass subject_only True for the leanest scan: each commit is ONLY\n   {short_sha, subject}.\n   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the\n   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))." ([env] (git-log-fn env nil)) ([env arg] (let [root (io/file (env-root env)) {:keys [limit path ref since until author subject-only is-body]} (cond (nil? arg) {:limit 20} (map? arg) (coerce-log-opts arg) :else {:limit (coerce-log-limit arg)}) body-cap (when (and is-body (> (or limit 1) 1)) 256) status (git-core/status-snapshot root) commits (->> (or (git-core/recent-commits root limit {:path path, :ref ref, :since since, :until until, :author author}) []) (mapv (fn* [p1__44706#] (slim-commit p1__44706# {:subject-only? subject-only, :is-body? is-body, :body-cap body-cap}))))] (extension/success {:result {"branch" (:branch status), "commits" commits}}))))
 
 (defn git-show-fn
   "Detailed view of one commit.
@@ -281,16 +325,16 @@
    `is_patch: True` every file entry also carries `:patch` with the
    unified-diff text (truncated at ~64KB per file)."
   ([env arg]
-   (let [{:keys [rev is_patch]}
-         (cond
-           (string? arg) {:rev arg}
-           (map? arg)    arg
-           :else         (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
-                                  {:type :foundation-git/invalid-opts :opts arg
-                                   :examples ["git_show(\"HEAD\")"
-                                              "git_show(\"abc1234\")"
-                                              "git_show({\"rev\": \"HEAD~1\"})"
-                                              "git_show({\"rev\": \"HEAD\", \"is_patch\": True})"]})))]
+   (let [rev      (cond
+                    (string? arg) arg
+                    (map? arg)    (get arg "rev")
+                    :else         (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
+                                           {:type :foundation-git/invalid-opts :opts arg
+                                            :examples ["git_show(\"HEAD\")"
+                                                       "git_show(\"abc1234\")"
+                                                       "git_show({\"rev\": \"HEAD~1\"})"
+                                                       "git_show({\"rev\": \"HEAD\", \"is_patch\": True})"]})))
+         is_patch (when (map? arg) (get arg "is_patch"))]
      (when-not (and (string? rev) (seq rev))
        (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))
@@ -299,7 +343,7 @@
        (when-not result
          (throw (ex-info (str "git/show could not resolve revision: " rev)
                   {:type :foundation-git/unknown-rev :rev rev})))
-       (extension/success {:result result})))))
+       (extension/success {:result (show->wire result)})))))
 
 (defn- legendize-blame
   "Reshape a raw blame result into a commit-legend form so per-line commit
@@ -320,18 +364,22 @@
                   (reduce
                     (fn [acc {:keys [sha short-sha author email at]}]
                       (if (and short-sha (not (contains? acc short-sha)))
-                        (assoc! acc short-sha {:sha    sha
-                                               :author author
-                                               :email  email
-                                               :at     at})
+                        (assoc! acc short-sha {"sha"    sha
+                                               "author" author
+                                               "email"  email
+                                               "at"     at})
                         acc))
                     (transient {})
                     lines))]
-    (-> result
-      (assoc :commits commits)
-      (assoc :lines (mapv (fn [{:keys [line short-sha content]}]
-                            {:line line :sha short-sha :content content})
-                      lines)))))
+    {"path"         (:path result)
+     "head"         (:head result)
+     "total"        (:total result)
+     "truncated"    (:truncated? result)
+     "ignored_revs" (vec (:ignored-revs result))
+     "commits"      commits
+     "lines"        (mapv (fn [{:keys [line short-sha content]}]
+                            {"line" line "sha" short-sha "content" content})
+                      lines)}))
 
 (defn- coerce-line-num
   "Normalize a git_blame line-range bound (:from / :to) to a positive int.
@@ -378,15 +426,17 @@
    Outside the work tree or on untracked files throws
    `:foundation-git/not-tracked`."
   ([env arg]
-   (let [{:keys [path from to ignore_revs]}
-         (cond
-           (string? arg) {:path arg}
-           (map? arg)    arg
-           :else         (throw (ex-info (str "git_blame expected a path string or opts dict, got " (pr-str arg))
-                                  {:type :foundation-git/invalid-opts :opts arg
-                                   :examples ["git_blame(\"src/foo.clj\")"
-                                              "git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})"
-                                              "git_blame({\"path\": \"src/foo.clj\", \"ignore_revs\": [\"abc1234\"]})"]})))]
+   (let [path        (cond
+                       (string? arg) arg
+                       (map? arg)    (get arg "path")
+                       :else         (throw (ex-info (str "git_blame expected a path string or opts dict, got " (pr-str arg))
+                                              {:type :foundation-git/invalid-opts :opts arg
+                                               :examples ["git_blame(\"src/foo.clj\")"
+                                                          "git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})"
+                                                          "git_blame({\"path\": \"src/foo.clj\", \"ignore_revs\": [\"abc1234\"]})"]})))
+         from        (when (map? arg) (get arg "from"))
+         to          (when (map? arg) (get arg "to"))
+         ignore_revs (when (map? arg) (get arg "ignore_revs"))]
      (when-not (and (string? path) (seq path))
        (throw (ex-info (str "git_blame requires a non-blank path, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))

@@ -119,8 +119,8 @@
   (it "format does BOTH parinfer delimiter repair AND cljfmt"
     (let [r (core/clj-format-fn "(defn f [x]\n  (+ x 1)")]   ; missing close paren
       (expect (:success? r))
-      (expect (true? (get-in r [:result :repaired?])))       ; a ) was added
-      (let [t (get-in r [:result :text])]
+      (expect (true? (get-in r [:result "repaired"])))       ; a ) was added
+      (let [t (get-in r [:result "text"])]
         (expect (re-find #"\(defn f \[x\]" t))
         ;; balanced now: repairing the output again is a no-op
         (expect (= t (core/clj-repair+format t)))))))
@@ -155,7 +155,7 @@
       (try
         (spit f "(defn f [x]\n        (+ x 1))\n")           ; valid but mis-indented
         (let [res (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                    :struct_patch [{:path "x.clj"}] {:success? true})
+                    :struct_patch [{"path" "x.clj"}] {:success? true})
               after (slurp f)]
           (expect (= {:success? true} res))                  ; result passes through
           (expect (not= "(defn f [x]\n        (+ x 1))\n" after))   ; reformatted
@@ -166,7 +166,7 @@
       (try
         (spit f "def g( ):\n  pass\n")
         (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-          :patch [{:path "x.py"}] {:success? true})
+          :patch [{"path" "x.py"}] {:success? true})
         (expect (= "def g( ):\n  pass\n" (slurp f)))
         (finally (cleanup dir)))))
   (it "is a no-op when the edit did NOT succeed"
@@ -174,7 +174,7 @@
       (try
         (spit f "(defn f [x]\n        (+ x 1))\n")
         (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-          :struct_patch [{:path "x.clj"}] {:success? false})
+          :struct_patch [{"path" "x.clj"}] {:success? false})
         (expect (= "(defn f [x]\n        (+ x 1))\n" (slurp f)))
         (finally (cleanup dir))))))
 
@@ -183,14 +183,14 @@
     (let [called (atom false)
           result (with-redefs-fn {#'ports/find-default (constantly 54321)
                                   #'test-runner/run-via-repl (fn [& _]
-                                                               {:error "Could not locate lazytest/core"})
+                                                               {"error" "Could not locate lazytest/core"})
                                   #'test-runner/run-via-cli (fn [_root norm]
                                                               (reset! called true)
-                                                              {:mode "cli" :ns (first (:nses norm)) :pass? true})}
+                                                              {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
                    #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
       (expect @called)
-      (expect (= "cli" (get-in result [:result :mode])))
-      (expect (= "clojure" (get-in result [:result :language]))))))
+      (expect (= "cli" (get-in result [:result "mode"])))
+      (expect (= "clojure" (get-in result [:result "language"]))))))
 
 (defn- balanced? [s]
   (= (count (re-seq #"\(" s)) (count (re-seq #"\)" s))))
@@ -200,9 +200,10 @@
    failing on unbalanced delimiters."
   (it "retries a .clj edit with paren-repaired code after the editor refuses it"
     (let [seen    (atom [])
-          ;; fake editor: refuses unbalanced code, accepts balanced
+          ;; fake editor: refuses unbalanced code, accepts balanced. Model args
+          ;; are STRING-keyed (strings-only boundary).
           next-fn (fn [args]
-                    (let [code (:code (first args))]
+                    (let [code (get (first args) "code")]
                       (swap! seen conj code)
                       (if (balanced? code)
                         {:success? true :result code}
@@ -210,7 +211,7 @@
                                  {:type :ext.foundation.editing/struct-zip-error})))))
           out (core/clj-struct-patch-no-fail-around
                 {} :struct_patch
-                [{:path "x.clj" :code "(defn f [] (+ 1 2)" :op "replace"}] next-fn)]
+                [{"path" "x.clj" "code" "(defn f [] (+ 1 2)" "op" "replace"}] next-fn)]
       (expect (:success? out))
       (expect (= 2 (count @seen)))                   ; raw attempt, then repaired retry
       (expect (balanced? (last @seen)))))            ; the retry used balanced code
@@ -218,14 +219,14 @@
     (let [calls   (atom 0)
           next-fn (fn [_] (swap! calls inc) (throw (ex-info "boom" {})))]
       (expect (true? (try (core/clj-struct-patch-no-fail-around
-                            {} :struct_patch [{:path "x.py" :code "def f("}] next-fn)
+                            {} :struct_patch [{"path" "x.py" "code" "def f("}] next-fn)
                        false (catch clojure.lang.ExceptionInfo _ true))))
       (expect (= 1 @calls))))
   (it "surfaces the ORIGINAL error when repair can't make the edit succeed"
     (let [next-fn (fn [_] (throw (ex-info "still broken" {:type :unfixable})))]
       (expect (= :unfixable
                 (try (core/clj-struct-patch-no-fail-around
-                       {} :struct_patch [{:path "x.clj" :code "(defn f [] (+ 1 2)"}] next-fn)
+                       {} :struct_patch [{"path" "x.clj" "code" "(defn f [] (+ 1 2)"}] next-fn)
                   nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 (defdescribe patch-no-fail-test
@@ -260,8 +261,8 @@
             (expect (balanced? a))
             (expect (= (count (re-seq #"\[" a)) (count (re-seq #"\]" a)))))
           (expect (= "(def other 1)\n" (slurp (io/file root "b.clj"))))
-          ;; the summary marks the repaired file
-          (expect (= [true nil] (mapv :repaired? (:result out)))))
+          ;; the summary marks the repaired file (result vector is STRING-keyed)
+          (expect (= [true nil] (mapv #(get % "repaired") (:result out)))))
         (finally (cleanup root)))))
   (it "surfaces the ORIGINAL refusal when a broken candidate is NOT delimiter-repairable"
     (let [root (tmp-dir)]

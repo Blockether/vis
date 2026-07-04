@@ -36,23 +36,21 @@
 
 (def ^:private workspace-drop-keys
   "Internal ids the model never uses — dropped from the model-facing `workspace`
-   block (the real linkage lives on the session objects, not in ctx)."
-  #{:workspace/id :session/state-id :session/id})
+   block (the real linkage lives on the session objects, not in ctx). The ctx is
+   STRING-KEYED end to end; producers own the naming, this is only a defensive
+   drop of internal id fields."
+  #{"id" "workspace_id" "state_id" "session_state_id" "session_id"})
 
 (defn- normalize-workspace
-  "Model-facing `workspace` map: drop internal UUID ids, and strip the redundant
-   `workspace/` namespace from keys — we're already UNDER `workspace`, so
-   `:workspace/root` should read as `root`, not `workspace_root`. Other
-   namespaces (`:vcs/kind`, `:session/title`, `:session/fork-of`) are kept as-is.
-   Source iteration order is preserved (array-map) so the ctx-delta stays stable."
+  "Model-facing `workspace` map: drop internal UUID ids. Producers build the
+   map STRING-KEYED (`\"root\"`, `\"sandbox\"`, `\"vcs_kind\"`, ...) — no key
+   rewriting happens here anymore. Source iteration order is preserved
+   (array-map) so the ctx-delta stays stable."
   [ws]
   (if (map? ws)
     (reduce-kv
       (fn [m k v]
-        (cond
-          (contains? workspace-drop-keys k)     m
-          (= "workspace" (namespace k))         (assoc m (keyword (name k)) v)
-          :else                                 (assoc m k v)))
+        (if (contains? workspace-drop-keys k) m (assoc m k v)))
       (array-map) ws)
     (or ws {})))
 
@@ -66,25 +64,26 @@
    Takes a `session-view` map (from `eng/session-view`). `_opts` is ignored."
   ([view] (project-ctx view nil))
   ([view _opts]
-   ;; Keys are UNQUALIFIED on purpose: the engine view's `:session/*`
-   ;; namespace folds to bare Python dict keys.
+   ;; Keys are BARE on purpose: the engine view's `session_*` prefix folds
+   ;; to bare Python dict keys. Strings-only — this map crosses the boundary.
    (cond-> (array-map
-             :id    (:session/id view)
-             :turn  (:session/turn view)
-             :scope (:session/scope view))
-     (:session/utilization view)           (assoc :utilization (:session/utilization view))
-     true                                  (assoc :workspace (normalize-workspace (:session/workspace view)))
-     (:session/env view)                   (assoc :env (:session/env view))
-     (not-empty (:session/routing view))   (assoc :routing (:session/routing view))
-     (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
-     (not-empty (:session/symbols view))   (assoc :symbols (:session/symbols view)))))
+             "id"    (get view "session_id")
+             "turn"  (get view "session_turn")
+             "scope" (get view "session_scope"))
+     (get view "session_utilization")
+     (assoc "utilization" (get view "session_utilization"))
+     true (assoc "workspace" (normalize-workspace (get view "session_workspace")))
+     (get view "session_env") (assoc "env" (get view "session_env"))
+     (not-empty (get view "session_routing")) (assoc "routing" (get view "session_routing"))
+     (not-empty (get view "session_resources")) (assoc "resources" (get view "session_resources"))
+     (not-empty (get view "session_symbols")) (assoc "symbols" (get view "session_symbols")))))
 
 (def ^:private static-context-keys
   "The ambient session keys the model needs as STANDING context — embedded
    once in the (cached) system prompt and re-emitted per iteration ONLY when
-   they change. The per-iteration churn (`:id` `:turn` `:scope`
-   `:utilization`) is internal bookkeeping and never model-facing."
-  [:workspace :env :routing :resources :symbols])
+   they change. The per-iteration churn (`\"id\"` `\"turn\"` `\"scope\"`
+   `\"utilization\"`) is internal bookkeeping and never model-facing."
+  ["workspace" "env" "routing" "resources" "symbols"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.
@@ -95,7 +94,7 @@
         m    (reduce (fn [m k] (if (contains? full k) (assoc m k (get full k)) m))
                (array-map) static-context-keys)]
     (cond-> m
-      (get-in m [:env :host :clock]) (update-in [:env :host] dissoc :clock))))
+      (get-in m ["env" "host" "clock"]) (update-in ["env" "host"] dissoc "clock"))))
 
 (defn render-ctx-static
   "Render the standing session context (workspace / env / routing / resources /
@@ -130,19 +129,15 @@
   (let [view (eng/session-view ctx warnings)
         m    (project-ctx-static view)]
     (cond-> m
-      (:session/utilization view) (assoc :utilization (:session/utilization view)))))
-
-(defn- ctx-key->py
-  "Keyword/string ctx key → the Python dict key string (snake_case), matching
-   how `->py` renders keys, so the delta's `session[\"k\"]` path hits the live dict."
-  [k]
-  (-> k (#(if (keyword? %) (name %) (str %))) (str/replace "-" "_")))
+      (get view "session_utilization")
+      (assoc "utilization" (get view "session_utilization")))))
 
 (defn- ctx-path-str
-  "A key path `[:env :host :os]` → the Python subscript chain
-   `[\"env\"][\"host\"][\"os\"]`."
+  "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain
+   `[\"env\"][\"host\"][\"os\"]`. Ctx keys are canonical STRINGS already —
+   no key transform exists between the delta path and the live dict."
   [path]
-  (apply str (map #(str "[\"" (ctx-key->py %) "\"]") path)))
+  (apply str (map #(str "[\"" % "\"]") path)))
 
 (defn- ctx-delta-ops
   "RECURSIVE structural diff of `prev`→`cur` under `path`, as a seq of Python op
@@ -207,8 +202,8 @@
    `:op` (the call head) is stripped from maps since the call is already
    visible in the assistant replay; `src` is accepted for call-site
    compatibility but no longer affects the output. File reads return `:anchors`
-   as an ordered `{\"ln:hash\" text}` map — the key IS the `patch :from_anchor`
+   as an ordered `{\"ln:hash\" text}` map — the key IS the `patch from_anchor`
    — so editing resolves straight off this structured data."
   ^String [_src v]
-  (env/ctx->python-str (if (map? v) (dissoc v :op) v)))
+  (env/ctx->python-str (if (map? v) (dissoc v "op") v)))
 

@@ -9,7 +9,7 @@
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call request-size guardrail surfaced to the model as
-   `:session/utilization :auto-compress-above`. ~72% of a typical 200k window,
+   `session_utilization.auto_compress_above`. ~72% of a typical 200k window,
    leaving headroom for the model's own output. Compared against PROVIDER-reported
    input tokens (no local tokenizer) — see `utilization`."
   144000)
@@ -132,15 +132,17 @@
       (dissoc :error))))
 
 (defn advance-iter
-  "Advance the cursor so the next iter starts at :iter (current+1),
-   :next-form 1. Prior tool outputs are carried by append-only message
-   history, not by mutable context state."
+  "Advance the cursor so the next iter starts at \"iter\" (current+1),
+   \"next_form\" 1. Prior tool outputs are carried by append-only message
+   history, not by mutable context state. CTX is STRING-KEYED end to end —
+   it is bound into Python as the `context` dict and nippy-persisted, and
+   both surfaces are strings-only."
   [ctx _form-results-vec]
-  (let [cursor (:session/scope ctx)]
+  (let [cursor (get ctx "session_scope")]
     (assoc ctx
-      :session/scope (-> cursor
-                       (update :iter inc)
-                       (assoc :next-form 1)))))
+      "session_scope" (-> cursor
+                        (update "iter" inc)
+                        (assoc "next_form" 1)))))
 ;; --- GC TTL constants ----------------------------------------------------
 (defn gc-pass
   "Passthrough. Tasks/facts/archive are gone — there is nothing to GC.
@@ -165,9 +167,9 @@
   [ctx turn-pos]
   (let [next-turn (long (or turn-pos 1))]
     (-> ctx
-      (assoc :session/turn next-turn)
-      (assoc :session/scope {:turn next-turn, :iter 1, :next-form 1})
-      (assoc :engine/blockers [])
+      (assoc "session_turn" next-turn)
+      (assoc "session_scope" {"turn" next-turn, "iter" 1, "next_form" 1})
+      (assoc "engine_blockers" [])
       gc-pass)))
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
@@ -176,27 +178,32 @@
   "A minimal CTX scaffold with all model-facing keys filled by empty /
    default values. Useful as the starting point for scenario replays.
 
-   Includes the engine-ephemeral key `:engine/warnings` so the rest of
+   Includes the engine-ephemeral key `\"engine_warnings\"` so the rest of
    the system can swap! it without nil-puncturing. Stripped at
-   persistence boundaries via `strip-ephemeral`."
+   persistence boundaries via `strip-ephemeral`.
+
+   CTX is STRING-KEYED end to end: it is bound into Python as the `context`
+   dict (strings-only boundary) and nippy-persisted (strings-only DB), so
+   there is no keyword->string projection anywhere between."
   ([] (empty-ctx "test-session"))
   ([session-id]
-   {:session/id session-id,
-    :session/turn 1,
-    :session/scope {:turn 1, :iter 1, :next-form 1},
+   {"session_id" session-id,
+    "session_turn" 1,
+    "session_scope" {"turn" 1, "iter" 1, "next_form" 1},
     ;; Empty scaffold only. Prompt render replaces this through
     ;; foundation-core with a real workspace identity:
-    ;;   {:workspace/root ... :workspace/sandbox? ... :vcs/kind ...}
-    ;; `:vcs/kind :none` is reserved for an actual root with no supported VCS.
-    :session/workspace {},
-    :session/symbols {},
-    :engine/warnings []}))
+    ;;   {"root" ... "sandbox" ... "vcs_kind" ...}
+    ;; `"vcs_kind" "none"` is reserved for an actual root with no supported VCS.
+    "session_workspace" {},
+    "session_symbols" {},
+    "engine_warnings" []}))
 (defn strip-ephemeral
-  "Remove every `:engine/*` key from a ctx. Call before Nippy-snapshotting
+  "Remove every `\"engine_*\"` key from a ctx. Call before Nippy-snapshotting
    to persistence so transient mutator state (warnings, pending satisfy
    requests) does not leak into the durable record."
   [ctx]
-  (when ctx (into {} (remove (fn [[k _]] (and (keyword? k) (= "engine" (namespace k)))) ctx))))
+  (when ctx
+    (into {} (remove (fn [[k _]] (and (string? k) (str/starts-with? k "engine_"))) ctx))))
 ;; =============================================================================
 ;; Iter-scope parsing + comparator
 ;; =============================================================================
@@ -212,44 +219,44 @@
   [ctx _form-scope _args]
   {:ctx ctx, :warnings []})
 (defn utilization
-  "Pure: the `:session/utilization` map the model reads to see how much
+  "Pure: the `\"session_utilization\"` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
    so they can't be misread:
-     :last-request-tokens  input size of the most recent model call
-     :model-input-limit    HARD per-call ceiling (provider rejects above)
-     :saturation           last-request / model-input-limit, as a rounded
-                           percentage — how FULL the per-call window is
-     :headroom-tokens      tokens still free before the ceiling
-                           (model-input-limit - last-request); the
-                           actionable 'can I keep going or must I fold?'
-     :auto-compress-above  soft guardrail threshold for request size
-     :turn-total-tokens    cumulative input this turn (billing, NOT a
-                           per-call limit — may exceed the limit safely)
+     last_request_tokens  input size of the most recent model call
+     model_input_limit    HARD per-call ceiling (provider rejects above)
+     saturation           last-request / model-input-limit, as a rounded
+                          percentage — how FULL the per-call window is
+     headroom_tokens      tokens still free before the ceiling
+                          (model_input_limit - last request); the
+                          actionable 'can I keep going or must I fold?'
+     auto_compress_above  soft guardrail threshold for request size
+     turn_total_tokens    cumulative input this turn (billing, NOT a
+                          per-call limit — may exceed the limit safely)
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
   (let [req (long (or request-tokens 0))
         win (long (or window-tokens 0))]
     (when (pos? req)
-      (cond-> {:last-request-tokens req
-               :turn-total-tokens   (long (or turn-tokens 0))
-               :auto-compress-above (long (or fold-cap 0))}
-        (pos? win) (assoc :model-input-limit win
-                     :saturation (long (Math/round (* 100.0 (/ (double req) (double win)))))
-                     :headroom-tokens (max 0 (- win req)))))))
+      (cond-> {"last_request_tokens" req
+               "turn_total_tokens"   (long (or turn-tokens 0))
+               "auto_compress_above" (long (or fold-cap 0))}
+        (pos? win) (assoc "model_input_limit" win
+                     "saturation" (long (Math/round (* 100.0 (/ (double req) (double win)))))
+                     "headroom_tokens" (max 0 (- win req)))))))
 
 (def model-facing-keys
-  "EXACT set of `:session/*` keys the model is meant to see. This is the
+  "EXACT set of `session_*` keys the model is meant to see. This is the
    SINGLE definition of 'model-facing'; `session-view` selects on it so engine
    bookkeeping cannot leak into the rendered `<context>` or bound `context`
-   dict. `:session/utilization` is derived (from `:engine/utilization`), so it
-   is folded in by `session-view` rather than listed here."
-  [:session/id :session/turn :session/scope :session/workspace
-   :session/env :session/routing :session/resources :session/symbols])
+   dict. `\"session_utilization\"` is derived (from `\"engine_utilization\"`),
+   so it is folded in by `session-view` rather than listed here."
+  ["session_id" "session_turn" "session_scope" "session_workspace"
+   "session_env" "session_routing" "session_resources" "session_symbols"])
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
-   `:session/*` view.
+   `session_*` view.
 
    Both consumers derive from this, so the rendered `<context>` block and the
    Python `context` dict are the same map by construction:
@@ -257,12 +264,14 @@
      - `ctx-loop/session-snapshot` binds this view as read-only `context`
 
    Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
-   projects `:engine/utilization` → `:session/utilization`. The second arity
-   takes legacy `warnings` for call-site compatibility but ignores them. Pure."
+   projects `\"engine_utilization\"` → `\"session_utilization\"`. The second
+   arity takes legacy `warnings` for call-site compatibility but ignores them.
+   Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
    (cond-> (select-keys ctx model-facing-keys)
-     (:engine/utilization ctx) (assoc :session/utilization (:engine/utilization ctx)))))
+     (get ctx "engine_utilization")
+     (assoc "session_utilization" (get ctx "engine_utilization")))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

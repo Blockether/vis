@@ -55,7 +55,7 @@
 
 (defn- conflicts*
   [^Git git]
-  (mapv (fn [path] {:path path :state "UU"}) (sort (conflict-paths* git))))
+  (mapv (fn [path] {"path" path "state" "UU"}) (sort (conflict-paths* git))))
 
 (defn- sha
   "Resolve `rev` to its sha string, or nil when the ref doesn't exist
@@ -73,11 +73,11 @@
   []
   (with-open [git (open-git)]
     (let [active? (merge-in-progress?* git)]
-      (cond-> {:in-progress? active?}
-        active? (assoc :head       (sha git "HEAD")
-                  :merge-head (sha git "MERGE_HEAD")
-                  :branch     (.getBranch (.getRepository git))
-                  :conflicts  (conflicts* git))))))
+      (cond-> {"in_progress" active?}
+        active? (assoc "head"       (sha git "HEAD")
+                  "merge_head" (sha git "MERGE_HEAD")
+                  "branch"     (.getBranch (.getRepository git))
+                  "conflicts"  (conflicts* git))))))
 
 (defn accept-ours
   "Resolve `path` by keeping the trunk side (HEAD) of the conflict.
@@ -88,7 +88,7 @@
   (with-open [git (open-git)]
     (.. git checkout (setStage CheckoutCommand$Stage/OURS) (addPath path) call)
     (.. git add (addFilepattern path) call))
-  {:path path :op :git/merge-accept-ours})
+  {"path" path "op" "git_merge_accept_ours"})
 
 (defn accept-theirs
   "Resolve `path` by keeping the branch side (MERGE_HEAD). JGit
@@ -97,7 +97,7 @@
   (with-open [git (open-git)]
     (.. git checkout (setStage CheckoutCommand$Stage/THEIRS) (addPath path) call)
     (.. git add (addFilepattern path) call))
-  {:path path :op :git/merge-accept-theirs})
+  {"path" path "op" "git_merge_accept_theirs"})
 
 (defn mark-resolved
   "Stage a path the model already edited by hand (e.g. via `patch`).
@@ -105,31 +105,36 @@
   [path]
   (with-open [git (open-git)]
     (.. git add (addFilepattern path) call))
-  {:path path :op :git/merge-mark-resolved})
+  {"path" path "op" "git_merge_mark_resolved"})
 
 (defn continue!
   "Commit the merge with `:message` (default: 'merge-resolve').
    Refuses when conflicts are still outstanding. Publishes a
    `:session/merge-resolve-finished` event on success."
-  [{:keys [message channel-id session-id]}]
-  (with-open [git (open-git)]
-    (let [outstanding (conflicts* git)]
-      (when (seq outstanding)
-        (throw (ex-info "merge has unresolved conflicts; resolve them before continue!"
-                 {:type :merge-ops/unresolved-conflicts
-                  :conflicts outstanding}))))
-    (let [msg    (or (some-> message str str/trim not-empty) "merge-resolve")
-          commit (.. git commit (setMessage msg) call)
-          new-sha (.getName commit)]
-      (when channel-id
-        (try (vis/publish-channel-event! channel-id
-               {:type :session/merge-resolve-finished
-                :session-id session-id
-                :result :continued
-                :head new-sha
-                :message msg})
-          (catch Throwable _ nil)))
-      {:result :continued :head new-sha :message msg})))
+  [opts]
+  ;; `message` is model-facing (string key); `:channel-id`/`:session-id` are
+  ;; host-injected internals the model can never supply (keyword keys).
+  (let [message    (get opts "message")
+        channel-id (:channel-id opts)
+        session-id (:session-id opts)]
+    (with-open [git (open-git)]
+      (let [outstanding (conflicts* git)]
+        (when (seq outstanding)
+          (throw (ex-info "merge has unresolved conflicts; resolve them before continue!"
+                   {:type :merge-ops/unresolved-conflicts
+                    :conflicts outstanding}))))
+      (let [msg    (or (some-> message str str/trim not-empty) "merge-resolve")
+            commit (.. git commit (setMessage msg) call)
+            new-sha (.getName commit)]
+        (when channel-id
+          (try (vis/publish-channel-event! channel-id
+                 {:type :session/merge-resolve-finished
+                  :session-id session-id
+                  :result :continued
+                  :head new-sha
+                  :message msg})
+            (catch Throwable _ nil)))
+        {"result" "continued" "head" new-sha "message" msg}))))
 
 (defn abort!
   "Restore HEAD via JGit `ResetCommand` with `ResetType/HARD` — the
@@ -158,7 +163,7 @@
             :session-id session-id
             :result :aborted})
       (catch Throwable _ nil)))
-  {:result :aborted}) (defn- merge-hint
+  {"result" "aborted"}) (defn- merge-hint
                         "Actionable next-step for a non-trivial merge `status` name, or nil."
                         [status-name]
                         (case status-name
@@ -186,7 +191,7 @@
    Returns {:op :git/merge :status <MergeStatus> :merged? bool :branch
             :head :merge-head :conflicts [{:path :state}] :failing-paths {}
             :hint}."
-                                  [{:keys [branch ref message is_no_ff is_ff_only is_squash is_no_commit]}]
+                                  [{:strs [branch ref message is_no_ff is_ff_only is_squash is_no_commit]}]
                                   (with-open [git (open-git)]
                                     (let [target (or (some-> (or branch ref) str str/trim not-empty)
                                                    (throw (ex-info "git_merge requires a branch/ref to merge in"
@@ -208,16 +213,16 @@
                                             sname  (.name status)
                                             head   (some-> (.getNewHead res) .getName)
                                             failing (.getFailingPaths res)]
-                                        (cond-> {:op :git/merge
-                                                 :status sname
-                                                 :merged? (.isSuccessful status)
-                                                 :branch (.getBranch repo)
-                                                 :merge-head (.getName obj)}
-                                          head (assoc :head head)
-                                          (seq (conflicts* git)) (assoc :conflicts (conflicts* git))
-                                          failing (assoc :failing-paths
+                                        (cond-> {"op" "git_merge"
+                                                 "status" sname
+                                                 "merged" (.isSuccessful status)
+                                                 "branch" (.getBranch repo)
+                                                 "merge_head" (.getName obj)}
+                                          head (assoc "head" head)
+                                          (seq (conflicts* git)) (assoc "conflicts" (conflicts* git))
+                                          failing (assoc "failing_paths"
                                                     (into {} (map (fn [[p r]] [p (.name r)])) failing))
-                                          (merge-hint sname) (assoc :hint (merge-hint sname)))))))
+                                          (merge-hint sname) (assoc "hint" (merge-hint sname)))))))
 
 ;; =============================================================================
 ;; Python-facing tool wrappers (envelope contract)

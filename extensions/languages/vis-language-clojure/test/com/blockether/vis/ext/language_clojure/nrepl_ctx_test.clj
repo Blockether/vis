@@ -13,7 +13,10 @@
   (reset! @#'nx/liveness-cache {:key nil :statuses {}}))
 
 (defn- nrepl-of [contribution]
-  (get-in contribution [:session/env :languages :clojure :nrepl]))
+  ;; The contribution is STRING-keyed from the top: the contract key is
+  ;; "session_env" (ctx_loop drops a keyword :session/env), and everything under
+  ;; it crosses the strings-only boundary.
+  (get-in contribution ["session_env" "languages" "clojure" "nrepl"]))
 
 (defdescribe contribute-shape-test
   (it "nests live nREPL state under :session/env :languages :clojure with via/status/dialect/cwd"
@@ -26,16 +29,16 @@
                                               :cwd "/proj"})]
       (let [b (nrepl-of (nx/contribute {:workspace/root "/proj"
                                         :ctx-atom (atom {:session/turn 1})}))
-            p (first (:ports b))]
-        (expect (= 7001 (:default b)))
-        (expect (= :project (:via p)))
-        (expect (= :up (:status p)))
-        (expect (= :clj (:dialect p)))
-        (expect (= "/proj" (:cwd p)))
-        (expect (= {:clojure "1.12.4"} (:versions p)))
-        ;; not vis-managed (no managed processes) → :managed false, no handle
-        (expect (false? (:managed p)))
-        (expect (nil? (:tool p))))))
+            p (first (get b "ports"))]
+        (expect (= 7001 (get b "default")))
+        (expect (= "project" (get p "via")))
+        (expect (= "up" (get p "status")))
+        (expect (= "clj" (get p "dialect")))
+        (expect (= "/proj" (get p "cwd")))
+        (expect (= {"clojure" "1.12.4"} (get p "versions")))
+        ;; not vis-managed (no managed processes) → managed false, no handle
+        (expect (false? (get p "managed")))
+        (expect (nil? (get p "tool"))))))
 
   (it "derives :via per source and falls back :cwd to the source dir for project ports"
     (reset-cache!)
@@ -44,16 +47,16 @@
                                               {:port 3 :source "/h/.clojure/.nrepl-port"}])
                   rm/managed-ports   (fn [] {})
                   nc/probe!          (fn [_] {:status :up})] ; no :cwd from server
-      (let [ports   (:ports (nrepl-of (nx/contribute {:workspace/root "/a"
-                                                      :ctx-atom (atom {:session/turn 2})})))
-            by-port (into {} (map (juxt :port identity)) ports)]
-        (expect (= :project      (:via (by-port 1))))
-        (expect (= :lein-home    (:via (by-port 2))))
-        (expect (= :clojure-home (:via (by-port 3))))
-        ;; project port falls back to its source dir; non-project leave :cwd absent
-        (expect (= "/a" (:cwd (by-port 1))))
-        (expect (nil? (:cwd (by-port 2))))
-        (expect (nil? (:cwd (by-port 3)))))))
+      (let [ports   (get (nrepl-of (nx/contribute {:workspace/root "/a"
+                                                   :ctx-atom (atom {:session/turn 2})})) "ports")
+            by-port (into {} (map (juxt #(get % "port") identity)) ports)]
+        (expect (= "project"      (get (by-port 1) "via")))
+        (expect (= "lein-home"    (get (by-port 2) "via")))
+        (expect (= "clojure-home" (get (by-port 3) "via")))
+        ;; project port falls back to its source dir; non-project leave cwd absent
+        (expect (= "/a" (get (by-port 1) "cwd")))
+        (expect (nil? (get (by-port 2) "cwd")))
+        (expect (nil? (get (by-port 3) "cwd"))))))
 
   (it "returns {} when no workspace root is on env"
     (expect (= {} (nx/contribute {}))))
@@ -64,8 +67,8 @@
                   rm/managed-ports   (fn [] {})]
       (let [b (nrepl-of (nx/contribute {:workspace/root "/proj"
                                         :ctx-atom (atom {:session/turn 3})}))]
-        (expect (nil? (:default b)))
-        (expect (= [] (:ports b))))))
+        (expect (nil? (get b "default")))
+        (expect (= [] (get b "ports"))))))
 
   (it "never throws — degrades to {} when discovery blows up"
     (reset-cache!)
@@ -81,12 +84,12 @@
                                                    :pid 4242 :aliases [:dev]
                                                    :dir "/proj"}})
                   nc/probe!          (fn [_] {:status :up})]
-      (let [p (first (:ports (nrepl-of (nx/contribute {:workspace/root "/proj"
-                                                       :ctx-atom (atom {:session/turn 8})}))))]
-        (expect (true? (:managed p)))
-        (expect (= :clj (:tool p)))
-        (expect (= 4242 (:pid p)))
-        (expect (= [:dev] (:aliases p))))))
+      (let [p (first (get (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                                    :ctx-atom (atom {:session/turn 8})})) "ports"))]
+        (expect (true? (get p "managed")))
+        (expect (= "clj" (get p "tool")))
+        (expect (= 4242 (get p "pid")))
+        (expect (= ["dev"] (get p "aliases"))))))
 
   (it "surfaces a vis-managed subdir REPL that workspace-root discovery misses"
     (reset-cache!)
@@ -94,13 +97,13 @@
                   rm/managed-ports   (fn [] {6543 {:managed true :tool :clj
                                                    :dir "/proj/extensions/foo"}})
                   nc/probe!          (fn [_] {:status :up})]
-      (let [ports (:ports (nrepl-of (nx/contribute {:workspace/root "/proj"
-                                                    :ctx-atom (atom {:session/turn 9})})))
+      (let [ports (get (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                                 :ctx-atom (atom {:session/turn 9})})) "ports")
             p     (first ports)]
         (expect (= 1 (count ports)))
-        (expect (= 6543 (:port p)))
-        (expect (true? (:managed p)))
-        (expect (= "/proj/extensions/foo/.nrepl-port" (:source p)))))))
+        (expect (= 6543 (get p "port")))
+        (expect (true? (get p "managed")))
+        (expect (= "/proj/extensions/foo/.nrepl-port" (get p "source")))))))
 
 (defdescribe per-turn-cache-test
   (it "probes once per (turn, port-set); re-probes when the turn advances"

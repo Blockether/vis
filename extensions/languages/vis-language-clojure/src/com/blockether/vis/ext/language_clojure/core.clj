@@ -81,15 +81,14 @@
     (.getCanonicalPath f)))
 
 (defn- coerce-aliases
-  "Accept [:dev :test], :dev, [\"dev\"], or nil → a vec of keywords or nil."
+  "Accept [\"dev\" \"test\"], \"dev\", [:dev], or nil → a vec of alias name
+   STRINGS or nil. No keyword minting: aliases stay strings end-to-end (deps.edn
+   alias suffix, resource detail that crosses the strings-only boundary)."
   [a]
   (cond
     (nil? a)         nil
-    (sequential? a)  (mapv keyword a)
-    :else            [(keyword a)]))
-
-(defn- opt [m k]
-  (or (get m k) (get m (name k))))
+    (sequential? a)  (mapv name a)
+    :else            [(name a)]))
 
 (defn- repl-resource-id
   ([dir] (repl-resource-id dir nil))
@@ -106,17 +105,24 @@
    stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
    resource_stop both drive repl-manager through them."
   [session dir aliases result & [id]]
-  (when (and session (or (:pid result) (:port result)))
+  ;; `result` is repl-manager/start!'s STRING-keyed lifecycle map. The resource
+  ;; map handed to `vis/register-resource!` is the CENTRAL resources.clj DATA
+  ;; shape (keyword keys/values) — that projection is what crosses to the model,
+  ;; and its strings-only migration lives in resources.clj (flagged hand-off).
+  (when (and session (or (get result "pid") (get result "port")))
     (vis/register-resource! session
       {:id     (repl-resource-id dir id)
        :kind   :nrepl
        :label  (str "nREPL " (.getName (io/file dir))
-                 (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-       :status (or (:status result) :up)
-       :detail (cond-> {:dir dir}
-                 (:port result) (assoc :port (:port result))
-                 (seq aliases)  (assoc :aliases (vec aliases)))
-       :pid    (:pid result)
+                 (when (seq aliases) (apply str (map #(str " :" %) aliases))))
+       :status (or (get result "status") :up)
+       ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
+       ;; stringifies its own keys + the kind/status/owner/language enums), so it
+       ;; must already be STRING-keyed to survive the strings-only boundary.
+       :detail (cond-> {"dir" dir}
+                 (get result "port") (assoc "port" (get result "port"))
+                 (seq aliases)       (assoc "aliases" (vec aliases)))
+       :pid    (get result "pid")
        :owner  :ext/language-clojure
        :language :clojure}
       {:stop-fn    (fn [] (repl-manager/stop! dir))
@@ -128,7 +134,7 @@
     ;; Surface the registration in the TUI (header toast) so a spawned REPL is
     ;; visible the moment it lands, not just as a silent ● bump in the footer.
     (vis/notify! (str "● nREPL up — " (.getName (io/file dir))
-                   (when-let [p (:port result)] (str " :" p)))
+                   (when-let [p (get result "port")] (str " :" p)))
       :level :success :ttl-ms 4000)))
 
 (defn clj-repl-fn
@@ -144,30 +150,31 @@
    workspace root; \"aliases\" become deps.edn aliases / lein profiles. Live
    nREPL state already rides in ctx under
    `:session/env :languages :clojure :nrepl`; this tool acts on it."
-  ([env] (clj-repl-fn env :status nil))
+  ([env] (clj-repl-fn env "status" nil))
   ([env op] (clj-repl-fn env op nil))
   ([env op opts]
    (let [root    (env-root env)
-         op      (cond (keyword? op) op
-                   (string? op)  (keyword op)
-                   :else         :status)
+         ;; Positional op arrives as a STRING from the model (strings-only
+         ;; boundary); dispatch on it directly, no keyword minting. Default
+         ;; "status".
+         op      (if (string? op) op "status")
          opts    (when (map? opts) opts)
-         id      (or (opt opts :id) (opt opts :repl_id))
-         dir     (resolve-repl-dir root (opt opts :dir))
-         aliases (coerce-aliases (opt opts :aliases))]
+         id      (or (get opts "id") (get opts "repl_id"))
+         dir     (resolve-repl-dir root (get opts "dir"))
+         aliases (coerce-aliases (get opts "aliases"))]
      (case op
-       :status  (extension/success {:result (repl-manager/status dir)})
-       :stop    (let [r (repl-manager/stop! dir)]
-                  ;; Drop the session's resource mirror (best-effort; the thunk
-                  ;; already ran the real teardown above).
-                  (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-                  (extension/success {:result r}))
-       (:start :restart)
+       "status"  (extension/success {:result (repl-manager/status dir)})
+       "stop"    (let [r (repl-manager/stop! dir)]
+                   ;; Drop the session's resource mirror (best-effort; the thunk
+                   ;; already ran the real teardown above).
+                   (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+                   (extension/success {:result r}))
+       ("start" "restart")
        (do
          (when-not (.isDirectory (io/file dir))
-           (throw (ex-info (str "clj_repl \"" (name op) "\" target dir does not exist: " dir)
+           (throw (ex-info (str "clj_repl \"" op "\" target dir does not exist: " dir)
                     {:type :clj/bad-args :dir dir})))
-         (let [result (if (= op :restart)
+         (let [result (if (= op "restart")
                         (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
                         (repl-manager/start! dir {:aliases aliases}))]
            ;; Mirror the live REPL into the session resource registry → ctx +
@@ -223,7 +230,7 @@
      clj_eval({\"code\": \"...\", \"id\": \"<repl-id>\"})   ; target a registered REPL"
   [arg]
   (cond
-    (string? arg) {:code arg}
+    (string? arg) {"code" arg}
     (map? arg)    arg
     :else (throw (ex-info "clj_eval expects a code string or opts map"
                    {:type :clj/bad-args :got arg
@@ -243,7 +250,9 @@
   [env root host port rid]
   (cond
     port port
-    rid  (or (some-> (vis/get-resource (:session-id env) rid) (get-in [:detail :port]))
+    ;; `get-resource` returns the STRING-keyed resources.clj DATA map; its
+    ;; "detail" is the verbatim string-keyed detail we registered.
+    rid  (or (some-> (vis/get-resource (:session-id env) rid) (get-in ["detail" "port"]))
            (throw (ex-info (str "no nREPL registered under id '" rid
                              "' — check session_resources for live REPL ids")
                     {:type :clj/unknown-repl-id :id rid})))
@@ -254,7 +263,14 @@
 
 (defn clj-eval-fn
   ([env arg]
-   (let [{:keys [code port host ns timeout_ms id repl_id]} (coerce-eval-arg arg)
+   (let [m         (coerce-eval-arg arg)
+         code      (get m "code")
+         port      (get m "port")
+         host      (get m "host")
+         ns        (get m "ns")
+         timeout_ms (get m "timeout_ms")
+         id        (get m "id")
+         repl_id   (get m "repl_id")
          root (env-root env)
          host (or host "localhost")
          rid  (some-> (or id repl_id) str str/trim not-empty)
@@ -302,12 +318,11 @@
 (defn clj-format-fn
   ([arg] (clj-format-fn nil arg))
   ([env arg]
-   (let [path (and (map? arg) (or (:path arg) (get arg "path")))
+   (let [path (and (map? arg) (get arg "path"))
          code (cond
-                (string? arg)                          arg
-                (and (map? arg) (contains? arg :code)) (str (:code arg))
+                (string? arg)                           arg
                 (and (map? arg) (contains? arg "code")) (str (get arg "code"))
-                path                                   (slurp (str path))
+                path                                    (slurp (str path))
                 :else (throw (ex-info "format expects a code string, {\"code\": ...}, or {\"path\": ...}"
                                {:type :clj/bad-args :got arg
                                 :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
@@ -317,28 +332,27 @@
      (when (and path (not= out code))
        (spit (str path) out))
      (extension/success
-       {:result (cond-> {:op        :clj-format
-                         :changed?  (not= out code)
-                         :repaired? (not= (or (repair/fix-delimiters code) code) code)
-                         :text      out}
-                  path (assoc :path   (relativize-path (io/file (or (:workspace/root env) ".")) path)
-                         :wrote? (not= out code)))}))))
+       {:result (cond-> {"op"        "clj-format"
+                         "changed"   (not= out code)
+                         "repaired"  (not= (or (repair/fix-delimiters code) code) code)
+                         "text"      out}
+                  path (assoc "path"   (relativize-path (io/file (or (:workspace/root env) ".")) path)
+                         "wrote" (not= out code)))}))))
 
 (defn clj-lint-fn
   "clj-kondo lint via the language facade (`lint_code`). Accepts:
-     - a raw code string / {:code ...}  -> lint it on stdin
-     - {:path \"src/foo.clj\"}            -> lint that file
-     - {:paths [\"src\" \"test\"]}          -> lint those paths
-     - nothing / {}                     -> lint the workspace's src + test (or root)
-   Paths are resolved against :workspace/root when relative. Finding `:file`
-   paths are reported RELATIVE to :workspace/root (absolute only when outside)."
+     - a raw code string / {\"code\": ...}  -> lint it on stdin
+     - {\"path\": \"src/foo.clj\"}           -> lint that file
+     - {\"paths\": [\"src\", \"test\"]}        -> lint those paths
+     - nothing / {}                       -> lint the workspace's src + test (or root)
+   Paths are resolved against the workspace root when relative. Finding \"file\"
+   paths are reported RELATIVE to the workspace root (absolute only when outside)."
   [env arg]
   (let [root  (io/file (or (:workspace/root env) "."))
-        path  (when (map? arg) (or (:path arg) (get arg "path")))
-        paths (when (map? arg) (or (:paths arg) (get arg "paths")))
+        path  (when (map? arg) (get arg "path"))
+        paths (when (map? arg) (get arg "paths"))
         code  (cond
-                (string? arg)                          arg
-                (and (map? arg) (contains? arg :code)) (str (:code arg))
+                (string? arg)                           arg
                 (and (map? arg) (contains? arg "code")) (str (get arg "code"))
                 :else nil)
         under (fn [p] (let [f (io/file (str p))]
@@ -355,9 +369,9 @@
     (extension/success
       {:result
        (assoc
-         (update base :findings
-           (fn [fs] (mapv #(update % :file (partial relativize-path root)) fs)))
-         :language "clojure")})))
+         (update base "findings"
+           (fn [fs] (mapv #(update % "file" (partial relativize-path root)) fs)))
+         "language" "clojure")})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 (def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
@@ -367,13 +381,14 @@
     (boolean (some #(str/ends-with? p %) clj-source-exts))))
 
 (defn- edit-arg-paths
-  "Edited file path(s) from a struct_patch/write call (a map with :path/\"path\")
-   or a patch call (a seq of such maps). Tolerant of keyword OR string keys."
+  "Edited file path(s) from a struct_patch/write call (a map with \"path\") or a
+   patch call (a seq of such maps). Model-supplied args are STRING-keyed
+   (strings-only boundary)."
   [args]
   (let [a (first args)]
     (cond
-      (map? a)        (when-let [p (or (:path a) (get a "path"))] [p])
-      (sequential? a) (keep #(when (map? %) (or (:path %) (get % "path"))) a)
+      (map? a)        (when-let [p (get a "path")] [p])
+      (sequential? a) (keep #(when (map? %) (get % "path")) a)
       (string? a)     [a]
       :else           nil)))
 
@@ -419,15 +434,12 @@
     (next args)
     (catch clojure.lang.ExceptionInfo e
       (let [m     (first args)
-            path  (and (map? m) (or (:path m) (get m "path")))
-            codek (cond (and (map? m) (contains? m :code))  :code
-                    (and (map? m) (contains? m "code")) "code"
-                    :else nil)
-            code  (and codek (get m codek))
+            path  (and (map? m) (get m "path"))
+            code  (and (map? m) (get m "code"))
             fixed (when (and (clj-source-file? path) (string? code))
                     (repair/fix-delimiters code))]
         (if (and fixed (not= fixed code))
-          (try (next (assoc-in (vec args) [0 codek] fixed))
+          (try (next (assoc-in (vec args) [0 "code"] fixed))
             (catch Throwable _ (throw e)))            ; repaired retry failed → original
           (throw e))))))
 
@@ -478,14 +490,18 @@
                 (io/make-parents f)
                 (spit f after)))
             (extension/success
+              ;; `:op`/`:metadata` are ENVELOPE fields (op-tag + internal
+              ;; timing/aux) — keyword. The `:result` VALUE is the model-facing
+              ;; per-file summary that crosses the strings-only boundary → STRING
+              ;; keys + STRING enum values.
               {:op :patch
                :path (or (:path (first repaired-plans)) ".")
                :kind :file
                :result (mapv (fn [{:keys [path repaired?]}]
-                               (cond-> {:path path :op :update :changed? true}
+                               (cond-> {"path" path "op" "update" "changed" true}
                                  repaired?
-                                 (assoc :repaired? true
-                                   :note "unbalanced delimiters auto-repaired (parinfer) before write")))
+                                 (assoc "repaired" true
+                                   "note" "unbalanced delimiters auto-repaired (parinfer) before write")))
                          repaired-plans)
                :metadata {:mode :exact-replace
                           :file-count (count repaired-plans)

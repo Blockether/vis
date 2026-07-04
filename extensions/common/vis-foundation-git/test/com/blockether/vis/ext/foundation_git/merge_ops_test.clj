@@ -85,7 +85,7 @@
           (commit-file! g base "seed.txt" "seed\n" "seed"))
         (binding [workspace/*workspace-root* base]
           (let [s (mr/status)]
-            (expect (false? (:in-progress? s)))))
+            (expect (false? (get s "in_progress")))))
         (finally (delete-tree! base)))))
 
   (it "surfaces conflicts + branches when a merge is in progress"
@@ -94,10 +94,10 @@
         (init-conflict-repo! base)
         (binding [workspace/*workspace-root* base]
           (let [s (mr/status)]
-            (expect (true? (:in-progress? s)))
-            (expect (some? (:head s)))
-            (expect (some? (:merge-head s)))
-            (expect (some #(= "note.txt" (:path %)) (:conflicts s)))))
+            (expect (true? (get s "in_progress")))
+            (expect (some? (get s "head")))
+            (expect (some? (get s "merge_head")))
+            (expect (some #(= "note.txt" (get % "path")) (get s "conflicts")))))
         (finally (delete-tree! base))))))
 
 ;; =============================================================================
@@ -111,12 +111,12 @@
         (init-conflict-repo! base)
         (binding [workspace/*workspace-root* base]
           (mr/accept-ours "note.txt")
-          (let [out (mr/continue! {:message "test merge"})]
-            (expect (= :continued (:result out)))
+          (let [out (mr/continue! {"message" "test merge"})]
+            (expect (= "continued" (get out "result")))
             (expect (= "trunk-side\n" (slurp (io/file base "note.txt"))))
             ;; merge complete -> no in-progress, no conflicts
             (let [s (mr/status)]
-              (expect (false? (:in-progress? s))))))
+              (expect (false? (get s "in_progress"))))))
         (finally (delete-tree! base)))))
 
   (it "accept-theirs keeps the branch content"
@@ -125,7 +125,7 @@
         (init-conflict-repo! base)
         (binding [workspace/*workspace-root* base]
           (mr/accept-theirs "note.txt")
-          (mr/continue! {:message "took theirs"})
+          (mr/continue! {"message" "took theirs"})
           (expect (= "feature-side\n" (slurp (io/file base "note.txt")))))
         (finally (delete-tree! base))))))
 
@@ -139,7 +139,7 @@
       (try
         (init-conflict-repo! base)
         (binding [workspace/*workspace-root* base]
-          (try (mr/continue! {:message "nope"})
+          (try (mr/continue! {"message" "nope"})
             (expect false)
             (catch clojure.lang.ExceptionInfo e
               (expect (= :merge-ops/unresolved-conflicts
@@ -157,9 +157,9 @@
         (init-conflict-repo! base)
         (binding [workspace/*workspace-root* base]
           (let [out (mr/abort! {})]
-            (expect (= :aborted (:result out))))
+            (expect (= "aborted" (get out "result"))))
           (let [s (mr/status)]
-            (expect (false? (:in-progress? s)))))
+            (expect (false? (get s "in_progress")))))
         (finally (delete-tree! base))))))
 
 ;; =============================================================================
@@ -176,7 +176,9 @@
                         (fn [channel event] (swap! events conj [channel event]))]
             (binding [workspace/*workspace-root* base]
               (mr/accept-ours "note.txt")
-              (mr/continue! {:message "done"
+              ;; "message" is model-facing (string key); :channel-id/:session-id
+              ;; are host-injected internals (keyword keys).
+              (mr/continue! {"message" "done"
                              :channel-id :tui
                              :session-id "soul-1"})))
           (expect (some (fn [[ch ev]]

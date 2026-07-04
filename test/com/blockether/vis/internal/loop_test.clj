@@ -277,8 +277,8 @@
                                         {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}}    ; iter i2 → folded
                                         {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])] ; (same iter, 2nd form)
       (let [env {:session-id "s1" :db-info ::db
-                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1"} :drop? true :gist "wrong file"} ; drop i1
-                                                      {:scopes #{"t1/i2"} :gist "b pinned"}]})}           ; fold i2
+                 :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "drop" true "gist" "wrong file"} ; drop i1
+                                                       {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}            ; fold i2
             results (:results (first (previous-turn-context env "t9")))]
         (expect (= 2 (count results)))                                      ; i1 dropped-line + i2 gist (each deduped)
         (let [by-scope (into {} (map (juxt :scope identity)) results)]
@@ -338,28 +338,28 @@
       (expect (nil? (previous-request-usage {:session-id "s1" :db-info ::db} "t2"))))))
 
 (defdescribe stamp-utilization-monotonic-test
-  ;; Regression: the stamp used to (dissoc :engine/utilization) on a nil
+  ;; Regression: the stamp used to (dissoc "engine_utilization") on a nil
   ;; measurement, so a transient req=0 (iter-1 seed miss / errored iter)
-  ;; BLANKED an already-shown :session/utilization — the "sometimes works,
+  ;; BLANKED an already-shown "session_utilization" — the "sometimes works,
   ;; sometimes doesn't" flicker. The stamp must be monotonic.
   (let [stamp (var-get #'lp/stamp-utilization!)
-        util1 {:last-request-tokens 5000 :saturation 3}
-        util2 {:last-request-tokens 9000 :saturation 5}]
+        util1 {"last_request_tokens" 5000 "saturation" 3}
+        util2 {"last_request_tokens" 9000 "saturation" 5}]
 
     (it "stamps a real measurement onto the ctx-atom"
       (let [ca (atom {})]
         (stamp ca util1)
-        (expect (= util1 (:engine/utilization @ca)))))
+        (expect (= util1 (get @ca "engine_utilization")))))
 
     (it "NEVER blanks an existing value on a transient nil measurement"
-      (let [ca (atom {:engine/utilization util1})]
+      (let [ca (atom {"engine_utilization" util1})]
         (stamp ca nil)
-        (expect (= util1 (:engine/utilization @ca)))))
+        (expect (= util1 (get @ca "engine_utilization")))))
 
     (it "upgrades to a fresh measurement when one arrives"
-      (let [ca (atom {:engine/utilization util1})]
+      (let [ca (atom {"engine_utilization" util1})]
         (stamp ca util2)
-        (expect (= util2 (:engine/utilization @ca)))))
+        (expect (= util2 (get @ca "engine_utilization")))))
 
     (it "is a no-op on a nil ctx-atom"
       (expect (nil? (stamp nil util1))))))
@@ -379,21 +379,21 @@
       (expect (nil? (scope-key "garbage"))))
 
     (it "expand-through resolves a range cursor against the universe (inclusive)"
-      (let [out (expand-through [{:through "t1/i3" :gist "g"}]
+      (let [out (expand-through [{"through" "t1/i3" "gist" "g"}]
                   ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])]
-        (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (:scopes (first out))))
-        (expect (nil? (:through (first out))))
-        (expect (= "g" (:gist (first out))))))
+        (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (get (first out) "scopes")))
+        (expect (nil? (get (first out) "through")))
+        (expect (= "g" (get (first out) "gist")))))
 
     (it "expand-through leaves explicit-scope summaries untouched"
-      (let [s [{:scopes #{"t1/i2"} :gist "g"}]]
+      (let [s [{"scopes" #{"t1/i2"} "gist" "g"}]]
         (expect (= s (expand-through s ["t1/i1" "t1/i2"])))))
 
     (it "apply-summaries collapses a through-range over the trailer, sparing later steps"
       (let [trailer [[0 {:forms-vec [{:scope "t1/i1/f1" :result "a"}]}]
                      [1 {:forms-vec [{:scope "t1/i2/f1" :result "b"}]}]
                      [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
-            out (apply-summaries trailer [{:through "t1/i2" :gist "early"}])]
+            out (apply-summaries trailer [{"through" "t1/i2" "gist" "early"}])]
         (expect (true? (:collapsed? (second (nth out 0)))))
         (expect (true? (:collapsed? (second (nth out 1)))))
         (expect (nil?  (:collapsed? (second (nth out 2)))))))
@@ -405,7 +405,7 @@
       (let [forms [{:scope "t1/i1/f1" :result "a" :src "(cat \"x\")"}
                    {:scope "t1/i1/f2" :result "b" :src "(rg \"y\")"}
                    {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
-            out (prior-scope-index forms [{:scopes #{"t1/i1"} :gist "explored"}])]
+            out (prior-scope-index forms [{"scopes" #{"t1/i1"} "gist" "explored"}])]
         (expect (= 1 (count (filter :gist out))))
         (expect (= {:scope "t1/i1" :gist "explored"} (first (filter :gist out))))
         (expect (some #(= "t1/i2/f1" (:scope %)) out))))
@@ -414,7 +414,7 @@
       (let [forms [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
                    {:scope "t1/i1/f2" :result "b" :src "(rg)"}    ; same dropped iter → still ONE line
                    {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
-            out (prior-scope-index forms [{:scopes #{"t1/i1"} :drop? true :gist "misread"}])]
+            out (prior-scope-index forms [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
         ;; the iteration's forms collapse to a single audit line, not per-form, not vanished
         (expect (= {:scope "t1/i1" :dropped? true :note "misread"}
                   (first (filter :dropped? out))))
@@ -431,7 +431,7 @@
         (expect (= ["t1/i1" "t1/i2"] (mapv :scope cands)))         ; t1/i3 excluded
         (expect (> (:tokens (first cands)) (:tokens (second cands))))
         (expect (= ["t1/i2"]
-                  (mapv :scope (fold-candidates trailer [{:scopes #{"t1/i1"}}]))))))
+                  (mapv :scope (fold-candidates trailer [{"scopes" #{"t1/i1"}}]))))))
 
     (it "over-utilization-hint stays nil under budget, names heaviest steps when firing"
       (let [big (apply str (repeat 8000 "x"))
@@ -447,18 +447,18 @@
     (it "supersede-summaries collapses summary-of-summary (subset dropped, superset/newer wins)"
       (let [supersede (var-get #'lp/supersede-summaries)]
         ;; proper subset is covered by the broader fold → only the superset survives
-        (expect (= [{:scopes #{"t1/i2" "t1/i3" "t1/i4"} :gist "B"}]
-                  (supersede [{:scopes #{"t1/i2" "t1/i3"} :gist "A"}
-                              {:scopes #{"t1/i2" "t1/i3" "t1/i4"} :gist "B"}])))
+        (expect (= [{"scopes" #{"t1/i2" "t1/i3" "t1/i4"} "gist" "B"}]
+                  (supersede [{"scopes" #{"t1/i2" "t1/i3"} "gist" "A"}
+                              {"scopes" #{"t1/i2" "t1/i3" "t1/i4"} "gist" "B"}])))
         ;; equal sets → the later (newer) gist wins
-        (expect (= [{:scopes #{"t1/i1"} :gist "new"}]
-                  (supersede [{:scopes #{"t1/i1"} :gist "old"}
-                              {:scopes #{"t1/i1"} :gist "new"}])))
+        (expect (= [{"scopes" #{"t1/i1"} "gist" "new"}]
+                  (supersede [{"scopes" #{"t1/i1"} "gist" "old"}
+                              {"scopes" #{"t1/i1"} "gist" "new"}])))
         ;; disjoint and partial-overlap → both kept (coverage differs)
-        (expect (= 2 (count (supersede [{:scopes #{"t1/i1"} :gist "A"}
-                                        {:scopes #{"t1/i2"} :gist "B"}]))))
-        (expect (= 2 (count (supersede [{:scopes #{"t1/i1" "t1/i2"} :gist "A"}
-                                        {:scopes #{"t1/i2" "t1/i3"} :gist "B"}]))))))))
+        (expect (= 2 (count (supersede [{"scopes" #{"t1/i1"} "gist" "A"}
+                                        {"scopes" #{"t1/i2"} "gist" "B"}]))))
+        (expect (= 2 (count (supersede [{"scopes" #{"t1/i1" "t1/i2"} "gist" "A"}
+                                        {"scopes" #{"t1/i2" "t1/i3"} "gist" "B"}]))))))))
 
 (defdescribe turn-position-state-test
   (it "seeds turn-state with persisted turn position before iteration render"
@@ -996,7 +996,7 @@
     (it "a later python_execution retrieves a PERSISTED native result by its tool_use id"
       (let [env (lp/create-environment ::router {:db :memory})]
         (try
-          (store-native! env "toolu_E2E" {:op "cat" :path "x.py" :text "hello world"})
+          (store-native! env "toolu_E2E" {"op" "cat" "path" "x.py" "text" "hello world"})
           (let [r (env/run-python-block
                     (:python-context env)
                     (str "res = native_tools_results[\"toolu_E2E\"]\n"
@@ -1027,10 +1027,10 @@
       (let [env    (lp/create-environment ::router {:db :memory})
             called (atom false)]
         (try
-          (store-native! env "toolu_NOFETCH" {:op "cat" :text "cached body"})
+          (store-native! env "toolu_NOFETCH" {"op" "cat" "text" "cached body"})
             ;; Shadow-proof: install a probe `cat` in the sandbox; retrieval must
             ;; NOT call it (native_tools_results goes straight to the store).
-          (env/bind-and-bump! env 'cat (fn [& _] (reset! called true) {:op "cat" :text "REFETCHED"}))
+          (env/bind-and-bump! env 'cat (fn [& _] (reset! called true) {"op" "cat" "text" "REFETCHED"}))
           (let [r (env/run-python-block
                     (:python-context env)
                     "print(native_tools_results[\"toolu_NOFETCH\"][\"text\"])"
@@ -1049,7 +1049,7 @@
     (it "summarize([tN/iN]) tags the iteration :collapsed? and swaps it for the gist"
       (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big output"}]}]
                  [2 {:forms-vec [{:scope "t1/i2/f1" :stdout "keep me"}]}]]
-            out (apply-summaries tis [{:scopes #{"t1/i1"} :gist "did the thing"}])
+            out (apply-summaries tis [{"scopes" #{"t1/i1"} "gist" "did the thing"}])
             r1  (second (first out))
             r2  (second (second out))]
         (expect (true? (:collapsed? r1)))
@@ -1059,7 +1059,7 @@
 
     (it "session_drop collapses to a `-- dropped: <why>` line (reason kept)"
       (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
-                  [{:scopes #{"t1/i1"} :drop? true :gist "misread"}])]
+                  [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
         (expect (= "# -- t1/i1 -- dropped: misread" (:content (irm (second (first out))))))))
 
     (it "a live step renders as a tool_result tagged with its # tN/iN handle"
@@ -1296,7 +1296,7 @@
                           lp/run-turn!            (fn [_e _p _o] {:status :success :answer "did it"})
                           lp/dispose-environment! (fn [_])]
               (lp/sub-loop! parent {:prompt "implement oauth"
-                                    :subctx {:focus "oauth" :tasks {:oauth {:status "doing"}}}
+                                    :subctx {"focus" "oauth" "tasks" {"oauth" {"status" "doing"}}}
                                     :models ["haiku"]}))]
       (it "routes the child to the PROPOSED model"
         (expect (= "haiku" (:name (lp/resolve-effective-model (:router @captured))))))
@@ -1308,10 +1308,10 @@
         ;; from the top-level list, queryable as the parent's sub-tree
         (expect (= "parent-state-123" (get-in @captured [:opts :child :parent-state-id]))))
       (it "returns the focus result shape (task_id/status/answer)"
-        (expect (= "oauth" (:task_id r)))
+        (expect (= "oauth" (get r "task_id")))
         ;; status is the child turn's status, coerced to a python-facing STRING
-        (expect (= "success" (:status r)))
-        (expect (= "did it" (:answer r))))))
+        (expect (= "success" (get r "status")))
+        (expect (= "did it" (get r "answer"))))))
   (describe "depth cap"
     (it "throws :vis/subloop-depth-exceeded past MAX-SUBLOOP-DEPTH"
       (with-redefs [lp/child-workspace!     (fn [& _] {:id "x" :root "/x"})
@@ -1334,7 +1334,7 @@
                         lp/dispose-environment! (fn [_] (swap! events conj :dispose))]
             (lp/sub-loop! {:router {} :db-info :db :depth-atom (atom 0)
                            :workspace {:id "parent-ws" :root "/parent"}}
-              {:prompt "p" :subctx {:focus "t"}}))
+              {:prompt "p" :subctx {"focus" "t"}}))
           ;; merge happens before dispose before abandon — and abandon names the clone
           (expect (= [:apply :dispose [:abandon "child-ws"]] @events))))
 
@@ -1349,7 +1349,7 @@
             (expect (throws? clojure.lang.ExceptionInfo
                       #(lp/sub-loop! {:router {} :db-info :db :depth-atom (atom 0)
                                       :workspace {:id "parent-ws" :root "/parent"}}
-                         {:prompt "p" :subctx {:focus "t"}})))
+                         {:prompt "p" :subctx {"focus" "t"}})))
             ;; no merge (turn failed), but BOTH cleanups ran
             (expect (= [:dispose [:abandon "child-ws"]] @events)))))))
 
@@ -1363,110 +1363,110 @@
                                       (swap! peak max n))
                                     (Thread/sleep 25)
                                     (swap! live dec)
-                                    (let [focus (:focus subctx)]
+                                    (let [focus (get subctx "focus")]
                                       (when (= focus "boom")
                                         (throw (ex-info "child blew up" {})))
-                                      {:task_id focus :status "done" :changed_files []}))]
+                                      {"task_id" focus "status" "done" "changed_files" []}))]
                       (lp/parallel-sub-loops! parent specs)))
-          specs   (mapv (fn [i] {:prompt (str "t" i)
-                                 :subctx {:focus (str "task" i)}
-                                 :models ["haiku"]})
+          specs   (mapv (fn [i] {"prompt" (str "t" i)
+                                 "subctx" {"focus" (str "task" i)}
+                                 "models" ["haiku"]})
                     (range 8))
           results (run {:depth-atom (atom 0)} specs)]
       (it "returns one result per spec, in INPUT ORDER"
         (expect (= 8 (count results)))
-        (expect (= (mapv #(str "task" %) (range 8)) (mapv :task_id results))))
+        (expect (= (mapv #(str "task" %) (range 8)) (mapv #(get % "task_id") results))))
       (it "bounds concurrency to the cap (peak in-flight never exceeds 4)"
         (expect (<= @peak 4))
         (expect (pos? @peak)))
       (it "a child that throws surfaces as a failed slot, not a batch-killing exception"
         (let [r (run {:depth-atom (atom 0)}
-                  [{:prompt "ok"   :subctx {:focus "good"}}
-                   {:prompt "bad"  :subctx {:focus "boom"}}
-                   {:prompt "ok2"  :subctx {:focus "fine"}}])]
-          (expect (= ["good" "boom" "fine"] (mapv :task_id r)))
-          (expect (= ["done" "failed" "done"] (mapv :status r)))
-          (expect (= "child blew up" (:error (second r))))))))
+                  [{"prompt" "ok"   "subctx" {"focus" "good"}}
+                   {"prompt" "bad"  "subctx" {"focus" "boom"}}
+                   {"prompt" "ok2"  "subctx" {"focus" "fine"}}])]
+          (expect (= ["good" "boom" "fine"] (mapv #(get % "task_id") r)))
+          (expect (= ["done" "failed" "done"] (mapv #(get % "status") r)))
+          (expect (= "child blew up" (get (second r) "error")))))))
 
   (describe "sequence-sub-loops! (:sequence composite — in order, fail-fast)"
     ;; stub sub-loop! to succeed/fail based on the spec's focus key
     (let [run (fn [focuses fail-set]
                 (let [ran (atom [])]
                   (with-redefs [lp/sub-loop! (fn [_ {:keys [subctx]}]
-                                               (let [f (:focus subctx)]
+                                               (let [f (get subctx "focus")]
                                                  (swap! ran conj f)
-                                                 {:task_id f :status (if (fail-set f) "failed" "done")}))]
+                                                 {"task_id" f "status" (if (fail-set f) "failed" "done")}))]
                     {:results (lp/sequence-sub-loops! {}
-                                (mapv (fn [f] {:prompt f :subctx {:focus f}}) focuses))
+                                (mapv (fn [f] {"prompt" f "subctx" {"focus" f}}) focuses))
                      :ran @ran})))]
       (it "all succeed → runs every child in order, returns all"
         (let [{:keys [results ran]} (run ["a" "b" "c"] #{})]
           (expect (= ["a" "b" "c"] ran))
-          (expect (= ["a" "b" "c"] (mapv :task_id results)))
-          (expect (= ["done" "done" "done"] (mapv :status results)))))
+          (expect (= ["a" "b" "c"] (mapv #(get % "task_id") results)))
+          (expect (= ["done" "done" "done"] (mapv #(get % "status") results)))))
       (it "stops at the FIRST failure — later children never run; result includes the failure"
         (let [{:keys [results ran]} (run ["a" "b" "c"] #{"b"})]
           (expect (= ["a" "b"] ran))                       ; "c" never ran
-          (expect (= ["a" "b"] (mapv :task_id results)))
-          (expect (= ["done" "failed"] (mapv :status results)))))))
+          (expect (= ["a" "b"] (mapv #(get % "task_id") results)))
+          (expect (= ["done" "failed"] (mapv #(get % "status") results)))))))
 
   (describe "selector-sub-loops! (:selector composite — alternatives until one succeeds)"
     (let [run (fn [focuses fail-set]
                 (let [ran (atom [])]
                   (with-redefs [lp/sub-loop! (fn [_ {:keys [subctx]}]
-                                               (let [f (:focus subctx)]
+                                               (let [f (get subctx "focus")]
                                                  (swap! ran conj f)
-                                                 {:task_id f :status (if (fail-set f) "failed" "done")}))]
+                                                 {"task_id" f "status" (if (fail-set f) "failed" "done")}))]
                     {:results (lp/selector-sub-loops! {}
-                                (mapv (fn [f] {:prompt f :subctx {:focus f}}) focuses))
+                                (mapv (fn [f] {"prompt" f "subctx" {"focus" f}}) focuses))
                      :ran @ran})))]
       (it "first child succeeds → stops immediately, no alternatives tried"
         (let [{:keys [results ran]} (run ["a" "b" "c"] #{})]
           (expect (= ["a"] ran))
-          (expect (= ["a"] (mapv :task_id results)))
-          (expect (= ["done"] (mapv :status results)))))
+          (expect (= ["a"] (mapv #(get % "task_id") results)))
+          (expect (= ["done"] (mapv #(get % "status") results)))))
       (it "tries alternatives in order until one succeeds; later ones skipped"
         (let [{:keys [results ran]} (run ["a" "b" "c"] #{"a"})]
           (expect (= ["a" "b"] ran))                       ; "c" never tried
-          (expect (= ["failed" "done"] (mapv :status results)))))
+          (expect (= ["failed" "done"] (mapv #(get % "status") results)))))
       (it "all alternatives fail → returns every attempt (all failures)"
         (let [{:keys [results ran]} (run ["a" "b"] #{"a" "b"})]
           (expect (= ["a" "b"] ran))
-          (expect (= ["failed" "failed"] (mapv :status results)))))))
+          (expect (= ["failed" "failed"] (mapv #(get % "status") results)))))))
 
   (describe "retry-sub-loop! (stubbed sub-loop! — selector: re-run until success)"
     (it "succeeds on the first attempt — no re-run"
       (let [calls (atom 0)]
-        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {:task_id "t" :status "done"})]
-          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 3)]
-            (expect (= "done" (:status r)))
-            (expect (= 1 (:attempts r)))
+        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {"task_id" "t" "status" "done"})]
+          (let [r (lp/retry-sub-loop! {} {"prompt" "p" "subctx" {"focus" "t"}} 3)]
+            (expect (= "done" (get r "status")))
+            (expect (= 1 (get r "attempts")))
             (expect (= 1 @calls))))))
     (it "re-runs a failing child until it succeeds, stamping the winning attempt"
       (let [calls (atom 0)]
         (with-redefs [lp/sub-loop! (fn [_ _]
                                      (let [n (swap! calls inc)]
                                        (if (< n 3)
-                                         {:task_id "t" :status "failed"}
-                                         {:task_id "t" :status "done"})))]
-          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 5)]
-            (expect (= "done" (:status r)))
-            (expect (= 3 (:attempts r)))
+                                         {"task_id" "t" "status" "failed"}
+                                         {"task_id" "t" "status" "done"})))]
+          (let [r (lp/retry-sub-loop! {} {"prompt" "p" "subctx" {"focus" "t"}} 5)]
+            (expect (= "done" (get r "status")))
+            (expect (= 3 (get r "attempts")))
             (expect (= 3 @calls))))))
     (it "exhausts n attempts and returns the last failure (status in the failure set)"
       (let [calls (atom 0)]
-        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {:task_id "t" :status "rejected"})]
-          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 2)]
-            (expect (= "rejected" (:status r)))
-            (expect (= 2 (:attempts r)))
+        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {"task_id" "t" "status" "rejected"})]
+          (let [r (lp/retry-sub-loop! {} {"prompt" "p" "subctx" {"focus" "t"}} 2)]
+            (expect (= "rejected" (get r "status")))
+            (expect (= 2 (get r "attempts")))
             (expect (= 2 @calls))))))
     (it "treats a THROWN child as a failure and retries; defaults to 2 attempts"
       (let [calls (atom 0)]
         (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) (throw (ex-info "blew up" {})))]
-          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} nil)]
-            (expect (= "failed" (:status r)))
-            (expect (= "blew up" (:error r)))
-            (expect (= 2 (:attempts r)))
+          (let [r (lp/retry-sub-loop! {} {"prompt" "p" "subctx" {"focus" "t"}} nil)]
+            (expect (= "failed" (get r "status")))
+            (expect (= "blew up" (get r "error")))
+            (expect (= 2 (get r "attempts")))
             (expect (= 2 @calls)))))))
 
   (describe "SINGULAR DB connection (child reuses the parent's; never opens its own)"

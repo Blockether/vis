@@ -170,7 +170,13 @@
 (defn- parse-json-map
   "Best-effort JSON object parser for persisted provider errors. The
    persistence layer stores `iteration.llm_error` as JSON text; meta
-   keeps parsing local so callers get failures as Clojure data."
+   keeps parsing local so callers get failures as Clojure data.
+
+   `:key-fn keyword` stays: the parsed map is INTERNAL to
+   `provider-failure` (its keys are read locally via `(:type data)`
+   etc. and never emitted), and its string VALUES are what flow into
+   the boundary-crossing failure map. Keeping idiomatic keyword access
+   here does not put a keyword on the wire."
   [text]
   (when (and (string? text) (not (str/blank? text)))
     (try
@@ -194,21 +200,27 @@
     (map? error) (or (:message error) (pr-str error))
     :else (str error)))
 
-(defn- keywordish [value]
-  (cond
-    (keyword? value) value
-    (string? value) (keyword (str/replace value #"^:" ""))
-    :else value))
+(def ^:private schema-rejected-type-strings
+  "String forms svar's schema-rejection error type serializes to. The
+   persisted `iteration.llm_error` JSON carries the type as a string
+   (charred writes the `:svar.spec/schema-rejected` keyword as the bare
+   `\"svar.spec/schema-rejected\"`); the colon-prefixed variant is kept
+   in case a different serializer preserved the leading colon. Matched
+   by string equality - no keyword minting off boundary-supplied data."
+  #{"svar.spec/schema-rejected" ":svar.spec/schema-rejected"})
 
 (defn- schema-rejected-type? [value]
-  (= :svar.spec/schema-rejected (keywordish value)))
+  (contains? schema-rejected-type-strings value))
 
 (defn- provider-failure [iteration]
   (when-let [error (:error iteration)]
     (let [error-map (or (parse-json-map error) {:message (str error)})
           data      (:data error-map)
-          type      (keywordish (:type data))
-          reason    (keywordish (:reason data))
+          ;; `:type` / `:reason` are JSON string values carried straight
+          ;; into the failure map, which crosses the strings-only
+          ;; boundary - keep them as strings, never mint keywords.
+          type      (:type data)
+          reason    (:reason data)
           raw-data  (:raw-data data)]
       (cond-> {:source       :provider
                :iteration-id (:id iteration)
@@ -638,7 +650,9 @@
       blocks
       (assoc :executable-blocks blocks
         :form-count (count blocks)
-        :block-langs (mapv :lang blocks)))))
+        ;; `:llm-executable-blocks` is a `<-json` DB column -> STRING-keyed
+        ;; ({"lang" ..., "source" ...}); read the lang by string key.
+        :block-langs (mapv #(get % "lang") blocks)))))
 
 (defn- llm-diagnostic-row
   [turn iteration]
@@ -692,10 +706,47 @@
      :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
      :transcript          transcript-data}))
 
+;; ---------------------------------------------------------------------------
+;; Strings-only boundary egress. session_state / sessions / session_report_md
+;; are MODEL-FACING verbs: the `:result` they return crosses the Clojure->Python
+;; boundary, which throws on any keyword/symbol key or value. The internal
+;; builders + the transcript projection stay idiomatic keyword Clojure (the
+;; Markdown renderer reads them back by keyword); we stringify ONCE at the verb
+;; exit, mirroring `env-python/kw->snake` (kebab->snake, trailing `?`/`!`
+;; stripped, namespace folded with `_`) so the model reads the SAME snake_case
+;; keys/enum values it saw when the boundary itself did the conversion.
+;; ---------------------------------------------------------------------------
+
+(defn- kw->snake
+  ^String [k]
+  (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
+    (str/replace "-" "_")
+    (str/replace #"[?!]$" "")))
+
+(defn- boundary-key [k]
+  (cond
+    (string? k)  k
+    (keyword? k) (kw->snake k)
+    (symbol? k)  (kw->snake (keyword k))
+    :else        (str k)))
+
+(defn- deep-stringify
+  "Rebuild a value into the strings-only boundary shape: map KEYS and
+   keyword/symbol VALUES become snake_case strings, collections recurse.
+   UUID/Date/Temporal leaves are left for the real boundary (`->py`) to
+   ISO-stringify."
+  [x]
+  (cond
+    (map? x) (reduce-kv (fn [m k v] (assoc m (boundary-key k) (deep-stringify v))) {} x)
+    (or (vector? x) (seq? x) (set? x)) (mapv deep-stringify x)
+    (keyword? x) (kw->snake x)
+    (symbol? x)  (kw->snake (keyword x))
+    :else x))
+
 (defn- session-envelope
   [op result]
   (extension/success {:op op
-                      :result result}))
+                      :result (deep-stringify result)}))
 
 (defn- foundation-inspect
   "Canonical session-state data surface. Returns a Vis tool envelope;

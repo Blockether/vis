@@ -114,20 +114,20 @@
       (expect (= [1]   (p [1 0] ["t"])))         ; up via single-letter 'top'
       (expect (= []    (p [2] ["root"])))        ; back to the top
       (expect (= [1 0] (p [] ["d" "r" "d"])))    ; down, right, down
-      (expect (= [2]   (p [] [{:child 2}]))))    ; {child: i}
+      (expect (= [2]   (p [] [{"child" 2}]))))    ; {child: i}
     (it "boundary moves FAIL CLOSED (not silent no-ops)"
       (expect (= :bad-move (get-in (nav [3] ["right"]) [:error :reason])))  ; no right sibling
       (expect (= :bad-move (get-in (nav [] ["up"]) [:error :reason])))      ; up at root
       (expect (= :bad-move (get-in (nav [0] ["left"]) [:error :reason])))   ; no left sibling
-      (expect (= :bad-move (get-in (nav [] [{:child 9}]) [:error :reason])))) ; child out of range
+      (expect (= :bad-move (get-in (nav [] [{"child" 9}]) [:error :reason])))) ; child out of range
     (it "moves-available reports which directions remain + index/siblings (lefts/rights)"
-      (expect (= {:down true :up false :left false :right false :next true :prev false :index nil :siblings nil}
+      (expect (= {"down" true "up" false "left" false "right" false "next" true "prev" false "index" nil "siblings" nil}
                 (z/moves-available "clojure" src [])))
-      (expect (= {:down true :up true :left true  :right true  :next true :prev true :index 1 :siblings 4}
+      (expect (= {"down" true "up" true "left" true  "right" true  "next" true "prev" true "index" 1 "siblings" 4}
                 (z/moves-available "clojure" src [1])))
-      (expect (= {:down true :up true :left false :right true  :next true :prev true :index 0 :siblings 4}
+      (expect (= {"down" true "up" true "left" false "right" true  "next" true "prev" true "index" 0 "siblings" 4}
                 (z/moves-available "clojure" src [0])))
-      (expect (= {:down true :up true :left true  :right false :next true :prev true :index 3 :siblings 4}
+      (expect (= {"down" true "up" true "left" true  "right" false "next" true "prev" true "index" 3 "siblings" 4}
                 (z/moves-available "clojure" src [3]))))
     (it "depth-first next/prev walk into and across nodes (clojure.zip semantics)"
       (expect (= [0 0] (p [0] ["next"])))         ; next DESCENDS first (down before right)
@@ -136,9 +136,9 @@
       (expect (= :bad-move (get-in (nav [] ["prev"]) [:error :reason])))   ; prev at root fails
       (expect (= :bad-move (get-in (nav [3 2] ["next" "next" "next"]) [:error :reason])))) ; runs off the end
     (it "find / find_kind jump to the next matching node (rewrite-clj search)"
-      (expect (= [2]   (p [] [{:find "defn b"}])))     ; first node whose text contains it
-      (expect (= [1 2] (p [] [{:find_kind "vec_lit"}]))) ; the [p q] param vector
-      (expect (= :bad-move (get-in (nav [] [{:find "nonexistent_xyz"}]) [:error :reason]))))))
+      (expect (= [2]   (p [] [{"find" "defn b"}])))     ; first node whose text contains it
+      (expect (= [1 2] (p [] [{"find_kind" "vec_lit"}]))) ; the [p q] param vector
+      (expect (= :bad-move (get-in (nav [] [{"find" "nonexistent_xyz"}]) [:error :reason]))))))
 
 ;; ── 6. append_child / prepend_child (insert INSIDE a node) ───────────────────
 (defdescribe child-insert-test

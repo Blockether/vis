@@ -69,19 +69,19 @@
           struct-patch @#'editing/struct-patch-tool
           path (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
           root (:result (sexpr path))]
-      (expect (>= (:named_child_count root) 2))
-      (let [i (some (fn [c] (when (str/includes? (str (:head c)) "defn") (:idx c)))
-                (:children root))]
+      (expect (>= (get root "named_child_count") 2))
+      (let [i (some (fn [c] (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
+                (get root "children"))]
         (expect (some? i))
-        (expect (str/includes? (:text (:result (sexpr path {:at [i]}))) "defn g"))
+        (expect (str/includes? (get (:result (sexpr path {"at" [i]})) "text") "defn g"))
         ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
-        (expect (:success? (sexpr path {:at [i] :nav ["down"]})))
+        (expect (:success? (sexpr path {"at" [i] "nav" ["down"]})))
         ;; struct_patch takes the zipper PATH (sexpr_edit folded into it)
-        (let [ed (struct-patch :path path :at [i] :op "replace" :code "(defn g [x] (* x 9))")]
+        (let [ed (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] (* x 9))")]
           (expect (:success? ed))
           (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
         ;; syntax-breaking edit refused
-        (expect (try (struct-patch :path path :at [i] :op "replace" :code "(defn g [x]")
+        (expect (try (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x]")
                   false (catch clojure.lang.ExceptionInfo _ true)))))))
 
 (defdescribe op-keyword-regression-test

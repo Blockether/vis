@@ -108,7 +108,8 @@ _main()
 (defn- alive? [info] (boolean (some-> ^Process (:process info) .isAlive)))
 
 (defn start!
-  "Spawn (or replace) the managed Python REPL for `dir`. Returns a status map."
+  "Spawn (or replace) the managed Python REPL for `dir`. Returns a STRING-keyed
+   status map (crosses the strings-only boundary as a tool `:result`)."
   [dir _opts]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
@@ -124,7 +125,7 @@ _main()
               :pid     (.pid p)
               :started-at (System/currentTimeMillis)}]
     (swap! processes assoc dir info)
-    {:status :up :pid (.pid p) :cmd cmd :dir dir}))
+    {"status" "up" "pid" (.pid p) "cmd" cmd "dir" dir}))
 
 (defn- request!
   [dir req timeout-ms]
@@ -162,11 +163,13 @@ _main()
     (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
       (catch Throwable _ nil)))
   (swap! processes dissoc dir)
-  {:status :stopped :dir dir})
+  {"status" "stopped" "dir" dir})
 
-(defn status [dir]
+(defn status
+  "STRING-keyed lifecycle view (crosses as a tool `:result`)."
+  [dir]
   (let [info (get @processes dir)]
-    {:dir dir
-     :status (if (alive? info) :up :down)
-     :pid (some-> ^Process (:process info) .pid)
-     :cmd (:cmd info)}))
+    {"dir" dir
+     "status" (if (alive? info) "up" "down")
+     "pid" (some-> ^Process (:process info) .pid)
+     "cmd" (:cmd info)}))

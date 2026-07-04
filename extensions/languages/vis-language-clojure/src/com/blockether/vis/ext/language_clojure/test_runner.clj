@@ -5,8 +5,9 @@
    The in-REPL path is FRAMEWORK-AGNOSTIC: a ns whose vars carry clojure.test
    :test metadata runs through clojure.test/run-tests; otherwise it is treated
    as lazytest and run through lazytest.runner/run-tests. Either way the result
-   is a uniform map with :mode (repl or cli), :framework, :ns, :total, :pass,
-   :fail and :failures [{:ns :test :message :file :line} ...].
+   is a uniform STRING-keyed map (crosses the strings-only boundary) with
+   \"mode\" (repl or cli), \"framework\", \"ns\", \"total\", \"pass\", \"fail\" and
+   \"failures\" [{\"ns\" \"test\" \"message\" \"file\" \"line\"} ...].
 
    run-form is the code EVALED on the target nREPL. It is a quoted form (not a
    call into this namespace) so it works against ANY project's nREPL, including
@@ -76,25 +77,25 @@
                                          (when (#{:fail :error} (:type m))
                                            (let [v0 (first clojure.test/*testing-vars*)]
                                              (swap! fails conj
-                                               {:ns (str (:ns (meta v0)))
-                                                :test (when v0 (str (:name (meta v0))))
-                                                :type (name (:type m))
-                                                :message (str (or (:message m) (:type m)))
-                                                :expected (pr-str (:expected m))
-                                                :actual (pr-str (:actual m))
-                                                :file (str (:file m))
-                                                :line (:line m)}))))]
+                                               {"ns" (str (:ns (meta v0)))
+                                                "test" (when v0 (str (:name (meta v0))))
+                                                "type" (name (:type m))
+                                                "message" (str (or (:message m) (:type m)))
+                                                "expected" (pr-str (:expected m))
+                                                "actual" (pr-str (:actual m))
+                                                "file" (str (:file m))
+                                                "line" (:line m)}))))]
                            (clojure.test/test-vars selected))
                          (let [c (clojure.core/deref cnt)
                                fs (clojure.core/deref fails)]
-                           {:framework "clojure.test"
-                            :total (+ (:pass c) (:fail c) (:error c))
-                            :pass (:pass c)
-                            :fail (+ (:fail c) (:error c))
-                            :selected (count selected)
-                            :skipped skipped
-                            :failures fs
-                            :errors (vec (filter (fn [f] (= "error" (:type f))) fs))}))
+                           {"framework" "clojure.test"
+                            "total" (+ (:pass c) (:fail c) (:error c))
+                            "pass" (:pass c)
+                            "fail" (+ (:fail c) (:error c))
+                            "selected" (count selected)
+                            "skipped" skipped
+                            "failures" fs
+                            "errors" (vec (filter (fn [f] (= "error" (get f "type"))) fs))}))
                        (let [selected (vec (filter keep? all-lt))
                              skipped (- (count all-lt) (count selected))
                              run-var (requiring-resolve (quote lazytest.runner/run-test-var))
@@ -104,28 +105,28 @@
                              leaves (filter (fn [x] (#{:fail :error :pass} (:type x))) results)
                              fails (filter (fn [x] (#{:fail :error} (:type x))) results)
                              ->fail (fn [f]
-                                      {:ns (str (:ns f))
-                                       :test (str (:doc f))
-                                       :type (name (:type f))
-                                       :message (let [m (:message f)]
+                                      {"ns" (str (:ns f))
+                                       "test" (str (:doc f))
+                                       "type" (name (:type f))
+                                       "message" (let [m (:message f)]
                                                   (cond
                                                     (seq (str m)) (str m)
                                                     (:thrown f) (str (.getMessage (:thrown f)))
                                                     :else (str "expected " (pr-str (:expected f))
                                                             " actual " (pr-str (:actual f)))))
-                                       :expected (pr-str (:expected f))
-                                       :actual (pr-str (:actual f))
-                                       :file (str (:file f))
-                                       :line (:line f)})]
-                         {:framework "lazytest"
-                          :total (count leaves)
-                          :pass (count (filter (fn [x] (= :pass (:type x))) results))
-                          :fail (count fails)
-                          :selected (count selected)
-                          :skipped skipped
-                          :failures (mapv ->fail fails)
-                          :errors (mapv ->fail (filter (fn [x] (= :error (:type x))) results))})))]
-        (assoc result :output (clojure.core/str out-writer))))))
+                                       "expected" (pr-str (:expected f))
+                                       "actual" (pr-str (:actual f))
+                                       "file" (str (:file f))
+                                       "line" (:line f)})]
+                         {"framework" "lazytest"
+                          "total" (count leaves)
+                          "pass" (count (filter (fn [x] (= :pass (:type x))) results))
+                          "fail" (count fails)
+                          "selected" (count selected)
+                          "skipped" skipped
+                          "failures" (mapv ->fail fails)
+                          "errors" (mapv ->fail (filter (fn [x] (= :error (:type x))) results))})))]
+        (assoc result "output" (clojure.core/str out-writer))))))
 
 (defn build-eval-code
   "Self-contained Clojure source string that runs tests for ns-strs with sel.
@@ -264,16 +265,21 @@
 (defn- normalize-arg
   "Coerce the raw clj_test arg (namespace string / symbol / opts dict) into the
    canonical selector map via the shared test-contract:
-   `{:nses [str] :only [str] :include [str] :exclude [str]}`. A dict may carry
-   :ns / :namespace / :namespaces (string or vector) OR :paths / :path (directories
-   or files the caller has already resolved to namespaces upstream)."
+   `{:nses [str] :only [str] :include [str] :exclude [str]}`. The model arg is
+   STRING-keyed (strings-only boundary); this is the external->internal seam that
+   translates its `\"ns\"/\"namespace\"/\"namespaces\"/\"only\"/\"include\"/\"exclude\"`
+   keys into the keyword vocabulary `normalize-selectors` reads. A dict may carry
+   ns keys OR `\"paths\"/\"path\"` (resolved to namespaces upstream in clj-test-fn)."
   [arg]
   (contract/normalize-selectors
     (cond
       (string? arg) {:ns arg}
       (symbol? arg) {:ns (str arg)}
-      (map? arg)    arg
-      :else (throw (ex-info "clj_test expects a namespace string, or a dict with an :ns / :namespaces or :paths key"
+      (map? arg)    {:ns      (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))
+                     :only    (get arg "only")
+                     :include (get arg "include")
+                     :exclude (get arg "exclude")}
+      :else (throw (ex-info "clj_test expects a namespace string, or a dict with an \"ns\" / \"namespaces\" or \"paths\" key"
                      {:type :clj/bad-args
                       :got arg
                       :examples ["clj_test(\"my.app.core-test\")"
@@ -346,17 +352,17 @@
         code (build-eval-code ns-strs sel ns-files ns-deps)
         ns-disp (str/join " " ns-strs)
         r (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 120000})
-        parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))]
+        parsed (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
     (if (map? parsed)
       (-> parsed
-        (update :output strip-ansi)
-        (assoc :mode "repl" :ns ns-disp :port port))
-      {:mode "repl"
-       :ns ns-disp
-       :port port
-       :error (str "could not parse test result"
-                (when (seq (str (:err r))) (str " - nREPL :err " (:err r))))
-       :raw-value (:value r)})))
+        (update "output" strip-ansi)
+        (assoc "mode" "repl" "ns" ns-disp "port" port))
+      {"mode" "repl"
+       "ns" ns-disp
+       "port" port
+       "error" (str "could not parse test result"
+                 (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
+       "raw_value" (get r "value")})))
 
 (defn- cli-tail
   "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the
@@ -385,15 +391,18 @@
             cases (some-> (re-find #"Ran (\d+) test" out) second)
             fails (some-> (re-find #"(\d+) failures?" out) second)
             tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
-        {:mode "cli", :ns ns-str, :tool (name tool), :command (str/join " " cmd)
-         :exit (:exit res), :pass? (zero? (or (:exit res) -1))
+        ;; "pass?" (exit-code verdict) is a DISTINCT key from the repl path's
+        ;; "pass" (a count) — render-test-result reads both; keep the "?" so they
+        ;; never collide.
+        {"mode" "cli", "ns" ns-str, "tool" (name tool), "command" (str/join " " cmd)
+         "exit" (:exit res), "pass?" (zero? (or (:exit res) -1))
          ;; Surface just the RESULT — the tally is all the caller needs. The
          ;; runner mechanics (which build tool, live nREPL vs CLI, selector
          ;; pass-through) are internal plumbing, not something to narrate.
-         :note tally
-         :output (cli-tail out)})
-      {:mode "cli", :ns ns-str
-       :error (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))
+         "note" tally
+         "output" (cli-tail out)})
+      {"mode" "cli", "ns" ns-str
+       "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))
 
 (defn clj-test-fn
   "Run tests for one OR many namespaces with the lazytest-modeled selectors
@@ -409,9 +418,9 @@
    (let [root (or (:workspace/root env)
                 (throw (ex-info "clj_test fired without :workspace/root in env"
                          {:type :clj/no-workspace})))
-         paths (when (map? arg) (or (:paths arg) (:path arg)))
-         arg (if (and paths (not (or (:ns arg) (:namespace arg) (:namespaces arg))))
-               (-> arg (dissoc :paths :path) (assoc :ns (paths->test-nses root paths)))
+         paths (when (map? arg) (or (get arg "paths") (get arg "path")))
+         arg (if (and paths (not (or (get arg "ns") (get arg "namespace") (get arg "namespaces"))))
+               (-> arg (dissoc "paths" "path") (assoc "ns" (paths->test-nses root paths)))
                arg)
          {:keys [nses] :as norm} (normalize-arg arg)
          sel (select-keys norm [:only :include :exclude])
@@ -424,8 +433,8 @@
      (let [result (if port
                     (run-via-repl root nses sel port)
                     (run-via-cli root norm))
-           result' (if (and (:error result)
-                         (str/includes? (:error result) "Could not locate lazytest/core"))
+           result' (if (and (get result "error")
+                         (str/includes? (get result "error") "Could not locate lazytest/core"))
                      (run-via-cli root norm)
                      result)]
-       (extension/success {:result (assoc result' :language "clojure")})))))
+       (extension/success {:result (assoc result' "language" "clojure")})))))

@@ -16,10 +16,11 @@
 
    B-DISPATCH model. A resource is split into:
 
-     - DATA (serializable): `:id :kind :label :status :detail :pid :owner :session
-       :can-stop :can-restart :created-at`. This is what ctx carries, what the
-       footer renders, and what persists to `~/.vis/resources.edn` so a resource
-       survives a vis restart (display + pid re-attach).
+     - DATA (serializable, STRING-KEYED): id, kind, label, status, detail,
+       pid, owner, session, can_stop, can_restart, created_at. This is
+       what ctx carries (crossing the Python boundary as session[resources]),
+       what the footer renders, and what persists to `~/.vis/resources.edn` so a
+       resource survives a vis restart (display + pid re-attach).
      - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :restart-fn :alive-fn`.
        Never serialized. Across a restart the OWNER re-registers them (e.g. the
        Clojure pack re-attaches its nREPLs by pid on init) — exactly the pattern
@@ -98,29 +99,52 @@
 (defn- record-alive? [{:keys [data alive-fn]}]
   (cond
     alive-fn (boolean (try (alive-fn) (catch Throwable _ false)))
-    :else    (pid-alive? (:pid data))))
+    :else    (pid-alive? (get data "pid"))))
 
 ;; ---------------------------------------------------------------------------
-;; Data shape
+;; Data shape — STRING-KEYED. The DATA map is what ctx carries into
+;; `session["resources"]`, so it crosses the Python boundary: keys and enum
+;; values (kind/status/owner/language) are strings, never keywords. Callers
+;; still hand a keyword-keyed INPUT map (a host-side API arg); `->data` and
+;; `normalize-patch` are the single construction boundary that stringifies it.
 ;; ---------------------------------------------------------------------------
+
+(defn- sval
+  "Stringify a keyword enum VALUE so it can cross the boundary; other scalars
+   pass through unchanged."
+  [v]
+  (if (keyword? v) (name v) v))
+
+(defn- data-key
+  "A caller patch KEY (kebab keyword like `:can-stop`) → the canonical DATA
+   string key (`\"can_stop\"`). Non-keywords (already-canonical strings) pass
+   through."
+  [k]
+  (if (keyword? k) (.replace (name k) "-" "_") k))
+
+(defn- normalize-patch
+  "Project a caller `update!` patch (keyword-keyed host-side map) onto the
+   canonical string-keyed DATA shape so a merge can't mix key types."
+  [patch]
+  (reduce-kv (fn [m k v] (assoc m (data-key k) (sval v))) {} patch))
 
 (defn- ->data
   "Normalise a caller resource map into the canonical serializable DATA map.
-   `:can-stop`/`:can-restart` reflect whether a thunk was supplied; `:session`
-   is stamped from the owning session."
+   `\"can_stop\"`/`\"can_restart\"` reflect whether a thunk was supplied;
+   `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]} {:keys [stop-fn restart-fn]}]
-  (cond-> {:id          (str id)
-           :session     (skey session)
-           :kind        (or kind :resource)
-           :label       (str (or label id))
-           :status      (or status :up)
-           :can-stop    (boolean stop-fn)
-           :can-restart (boolean restart-fn)
-           :created-at  (System/currentTimeMillis)}
-    detail (assoc :detail detail)
-    pid    (assoc :pid pid)
-    owner    (assoc :owner owner)
-    language (assoc :language language)))
+  (cond-> {"id"          (str id)
+           "session"     (skey session)
+           "kind"        (sval (or kind :resource))
+           "label"       (str (or label id))
+           "status"      (sval (or status :up))
+           "can_stop"    (boolean stop-fn)
+           "can_restart" (boolean restart-fn)
+           "created_at"  (System/currentTimeMillis)}
+    detail   (assoc "detail" detail)
+    pid      (assoc "pid" pid)
+    owner    (assoc "owner" (sval owner))
+    language (assoc "language" (sval language))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API — every verb is scoped to the owning `session`.
@@ -151,7 +175,7 @@
   [session id patch]
   (let [sid (skey session) id (str id)]
     (when (get-in @registry [sid id])
-      (let [data (-> (swap! registry update-in [sid id :data] merge patch)
+      (let [data (-> (swap! registry update-in [sid id :data] merge (normalize-patch patch))
                    (get-in [sid id :data]))]
         (persist-snapshot!)
         data))))
@@ -245,14 +269,25 @@
 ;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets two engine-builtin tools, each
 ;; CLOSED OVER the owning session, that act on a resource purely by its `:id`;
-;; ctx (`:session/resources`) already advertises which ids are
+;; ctx (`session["resources"]`) already advertises which ids are
 ;; `can_stop`/`can_restart`. Wired by the loop via env/set-python-binding!,
 ;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
 ;; ---------------------------------------------------------------------------
 
+(defn- ->model-result
+  "Project an internal `stop!`/`restart!` result map (`{:result :stopped
+   :id ...}`) to a strings-only payload for the model-facing tools — the return
+   value crosses the Python boundary, so nothing keyword may survive."
+  [{:keys [result id message]}]
+  (cond-> {"result" (name result) "id" (str id)}
+    message (assoc "message" message)))
+
 (defn sandbox-bindings
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
-   Closures bind the session so the tools are session-scoped by construction."
+   Closures bind the session so the tools are session-scoped by construction.
+   Returns are projected to strings-only (`->model-result`) since they cross the
+   boundary as the tool result; `stop!`/`restart!` stay keyword-keyed for
+   internal callers (e.g. the REPL pack's `repl_stop`)."
   [session]
-  {'resource-stop    (fn [id] (stop! session id))
-   'resource-restart (fn [id] (restart! session id))})
+  {'resource-stop    (fn [id] (->model-result (stop! session id)))
+   'resource-restart (fn [id] (->model-result (restart! session id)))})

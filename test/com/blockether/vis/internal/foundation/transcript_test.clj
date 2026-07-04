@@ -232,9 +232,10 @@
           (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                     (:llm-raw-response-sha256 iter)))
           ;; :llm-executable-code removed during the per-block-eval cut;
-          ;; :llm-executable-blocks is the single source of truth.
+          ;; :llm-executable-blocks is the single source of truth. It is a
+          ;; `<-json` DB column, so it round-trips STRING-keyed.
           (expect (nil? (:llm-executable-code iter)))
-          (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
+          (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
                     (:llm-executable-blocks iter))))
         (finally (vis/db-dispose-connection! s)))))
 

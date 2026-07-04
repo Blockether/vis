@@ -45,7 +45,7 @@
     (when (has-python?)
       (let [dir (.getPath (tmp-dir))]
         (try
-          (expect (= :up (:status (repl/start! dir {}))))
+          (expect (= "up" (get (repl/start! dir {}) "status")))
           ;; last expression's value is captured (REPL semantics)
           (expect (= "2" (get (repl/eval! dir "1+1" 10000) "value")))
           ;; globals PERSIST across separate evals — a real session
@@ -59,9 +59,9 @@
           (let [r (repl/eval! dir "1/0" 10000)]
             (expect (false? (get r "ok")))
             (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
-          (expect (= :up (:status (repl/status dir))))
+          (expect (= "up" (get (repl/status dir) "status")))
           (repl/stop! dir)
-          (expect (= :down (:status (repl/status dir))))
+          (expect (= "down" (get (repl/status dir) "status")))
           (finally (repl/stop! dir))))))
   (it "eval before start fails closed with a clear error"
     (let [dir (str (.getPath (tmp-dir)) "-never-started")]
@@ -86,10 +86,10 @@
             dir  (.getCanonicalPath root)
             env  {:workspace/root (.getPath root)}]
         (try
-          (expect (:success? (core/py-start-repl-fn env :start nil)))
-          (expect (= :up (get-in (core/py-start-repl-fn env :status nil) [:result :status])))
-          (core/py-start-repl-fn env :stop nil)
-          (expect (= :down (get-in (core/py-start-repl-fn env :status nil) [:result :status])))
+          (expect (:success? (core/py-start-repl-fn env "start" nil)))
+          (expect (= "up" (get-in (core/py-start-repl-fn env "status" nil) [:result "status"])))
+          (core/py-start-repl-fn env "stop" nil)
+          (expect (= "down" (get-in (core/py-start-repl-fn env "status" nil) [:result "status"])))
           (finally (repl/stop! dir)))))))
 
 ;; ── activation ───────────────────────────────────────────────────────────────

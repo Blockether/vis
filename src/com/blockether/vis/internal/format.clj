@@ -31,9 +31,12 @@
    underscores/hyphens normalized to SPACES and the first letter capitalized
    (`api_key` -> `Api key`, `clj_eval_render` -> `Clj eval render`).
    DISPLAY ONLY — the stored key stays verbatim, so restore still
-   matches. Canonical across the context panel and every channel (TUI, web)."
+   matches. Canonical across the context panel and every channel (TUI, web).
+
+   Fact/entity keys are model-authored strings (strings-only boundary),
+   so `(str k)` is total here — no keyword branch."
   [k]
-  (let [s (if (keyword? k) (name k) (str k))]
+  (let [s (str k)]
     (cond
       (str/blank? s) s
 

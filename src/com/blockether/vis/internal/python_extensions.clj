@@ -278,8 +278,13 @@ def __vis_registration__():
     (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
     (.build)))
 
-(def ^:private log-levels #{:trace :debug :info :warn :error})
-(def ^:private notify-levels #{:info :success :warn :error})
+;; Python hands LEVEL as a string; the boundary is strings-only, so the
+;; lookup maps string -> the INTERNAL telemere/notification level keyword.
+;; No `(keyword …)` minting of Python-supplied data.
+(def ^:private log-levels
+  {"trace" :trace, "debug" :debug, "info" :info, "warn" :warn, "error" :error})
+(def ^:private notify-levels
+  {"info" :info, "success" :success, "warn" :warn, "error" :error})
 
 (defn- bind-host!
   "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
@@ -300,7 +305,7 @@ def __vis_registration__():
                       nil)))
     (.putMember g "__vis_host_log__"
       (->executable (fn [level msg]
-                      (let [lvl (get log-levels (keyword (str level)) :info)]
+                      (let [lvl (get log-levels (str level) :info)]
                         (tel/log! {:level lvl :id ::extension-log
                                    :data {:extension state-name}
                                    :msg (str msg)}))
@@ -308,7 +313,7 @@ def __vis_registration__():
     (.putMember g "__vis_host_notify__"
       (->executable (fn [text level]
                       (notifications/notify! (str text)
-                        :level (get notify-levels (keyword (str level)) :info))
+                        :level (get notify-levels (str level) :info))
                       nil)))))
 
 ;; =============================================================================
@@ -321,11 +326,12 @@ def __vis_registration__():
 (defn- slim-env
   "The read-only env dict Python activation/prompt callables receive.
    Deliberately small and documented — never the raw host env map (which
-   carries atoms, contexts and other host-only handles)."
+   carries atoms, contexts and other host-only handles). STRING keys —
+   it crosses the strings-only boundary."
   [env]
-  {:cwd (System/getProperty "user.dir")
-   :session-id (some-> (:session-id env) str)
-   :channel (some-> (:channel env) str)})
+  {"cwd" (System/getProperty "user.dir")
+   "session_id" (some-> (:session-id env) str)
+   "channel" (some-> (:channel env) str)})
 
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
@@ -368,18 +374,20 @@ def __vis_registration__():
    `vis.ok(...)` / `vis.err(...)` (or a plain string / None)."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [sctx]
-    (let [payload {:channel (some-> (:channel/id sctx) name)
-                   :args (mapv str (:command/argv sctx))
-                   :raw (str (:command/raw sctx))
-                   :session-id (some-> (:session/id sctx) str)}
+    ;; The payload crosses INTO Python (string keys); the response crossed
+    ;; BACK via `->clj` (string keys as well).
+    (let [payload {"channel" (some-> (:channel/id sctx) name)
+                   "args" (mapv str (:command/argv sctx))
+                   "raw" (str (:command/raw sctx))
+                   "session_id" (some-> (:session/id sctx) str)}
           res (call-py ctx pyfn [payload])]
       (cond
         (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
         (string? res) {:slash/status :ok :slash/title res}
-        (map? res) (cond-> {:slash/status (if (= "error" (:status res)) :error :ok)}
-                     (:title res) (assoc :slash/title (str (:title res)))
-                     (string? (:body res)) (assoc :slash/body (:body res))
-                     (some? (:data res)) (assoc :slash/data (:data res)))
+        (map? res) (cond-> {:slash/status (if (= "error" (get res "status")) :error :ok)}
+                     (get res "title") (assoc :slash/title (str (get res "title")))
+                     (string? (get res "body")) (assoc :slash/body (get res "body"))
+                     (some? (get res "data")) (assoc :slash/data (get res "data")))
         :else {:slash/status :ok :slash/title (pr-str res)}))))
 
 (defn- guard-adapter
@@ -391,15 +399,15 @@ def __vis_registration__():
   [ext-name ^Context ctx ^Value pyfn]
   (fn [_env op-kw args next-fn]
     (let [res (try
-                (call-py ctx pyfn [{:op (name op-kw) :args (vec args)}])
+                (call-py ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
                 (catch Throwable t
                   (tel/log! {:level :warn :id ::op-hook-failed
                              :data {:extension ext-name :op op-kw :error (ex-message t)}})
                   nil))]
-      (if (and (map? res) (= "block" (:marker res)))
+      (if (and (map? res) (= "block" (get res "marker")))
         (extension/failure
           {:result nil
-           :error {:message (str (or (:reason res) "Blocked by a Python extension hook"))
+           :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
                    :hint (str "Blocked by the '" ext-name
                            "' Python extension. Ask the user before retrying.")}})
         (next-fn args)))))
@@ -411,7 +419,7 @@ def __vis_registration__():
   [ext-name ^Context ctx ^Value pyfn]
   (fn [_env op-kw args result]
     (try
-      (call-py ctx pyfn [{:op (name op-kw) :args (vec args) :result (:result result)}])
+      (call-py ctx pyfn [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
       (catch Throwable t
         (tel/log! {:level :warn :id ::op-hook-failed
                    :data {:extension ext-name :op op-kw :error (ex-message t)}})))
@@ -432,52 +440,64 @@ def __vis_registration__():
       (subs n (count prefix))
       n)))
 
+;; Extension TAG vocabulary: the .py author declares "observation"/"mutation";
+;; the registry stores the internal tag keyword. Bounded map — no minting.
+(def ^:private symbol-tags {"observation" :observation, "mutation" :mutation})
+
 (defn- ->symbol-entry
-  [ext-name alias-sym ^Context ctx {:keys [name tag hidden doc params varargs] pyfn :fn}]
-  (let [sym (clojure.core/symbol (symbol-base-name alias-sym (str name)))
-        argv (cond-> (mapv clojure.core/symbol params)
-               varargs (-> (conj '&) (conj 'args)))]
+  "`spec` is a Python registration dict — STRING keys (strings-only boundary)."
+  [ext-name alias-sym ^Context ctx spec]
+  (let [sym (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
+        pyfn (get spec "fn")
+        argv (cond-> (mapv clojure.core/symbol (get spec "params"))
+               (get spec "varargs") (-> (conj '&) (conj 'args)))]
     (cond-> #:ext.symbol{:symbol sym
                          :fn (tool-adapter ext-name sym ctx pyfn)
-                         :doc (str doc)
+                         :doc (str (get spec "doc"))
                          :arglists [argv]
-                         :tag (keyword (str tag))}
-      hidden (assoc :ext.symbol/hidden? true))))
+                         :tag (get symbol-tags (str (get spec "tag")) :observation)}
+      (get spec "hidden") (assoc :ext.symbol/hidden? true))))
 
 (defn- ->slash-spec
-  [ext-name ^Context ctx {:keys [name doc usage] run :run}]
-  (cond-> {:slash/name (str name)
-           :slash/run-fn (slash-adapter ext-name ctx run)}
-    (string? doc) (assoc :slash/doc doc)
-    (string? usage) (assoc :slash/usage usage)))
+  [ext-name ^Context ctx spec]
+  (let [doc (get spec "doc"), usage (get spec "usage")]
+    (cond-> {:slash/name (str (get spec "name"))
+             :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
+      (string? doc) (assoc :slash/doc doc)
+      (string? usage) (assoc :slash/usage usage))))
 
 (defn- ->op-hook-entries
-  [ext-name ^Context ctx {:keys [ops phase] pyfn :fn}]
-  (let [before? (= "before" (str phase))
+  [ext-name ^Context ctx spec]
+  (let [before? (= "before" (str (get spec "phase")))
+        pyfn (get spec "fn")
         f (if before?
             (guard-adapter ext-name ctx pyfn)
             (after-adapter ext-name ctx pyfn))]
+    ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
+    ;; canonical tool op keywords). The vocabulary is author-declared config,
+    ;; not model data — the one sanctioned mint in this file.
     (mapv (fn [op] {:op (keyword (str op))
                     :phase (if before? :around :after)
                     :fn f})
-      ops)))
+      (get spec "ops"))))
 
 (defn- registration->spec
+  "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
   [^Context ctx reg]
-  (let [ext-name (str (:name reg))
-        alias-sym (some-> (:alias reg) str clojure.core/symbol)
-        symbols (mapv #(->symbol-entry ext-name alias-sym ctx %) (:symbols reg))
-        slashes (mapv #(->slash-spec ext-name ctx %) (:slash_commands reg))
-        op-hooks (vec (mapcat #(->op-hook-entries ext-name ctx %) (:op_hooks reg)))
-        prompt (:prompt reg)
-        activation (:activation reg)]
+  (let [ext-name (str (get reg "name"))
+        alias-sym (some-> (get reg "alias") str clojure.core/symbol)
+        symbols (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
+        slashes (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
+        op-hooks (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
+        prompt (get reg "prompt")
+        activation (get reg "activation")]
     (cond-> {:ext/name ext-name
-             :ext/description (str (:description reg))
-             :ext/kind (str (or (:kind reg) "python"))
+             :ext/description (str (get reg "description"))
+             :ext/kind (str (or (get reg "kind") "python"))
              :ext/source-nses ['com.blockether.vis.internal.python-extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols}
                            alias-sym (assoc :ext.engine/alias alias-sym))}
-      (:version reg) (assoc :ext/version (str (:version reg)))
+      (get reg "version") (assoc :ext/version (str (get reg "version")))
       (seq slashes) (assoc :ext/slash-commands slashes)
       (seq op-hooks) (assoc :ext/op-hooks op-hooks)
       (string? prompt) (assoc :ext/prompt-fn prompt)

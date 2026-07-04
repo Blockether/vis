@@ -156,25 +156,25 @@
   (let [session (:session-id env)
         live    (get @conns session)]
     (ok :mcp/servers
-      {:servers (mapv (fn [[nm spec]]
-                        (let [conn (get live nm)]
-                          (cond-> {:name nm
-                                   :transport (name (transport-of spec))
-                                   :connected (boolean conn)}
-                            conn          (assoc :tools (count (or (some-> (:tools conn) deref) [])))
-                            (:command spec) (assoc :command (:command spec))
-                            (:url spec)     (assoc :url (:url spec)))))
-                  (configured-servers))})))
+      {"servers" (mapv (fn [[nm spec]]
+                         (let [conn (get live nm)]
+                           (cond-> {"name" nm
+                                    "transport" (name (transport-of spec))
+                                    "connected" (boolean conn)}
+                             conn            (assoc "tools" (count (or (some-> (:tools conn) deref) [])))
+                             (:command spec) (assoc "command" (:command spec))
+                             (:url spec)     (assoc "url" (:url spec)))))
+                   (configured-servers))})))
 
 (defn- mcp-tools-impl
   [env server]
   (if-let [conn (connect-server! (:session-id env) server)]
     (ok :mcp/tools
-      {:server server
-       :tools  (mapv (fn [t] {:name         (get t "name")
-                              :description  (get t "description")
-                              :input_schema (get t "inputSchema")})
-                 (mcp/list-tools conn))})
+      {"server" server
+       "tools"  (mapv (fn [t] {"name"         (get t "name")
+                               "description"  (get t "description")
+                               "input_schema" (get t "inputSchema")})
+                  (mcp/list-tools conn))})
     (err :mcp/tools (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
       :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers))))))))
 
@@ -182,26 +182,29 @@
   ([env server tool] (mcp-call-impl env server tool {}))
   ([env server tool args]
    (if-let [conn (connect-server! (:session-id env) server)]
+     ;; `args` arrives from Python string-keyed (verbatim, matching the tool's
+     ;; input_schema); the MCP JSON client wants string keys, so pass straight
+     ;; through — no keyword→string coercion.
      (let [r (mcp/call-tool conn tool (if (map? args) args {}))]
        (ok :mcp/call
-         {:server  server
-          :tool    tool
-          :content (get r "content")
-          :is_error (boolean (get r "isError"))}))
+         {"server"   server
+          "tool"     tool
+          "content"  (get r "content")
+          "is_error" (boolean (get r "isError"))}))
      (err :mcp/call (str "MCP server '" server "' is not configured (see ~/.vis/config.edn :mcp :servers).")
        :hint (str "Configured servers: " (pr-str (vec (keys (configured-servers)))))))))
 
 (defn- mcp-connect-impl
   [env server]
   (if-let [conn (connect-server! (:session-id env) server)]
-    (ok :mcp/connect {:server server :connected true
-                      :tools (count (try (mcp/list-tools conn) (catch Throwable _ [])))})
+    (ok :mcp/connect {"server" server "connected" true
+                      "tools" (count (try (mcp/list-tools conn) (catch Throwable _ [])))})
     (err :mcp/connect (str "Could not connect to MCP server '" server "'."))))
 
 (defn- mcp-disconnect-impl
   [env server]
   (let [res (resources/stop! (:session-id env) (resource-id server))]
-    (ok :mcp/disconnect {:server server :result (name (or (:result res) :unknown))})))
+    (ok :mcp/disconnect {"server" server "result" (name (or (:result res) :unknown))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Gate + error envelopes (mirror the shell extension)
@@ -225,8 +228,9 @@
                 :throwable err*})}))
 
 ;; ---------------------------------------------------------------------------
-;; Native op-card renderers — `:result` → `{:summary :body}`. Keys arrive
-;; keywordized snake_case (trailing ?/! stripped), the injected env gone.
+;; Native op-card renderers — read the tool's string-keyed `:result` and return
+;; the internal `{:summary :body}` IR (keyword-keyed by contract). Keys arrive
+;; as VERBATIM STRINGS (the boundary is strings-only); the injected env is gone.
 ;; ---------------------------------------------------------------------------
 
 (defn- mcp-fence [s]
@@ -234,46 +238,46 @@
 
 (defn- render-mcp-servers-result
   [r]
-  (let [servers (:servers r)]
+  (let [servers (get r "servers")]
     {:summary (str (count servers) " MCP server" (when (not= 1 (count servers)) "s"))
      :body    (when (seq servers)
                 (str/join "\n"
                   (map (fn [s]
-                         (str "- `" (:name s) "` " (:transport s)
-                           (if (:connected s)
-                             (str " ✓" (when (:tools s) (str " (" (:tools s) " tools)")))
+                         (str "- `" (get s "name") "` " (get s "transport")
+                           (if (get s "connected")
+                             (str " ✓" (when (get s "tools") (str " (" (get s "tools") " tools)")))
                              " ·")))
                     servers)))}))
 
 (defn- render-mcp-tools-result
   [r]
-  (let [tools (:tools r)]
-    {:summary (str "`" (:server r) "` — " (count tools) " tool" (when (not= 1 (count tools)) "s"))
+  (let [tools (get r "tools")]
+    {:summary (str "`" (get r "server") "` — " (count tools) " tool" (when (not= 1 (count tools)) "s"))
      :body    (when (seq tools)
                 (str/join "\n"
                   (map (fn [t]
-                         (str "- `" (:name t) "`"
-                           (when (seq (str (:description t)))
-                             (str " — " (:description t)))))
+                         (str "- `" (get t "name") "`"
+                           (when (seq (str (get t "description")))
+                             (str " — " (get t "description")))))
                     tools)))}))
 
 (defn- render-mcp-call-result
   [r]
-  (let [blocks (:content r)
+  (let [blocks (get r "content")
         text   (->> blocks
-                 (keep (fn [b] (or (get b "text") (get b :text))))
+                 (keep (fn [b] (get b "text")))
                  (str/join "\n"))]
-    {:summary (str "`" (:server r) "`/" (:tool r) (when (:is_error r) " — error"))
+    {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " — error"))
      :body    (mcp-fence (if (seq text) text (pr-str blocks)))}))
 
 (defn- render-mcp-connect-result
   [r]
-  {:summary (str "connected `" (:server r) "`"
-              (when (:tools r) (str " (" (:tools r) " tools)")))})
+  {:summary (str "connected `" (get r "server") "`"
+              (when (get r "tools") (str " (" (get r "tools") " tools)")))})
 
 (defn- render-mcp-disconnect-result
   [r]
-  {:summary (str "disconnected `" (:server r) "` — " (:result r))})
+  {:summary (str "disconnected `" (get r "server") "` — " (get r "result"))})
 
 ;; ---------------------------------------------------------------------------
 ;; Public, doc-bearing vars (model-facing surface). Under alias `mcp` they bind
@@ -365,12 +369,15 @@
   (let [session (:session-id env)
         live    (get @conns session)]
     (when (seq live)
-      {:session/env
-       {:mcp {:servers (mapv (fn [[nm conn]]
-                               {:name nm
-                                :transport (name (:transport conn))
-                                :tools (count (or (some-> (:tools conn) deref) []))})
-                         live)}}})))
+      ;; `"session_env"` is the merge directive read STRING-KEYED by ctx_loop /
+      ;; env-digest; the whole contribution (key + value) is string-keyed with no
+      ;; keyword values, so it survives the merge and crosses the boundary.
+      {"session_env"
+       {"mcp" {"servers" (mapv (fn [[nm conn]]
+                                 {"name" nm
+                                  "transport" (name (:transport conn))
+                                  "tools" (count (or (some-> (:tools conn) deref) []))})
+                           live)}}})))
 
 (def ^:private prompt-text
   (str "MCP servers available. Connect to Model Context Protocol servers (declared in\n"
