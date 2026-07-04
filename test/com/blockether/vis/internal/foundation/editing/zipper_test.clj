@@ -92,3 +92,32 @@
     (doseq [op [:sexpr :struct_patch :occurrences
                 :create-dirs :delete-if-exists :patch :write]]
       (expect (#{:observation :mutation} (ext/op-tag op))))))
+
+(defdescribe error-localization-test
+  (it "error-nodes locates each ERROR/MISSING node with a 1-based line"
+    ;; a `[` closed with `)` — the classic bracket-TYPE mismatch
+    (let [errs (zip/error-nodes "clojure" "(defn f [x)\n  (+ x 1))\n")]
+      (expect (seq errs))
+      ;; tree-sitter names the delimiter it expected: a MISSING `]`
+      (expect (some (fn [e] (and (:missing? e) (= "]" (:kind e)))) errs))
+      (expect (every? (fn [e] (pos? (long (:line e)))) errs))))
+
+  (it "error-nodes is empty on clean source"
+    (expect (empty? (zip/error-nodes "clojure" "(defn f [x] (+ x 1))\n"))))
+
+  (it "describe-syntax-errors names the location + the expected delimiter"
+    (let [d (zip/describe-syntax-errors "clojure" "(defn f [x)\n  (+ x 1))\n")]
+      (expect (string? d))
+      (expect (str/includes? d "line"))
+      (expect (str/includes? d "expected a `]`"))
+      (expect (str/includes? d "bracket-TYPE mismatch")))
+    ;; nil when the source parses clean
+    (expect (nil? (zip/describe-syntax-errors "clojure" "(defn f [x] (+ x 1))"))))
+
+  (it "a refused edit carries the located diagnostic in its message"
+    (let [i (child-idx-containing (zip/inspect "clojure" clj-src []) "defn")
+          r (zip/edit "clojure" clj-src [i] :replace "(defn bar [x)\n  (+ x 1))")]
+      (expect (= :syntax-broken (get-in r [:error :reason])))
+      ;; the message now includes a real line/col + the expected delimiter,
+      ;; not just a bare "would introduce a syntax error"
+      (expect (str/includes? (get-in r [:error :message]) "expected a `]`")))))

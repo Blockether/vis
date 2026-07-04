@@ -13,6 +13,7 @@
 (def ^:private shell-run* @#'shell/shell-run-impl)
 (def ^:private shell-bg* @#'shell/shell-bg-impl)
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
+(def ^:private shell-send* @#'shell/shell-send-impl)
 
 (defn- with-shell-on [f]
   (toggles/set-enabled! :shell/enabled true)
@@ -243,6 +244,39 @@
                 (expect (empty? (resources/list-resources sid))))
               (finally (resources/stop-all! sid)))))))))
 
+(defdescribe shell-send-test
+  (it "types into a running background shell's stdin and the program reads it"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let [sid "shell-ext-send"
+                env {:session-id sid}]
+            (try
+              (shell-bg* env "echoer" "read x; echo GOT:$x; sleep 60")
+              (let [snt (:result (shell-send* env "echoer" "hi-there"))]
+                (expect (= "running" (get snt "status")))
+                ;; "hi-there" (8) + submitting newline = 9 chars written
+                (expect (= 9 (get snt "sent"))))
+              (let [hit? (fn [r] (some #(str/includes? (str (second %)) "GOT:hi-there")
+                                   (get r "lines")))
+                    r    (poll #(:result (shell-logs* env "echoer")) hit?)]
+                (expect (hit? r)))
+              (finally (resources/stop-all! sid))))))))
+
+  (it "refuses a send to an unknown id and to an exited shell"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let [sid "shell-ext-send-err"
+                env {:session-id sid}]
+            (try
+              (expect (threw? #(shell-send* env "nope" "x")))
+              (shell-bg* env "gone" "exit 0")
+              (poll #(:result (shell-logs* env "gone"))
+                #(= "exited" (get % "status")))
+              (expect (threw? #(shell-send* env "gone" "x")))
+              (finally (resources/stop-all! sid)))))))))
+
 (defdescribe shell-prompt-test
   (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
     (toggles/reset-to-default! :shell/enabled)
@@ -261,4 +295,5 @@
     (let [syms (set (map :ext.symbol/symbol shell/shell-symbols))]
       (expect (contains? syms 'run))
       (expect (contains? syms 'bg))
-      (expect (contains? syms 'logs)))))
+      (expect (contains? syms 'logs))
+      (expect (contains? syms 'send)))))

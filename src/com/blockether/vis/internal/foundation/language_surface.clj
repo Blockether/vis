@@ -229,14 +229,23 @@
 
 (defn- render-format-result
   "format_code → `` `path` (changed) `` when writing a file (the FORMAT_CODE
-   badge already names the tool), else the formatted text as a code block."
+   badge already names the tool), a per-file roll-up when several `paths` were
+   formatted, else the formatted text as a code block."
   [r]
-  (let [changed (get r "changed")
-        note    (if changed "(changed)" "(no change)")]
-    (if-let [path (get r "path")]
-      {:summary (str "`" path "` " note)}
-      {:summary note
-       :body    (fence nil (get r "text"))})))
+  (if-let [files (get r "files")]
+    (let [n       (count files)
+          changed (or (get r "changed") 0)]
+      {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
+       :body    (fence nil (str/join "\n"
+                             (for [f files]
+                               (str "`" (get f "path") "` "
+                                 (if (get f "changed") "(changed)" "(no change)")))))})
+    (let [changed (get r "changed")
+          note    (if changed "(changed)" "(no change)")]
+      (if-let [path (get r "path")]
+        {:summary (str "`" path "` " note)}
+        {:summary note
+         :body    (fence nil (get r "text"))}))))
 
 (defn- render-lint-result
   "lint_code → `N files — E errors, W warnings` headline (the LINT_CODE badge
@@ -357,7 +366,7 @@
 
 (defn format-code
   "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
-   `arg` is either a raw code string / {\"code\": ...} (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The payload is passed through to the language handler verbatim."
+   `arg` is either a raw code string / {\"code\": ...} (returns the formatted text), a {\"path\": file} map (formats that ONE file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back), or a {\"paths\": [file …]} map (formats MANY files in place, returning a per-file changed roll-up). The payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
@@ -405,7 +414,8 @@
      :schema {:type "object"
               :properties {"language" {:type "string" :description "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
                            "code"     {:type "string" :description "Source to format (returns the formatted text)."}
-                           "path"     {:type "string" :description "Format this file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code."}}
+                           "path"     {:type "string" :description "Format this ONE file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code."}
+                           "paths"    {:type "array" :items {:type "string"} :description "Format MANY files IN PLACE (returns a per-file changed roll-up). Mutually exclusive with code/path."}}
               :required []}
      :before-fn inject-env
      :tag :mutation}))
