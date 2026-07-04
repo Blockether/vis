@@ -1996,6 +1996,43 @@
         (expect (not (contains? names "foundation_git_merge_ops.clj")))
         (expect (not (contains? names "foundation_voice_asr.clj")))))))
 
+(defdescribe find-fuzzy-fallback-test
+  "find-relevance takes the MIN across query tokens, so a multi-word CONCEPT
+   query drops the moment any word is absent — the reason natural-language
+   phrases returned nothing. When the strict pass is empty and the query has
+   >=2 usable tokens, find-search falls back to per-token search and surfaces
+   files by exact-name bullseye then coverage."
+  (let [find-search (private-fn "find-search")]
+    (it "a conceptual phrase surfaces the exact-name file the strict MIN pass dropped"
+      (let [_   (write-temp! "findfuzz/render.clj" ";; the visualization renderer\n")
+            _   (write-temp! "findfuzz/native_tool_handlers.md" "# native tool docs\n")
+            _   (write-temp! "findfuzz/unrelated_widget.clj" ";; nope\n")
+            dir (temp-dir-path "findfuzz")
+            out (find-search [{:query "native tool call visualization render" :paths [dir]}])
+            names (mapv #(last (string/split % #"/")) (:paths out))]
+        ;; strict MIN would need ALL five words in one path → nothing; fuzzy saves it
+        (expect (true? (:fuzzy out)))
+        (expect (some #{"render.clj"} names))
+        ;; the exact-name bullseye (`render` → render.clj) ranks FIRST, above the
+        ;; two-common-word loose hit (native+tool → native_tool_handlers.md)
+        (expect (= "render.clj" (first names)))
+        ;; the terms that actually landed are reported
+        (expect (some #{"render"} (:matched-terms out)))
+        ;; a file matching NONE of the terms is not dragged in
+        (expect (not (some #{"unrelated_widget.clj"} names)))))
+    (it "a precise query that the strict MIN pass satisfies stays NON-fuzzy"
+      (let [_   (write-temp! "findprecise/channel_tui_footer.clj" ";; footer\n")
+            dir (temp-dir-path "findprecise")
+            out (find-search [{:query "channel tui footer" :paths [dir]}])]
+        (expect (nil? (:fuzzy out)))
+        (expect (some #{"channel_tui_footer.clj"}
+                  (map #(last (string/split % #"/")) (:paths out))))))
+    (it "a genuinely-unmatchable query still returns nothing (fuzzy can't invent hits)"
+      (let [_   (write-temp! "findnone/alpha.clj" ";; x\n")
+            dir (temp-dir-path "findnone")
+            out (find-search [{:query "zzzqqq wwwvvv" :paths [dir]}])]
+        (expect (zero? (:item-count out)))))))
+
 (defdescribe structural-tool-gating-test
   "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
    structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."

@@ -1218,6 +1218,73 @@
        :is_hidden (boolean (:is_hidden spec))
        :is_respect_gitignore (get spec :is_respect_gitignore true)})))
 
+(defn- find-scan
+  "Scan `roots` for ONE `query` string via fff and keep candidates whose
+   `find-relevance` (name-weighted, order-insensitive) clears `find-min-score`.
+   Returns raw item maps carrying `:score`. A direct FILE root contributes
+   itself at score 1.0. The single-query building block `find-search` runs
+   once for the strict whole-query pass and once per token for the fallback."
+  [roots query is_hidden is_respect_gitignore candidate-page]
+  (->> roots
+    (mapcat (fn [^File root]
+              (cond
+                (.isFile root)
+                [{:path (rel-path root)
+                  :file-name (.getName root)
+                  :size (.length root)
+                  :binary? false
+                  :source :direct-file
+                  :score 1.0}]
+
+                ;; skip $HOME / filesystem roots (never indexable); other
+                ;; roots still contribute results
+                (paths/pathological-index-root? root)
+                nil
+
+                :else
+                (with-open [idx (rg-fff-open root)]
+                  (let [base (.getCanonicalFile root)]
+                       ;; doall: realize hits INSIDE with-open, before the
+                       ;; fresh instance is closed.
+                    (doall
+                      (->> (:items (fff/search idx {:query query
+                                                    :page-size candidate-page}))
+                        (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?]}]
+                                (let [f     (io/file base relative-path)
+                                      rel   (rel-path f)
+                                      score (find-relevance query rel)]
+                                  (when (and (>= score find-min-score)
+                                          (or is_hidden (not (.isHidden f)))
+                                          (or (not is_respect_gitignore)
+                                            (not (ignored? (load-ignore-node base) f base))))
+                                    {:path rel
+                                     :file-name (or file-name (.getName f))
+                                     :size size
+                                     :modified modified
+                                     :frecency-score frecency-score
+                                     :git-status git-status
+                                     :binary? (boolean binary?)
+                                     :score score})))))))))))
+    (distinct)
+    vec))
+
+(defn- find-fallback-tokens
+  "Distinct alnum query tokens worth an independent per-token search: length
+   ≥ 3 (a 1–2 char token matches everything) and NOT one of a few noise words
+   that describe INTENT rather than a filename (`file`, `code`, `render`-style
+   verbs are kept — they often ARE the name; only true glue words drop). Capped
+   at the 5 LONGEST so a rambling query can't fan out into a dozen fff scans."
+  [query]
+  (let [glue #{"the" "and" "for" "with" "that" "this" "how" "what" "where"
+               "into" "from" "was" "are" "any" "all" "not" "our" "you" "your"}]
+    (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
+      (remove str/blank?)
+      distinct
+      (filter #(and (>= (count %) 3) (not (contains? glue %))))
+      (sort-by (comp - count))
+      (take 5)
+      vec)))
+
 (defn- find-search [args]
   (let [{:keys [query paths limit is_hidden is_respect_gitignore]} (coerce-find-spec args)
         roots (resolve-search-roots paths)
@@ -1225,60 +1292,75 @@
         ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
         ;; filter below do the real cutting (a fresh fff scan is ~11ms).
         candidate-page (max limit 300)
-        items (->> roots
-                (mapcat (fn [^File root]
-                          (cond
-                            (.isFile root)
-                            [{:path (rel-path root)
-                              :file-name (.getName root)
-                              :size (.length root)
-                              :binary? false
-                              :source :direct-file
-                              :score 1.0}]
-
-                            ;; skip $HOME / filesystem roots (never indexable);
-                            ;; other roots still contribute results
-                            (paths/pathological-index-root? root)
-                            nil
-
-                            :else
-                            (with-open [idx (rg-fff-open root)]
-                              (let [base (.getCanonicalFile root)]
-                                   ;; doall: realize hits INSIDE with-open, before the
-                                   ;; fresh instance is closed.
-                                (doall
-                                  (->> (:items (fff/search idx {:query query
-                                                                :page-size candidate-page}))
-                                    (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?]}]
-                                            (let [f     (io/file base relative-path)
-                                                  rel   (rel-path f)
-                                                  score (find-relevance query rel)]
-                                              (when (and (>= score find-min-score)
-                                                      (or is_hidden (not (.isHidden f)))
-                                                      (or (not is_respect_gitignore)
-                                                        (not (ignored? (load-ignore-node base) f base))))
-                                                {:path rel
-                                                 :file-name (or file-name (.getName f))
-                                                 :size size
-                                                 :modified modified
-                                                 :frecency-score frecency-score
-                                                 :git-status git-status
-                                                 :binary? (boolean binary?)
-                                                 :score score})))))))))))
-                (distinct)
-                   ;; strongest match first; frecency then path break ties deterministically.
-                (sort-by (fn [it] [(- (double (:score it 0.0)))
-                                   (- (long (or (:frecency-score it) 0)))
-                                   (:path it)]))
-                (take limit)
-                vec)]
-    {:items items
-     :item-count (count items)
-     :paths (mapv :path items)
-     :query query
-     :searched-paths paths
-     :limit limit
-     :truncated-by (if (>= (count items) limit) :limit :end-of-results)}))
+        scan (fn [q] (find-scan roots q is_hidden is_respect_gitignore candidate-page))
+        strict (scan query)
+        tokens (find-fallback-tokens query)
+        ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
+        ;; so EVERY word must land in one path — a multi-word CONCEPT query
+        ;; ("native tool call visualization render") is dropped the moment any
+        ;; term is absent, even when a distinctive term is an exact filename
+        ;; match (`render`). That is why such queries returned nothing. When the
+        ;; strict pass is empty and the query has ≥2 usable tokens, search each
+        ;; token on its own and surface files ranked by HOW MANY query terms
+        ;; they match (coverage) then best term score. It stays a FILENAME tool
+        ;; — it just stops requiring the whole sentence to be one filename.
+        ;; Low-confidence fuzzy results are ranked, not exhaustive — a tight cap
+        ;; keeps the card/model focused on the strongest candidates instead of a
+        ;; page of loose single-term noise.
+        fuzzy-limit (min limit 20)
+        [ranked fuzzy?]
+        (if (or (seq strict) (< (count tokens) 2))
+          [strict false]
+          (let [stem  (fn [it] (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+                by-path (reduce
+                          (fn [m t]
+                            (reduce (fn [m it]
+                                      (update m (:path it)
+                                        (fn [cur]
+                                          (-> (or cur (assoc it :score 0.0 :terms #{}))
+                                            (update :score max (:score it))
+                                            (update :terms conj t)))))
+                              m (scan t)))
+                          {} tokens)
+                ;; A term that IS the filename stem (`render` → `render.clj`) is a
+                ;; bullseye — it must beat a 2-common-word loose match
+                ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
+                ;; score bonus that ranks above raw term coverage.
+                scored (map (fn [it]
+                              (let [s (stem it)
+                                    bull? (contains? (:terms it) s)]
+                                (assoc it :rank-score (+ (double (:score it 0.0))
+                                                        (if bull? 0.6 0.0)))))
+                         (vals by-path))]
+            [(->> scored
+               (sort-by (fn [it] [(- (double (:rank-score it)))
+                                  (- (count (:terms it)))          ;; then coverage
+                                  (- (long (or (:frecency-score it) 0)))
+                                  (:path it)]))
+               vec)
+             true]))
+        items (if fuzzy?
+                (vec (take fuzzy-limit (map #(dissoc % :rank-score) ranked)))
+                (->> ranked
+                  ;; strongest match first; frecency then path break ties.
+                  (sort-by (fn [it] [(- (double (:score it 0.0)))
+                                     (- (long (or (:frecency-score it) 0)))
+                                     (:path it)]))
+                  (take limit)
+                  vec))
+        ;; The query terms that actually landed a file (fuzzy pass only) — so
+        ;; the card/model can see WHICH words matched, e.g. "render, native".
+        matched-terms (when fuzzy?
+                        (->> items (mapcat :terms) distinct (sort-by (comp - count)) vec))]
+    (cond-> {:items (mapv #(dissoc % :terms) items)
+             :item-count (count items)
+             :paths (mapv :path items)
+             :query query
+             :searched-paths paths
+             :limit limit
+             :truncated-by (if (>= (count items) limit) :limit :end-of-results)}
+      fuzzy?              (assoc :fuzzy true)
+      (seq matched-terms) (assoc :matched-terms matched-terms))))
 
 (defn- find-tool
   "Find files by NAME/PATH — fuzzy subsequence match over the file TREE (fff;
@@ -3223,8 +3305,16 @@
   [r]
   (let [n (or (:item_count r) (count (:paths r)) 0)
         q (some-> (:query r) str not-empty)
-        hint (some-> (:hint r) kw->str not-empty)]
-    {:summary (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\"")))
+        hint (some-> (:hint r) kw->str not-empty)
+        ;; When the strict whole-query pass found nothing, find_files fell back
+        ;; to per-TERM matching (see `find-search`). Name the terms that landed
+        ;; so a fuzzy result reads honestly — `3 matches for "…" · terms: render,
+        ;; native` — instead of implying an exact whole-query hit.
+        terms (when (:fuzzy r)
+                (seq (keep #(some-> % kw->str not-empty) (:matched_terms r))))]
+    {:summary (str n " match" (when (not= 1 n) "es")
+                (when q (str " for \"" q "\""))
+                (when terms (str " · terms: " (str/join ", " terms))))
      :body    (cond
                 (seq (:paths r))
                 (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```")
