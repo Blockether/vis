@@ -146,13 +146,21 @@
                    {:type :foundation-git/invalid-opts :arg arg}))))
 
 (defn add
-  "Stage `arg`: :all, a path, or a vec of paths."
+  "Stage `arg`: :all, a path, or a vec of paths.
+
+   Mirrors CLI `git add -A`: JGit's AddCommand with the default
+   update=false stages new + modified files but SKIPS deletions, so a
+   single pass silently drops removed files. We run two passes — one
+   with update=false (new + modified) and one with update=true
+   (modified + deleted tracked files) — whose union covers adds,
+   modifications, and deletions."
   [arg]
   (let [paths (coerce-paths arg)]
     (with-open [git (open-git)]
-      (let [cmd (.add git)]
-        (doseq [p paths] (.addFilepattern cmd p))
-        (.call cmd)))
+      (doseq [update? [false true]]
+        (let [cmd (.. (.add git) (setUpdate update?))]
+          (doseq [p paths] (.addFilepattern cmd p))
+          (.call cmd))))
     {:op :git/add :paths paths}))
 
 (defn- head-message [^Git git]

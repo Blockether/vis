@@ -80,6 +80,30 @@
            (let [c (-> g .commit (.setMessage (str "commit " i)) .call)]
              (subs (.getName c) 0 7))))))))
 
+(defdescribe add-test
+  (it "stages adds, modifications, AND deletions like `git add -A`"
+    (let [root (make-tmp-dir)]
+      (try
+        ;; Seed: two tracked files committed.
+        (init-repo! root 2)
+        (with-workspace root
+          ;; Working-tree churn: delete one tracked file, modify the
+          ;; other, introduce a brand-new file.
+          (.delete (io/file root "src/f0.clj"))
+          (spit-rel root "src/f1.clj" "(ns f1) ;; edited\n")
+          (spit-rel root "src/new.clj" "(ns new)\n")
+          (let [res (wo/add ".")]
+            (expect (= :git/add (:op res)))
+            (with-open [g (Git/open root)]
+              (let [s (.. g status call)]
+                ;; The single-pass (update=false) bug left the deletion
+                ;; unstaged in `getMissing`; the two-pass add clears it.
+                (expect (contains? (set (.getRemoved s)) "src/f0.clj"))
+                (expect (contains? (set (.getChanged s)) "src/f1.clj"))
+                (expect (contains? (set (.getAdded s)) "src/new.clj"))
+                (expect (empty? (.getMissing s)))))))
+        (finally (cleanup root))))))
+
 (defdescribe reset!-test
   (it "soft-resets HEAD to a prior revision, leaving worktree intact"
     (let [root (make-tmp-dir)]
