@@ -526,7 +526,7 @@
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
      :ext/ctx-fn            nrepl-ctx/contribute
-     :ext/language-tools [{:language :clojure
+     :ext/language-tools [{:language "clojure"
                            :format-fn (fn [env arg]
                                         (clj-format-fn env arg))
                            :lint-fn clj-lint-fn
@@ -554,9 +554,13 @@
      [{:kind          :nrepl
        :label         "nREPL"
        :options-label "aliases"
+       ;; options-fn RENDERS aliases in deps.edn spelling (":dev"); start-fn
+       ;; consumes its own display format back — the exact inverse (drop the
+       ;; one ":" this options-fn prepended). No regex, no dual-spelling
+       ;; tolerance.
        :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
        :start-fn      (fn [env selected]
-                        (ui-start-repl! env (map #(str/replace (str %) #"^:" "") selected)))}]
+                        (ui-start-repl! env (map #(subs (str %) 1) selected)))}]
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
