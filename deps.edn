@@ -29,7 +29,6 @@
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
-  com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
   com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-foundation-mcp               {:local/root "extensions/common/vis-foundation-mcp"}
   com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
@@ -128,8 +127,7 @@
   ;; babashka.fs / java-diff-utils — back the `v/` kernel (cat/ls/rg/patch),
   ;; now a CORE module under `internal.foundation` (was the vis-foundation-core
   ;; extension). fs = cwd-safe filesystem wrappers; java-diff-utils = unified
-  ;; diff hunks for `v/patch` previews. JGit (gitignore parsing + repo
-  ;; discovery) is already declared below.
+  ;; diff hunks for `v/patch` previews.
   babashka/fs                                     {:mvn/version "0.5.33"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.17"}
   ;; tree-sitter structural index + unified structural editing (Clojure from
@@ -156,7 +154,7 @@
   ;; vis already passes :enable-mmap-cache? false at both fff/create sites.
   com.blockether/fff                              {:mvn/version "0.9.6-8"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
-  ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
+  ;; SLF4J 2.x provider: routes Java-library logging (Jetty, …)
   ;; into Telemere — kills the "No SLF4J providers were found" startup
   ;; warning and puts library logs under Telemere's handler/min-level
   ;; control. Version MUST match com.taoensso/telemere.
@@ -190,19 +188,7 @@
   ;; nothing from the classpath when absent.
   ring/ring-core                                  {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.5"}
-  metosin/reitit-ring                             {:mvn/version "0.10.1"}
-  ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
-  ;; on the classpath to read `ssh-ed25519` private keys.
-  ;; All THREE BouncyCastle artifacts MUST be the SAME version: the jars are
-  ;; SEALED + signed, and the JCE verifies the provider's signature. JGit's
-  ;; apache-ssh drags bcpkix/bcutil in at 1.78.1, so pinning only bcprov to 1.80
-  ;; left a 1.80/1.78.1 split — JCE then rejects it with "JCE cannot authenticate
-  ;; the provider BC" on every ssh git op (and that ExceptionInInitializerError
-  ;; cascades — e.g. into GraalPy's Engine$ImplHolder). Pin all three to 1.80.
-  org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.84"}
-  org.bouncycastle/bcpkix-jdk18on                 {:mvn/version "1.84"}
-  org.bouncycastle/bcutil-jdk18on                 {:mvn/version "1.84"}
-  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.7.0.202606012155-r"}}
+  metosin/reitit-ring                             {:mvn/version "0.10.1"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.
@@ -233,7 +219,6 @@
                         "extensions/common/vis-foundation-bridge/test"
                         "extensions/common/vis-foundation-harness/test"
                         "extensions/common/vis-foundation-search/test"
-                        "extensions/common/vis-foundation-git/test"
                         "extensions/common/vis-foundation-voice/test"
                         "extensions/common/vis-foundation-mcp/test"
                         "extensions/languages/vis-language-clojure/test"
@@ -262,7 +247,6 @@
                         "--dir" "extensions/common/vis-foundation-bridge/test"
                         "--dir" "extensions/common/vis-foundation-harness/test"
                         "--dir" "extensions/common/vis-foundation-search/test"
-                        "--dir" "extensions/common/vis-foundation-git/test"
                         "--dir" "extensions/common/vis-foundation-voice/test"
                         "--dir" "extensions/common/vis-foundation-mcp/test"
                         "--dir" "extensions/languages/vis-language-clojure/test"

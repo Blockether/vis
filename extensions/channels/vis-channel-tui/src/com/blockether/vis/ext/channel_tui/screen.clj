@@ -2052,51 +2052,19 @@
   ;; Restore IEXTEN so the user's shell gets literal-next quoting back.
   (try (input/restore-literal-next!) (catch Throwable _ nil)))
 ;; ---------------------------------------------------------------------------
-;; Encrypted SSH key passphrase prompt
+;; Encrypted SSH key passphrase prompt — retired.
 ;;
-;; foundation-git's git/push! and git/fetch! install JGit's Apache MINA SSHD
-;; factory on first call. Encrypted keys (passphrase-protected ed25519 /
-;; rsa) need a `KeyPasswordProvider`; foundation-git exposes a registration
-;; hook (`set-ssh-passphrase-prompt!`) so each channel can plug in its own
-;; UI. The TUI plugs in a masked text-input dialog. Headless callers
-;; leave the prompt nil and supply the passphrase via
-;; `VIS_SSH_KEY_PASSPHRASE` (foundation-git's fallback path).
-;;
-;; `requiring-resolve` keeps this a soft, lazy dep: if foundation-git is
-;; ever stripped from the build, the TUI still starts cleanly.
+;; git auth (ssh keys, credential helpers, passphrase prompts) is now handled
+;; entirely by the user's own `git` binary and its ssh-agent / askpass config,
+;; so the TUI no longer registers an in-app passphrase provider. Kept as a
+;; no-op returning nil so the screen lifecycle (which vresets a cleanup thunk
+;; from this call) stays unchanged.
 ;; ---------------------------------------------------------------------------
 (defn- install-ssh-passphrase-prompt!
-  "Register a TUI-aware passphrase prompt with foundation-git. Returns a
-   zero-arg cleanup that clears the registration; the screen's outer
-   finally invokes it so a torn-down TUI doesn't leave a prompt
-   pointing at a dead screen."
-  [^TerminalScreen screen]
-  (when-let [setter (requiring-resolve
-                      'com.blockether.vis.ext.foundation-git.write-ops/set-ssh-passphrase-prompt!)]
-    (let [prompt (fn [resource attempt]
-                   ;; Run on whatever thread JGit calls us on (worker /
-                   ;; Python eval). `with-dialog-lock` grabs `draw-lock`
-                   ;; for the dialog's whole session so the render
-                   ;; thread can't scribble underneath, then dispatches
-                   ;; the open/close flags into app-db.
-                   (let [label (str (or resource "SSH key")
-                                 (when (and attempt (> (long attempt) 1))
-                                   (str " (attempt " attempt ")")))]
-                     (try (with-dialog-lock #(let [raw (dlg/text-input-dialog! screen
-                                                         "SSH Key Passphrase"
-                                                         "Passphrase:"
-                                                         :mask \*
-                                                         :body label)]
-                                               (when-not (str/blank? raw) raw)))
-                       (catch Throwable t
-                         (tel/log!
-                           {:level :warn,
-                            :id ::ssh-passphrase-prompt-failed,
-                            :data {:error (ex-message t)}}
-                           "SSH passphrase prompt failed; returning nil so JGit falls back.")
-                         nil))))]
-      (setter prompt)
-      (fn cleanup-ssh-passphrase-prompt! [] (try (setter nil) (catch Throwable _ nil))))))
+  "No-op: the host `git` binary owns credential prompting now. Returns nil
+   (no cleanup thunk to run)."
+  [^TerminalScreen _screen]
+  nil)
 (defn- sweep-orphaned-running-turns!
   []
   (try (vis/gateway-reconcile-running-turns!) (catch Throwable _ nil)))

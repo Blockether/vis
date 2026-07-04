@@ -2518,6 +2518,7 @@
        toggle always registers and the feature is one settings flip away (the tools
        stay gated OFF behind :shell/enabled until the user enables it)."
   '[com.blockether.vis.internal.foundation.core
+    com.blockether.vis.internal.foundation.git-tool
     com.blockether.vis.internal.foundation.shell])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`

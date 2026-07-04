@@ -14,9 +14,7 @@
    [com.blockether.vis.ext.workspace-rift]
    [com.blockether.vis.internal.workspace :as ws]
    [lazytest.core :refer [defdescribe expect it]]
-   [next.jdbc :as jdbc])
-  (:import
-   (org.eclipse.jgit.api Git)))
+   [next.jdbc :as jdbc]))
 
 (defn- with-store
   "Open an :memory sqlite store, run `f` with it, dispose."
@@ -38,18 +36,25 @@
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
 
+(defn- git! [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (.redirectErrorStream pb true)
+    (let [p (.start pb)]
+      (slurp (.getInputStream p))
+      (.waitFor p))))
+
 (defn- init-repo!
-  "Initialise a real git repo at `root` via JGit (no shelling out — same
-   pattern as git-test), with one committed file so it has a HEAD."
+  "Initialise a real git repo at `root` (shells out to the git binary),
+   with one committed file so it has a HEAD."
   [^java.io.File root]
-  (with-open [g (-> (Git/init) (.setDirectory root) .call)]
-    (let [config (.. g getRepository getConfig)]
-      (.setString config "user" nil "name" "Vis Test")
-      (.setString config "user" nil "email" "vis-test@example.invalid")
-      (.save config))
-    (spit (io/file root "a.txt") "x\n")
-    (-> g .add (.addFilepattern "a.txt") .call)
-    (-> g .commit (.setMessage "init") .call)))
+  (git! root "init" "-q")
+  (git! root "config" "user.name" "Vis Test")
+  (git! root "config" "user.email" "vis-test@example.invalid")
+  (git! root "config" "commit.gpgsign" "false")
+  (spit (io/file root "a.txt") "x\n")
+  (git! root "add" "a.txt")
+  (git! root "commit" "-q" "-m" "init"))
 
 (defn- seed-workspace!
   "Insert a lightweight 'current' workspace row rooted at `base` (no
@@ -187,10 +192,10 @@
     (let [base   (temp-dir "vis-ws-worktree-base")
           linked (temp-dir "vis-ws-worktree-linked")]
       (try
-        ;; Real base repo via JGit. A linked worktree's working dir is just a
-        ;; dir whose `.git` is a FILE pointing at the main repo's worktree
-        ;; admin dir — exactly what the preflight detects. JGit has no
-        ;; worktree-add command, so we write that gitdir pointer directly,
+        ;; Real base repo via the git binary. A linked worktree's working dir
+        ;; is just a dir whose `.git` is a FILE pointing at the main repo's
+        ;; worktree admin dir — exactly what the preflight detects. Rather than
+        ;; run `git worktree add`, we write that gitdir pointer directly,
         ;; reproducing git's on-disk shape deterministically.
         (init-repo! (io/file base))
         (let [admin (io/file base ".git" "worktrees" "linked")]

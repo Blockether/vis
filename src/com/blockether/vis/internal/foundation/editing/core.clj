@@ -43,12 +43,12 @@
    [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git]
+   [com.blockether.vis.internal.gitignore :as gitignore]
    [com.blockether.vis.internal.paths :as paths]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    (com.github.difflib DiffUtils UnifiedDiffUtils)
-   (java.io File)
-   (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
+   (java.io File)))
 
 ;; Tools in this namespace (cat/patch/write/move/…) can execute DEFERRED on a
 ;; virtual thread that has entered the GraalPy polyglot Context — e.g. inside
@@ -654,22 +654,16 @@
 ;; .gitignore (cheap, lazy)
 ;; =============================================================================
 
-(defn- load-ignore-node ^IgnoreNode [^File root]
-  (let [gi (io/file root ".gitignore")]
-    (when (.exists gi)
-      (let [n (IgnoreNode.)]
-        (with-open [in (io/input-stream gi)]
-          (.parse n in))
-        n))))
+(defn- load-ignore-node [^File root]
+  (gitignore/load-matcher root))
 
-(defn- ignored? [^IgnoreNode node ^File f ^File root]
+(defn- ignored? [node ^File f ^File root]
   (when node
-    ;; JGit's IgnoreNode matches gitignore patterns against `/`-separated
-    ;; paths — a Windows `\` would never match, leaking ignored files.
-    (let [rel (paths/unixify (.relativize (.toPath root) (.toPath f)))
-          dir? (.isDirectory f)
-          result (.isIgnored node rel dir?)]
-      (= IgnoreNode$MatchResult/IGNORED result))))
+    ;; Match gitignore patterns against `/`-separated paths — a Windows `\`
+    ;; would never match, leaking ignored files.
+    (let [rel  (paths/unixify (.relativize (.toPath root) (.toPath f)))
+          dir? (.isDirectory f)]
+      (gitignore/ignored? node rel dir?))))
 
 ;; =============================================================================
 ;; cat

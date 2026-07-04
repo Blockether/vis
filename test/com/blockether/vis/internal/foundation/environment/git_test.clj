@@ -5,8 +5,7 @@
    [lazytest.core :refer [defdescribe expect it]])
   (:import
    (java.nio.file Files)
-   (java.nio.file.attribute FileAttribute)
-   (org.eclipse.jgit.api Git)))
+   (java.nio.file.attribute FileAttribute)))
 
 (defn- make-tmp-dir ^java.io.File []
   (let [path (Files/createTempDirectory "vis-env-git-"
@@ -23,20 +22,35 @@
     (doseq [^java.io.File f (reverse (file-seq root))]
       (.delete f))))
 
+(defn- git! [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (.redirectErrorStream pb true)
+    (let [p (.start pb)]
+      (slurp (.getInputStream p))
+      (.waitFor p))))
+
+(defn- git-out ^String [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (let [p   (.start pb)
+          out (slurp (.getInputStream p))]
+      (.waitFor p)
+      (.trim ^String out))))
+
 (defn- init-repo!
   "Initialize a git repository at `dir`, write a single committed
    file, and configure a known author so `commit` succeeds without
    reading the user's global config."
   [^java.io.File dir]
-  (with-open [git (-> (Git/init) (.setDirectory dir) .call)]
-    (let [config (.. git getRepository getConfig)]
-      (.setString config "user" nil "name"  "test")
-      (.setString config "user" nil "email" "test@example.com")
-      (.save config))
-    (spit-rel dir "README.md" "# initial")
-    (-> git .add (.addFilepattern "README.md") .call)
-    (-> git .commit (.setMessage "init") .call)
-    (.. git getRepository (getBranch))))
+  (git! dir "init" "-q")
+  (git! dir "config" "user.name" "test")
+  (git! dir "config" "user.email" "test@example.com")
+  (git! dir "config" "commit.gpgsign" "false")
+  (spit-rel dir "README.md" "# initial")
+  (git! dir "add" "README.md")
+  (git! dir "commit" "-q" "-m" "init")
+  (git-out dir "rev-parse" "--abbrev-ref" "HEAD"))
 
 (defdescribe git-snapshot-test
   (it "returns nil outside any git repository"
@@ -94,8 +108,7 @@
       (try
         (init-repo! root)
         (spit-rel root "README.md" "# stashed")
-        (with-open [g (Git/open root)]
-          (.. g (stashCreate) (setWorkingDirectoryMessage "test stash") (call)))
+        (git! root "stash" "push" "-m" "test stash")
         (let [snap (git/snapshot root)]
           (expect (= 1 (long (:stash-count snap)))))
         (finally (cleanup root)))))
@@ -104,17 +117,14 @@
     (let [root (make-tmp-dir)]
       (try
         (let [branch (init-repo! root)]
-          (with-open [g (Git/open root)]
-            (.. g (branchCreate) (setName "base") (call))
-            (.. g (checkout) (setName "base") (call))
-            (spit-rel root "base.txt" "base")
-            (-> g .add (.addFilepattern "base.txt") .call)
-            (-> g .commit (.setMessage "base commit") .call)
-            (.. g (checkout) (setName branch) (call))
-            (let [config (.. g getRepository getConfig)]
-              (.setString config "branch" branch "remote" ".")
-              (.setString config "branch" branch "merge" "refs/heads/base")
-              (.save config)))
+          (git! root "branch" "base")
+          (git! root "checkout" "-q" "base")
+          (spit-rel root "base.txt" "base")
+          (git! root "add" "base.txt")
+          (git! root "commit" "-q" "-m" "base commit")
+          (git! root "checkout" "-q" branch)
+          (git! root "config" (str "branch." branch ".remote") ".")
+          (git! root "config" (str "branch." branch ".merge") "refs/heads/base")
           (let [snap (git/snapshot root)]
             (expect (= "base" (:upstream snap)))
             (expect (= 0 (long (:ahead snap))))
