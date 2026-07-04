@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-04 by `scripts/gen-audit.bb` (run in CI — see §7). Dependency
+> Generated 2026-07-05 by `scripts/gen-audit.bb` (run in CI — see §7). Dependency
 > versions, licenses and jar sizes are pulled straight from the resolved
 > `deps.edn` graph and the Clojars / Maven Central POMs. **Do not edit by hand**
 > — rerun `bb scripts/gen-audit.bb` (or let the `audit-md` workflow regenerate it).
@@ -18,7 +18,7 @@ vulnerabilities.
 ## 1. At a glance
 
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 56 unique, across 15 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 57 unique, across 15 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~218 MB — dominated by the embedded GraalPy runtime and the voice/ONNX stack (both optional extensions).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged below.**
 - **Continuous auditing:** [clj-watson](https://github.com/clj-holmes/clj-watson) SCA scan on every dependency change, on a weekly schedule, and on demand — results published to the GitHub **Security** tab (see §2).
@@ -123,6 +123,7 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `org.graalvm.python/python-language` | `25.1.3` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
 | `org.graalvm.python/python-resources` | `25.1.3` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
 | `org.graalvm.truffle/truffle-runtime` | `25.1.3` | UPL-1.0 | 913 KB | 3rd-party |
+| `org.yamlstar/yamlstar` | `0.1.11` | MIT | 40 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
@@ -214,8 +215,8 @@ _Rift workspace/FFM integration._
 | License | Count |
 |---|---|
 | EPL-1.0 | 19 |
+| MIT | 13 |
 | Apache-2.0 | 12 |
-| MIT | 12 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | UPL-1.0 | 2 |
