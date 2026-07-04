@@ -4663,15 +4663,6 @@
       "glob": "models.dev.json"
     },
     {
-      "glob": "org/eclipse/jgit/internal/JGitText.properties"
-    },
-    {
-      "glob": "org/eclipse/jgit/internal/JGitText_en.properties"
-    },
-    {
-      "glob": "org/eclipse/jgit/internal/JGitText_en_PL.properties"
-    },
-    {
       "glob": "org/flywaydb/core/internal/version.txt"
     },
     {
