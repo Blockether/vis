@@ -3126,11 +3126,20 @@
   (let [f0        (first forms)
         summary   (merge-cat-summaries (map :result-summary forms))
         body      (str/join "\n" (keep (comp not-empty str :result-render) forms))
-        anchors   (reduce merge {} (map #(get-in % [:result :anchors]) forms))]
-    (assoc f0
-      :result-summary summary
-      :result-render body
-      :result (assoc (:result f0) :anchors anchors))))
+        anchors   (reduce merge {} (map #(get-in % [:result :anchors]) forms))
+        r0        (:result f0)]
+    (cond-> (assoc f0
+              :result-summary summary
+              :result-render body)
+      ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
+      ;; `cat-form-path` recovers the path from the summary chip precisely
+      ;; BECAUSE `:result` is no longer a map (anchors flattened) — it comes
+      ;; back as the rendered string (or nil). Assoc'ing onto that string
+      ;; threw ClassCastException every frame, freezing the whole TUI (the
+      ;; render loop keeps the last good frame and re-throws forever). The
+      ;; path/spans already live in the merged summary, so a non-map result
+      ;; simply carries through untouched.
+      (map? r0) (assoc :result (assoc r0 :anchors anchors)))))
 
 (defn- coalesce-cat-runs
   "Merge each maximal run of adjacent, successful `cat` op-cards reading the SAME
