@@ -40,7 +40,9 @@
    [taoensso.telemere :as tel])
   (:import
    [java.io OutputStream]
-   [java.nio.charset StandardCharsets]))
+   [java.nio.charset StandardCharsets]
+   [java.time Instant LocalDateTime ZoneId]
+   [java.time.format DateTimeFormatter]))
 
 (def ^:private HEARTBEAT_MS 15000)
 
@@ -598,11 +600,12 @@
    nil only when no timestamp is known."
   [epoch-ms]
   (when (number? epoch-ms)
-    [:span.role-time
-     (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
-       (java.time.LocalDateTime/ofInstant
-         (java.time.Instant/ofEpochMilli (long epoch-ms))
-         (java.time.ZoneId/systemDefault)))]))
+    (let [^DateTimeFormatter formatter (DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
+          ^LocalDateTime time (LocalDateTime/ofInstant
+                                (Instant/ofEpochMilli (long epoch-ms))
+                                (ZoneId/systemDefault))]
+      [:span.role-time
+       (.format formatter time)])))
 
 (defn- live-key-attr [k]
   (when k {:data-live-key (str k)}))

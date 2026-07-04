@@ -190,7 +190,7 @@
                           (< (- (long reset-ms) (long now-ms)) one-week-ms))
                       short-reset-formatter
                       long-reset-formatter)]
-      (.format formatter zoned))))
+      (.format ^DateTimeFormatter formatter zoned))))
 (defn- format-reset
   [now-ms reset-ms]
   (let [relative (format-relative-reset now-ms reset-ms)
