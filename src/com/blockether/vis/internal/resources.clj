@@ -282,6 +282,16 @@
   (cond-> {"result" (name result) "id" (str id)}
     message (assoc "message" message)))
 
+(defn- ->id
+  "Normalize a model-supplied resource id. The tool is documented as taking a
+   positional string, but a model frequently calls `resource_stop({\"id\": x})`
+   (or `resource_stop({:id x})`) — unwrap that single-key map to its id value so
+   the call resolves instead of stringifying to a bogus `{id x}` literal."
+  [id]
+  (if (map? id)
+    (str (or (get id "id") (get id :id) id))
+    (str id)))
+
 (defn sandbox-bindings
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
    Closures bind the session so the tools are session-scoped by construction.
@@ -289,5 +299,5 @@
    boundary as the tool result; `stop!`/`restart!` stay keyword-keyed for
    internal callers (e.g. the REPL pack's `repl_stop`)."
   [session]
-  {'resource-stop    (fn [id] (->model-result (stop! session id)))
-   'resource-restart (fn [id] (->model-result (restart! session id)))})
+  {'resource-stop    (fn [id] (->model-result (stop! session (->id id))))
+   'resource-restart (fn [id] (->model-result (restart! session (->id id))))})
