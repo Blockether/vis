@@ -68,3 +68,7 @@ __pycache__/
 
 # transient dev logs
 .docs-dev.log
+
+# transient slack dump / agent scratch (never commit)
+igor-dump/
+channels-*.csv

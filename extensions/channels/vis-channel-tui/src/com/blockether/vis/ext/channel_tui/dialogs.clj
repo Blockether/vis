@@ -891,13 +891,15 @@
             (let [r        (nth items i)
                   row-y    (+ content-top i)
                   selected? (= i @selected)
-                  port     (get-in r [:detail :port])
-                  [glyph gcolor] (resource-status-mark (:status r))
+                  ;; `list-resources` returns STRING-keyed data maps (strings-only
+                  ;; boundary); `detail` is a string-keyed sub-map too.
+                  port     (get-in r ["detail" "port"])
+                  [glyph gcolor] (resource-status-mark (get r "status"))
                   ;; kind reads as a TYPE prefix, then the readable name, then
                   ;; the dim port + status — the ● glyph already says live/errored.
-                  label    (str (name (:kind r)) "  " (:label r)
-                             (when port (str "  :" port)) "  " (name (:status r)))
-                  actions  (if (:can-restart r) "[r] restart  [s] stop" "[s] stop")
+                  label    (str (get r "kind") "  " (get r "label")
+                             (when port (str "  :" port)) "  " (get r "status"))
+                  actions  (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop")
                   action-w (count actions)]
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/fill-rect! g (inc left) row-y inner-w 1)
@@ -934,11 +936,11 @@
                     (when (pos? total)
                       (let [r (nth items (clamp @selected 0 (dec total)))]
                         (cond
-                          (= c \s) (do (vis/stop-resource! session-id (:id r))
-                                     (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
-                          (= c \r) (when (:can-restart r)
-                                     (vis/restart-resource! session-id (:id r))
-                                     (vis/notify! (str "Restarted " (:label r)) :level :info :ttl-ms 3000)))))
+                          (= c \s) (do (vis/stop-resource! session-id (get r "id"))
+                                     (vis/notify! (str "Stopped " (get r "label")) :level :info :ttl-ms 3000))
+                          (= c \r) (when (get r "can_restart")
+                                     (vis/restart-resource! session-id (get r "id"))
+                                     (vis/notify! (str "Restarted " (get r "label")) :level :info :ttl-ms 3000)))))
                     (recur))))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
