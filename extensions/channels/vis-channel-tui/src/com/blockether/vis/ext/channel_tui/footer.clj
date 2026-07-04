@@ -26,7 +26,7 @@
    repo/branch, one compact changed-file count, and ahead/behind counts
    when an upstream is configured. The second footer row carries provider
    budgets and cumulative usage under that git context. Git status is
-   cached briefly so repainting the TUI does not run JGit on every frame.
+   cached briefly so repainting the TUI does not shell out to git on every frame.
 
    Every numeric format uses `Locale/ROOT` so a Polish JVM doesn't
    produce mixed `5,8k` next to English `k`. The previous footer

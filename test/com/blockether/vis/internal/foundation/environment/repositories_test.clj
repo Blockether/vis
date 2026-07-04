@@ -5,8 +5,7 @@
    [lazytest.core :refer [defdescribe expect it]])
   (:import
    (java.nio.file Files)
-   (java.nio.file.attribute FileAttribute)
-   (org.eclipse.jgit.api Git)))
+   (java.nio.file.attribute FileAttribute)))
 
 (defn- make-tmp-dir ^java.io.File []
   (let [path (Files/createTempDirectory "vis-env-repositories-"
@@ -23,16 +22,23 @@
     (doseq [^java.io.File f (reverse (file-seq root))]
       (.delete f))))
 
+(defn- git! [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (.redirectErrorStream pb true)
+    (let [p (.start pb)]
+      (slurp (.getInputStream p))
+      (.waitFor p))))
+
 (defn- init-repo! [^java.io.File dir]
   (.mkdirs dir)
-  (with-open [git (-> (Git/init) (.setDirectory dir) .call)]
-    (let [config (.. git getRepository getConfig)]
-      (.setString config "user" nil "name"  "test")
-      (.setString config "user" nil "email" "test@example.com")
-      (.save config))
-    (spit-rel dir "README.md" "# initial")
-    (-> git .add (.addFilepattern "README.md") .call)
-    (-> git .commit (.setMessage "init") .call)))
+  (git! dir "init" "-q")
+  (git! dir "config" "user.name" "test")
+  (git! dir "config" "user.email" "test@example.com")
+  (git! dir "config" "commit.gpgsign" "false")
+  (spit-rel dir "README.md" "# initial")
+  (git! dir "add" "README.md")
+  (git! dir "commit" "-q" "-m" "init"))
 
 (defdescribe repositories-snapshot-test
   (it "detects multiple nested Git repositories with prompt-sized summaries"

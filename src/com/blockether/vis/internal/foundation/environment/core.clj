@@ -3,7 +3,7 @@
 
    Owns the environment facts: cwd, user, platform, shell, plus:
 
-     * git repository facts via JGit (root, branch, dirty status,
+     * git repository facts via the git binary (root, branch, dirty status,
        submodules, worktree),
      * a bounded language scan over the working tree (top languages
        by total bytes, primary language),

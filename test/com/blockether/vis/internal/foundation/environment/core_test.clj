@@ -7,8 +7,7 @@
    [lazytest.core :refer [defdescribe expect it]])
   (:import
    (java.nio.file Files)
-   (java.nio.file.attribute FileAttribute)
-   (org.eclipse.jgit.api Git)))
+   (java.nio.file.attribute FileAttribute)))
 
 (defn- make-tmp-dir ^java.io.File []
   (let [path (Files/createTempDirectory "vis-env-core-"
@@ -26,19 +25,24 @@
     (doseq [^java.io.File f (reverse (file-seq root))]
       (.delete f))))
 
+(defn- git! [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (.redirectErrorStream pb true)
+    (let [p (.start pb)]
+      (slurp (.getInputStream p))
+      (.waitFor p))))
+
 (defn- init-repo-on-branch!
   [^java.io.File root branch]
-  (with-open [git (-> (Git/init) (.setDirectory root) .call)]
-    (let [config (.. git getRepository getConfig)]
-      (.setString config "user" nil "name" "test")
-      (.setString config "user" nil "email" "test@example.com")
-      (.setBoolean config "commit" nil "gpgsign" false)
-      (.save config))
-    (spit-rel root "README.md" "# initial")
-    (-> git .add (.addFilepattern "README.md") .call)
-    (-> git .commit (.setMessage "init") .call)
-    (.. git (branchCreate) (setName branch) (call))
-    (.. git (checkout) (setName branch) (call))))
+  (git! root "init" "-q")
+  (git! root "config" "user.name" "test")
+  (git! root "config" "user.email" "test@example.com")
+  (git! root "config" "commit.gpgsign" "false")
+  (spit-rel root "README.md" "# initial")
+  (git! root "add" "README.md")
+  (git! root "commit" "-q" "-m" "init")
+  (git! root "checkout" "-q" "-b" branch))
 
 (defdescribe environment-core-test
   (it "exports the expected environment symbol surface"

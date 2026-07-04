@@ -3,7 +3,7 @@
 
    This namespace owns the NON-UI parts of the `@` picker:
    - repository discovery
-   - git dirty / ignored metadata via JGit
+   - git dirty / ignored metadata via the native `git` binary
    - filesystem indexing via java.nio.file
    - filtering, ranking, sorting
    - compact display labels for size / age / git status
@@ -18,13 +18,9 @@
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
-           [java.util Locale]
-           [java.util.concurrent ExecutionException Future TimeUnit TimeoutException]
-           [org.eclipse.jgit.api Git Status]
-           [org.eclipse.jgit.lib Repository]))
+           [java.util Locale]))
 
 (def ^:const max-results 200)
-(def ^:const status-timeout-ms 1500)
 (def ^:private sort-order [:recent :relevance])
 
 (defn cwd-path
@@ -36,12 +32,6 @@
   "`path` relativized against `root`, normalized to `/` separators."
   ^String [^Path root ^Path path]
   (paths/unixify (.relativize root path)))
-
-(defn open-repository
-  "Open the git repository containing `start`, or nil when `start` is
-   outside git."
-  ^Repository [^File start]
-  (git/open-repository start))
 
 (defn status-priority
   "Higher = more visually important in the picker."
@@ -55,72 +45,18 @@
     :ignored   1
     0))
 
-(defn- merge-status
-  [current next]
-  (if (> (status-priority next) (status-priority current)) next current))
-
-(defn- assoc-statuses
-  [m paths status]
-  (reduce (fn [acc path]
-            (update acc path merge-status status))
-    m
-    (or paths #{})))
-
-(defn collect-git-status
-  "Return a git-status snapshot for `repo`, or nil on timeout/failure.
-   Uses one bounded background task so the UI cannot hang indefinitely
-   on a very large working tree."
-  [^Repository repo ^long timeout-ms]
-  (let [task (reify java.util.concurrent.Callable
-               (call [_]
-                 (let [^Git git (Git/wrap repo)]
-                   (try
-                     (.. git (status) (call))
-                     (finally
-                       (try (.close git) (catch Throwable _ nil)))))))
-        executor (java.util.concurrent.Executors/newSingleThreadExecutor)]
-    (try
-      (let [^Future fut (.submit executor ^java.util.concurrent.Callable task)]
-        (try
-          (let [^Status status (.get fut timeout-ms TimeUnit/MILLISECONDS)]
-            {:path-status      (-> {}
-                                 (assoc-statuses (.getConflicting status) :conflict)
-                                 (assoc-statuses (.getRemoved status) :deleted)
-                                 (assoc-statuses (.getMissing status) :deleted)
-                                 (assoc-statuses (.getModified status) :modified)
-                                 (assoc-statuses (.getChanged status) :modified)
-                                 (assoc-statuses (.getAdded status) :added)
-                                 (assoc-statuses (.getUntracked status) :untracked)
-                                 (assoc-statuses (.getUntrackedFolders status) :untracked))
-             :ignored-exact    (set (.getIgnoredNotInIndex status))
-             :ignored-prefixes (mapv #(str % "/") (.getIgnoredNotInIndex status))})
-          (catch TimeoutException _
-            (.cancel fut true)
-            nil)
-          (catch ExecutionException _ nil)
-          (catch InterruptedException _ nil)))
-      (finally
-        (.shutdownNow executor)))))
-
 (defn git-status-snapshot
-  "Git metadata for the repository containing `cwd`, or a reduced empty
-   shape when the directory is not in git or status collection fails."
+  "Git metadata for the repository containing `cwd`, or a reduced empty shape
+   when the directory is not in git. Backed by one `git status` subprocess."
   [^Path cwd]
-  (if-let [^Repository repo (open-repository (.toFile cwd))]
+  (if-let [^File top (git/repo-work-tree (.toFile cwd))]
     (try
-      (let [repo-root (.toPath (.getWorkTree repo))
-            status    (collect-git-status repo status-timeout-ms)]
-        (merge {:repo-root repo-root
-                :path-status {}
-                :ignored-exact #{}
-                :ignored-prefixes []}
-          (or status {})))
-      (finally
-        (try (.close repo) (catch Throwable _ nil))))
-    {:repo-root nil
-     :path-status {}
-     :ignored-exact #{}
-     :ignored-prefixes []}))
+      (assoc (git/git-status-snapshot top) :repo-root (.toPath top))
+      (catch Throwable _
+        {:repo-root (.toPath top) :path-status {}
+         :ignored-exact #{} :ignored-prefixes []}))
+    {:repo-root nil :path-status {}
+     :ignored-exact #{} :ignored-prefixes []}))
 
 (defn ignored-path?
   "True when `repo-rel-path` is ignored according to the snapshot map
