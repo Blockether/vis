@@ -298,6 +298,17 @@
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
           :main-opts ["-m" "antq.core"]}
 
+  ;; clj-watson - software composition analysis (SCA): scans EVERY dependency
+  ;; (direct + transitive, this deps.edn + all :local/root extensions via -a '*')
+  ;; for known CVEs. Pinned to a tag+sha so the scan is reproducible. See AUDIT.md
+  ;; and .github/workflows/security-audit.yml. Run locally:
+  ;;   GITHUB_TOKEN=... clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s
+  ;; (github-advisory needs only a GITHUB_TOKEN; the dependency-check/NVD strategy
+  ;;  needs a NIST NVD API key and downloads the full NVD database on first run.)
+  :clj-watson {:replace-deps {io.github.clj-holmes/clj-watson
+                              {:git/tag "v6.1.0" :git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"}}
+               :main-opts   ["-m" "clj-watson.cli"]}
+
   ;; GraalVM native-image build deps. `graal-build-time` initializes every
   ;; Clojure-generated class at image-build time (the `InitClojureClasses`
   ;; feature) so the binary doesn't hit "class not initialized" at runtime.
