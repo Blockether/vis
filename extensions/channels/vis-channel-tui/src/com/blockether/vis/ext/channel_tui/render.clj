@@ -2508,13 +2508,18 @@
    scoping this file already uses for its projection cache."
   [session-id message detail-expansions]
   (cond
-    ;; User bubbles render plain prose — no disclosure nodes, so no expansion
-    ;; state can affect their height. WITHOUT this constant key, a user
-    ;; message falls into the no-turn-token branch below, whose key includes
-    ;; EVERY expansion in the session — one fold click then busts the
-    ;; height/estimate caches of every user bubble in the transcript.
-    (not= :assistant (:role message)) []
     (:vis.channel-tui/expand-all-details? detail-expansions) :expand-all
+    ;; A bubble with no turn id can't be turn-scoped AND carries no
+    ;; disclosures (only user prompts with a `[Pasted #N]` marker do, and
+    ;; those always land with a `:client-turn-id`) — keep the cheap
+    ;; constant key so an unrelated fold click never busts its cached
+    ;; height. WITH a turn id, fall through to the same per-turn scoping
+    ;; assistant bubbles use, so opening a paste recomputes only THIS
+    ;; bubble's height.
+    (and (not= :assistant (:role message))
+      (nil? (:client-turn-id message))
+      (nil? (:session-turn-id message)))
+    []
     :else
     (turn-detail-expansions-key {:session-id session-id,
                                  :session-turn-id (or (:client-turn-id message)
@@ -4179,11 +4184,76 @@
         trimmed-trailing (vec (reverse (drop-while user-prompt-margin-entry?
                                          (reverse trimmed-leading))))]
     trimmed-trailing))
+(defn- paste-code-block?
+  "True for a `vis-paste` code node — the collapsed-transcript shape
+   `input/collapse-paste-placeholders` emits for a `[Pasted #N: ...]`
+   token: `[:code {:lang \"vis-paste\"} \"<token>\\n<payload>\"]`."
+  [node]
+  (and (vector? node)
+    (= :code (first node))
+    (= "vis-paste" (:lang (second node)))))
+
+(defn- paste-block-parts
+  "Split a `vis-paste` code node body into `[summary payload]` — the
+   collapse pass writes the `[Pasted #N: ...]` token as the FIRST body
+   line, the verbatim payload underneath."
+  [node]
+  (let [body (str (nth node 2 ""))
+        nl   (.indexOf body "\n")]
+    (if (neg? nl)
+      [body ""]
+      [(subs body 0 nl) (subs body (inc nl))])))
+
+(defn- paste-disclosure-entries
+  "Render one `vis-paste` block as a collapsible disclosure: the
+   `[Pasted #N: ...]` token is the chevron summary row (`▸`/`▾` +
+   `:toggle-details` click meta), the verbatim payload the body shown
+   only when expanded. Collapsed by default so a pasted wall stays a
+   one-liner. A trailing blank row gives the next content breathing
+   room."
+  [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
+  (let [[summary payload] (paste-block-parts node)
+        summary   (str/trim summary)
+        id        (or (some-> (re-find #"#(\d+)" summary) second) "0")
+        node-id   (detail-node-id {:session-turn-id session-turn-id
+                                   :section :user
+                                   :kind :paste
+                                   :details-path [id]})
+        expanded? (detail-expanded? detail-expansions session-id node-id false)
+        header    (detail-summary-entries
+                    {:marker p/MARKER_ANSWER_TXT
+                     :max-w content-w
+                     :summary summary
+                     :collapsed? (not expanded?)
+                     :session-id session-id
+                     :node-id node-id})
+        body      (when expanded?
+                    (tag-copy-block-body
+                      (vec (ir-tui/ir->entries [:ir {} [:code {:wrap? true} payload]]
+                             content-w opts))
+                      node-id payload))]
+    (vec (concat header body [{:line "", :meta nil}]))))
+
+(defn- paste-aware-ir->entries
+  "`ir-tui/ir->entries`, but each top-level `vis-paste` code block becomes
+   a collapsible paste disclosure instead of an inline code chip. Falls
+   back to the plain walker (zero overhead) when the IR carries no paste."
+  [answer content-w opts]
+  (let [blocks (vec (drop 2 answer))]
+    (if (not-any? paste-code-block? blocks)
+      (vec (ir-tui/ir->entries answer content-w opts))
+      (->> (partition-by paste-code-block? blocks)
+        (mapcat (fn [run]
+                  (if (paste-code-block? (first run))
+                    (mapcat #(paste-disclosure-entries % content-w opts) run)
+                    (ir-tui/ir->entries (into [:ir {}] run) content-w opts))))
+        vec))))
+
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
   (assert-canonical-ir! answer)
   (let [content-w (max 10 (- bubble-w 4))
-        raw-entries (if (ir-non-empty? answer) (vec (ir-tui/ir->entries answer content-w opts)) [])
+        raw-entries (if (ir-non-empty? answer) (paste-aware-ir->entries answer content-w opts) [])
         ;; Assistant answers keep a blank margin row so the first line of
         ;; answer content is never flush against the top of the bubble or the
         ;; bottom of a preceding user message. User prompts already have their

@@ -1974,16 +1974,18 @@
 
 (defdescribe message-detail-expansions-key-test
   ;; The height/estimate/projection caches key a message to ONLY its own
-  ;; disclosure state. User bubbles have no disclosures, so their key must be
-  ;; CONSTANT — otherwise (no turn token) every session expansion leaks into
-  ;; the key and one fold click busts every user bubble's cached height.
+  ;; disclosure state. A user bubble with no turn token stays CONSTANT so no
+  ;; unrelated session expansion leaks in (one fold click would otherwise bust
+  ;; every user bubble's cached height). A user prompt CAN carry a collapsible
+  ;; `[Pasted #N]` disclosure, though — so `expand-all` and its own per-turn
+  ;; expansions must still key it (see the paste-disclosure path).
   (let [sid "s1"
         expansions {["s1" "iteration:tabc12345:i1:result"] true}]
     (it "user message key is constant regardless of expansions"
       (expect (= (render/message-detail-expansions-key sid {:role :user :text "hi"} {})
                 (render/message-detail-expansions-key sid {:role :user :text "hi"} expansions))))
-    (it "user message key ignores expand-all"
-      (expect (= []
+    (it "user message keys under expand-all (a `[Pasted #N]` disclosure may open)"
+      (expect (= :expand-all
                 (render/message-detail-expansions-key sid {:role :user :text "hi"}
                   {:vis.channel-tui/expand-all-details? true}))))
     (it "assistant message with matching turn token picks up its expansions"
@@ -2001,6 +2003,38 @@
                 (render/message-detail-expansions-key sid
                   {:role :assistant :session-turn-id "abc12345-0000-0000"}
                   {:vis.channel-tui/expand-all-details? true}))))))
+
+(defdescribe paste-disclosure-render-test
+  ;; A user prompt's `[Pasted #N]` marker (the `vis-paste` fence
+  ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
+  ;; disclosure: the token is the chevron summary row, the payload the body
+  ;; shown only when expanded.
+  (let [ir      [:ir {}
+                 [:p {} [:span {} "look at this"]]
+                 [:code {:lang "vis-paste"}
+                  "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
+        sid     "s1"
+        turn    "client-turn-1"
+        opts    (fn [de] {:session-id sid :session-turn-id turn
+                          :detail-expansions de :section :user})
+        node-id (@#'render/detail-node-id
+                 {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
+    (it "collapsed by default: summary chevron shows, payload hidden"
+      (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
+        (expect (str/includes? txt "▸ [Pasted #1: 3 lines, 11B]"))
+        (expect (not (str/includes? txt "AAA")))))
+    (it "expanded: chevron flips and the verbatim payload appears"
+      (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {[sid node-id] true})))]
+        (expect (str/includes? txt "▾ [Pasted #1: 3 lines, 11B]"))
+        (expect (str/includes? txt "AAA"))
+        (expect (str/includes? txt "CCC"))))
+    (it "the summary row carries toggle-details click meta scoped to this node"
+      (let [{:keys [lines line-meta]} (render/format-answer-markdown-data ir 76 (opts {}))
+            idx  (first (keep-indexed (fn [i l] (when (str/includes? l "Pasted #1") i)) lines))
+            meta (nth line-meta idx)]
+        (expect (= :toggle-details (:kind meta)))
+        (expect (= (str node-id) (:node-id meta)))
+        (expect (true? (:collapsed? meta)))))))
 
 (def ^:private git-only-form @#'render/git-only-form)
 (def ^:private git-command-parts @#'render/git-command-parts)
