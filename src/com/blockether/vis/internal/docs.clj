@@ -431,7 +431,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<span class=\"hero-install-spacer\"></span>"
           "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
           "</div>"
-          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash</code>"
+          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash</code>"
           "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\">iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile $env:TEMP\\vis.ps1; & $env:TEMP\\vis.ps1</code>"
           "</div>"
           "</div></section>"))

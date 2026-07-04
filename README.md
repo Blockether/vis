@@ -8,32 +8,28 @@ Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps
 
 ## Install
 
-Canonical install: clone once, put the launcher on `PATH`, then let `vis` install the right runtime for this machine.
+Two ways, one per platform. Each clones Vis, checks the runtime tools, and puts the `vis` launcher on your `PATH`.
+
+**macOS & Linux** (bash):
 
 ```bash
-git clone https://github.com/Blockether/vis.git
-cd vis
-echo 'export PATH="'"$PWD"'/bin:$PATH"' >> ~/.zshrc   # bash/zsh; or symlink bin/vis
-exec $SHELL
-vis update latest
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile install-vis.ps1
+powershell -ExecutionPolicy Bypass -File .\install-vis.ps1
+```
+
+Then confirm:
+
+```bash
 vis help
 ```
 
-Windows `cmd.exe` uses the same repo and launcher:
-
-```bat
-git clone https://github.com/Blockether/vis.git
-cd vis
-setx PATH "%CD%\bin;%PATH%"
-vis update latest
-vis help
-```
-
-Prereqs:
-
-- Daily/native install: Git plus `curl` (macOS/Linux) or PowerShell (Windows).
-- JVM/source fallback or `vis update <git-sha>`: [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ and a JRE/JDK.
-- Building native locally: Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
+Prereqs: `git`, `java` 21+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. Building the native binary locally needs Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
 
 ## What `vis` runs
 
