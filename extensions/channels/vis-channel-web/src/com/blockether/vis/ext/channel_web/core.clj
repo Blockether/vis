@@ -1035,7 +1035,12 @@
                ;; Per form: the raw code the model wrote, then what it PRINTED
                ;; (the single display surface), then any error. No op cards,
                ;; no return-value blobs — bare values never reach context.
-               (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
+               ;; Adjacent same-file `cat`/`patch` cards fold into ONE (shared
+               ;; `vis/coalesce-forms`, the SAME projection the TUI applies) so two
+               ;; reads/edits of a file render as one multi-span/multi-diff card,
+               ;; not look-alike siblings.
+               (for [form (vis/coalesce-forms
+                            (remove engine-empty-iteration-form? (or (:forms it) [])))]
                  (list
                    (when-let [src (:src form)]
                      (when-not (or (str/blank? (str src)) (engine-chrome-form? form))

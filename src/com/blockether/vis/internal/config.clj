@@ -27,7 +27,7 @@
    [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel])
   (:import
-   (java.io FileInputStream FileOutputStream)))
+   (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)))
 
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
@@ -50,7 +50,71 @@
 (def ^:private ^String log-path (str config-dir "/vis.log"))
 
 (def tty-in  (delay (FileInputStream.  "/dev/tty")))
-(def tty-out (delay ^java.io.OutputStream (FileOutputStream. "/dev/tty")))
+
+(def ^:private ^"[B" sync-update-begin
+  ;; DEC private mode 2026 "synchronized update" — the terminal HOLDS
+  ;; rendering from `h` to `l`, so everything between paints as ONE frame.
+  ;; Terminals without 2026 support ignore both marks (unknown private
+  ;; modes are no-ops), so emitting them unconditionally is safe.
+  (.getBytes "\u001b[?2026h" "UTF-8"))
+(def ^:private ^"[B" sync-update-end (.getBytes "\u001b[?2026l" "UTF-8"))
+
+(defn- cursor-report-query?
+  "Is this chunk Lanterna's CSI 6n cursor-position query? `reportPosition`
+   writes it as ONE 4-byte chunk and then BLOCKS (up to 5s) for the
+   terminal's reply WITHOUT flushing — the raw unbuffered FileOutputStream
+   used to smuggle it out immediately. The frame buffer must flush it
+   through on sight or every resize/size-probe stalls to the 5s timeout."
+  [^bytes b]
+  (and (= 4 (alength b))
+    (= (aget b 0) (byte 0x1b))
+    (= (aget b 1) (byte 0x5b))   ;; [
+    (= (aget b 2) (byte 0x36))   ;; 6
+    (= (aget b 3) (byte 0x6e)))) ;; n
+
+(defn frame-buffered-tty-out
+  "Wrap the raw tty stream so a whole repaint reaches the terminal as ONE
+   atomic write instead of one write(2) syscall PER CELL.
+
+   Lanterna's `refreshByDelta` calls `putString`/`setCursorPosition` per
+   changed cell and only `flush`es once at the end of `refresh`. On a raw
+   `FileOutputStream` every one of those calls is its own syscall straight
+   to the tty, so the terminal renders PARTIAL frames mid-repaint: a fold
+   toggle that shifts the transcript reads as a whole-screen flicker and a
+   transient content jump. Buffering until `flush` collapses the frame to
+   one write, and the DEC 2026 bracket makes the terminal hold rendering
+   until the frame is complete even when the kernel chunks the write.
+
+   Everything vis writes to the tty outside Lanterna (SGR-mouse /
+   bracketed-paste toggles, OSC 11 background, the `:bell` fx, the panic
+   PrintStream) already flushes explicitly, so nothing can sit in the
+   buffer across frames."
+  ^OutputStream [^OutputStream raw]
+  (let [buf (ByteArrayOutputStream. (* 64 1024))]
+    (proxy [OutputStream] []
+      (write
+        ([b]
+         (if (bytes? b)
+           (do (locking buf (.write buf ^bytes b 0 (alength ^bytes b)))
+             (when (cursor-report-query? b)
+               (.flush ^OutputStream this)))
+           (locking buf (.write buf (int b)))))
+        ([b off len]
+         (locking buf (.write buf ^bytes b (int off) (int len)))))
+      (flush []
+        (locking buf
+          (when (pos? (.size buf))
+            (.write raw sync-update-begin)
+            (.writeTo buf raw)
+            (.write raw sync-update-end)
+            (.reset buf))
+          (.flush raw)))
+      (close []
+        (.flush ^OutputStream this)
+        (.close raw)))))
+
+(def tty-out
+  (delay ^OutputStream (frame-buffered-tty-out (FileOutputStream. "/dev/tty"))))
 
 (def ^java.io.PrintStream original-stdout System/out)
 

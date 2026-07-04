@@ -118,6 +118,84 @@
     (into [] (keep result-card) cards)
     (if-let [c (result-card form)] [c] [])))
 
+(def ^:private coalescable-tools
+  "Native tools whose ADJACENT same-file op-cards fold into ONE card within an
+   iteration: repeated reads (`cat`) and repeated edits (`patch`) of the SAME
+   path read as a single multi-span / multi-diff card instead of a stack of
+   look-alike siblings. Only these two carry a stable file identity and a
+   summary whose leading `` `path` `` chip survives a DB round-trip."
+  #{"cat" "patch"})
+
+(defn- coalesce-error-form?
+  "A form the gateway marked failed (`:success? false`) — never folded into a run
+   (a failed read/edit is its own event and keeps its inline error)."
+  [form]
+  (and (some? (:success? form)) (not (:success? form))))
+
+(defn- form-file-path
+  "The file PATH a coalescable op-card (`cat`/`patch`) acted on — from the raw
+   `:result` `:path` when present, else parsed out of the first `` `path` `` chip
+   of the summary (which survives a DB round-trip that flattens `:result` to a
+   string). nil for a non-coalescable / pathless form."
+  [form]
+  (when (contains? coalescable-tools (some-> (:vis/tool-name form) str))
+    (or (get-in form [:result :path])
+      (some-> (:result-summary form) str
+        (->> (re-find #"`([^`]+)`")) second))))
+
+(defn- merge-summaries
+  "Fold N op-card summaries for the SAME path into ONE. Splits each on ` · `,
+   keeps the shared leading chip (`` `path` `` for cat, `` update `path` `` for
+   patch), then appends every DISTINCT tail — for cat the read's LINE SPANS plus
+   the SUMMED line count (only when every merged read carried one). So two reads
+   render `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` ``
+   instead of two look-alike cards."
+  [summaries]
+  (let [parts    (map #(str/split (str %) #" · ") summaries)
+        chip     (ffirst parts)
+        tails    (mapcat rest parts)
+        count-re #"^(\d+) lines?$"
+        counts   (keep #(some-> (re-matches count-re %) second parse-long) tails)
+        spans    (remove #(re-matches count-re %) tails)
+        total    (reduce + 0 counts)
+        span-str (str/join " · " (distinct spans))
+        count-str (when (and (seq counts) (= (count counts) (count summaries)))
+                    (str total " line" (when (not= 1 total) "s")))
+        tail     (str/join " · " (remove str/blank? [span-str count-str]))]
+    (if (str/blank? tail) chip (str chip " · " tail))))
+
+(defn- merge-run
+  "Collapse a RUN of adjacent op-cards on the same file into one synthesized form:
+   the combined multi-span/multi-diff summary plus every card's body slice stacked
+   under the single headline, so a channel renders it as ONE collapsible card."
+  [forms]
+  (let [f0      (first forms)
+        summary (merge-summaries (map :result-summary forms))
+        body    (str/join "\n" (keep (comp not-empty str :result-render) forms))
+        anchors (reduce merge {} (map #(get-in % [:result :anchors]) forms))
+        r0      (:result f0)]
+    (cond-> (assoc f0 :result-summary summary :result-render body)
+      ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
+      ;; `:result` comes back as the rendered string (anchors flattened) and the
+      ;; path/spans already live in the merged summary, so a non-map result
+      ;; carries through untouched (assoc'ing onto a string throws).
+      (map? r0) (assoc :result (assoc r0 :anchors anchors)))))
+
+(defn coalesce-forms
+  "Merge each maximal run of ADJACENT, successful op-cards of the SAME coalescable
+   tool reading/editing the SAME path into a single card; every other form passes
+   through untouched. The ONE projection both channels apply before rendering an
+   iteration's forms, so two `cat`s or two `patch`es of one file never render as
+   look-alike siblings. Always returns a vector."
+  [forms]
+  (let [key-fn (fn [f]
+                 (if-let [p (and (not (coalesce-error-form? f)) (form-file-path f))]
+                   [::run (some-> (:vis/tool-name f) str) p]
+                   [::solo (gensym)]))]
+    (into []
+      (map (fn [grp] (if (next grp) (merge-run grp) (first grp))))
+      (partition-by key-fn (vec forms)))))
+
 (def ^:private keyword-valued
   "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
    wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
