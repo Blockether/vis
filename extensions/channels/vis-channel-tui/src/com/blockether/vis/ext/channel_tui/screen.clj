@@ -2112,6 +2112,15 @@
      ;; save plumbing. The listener bumps `:render-version` so the
      ;; bubble repaints with the new value on the same tick.
      (try (vis/toggles-hydrate-from-config! (or (vis/load-config-raw) {}))
+       ;; `state/init!` (above) already projected registry DEFAULTS into
+       ;; `:settings`, and hydration mutates the toggles AFTER that and
+       ;; BEFORE the auto-persist listener below exists — so no resync
+       ;; fires for the hydrated values. Refresh the cached projection
+       ;; ONCE here, otherwise the footer keeps showing the default (e.g.
+       ;; reasoning `balanced`) while the real toggle holds the persisted
+       ;; value, and the first Ctrl+X r cycle appears to "do nothing"
+       ;; (it advances the toggle, but only up to the already-shown value).
+       (state/dispatch [:resync-toggle-settings])
        (vis/toggle-add-listener!
          (fn [_event]
            (try (let [raw (or (vis/load-config-raw) {})]
