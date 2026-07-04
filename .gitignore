@@ -41,6 +41,7 @@ packages/vis-benchmark/swebench-harness/
 # Sessions / runtime data
 .omc/
 .agents/
+.zcode/
 .nrepl-port
 .nrepl-session
 .nrepl.log

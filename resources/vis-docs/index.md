@@ -8,10 +8,10 @@ Vis also knows itself. Ask a running Vis what it can do and it describes its own
 
 ## Install
 
-**macOS & Linux** (one command; the installer detects your platform):
+**macOS & Linux** (bash):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
 ```
 
 **Windows** (PowerShell):
@@ -27,7 +27,7 @@ Both clone Vis, verify the runtime tools, and put the `vis` launcher on your PAT
 vis help
 ```
 
-The unix command points at a small dispatcher that figures out your OS and runs the right installer. Run it under Git Bash on Windows and it will point you to the PowerShell command above instead of half-working.
+On Windows, use the PowerShell command above: the bash installer creates unix symlinks and won't produce a working launcher under Git Bash. (WSL users: run the macOS/Linux command from inside WSL.)
 
 **Needs:** `java` 21+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what is missing. These are required to **run** Vis; the native build (below) is what removes the JVM dependency for daily use.
 
