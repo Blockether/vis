@@ -12,6 +12,40 @@
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
+(def ^:private coalesce-cat-runs @#'render/coalesce-cat-runs)
+
+(defdescribe coalesce-cat-runs-test
+  ;; Regression: a DB-restored session whose trailer had >=2 adjacent `cat`
+  ;; reads of the SAME file froze the whole TUI. `cat-form-path` groups them by
+  ;; the summary chip (it recovers the path from the summary PRECISELY because
+  ;; the DB round-trip flattens `:result` from a map to the rendered STRING),
+  ;; then `merge-cat-forms` did `(assoc (:result f0) :anchors …)` on that string
+  ;; -> ClassCastException every frame -> the render loop keeps re-throwing on
+  ;; the last frame and never repaints.
+  (it "merges adjacent same-path cat forms whose :result is a flattened STRING (no throw)"
+    (let [forms [{:vis/tool-name "cat" :result-summary "`a.clj` · L1-10"
+                  :result-render "line one\nline two" :result "line one\nline two"}
+                 {:vis/tool-name "cat" :result-summary "`a.clj` · L40-50"
+                  :result-render "line forty" :result "line forty"}]
+          out (coalesce-cat-runs forms)]
+      (expect (= 1 (count out)))                                  ; the run collapsed
+      (expect (str/includes? (:result-summary (first out)) "L1-10"))
+      (expect (str/includes? (:result-summary (first out)) "L40-50"))
+      ;; a string result carries through untouched (no anchors assoc'd onto it)
+      (expect (string? (:result (first out))))))
+  (it "still merges anchors when :result is a MAP (live, pre-DB-roundtrip)"
+    (let [forms [{:vis/tool-name "cat" :result-summary "`a.clj` · L1-10"
+                  :result-render "x" :result {:path "a.clj" :anchors {"1:aa" "x"}}}
+                 {:vis/tool-name "cat" :result-summary "`a.clj` · L40-50"
+                  :result-render "y" :result {:path "a.clj" :anchors {"40:bb" "y"}}}]
+          out (coalesce-cat-runs forms)]
+      (expect (= 1 (count out)))
+      (expect (= {"1:aa" "x" "40:bb" "y"} (get-in (first out) [:result :anchors])))))
+  (it "leaves a solo cat form and non-cat forms untouched"
+    (let [forms [{:vis/tool-name "cat" :result-summary "`a.clj` · L1-10" :result "solo"}
+                 {:vis/tool-name "rg" :result-summary "5 hits" :result "hits"}]
+          out (coalesce-cat-runs forms)]
+      (expect (= 2 (count out))))))
 
 (defdescribe tool-color-role-coverage-test
   (it "the TUI badge colour map covers every canonical vis/tool-color-roles role"
