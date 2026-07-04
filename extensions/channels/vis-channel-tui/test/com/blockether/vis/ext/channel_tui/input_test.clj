@@ -504,14 +504,20 @@
       (expect (< (count out) 500))
       (expect (str/includes? out " … "))))
 
-  (it "collapse keeps the token and appends a fenced head+tail peek"
+  (it "collapse folds the token into a `vis-paste` fence carrying token + full payload"
     (let [content (str/join "\n" (map #(str "line-" %) (range 1 30)))
           pastes  {1 {:id 1 :content content}}
           out     (input/collapse-paste-placeholders
                     "before [Pasted #1: 29 lines, 1KB] after" pastes)]
-      (expect (str/starts-with? out "before [Pasted #1: 29 lines, 1KB]\n````\n"))
-      (expect (str/includes? out "⋯ 20 more lines ⋯"))
-      (expect (str/ends-with? out "```` after"))))
+      ;; Token becomes the summary FIRST body line of a `vis-paste` fence,
+      ;; the WHOLE payload verbatim underneath (no head+tail truncation).
+      ;; The summary is RECOMPUTED from the payload, so its byte count is
+      ;; canonical (222B) regardless of the stale count in the input token.
+      (expect (str/includes? out "````vis-paste\n[Pasted #1: 29 lines, 222B]\n"))
+      (expect (str/includes? out "line-1\n"))
+      (expect (str/includes? out "line-29"))
+      (expect (not (str/includes? out "more lines")))
+      (expect (str/ends-with? out "````\n after"))))
 
   (it "collapse passes unknown tokens through unchanged"
     (let [unchanged "hello [Pasted #99: 1 line, 1B] world"]

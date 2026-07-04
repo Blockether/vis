@@ -928,25 +928,30 @@
         (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
 
 (defn collapse-paste-placeholders
-  "Substitute every `[Pasted #N: ...]` token in `text` with the SAME token
-   followed by a fenced head+tail preview of its content. Used by the send
-   path to build the VISIBLE transcript copy: the user keeps a readable peek
-   at what they pasted instead of the full wall, while `expand-paste-placeholders`
-   still ships the complete payload to the agent.
+  "Substitute every `[Pasted #N: ...]` token in `text` with a fenced
+   `vis-paste` block the TUI renders as a COLLAPSIBLE disclosure: the
+   `[Pasted #N: ...]` token becomes the chevron summary row, the full
+   payload the body you expand to read. Used by the send path to build
+   the VISIBLE transcript copy — the user keeps a one-line marker they
+   can open on demand, while `expand-paste-placeholders` still ships the
+   complete payload to the agent.
 
-   The preview is wrapped in a four-backtick fence so the pasted lines render
-   verbatim (no markdown interpretation) and don't collide with ordinary
-   three-backtick code the payload may itself contain. Tokens with no entry
-   in `pastes-map` pass through unchanged."
+   The block body is `<token>\\n<full content>`: the renderer peels the
+   first line off as the summary and shows the rest verbatim when
+   expanded (no head+tail truncation — the whole paste survives a
+   session reopen). A four-backtick fence keeps ordinary three-backtick
+   code the payload may itself contain from closing it early. Tokens
+   with no entry in `pastes-map` pass through unchanged."
   [^String text pastes-map]
   (str/replace text placeholder-regex
     (fn [[whole id-str]]
       (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
             entry (when id (get pastes-map id))]
         (if entry
-          (str whole "\n````\n"
-            (str/join "\n" (paste-content-preview (:content entry)))
-            "\n````")
+          (str "\n````vis-paste\n"
+            (format-paste-placeholder entry) "\n"
+            (:content entry)
+            "\n````\n")
           whole)))))
 
 (defn placeholder-id-before-cursor
