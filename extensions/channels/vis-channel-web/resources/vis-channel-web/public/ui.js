@@ -129,6 +129,55 @@
 
 
 
+  /* ── vis-paste fences: the SAME collapsed-paste mechanism the TUI uses.
+     A large paste is persisted (gateway-wide, one source of truth) as a
+     `vis-paste` fence whose FIRST body line is the `[Pasted #N: L lines, KB]`
+     token and whose remaining lines are the full payload verbatim. Render it
+     as a collapsed chevron chip that mirrors the TUI's `▸ [Pasted #N: …]`
+     disclosure — one click reveals the whole paste, click again re-folds. */
+  function foldPaste(el) {
+    el.querySelectorAll("pre:not([data-folded]) > code.language-vis-paste")
+      .forEach(function (code) {
+        var pre = code.parentNode;
+        pre.setAttribute("data-folded", "1");   /* keep foldCode's head/tail off it */
+        var text = code.textContent.replace(/\n$/, "");
+        var nl = text.indexOf("\n");
+        var summary = (nl === -1 ? text : text.slice(0, nl)).trim();
+        var payload = nl === -1 ? "" : text.slice(nl + 1);
+        var wrap = document.createElement("div");
+        wrap.className = "paste-fold";
+        wrap.setAttribute("data-collapsed", "1");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "paste-fold-summary";
+        var chev = document.createElement("span");
+        chev.className = "paste-chevron";
+        chev.textContent = "\u25b8";
+        var lbl = document.createElement("span");
+        lbl.className = "paste-fold-label";
+        lbl.textContent = summary;
+        btn.appendChild(chev);
+        btn.appendChild(document.createTextNode(" "));
+        btn.appendChild(lbl);
+        var body = document.createElement("pre");
+        body.className = "paste-fold-body";
+        body.setAttribute("data-folded", "1");  /* the reveal is whole; no nested head/tail fold */
+        body.hidden = true;
+        var bcode = document.createElement("code");
+        bcode.textContent = payload;
+        body.appendChild(bcode);
+        btn.addEventListener("click", function () {
+          var collapsed = wrap.getAttribute("data-collapsed") === "1";
+          wrap.setAttribute("data-collapsed", collapsed ? "0" : "1");
+          chev.textContent = collapsed ? "\u25be" : "\u25b8";
+          body.hidden = !collapsed;
+        });
+        wrap.appendChild(btn);
+        wrap.appendChild(body);
+        pre.parentNode.replaceChild(wrap, pre);
+      });
+  }
+
   function renderProse(root) {
     if (typeof marked !== "undefined") {
       (root || document).querySelectorAll("[data-md]:not([data-md-done])")
@@ -136,6 +185,7 @@
           el.setAttribute("data-md-done", "1");
           try {
             el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
+            foldPaste(el);
             foldCode(el);
 
           } catch (e) { /* keep the server-rendered fallback */ }
