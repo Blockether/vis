@@ -25,9 +25,15 @@
          ;; Jackson 2.x set to one deliberate, recent, patched version so the
          ;; security audit sees a single controlled coordinate instead of a
          ;; transitive accident. core/smile/cbor MUST stay on the same version.
+         ;; Exclude jackson-databind: cheshire uses only the streaming core +
+         ;; smile/cbor factories, never ObjectMapper binding, so databind was
+         ;; NOT on the classpath before this pin — keep it that way (databind is
+         ;; the historically CVE-prone module).
          com.fasterxml.jackson.core/jackson-core            {:mvn/version "2.19.4"}
-         com.fasterxml.jackson.dataformat/jackson-dataformat-smile {:mvn/version "2.19.4"}
-         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor  {:mvn/version "2.19.4"}
+         com.fasterxml.jackson.dataformat/jackson-dataformat-smile {:mvn/version "2.19.4"
+                                                                    :exclusions [com.fasterxml.jackson.core/jackson-databind]}
+         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor  {:mvn/version "2.19.4"
+                                                                    :exclusions [com.fasterxml.jackson.core/jackson-databind]}
          ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
          ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
          ;; delimiter-error detection).
