@@ -10,8 +10,8 @@
         (cat path offset n)   ; n lines starting at line `offset` (1-based)
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
-        (ls path)             ; -> nested {:name :path :type :size :children} tree
-        (ls path opts)        ; opts is {:depth :is_hidden :is_respect_gitignore}
+        (ls path)             ; -> nested dict tree (name/path/type/size/children)
+        (ls path opts)        ; opts keys: depth / is_hidden / is_respect_gitignore
         (rg query)           ; -> content hits; query = a term or list of terms (OR),
                                ; smart-case substring. Opts: paths/include/context/is_files_only
 
@@ -19,7 +19,7 @@
       the canonical text edit surface:
 
         (cat path)
-        (patch [{:path path :from_anchor anchor :replace new}])
+        (patch [edit-map])    ; keys: path / from_anchor / replace
         (create-dirs path)
         (copy src dest)
         (move src dest)
@@ -691,7 +691,7 @@
   (when-not (and (integer? start) (integer? end)
               (pos? start) (pos? end)
               (<= start end))
-    (throw (ex-info "cat :range/:ranges start/end must be positive ints with start <= end"
+    (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
              {:type :ext.foundation.editing/invalid-cat-args
               :start start :end end}))))
 
@@ -707,16 +707,16 @@
                 (vec ranges)
 
                 :else
-                (throw (ex-info "cat :ranges expects [[start end] ...]"
+                (throw (ex-info "cat \"ranges\" expects [[start, end], ...]"
                          {:type :ext.foundation.editing/invalid-cat-args
                           :ranges ranges})))]
     (when (empty? pairs)
-      (throw (ex-info "cat :ranges expects at least one range"
+      (throw (ex-info "cat \"ranges\" expects at least one range"
                {:type :ext.foundation.editing/invalid-cat-args
                 :ranges ranges})))
     (mapv (fn [pair]
             (when-not (and (sequential? pair) (= 2 (count pair)))
-              (throw (ex-info "cat :ranges entries must be [start end] pairs"
+              (throw (ex-info "cat \"ranges\" entries must be [start, end] pairs"
                        {:type :ext.foundation.editing/invalid-cat-args
                         :range pair})))
             (let [[start end] (vec pair)]
@@ -1069,15 +1069,15 @@
                is_files_only false
                is_dirs_only  false}} (or opts {})
          _ (when (and is_files_only is_dirs_only)
-             (throw (ex-info "ls :is_files_only and :is_dirs_only are mutually exclusive"
+             (throw (ex-info "ls \"is_files_only\" and \"is_dirs_only\" are mutually exclusive"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :opts opts})))
          _ (when-not (and (integer? depth) (not (neg? depth)))
-             (throw (ex-info "ls :depth must be a non-negative integer"
+             (throw (ex-info "ls \"depth\" must be a non-negative integer"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :depth depth})))
          _ (when-not (and (integer? limit) (pos? limit))
-             (throw (ex-info "ls :limit must be a positive integer"
+             (throw (ex-info "ls \"limit\" must be a positive integer"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :limit limit})))
          f (safe-path path)
@@ -1190,11 +1190,11 @@
                 :allowed (vec (sort allowed-keys))})))
     (let [query (get spec "query")
           _ (when-not (and (string? query) (not (str/blank? query)))
-              (throw (ex-info "find :query must be a non-blank string"
+              (throw (ex-info "find \"query\" must be a non-blank string"
                        {:type :ext.foundation.editing/invalid-find-args
                         :query query})))
           _ (when (and (contains? spec "paths") (contains? spec "path"))
-              (throw (ex-info "find spec must use only one of canonical :paths or alias :path."
+              (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
                        {:type :ext.foundation.editing/invalid-find-args
                         :spec spec})))
           raw-paths (cond
@@ -1206,12 +1206,12 @@
                   (sequential? raw-paths) (vec raw-paths)
                   :else raw-paths)
           _ (when-not (and (vector? paths) (seq paths) (every? string? paths))
-              (throw (ex-info "find :paths must be a non-empty vector of strings"
+              (throw (ex-info "find \"paths\" must be a non-empty vector of strings"
                        {:type :ext.foundation.editing/invalid-find-args
                         :paths raw-paths})))
           limit (or (get spec "limit") default-find-limit)
           _ (when-not (and (integer? limit) (pos? limit))
-              (throw (ex-info "find :limit must be a positive integer"
+              (throw (ex-info "find \"limit\" must be a positive integer"
                        {:type :ext.foundation.editing/invalid-find-args
                         :limit limit})))]
       {:query query
@@ -1443,7 +1443,7 @@
    Unknown keys are ignored so a stray annotation never hard-fails the call."
   [spec]
   (when-not (map? spec)
-    (throw (ex-info "rg takes one spec map: {:query [...] :paths [...]}."
+    (throw (ex-info "rg takes one spec map: {\"query\": [...], \"paths\": [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
   (let [vector-of-strings (fn [k raw]
@@ -1733,16 +1733,16 @@
                 :allowed (vec patch-group-allowed-keys)
                 :edit group})))
     (when-not (sequential? edits)
-      (throw (ex-info "patch grouped :edits must be a vector/seq of edit maps"
+      (throw (ex-info "patch grouped \"edits\" must be a vector/seq of edit maps"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :edits edits})))
     (when (empty? edits)
-      (throw (ex-info "patch grouped :edits must not be empty"
+      (throw (ex-info "patch grouped \"edits\" must not be empty"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :edit group})))
     (mapv (fn [edit]
             (when-not (map? edit)
-              (throw (ex-info "patch grouped :edits entries must be maps"
+              (throw (ex-info "patch grouped \"edits\" entries must be maps"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             ;; The LLM-facing JSON schema marks :path as required, so callers
@@ -1751,7 +1751,7 @@
             ;; only refuse a genuinely conflicting NON-EMPTY path — the group's
             ;; :path is assoc'd over it below regardless.
             (when-let [stated (some-> (get edit "path") str str/trim not-empty)]
-              (throw (ex-info "patch grouped :edits inherit :path; do not repeat it per edit"
+              (throw (ex-info "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :path stated
                         :edit edit})))
@@ -2245,7 +2245,7 @@
                 :allowed (vec write-allowed-keys)
                 :args args})))
     (when-not (string? (get args "content"))
-      (throw (ex-info "write :content must be a string"
+      (throw (ex-info "write \"content\" must be a string"
                {:type :ext.foundation.editing/invalid-write-args
                 :got (type (get args "content"))}))))
   (update args "path" str))
