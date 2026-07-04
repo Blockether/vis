@@ -77,9 +77,13 @@
     (when (seq parts) (str/join " " parts))))
 (defn- git-status-bits
   "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
-   style: changed-file counts then `⇡ahead ⇣behind`.
-   Clean *and* synced yields nil so the branch name stands alone — no glyph."
-  [{:keys [ahead behind], :as status}]
+   style: changed-file counts then `⇡ahead ⇣behind`; a branch with NO
+   upstream configured (`:upstream?` explicitly false) shows `∅` — no
+   remote to compare against, so ahead/behind are meaningless. `∅` (not a
+   warning glyph: nothing is wrong) is a bare NARROW char, safe for the
+   lanterna cell grid (VS-16 emoji are wide and desync the paint). Clean
+   *and* synced yields nil so the branch name stands alone — no glyph."
+  [{:keys [ahead behind upstream?], :as status}]
   (let [ahead (long (or ahead 0))
         behind (long (or behind 0))
         change (git-change-bits status)
@@ -88,7 +92,8 @@
                (pos? behind) (conj (str "⇣" behind)))
         parts (cond-> []
                 change (conj change)
-                (seq sync) (conj (str/join " " sync)))]
+                (seq sync) (conj (str/join " " sync))
+                (false? upstream?) (conj "∅"))]
     (when (seq parts) (str/join " " parts))))
 (defn- git-repo-label
   "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
