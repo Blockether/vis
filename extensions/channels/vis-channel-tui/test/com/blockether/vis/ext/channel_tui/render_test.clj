@@ -2001,3 +2001,83 @@
                 (render/message-detail-expansions-key sid
                   {:role :assistant :session-turn-id "abc12345-0000-0000"}
                   {:vis.channel-tui/expand-all-details? true}))))))
+
+(def ^:private git-only-form @#'render/git-only-form)
+(def ^:private git-command-parts @#'render/git-command-parts)
+(def ^:private git-group-entries @#'render/git-group-entries)
+(def ^:private render-iteration-entries @#'render/render-iteration-entries)
+
+(defn- git-form [summary render]
+  {:vis/tool-name "git" :success? true :code ""
+   :result-summary summary :result-render render
+   :tool-color-role :tool-color/shell :result {}})
+
+(defn- entry-text [entries]
+  ;; Drop every zero-width structural / inline-style marker so assertions match
+  ;; the human-visible text regardless of where sentinels sit in the row.
+  (mapv (fn [e]
+          (str/replace (str (:line e))
+            #"[\u200B-\u200F\u2060-\u206F\uFEFF\uE000-\uF8FF]" ""))
+    entries))
+
+(defdescribe git-band-grouping-test
+  ;; A RUN of consecutive git-only iterations coalesces into ONE collapsible
+  ;; GIT band; a lone git call, or a run broken by other work, renders per
+  ;; iteration as before.
+  (let [ctx {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        gi  (fn [i s] [i {:forms [(git-form s nil)]}])
+        py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        band-count (fn [pairs]
+                     (->> (render-iteration-entries pairs iter-fn false ctx)
+                       entry-text
+                       (filter #(str/includes? % "commands"))
+                       count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))]
+    (it "git-only-form detects a pure single-git iteration"
+      (expect (some? (git-only-form {:forms [(git-form "status" nil)]})))
+      (expect (nil? (git-only-form {:assistant-prose "hi" :forms [(git-form "status" nil)]})))
+      (expect (nil? (git-only-form {:forms [(git-form "a" nil) (git-form "b" nil)]})))
+      (expect (nil? (git-only-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]}))))
+    (it "git-command-parts recovers subcommand + failure from the summary note"
+      (let [ok (git-command-parts (git-form "status --short" nil))
+            ex (git-command-parts (git-form "push origin main (exit 1)" nil))
+            to (git-command-parts (git-form "commit -m foo (timed out)" nil))]
+        (expect (= "status" (:subcommand ok)))
+        (expect (false? (:failed? ok)))
+        (expect (= "push" (:subcommand ex)))
+        (expect (true? (:failed? ex)))
+        (expect (true? (:failed? to)))))
+    (it "three consecutive git iterations collapse into ONE band"
+      (let [pairs [(gi 0 "add -A") (gi 1 "commit -m x") (gi 2 "push")]]
+        (expect (= 1 (band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone git iteration renders normally (no band)"
+      (let [pairs [(gi 0 "status")]]
+        (expect (= 0 (band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a non-git step between two git calls breaks the run"
+      (let [pairs [(gi 0 "add") (py 1) (gi 2 "push")]]
+        (expect (= 0 (band-count pairs)))
+        (expect (= 3 (normal-count pairs)))))
+    (it "two runs split by other work yield two bands"
+      (let [pairs [(gi 0 "a") (gi 1 "b") (py 2) (gi 3 "c") (gi 4 "d")]]
+        (expect (= 2 (band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "collapsed band shows a chip per command; expanded shows each `$` row"
+      (let [forms   [(git-form "add -A" nil)
+                     (git-form "push" "```\nmain -> main\n```")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 5
+                                               :section :iteration :kind :git-group})
+            collapsed (entry-text (git-group-entries forms (assoc ctx :iteration-number 5)))
+            expanded  (entry-text (git-group-entries forms (assoc ctx :iteration-number 5
+                                                             :detail-expansions {["s1" node-id] true})))]
+        ;; Header row present in both; per-command `$` rows only when expanded.
+        (expect (some #(str/includes? % "2 commands") collapsed))
+        (expect (not-any? #(str/includes? % "$ add -A") collapsed))
+        (expect (some #(str/includes? % "$ add -A") expanded))
+        (expect (some #(str/includes? % "$ push") expanded))
+        (expect (some #(str/includes? % "main -> main") expanded))))))
