@@ -1,8 +1,9 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-04. Dependency versions, licenses and jar sizes in this file
-> are pulled straight from the resolved `deps.edn` graph and the Clojars /
-> Maven Central POMs. Regenerate whenever dependencies change.
+> Generated 2026-07-04 by `scripts/gen-audit.bb` (run in CI — see §7). Dependency
+> versions, licenses and jar sizes are pulled straight from the resolved
+> `deps.edn` graph and the Clojars / Maven Central POMs. **Do not edit by hand**
+> — rerun `bb scripts/gen-audit.bb` (or let the `audit-md` workflow regenerate it).
 
 `vis` is an autonomous coding agent: a single Clojure package
 (`com.blockether.vis.core`, Apache-2.0) plus a set of optional classpath
@@ -17,10 +18,10 @@ vulnerabilities.
 ## 1. At a glance
 
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 53 across 18 `deps.edn` files (root + extensions).
-- **Declared jar footprint (direct coords):** ~217 MB — dominated by the embedded GraalPy runtime and the voice/ONNX stack (both optional extensions).
-- **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **one copyleft exception** flagged below.
-- **Continuous auditing:** [clj-watson](https://github.com/clj-holmes/clj-watson) SCA scan on every dependency change, on a weekly schedule, and on demand — results published to the GitHub **Security** tab (see §5).
+- **Direct dependency coordinates:** 56 unique, across 15 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~218 MB — dominated by the embedded GraalPy runtime and the voice/ONNX stack (both optional extensions).
+- **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged below.**
+- **Continuous auditing:** [clj-watson](https://github.com/clj-holmes/clj-watson) SCA scan on every dependency change, on a weekly schedule, and on demand — results published to the GitHub **Security** tab (see §2).
 
 ---
 
@@ -60,6 +61,10 @@ build artifact. The workflow is **non-blocking by default**; an opt-in gate
 (`-f`, or `-c <cvss>` for a threshold) is included, commented out, to start
 failing PRs once the baseline is clean.
 
+**This document** — `.github/workflows/audit-md.yml` reruns
+`bb scripts/gen-audit.bb` on every `deps.edn` change and weekly, and commits any
+resulting AUDIT.md diff, so the inventory below can never drift from the code.
+
 ### Database strategies
 
 | Strategy | Source | Auth / cost | When |
@@ -75,10 +80,11 @@ To use the NVD strategy, get a key at
 
 ## 3. Dependency inventory
 
-Grouped by the module that declares each dependency. Jar sizes are the direct
-artifact only (not the transitive closure). "Ownership" distinguishes
-**Blockether in-house** libraries (we control the source and release cadence)
-from **3rd-party** open source.
+Grouped by the module that declares each dependency; a coordinate shared by
+several modules is listed once, under the first module that declares it. Jar
+sizes are the direct artifact only (not the transitive closure). "Ownership"
+distinguishes **Blockether in-house** libraries (we control the source and
+release cadence) from **3rd-party** open source.
 
 ### core (deps.edn)
 
@@ -121,48 +127,6 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
 
-### `vis-persistance-sqlite` extension
-
-_Durable session store (SQLite + Flyway migrations)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.github.seancorfield/honeysql` | `2.7.1399` | EPL-2.0 | 43 KB | 3rd-party |
-| `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
-| `com.taoensso/nippy` | `3.7.0-RC2` | EPL-1.0 | 51 KB | 3rd-party |
-| `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
-| `org.flywaydb/flyway-core` | `12.10.0` | Apache-2.0 | 789 KB | 3rd-party |
-| `org.flywaydb/flyway-database-nc-sqlite` | `12.10.0` | Apache-2.0 | 6 KB | 3rd-party |
-| `org.xerial/sqlite-jdbc` | `3.53.2.0` | Apache-2.0 | 11.4 MB | 3rd-party |
-
-### `vis-language-clojure` extension
-
-_Clojure language pack (format/lint/structural edits)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `borkdude/edamame` | `1.5.39` | EPL-1.0 | 26 KB | 3rd-party |
-| `clj-kondo/clj-kondo` | `2026.05.25` | EPL-1.0 | 701 KB | 3rd-party |
-| `dev.weavejester/cljfmt` | `0.16.4` | EPL-1.0 | 19 KB | 3rd-party |
-| `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
-
-### `vis-foundation-voice` extension
-
-_Local speech (sherpa-onnx / ONNX Runtime)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | Apache-2.0 | 7.7 MB | 3rd-party |
-| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | MIT | 83.5 MB | 3rd-party |
-
-### `vis-channel-tui` extension
-
-_Terminal UI (Lanterna)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.20` | LGPL-3.0 | 584 KB | Blockether (in-house) |
-
 ### `vis-channel-telegram` extension
 
 _Telegram bot channel._
@@ -171,6 +135,14 @@ _Telegram bot channel._
 |---|---|---|---|---|
 | `org.babashka/http-client` | `0.4.23` | MIT | 16 KB | 3rd-party |
 | `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
+
+### `vis-channel-tui` extension
+
+_Terminal UI (Lanterna)._
+
+| Dependency | Version | License | Jar size | Ownership |
+|---|---|---|---|---|
+| `com.blockether/lanterna` | `3.1.5-vis.20` | LGPL-3.0 | 584 KB | Blockether (in-house) |
 
 ### `vis-channel-web` extension
 
@@ -187,6 +159,43 @@ _Bridge verification tool surface._
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.blockether/bridge` | `0.1.2` | Apache-2.0 | 69 KB | Blockether (in-house) |
+
+### `vis-foundation-voice` extension
+
+_Local speech (sherpa-onnx / ONNX Runtime)._
+
+| Dependency | Version | License | Jar size | Ownership |
+|---|---|---|---|---|
+| `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | Apache-2.0 | 7.7 MB | 3rd-party |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | MIT | 83.5 MB | 3rd-party |
+
+### `vis-language-clojure` extension
+
+_Clojure language pack (format/lint/structural edits)._
+
+| Dependency | Version | License | Jar size | Ownership |
+|---|---|---|---|---|
+| `borkdude/edamame` | `1.5.39` | EPL-1.0 | 26 KB | 3rd-party |
+| `clj-kondo/clj-kondo` | `2026.05.25` | EPL-1.0 | 701 KB | 3rd-party |
+| `com.fasterxml.jackson.core/jackson-core` | `2.19.4` | Apache-2.0 | 578 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.19.4` | Apache-2.0 | 70 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.19.4` | Apache-2.0 | 95 KB | 3rd-party |
+| `dev.weavejester/cljfmt` | `0.16.4` | EPL-1.0 | 19 KB | 3rd-party |
+| `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
+
+### `vis-persistance-sqlite` extension
+
+_Durable session store (SQLite + Flyway migrations)._
+
+| Dependency | Version | License | Jar size | Ownership |
+|---|---|---|---|---|
+| `com.github.seancorfield/honeysql` | `2.7.1399` | EPL-2.0 | 43 KB | 3rd-party |
+| `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
+| `com.taoensso/nippy` | `3.7.0-RC2` | EPL-1.0 | 51 KB | 3rd-party |
+| `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
+| `org.flywaydb/flyway-core` | `12.10.0` | Apache-2.0 | 789 KB | 3rd-party |
+| `org.flywaydb/flyway-database-nc-sqlite` | `12.10.0` | Apache-2.0 | 6 KB | 3rd-party |
+| `org.xerial/sqlite-jdbc` | `3.53.2.0` | Apache-2.0 | 11.4 MB | 3rd-party |
 
 ### `vis-workspace-rift` extension
 
@@ -205,8 +214,8 @@ _Rift workspace/FFM integration._
 | License | Count |
 |---|---|
 | EPL-1.0 | 19 |
+| Apache-2.0 | 12 |
 | MIT | 12 |
-| Apache-2.0 | 9 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | UPL-1.0 | 2 |
@@ -216,23 +225,21 @@ _Rift workspace/FFM integration._
 | LGPL-3.0 | 1 |
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
-Apache-2.0, BSD-2-Clause, UPL-1.0, PSF, Public Domain) and compatible with
-shipping vis under **Apache-2.0** — **with one exception that needs legal sign-off:**
+Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
+under **Apache-2.0** — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.20`) is LGPL-3.0** (copyleft,
-> inherited from upstream Lanterna). It is used only by the `vis-channel-tui`
-> extension. LGPL is generally fine for dynamic linking, but **static linking
-> into the GraalVM native image** can trigger LGPL relinking obligations.
-> Action: confirm distribution terms with legal, or keep the TUI as an optional
-> (droppable) extension jar rather than baking it into the distributed binary.
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.20`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> linking, but **static linking into the GraalVM native image** can trigger
+> relinking obligations. Action: confirm distribution terms with legal, or keep
+> the owning extension as an optional (droppable) jar rather than baking it into
+> the distributed binary.
 
 ### Code ownership
 
 - **First-party (this repo, Apache-2.0):** the `com.blockether.vis.core` package
   and every `extensions/*` module.
 - **Blockether in-house libraries** (separate repos, we own source + releases):
-  `svar`, `anomaly`, `fff`, `ruff`, `rift`, `bridge`,
-  `tree-sitter-language-pack`, and the `lanterna` fork.
+  every `com.blockether/*` coordinate above.
 - **3rd-party:** everything else in §3, sourced from Clojars / Maven Central.
 
 ---
@@ -254,10 +261,9 @@ Heaviest direct artifacts (>= 1 MB):
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
   the agent's sandboxed Python substrate — mandatory for the core binary.
-- The **voice** stack (`onnxruntime` 83 MB + `sherpa-onnx` 8 MB) ships only with
-  the optional `vis-foundation-voice` extension; drop the jar, drop the weight.
-- `sqlite-jdbc` (11 MB) is bundled by the optional `vis-persistance-sqlite`
-  extension (native SQLite for all platforms).
+- The **voice** stack (`onnxruntime` + `sherpa-onnx`) ships only with the
+  optional `vis-foundation-voice` extension; drop the jar, drop the weight.
+- `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK + Truffle/GraalPy; track its size in the
   `native-release` workflow output.
@@ -272,16 +278,22 @@ Notes:
 - [ ] Flip on the CI **fail gate** (`-f` / `-c`) once the first clean baseline lands.
 - [ ] _(from Wojtek — pending input)_ additional compliance / threat-model items.
 
+(These items are hand-maintained in the `## 6.` block of `scripts/gen-audit.bb`;
+everything else on this page is generated.)
+
 ---
 
 ## 7. Maintenance
 
-Regenerate this inventory after any dependency bump:
+This file is generated. To refresh it after a dependency bump:
 
 ```bash
-clojure -M:antq          # list outdated deps
-clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s  # re-scan CVEs
+bb scripts/gen-audit.bb        # regenerate AUDIT.md from the deps graph
+clojure -M:antq                # list outdated deps
+clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s   # re-scan CVEs
 ```
 
-Keep the `:clj-watson` alias pinned to a released tag **and** its `:git/sha`
-(currently `v6.1.0` / `be98e4d`) so scans are reproducible; bump both together.
+CI enforces freshness: the `audit-md` workflow regenerates and commits AUDIT.md
+whenever any `deps.edn` changes, and `bb scripts/gen-audit.bb --check` fails a PR
+that leaves it stale. Keep the `:clj-watson` alias pinned to a released tag
+**and** its `:git/sha` so scans stay reproducible.

@@ -1,0 +1,78 @@
+name: Audit doc (AUDIT.md)
+
+# Keeps AUDIT.md — the dependency / license / footprint inventory — generated
+# straight from the deps.edn graph, so it can never drift from the code.
+#
+# scripts/gen-audit.bb walks every deps.edn, resolves each artifact's license
+# (following parent POMs) and jar size from Clojars / Maven Central, and renders
+# the whole document.
+#
+#   * push to main / weekly / manual -> regenerate and COMMIT any AUDIT.md diff.
+#   * pull request                    -> regenerate and FAIL if it drifted, so
+#                                        the PR author regenerates it themselves.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/deps.edn'
+      - 'scripts/gen-audit.bb'
+      - '.github/workflows/audit-md.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/deps.edn'
+      - 'scripts/gen-audit.bb'
+      - '.github/workflows/audit-md.yml'
+  # Licenses/sizes rarely change, but a released version can be re-published —
+  # refresh weekly so the doc stays honest even with no repo change.
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: audit-md-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # push the regenerated AUDIT.md back to main
+
+jobs:
+  audit-md:
+    name: regenerate AUDIT.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          bb: latest # babashka runs scripts/gen-audit.bb
+
+      - name: Regenerate AUDIT.md
+        run: bb scripts/gen-audit.bb
+
+      # On a PR we must NOT push to the contributor's branch — just fail if the
+      # committed AUDIT.md is stale, pointing them at the one command to fix it.
+      - name: Fail if AUDIT.md drifted (pull requests)
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet -- AUDIT.md; then
+            echo '::error::AUDIT.md is out of date. Run `bb scripts/gen-audit.bb` and commit the result.'
+            git --no-pager diff -- AUDIT.md
+            exit 1
+          fi
+          echo 'AUDIT.md is up to date.'
+
+      # On main / schedule / manual, commit the refreshed doc back automatically.
+      - name: Commit refreshed AUDIT.md
+        if: github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet -- AUDIT.md; then
+            echo 'AUDIT.md already up to date — nothing to commit.'
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add AUDIT.md
+          git commit -m 'chore(audit): regenerate AUDIT.md [skip ci]'
+          git push
