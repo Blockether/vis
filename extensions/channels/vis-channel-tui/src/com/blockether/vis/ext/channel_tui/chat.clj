@@ -364,7 +364,14 @@
     (let [turns           (vis/gateway-transcript session-id)]
       (into []
         (mapcat (fn [q]
-                  (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
+                  (let [user-message (assoc (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
+                                       ;; Reloaded/persisted turns carry no :client-turn-id, so without this
+                                       ;; `turn-identity` returns nil and every `[Pasted #N]` disclosure collapses
+                                       ;; to the same unscoped node-id (`user:paste:dN`) — clicking one paste would
+                                       ;; toggle every paste in the session. Stamp the gateway turn id (same one the
+                                       ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
+                                       ;; like the live send path scopes them by :client-turn-id.
+                                       :session-turn-id (:id q))
                         ;; `:prior-outcome :cancelled` is how the
                         ;; persistance layer marks an aborted turn (the
                         ;; sweep + cancel paths both write that value).
