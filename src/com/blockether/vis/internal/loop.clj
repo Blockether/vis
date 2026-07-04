@@ -23,6 +23,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.session-model :as session-model]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.prompt-templates :as prompt-templates]
    [com.blockether.vis.internal.provider-error :as perr]
    [com.blockether.vis.internal.providers :as providers]
    [com.blockether.vis.internal.registry :as registry]
@@ -5002,7 +5003,13 @@
    `slash/dispatch`. When the user-message resolves
    to a registered slash, the turn is fully handled by a synthetic
    iteration (`tag :user-slash`) and the LLM is never called. The
-   transcript still shows the user message + the slash envelope."
+   transcript still shows the user message + the slash envelope.
+
+   A slash NO extension claims (`:reason :unknown`) gets one more
+   chance as a PROMPT TEMPLATE (`.vis/prompts/*.md`, `~/.vis/prompts`,
+   provider-contributed templates like `/skill:<name>`): when a
+   template matches, the expanded text runs as a NORMAL LLM turn.
+   Registered slashes always win over templates."
   [env user-request loop-opts]
   (when-not (map? env)
     (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
@@ -5064,7 +5071,15 @@
                                             :error        (ex-message t)}})
                          {:handled? false}))]
     (if (:handled? slash-result)
-      (run-slash-turn! env user-request slash-result)
+      (if-let [expansion (when (= :unknown (:reason slash-result))
+                           (try (prompt-templates/expand env user-request)
+                             (catch Throwable t
+                               (tel/log! {:level :warn :id ::template-expand-threw
+                                          :data  {:user-request user-request
+                                                  :error        (ex-message t)}})
+                               nil)))]
+        (run-normal-turn! env (:text expansion) loop-opts)
+        (run-slash-turn! env user-request slash-result))
       (run-normal-turn! env user-request loop-opts))))
 
 (defn custom-bindings

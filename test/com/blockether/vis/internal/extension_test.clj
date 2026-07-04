@@ -278,3 +278,28 @@
       (extension/unregister-op-hooks-for-owner! :ext/zz)
       (expect (nil? (get (deref @#'extension/op-hooks) :ophtest-o1)))
       (expect (nil? (get (deref @#'extension/op-hooks) :ophtest-o2))))))
+
+(defdescribe reload-hooks-test
+  (it "runs every hook and isolates failures per id"
+    (let [ran (atom [])]
+      (extension/register-reload-hook! ::rh-ok (fn [] (swap! ran conj :ok)))
+      (extension/register-reload-hook! ::rh-boom (fn [] (throw (ex-info "boom" {}))))
+      (try
+        (let [results (extension/run-reload-hooks!)]
+          (expect (= [:ok] @ran))
+          (expect (true? (:ok? (get results ::rh-ok))))
+          (expect (false? (:ok? (get results ::rh-boom))))
+          (expect (= "boom" (:error (get results ::rh-boom)))))
+        (finally
+          ;; neutralize the fixtures so other tests' /reload paths stay clean
+          (extension/register-reload-hook! ::rh-ok (fn [] nil))
+          (extension/register-reload-hook! ::rh-boom (fn [] nil))))))
+  (it "re-registering an id replaces the hook (idempotent)"
+    (let [n (atom 0)]
+      (extension/register-reload-hook! ::rh-idem (fn [] (swap! n inc)))
+      (extension/register-reload-hook! ::rh-idem (fn [] (swap! n + 10)))
+      (try
+        (extension/run-reload-hooks!)
+        (expect (= 10 @n))
+        (finally
+          (extension/register-reload-hook! ::rh-idem (fn [] nil)))))))

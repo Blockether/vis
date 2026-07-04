@@ -1,20 +1,25 @@
 (ns com.blockether.vis.internal.agents
   "Project-guidance discovery — internal, no extension required.
 
-   Reads `AGENTS.md` (preferred) or `CLAUDE.md` (fallback) at the
-   active workspace root and exposes its full contents as the data
-   behind `(vis/main-agent-instructions)` and the PROJECT-INSTRUCTIONS
-   system block in `internal.prompt`.
+   STACKED context files, pi-style: guidance is collected from THREE
+   layers and all of them ride into the PROJECT-INSTRUCTIONS system
+   block, outermost first:
 
-   Strict precedence: AGENTS.md wins; CLAUDE.md is only consulted when
-   AGENTS.md is absent. No user-global merge — the rules a project ships
-   in its repo root are the rules.
+     1. user-global   `~/.vis/AGENTS.md` (or `~/.vis/CLAUDE.md`)
+     2. ancestors     `AGENTS.md` / `CLAUDE.md` in every ancestor
+                      directory of the workspace root (outermost first)
+     3. workspace     `AGENTS.md` / `CLAUDE.md` at the workspace root
 
-   Size policy: NO truncation. The whole file goes into the system
-   prompt verbatim. Provider prompt caching amortizes the cost across
-   every iter in the session; trimming would risk dropping the very
-   rule the user is testing. The cwd + (path, mtime, length) marker
-   cache below ensures we read the file at most once per change.
+   Per DIRECTORY precedence is strict: AGENTS.md wins; CLAUDE.md is
+   only consulted when AGENTS.md is absent in that directory. Across
+   directories nothing is dropped — nearer files are rendered LATER so
+   they positionally override outer rules on conflict.
+
+   Size policy: NO truncation. Every file goes into the system prompt
+   verbatim. Provider prompt caching amortizes the cost across every
+   iter in the session; trimming would risk dropping the very rule the
+   user is testing. The cwd + per-file (path, mtime, length) marker
+   cache below ensures files are re-read at most once per change.
 
    Failure modes (file unreadable, permissions, I/O error) land in the
    read-warning vec, NOT in the rendered prompt. The model isn't bound
@@ -25,14 +30,18 @@
    core functionality (drives the system prompt + slim ctx digest); the
    extension layer no longer owns it."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
 (defn- repo-cwd ^java.io.File []
   ;; Treat the active workspace root as the repo root. The channel
   ;; rebinds `*workspace-root*` per turn; calling outside that binding
-  ;; throws — that's a channel-layer bug, not silent degradation.
+  ;; falls back to the process cwd (REPL / test / one-off CLI paths).
   (workspace/cwd))
+
+(defn- global-config-dir ^java.io.File []
+  (java.io.File. (System/getProperty "user.home") ".vis"))
 
 (defn- read-bytes-safely
   "Read the entire file `f` into a byte array. Returns
@@ -74,9 +83,15 @@
          :bytes   total-bytes
          :content content}))))
 
+;; =============================================================================
+;; Single-root scan (legacy shape — kept for the foundation shim + tests)
+;; =============================================================================
+
 (defn scan-in
-  "Scan `root` for project-guidance files. Pure I/O. Returned shape
-   matches `scan`; exposed for testing against fixture roots."
+  "Scan `root` for project-guidance files. Pure I/O. Single-directory,
+   legacy result shape (`:source :repo` / `:repo:claude-md-fallback`);
+   the stacked multi-file scan is `scan-roots` / `scan`. Exposed for
+   testing against fixture roots."
   [^java.io.File root]
   (let [agents-file (java.io.File. root "AGENTS.md")
         claude-file (java.io.File. root "CLAUDE.md")]
@@ -102,10 +117,142 @@
       :else
       {:result {:found? false} :warnings []})))
 
+;; =============================================================================
+;; Stacked scan (global → ancestors → workspace root)
+;; =============================================================================
+
+(defn- guidance-candidate
+  "Pick the guidance file for one directory: AGENTS.md wins, CLAUDE.md
+   is the per-directory fallback. Returns `{:source :agents-md|:claude-md
+   :file f}` or nil."
+  [^java.io.File dir]
+  (let [a (java.io.File. dir "AGENTS.md")
+        c (java.io.File. dir "CLAUDE.md")]
+    (cond
+      (.isFile a) {:source :agents-md :file a}
+      (.isFile c) {:source :claude-md :file c}
+      :else       nil)))
+
+(defn- ancestor-chain
+  "Canonical directory chain from the filesystem root DOWN TO `root`
+   inclusive — outermost first, so render order = precedence order
+   (nearer files land later and positionally override)."
+  [^java.io.File root]
+  (loop [d (try (.getCanonicalFile root)
+             (catch Throwable _ (.getAbsoluteFile root)))
+         acc ()]
+    (if d
+      (recur (.getParentFile d) (cons d acc))
+      (vec acc))))
+
+(defn- read-guidance-entry
+  "Read one candidate into a stacked-file entry, or a warning on I/O
+   failure. `scope` is :global | :ancestor | :project."
+  [scope {:keys [source ^java.io.File file]}]
+  (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely file)]
+    (if err
+      {:warning {:source source
+                 :scope  scope
+                 :reason err
+                 :path   (.getAbsolutePath file)}}
+      {:entry {:scope   scope
+               :source  source
+               :path    (.getAbsolutePath file)
+               :bytes   total-bytes
+               :content (->utf8-string bytes total-bytes)}})))
+
+(defn origin-label
+  "Human label for a stacked-file entry: file name + scope qualifier."
+  [{:keys [scope source]}]
+  (str (case source :agents-md "AGENTS.md" :claude-md "CLAUDE.md" (str source))
+    (case scope
+      :global   " (user-global)"
+      :ancestor " (ancestor directory)"
+      :project  " (workspace root)"
+      "")))
+
+(defn- combined-content
+  "Render the stacked entries into ONE guidance string with per-file
+   origin headers (single file → verbatim, no header). This is the
+   `:content` consumers of the legacy single-file shape see."
+  [entries]
+  (if (= 1 (count entries))
+    (:content (first entries))
+    (str/join "\n\n"
+      (map (fn [e]
+             (str "# ── " (origin-label e) ": " (:path e) " ──\n" (:content e)))
+        entries))))
+
+(defn- legacy-source
+  "Back-compat top-level `:source` derived from the INNERMOST entry:
+   the workspace-root file keeps the historical :repo /
+   :repo:claude-md-fallback keywords; a stack that ends on an outer
+   layer reports its scope."
+  [{:keys [scope source]}]
+  (if (= :project scope)
+    (case source
+      :agents-md :repo
+      :claude-md :repo:claude-md-fallback
+      source)
+    scope))
+
+(defn scan-roots
+  "Stacked scan: guidance file in `global-dir` first (when non-nil),
+   then AGENTS.md / CLAUDE.md from every ancestor of `workspace-root`
+   (outermost first) down to the workspace root itself. Pure I/O;
+   exposed for testing against fixture roots.
+
+   Returns `{:result r :warnings [...]}` where `r` is:
+
+     present: {:found? true
+               :files  [{:scope :global|:ancestor|:project
+                         :source :agents-md|:claude-md
+                         :path \"…\" :bytes N :content \"…\"} …]
+               ;; legacy single-file view (innermost file + combined content)
+               :source <legacy kw> :path \"…\" :bytes <total> :content \"…\"}
+     absent:  {:found? false}"
+  [^java.io.File global-dir ^java.io.File workspace-root]
+  (let [chain    (ancestor-chain workspace-root)
+        n        (count chain)
+        dirs     (concat
+                   (when global-dir [[:global global-dir]])
+                   (map-indexed (fn [i d] [(if (= i (dec n)) :project :ancestor) d])
+                     chain))
+        ;; The global dir may coincide with an ancestor (e.g. workspace under
+        ;; ~/.vis) — drop the duplicate ancestor read, global already has it.
+        reads    (loop [ds dirs, seen #{}, acc []]
+                   (if (empty? ds)
+                     acc
+                     (let [[scope ^java.io.File d] (first ds)
+                           cand (guidance-candidate d)
+                           path (some-> cand ^java.io.File (:file) .getAbsolutePath)]
+                       (if (and cand (not (contains? seen path)))
+                         (recur (rest ds) (conj seen path)
+                           (conj acc (read-guidance-entry scope cand)))
+                         (recur (rest ds) seen acc)))))
+        entries  (vec (keep :entry reads))
+        warnings (vec (keep :warning reads))]
+    {:result
+     (if (seq entries)
+       (let [innermost (peek entries)]
+         {:found?  true
+          :files   entries
+          :source  (legacy-source innermost)
+          :path    (:path innermost)
+          :bytes   (reduce + 0 (map :bytes entries))
+          :content (combined-content entries)})
+       {:found? false})
+     :warnings warnings}))
+
 (defn scan
-  "Scan the active workspace root for project-guidance files."
+  "Scan the user-global `~/.vis` dir plus the active workspace root's
+   ancestor chain for project-guidance files (stacked)."
   []
-  (scan-in (repo-cwd)))
+  (scan-roots (global-config-dir) (repo-cwd)))
+
+;; =============================================================================
+;; Marker cache — stat-only revalidation on the hot path
+;; =============================================================================
 
 (defonce ^:private state
   (atom {:cwd nil :marker nil :result nil :warnings nil}))
@@ -122,11 +269,15 @@
    :last-modified (when (.isFile f) (.lastModified f))
    :length        (when (.isFile f) (.length f))})
 
+(defn- dir-marker
+  [^java.io.File d]
+  [(file-marker (java.io.File. d "AGENTS.md"))
+   (file-marker (java.io.File. d "CLAUDE.md"))])
+
 (defn- guidance-marker
   []
-  (let [root (repo-cwd)]
-    {:agents (file-marker (java.io.File. root "AGENTS.md"))
-     :claude (file-marker (java.io.File. root "CLAUDE.md"))}))
+  {:global (dir-marker (global-config-dir))
+   :chain  (mapv dir-marker (ancestor-chain (repo-cwd)))})
 
 (defn- rescan!
   [cwd marker]
@@ -136,9 +287,9 @@
     v))
 
 (defn current
-  "Return the cached scan, recomputing when cwd or AGENTS.md/CLAUDE.md
-   marker changes. Common path is stat-only — content is re-read only
-   when the marker changes."
+  "Return the cached scan, recomputing when cwd or any stacked
+   AGENTS.md/CLAUDE.md marker changes. Common path is stat-only —
+   content is re-read only when a marker changes."
   []
   (let [cwd     (canonical-cwd)
         marker  (guidance-marker)
@@ -156,18 +307,25 @@
   "Return the structured map behind `(vis/main-agent-instructions)`.
    Always a map. `:found?` discriminates present vs absent.
 
-     present:  `{:found? true :source :repo|:repo:claude-md-fallback
-                 :path \"…\" :bytes N :content \"…\"}`
+     present:  `{:found? true
+                 :files  [{:scope :source :path :bytes :content} …]
+                 :source <legacy kw> :path \"…\" :bytes N :content \"…\"}`
      absent:   `{:found? false}`
 
-   No truncation: `:content` is the full file verbatim. Caller-side
-   display limits (e.g. tape pretty-printing) are caller business."
+   `:files` is the stacked view (user-global → ancestors → workspace
+   root, outermost first). The top-level `:source`/`:path` describe the
+   INNERMOST file and `:content` is the combined origin-headed render —
+   the legacy single-file consumers keep working unchanged.
+
+   No truncation: every `:content` is the full file verbatim.
+   Caller-side display limits (e.g. tape pretty-printing) are caller
+   business."
   []
   (:result (current)))
 
 (defn read-warnings
   "Vec of warning maps for AGENTS.md / CLAUDE.md read failures.
-   Empty when the file isn't present at all (absence isn't a warning)
-   or when a present file read cleanly."
+   Empty when no file is present at all (absence isn't a warning)
+   or when every present file read cleanly."
   []
   (or (:warnings (current)) []))

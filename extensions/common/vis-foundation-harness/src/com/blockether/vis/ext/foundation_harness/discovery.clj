@@ -18,7 +18,8 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.internal.paths :as paths]))
+   [com.blockether.vis.internal.paths :as paths]
+   [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; =============================================================================
 ;; Frontmatter parsing — minimal, no YAML dependency
@@ -104,6 +105,38 @@
 
 (defn- existing-dir? [^java.io.File d] (and d (.isDirectory d)))
 
+(defn- project-root
+  "The active WORKSPACE root (falls back to process cwd outside a turn
+   binding). `:rel` sources resolve against this, NOT the process cwd —
+   they must follow the session's workspace."
+  ^java.io.File []
+  (try (.getCanonicalFile (workspace/cwd))
+    (catch Throwable _ (io/file (System/getProperty "user.dir")))))
+
+(defn- git-boundary
+  "Nearest ancestor of `start` (inclusive) containing `.git`, or nil
+   when not inside a repository."
+  ^java.io.File [^java.io.File start]
+  (loop [d start]
+    (when d
+      (if (.exists (io/file d ".git")) d (recur (.getParentFile d))))))
+
+(defn- walk-dirs
+  "`<d>/<parts…>` for `d` = workspace root, then each ancestor, up to
+   the git repo root (or the filesystem root when not in a repo) —
+   nearest first, so nearer definitions win the name dedup. pi-style
+   `.agents/skills` ancestor discovery."
+  [parts]
+  (let [start (project-root)
+        stop  (git-boundary start)]
+    (loop [d start, acc []]
+      (if (nil? d)
+        acc
+        (let [acc (conj acc (apply dir d parts))]
+          (if (and stop (= d stop))
+            acc
+            (recur (.getParentFile d) acc)))))))
+
 (defn- plugin-leaf-dirs
   "Every `<cache>/<plugin>/<version>/<leaf>` directory that exists under the
    Claude Code plugin cache — one per installed plugin/version."
@@ -126,7 +159,7 @@
    [:claude   :plugins "agents"]                ; installed plugin caches
    [:pi       :rel     ".pi" "agents"]          ; pi project
    [:pi       :home    ".pi" "agent" "agents"]  ; pi user
-   [:agents   :rel     ".agents" "agents"]      ; agents-standard project
+   [:agents   :rel-walk ".agents" "agents"]     ; agents-standard project (+ ancestors up to git root)
    [:agents   :home    ".agents" "agents"]      ; agents-standard user
    [:opencode :rel     ".opencode" "agent"]     ; opencode project (singular `agent`)
    [:opencode :home    ".config" "opencode" "agent"]])
@@ -138,7 +171,7 @@
    [:claude   :plugins "skills"]
    [:pi       :rel     ".pi" "skills"]          ; pi project
    [:pi       :home    ".pi" "agent" "skills"]  ; pi user (~/.pi/agent/skills)
-   [:agents   :rel     ".agents" "skills"]      ; agents-standard project
+   [:agents   :rel-walk ".agents" "skills"]     ; agents-standard project (+ ancestors up to git root)
    [:agents   :home    ".agents" "skills"]      ; agents-standard user (~/.agents/skills)
    [:opencode :rel     ".opencode" "skill"]
    [:opencode :home    ".config" "opencode" "skill"]])
@@ -148,10 +181,15 @@
   #{:vis :claude :pi :agents :opencode})
 
 (defn- resolve-source
-  "Expand a `[tool kind & parts]` spec into existing `[tool ^File dir]` pairs."
+  "Expand a `[tool kind & parts]` spec into existing `[tool ^File dir]` pairs.
+   `:rel` resolves against the active WORKSPACE root (absolute specs pass
+   through untouched); `:rel-walk` additionally walks the root's ancestors
+   up to the git repo root, nearest first."
   [[tool kind & parts]]
   (->> (case kind
-         :rel     [(apply dir parts)]
+         :rel     (let [f (apply dir parts)]
+                    [(if (.isAbsolute f) f (io/file (project-root) (str f)))])
+         :rel-walk (walk-dirs parts)
          :home    [(apply dir home parts)]
          :plugins (plugin-leaf-dirs (first parts))
          [])
@@ -237,21 +275,39 @@
       e)))
 
 ;; =============================================================================
-;; Cache + accessors
+;; Cache + accessors — marker-revalidated, so a skill/agent added (or edited)
+;; mid-session is picked up without a process restart. The marker is a cheap
+;; stat pass over the candidate files; content is re-parsed only on change.
 ;; =============================================================================
 
 (defonce ^:private cache (atom nil))
 
+(defn- file-mark [^java.io.File f]
+  [(.getPath f) (.lastModified f) (.length f)])
+
+(defn- source-marker []
+  {:root   (.getPath (project-root))
+   :agents (vec (for [[tool ^java.io.File d] (agent-dirs)
+                      ^java.io.File f (md-files d)]
+                  [tool (file-mark f)]))
+   :skills (vec (for [[tool ^java.io.File d] (skill-dirs)
+                      ^java.io.File f (skill-md-files d)]
+                  [tool (file-mark f)]))})
+
 (defn- ensure! []
-  (or @cache
-    (reset! cache {:agents (vec (discover-agents))
-                   :skills (vec (discover-skills))})))
+  (let [m (source-marker)
+        c @cache]
+    (if (and c (= m (:marker c)))
+      c
+      (reset! cache {:marker m
+                     :agents (vec (discover-agents))
+                     :skills (vec (discover-skills))}))))
 
 (defn reload!
   "Rescan the source dirs and refresh the cache. Returns `{:agents :skills}`."
   []
-  (reset! cache {:agents (vec (discover-agents))
-                 :skills (vec (discover-skills))}))
+  (reset! cache nil)
+  (select-keys (ensure!) [:agents :skills]))
 
 (defn agents [] (:agents (ensure!)))
 (defn skills [] (:skills (ensure!)))

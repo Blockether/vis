@@ -29,6 +29,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.prompt-templates :as prompt-templates]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.ext.foundation-harness.discovery :as d]))
 
@@ -139,6 +140,50 @@
      :handler      skill-tool
      :render       render-skill
      :color-role   :tool-color/meta}))
+
+;; =============================================================================
+;; /skill:<name> — user-invokable skill templates (pi-style)
+;; =============================================================================
+
+(defn- skill-template-text
+  "Expanded user-message text for a `/skill:<name> [task]` invocation:
+   the full SKILL.md (once — an already-loaded skill gets a pointer
+   instead of a re-injection, same as skill()) plus the optional task."
+  [env s args]
+  (let [r    (skill-result env (:name s))
+        task (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
+    (if (= "already-loaded" (:status r))
+      (str "Use the skill \"" (:name s) "\" — it was already loaded earlier "
+        "this session; its SKILL.md is above in your context. Follow it."
+        task)
+      (str "Use the skill \"" (:name s) "\" for this task — its full SKILL.md "
+        "follows. Follow these instructions.\n\n"
+        (:body r)
+        (when (seq (:resources r))
+          (str "\n\nBundled resources (read them with the file tools as needed):\n"
+            (str/join "\n" (map #(str "- " %) (:resources r)))))
+        task))))
+
+(defn- skill-template-entries
+  "Every discovered skill as a dynamic prompt template named
+   `skill:<name>`, so the user can type `/skill:<name> [task]` in any
+   channel. Gated by the same toggle as the skill() verb."
+  []
+  (when (toggles/enabled? :vis/harness-skills)
+    (mapv (fn [s]
+            {:name        (str "skill:" (:name s))
+             :description (str "Load skill " (:name s)
+                            (when-let [d (not-empty (str (:description s)))]
+                              (str " — " (clip d 140))))
+             :expand-fn   (fn [env args] (skill-template-text env s args))})
+      (d/skills))))
+
+(prompt-templates/register-provider! ::skills skill-template-entries)
+
+;; `/reload` refresh: force a full rescan of the harness agent/skill source
+;; dirs (the marker cache already catches file edits; the hook also covers
+;; sources a stat can miss and gives the user an explicit big hammer).
+(extension/register-reload-hook! ::discovery d/reload!)
 
 ;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
