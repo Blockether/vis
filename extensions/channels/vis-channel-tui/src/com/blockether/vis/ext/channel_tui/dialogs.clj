@@ -2005,7 +2005,7 @@
 (defn- format-session-date
   [v]
   (if-let [date (date-value v)]
-    (let [fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
+    (let [^SimpleDateFormat fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
     "-"))
@@ -2015,14 +2015,14 @@
 (defn- format-session-day
   [v]
   (if-let [date (date-value v)]
-    (let [fmt (SimpleDateFormat. "yyyy-MM-dd" Locale/ROOT)]
+    (let [^SimpleDateFormat fmt (SimpleDateFormat. "yyyy-MM-dd" Locale/ROOT)]
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
     "-"))
 (defn- format-session-time
   [v]
   (if-let [date (date-value v)]
-    (let [fmt (SimpleDateFormat. "HH:mm" Locale/ROOT)]
+    (let [^SimpleDateFormat fmt (SimpleDateFormat. "HH:mm" Locale/ROOT)]
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
     "-"))
