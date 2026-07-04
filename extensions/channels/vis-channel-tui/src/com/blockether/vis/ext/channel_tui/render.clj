@@ -2507,8 +2507,15 @@
    without busting every other message's cached height — the SAME per-turn
    scoping this file already uses for its projection cache."
   [session-id message detail-expansions]
-  (if (:vis.channel-tui/expand-all-details? detail-expansions)
-    :expand-all
+  (cond
+    ;; User bubbles render plain prose — no disclosure nodes, so no expansion
+    ;; state can affect their height. WITHOUT this constant key, a user
+    ;; message falls into the no-turn-token branch below, whose key includes
+    ;; EVERY expansion in the session — one fold click then busts the
+    ;; height/estimate caches of every user bubble in the transcript.
+    (not= :assistant (:role message)) []
+    (:vis.channel-tui/expand-all-details? detail-expansions) :expand-all
+    :else
     (turn-detail-expansions-key {:session-id session-id,
                                  :session-turn-id (or (:client-turn-id message)
                                                     (:session-turn-id message)),

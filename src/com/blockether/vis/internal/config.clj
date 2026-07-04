@@ -90,25 +90,40 @@
    PrintStream) already flushes explicitly, so nothing can sit in the
    buffer across frames."
   ^OutputStream [^OutputStream raw]
-  (let [buf (ByteArrayOutputStream. (* 64 1024))]
+  (let [initial-capacity (* 64 1024)
+        ;; `ByteArrayOutputStream/reset` keeps the grown backing array forever,
+        ;; so one outsized frame (full repaint on a huge terminal) would pin
+        ;; megabytes. Over the retention cap the buffer is REPLACED after the
+        ;; flush instead of reset. Mutable holder because the swap needs a new
+        ;; instance; all access goes through `lock`.
+        retain-capacity (* 512 1024)
+        lock (Object.)
+        buf-holder (java.util.concurrent.atomic.AtomicReference.
+                     (ByteArrayOutputStream. initial-capacity))]
     (proxy [OutputStream] []
       (write
         ([b]
          (if (bytes? b)
-           (do (locking buf (.write buf ^bytes b 0 (alength ^bytes b)))
+           (do (locking lock
+                 (.write ^ByteArrayOutputStream (.get buf-holder) ^bytes b 0 (alength ^bytes b)))
              (when (cursor-report-query? b)
                (.flush ^OutputStream this)))
-           (locking buf (.write buf (int b)))))
+           (locking lock (.write ^ByteArrayOutputStream (.get buf-holder) (int b)))))
         ([b off len]
-         (locking buf (.write buf ^bytes b (int off) (int len)))))
+         (locking lock
+           (.write ^ByteArrayOutputStream (.get buf-holder) ^bytes b (int off) (int len)))))
       (flush []
-        (locking buf
-          (when (pos? (.size buf))
-            (.write raw sync-update-begin)
-            (.writeTo buf raw)
-            (.write raw sync-update-end)
-            (.reset buf))
-          (.flush raw)))
+        (locking lock
+          (let [^ByteArrayOutputStream buf (.get buf-holder)
+                n (.size buf)]
+            (when (pos? n)
+              (.write raw sync-update-begin)
+              (.writeTo buf raw)
+              (.write raw sync-update-end)
+              (if (> n retain-capacity)
+                (.set buf-holder (ByteArrayOutputStream. initial-capacity))
+                (.reset buf)))
+            (.flush raw))))
       (close []
         (.flush ^OutputStream this)
         (.close raw)))))
