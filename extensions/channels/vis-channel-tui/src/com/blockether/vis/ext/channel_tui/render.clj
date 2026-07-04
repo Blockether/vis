@@ -3770,11 +3770,12 @@
                   (when (and (= "commit" subcmd) (str/starts-with? b "> "))
                     (-> b str/split-lines first (subs 2) str/trim not-empty)))
         ;; The tool summary now lifts the commit subject onto its headline
-        ;; (`commit -m — subject`). In the grouped band that subject already
-        ;; rides the collapsed chip AND the expanded blockquote body, so strip
-        ;; it from the `$ …` row to avoid showing it three times.
-        headline (if (and subject (str/includes? (str summary) (str " \u2014 " subject)))
-                   (str/replace (str summary) (str " \u2014 " subject) "")
+        ;; (`commit -m — subject`, possibly clipped). In the grouped band that
+        ;; subject already rides the collapsed chip AND the expanded blockquote
+        ;; body, so strip it from the `$ …` row — from the em-dash marker to end,
+        ;; so a CLIPPED headline subject strips just as cleanly as a full one.
+        headline (if-let [dash (and subject (str/index-of (str summary) " \u2014 "))]
+                   (str/trimr (subs (str summary) 0 (long dash)))
                    summary)]
     {:subcommand subcmd
      :failed?    failed?

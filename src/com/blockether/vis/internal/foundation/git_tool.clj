@@ -98,8 +98,11 @@
 ;; Render — the op-card for a `git` call: `<args>` headline (with an
 ;; exit/timeout note) + fenced stdout / stderr. The GIT badge already names
 ;; the command, so the headline shows only the ARGS — no redundant `$ git`.
-;; Like shell_run's renderer, git writes normal output to stderr on success
-;; (progress, hints), so the
+;; A `commit -m <msg>` is special-cased: the message is lifted OUT of the
+;; headline (which stays `commit -m`) and rendered as a markdown blockquote at
+;; the top of the body, so the real message reads as a quoted block instead of
+;; a crammed argument. Like shell_run's renderer, git writes normal output to
+;; stderr on success (progress, hints), so the
 ;; `stderr:` label rides along only when the command actually FAILED.
 ;; =============================================================================
 
@@ -107,20 +110,90 @@
   [s]
   (when (seq (str s)) (str "```\n" s "\n```")))
 
+(defn- commit-message
+  "The commit MESSAGE this git call authored, or nil for a non-commit. Joins
+   every `-m`/`--message` value (git treats repeated `-m` as separate
+   paragraphs) plus the inline `--message=…` form, so `commit -m subject -m body`
+   reads back as the real multi-paragraph message."
+  [args]
+  (when (= "commit" (first args))
+    (not-empty
+      (str/join "\n\n"
+        (loop [xs (rest args) acc []]
+          (if-let [a (first xs)]
+            (cond
+              (#{"-m" "--message"} a)
+              (recur (drop 2 xs) (cond-> acc (some? (second xs)) (conj (second xs))))
+              (str/starts-with? (str a) "--message=")
+              (recur (rest xs) (conj acc (subs a (count "--message="))))
+              :else (recur (rest xs) acc))
+            acc))))))
+
+(defn- strip-commit-message
+  "The commit arg vector with the `-m`/`--message` VALUES removed (the flag
+   itself stays) so the headline reads `commit -m` instead of cramming the whole
+   message onto one line — the message renders as its own quoted block below."
+  [args]
+  (loop [xs args out []]
+    (if-let [a (first xs)]
+      (cond
+        (#{"-m" "--message"} a)                 (recur (drop 2 xs) (conj out a))
+        (str/starts-with? (str a) "--message=") (recur (rest xs) (conj out "--message"))
+        :else                                   (recur (rest xs) (conj out a)))
+      out)))
+
+(defn- quote-block
+  "Render `s` as a markdown blockquote (each line prefixed `> `, blank lines a
+   bare `>`) so the channel paints it as one solid `│ ` bar — the commit message
+   reads as a quoted block instead of a crammed argument."
+  [s]
+  (->> (str/split-lines (str/trim (str s)))
+    (map (fn [l] (if (str/blank? l) ">" (str "> " l))))
+    (str/join "\n")))
+
+(defn- clip-subject
+  "Clamp a commit SUBJECT to `max-len` chars for the one-line headline, adding
+   a single-glyph ellipsis, so a really long subject (or a run-on first
+   paragraph) can't blow out the collapsed card. The FULL message still renders
+   untruncated as the blockquote body below, so nothing is lost — only the
+   headline preview is bounded."
+  ([s] (clip-subject s 72))
+  ([s max-len]
+   (let [s (str/trim (str s))]
+     (if (> (count s) max-len)
+       (str (str/trimr (subs s 0 (max 0 (dec max-len)))) "\u2026")
+       s))))
+
 (defn- render-git-result
   [r]
-  (let [exit    (get r "exit")
+  (let [args    (get r "args")
+        exit    (get r "exit")
         failed? (or (get r "timed_out") (and exit (not (zero? exit))))
         note    (cond
                   (get r "timed_out")           " (timed out)"
                   (and exit (not (zero? exit)))  (str " (exit " exit ")")
                   :else                          "")
-        body    (->> [(fence (get r "stdout"))
+        msg     (commit-message args)
+        ;; A commit lifts its SUBJECT (first message line) onto the headline
+        ;; after an em-dash — `commit — <subject>` — so the collapsed card
+        ;; shows WHAT was committed while the full message still renders as the
+        ;; blockquote body below. The now-redundant `-m` flags are dropped (the
+        ;; subject already says it's a message commit); any OTHER flag
+        ;; (`--amend`, `-a`, …) survives. Dropped on failure so the `(exit N)`
+        ;; note stays the headline's focus.
+        subject (some-> msg str/split-lines first str/trim not-empty)
+        show?   (and subject (not failed?))
+        base    (cond->> (if msg (strip-commit-message args) args)
+                  show? (remove #{"-m" "--message"}))
+        head    (cond-> (str/join " " base)
+                  show? (str " \u2014 " (clip-subject subject)))
+        body    (->> [(when msg (quote-block msg))
+                      (fence (get r "stdout"))
                       (when-let [e (fence (get r "stderr"))]
                         (if failed? (str "stderr:\n" e) e))]
                   (remove nil?)
                   (str/join "\n\n"))]
-    {:summary (str (str/join " " (get r "args")) note)
+    {:summary (str head note)
      :body    (when (seq body) body)}))
 
 ;; =============================================================================
