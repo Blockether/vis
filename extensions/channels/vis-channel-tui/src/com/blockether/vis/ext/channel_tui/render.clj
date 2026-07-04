@@ -3041,7 +3041,7 @@
         ;; breathing room and the web card's `gap` between summary + body).
         ;; The markdown IR drops any leading blank in `body-text`, so we
         ;; add exactly one spacer here regardless.
-        head-line (str label (when summary (str "  " summary)))
+        head-line (str (when (seq (str label)) (str "**" label "**")) (when summary (str "  " summary)))
         ->result  (fn [e]
                     (let [l (str (:line e))
                           stripped (or (second (split-structural-line-marker l)) l)]
@@ -3083,77 +3083,6 @@
         (vec (concat headline
                body-rows
                [{:line (str result-marker ""), :meta nil}]))))))
-(defn- cat-form-path
-  "The file PATH a `cat` op-card read — from the raw `:result` when present,
-   else parsed out of the leading `` `path` `` chip of the summary (survives a
-   DB round-trip that flattens the anchors). nil for a non-cat / pathless form."
-  [form]
-  (when (= "cat" (:vis/tool-name form))
-    (or (get-in form [:result :path])
-      (some-> (:result-summary form) str (->> (re-find #"^`([^`]+)`")) second))))
-
-(defn- error-form?
-  "A form the gateway marked failed (`:success? false`)."
-  [form]
-  (and (some? (:success? form)) (not (:success? form))))
-
-(defn- merge-cat-summaries
-  "Fold N `cat` summaries (`` `path` · L… · N lines ``) for the SAME path into
-   ONE — the shared path chip, then every read's LINE SPAN, then the SUMMED line
-   count (only when every merged read carried one, else omitted). So two reads
-   of the same file render as `` `path` · L3086-3130 · L3340-3390 `` instead of
-   two look-alike cards."
-  [summaries]
-  (let [parts    (map #(str/split (str %) #" · ") summaries)
-        chip     (ffirst parts)
-        tails    (mapcat rest parts)
-        count-re #"^(\d+) lines?$"
-        counts   (keep #(some-> (re-matches count-re %) second parse-long) tails)
-        spans    (remove #(re-matches count-re %) tails)
-        total    (reduce + 0 counts)
-        span-str (str/join " · " spans)
-        count-str (when (and (seq counts) (= (count counts) (count summaries)))
-                    (str total " line" (when (not= 1 total) "s")))
-        tail     (str/join " · " (remove str/blank? [span-str count-str]))]
-    (if (str/blank? tail) chip (str chip " · " tail))))
-
-(defn- merge-cat-forms
-  "Collapse a RUN of adjacent `cat` op-cards on the same file into one synthesized
-   form: the combined multi-span summary plus every read's body slice stacked
-   under the single headline. The existing card machinery renders it as ONE
-   collapsible op-card."
-  [forms]
-  (let [f0        (first forms)
-        summary   (merge-cat-summaries (map :result-summary forms))
-        body      (str/join "\n" (keep (comp not-empty str :result-render) forms))
-        anchors   (reduce merge {} (map #(get-in % [:result :anchors]) forms))
-        r0        (:result f0)]
-    (cond-> (assoc f0
-              :result-summary summary
-              :result-render body)
-      ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
-      ;; `cat-form-path` recovers the path from the summary chip precisely
-      ;; BECAUSE `:result` is no longer a map (anchors flattened) — it comes
-      ;; back as the rendered string (or nil). Assoc'ing onto that string
-      ;; threw ClassCastException every frame, freezing the whole TUI (the
-      ;; render loop keeps the last good frame and re-throws forever). The
-      ;; path/spans already live in the merged summary, so a non-map result
-      ;; simply carries through untouched.
-      (map? r0) (assoc :result (assoc r0 :anchors anchors)))))
-
-(defn- coalesce-cat-runs
-  "Merge each maximal run of adjacent, successful `cat` op-cards reading the SAME
-   path into a single card; every other form passes through untouched. Keeps the
-   downstream per-form flush/padding logic unchanged — a merged run is still one
-   chrome-hidden native card."
-  [forms-vec]
-  (let [key-fn (fn [f]
-                 (if-let [p (and (not (error-form? f)) (cat-form-path f))]
-                   [::cat p]
-                   [::solo (gensym)]))]
-    (into []
-      (map (fn [grp] (if (next grp) (merge-cat-forms grp) (first grp))))
-      (partition-by key-fn forms-vec))))
 
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
@@ -3544,7 +3473,7 @@
      ;; as block-level op rows). `forms` here = proof envelopes, the
      ;; canonical meaning; the rendered card is the display block.
      block-code-body (when (seq forms)
-                       (let [forms-vec (coalesce-cat-runs (vec forms))
+                       (let [forms-vec (vis/coalesce-forms (vec forms))
                              ;; A code-less native op-card (cat/rg/patch/…, not
                              ;; python_execution, no error) hides its code chrome
                              ;; and paints ONLY the op rows — which already open

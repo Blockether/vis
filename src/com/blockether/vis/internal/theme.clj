@@ -188,7 +188,7 @@
    ;; infrastructure, not a highlight.
    :tool-color-shell [100 116 139]
    :tool-color-meta [20 135 135]
-   :tool-color-test [190 60 130]
+   :tool-color-test [79 70 229]
    :iteration-header-fg [170 170 170]
    :iteration-header-bg [244 244 244]
    :answer-sep-fg [190 190 190]
@@ -294,7 +294,7 @@
    ;; Slate shell badge (see light palette) — no khaki.
    :tool-color-shell [148 163 184]
    :tool-color-meta [45 212 191]
-   :tool-color-test [244 114 182]
+   :tool-color-test [129 140 248]
    :iteration-header-fg [148 148 148]
    :iteration-header-bg [30 30 30]
    :answer-sep-fg [100 116 139]

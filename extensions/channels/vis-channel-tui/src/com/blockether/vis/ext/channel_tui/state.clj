@@ -794,9 +794,26 @@
                 ;; Pushed in by the render thread; intentionally does NOT bump
                 ;; render-version (see no-render-bump-events).
     (assoc db :layout layout)))
+(defn- park-scroll-for-toggle
+  "Pin the viewport before a disclosure toggle mutates message heights.
+
+   In FOLLOW mode the painter pins the BOTTOM of the transcript, so
+   expanding a fold pushes every row above it UP by the body height — the
+   clicked row runs away from the cursor (worse the bigger the result
+   body). Parking at the currently painted offset flips the pin to the
+   TOP-of-viewport message (the layout's prev-offsets anchoring), so the
+   clicked row stays put and the body grows DOWNWARD off-screen — the
+   browser `<details>` behaviour. Already-parked scrolls are left alone;
+   they anchor correctly as-is. No-op before the first paint (no layout)."
+  [db]
+  (let [eff (get-in db [:layout :eff-scroll])]
+    (if (and (not (scroll/scrolled-up? (:scroll db))) (some? eff))
+      (assoc db :scroll (scroll/parked (long eff)))
+      db)))
 (reg-event-db :toggle-detail
   (fn [db [_ session-id node-id explicit-expand?]]
-    (let [k [(str session-id) (str node-id)]]
+    (let [k [(str session-id) (str node-id)]
+          db (park-scroll-for-toggle db)]
       (if (some? explicit-expand?)
                     ;; Caller knows the row's CURRENT effective state (from the click
                     ;; region's `:collapsed?`) and passes the desired new expanded state.

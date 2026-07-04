@@ -543,8 +543,10 @@
    sequence of SEPARATE 2-column box-drawing tables — one self-contained box per
    section, each with its own `┌┐` top rule, a bold full-width `:title` banner, a
    `┬`-split header rule, the `│`-framed `key-w`/`desc-w` cells with `┼` separators
-   between rows, and its own `└┴┘` bottom rule. A blank spacer row sits BETWEEN the
-   tables so the sections read as distinct cards. `bd` is the border color,
+   between rows, and its own `└┴┘` bottom rule. The tables stack FLUSH — no
+   blank spacer between them — so the sections read as distinct, adjacent cards
+   (the same tight stacking consecutive code blocks get in the chat renderer).
+   `bd` is the border color,
    `key-fg`/`desc-fg` the cell text colors, `title-fg` the banner color.
 
    Descriptions WIDER than `desc-w` WRAP onto continuation lines (word-wrapped
@@ -581,10 +583,11 @@
                           (apply concat
                             (interpose [(cols "├" "┼" "┤")]
                               (mapv row-block rows)))
-                          [(cols "└" "┴" "┘")]))
-        blank [["" bd false]]]
-    (vec (apply concat
-           (interpose [blank] (mapv section-lines sections))))))
+                          [(cols "└" "┴" "┘")]))]
+    ;; Sections stack FLUSH (each its own bordered box, no blank spacer
+    ;; between them) — the same tight stacking consecutive code blocks get
+    ;; in the shared chat/gateway renderer.
+    (vec (apply concat (mapv section-lines sections)))))
 
 (defn scrollable-dialog-body!
   "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:
