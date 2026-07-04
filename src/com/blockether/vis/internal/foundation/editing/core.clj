@@ -1281,20 +1281,40 @@
      :truncated-by (if (>= (count items) limit) :limit :end-of-results)}))
 
 (defn- find-tool
-  "Fuzzy file/path discovery powered by fff (bound as `find_files`; `find` is a
-   back-compat alias).
-     await find_files(\"workspace rift deps\")
-     await find_files(\"renderer\", {\"paths\": [\"src\"], \"limit\": 20})
-     await find_files({\"query\": \"lazy native download\", \"paths\": [\".\"]})
+  "Find files by NAME/PATH — fuzzy subsequence match over the file TREE (fff;
+   bound as `find_files`, `find` is a back-compat alias). It matches FILENAMES
+   and PATHS, NOT file contents. The `query` is a filename fragment or a couple
+   of distinctive path words — SHORT, e.g.:
+     await find_files(\"render\")
+     await find_files(\"channel_tui render\", {\"paths\": [\"src\"], \"limit\": 20})
+     await find_files({\"query\": \"editing/core\", \"paths\": [\".\"]})
 
-   Use find_files to locate likely files/modules when you do NOT know the exact path.
-   Use rg for exact content/symbol/error-string search, cat once you know the path,
-   and ls only when you need a literal directory listing.
+   Do NOT pass a natural-language phrase describing what code DOES (e.g.
+   \"native tool call visualization render\") — that describes CONTENT, matches
+   no filename, and returns nothing. For text/symbols/error-strings INSIDE
+   files use `rg`; use `find_files` only to locate a file when you half-know
+   its name; `cat` once you know the path; `ls` for a literal directory listing.
 
-   Returns {\"items\": [{\"path\": P, \"file_name\": N, ...}],
-   \"paths\": [P...], \"item_count\", \"query\", \"searched_paths\", \"limit\"}."
+   Returns {\"items\": [{\"path\": P, \"file_name\": N, ...}], \"paths\": [P...],
+   \"item_count\", \"query\", \"searched_paths\", \"limit\"} — plus a \"hint\" when
+   nothing matched."
   [& args]
-  (let [{:keys [query searched-paths limit item-count truncated-by] :as out} (find-search args)]
+  (let [{:keys [query searched-paths limit item-count truncated-by] :as out} (find-search args)
+        ;; A 0-result find is almost always a MISUSE: the model passed a
+        ;; content/concept phrase to a FILENAME matcher. Steer it — a bare
+        ;; "0 matches" just makes it retry the same wrong query (the exact loop
+        ;; the user hit). Only fires on empty so a normal hit set stays lean.
+        multiword? (> (count (str/split (str/trim (str query)) #"\s+")) 2)
+        out (cond-> out
+              (zero? (long (or item-count 0)))
+              (assoc :hint
+                (str "No FILENAME/PATH matched \"" query "\". find_files matches file "
+                  "NAMES, not contents. "
+                  (if multiword?
+                    (str "That query looks like CONTENT (a phrase describing code) — "
+                      "search inside files with rg(\"a distinctive term\") instead, "
+                      "or shorten this to a single filename fragment.")
+                    "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
     (tool-success
       {:op :find_files
        :path (first searched-paths)
@@ -2520,14 +2540,19 @@
                         {:type :ext.foundation.editing/invalid-rg-arity
                          :expected '([query] [query opts] [spec-map] [& kwargs])
                          :got args})))
-        {:keys [paths include is_files_only context limit]} (coerce-rg-spec spec)
+        {:keys [needles paths include is_files_only context limit]} (coerce-rg-spec spec)
         out (rg-search spec)
         mode (if is_files_only :files-only :content)
         ;; NO `:spec` echo in the model-facing payload: echoing the input
         ;; map back taught models a phantom "spec" INPUT key (`rg({...,
         ;; "spec": {}})`). The spec stays host-side on `:metadata` below
         ;; for channel labels.
+        ;; `:needles` = the parsed OR search terms, carried on the result so the
+        ;; op-card HEADLINE can name WHAT was searched (a bare "N hits in M
+        ;; files" is useless without it). Model-facing but harmless — it is the
+        ;; query the model itself sent, echoed back as data it can re-read.
         shared {:mode         mode
+                :needles      needles
                 :truncated-by (:truncated-by out)
                 :paths        paths
                 :limit        limit}
@@ -3131,11 +3156,19 @@
    `{:text :before :after}` context map (see `rg-hit-rows`)."
   [r]
   (let [fc    (or (:file_count r) 0)
-        files-word (str fc " file" (when (not= 1 fc) "s"))]
+        files-word (str fc " file" (when (not= 1 fc) "s"))
+        ;; NAME what was searched on the headline — a bare "N hits in M files"
+        ;; is useless without the term(s). Each OR needle is backtick-quoted
+        ;; (the same chip style paths use); multiple terms join with " OR ".
+        ;; `:needles` is snake-safe (no hyphen) across the render boundary.
+        needles (seq (:needles r))
+        query-chip (when needles
+                     (str/join " OR " (map #(str "`" % "`") needles)))
+        with-query (fn [tail] (if query-chip (str query-chip " · " tail) tail))]
     (cond
       ;; files-only — the matching FILES are the result; there are no per-line hits.
       (contains? r :files)
-      {:summary files-word
+      {:summary (with-query files-word)
        :body    (when-let [files (seq (:files r))]
                   (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
       ;; content (default) — per-line hits grouped by file.
@@ -3147,7 +3180,7 @@
                         (mapcat (fn [[k v]] (rg-hit-rows k v))
                           (sort-by (comp rg-anchor-lineno-long key) hits)))
                       "\n```"))]
-        {:summary (str hc " hit" (when (not= 1 hc) "s") " in " files-word)
+        {:summary (with-query (str hc " hit" (when (not= 1 hc) "s") " in " files-word))
          :body    (when (seq files) (str "\n" (str/join "\n\n" files)))}))))
 
 (defn- render-patch-result
@@ -3189,10 +3222,16 @@
    `{:paths [path…] :item_count :query}`."
   [r]
   (let [n (or (:item_count r) (count (:paths r)) 0)
-        q (some-> (:query r) str not-empty)]
+        q (some-> (:query r) str not-empty)
+        hint (some-> (:hint r) kw->str not-empty)]
     {:summary (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\"")))
-     :body    (when (seq (:paths r))
-                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
+     :body    (cond
+                (seq (:paths r))
+                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```")
+                ;; 0 results: show the steer (filename-vs-content) instead of a
+                ;; blank card — the same hint the model reads, so the user sees
+                ;; WHY it found nothing.
+                hint (str "\n" hint))}))
 
 (defn- render-outline-result
   "outline → `{:summary :body}`: a path headline (like cat) + the skeleton

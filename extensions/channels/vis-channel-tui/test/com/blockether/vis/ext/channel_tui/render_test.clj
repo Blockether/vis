@@ -5,6 +5,7 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
+   [com.blockether.vis.internal.iteration :as iteration]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -12,9 +13,42 @@
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
-(def ^:private coalesce-cat-runs @#'render/coalesce-cat-runs)
+(def ^:private coalesce-forms vis/coalesce-forms)
 
-(defdescribe coalesce-cat-runs-test
+(defn- native-form [tool summary render]
+  (cond-> {:vis/tool-name tool :success? true :code ""
+           :result-summary summary :tool-color-role :tool-color/search :result {}}
+    render (assoc :result-render render)))
+
+(defn- render-forms [forms]
+  (format-iteration-entry
+    (iteration/canonicalize {:position 0 :thinking nil :forms forms})
+    80 1 {}))
+
+(defdescribe native-card-flush-spacing-test
+  ;; Two adjacent code-less native op-cards (cat/rg/ls/…) must stack FLUSH — no
+  ;; blank row between their headlines. The flush logic (render/…block-code-body)
+  ;; drops the trailing pad of the earlier card and the leading breathe of the
+  ;; next when both are chrome-hidden natives. Guards the "two native calls
+  ;; shouldn't have a blank line between them" contract.
+  (it "two summary-only native cards render their headlines on ADJACENT lines"
+    (let [lines (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
+                               (native-form "rg" "`y` · 0 hits in 0 files" nil)])
+          head-idxs (keep-indexed (fn [i l] (when (str/includes? (str l) "hits in") i)) lines)]
+      (expect (= 2 (count head-idxs)))
+      ;; adjacent — index delta 1 means NO row (blank or otherwise) between them
+      (expect (= 1 (- (second head-idxs) (first head-idxs))))))
+  (it "a summary-only native card followed by one WITH a body still stacks flush"
+    (let [lines (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
+                               (native-form "cat" "`a.clj` · L1-10" "line one\nline two")])
+          head-idxs (keep-indexed (fn [i l]
+                                    (when (or (str/includes? (str l) "hits in")
+                                            (str/includes? (str l) "L1-10")) i))
+                      lines)]
+      (expect (= 2 (count head-idxs)))
+      (expect (= 1 (- (second head-idxs) (first head-idxs)))))))
+
+(defdescribe coalesce-forms-test
   ;; Regression: a DB-restored session whose trailer had >=2 adjacent `cat`
   ;; reads of the SAME file froze the whole TUI. `cat-form-path` groups them by
   ;; the summary chip (it recovers the path from the summary PRECISELY because
@@ -27,7 +61,7 @@
                   :result-render "line one\nline two" :result "line one\nline two"}
                  {:vis/tool-name "cat" :result-summary "`a.clj` · L40-50"
                   :result-render "line forty" :result "line forty"}]
-          out (coalesce-cat-runs forms)]
+          out (coalesce-forms forms)]
       (expect (= 1 (count out)))                                  ; the run collapsed
       (expect (str/includes? (:result-summary (first out)) "L1-10"))
       (expect (str/includes? (:result-summary (first out)) "L40-50"))
@@ -38,13 +72,37 @@
                   :result-render "x" :result {:path "a.clj" :anchors {"1:aa" "x"}}}
                  {:vis/tool-name "cat" :result-summary "`a.clj` · L40-50"
                   :result-render "y" :result {:path "a.clj" :anchors {"40:bb" "y"}}}]
-          out (coalesce-cat-runs forms)]
+          out (coalesce-forms forms)]
       (expect (= 1 (count out)))
       (expect (= {"1:aa" "x" "40:bb" "y"} (get-in (first out) [:result :anchors])))))
   (it "leaves a solo cat form and non-cat forms untouched"
     (let [forms [{:vis/tool-name "cat" :result-summary "`a.clj` · L1-10" :result "solo"}
                  {:vis/tool-name "rg" :result-summary "5 hits" :result "hits"}]
-          out (coalesce-cat-runs forms)]
+          out (coalesce-forms forms)]
+      (expect (= 2 (count out)))))
+  (it "folds adjacent same-file patch forms into one multi-diff card"
+    (let [forms [{:vis/tool-name "patch" :success? true :result-summary "update `a.clj`"
+                  :result-render "```diff\n+ one\n```" :result {:path "a.clj"}}
+                 {:vis/tool-name "patch" :success? true :result-summary "update `a.clj`"
+                  :result-render "```diff\n+ two\n```" :result {:path "a.clj"}}]
+          out (coalesce-forms forms)]
+      (expect (= 1 (count out)))
+      (expect (= "update `a.clj`" (:result-summary (first out))))
+      (expect (str/includes? (:result-render (first out)) "+ one"))
+      (expect (str/includes? (:result-render (first out)) "+ two"))))
+  (it "keeps a failed patch separate from an adjacent successful one on the same file"
+    (let [forms [{:vis/tool-name "patch" :success? false :result-summary "update `a.clj`"
+                  :result-render "boom" :result {:path "a.clj"}}
+                 {:vis/tool-name "patch" :success? true :result-summary "update `a.clj`"
+                  :result-render "ok" :result {:path "a.clj"}}]
+          out (coalesce-forms forms)]
+      (expect (= 2 (count out)))))
+  (it "does not merge a cat and a patch on the same file"
+    (let [forms [{:vis/tool-name "cat" :success? true :result-summary "`a.clj` · L1-10"
+                  :result-render "body" :result {:path "a.clj"}}
+                 {:vis/tool-name "patch" :success? true :result-summary "update `a.clj`"
+                  :result-render "```diff\n+ x\n```" :result {:path "a.clj"}}]
+          out (coalesce-forms forms)]
       (expect (= 2 (count out))))))
 
 (defdescribe tool-color-role-coverage-test
