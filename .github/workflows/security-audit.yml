@@ -1,0 +1,120 @@
+name: Security audit (clj-watson)
+
+# Software Composition Analysis (SCA) for the whole vis monorepo.
+#
+# clj-watson (https://github.com/clj-holmes/clj-watson) resolves the FULL
+# dependency graph of the root deps.edn *plus* every :local/root extension
+# (`-a '*'` pulls in all aliases, and each extension drags in its own deps),
+# then matches every direct + transitive dependency against a vulnerability
+# database and reports known CVEs.
+#
+# Strategy: `github-advisory` — queries the GitHub Advisory Database over the
+# GraphQL API using the workflow's built-in GITHUB_TOKEN. Zero setup, no
+# secrets to provision, no multi-minute NVD database download. (The alternative
+# `dependency-check`/NIST-NVD strategy is documented in AUDIT.md for teams that
+# want the deeper CVSS coverage — it needs an NVD_API_KEY secret.)
+#
+# Findings are emitted as SARIF and uploaded to GitHub code scanning, so they
+# show up under the repository Security tab, and archived as a build artifact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/deps.edn'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/deps.edn'
+      - '.github/workflows/security-audit.yml'
+  # Fresh advisories land daily — re-scan the pinned dependency set weekly even
+  # when nothing in the repo changed.
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write # required to upload SARIF to code scanning
+
+jobs:
+  clj-watson:
+    name: clj-watson SCA scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      # clj-watson is a git tool dep (~/.gitlibs); its transitive libs land in
+      # ~/.m2. Cache both so repeat runs skip the resolve/download.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: clj-watson-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: clj-watson-${{ runner.os }}-
+
+      - name: Run clj-watson dependency scan
+        env:
+          # github-advisory strategy authenticates against the GitHub GraphQL
+          # Advisory API with this automatically-provisioned token.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # -a '*'  scan every alias (test/build/native + extension locals)
+          # -o sarif emits SARIF 2.1.0 to stdout, followed by a plain-text
+          #          "Dependencies scanned / Vulnerable dependencies found"
+          #          summary — capture raw, then slice out just the JSON object.
+          clojure -M:clj-watson scan -p deps.edn -a '*' \
+            -t github-advisory -o sarif > clj-watson.raw 2> clj-watson.stderr || true
+          # Keep only the top-level JSON object (drops the trailing summary lines;
+          # nested braces are indented, so ^} matches only the closing brace).
+          sed -n '/^{/,/^}/p' clj-watson.raw > clj-watson.sarif
+          {
+            echo "## clj-watson dependency scan"
+            echo ''
+            grep -E '^(Dependencies scanned|Vulnerable dependencies found):' clj-watson.raw \
+              || echo 'No summary produced — see the raw log below.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Fail-fast surface for humans reading the job log.
+          grep -E '^(Dependencies scanned|Vulnerable dependencies found):' clj-watson.raw || true
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true # a repo without code scanning still gets the artifact below
+        with:
+          sarif_file: clj-watson.sarif
+          category: clj-watson
+
+      - name: Archive scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clj-watson-sarif
+          path: |
+            clj-watson.sarif
+            clj-watson.raw
+            clj-watson.stderr
+          retention-days: 90
+
+      # OPT-IN CI GATE — uncomment to block PRs on new advisories once the
+      # baseline is clean. `-f` fails on any finding; swap for
+      # `-c 7.0` to fail only at/above a CVSS threshold.
+      #
+      # - name: Fail on vulnerabilities
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     clojure -M:clj-watson scan -p deps.edn -a '*' \
+      #       -t github-advisory -o stdout-simple -f

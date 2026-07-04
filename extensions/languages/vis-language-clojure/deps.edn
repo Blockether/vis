@@ -19,6 +19,15 @@
          ;; clj-kondo: static analysis / linter, run via its programmatic API
          ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
          clj-kondo/clj-kondo     {:mvn/version "2026.05.25"}
+         ;; --- Jackson override (audit) ---
+         ;; clj-kondo -> cheshire 5.13.0 drags in Jackson 2.17.0 transitively
+         ;; (vis itself uses charred for JSON, not cheshire). Pin the whole
+         ;; Jackson 2.x set to one deliberate, recent, patched version so the
+         ;; security audit sees a single controlled coordinate instead of a
+         ;; transitive accident. core/smile/cbor MUST stay on the same version.
+         com.fasterxml.jackson.core/jackson-core            {:mvn/version "2.19.4"}
+         com.fasterxml.jackson.dataformat/jackson-dataformat-smile {:mvn/version "2.19.4"}
+         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor  {:mvn/version "2.19.4"}
          ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
          ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
          ;; delimiter-error detection).
