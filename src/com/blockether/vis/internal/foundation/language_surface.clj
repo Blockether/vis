@@ -238,7 +238,7 @@
       {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
        :body    (fence nil (str/join "\n"
                              (for [f files]
-                               (str "`" (get f "path") "` "
+                               (str (get f "path") " "
                                  (if (get f "changed") "(changed)" "(no change)")))))})
     (let [changed (get r "changed")
           note    (if changed "(changed)" "(no change)")]
