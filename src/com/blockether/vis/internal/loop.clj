@@ -2400,9 +2400,14 @@
   "EXTERNAL-EDGE ADAPTER (svar wire): svar's JSON parse may hand tool args with
    keyword OR string keys depending on the provider adapter. This is the ONE
    sanctioned conversion point — everything downstream (synth-call, py-literal,
-   the sandbox) is strings-only."
+   the sandbox) is strings-only. `normalize-dict-key` additionally strips a
+   model-drift leading colon (`\":path\"`) so positional extraction still finds
+   the key and the call just works."
   [input]
-  (into {} (map (fn [[k v]] [(if (keyword? k) (name k) (str k)) v])) (or input {})))
+  (into {}
+    (map (fn [[k v]]
+           [(env/normalize-dict-key (if (keyword? k) (name k) (str k))) v]))
+    (or input {})))
 
 (defn- synth-call
   "Synthesize `py-name(args…)` from a native tool's `:call` SHAPE map + the tool

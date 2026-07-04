@@ -58,6 +58,21 @@
             :value                  x
             :path                   (vec path)})))
 
+(defn normalize-dict-key
+  "Model-input hygiene at the ONE inbound conversion: a dict key spelled
+   `\":from_anchor\"` is still a STRING (the model drifting into colon
+   spelling while reading keyword-heavy source), so strip the single leading
+   colon when an identifier char follows and the call just works — no
+   lecture, no failure. Data keys are untouched: anchors (`\"44:f14\"`) start
+   with a digit, paths with a letter or `/`, neither with `:`. Produces
+   strings, never keywords."
+  ^String [^String s]
+  (if (and (> (count s) 1)
+        (= \: (.charAt s 0))
+        (let [c (.charAt s 1)] (or (Character/isLetter c) (= \_ c))))
+    (subs s 1)
+    s))
+
 (defn- key->py
   "Map key -> the Python-side dict key. STRINGS-ONLY: a string key passes
    verbatim; anything else (keyword, symbol, number, ...) is a producer bug
@@ -156,9 +171,10 @@
                           (loop [m (omap/ordered-map)]
                             (if (.hasIteratorNextElement it)
                               (let [k  (.getIteratorNextElement it)
-                                    ks (if (.isString k)
-                                         (.asString k)
-                                         (str (->clj k)))]
+                                    ks (normalize-dict-key
+                                         (if (.isString k)
+                                           (.asString k)
+                                           (str (->clj k))))]
                                 (recur (assoc m ks (->clj (.getHashValue v k)))))
                               m)))
     (.isHostObject v)   (.asHostObject v)
@@ -182,7 +198,10 @@
    (cond
      (map? x)     (into {}
                     (map (fn [[k v]]
-                           (let [pk (key->py k path)]
+                           ;; mirror the REAL round trip: `key->py` guards the
+                           ;; outbound key, `normalize-dict-key` is what `->clj`
+                           ;; does to it on the way back in.
+                           (let [pk (normalize-dict-key (key->py k path))]
                              [pk (boundary-view v (conj path pk))])))
                     x)
      (or (vector? x) (seq? x) (set? x))
