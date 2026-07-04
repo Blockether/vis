@@ -3762,10 +3762,24 @@
         note-re #"\s*\((?:exit \d+|timed out)\)\s*$"
         failed? (boolean (re-find note-re (str summary)))
         args    (str/trim (str/replace (str summary) note-re ""))
-        subcmd  (or (not-empty (first (str/split args #"\s+"))) "git")]
+        subcmd  (or (not-empty (first (str/split args #"\s+"))) "git")
+        ;; A commit's body leads with the message blockquote (`> subject …`);
+        ;; lift its first line as the chip preview so the collapsed band shows
+        ;; WHAT was committed, not just that a commit happened.
+        subject (let [b (str (:body card))]
+                  (when (and (= "commit" subcmd) (str/starts-with? b "> "))
+                    (-> b str/split-lines first (subs 2) str/trim not-empty)))
+        ;; The tool summary now lifts the commit subject onto its headline
+        ;; (`commit -m — subject`). In the grouped band that subject already
+        ;; rides the collapsed chip AND the expanded blockquote body, so strip
+        ;; it from the `$ …` row to avoid showing it three times.
+        headline (if (and subject (str/includes? (str summary) (str " \u2014 " subject)))
+                   (str/replace (str summary) (str " \u2014 " subject) "")
+                   summary)]
     {:subcommand subcmd
      :failed?    failed?
-     :headline   summary
+     :subject    subject
+     :headline   headline
      :body       (:body card)}))
 
 (defn- git-group-entries
@@ -3773,7 +3787,7 @@
    band instead of N separately-stacked GIT op-cards.
 
    Collapsed (default) — a single badge row:
-     ▸ GIT · 3 commands  `add` (success) · `commit` (success) · `push` (success)
+     ▸ GIT · 3 commands  `add` (success) · `commit` (success) — tui: nicer git band · `push` (success)
    Expanded — each command as a `$ <args>` row with its stdout / stderr
    nested underneath, so the run reads as one shell log. One node-id folds
    the whole band, so it toggles with a single triangle. A failed command
@@ -3782,8 +3796,13 @@
   (let [parts      (mapv git-command-parts git-forms)
         n          (count parts)
         chips      (str/join " · "
-                     (map (fn [{:keys [subcommand failed?]}]
-                            (str "`" subcommand "`" (if failed? " (failed)" " (success)")))
+                     (map (fn [{:keys [subcommand failed? subject]}]
+                            (str "`" subcommand "`"
+                              (if failed? " (failed)" " (success)")
+                              ;; Only a commit carries a subject — show it (clipped)
+                              ;; so the message is visible without expanding.
+                              (when (and subject (not failed?))
+                                (str " — " (ellipsize-cols subject 56)))))
                        parts))
         head       (str "**GIT** · " n " command" (when (not= 1 n) "s") "  " chips)
         color-role :tool-color/shell
@@ -4221,7 +4240,7 @@
                                    :details-path [id]})
         expanded? (detail-expanded? detail-expansions session-id node-id false)
         header    (detail-summary-entries
-                    {:marker p/MARKER_ANSWER_TXT
+                    {:marker md-summary-marker
                      :max-w content-w
                      :summary summary
                      :collapsed? (not expanded?)

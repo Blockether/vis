@@ -2085,6 +2085,23 @@
         (expect (= "push" (:subcommand ex)))
         (expect (true? (:failed? ex)))
         (expect (true? (:failed? to)))))
+    (it "git-command-parts lifts a commit subject from its message blockquote"
+      (let [c (git-command-parts
+                (git-form "commit -m"
+                  "> wip: tidy things\n>\n> a longer body paragraph\n\n```\n[main abc] wip: tidy things\n```"))]
+        (expect (= "commit" (:subcommand c)))
+        (expect (= "wip: tidy things" (:subject c))))
+      ;; No blockquote / non-commit ⇒ no subject.
+      (expect (nil? (:subject (git-command-parts (git-form "status --short" nil)))))
+      (expect (nil? (:subject (git-command-parts (git-form "commit -m" "```\n[main abc] x\n```"))))))
+    (it "a commit's subject rides on its collapsed chip"
+      (let [forms     [(git-form "add -A" nil)
+                       (git-form "commit -m"
+                         "> wip: tidy\n>\n> body\n\n```\n[main abc] wip: tidy\n```")]
+            collapsed (entry-text (git-group-entries forms (assoc ctx :iteration-number 7)))]
+        (expect (some #(str/includes? % "2 commands") collapsed))
+        ;; The message subject is visible WITHOUT expanding the band.
+        (expect (str/includes? (str/join " " collapsed) "wip: tidy"))))
     (it "three consecutive git iterations collapse into ONE band"
       (let [pairs [(gi 0 "add -A") (gi 1 "commit -m x") (gi 2 "push")]]
         (expect (= 1 (band-count pairs)))
