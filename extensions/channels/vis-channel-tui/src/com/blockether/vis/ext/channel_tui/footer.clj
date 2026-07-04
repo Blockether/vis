@@ -539,7 +539,7 @@
 (defn- spans-width
   [spans separator]
   (reduce (fn [w [i span]]
-            (+ w (if (zero? i) 0 (count (separator-before span separator))) (count (:text span))))
+            (+ w (if (zero? i) 0 (p/display-width (separator-before span separator))) (p/display-width (:text span))))
     0
     (map-indexed vector spans)))
 (defn- total-width
@@ -589,21 +589,21 @@
                         (p/set-colors! g t/footer-fg-muted t/terminal-bg)
                         (let [separator (separator-before s separator)]
                           (p/put-str! g c row separator)
-                          (+ c (count separator)))))]
+                          (+ c (p/display-width separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
                 ;; accent on hover, click region registered under `:kind`).
                 (do (components/button! g c row (:text s) (:kind s)
                       {:register? true})
-                  (+ c (count (:text s))))
+                  (+ c (p/display-width (:text s))))
                 (do
                   (p/clear-styles! g)
                   (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
                   (when (:bold? s) (p/enable! g p/BOLD))
                   (p/put-str! g c row (:text s))
                   (p/clear-styles! g)
-                  (+ c (count (:text s)))))))
+                  (+ c (p/display-width (:text s)))))))
     start-col
     (map-indexed vector spans)))
 

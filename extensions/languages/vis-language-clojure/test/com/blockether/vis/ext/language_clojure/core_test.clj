@@ -125,6 +125,29 @@
         ;; balanced now: repairing the output again is a no-op
         (expect (= t (core/clj-repair+format t)))))))
 
+(defdescribe multi-file-format-test
+  (it "formats every file in {\"paths\": [...]} IN PLACE and rolls up per-file changes"
+    (let [dir (tmp-dir)]
+      (try
+        (let [f1 (io/file dir "a.clj")
+              f2 (io/file dir "b.clj")]
+          (spit f1 "(defn f [x]\n(* x 2))\n")            ; mis-indented -> changes
+          (spit f2 "(defn g [y] (+ y 1))\n")             ; already tidy -> no change
+          (let [r     (core/clj-format-fn {:workspace/root (str dir)}
+                        {"paths" [(str f1) (str f2)]})
+                files (get-in r [:result "files"])]
+            (expect (:success? r))
+            (expect (= "clj-format" (get-in r [:result "op"])))
+            (expect (= 1 (get-in r [:result "changed"])))  ; only f1 changed
+            (expect (= 2 (count files)))
+            ;; per-file result carries changed/wrote flags
+            (expect (= [true false] (mapv #(get % "changed") files)))
+            (expect (= [true false] (mapv #(get % "wrote") files)))
+            ;; the mis-indented file was actually rewritten on disk
+            (expect (= "(defn f [x]\n  (* x 2))\n" (slurp f1)))
+            (expect (= "(defn g [y] (+ y 1))\n" (slurp f2)))))
+        (finally (cleanup dir))))))
+
 (defdescribe cljfmt-config-test
   (it "honors a project-local .cljfmt.edn (walked up from the file) over cljfmt defaults"
     ;; The churn bug: the hook must READ the nearest .cljfmt.edn, not reformat
@@ -168,6 +191,45 @@
         (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
           :patch [{"path" "x.py"}] {:success? true})
         (expect (= "def g( ):\n  pass\n" (slurp f)))
+        (finally (cleanup dir)))))
+  (it "re-diffs the summary against FINAL disk bytes (truthful diff, no false structural flag)"
+    (let [dir (tmp-dir) f (io/file dir "x.clj")
+          before "(defn f [x]\n  (+ x 1))\n"]
+      (try
+        ;; the raw edit wrote a mis-indented body to disk; the summary's diff
+        ;; still shows that col-0 INTENT (the bug this fixes).
+        (spit f "(defn f [x]\n(+ x 2))\n")
+        (let [result {:success? true
+                      :result [{"path" "x.clj" "op" "update" "changed" true
+                                "diff" "STALE"}]
+                      :metadata {:file-befores [{:path "x.clj" :before before}]}}
+              out (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                    :patch [{"path" "x.clj"}] result)
+              summ (first (:result out))]
+          ;; cljfmt re-indented the body on disk ...
+          (expect (re-find #"\n  \(\+ x 2\)\)" (slurp f)))
+          ;; ... and the returned diff now reflects THAT, not the col-0 intent.
+          (expect (re-find #"\+  \(\+ x 2\)\)" (get summ "diff")))
+          (expect (not (contains? summ "repaired"))))
+        (finally (cleanup dir)))))
+  (it "flags a parinfer STRUCTURAL repair loudly on the summary"
+    (let [dir (tmp-dir) f (io/file dir "x.clj")
+          before "(defn f [x]\n  (inc x))\n"]
+      (try
+        ;; raw edit left an unbalanced delimiter (missing final closer) on disk
+        (spit f "(defn g [x]\n  (when x\n    (inc x))\n")
+        (let [result {:success? true
+                      :result [{"path" "x.clj" "op" "update" "changed" true
+                                "diff" "STALE"}]
+                      :metadata {:file-befores [{:path "x.clj" :before before}]}}
+              out (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                    :patch [{"path" "x.clj"}] result)
+              summ (first (:result out))]
+          ;; parinfer balanced the file ...
+          (expect (re-find #"\(inc x\)\)\)" (slurp f)))
+          ;; ... and the summary is loudly flagged so a scope shift can't hide.
+          (expect (= true (get summ "repaired")))
+          (expect (re-find #"CHANGED STRUCTURE" (get summ "note"))))
         (finally (cleanup dir)))))
   (it "is a no-op when the edit did NOT succeed"
     (let [dir (tmp-dir) f (io/file dir "x.clj")]

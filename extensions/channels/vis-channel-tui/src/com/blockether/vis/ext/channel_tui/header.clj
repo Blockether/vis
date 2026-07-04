@@ -482,7 +482,21 @@
         right-w action-w
         right-col (max right-x (- cols edge-pad right-w))
         action-col right-col
-        active-id (active-tab-entry-id db workspaces)]
+        active-id (active-tab-entry-id db workspaces)
+        ;; RIGHT cluster geometry (help/search chips + id badge) is
+        ;; right-aligned by ABSOLUTE `cols` math, independent of the centre
+        ;; slot. On narrow/medium terminals its real width exceeds the
+        ;; layout's `right-w` estimate, so `slot-layout` alone would let the
+        ;; chips paint ON TOP of the tab strip. Compute the cluster's true
+        ;; left edge here and clamp the centre width to stop short of it.
+        chips     [[:header-help   (str " help ("   (keymap/label-for :toggle-help) ") ")]
+                   [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
+        chip-gap  1
+        cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
+                    (* chip-gap (count chips)))
+        cluster-start (max edge-pad (- action-col cluster-w))
+        center-limit  (- cluster-start (long vh/slot-gap-cols))
+        center-w      (max 0 (min (long center-w) (- center-limit (long center-x))))]
     (components/band-rule! g top-rule-row cols)
 
     (p/clear-styles! g)
@@ -509,17 +523,11 @@
     ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
-    (let [chips     [[:header-help   (str " help ("   (keymap/label-for :toggle-help) ") ")]
-                     [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
-          gap       1
-          cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
-                      (* gap (count chips)))
-          start     (max edge-pad (- action-col cluster-w))]
-      (reduce (fn [x [kind label]]
-                (+ x gap (components/button! g x content-row label kind
-                           {:register? *register-click-regions?*})))
-        start
-        chips))
+    (reduce (fn [x [kind label]]
+              (+ x chip-gap (components/button! g x content-row label kind
+                              {:register? *register-click-regions?*})))
+      cluster-start
+      chips)
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)

@@ -61,6 +61,71 @@
       (let [^Node r (.rootNode t)]
         (try (.hasError r) (finally (.close r))))
       (finally (.close t)))))
+(defn error-nodes
+  "Every ERROR / MISSING node tree-sitter finds in `source` (parsed as `lang`),
+   as [{:line :col :end-line :end-col :kind :missing? :text} …] in document
+   order (1-based line, 0-based col). Empty when the source parses clean or the
+   language can't be parsed. Public so an edit guard can turn a bare
+   \"N syntax error(s)\" rejection into a LOCATED, actionable message — a MISSING
+   node even NAMES the delimiter the parser expected (`:kind` = `]`, `)`, …)."
+  [lang ^String source]
+  (if-let [^Tree tree (and lang (parse-tree lang source))]
+    (let [src-bytes (utf8 source)
+          acc       (transient [])]
+      (try
+        (let [^Node root (.rootNode tree)]
+          (try
+            (letfn [(walk [^Node n]
+                      (when (or (.isError n) (.isMissing n))
+                        (let [^Point sp (.startPosition n)
+                              ^Point ep (.endPosition n)]
+                          (conj! acc {:line      (inc (.row sp)) :col (.column sp)
+                                      :end-line  (inc (.row ep)) :end-col (.column ep)
+                                      :kind      (.kind n)
+                                      :missing?  (.isMissing n)
+                                      :text      (byte-slice src-bytes (.startByte n) (.endByte n))})))
+                      (dotimes [i (.childCount n)]
+                        (when-let [^Node c (.orElse (.child n (int i)) nil)]
+                          (try (walk c) (finally (.close c))))))]
+              (walk root))
+            (finally (.close root))))
+        (finally (.close tree)))
+      (persistent! acc))
+    []))
+
+(defn- one-line
+  "`s` collapsed to a single spaced line, truncated to `n` chars with an ellipsis."
+  [s ^long n]
+  (let [t (str/trim (str/replace (str s) #"\s+" " "))]
+    (if (> (count t) n) (str (subs t 0 n) "…") t)))
+
+(defn describe-syntax-errors
+  "One-line, model-actionable summary of the ERROR/MISSING nodes in `source`
+   (parsed as `lang`), or nil when it parses clean. Names WHERE the parser broke
+   and, when tree-sitter knows it, WHICH delimiter it expected — so a rejected
+   edit stops the model from blind paren-counting."
+  [lang ^String source]
+  (let [errs    (error-nodes lang source)
+        missing (filter :missing? errs)
+        broken  (remove :missing? errs)]
+    (when (seq errs)
+      (let [n (count errs)
+            u (first broken)
+            m (first missing)]
+        (str n " tree-sitter parse-error node" (when (> n 1) "s")
+          (when (> n 1)
+            (str " (a parse CASCADE from usually ONE fault, not " n " separate mistakes)"))
+          (when u
+            (str "; first unexpected token at line " (:line u) " col " (:col u)
+              " → `" (one-line (:text u) 40) "`"))
+          (when m
+            (str "; parser expected a `" (:kind m) "` at line " (:line m)
+              " col " (:col m) " (a delimiter/token is missing or mismatched there)"))
+          (when (> n 1)
+            (str ". Count >1 usually means a bracket-TYPE mismatch (a `[`/`{`"
+              " closed with `)`, or vice-versa) or a mis-nest — NOT a trailing-paren"
+              " miscount, so stop counting parens and check delimiter TYPES"))
+          ".")))))
 
 (defn- node-data
   "Plain-data view of `n` (+ its immediate named children when `children?`).
@@ -165,7 +230,9 @@
                     (not (syntax-broken? lang source)))
                 {:error {:reason :syntax-broken
                          :message (str "refused: " (name op) " at " (vec at)
-                                    " would introduce a syntax error")}}
+                                    " would introduce a syntax error"
+                                    (when-let [d (describe-syntax-errors lang new-source)]
+                                      (str " — " d)))}}
                 {:ok? true :new-source new-source}))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──

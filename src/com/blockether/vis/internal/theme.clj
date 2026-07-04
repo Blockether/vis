@@ -372,8 +372,13 @@
    :code-ok-bg [231 235 203]
    :code-err-bg [247 224 219]
    :result-bg [245 236 210]
-   :result-path-bg [223 226 197]
-   :result-path-fg [38 139 210]
+   ;; Path chips inside a RESULT body must read as a distinct BLUE header band
+   ;; (like `light-palette`), not blend into the warm cream. The old olive band
+   ;; ([223 226 197]) shared the cream's hue and only reached 2.77:1 ink
+   ;; contrast — a cool pale-blue slab with darkened Solarized-blue ink (6.1:1)
+   ;; restores the clickable-header read.
+   :result-path-bg [213 227 245]
+   :result-path-fg [24 84 130]
    :code-block-fg [88 110 117]
    :code-success-fg [133 153 0]
    :code-error-fg [220 50 47]

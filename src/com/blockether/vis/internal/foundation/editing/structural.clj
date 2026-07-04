@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.outline :as outline]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
+            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack StructuralApi StructuralApi$Op]))
@@ -114,10 +115,19 @@
           (StructuralApi/edit source language jop target (some-> kind name) code)))
       (catch clojure.lang.ExceptionInfo e (throw e))
       (catch Throwable e
-        (throw (ex-info (vis-ize-error (.getMessage e))
-                 {:type :ext.foundation.editing/struct-edit-failed
-                  :op op :target target :language language}
-                 e))))))
+        (let [raw   (vis-ize-error (.getMessage e))
+              synx? (str/includes? (str raw) "syntax error")
+              hint  (when (and synx? (string? code) (not (str/blank? code)))
+                      (try (or (zipper/describe-syntax-errors language code)
+                             ;; `code` parses clean alone → the fault is at the seam.
+                             (str "the replacement parses fine in isolation, so the fault is at the INSERTION SEAM"
+                               " — an enclosing delimiter was consumed/duplicated or the indentation disagrees"
+                               " with the parens; check the code's OUTER balance against the surrounding form."))
+                        (catch Throwable _ nil)))]
+          (throw (ex-info (cond-> raw hint (str "  " hint))
+                   {:type :ext.foundation.editing/struct-edit-failed
+                    :op op :target target :language language}
+                   e)))))))
 
 (defn references
   "Occurrences of identifier `name` in `path` as

@@ -2865,6 +2865,18 @@
       (seq passes)  (assoc "passes" (mapv #(str/replace (name %) "-" "_") passes))
       indent-delta  (assoc "indent_delta" indent-delta))))
 
+(defn refresh-file-summary
+  "Recompute a per-file summary's \"diff\"/\"changed\" from the ORIGINAL `before`
+   and the FINAL on-disk `after`. A language pack that rewrites a just-edited
+   file in an :after op-hook (parinfer paren-repair + cljfmt) calls this so the
+   MODEL-FACING diff shows the bytes actually written, not the pre-hook
+   intermediate the raw edit produced. All other summary keys are preserved."
+  [summary before after]
+  (let [diff-text (unified-diff-text before after)]
+    (cond-> (assoc summary "changed" (not= before after))
+      diff-text        (assoc "diff" diff-text)
+      (nil? diff-text) (dissoc "diff"))))
+
 (defn- patch-tool
   "Edit files by ANCHOR (no text search/replace).
      await patch([{\"path\": P, \"from_anchor\": \"12:a3f2\", \"replace\": R}])
@@ -2891,7 +2903,11 @@
            :result summaries
            :metadata  {:mode          :exact-replace
                        :file-count    (count summaries)
-                       :changed-count (count (filter #(get % "changed") summaries))}}))
+                       :changed-count (count (filter #(get % "changed") summaries))
+                       ;; Pre-edit content per file (relativized path == summary
+                       ;; "path") so an :after op-hook that rewrites the file
+                       ;; (paren-repair/format) can re-diff against final bytes.
+                       :file-befores  (mapv #(select-keys % [:path :before]) plans)}}))
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
@@ -2970,7 +2986,8 @@
            :metadata  {:mode :write
                        :file-count 1
                        :changed-count (if (get summary "changed") 1 0)
-                       :op (:op plan)}}))
+                       :op (:op plan)
+                       :file-befores [(select-keys plan [:path :before])]}}))
       (let [first-failure (first (:failures result))]
         (extension/failure
           {:result   nil
@@ -3787,7 +3804,8 @@
            :metadata {:mode :struct_patch
                       :file-count 1
                       :changed-count (if (get summary "changed") 1 0)
-                      :op (:op plan)}}))
+                      :op (:op plan)
+                      :file-befores [(select-keys plan [:path :before])]}}))
       (extension/failure
         {:result nil
          :op :struct_patch

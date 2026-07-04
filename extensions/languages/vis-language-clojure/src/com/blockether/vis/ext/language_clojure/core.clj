@@ -21,7 +21,8 @@
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
-   [com.blockether.vis.internal.extension :as extension]))
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.foundation.editing.core :as editing]))
 
 ;; =============================================================================
 ;; Activation
@@ -315,29 +316,51 @@
         (catch Throwable _ s))
       s)))
 
+(defn- clj-format-one-file!
+  "Format a single file at `path` IN PLACE (paren-repair + cljfmt), writing
+   back ONLY when the content changes. Returns a per-file result map with the
+   workspace-relative path."
+  [env path]
+  (let [code (slurp (str path))
+        out  (clj-repair+format code (or path (:workspace/root env)))]
+    (when (not= out code)
+      (spit (str path) out))
+    {"path"     (relativize-path (io/file (or (:workspace/root env) ".")) path)
+     "changed"  (not= out code)
+     "repaired" (not= (or (repair/fix-delimiters code) code) code)
+     "wrote"    (not= out code)}))
+
 (defn clj-format-fn
   ([arg] (clj-format-fn nil arg))
   ([env arg]
-   (let [path (and (map? arg) (get arg "path"))
-         code (cond
-                (string? arg)                           arg
-                (and (map? arg) (contains? arg "code")) (str (get arg "code"))
-                path                                    (slurp (str path))
-                :else (throw (ex-info "format expects a code string, {\"code\": ...}, or {\"path\": ...}"
-                               {:type :clj/bad-args :got arg
-                                :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
-                                           "format(\"clojure\", {\"code\": \"...\"})"
-                                           "format(\"clojure\", {\"path\": \"src/foo.clj\"})"]})))
-         out  (clj-repair+format code (or path (:workspace/root env)))]
-     (when (and path (not= out code))
-       (spit (str path) out))
-     (extension/success
-       {:result (cond-> {"op"        "clj-format"
-                         "changed"   (not= out code)
-                         "repaired"  (not= (or (repair/fix-delimiters code) code) code)
-                         "text"      out}
-                  path (assoc "path"   (relativize-path (io/file (or (:workspace/root env) ".")) path)
-                         "wrote" (not= out code)))}))))
+   (let [paths (when (map? arg) (get arg "paths"))]
+     (if (seq paths)
+       (let [files (mapv #(clj-format-one-file! env %) paths)]
+         (extension/success
+           {:result {"op"      "clj-format"
+                     "files"   files
+                     "changed" (count (filter #(get % "changed") files))}}))
+       (let [path (and (map? arg) (get arg "path"))
+             code (cond
+                    (string? arg)                           arg
+                    (and (map? arg) (contains? arg "code")) (str (get arg "code"))
+                    path                                    (slurp (str path))
+                    :else (throw (ex-info "format expects a code string, {\"code\": ...}, {\"path\": ...}, or {\"paths\": [...]}"
+                                   {:type :clj/bad-args :got arg
+                                    :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
+                                               "format(\"clojure\", {\"code\": \"...\"})"
+                                               "format(\"clojure\", {\"path\": \"src/foo.clj\"})"
+                                               "format(\"clojure\", {\"paths\": [\"src/a.clj\" \"src/b.clj\"]})"]})))
+             out  (clj-repair+format code (or path (:workspace/root env)))]
+         (when (and path (not= out code))
+           (spit (str path) out))
+         (extension/success
+           {:result (cond-> {"op"        "clj-format"
+                             "changed"   (not= out code)
+                             "repaired"  (not= (or (repair/fix-delimiters code) code) code)
+                             "text"      out}
+                      path (assoc "path"   (relativize-path (io/file (or (:workspace/root env) ".")) path)
+                             "wrote" (not= out code)))}))))))
 
 (defn clj-lint-fn
   "clj-kondo lint via the language facade (`lint_code`). Accepts:
@@ -399,28 +422,74 @@
 (defn- repair-clj-file!
   "Re-tidy a just-edited Clojure file IN PLACE (paren-repair + cljfmt), writing
    back ONLY when the content actually changes — a clean file is a no-op so
-   nothing churns. Returns true when it rewrote."
+   nothing churns. Returns `{:changed? bool :structural? bool}` describing the
+   rewrite (`:structural?` = parinfer MOVED/added/removed delimiters, i.e. NOT
+   a whitespace-only cljfmt reflow — the case that can silently re-nest code),
+   or nil when `path` is not an existing Clojure file."
   [env path]
   (let [f (resolve-under-root env path)]
     (when (and (clj-source-file? path) (.isFile f))
-      (let [code (slurp f)
-            out  (clj-repair+format code f)]
-        (when (and (string? out) (not= out code))
-          (spit f out)
-          true)))))
+      (let [code       (slurp f)
+            fixed      (repair/fix-delimiters code)
+            structural (and (string? fixed) (not= fixed code))
+            out        (clj-repair+format code f)
+            changed    (and (string? out) (not= out code))]
+        (when changed
+          (spit f out))
+        {:changed? changed :structural? (boolean structural)}))))
 
 (defn clj-edit-repair-hook
   "An :after op-hook (registered on struct_patch / patch / write): after a
    SUCCESSFUL edit, paren-repair + cljfmt every Clojure file it touched, so the
    model never needs a separate repair/format step and a raw `patch` that left
-   delimiters unbalanced is auto-corrected. Returns the result unchanged; a
-   throwing repair is caught + logged by the op-hook runner, never breaking the
-   underlying edit."
+   delimiters unbalanced is auto-corrected.
+
+   It then makes the RESULT TRUTHFUL: the foundation rendered each file's
+   `diff` from what the raw edit wrote, BEFORE this repair/format rewrote the
+   bytes on disk, so without this the model would be shown its INTENT, not the
+   file. Using the pre-edit content the foundation stashes on
+   `:metadata :file-befores`, we re-diff every touched summary against the
+   FINAL on-disk bytes, and when parinfer CHANGED STRUCTURE (moved delimiters,
+   which can silently re-nest code) we flag the summary loudly
+   (`repaired`/`note`) so a scope shift can never hide behind a stale diff.
+
+   A throwing repair is caught + logged by the op-hook runner, never breaking
+   the underlying edit."
   [env _op-kw args result]
-  (when (:success? result)
-    (doseq [p (edit-arg-paths args)]
-      (repair-clj-file! env p)))
-  result)
+  (if-not (:success? result)
+    result
+    (let [befores (get-in result [:metadata :file-befores])]
+      (if-not (seq befores)
+        ;; No pre-edit content stashed (e.g. a pack :around already committed
+        ;; and built its own result) -- just tidy the files, result unchanged.
+        (do (doseq [p (edit-arg-paths args)]
+              (repair-clj-file! env p))
+          result)
+        ;; Repair each touched file, then RE-DIFF the model-facing summaries
+        ;; against the final disk bytes and flag any structural repair.
+        (let [reports (into {}
+                        (keep (fn [{:keys [path before]}]
+                                (when-let [r (repair-clj-file! env path)]
+                                  [path (assoc r :before before)]))
+                          befores))]
+          (update result :result
+            (fn [summaries]
+              (mapv (fn [s]
+                      (if-let [{:keys [before structural?]} (get reports (get s "path"))]
+                        (let [f     (resolve-under-root env (get s "path"))
+                              after (when (.isFile f) (slurp f))
+                              s'    (if after
+                                      (editing/refresh-file-summary s before after)
+                                      s)]
+                          (cond-> s'
+                            structural?
+                            (assoc "repaired" true
+                              "note" (str "parinfer paren-repair CHANGED STRUCTURE "
+                                       "(moved/added/removed delimiters); the diff "
+                                       "shows the FINAL on-disk result -- verify the "
+                                       "nesting is what you intended."))))
+                        s))
+                summaries))))))))
 
 (defn clj-struct-patch-no-fail-around
   "MIDDLEWARE (:around) on struct_patch so a Clojure structural edit does NOT

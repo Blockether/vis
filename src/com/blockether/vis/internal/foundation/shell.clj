@@ -43,10 +43,13 @@
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.paths :as paths]
-   [com.blockether.vis.internal.workspace :as workspace])
+   [com.blockether.vis.internal.workspace :as workspace]
+   [com.blockether.vis.internal.foundation.pty :as pty]
+   [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge])
   (:import
    (java.io File)
    (java.lang ProcessHandle)
+   (java.util HashMap)
    (java.util.concurrent TimeUnit)))
 
 ;; =============================================================================
@@ -231,26 +234,79 @@
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
 
-(defn- kill-tree!
-  "Destroy a process and every descendant the JVM can still REACH via
-   `ProcessHandle.descendants`: polite destroy first, then a forced pass after
-   a 2s grace. Never throws (teardown path). NOTE: a deliberately-detaching
-   child (`setsid`/double-fork/`nohup … &`) reparents to init and escapes this
-   reach — for those the registry still drops cleanly and the pump is unblocked
-   by closing the pipe in the stop-fn, but the orphan keeps running."
+(defn- process->handle
+  "Adapt a plain `java.lang.Process` (the no-PTY ProcessBuilder path) into the
+   same handle map the FFM PTY backend returns, so the background pump /
+   kill-tree! / shell_send all consume ONE shape regardless of backend. Used as
+   the native-Windows fallback (see pty-spawn!)."
   [^Process p]
+  {:pid     (.pid p)
+   :in      (.getInputStream p)
+   :send    (fn [^bytes b]
+              (let [^java.io.OutputStream os (.getOutputStream p)]
+                (.write os b)
+                (.flush os)))
+   :wait    (fn [] (.waitFor p))
+   :alive?  (fn [] (.isAlive p))
+   :destroy (fn [force?] (if force? (.destroyForcibly p) (.destroy p)))})
+
+(defn- pty-spawn!
+  "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
+   FFM, no JNA and no extracted native helper): isatty() is TRUE, $TERM is set,
+   and stdin is writable (shell_send) — so interactive CLIs that refuse a dumb
+   pipe (browser-auth prompts, password `read`, REPLs) actually run. Returns the
+   pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
+   kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
+   (a real terminal has no separate error channel), so no merge-err? knob."
+  [cmd ^File dir]
+  (if (windows?*)
+    ;; pty is POSIX-only (openpty/posix_spawnp). On native Windows fall back to
+    ;; a plain merged-output ProcessBuilder wrapped in the same handle shape —
+    ;; no real TTY (isatty() false, no shell_send interactivity, no attach
+    ;; bridge), but shell_bg still runs/captures/stops cleanly instead of
+    ;; throwing. (ConPTY could restore a real TTY here later.)
+    (process->handle (spawn! cmd dir true))
+    (pty/spawn! {:command [(bash-command) "-lc" (str cmd)]
+                 :dir     (.getPath dir)
+                 :env     (doto (HashMap. ^java.util.Map (System/getenv))
+                            (.put "TERM" "xterm-256color"))
+                 :cols    120
+                 :rows    40})))
+
+(defn- kill-tree!
+  "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
+   pid`: polite SIGTERM first, then a forced SIGKILL after a 2s grace. Accepts
+   EITHER a `java.lang.Process` (the sync `shell_run` ProcessBuilder path) or the
+   pty HANDLE MAP (the `shell_bg` path); both spawn genuine OS processes reachable
+   via `ProcessHandle`. Never throws (teardown path). NOTE: a deliberately-
+   detaching child (`setsid`/double-fork/`nohup … &`) reparents to init and
+   escapes this reach — the registry still drops cleanly and the pump is unblocked
+   by closing the stream in the stop-fn, but the orphan keeps running."
+  [p]
   (try
-    (let [h (.toHandle p)]
-      (run! (fn [^ProcessHandle d] (.destroy d))
-        (-> h .descendants .iterator iterator-seq))
-      (.destroy h)
-      (when-not (try (.waitFor p 2 TimeUnit/SECONDS)
-                  (catch InterruptedException _
-                    (.interrupt (Thread/currentThread))
-                    false))
-        (run! (fn [^ProcessHandle d] (.destroyForcibly d))
-          (-> h .descendants .iterator iterator-seq))
-        (.destroyForcibly h)))
+    (let [pid         (if (map? p) (:pid p) (.pid ^Process p))
+          destroy     (if (map? p)
+                        (:destroy p)
+                        (fn [force?] (if force?
+                                       (.destroyForcibly ^Process p)
+                                       (.destroy ^Process p))))
+          ph          (try (.orElse (ProcessHandle/of pid) nil)
+                        (catch Throwable _ nil))
+          descendants (fn [] (if ph
+                               (-> ph .descendants .iterator iterator-seq)
+                               []))]
+      (run! (fn [^ProcessHandle d] (try (.destroy d) (catch Throwable _ nil)))
+        (descendants))
+      (destroy false)
+      (let [deadline (+ (System/currentTimeMillis) 2000)]
+        (loop []
+          (when (and ph (.isAlive ph) (< (System/currentTimeMillis) deadline))
+            (Thread/sleep 50)
+            (recur))))
+      (when (and ph (.isAlive ph))
+        (run! (fn [^ProcessHandle d] (try (.destroyForcibly d) (catch Throwable _ nil)))
+          (descendants))
+        (destroy true)))
     (catch Throwable _ nil))
   nil)
 
@@ -334,6 +390,12 @@
   ;; :started-at} } }. defonce so a dev `:reload` never orphans live processes.
   (atom {}))
 
+(defonce ^:private _bridge-sweep
+  ;; One-time GC at extension load: a prior vis crash/kill never ran serve!'s
+  ;; :stop (the JVM held the AF_UNIX server), so stale attach sockets pile up in
+  ;; bridge-dir. sweep-orphans! connect-probes each and unlinks the dead ones.
+  (do (try (pty-bridge/sweep-orphans!) (catch Throwable _ nil)) true))
+
 (defn- bg-entry [session id]
   (get-in @bg-procs [(str session) (str id)]))
 
@@ -370,14 +432,14 @@
    would resurrect a partial `:data`-only entry (TOCTOU). The stop-fn also
    joins this thread, so on a manual stop the pump has fully drained before
    the resource is removed. Returns the started Thread."
-  ^Thread [session id ^Process p buffer exit-atom stopped?]
+  ^Thread [session id p buffer exit-atom stopped? bridge-atom]
   (doto (Thread.
           (fn []
             ;; Char-level drain (not `line-seq`) so a newline-free stream
             ;; (`cat big.bin`) can't grow one unbounded line in memory: a line
             ;; is force-flushed at `max-line-chars`.
             (try
-              (with-open [r (io/reader (.getInputStream p))]
+              (with-open [r (io/reader ^java.io.InputStream (:in p))]
                 (let [sb (StringBuilder.)]
                   (loop []
                     (let [c (.read r)]
@@ -395,9 +457,15 @@
                             (.setLength sb 0))
                           (recur)))))))
               (catch Throwable _ nil))
-            (let [code (try (.waitFor p) (catch Throwable _ nil))]
+            (let [code (try ((:wait p)) (catch Throwable _ nil))]
               (reset! exit-atom code)
               (when-not @stopped?
+                ;; Natural child exit (not resource_stop): tear down the attach
+                ;; bridge so its AF_UNIX socket doesn't linger — otherwise a human
+                ;; could `attach` a dead shell and find-socket could pick the
+                ;; stale .sock. On a manual stop the stop-fn owns this teardown.
+                (when-let [b @bridge-atom]
+                  (try ((:stop b)) (catch Throwable _ nil)))
                 (try
                   (resources/update! session id
                     {:status :exited
@@ -420,9 +488,9 @@
       (throw (ex-info "shell_bg needs a non-blank command string (second arg)."
                {:type ::blank-command})))
     (when-let [existing (bg-entry session id)]
-      (if (.isAlive ^Process (:proc existing))
+      (if ((:alive? (:proc existing)))
         (throw (ex-info (str "Background shell '" id "' is already running (pid "
-                          (.pid ^Process (:proc existing))
+                          (:pid (:proc existing))
                           "); resource_stop it first or pick a new id.")
                  {:type ::bg-id-in-use :id id}))
         ;; Exited-but-unread entry under the same id: replacing it discards
@@ -430,21 +498,40 @@
         (do (resources/unregister! session id)
           (drop-bg-entry! session id))))
     (let [dir       (resolve-cwd nil)
-          p         (spawn! cmd dir true)
+          p         (pty-spawn! cmd dir)
           buffer    (atom {:lines [] :next-seq 1 :dropped 0})
           exit-atom (atom nil)
           stopped?  (atom false)
+          bridge-atom (atom nil)
           t0        (now-ms)
-          pump      (start-pump! session id p buffer exit-atom stopped?)]
+          pump      (start-pump! session id p buffer exit-atom stopped? bridge-atom)
+          ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
+          ;; so a HUMAN can `vis ext shell attach <id>` into the live terminal
+          ;; (browser OAuth, a prompt only a person can answer) and detach again,
+          ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
+          ;; runs, just without human attach.
+          bridge    (try
+                      (pty-bridge/serve!
+                        {:pty       p
+                         :path      (pty-bridge/socket-path session id)
+                         :replay-fn (fn []
+                                      (let [ls (:lines @buffer)]
+                                        (when (seq ls)
+                                          (.getBytes
+                                            (str (str/join "\n" (map second ls)) "\n")
+                                            java.nio.charset.StandardCharsets/UTF_8))))})
+                      (catch Throwable _ nil))]
+      (reset! bridge-atom bridge)
       (swap! bg-procs assoc-in [(str session) id]
         {:proc p :buffer buffer :exit exit-atom :pump pump :stopped? stopped?
+         :send (:send p) :bridge bridge
          :cmd cmd :cwd (.getPath dir) :started-at t0})
       (resources/register! session
         {:id id
          :kind :shell
          :label (one-line cmd 48)
          :detail cmd
-         :pid (.pid p)
+         :pid (:pid p)
          :owner "foundation-shell"
          :status :running}
         {:stop-fn  (fn []
@@ -457,8 +544,11 @@
                      ;; Close the read end so the pump's blocking `.read`
                      ;; returns even if a detached grandchild still holds the
                      ;; write end — the pump thread can't outlive the stop.
-                     (try (.close (.getInputStream p)) (catch Throwable _ nil))
+                     (try (.close ^java.io.InputStream (:in p)) (catch Throwable _ nil))
                      (try (.join pump 3000) (catch InterruptedException _ nil))
+                     ;; Tear down the attach socket last: no more human attachers
+                     ;; once the child is gone.
+                     (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
                      (drop-bg-entry! session id))
          ;; Alive while the buffer entry exists — an EXITED process is kept
          ;; (status :exited) so its logs stay readable; only resource_stop
@@ -467,13 +557,15 @@
       (extension/success
         ;; No :op / :cwd — shell_bg always runs at the workspace root and the
         ;; result rides every later prompt as a frozen <results> pin.
-        {:result {"id" id
-                  "pid" (.pid p)
-                  "cmd" cmd
-                  "status" "running"}
+        {:result (cond-> {"id" id
+                          "pid" (:pid p)
+                          "cmd" cmd
+                          "status" "running"}
+                   bridge (assoc "attach" (str "vis ext shell attach " id)
+                            "socket" (:path bridge)))
          :op :shell/bg
          :metadata {:command cmd
-                    :pid (.pid p)
+                    :pid (:pid p)
                     :started-at-ms t0
                     :finished-at-ms t0
                     :duration-ms 0}}))))
@@ -512,6 +604,45 @@
                      :started-at-ms t
                      :finished-at-ms t
                      :duration-ms 0}})))))
+
+(defn- shell-send-impl
+  "Write `text` to a background shell's STDIN (its PTY master). With enter (default
+   true) a trailing newline SUBMITS the line — exactly what an interactive prompt
+   (password, `read`, a REPL, a y/N confirm) waits for. The send-keys equivalent:
+   the agent drives an interactive program whose output the pump captured. Read the
+   response with shell_logs(id). Returns {id, sent, status}."
+  ([env id text] (shell-send-impl env id text nil))
+  ([env id text opts]
+   (let [session (:session-id env)
+         id      (str id)
+         entry   (bg-entry session id)
+         enter?  (let [e (get opts "enter" (get opts :enter true))]
+                   (if (nil? e) true (boolean e)))]
+     (when-not entry
+       (throw (ex-info (str "No background shell '" id "' in this session — start"
+                         " one with shell_bg(id, cmd); live ids are listed in"
+                         " resources.")
+                {:type ::unknown-bg-id :id id})))
+     (when-not ((:alive? (:proc entry)))
+       (throw (ex-info (str "Background shell '" id "' has exited — nothing to send"
+                         " to. Its logs stay readable until resource_stop.")
+                {:type ::bg-exited :id id})))
+     (let [send-fn (:send entry)]
+       (when (nil? send-fn)
+         (throw (ex-info (str "Background shell '" id "' has no writable stdin.")
+                  {:type ::no-stdin :id id})))
+       (let [payload (str text (when enter? "\n"))
+             t       (now-ms)]
+         (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
+         (extension/success
+           {:result {"id" id
+                     "sent" (count payload)
+                     "status" "running"}
+            :op :shell/send
+            :metadata {:id id
+                       :started-at-ms t
+                       :finished-at-ms t
+                       :duration-ms 0}}))))))
 
 ;; =============================================================================
 ;; Toggle gate + env injection (one before-fn does both)
@@ -602,6 +733,15 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
        :arglists '([id] [id n])}
   shell-logs shell-logs-impl)
 
+(def ^{:doc "await shell_send(\"dev-server\", \"y\")
+await shell_send(\"slack-auth\", \"xoxp-my-token\", {\"enter\": true})
+
+Type into a background shell's STDIN — the send-keys equivalent. The process runs under a REAL pty (isatty() true, $TERM set), so interactive prompts (password / `read` / REPL / y-N confirm) accept input. `text` is written to its stdin; with enter (default true) a trailing newline SUBMITS the line. Read what came back with shell_logs(id).
+Returns {\"id\", \"sent\", \"status\"}.
+Gotcha: only a RUNNING background shell accepts input; an exited one raises. A step only a HUMAN can finish (browser OAuth, a device-code prompt) can't be typed by the agent — tell the user to run `vis ext shell attach <id>` in their own terminal to take over the live session, then detach with Ctrl-] (the child keeps running). The shell_bg result carries the exact `attach` command."
+       :arglists '([id text] [id text opts])}
+  shell-send shell-send-impl)
+
 ;; =============================================================================
 ;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
 ;; string-keyed snake_case (strings-only boundary); the injected env first arg is
@@ -648,6 +788,11 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:summary (str "`" (get r "id") "` " (or (get r "status") "?") " — " (count lines) " lines"
                 (when-let [d (get r "dropped")] (str " (" d " dropped)")))
      :body    (fence text)}))
+
+(defn- render-shell-send-result
+  "shell_send → `→ `<id>` sent N chars` headline only."
+  [r]
+  {:summary (str "→ `" (get r "id") "` sent " (get r "sent") " chars")})
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. Alias `shell` → `shell_run` / `shell_bg` /
@@ -706,8 +851,26 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
      :tag :observation
      :on-error-fn (shell-on-error :shell/logs)}))
 
+(def shell-send-symbol
+  (vis/symbol #'shell-send
+    {:symbol 'send
+     :native-tool? true
+     :name "shell_send"
+               ;; shell_send(id, text, {opts}) — id + text positional, rest an options dict.
+     :call {:pos ["id" "text"] :rest :opt}
+     :render render-shell-send-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties {"id"    {:type "string" :description "The background shell's resource id."}
+                           "text"  {:type "string" :description "Text written to the shell's stdin."}
+                           "enter" {:type "boolean" :description "Append a newline to SUBMIT the line (default true)."}}
+              :required ["id" "text"]}
+     :before-fn (shell-gate-before-fn :shell/send)
+     :tag :mutation
+     :on-error-fn (shell-on-error :shell/send)}))
+
 (def shell-symbols
-  [shell-run-symbol shell-bg-symbol shell-logs-symbol])
+  [shell-run-symbol shell-bg-symbol shell-logs-symbol shell-send-symbol])
 
 (defn shell-prompt
   "Prompt fragment advertising the shell surface — ONLY while the toggle is
@@ -725,10 +888,42 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
        "  (Clojure nREPL specifically: prefer the managed repl_start(\"clojure\") / clj_repl(\"start\") over a raw shell_bg — it registers the port + .nrepl-port for you. Use shell_bg only for a bespoke launcher.)"
        "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
+       "  shell_send(\"dev-server\", \"y\")                       # type into its stdin: interactive prompts, REPLs, y/N (enter submits)"
+       "  Human must finish it (browser OAuth)? Tell the user: `vis ext shell attach <id>` joins the LIVE terminal in their own shell (Ctrl-] detaches, child keeps running). The shell_bg result carries the ready `attach` command."
        "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
        "  Prefer cat/ls/rg/patch/write for file work — shell_run never replaces them."
        "  Commands run inside the workspace root only."])
     ""))
+
+(defn shell-attach-command
+  "`vis ext shell attach <id>` — the human-side passthrough: join a live
+   `shell_bg` shell's PTY in your OWN terminal (finish a browser OAuth, answer a
+   prompt only a person can), then Ctrl-] to detach with the child untouched.
+   `--socket PATH` targets an explicit socket; otherwise the newest shell whose
+   id matches. Returns the attach exit code."
+  [_parsed residual]
+  (let [args   (vec residual)
+        socket (loop [xs args]
+                 (cond (empty? xs)            nil
+                   (= (first xs) "--socket")  (second xs)
+                   :else                      (recur (rest xs))))
+        id     (first (remove #(str/starts-with? % "--") args))]
+    (pty-bridge/attach! {:id id :socket socket})))
+
+(def shell-cli
+  "CLI surface mounted under `vis ext shell`. Only `attach` for now — the human
+   passthrough onto a background PTY the agent spawned."
+  [{:cmd/name  "shell"
+    :cmd/doc   "Attach a real terminal to a live background shell (shell_bg)."
+    :cmd/usage "vis ext shell attach <id>"
+    :cmd/subcommands
+    [{:cmd/name      "attach"
+      :cmd/doc       "Join a background shell's PTY in your terminal; Ctrl-] detaches (child keeps running)."
+      :cmd/usage     "vis ext shell attach <id> [--socket PATH]"
+      :cmd/owns-tty? true
+      :cmd/examples  ["vis ext shell attach slack-auth"
+                      "vis ext shell attach dev-server"]
+      :cmd/run-fn    #'shell-attach-command}]}])
 
 (def vis-extension
   (vis/extension
@@ -749,6 +944,7 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
      :ext/activation-fn (fn [_env] (toggles/enabled? :shell/enabled))
      :ext/engine      {:ext.engine/alias   'shell
                        :ext.engine/symbols shell-symbols}
-     :ext/prompt-fn      shell-prompt}))
+     :ext/prompt-fn      shell-prompt
+     :ext/cli            shell-cli}))
 
 (vis/register-extension! vis-extension)
