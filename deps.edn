@@ -178,6 +178,10 @@
   org.graalvm.python/python-resources             {:mvn/version "25.1.3"}
   org.graalvm.truffle/truffle-runtime             {:mvn/version "25.1.3"}
   com.cnuernber/charred                           {:mvn/version "1.039"}
+  ;; YAMLStar — pure-Clojure YAML 1.2 loader (zero SnakeYAML; deps: data.json).
+  ;; Backs the sandbox `import yaml` shim in `internal.env-python`, so agent
+  ;; Python gets a PyYAML-compatible `yaml` module without shipping CPython PyYAML.
+  org.yamlstar/yamlstar                           {:mvn/version "0.1.11"}
   ;; Ring + Reitit — the HTTP gateway (`internal.gateway.server`). Ring's
   ;; standard handler/middleware model with the Jetty adapter running on
   ;; JDK virtual threads (`:virtual-threads? true`, Java 21+); reitit-ring
