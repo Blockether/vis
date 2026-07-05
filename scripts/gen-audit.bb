@@ -242,12 +242,7 @@
     (str
       "# vis — Security & Dependency Audit
 
-> Generated " today " by `scripts/gen-audit.bb` (run in CI — see §12). The
-> dependency inventory (§5), license distribution (§6), CVE posture (§7) and
-> resource footprint (§8) are pulled straight from the resolved `deps.edn` graph
-> and the Clojars / Maven Central POMs — **do not edit those by hand**; rerun
-> `bb scripts/gen-audit.bb`. The surrounding prose (product, ownership,
-> technology, licensing, data-governance, warranty) is reviewed on change.
+> Generated " today ".
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -465,15 +460,20 @@ under **Apache-2.0**"
 
 ## 7. Vulnerability posture — clj-watson (CVEs)
 
-### Are there any CVEs?
+### Where to find live findings
 
-**No known CVEs are outstanding against the shipped dependency graph.**
-[clj-watson](https://github.com/clj-holmes/clj-watson) resolves the *entire*
-graph (direct **and** transitive) and matches every artifact against a
-vulnerability database on every dependency change; the current run reports no
-open advisories. Live findings — the always-current answer — are published to
-the repository **Security → Code scanning** tab; this document is not the
-system of record for live CVE state, the Security tab is.
+The **authoritative, always-current** list of vulnerabilities is the repository's
+GitHub **Security → Code scanning** tab — not this document:
+
+**<https://github.com/Blockether/vis/security/code-scanning>**
+
+Every [clj-watson](https://github.com/clj-holmes/clj-watson) run resolves the
+*entire* dependency graph (direct **and** transitive), matches each artifact
+against a vulnerability database on every dependency change, and publishes its
+findings (SARIF) there. Each run is also archived as a downloadable build
+artifact under **Actions → Security audit**
+(<https://github.com/Blockether/vis/actions/workflows/security-audit.yml>). This
+document is not the system of record for live CVE state — the Security tab is.
 
 ### What it is & why
 
