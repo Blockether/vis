@@ -2415,12 +2415,22 @@
    sanctioned conversion point — everything downstream (synth-call, py-literal,
    the sandbox) is strings-only. `normalize-dict-key` additionally strips a
    model-drift leading colon (`\":path\"`) so positional extraction still finds
-   the key and the call just works."
+   the key and the call just works.
+
+   DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
+   `patch` carry NESTED dicts (`edits [{:from_anchor …}]`); a shallow pass left
+   the model-drift colon on those nested keys, so the synthesized Python call
+   leaked `patch([{\":from_anchor\": …}])`. Only KEYS are touched — values (edit
+   `replace` text, anchors, paths) pass through verbatim."
   [input]
-  (into {}
-    (map (fn [[k v]]
-           [(env/normalize-dict-key (if (keyword? k) (name k) (str k))) v]))
-    (or input {})))
+  (letfn [(nk [k] (env/normalize-dict-key (if (keyword? k) (name k) (str k))))
+          (walk [x]
+            (cond
+              (map? x)               (into {} (map (fn [[k v]] [(nk k) (walk v)])) x)
+              (or (vector? x)
+                (seq? x) (set? x))   (mapv walk x)
+              :else                  x))]
+    (walk (or input {}))))
 
 (defn- synth-call
   "Synthesize `py-name(args…)` from a native tool's `:call` SHAPE map + the tool

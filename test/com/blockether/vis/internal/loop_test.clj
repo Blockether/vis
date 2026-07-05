@@ -1693,6 +1693,21 @@
                 (synth {:name "patch" :input {"edits" [{"from_anchor" "1:a"}]}})))
       (expect (= "patch({\"path\": \"a.clj\", \"edits\": [{\"from_anchor\": \"1:a\"}]})"
                 (synth {:name "patch" :input {"path" "a.clj" "edits" [{"from_anchor" "1:a"}]}}))))
+    (it "strips the model-drift leading colon at EVERY depth (not just top-level)"
+        ;; Regression: the model reads keyword-heavy Clojure source and drifts into
+        ;; `:key` spelling. A shallow normalize fixed top-level keys (cat(\"x\")) but
+        ;; left NESTED dict keys colon-prefixed, so `patch` leaked
+        ;; `patch([{\":from_anchor\": …}])`. Keys normalize at all depths; VALUES
+        ;; that happen to start with a colon are untouched.
+      (expect (= "cat(\"x\")" (synth {:name "cat" :input {":path" "x"}})))
+      (expect (= "patch([{\"from_anchor\": \"1:a\", \"replace\": \"x\"}])"
+                (synth {:name "patch" :input {"edits" [{":from_anchor" "1:a" ":replace" "x"}]}})))
+      (expect (= "patch({\"path\": \"a.clj\", \"edits\": [{\"from_anchor\": \"1:a\", \"to_anchor\": \"2:b\"}]})"
+                (synth {:name "patch" :input {":path" "a.clj"
+                                              "edits" [{":from_anchor" "1:a" ":to_anchor" "2:b"}]}})))
+        ;; a VALUE spelled like a keyword survives verbatim — only KEYS are cleaned.
+      (expect (= "patch([{\"from_anchor\": \"1:a\", \"replace\": \":kw-value\"}])"
+                (synth {:name "patch" :input {"edits" [{"from_anchor" "1:a" "replace" ":kw-value"}]}}))))
     (it "language facade splits `language` into the leading positional"
       (expect (= "repl_eval(\"clojure\", {\"code\": \"(+ 1 2)\"})"
                 (synth {:name "repl_eval" :input {"language" "clojure" "code" "(+ 1 2)"}})))
