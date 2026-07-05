@@ -1904,6 +1904,14 @@
                (p/set-colors! g t/dialog-hint t/dialog-bg)
                (p/put-str! g (- (+ left inner-w) count-w) search-row count-str)
                cur)]
+         ;; Full-width rule under the search bar — the same framed-input
+         ;; compartment the command palette (`list-dialog!`) and the session
+         ;; switcher (`navigator-dialog!`) draw under their query fields, so
+         ;; every searchable surface reads the same. `┬` joins the rail
+         ;; divider that begins on the row below it.
+         (p/set-colors! g t/dialog-border t/dialog-bg)
+         (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
+         (p/put-str! g lleft (inc content-top) "┬")
          (dotimes [i visible-h]
            (let [entry-idx (+ @scroll i)
                  row-y (+ list-top i)]
@@ -1960,7 +1968,7 @@
          ;; the divider never gets overwritten by a pane fill.
          (let [toc (settings-toc rows @selected)]
            (p/set-colors! g t/dialog-border t/dialog-bg)
-           (doseq [ry (range (inc content-top) (+ content-top content-h))]
+           (doseq [ry (range list-top (+ content-top content-h))]
              (p/put-str! g lleft ry "│"))
            (dotimes [i (min (count toc) visible-h)]
              (let [{lbl :label cnt :count active? :active?} (nth toc i)
