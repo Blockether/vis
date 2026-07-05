@@ -378,9 +378,9 @@
   [store]
   (when-let [db-file (:db-file store)]
     (try
-      (let [attrs (Files/readAttributes (Paths/get db-file (make-array String 0))
+      (let [attrs (Files/readAttributes ^java.nio.file.Path (Paths/get db-file (make-array String 0))
                     "basic:fileKey,lastModifiedTime,size"
-                    (make-array LinkOption 0))]
+                    ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))]
         {:db-file       db-file
          :file-key      (get attrs "fileKey")
          :last-modified (some-> (get attrs "lastModifiedTime") str)
