@@ -452,7 +452,20 @@
           big   (input/format-paste-placeholder
                   {:id 2 :content (apply str (repeat 2048 "a"))})]
       (expect (str/includes? small "1B"))
-      (expect (str/includes? big "2.0KB")))))
+      (expect (str/includes? big "2.0KB"))))
+
+  (it "an image entry is labelled `Image` with filename + dims + size"
+    (let [token (input/format-paste-placeholder
+                  {:id 3 :content "/tmp/shot.png"
+                   :image {:filename "shot.png" :width 1200 :height 800
+                           :size-label "245KB"}})]
+      (expect (= "[Image #3: shot.png 1200×800, 245KB]" token))))
+
+  (it "an image with unknown dims omits the WxH clause"
+    (let [token (input/format-paste-placeholder
+                  {:id 4 :content "/tmp/x.gif"
+                   :image {:filename "x.gif" :size-label "12KB"}})]
+      (expect (= "[Image #4: x.gif, 12KB]" token)))))
 
 (defdescribe placeholder-threshold-test
   (it "short single-line text bypasses the placeholder UX"
@@ -522,7 +535,25 @@
   (it "collapse passes unknown tokens through unchanged"
     (let [unchanged "hello [Pasted #99: 1 line, 1B] world"]
       (expect (= unchanged
-                (input/collapse-paste-placeholders unchanged {}))))))
+                (input/collapse-paste-placeholders unchanged {})))))
+
+  (it "an image token collapses into a `vis-image` fence carrying path + metadata"
+    (let [pastes {1 {:id 1 :content "/tmp/shot.png"
+                     :image {:path "/tmp/shot.png" :mime "image/png"
+                             :filename "shot.png" :width 1200 :height 800
+                             :size-label "245KB"}}}
+          out    (input/collapse-paste-placeholders
+                   "see [Image #1: shot.png 1200×800, 245KB]" pastes)]
+      (expect (str/includes? out "````vis-image\n[Image #1: shot.png 1200×800, 245KB]\n"))
+      (expect (str/includes? out "/tmp/shot.png\nimage/png\n1200x800\n245KB\n"))
+      (expect (str/ends-with? out "````\n"))))
+
+  (it "an image token expands to just the file PATH for the engine to attach"
+    (let [pastes {1 {:id 1 :content "/tmp/shot.png"
+                     :image {:path "/tmp/shot.png" :filename "shot.png"}}}]
+      (expect (= "see /tmp/shot.png"
+                (input/expand-paste-placeholders
+                  "see [Image #1: shot.png 1200×800, 245KB]" pastes))))))
 
 (defdescribe placeholder-smart-delete-test
   (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"
