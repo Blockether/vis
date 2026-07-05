@@ -1755,17 +1755,40 @@
         (vec (keep-indexed (fn [i row] (when (contains? keep i) row)) rows))))))
 (defn- settings-selectable-count [rows] (count (filter settings-selectable? rows)))
 
-(defn settings-dialog!
-  "Show the tabbed settings dialog.
+(defn- settings-toc
+  "Table-of-contents entries for the VS Code-style left sidebar: one per
+   top-level `:section`, each with the count of selectable rows beneath it
+   and whether it owns the currently-selected row. `rows` is the (already
+   filtered) flat settings list; `selected` is the selected row index."
+  [rows selected]
+  (let [rows (vec rows)
+        n (count rows)
+        sec-idxs (filterv #(= :section (:type (nth rows %))) (range n))]
+    (vec
+      (map-indexed
+        (fn [k start]
+          (let [end (long (or (get sec-idxs (inc k)) n))
+                cnt (count (filter settings-selectable? (subvec rows start end)))]
+            {:label (:label (nth rows start))
+             :count cnt
+             :start start
+             :active? (and (>= selected start) (< selected end))}))
+        sec-idxs))))
 
-   ONE flat, grouped, scrollable list — no tabs (mirrors the web settings
-   modal). Toggle rows render `[✓]` / `[ ]`. Choice rows render `[->]` and cycle
-   through their allowed values with Space or Enter. Action rows render `[↗]`
-   and invoke a callback from `callbacks`.
+(defn settings-dialog!
+  "Show the settings dialog.
+
+   ONE flat, grouped, scrollable list (mirrors the web settings modal), laid
+   out VS Code-style: a left Table-of-Contents sidebar rail lists the sections
+   with per-section counts and highlights the one owning the selection, while
+   the right pane shows the settings themselves. Toggle rows render a leading
+   status glyph; choice rows cycle their value with Enter; action rows invoke
+   a callback. The rail is a passive locator — arrow keys still move through
+   the right pane and the rail tracks where you are.
 
    `settings` is the persisted TUI settings map (see
-   `state/default-settings`). Esc closes the dialog and returns the
-   current settings map."
+   `state/default-settings`). Esc clears an active search first, then closes
+   and returns the current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let [extension-rows (extension-option-rows)
@@ -1794,6 +1817,14 @@
                       (settings-content-width cols)
                       (settings-content-height screen-rows))
              {:keys [left inner-w]} bounds
+             ;; VS Code split: a left sidebar rail (the section Table of
+             ;; Contents) + a vertical divider + the right settings pane.
+             ;; `lleft`/`linner` are the right pane's own left/inner-w, so the
+             ;; whole list-painting block below reuses the single-pane math
+             ;; unchanged — only the search bar and hint bar stay full width.
+             rail-w (clamp (quot inner-w 4) 14 22)
+             lleft (+ left rail-w 1)
+             linner (max 1 (- inner-w rail-w 1))
              {:keys [content-top content-h hint-row]} (dialog-layout bounds)
              search-row content-top
              list-top (+ content-top 2)
@@ -1803,16 +1834,16 @@
              ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
              ;; option row for the selection gutter (`>` glyph + 1
              ;; col margin). The cursor itself is painted at
-             ;; `(inc left)` (the dialog's inner edge) by the row
+             ;; `(inc lleft)` (the pane's inner edge) by the row
              ;; loop; option body shifts right by the gutter.
-             option-x (+ left 2 option-indent p/SELECTION_WIDTH)
+             option-x (+ lleft 2 option-indent p/SELECTION_WIDTH)
              labels (mapv #(settings-option-label % @values) rows)
-             base-paint-w inner-w
+             base-paint-w linner
              base-option-w (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
              base-desc-w (max 1 (- base-option-w check-w))
              base-entries (settings-render-entries rows base-option-w base-desc-w)
              scrollable? (> (count base-entries) visible-h)
-             paint-w (if scrollable? (max 1 (dec inner-w)) inner-w)
+             paint-w (if scrollable? (max 1 (dec linner)) linner)
              option-w (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
              desc-x (+ option-x check-w)
              desc-w (max 1 (- option-w check-w))
@@ -1863,7 +1894,7 @@
                               start0)]
                  (reset! scroll start1))
              ;; Frame 1 search bar: borderless query field + "N of M" count,
-             ;; sitting above the list. Returns the cursor position for the field.
+             ;; sitting above the split (full width). Returns the cursor pos.
              search-cursor
              (let [count-str (str shown-count " of " total-count)
                    count-w   (count count-str)
@@ -1885,34 +1916,34 @@
                  (case part
                    :section (do
                               (p/set-colors! g t/dialog-border t/dialog-bg)
-                              (p/fill-rect! g (inc left) row-y paint-w 1)
-                              (p/put-str! g (+ left 2) row-y (settings-section-text label paint-w))
+                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                              (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
                               (p/set-fg! g t/dialog-hint-key)
-                              (p/styled g [p/BOLD] (p/put-str! g (+ left 5) row-y label)))
+                              (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
                    :subsection (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                 (p/fill-rect! g (inc left) row-y paint-w 1)
+                                 (p/fill-rect! g (inc lleft) row-y paint-w 1)
                                  (p/styled g
                                    [p/BOLD]
                                    (p/put-str! g
-                                     (+ left 2)
+                                     (+ lleft 2)
                                      row-y
                                      (settings-subsection-text label paint-w))))
                    :info-line
                    (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                     (p/fill-rect! g (inc left) row-y paint-w 1)
-                     (p/put-str! g (+ left 2) row-y (ellipsize text (max 1 (- paint-w 2)))))
+                     (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                     (p/put-str! g (+ lleft 2) row-y (ellipsize text (max 1 (- paint-w 2)))))
                    :option-desc (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                  (p/fill-rect! g (inc left) row-y paint-w 1)
+                                  (p/fill-rect! g (inc lleft) row-y paint-w 1)
                                   (p/put-str! g desc-x row-y (ellipsize text desc-w)))
                    ;; Selection visual: leading `> ` cursor glyph and
                    ;; BOLD label text. Descriptions wrap beneath the
                    ;; option on dim rows, so long labels no longer force
                    ;; descriptions into an ellipsis-only column.
                    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                     (p/fill-rect! g (inc left) row-y paint-w 1)
+                     (p/fill-rect! g (inc lleft) row-y paint-w 1)
                        ;; Cursor glyph in the dialog padding column.
                      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                     (p/draw-selection-marker! g (inc left) row-y selected?)
+                     (p/draw-selection-marker! g (inc lleft) row-y selected?)
                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
                        ;; which returns the col to start the label at.
                      (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
@@ -1922,9 +1953,32 @@
                          (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
                          (p/put-str! g label-x row-y lbl))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) row-y paint-w 1)))))
+                 (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
+         ;; Left Table-of-Contents rail (the VS Code settings sidebar): the
+         ;; section list with per-section counts; the section owning the
+         ;; selected row gets an accent bar. Painted AFTER the right pane so
+         ;; the divider never gets overwritten by a pane fill.
+         (let [toc (settings-toc rows @selected)]
+           (p/set-colors! g t/dialog-border t/dialog-bg)
+           (doseq [ry (range (inc content-top) (+ content-top content-h))]
+             (p/put-str! g lleft ry "│"))
+           (dotimes [i (min (count toc) visible-h)]
+             (let [{lbl :label cnt :count active? :active?} (nth toc i)
+                   ry     (+ list-top i)
+                   rail-x (inc left)
+                   cstr   (str cnt)
+                   lbl-w  (max 1 (- rail-w 2 (count cstr) 1))
+                   bg     (if active? t/header-active-tab-accent t/dialog-bg)
+                   fg     (if active? t/dialog-bg t/dialog-fg)]
+               (p/set-colors! g fg bg)
+               (p/fill-rect! g rail-x ry rail-w 1)
+               (if active?
+                 (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                 (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+               (p/set-colors! g (if active? t/dialog-bg t/dialog-hint) bg)
+               (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr))))
          (scrollbar/draw! g
-           {:col (+ left inner-w),
+           {:col (+ lleft linner),
             :top list-top,
             :track-h visible-h,
             :total-h visual-n,
@@ -1947,7 +2001,7 @@
                      pos (.getPosition ma)
                      mx (.getColumn pos)
                      my (.getRow pos)
-                     bar-col (+ left inner-w)
+                     bar-col (+ lleft linner)
                      geom (scrollbar/geometry visual-n visible-h visible-h @scroll)]
                  (cond
                      ;; Mouse wheel anywhere in the dialog — scroll the
