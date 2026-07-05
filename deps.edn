@@ -120,6 +120,15 @@
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                 criterium/criterium            {:mvn/version "0.4.6"}}}
 
+  ;; Objective flicker/delta-correctness harness for the Lanterna delta
+  ;; emitter — replays refresh(DELTA) onto a reference DefaultVirtualTerminal
+  ;; and asserts the buffer matches. See dev/flicker_harness.clj.
+  :flicker {:extra-paths ["dev"]
+            :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
+                          "--enable-native-access=ALL-UNNAMED"
+                          "-Djava.awt.headless=true"]
+            :main-opts   ["-m" "flicker-harness"]}
+
   :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                        slipset/deps-deploy           {:mvn/version "0.2.5"}
                        org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
