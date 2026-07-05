@@ -142,6 +142,20 @@ def test_summary_preserves_false_reward_fields(tmp_path):
     assert summary["rubric_score"] == 0
 
 
+def test_summary_prefers_reward_details_over_reward(tmp_path):
+    run_dir = tmp_path / "run"
+    verifier = run_dir / "harbor-output" / "trial" / "verifier"
+    verifier.mkdir(parents=True)
+    (verifier / "reward.json").write_text(json.dumps({"reward": 0.0}))
+    (verifier / "reward_details.json").write_text(
+        json.dumps({"reward": 1.0, "rubric": {"status": "ok"}, "taste": {"status": "ok"}})
+    )
+
+    summary = _run_metrics(tmp_path, run_dir)
+
+    assert summary["harbor_reward"] == {"reward": 1.0, "rubric": {"status": "ok"}, "taste": {"status": "ok"}}
+
+
 def test_summary_classifies_docker_daemon_failure_from_harbor_log(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
