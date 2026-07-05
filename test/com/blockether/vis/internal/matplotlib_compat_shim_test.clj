@@ -151,3 +151,75 @@
                        (str "import matplotlib.pyplot as plt\nimport io\nplt.clf()\n"
                          "plt.plot([0,1],[0,1])\n"
                          "__b = io.BytesIO()\nplt.savefig(__b) is __b")))))))
+
+(defdescribe matplotlib-figure-oo-test
+  (it "fig.savefig writes a real PNG via the OO subplots API"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                         "fig, ax = plt.subplots()\nax.plot([1,2,3],[1,4,9])\n"
+                         "__b = io.BytesIO()\nfig.savefig(__b)\n"
+                         "list(__b.getvalue()[:4]) == [137, 80, 78, 71]"))))))
+
+  (it "fig.suptitle / tight_layout / set_size_inches / add_subplot all render"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context
+                       (str "fig, ax = plt.subplots()\nfig.suptitle('t'); fig.tight_layout()\n"
+                         "fig.set_size_inches(8, 6)\nax.plot([1,2],[1,2])"))))
+      (expect (< 100 (png-len python-context
+                       "fig = plt.figure()\nax = fig.add_subplot(1,1,1)\nax.plot([1,2],[1,2])")))))
+
+  (it "twinx returns an Axes that draws into the same figure"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context
+                       (str "ax = plt.gca()\nax2 = ax.twinx()\n"
+                         "ax.plot([1,2,3],[1,2,3])\nax2.plot([1,2,3],[30,20,10])")))))))
+
+(defdescribe matplotlib-expanded-api-test
+  (it "publishes the newly added pyplot callables"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\n"
+                         "all(callable(getattr(plt, n, None)) for n in "
+                         "['axis','boxplot','imshow','colorbar','hlines','vlines'])"))))))
+
+  (it "plot() with multiple x,y pairs accumulates one series per pair"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (= 2 (ev python-context
+                     "import matplotlib.pyplot as plt\nplt.clf()\nlen(plt.plot([1,2,3],[1,2,3],[1,2,3],[3,2,1]))")))))
+
+  (it "plot() returns line handles supporting `line, = ...` and set_*"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                         "ln, = plt.plot([1,2,3],[1,2,3])\n"
+                         "ln.set_label('a'); ln.set_color('red'); ln.set_linestyle('--')\n"
+                         "ln.get_label() == 'a'"))))))
+
+  (it "renders boxplot / imshow to real PNGs"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (png-magic? python-context
+                       "plt.boxplot([[1,2,3,4,5],[2,4,6,8,10],[1,1,3,7,9]])")))
+      (expect (true? (png-magic? python-context
+                       "plt.imshow([[1,2,3],[4,5,6],[7,8,9]])")))))
+
+  (it "renders hlines / vlines and honours a hex color"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context
+                       "plt.plot([0,1,2],[0,1,2])\nplt.hlines([1,2],0,2)\nplt.vlines([0.5,1.5],0,2)")))
+      (expect (< 100 (png-len python-context
+                       "plt.plot([1,2,3],[1,2,3], color='#00ff88')")))))
+
+  (it "colorbar is a no-op that does not break rendering"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       "import matplotlib.pyplot as plt\nplt.clf()\nplt.scatter([1,2],[1,2], c=[1,2])\nplt.colorbar() is None")))
+      (expect (< 100 (png-len python-context "plt.scatter([1,2,3],[1,2,3], c=[1,2,3])\nplt.colorbar()")))))
+
+  (it "axis('off') renders without a frame; axis([...]) sets limits"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})
+          off (png-len python-context "plt.plot([1,2,3],[1,2,3])\nplt.axis('off')")
+          on (png-len python-context "plt.plot([1,2,3],[1,2,3])")]
+      (expect (< 100 off))
+      (expect (< off on))
+      (expect (< 100 (png-len python-context "plt.plot([1,2,3],[1,2,3])\nplt.axis([0,5,0,10])"))))))
