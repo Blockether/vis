@@ -101,6 +101,19 @@
     ;; non-tool form → no card at all (its body stays channel-specific).
     (expect (= [] (form/result-cards {:result {:k 1}}))))
 
+  (it "hide-tool-code? drops the redundant source for a successful native non-python tool only"
+    ;; A successful native tool (cat/rg/patch/…) already renders as an op-card, so
+    ;; its synthesized `name(args)` source is redundant chrome — hide it.
+    (expect (form/hide-tool-code? {:vis/tool-name "cat"}))
+    (expect (form/hide-tool-code? {:vis/tool-name "rg" :success? true}))
+    ;; python_execution is the model's OWN program — always keep its code.
+    (expect (not (form/hide-tool-code? {:vis/tool-name "python_execution"})))
+    ;; A non-tool form has no card, so there's nothing to hide behind.
+    (expect (not (form/hide-tool-code? {:result {:k 1}})))
+    ;; An errored tool form keeps its code so the inline error has context.
+    (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
+    (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false}))))
+
   (it "->display drops nils so a merge never stamps empty keys"
     (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
     (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil})))))
