@@ -1237,16 +1237,35 @@
     });
   });
   /* ── Settings: VS Code-style live search + category rail ────────────
-     The Settings modal is swapped into #modal by htmx. All wiring is
-     DELEGATED on document.body so it survives every swap without re-init:
-     typing in #settings-search filters rows live (hiding empty groups and
-     their rail entries), and clicking a category scrolls its section into
-     view. A scroll-spy keeps the active rail entry in sync. */
+     The Settings modal is swapped into #modal by htmx. Each swapped-in
+     pane is wired ONCE (data-init guard): typing filters rows live,
+     clicking a category scrolls its section to the top of the list, and a
+     scroll-spy — attached DIRECTLY to the real scroll container
+     (.settings-groups), not a delegated body listener — keeps the active
+     rail entry in sync as you scroll. A trailing spacer lets even the last
+     (short) section scroll all the way up to the top. */
   ready(function () {
     function pane() { return document.querySelector(".settings-pane"); }
 
-    function applyFilter() {
-      var p = pane(); if (!p) { return; }
+    function setActive(p, group) {
+      p.querySelectorAll(".settings-toc-item").forEach(function (x) {
+        x.classList.toggle("is-active", x.dataset.group === group);
+      });
+    }
+
+    /* Trailing spacer height so the LAST (or any short) section can still
+       scroll up to the top — otherwise clicking it parks it mid-list. */
+    function sizeSpacer(p) {
+      var groups = p.querySelector(".settings-groups");
+      var spacer = p.querySelector(".settings-groups-spacer");
+      if (!groups || !spacer) { return; }
+      var last = null;
+      groups.querySelectorAll(".settings-group").forEach(function (s) { if (!s.hidden) { last = s; } });
+      spacer.style.height = last ? Math.max(0, groups.clientHeight - last.offsetHeight - 16) + "px" : "0px";
+    }
+
+    function applyFilter(p) {
+      p = p || pane(); if (!p) { return; }
       var input = p.querySelector("#settings-search");
       var q = (input && input.value || "").trim().toLowerCase();
       var shown = 0, total = 0;
@@ -1266,56 +1285,66 @@
       });
       var count = p.querySelector("#settings-count");
       if (count) { count.textContent = q ? (shown + " of " + total) : ""; }
+      sizeSpacer(p);
     }
 
-    function setActive(group) {
-      var p = pane(); if (!p) { return; }
-      p.querySelectorAll(".settings-toc-item").forEach(function (x) {
-        x.classList.toggle("is-active", x.dataset.group === group);
-      });
-    }
-
-    document.body.addEventListener("input", function (e) {
-      if (e.target && e.target.id === "settings-search") { applyFilter(); }
-    });
-
-    document.body.addEventListener("click", function (e) {
-      var it = e.target.closest && e.target.closest(".settings-toc-item");
-      if (!it) { return; }
-      var p = pane(); if (!p) { return; }
-      var sec = p.querySelector('.settings-group[data-group="' + it.dataset.group + '"]');
-      var groups = p.querySelector(".settings-groups");
-      if (sec && groups) {
-        var top = sec.getBoundingClientRect().top - groups.getBoundingClientRect().top + groups.scrollTop;
-        groups.scrollTo({ top: top, behavior: "smooth" });
-      }
-      setActive(it.dataset.group);
-    });
-
-    /* scroll doesn't bubble → listen in the CAPTURE phase; spy the section
-       whose top is nearest the scroll container's top. */
-    document.body.addEventListener("scroll", function (e) {
-      var groups = e.target;
-      if (!groups.classList || !groups.classList.contains("settings-groups")) { return; }
-      var best = null, bestDist = Infinity;
-      groups.querySelectorAll(".settings-group").forEach(function (sec) {
-        if (sec.hidden) { return; }
-        var dist = Math.abs(sec.getBoundingClientRect().top - groups.getBoundingClientRect().top);
-        if (dist < bestDist) { bestDist = dist; best = sec; }
-      });
-      if (best) { setActive(best.dataset.group); }
-    }, true);
-
-    /* On (re)load of the Settings modal: highlight the first category and
-       focus the search box, once per swapped-in pane. */
-    document.body.addEventListener("htmx:afterSwap", function () {
-      var p = pane(); if (!p || p.dataset.init) { return; }
+    /* Wire ONE freshly-swapped-in Settings pane. */
+    function initPane(p) {
+      if (!p || p.dataset.init) { return; }
       p.dataset.init = "1";
+      var groups = p.querySelector(".settings-groups");
+      var input = p.querySelector("#settings-search");
+
+      if (groups && !groups.querySelector(".settings-groups-spacer")) {
+        var spacer = document.createElement("div");
+        spacer.className = "settings-groups-spacer";
+        spacer.setAttribute("aria-hidden", "true");
+        groups.appendChild(spacer);
+      }
+
+      if (input) { input.addEventListener("input", function () { applyFilter(p); }); }
+
+      /* click a category → scroll its section to the top of the list */
+      p.querySelectorAll(".settings-toc-item").forEach(function (it) {
+        it.addEventListener("click", function () {
+          if (!groups) { return; }
+          var sec = p.querySelector('.settings-group[data-group="' + it.dataset.group + '"]');
+          if (!sec) { return; }
+          var top = sec.getBoundingClientRect().top - groups.getBoundingClientRect().top + groups.scrollTop;
+          groups.scrollTo({ top: top, behavior: "smooth" });
+          setActive(p, it.dataset.group);
+        });
+      });
+
+      /* scroll-spy: the last section whose top has passed the list top wins;
+         at the very bottom, force the last visible section so it lights up. */
+      function spy() {
+        if (!groups) { return; }
+        var gTop = groups.getBoundingClientRect().top;
+        var current = null, visSecs = [];
+        groups.querySelectorAll(".settings-group").forEach(function (sec) {
+          if (sec.hidden) { return; }
+          visSecs.push(sec);
+          if (sec.getBoundingClientRect().top - gTop <= 12) { current = sec; }
+        });
+        if (groups.scrollTop + groups.clientHeight >= groups.scrollHeight - 4 && visSecs.length) {
+          current = visSecs[visSecs.length - 1];
+        }
+        if (!current && visSecs.length) { current = visSecs[0]; }
+        if (current) { setActive(p, current.dataset.group); }
+      }
+      if (groups) { groups.addEventListener("scroll", spy, { passive: true }); }
+
+      sizeSpacer(p);
       var first = p.querySelector(".settings-toc-item");
       if (first) { first.classList.add("is-active"); }
-      var input = p.querySelector("#settings-search");
       if (input) { input.focus(); }
-    });
+    }
+
+    document.body.addEventListener("htmx:afterSwap", function () { initPane(pane()); });
+    window.addEventListener("resize", function () { var p = pane(); if (p) { sizeSpacer(p); } });
+    /* pane may already be present (full load with the modal open) */
+    initPane(pane());
   });
 
 })();
