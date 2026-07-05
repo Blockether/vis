@@ -480,31 +480,3 @@ addresses reports on a best-effort basis.
 Keep the two channels separate: security disclosures stay private
 (<security@blockether.com>); everything else is a GitHub issue.
 
----
-
-## 12. Maintenance & follow-ups
-
-This file is generated. To refresh it after a dependency bump:
-
-```bash
-bb scripts/gen-audit.bb        # regenerate audit/README.md from the deps graph
-clojure -M:antq                # list outdated deps
-clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s   # re-scan CVEs
-```
-
-CI enforces freshness: the `audit-md` workflow reruns `bb scripts/gen-audit.bb`
-on every `deps.edn` change and weekly, and `bb scripts/gen-audit.bb --check`
-fails a PR that leaves audit/README.md stale. Keep the `:clj-watson` alias
-pinned to a released tag **and** its `:git/sha` so scans stay reproducible.
-
-**Pending / follow-ups** (hand-maintained inline in the `gen` string of
-`scripts/gen-audit.bb`; everything else on this page is generated):
-
-- [ ] Provision the free **NVD API key** as the `NVD_API_KEY` repo secret to
-      activate the `nvd-scan` (dependency-check / CVSS) job. The CI wiring is
-      already in place; the job self-skips until the secret is set.
-- [ ] Resolve the **LGPL / Lanterna** distribution question (§4.3, §6) with legal.
-- [x] **Native-image distribution** for paid delivery (§4): **done** — the release
-      build uses **GraalVM CE** (GPL-2.0 + Classpath Exception), so the binary can
-      be shipped or sold under any terms. Oracle GraalVM/GFTC no longer applies.
-- [ ] Flip on the CI **fail gate** (`-f` / `-c`) once the first clean baseline lands.
