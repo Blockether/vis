@@ -3731,12 +3731,20 @@
                            (recur out prev-family (next xs))
                            (recur (conj! out e) f (next xs))))
             :else (recur (conj! out e) nil (next xs))))))))
-(defn- git-only-form
-  "The lone `git` native-tool form of an iteration entry — or nil when the
-   iteration is NOT a pure single-git-call step. Thinking, streamed prose,
-   recaps, provider fallbacks, an iter-level error, a print-many `:cards`
-   block, or any non-git / multi-form shape all disqualify it, so a group
-   never swallows a causally-distinct iteration."
+(def ^:private groupable-tool-names
+  "Native tools whose consecutive PURE single-call iterations coalesce into ONE
+   collapsible band (a GIT / RG log) instead of N separately-stacked op-cards.
+   Only tools whose repeated back-to-back calls read as one logical activity
+   belong here: a burst of `git` commands, a burst of `rg` searches."
+  #{"git" "rg"})
+
+(defn- groupable-tool-form
+  "The lone native-tool form of an iteration entry when the iteration is a PURE
+   single call to a groupable tool (`groupable-tool-names`) — returns
+   `[tool-name form]`, else nil. Thinking, streamed prose, recaps, provider
+   fallbacks, an iter-level error, a print-many `:cards` block, or any non-single
+   / multi-form shape all disqualify it, so a group never swallows a
+   causally-distinct iteration."
   [entry]
   (let [{:keys [thinking content-stream assistant-prose forms recaps
                 provider-fallbacks error]}
@@ -3748,11 +3756,12 @@
             (str/blank? (str content-stream))
             (str/blank? (str assistant-prose))
             (= 1 (count forms)))
-      (let [f (first forms)]
-        (when (and (= "git" (some-> (:vis/tool-name f)
-                              str))
+      (let [f  (first forms)
+            tn (some-> (:vis/tool-name f)
+                 str)]
+        (when (and (contains? groupable-tool-names tn)
                 (empty? (:cards f)))
-          f)))))
+          [tn f])))))
 
 (defn- git-command-parts
   "Project one git form into the fields a grouped GIT band needs: the chip
@@ -3790,52 +3799,32 @@
      :headline   headline
      :body       (:body card)}))
 
-(defn- git-group-entries
-  "Coalesce a RUN of consecutive git-only iterations into ONE collapsible GIT
-   band instead of N separately-stacked GIT op-cards.
-
-   Collapsed (default) — a single badge row:
-     ▸ GIT · 3 commands  `add` (success) · `commit` (success) — tui: nicer git band · `push` (success)
-   Expanded — each command as a `$ <args>` row with its stdout / stderr
-   nested underneath, so the run reads as one shell log. One node-id folds
-   the whole band, so it toggles with a single triangle. A failed command
-   keeps its `(exit N)` note on both its chip and its `$` row."
-  [git-forms {:keys [fill-w session-id session-turn-id iteration-number detail-expansions]}]
-  (let [parts      (mapv git-command-parts git-forms)
-        n          (count parts)
-        chips      (str/join " · "
-                     (map (fn [{:keys [subcommand failed? subject]}]
-                            (str "`" subcommand "`"
-                              (if failed? " (failed)" " (success)")
-                              ;; Only a commit carries a subject — show it (clipped)
-                              ;; so the message is visible without expanding.
-                              (when (and subject (not failed?))
-                                (str " — " (ellipsize-cols subject 56)))))
-                       parts))
-        head       (str "**GIT** · " n " command" (when (not= 1 n) "s") "  " chips)
-        color-role :tool-color/shell
-        node-id    (when session-id
-                     (detail-node-id {:session-turn-id  session-turn-id
-                                      :iteration-number iteration-number
-                                      :section          :iteration
-                                      :kind             :git-group}))
-        ->result   (fn [e]
-                     (let [l        (str (:line e))
-                           stripped (or (second (split-structural-line-marker l)) l)]
-                       (assoc e :line (str result-marker
-                                        (if (str/blank? stripped)
-                                          stripped
-                                          (str tool-output-indent stripped))))))
-        body-md    (str/join "\n\n"
-                     (map (fn [{:keys [headline body]}]
-                            (str "`$ " headline "`"
-                              (when (seq (str body)) (str "\n\n" body))))
-                       parts))
-        entries    (when (seq body-md)
-                     (tag-copy-block-body
-                       (vec (ir-tui/ir->entries (vis/markdown->ir body-md)
-                              (max 1 (- fill-w tool-output-indent-cols)) {:mode :channel}))
-                       node-id body-md))]
+(defn- tool-band-entries
+  "Shared scaffolding for a collapsible tool BAND (GIT, RG, …): fold a markdown
+   `body-md` under ONE `head` summary row, toggled by a single triangle. `kind`
+   scopes the disclosure node per band type; `color-role` paints the badge. Body
+   rows get a left pad so they read as CHILDREN of the band. With no session (nil
+   id) the band renders inline, always expanded, so it still shows its items
+   rather than vanishing."
+  [{:keys [head color-role body-md kind]}
+   {:keys [fill-w session-id session-turn-id iteration-number detail-expansions]}]
+  (let [node-id  (when session-id
+                   (detail-node-id {:session-turn-id  session-turn-id
+                                    :iteration-number iteration-number
+                                    :section          :iteration
+                                    :kind             kind}))
+        ->result (fn [e]
+                   (let [l        (str (:line e))
+                         stripped (or (second (split-structural-line-marker l)) l)]
+                     (assoc e :line (str result-marker
+                                      (if (str/blank? stripped)
+                                        stripped
+                                        (str tool-output-indent stripped))))))
+        entries  (when (seq body-md)
+                   (tag-copy-block-body
+                     (vec (ir-tui/ir->entries (vis/markdown->ir body-md)
+                            (max 1 (- fill-w tool-output-indent-cols)) {:mode :channel}))
+                     node-id body-md))]
     (if (and node-id (seq entries))
       (let [expanded?    (detail-expanded? detail-expansions session-id node-id false)
             body-entries (into [(->result {:line ""})] (mapv ->result entries))
@@ -3849,7 +3838,7 @@
                  (conj body-entries {:line (str result-marker ""), :meta nil})
                  [{:line (str result-marker ""), :meta nil}]))))
       ;; No node-id (nil session-id) — render inline, always expanded, so the
-      ;; band still shows its commands rather than vanishing.
+      ;; band still shows its items rather than vanishing.
       (let [headline  (mapv (fn [line] {:line (str result-marker " " line),
                                         :meta {:kind :result-headline, :color-role color-role}})
                         (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head))
@@ -3859,35 +3848,113 @@
         (vec (concat [{:line (str result-marker ""), :meta nil}]
                headline body-rows [{:line (str result-marker ""), :meta nil}]))))))
 
+(defn- git-group-entries
+  "Coalesce a RUN of consecutive git-only iterations into ONE collapsible GIT
+   band instead of N separately-stacked GIT op-cards.
+
+   Collapsed (default) — a single badge row:
+     ▸ GIT · 3 commands  `add` (success) · `commit` (success) — tui: nicer git band · `push` (success)
+   Expanded — each command as a `$ <args>` row with its stdout / stderr
+   nested underneath, so the run reads as one shell log. A failed command keeps
+   its `(exit N)` note on both its chip and its `$` row."
+  [git-forms ctx]
+  (let [parts   (mapv git-command-parts git-forms)
+        n       (count parts)
+        chips   (str/join " · "
+                  (map (fn [{:keys [subcommand failed? subject]}]
+                         (str "`" subcommand "`"
+                           (if failed? " (failed)" " (success)")
+                           ;; Only a commit carries a subject — show it (clipped)
+                           ;; so the message is visible without expanding.
+                           (when (and subject (not failed?))
+                             (str " — " (ellipsize-cols subject 56)))))
+                    parts))
+        head    (str "**GIT** · " n " command" (when (not= 1 n) "s") "  " chips)
+        body-md (str/join "\n\n"
+                  (map (fn [{:keys [headline body]}]
+                         (str "`$ " headline "`"
+                           (when (seq (str body)) (str "\n\n" body))))
+                    parts))]
+    (tool-band-entries {:head head, :color-role :tool-color/shell,
+                        :body-md body-md, :kind :git-group}
+      ctx)))
+
+(defn- rg-command-parts
+  "Project one rg form into a grouped RG band's fields: the compact collapsed
+   `:chip` (the count tail — `4 files` / `6 hits in 1 file`, dropping the long
+   query prefix that would blow out the collapsed row), the FULL `:summary`
+   (query chips + count) as the expanded headline, and the matching-files
+   `:body`. Reads only the DB-stable card, so a restored trace groups
+   identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card) str str/trim not-empty)
+        ;; The rg summary is `<query chips> · <count>`; the count is the LAST
+        ;; ` · `-delimited segment (needles are OR-joined, never ` · `-joined),
+        ;; so a run of searches collapses to just their counts.
+        chip    (if summary
+                  (str/trim (last (str/split summary #" · ")))
+                  "rg")]
+    {:chip chip, :summary summary, :body (:body card)}))
+
+(defn- rg-group-entries
+  "Coalesce a RUN of consecutive rg-only iterations into ONE collapsible RG band
+   instead of N separately-stacked search op-cards.
+
+   Collapsed (default) — a single badge row with each search's count:
+     ▸ RG · 2 searches  4 files · 6 hits in 1 file
+   Expanded — each search as its full `<query> · <count>` headline with the
+   matching files nested underneath, so the burst reads as one search log."
+  [rg-forms ctx]
+  (let [parts   (mapv rg-command-parts rg-forms)
+        n       (count parts)
+        chips   (str/join " · " (map :chip parts))
+        head    (str "**RG** · " n " search" (when (not= 1 n) "es") "  " chips)
+        body-md (str/join "\n\n"
+                  (map (fn [{:keys [summary body]}]
+                         (str (or summary "rg")
+                           (when (seq (str body)) (str "\n" body))))
+                    parts))]
+    (tool-band-entries {:head head, :color-role :tool-color/search,
+                        :body-md body-md, :kind :rg-group}
+      ctx)))
+
 (defn- render-iteration-entries
-  "Turn the visible `[idx entry]` iteration pairs into painter entries. A
-   MAXIMAL run (>= 2) of consecutive git-only iterations collapses into one
-   `git-group-entries` band; every other iteration (including a lone git
-   call) renders through `iter-entry-fn` as before. A non-git step between
-   two git calls breaks the run, so grouping never crosses causally-distinct
-   work."
-  [visible-iterations iter-entry-fn show-silent? git-ctx]
+  "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
+   run (>= 2) of consecutive pure single-call iterations to the SAME groupable
+   tool collapses into ONE band (`git-group-entries` / `rg-group-entries`); every
+   other iteration — including a lone groupable call, a run broken by other work,
+   or a switch to a DIFFERENT groupable tool — renders through `iter-entry-fn` as
+   before, so grouping never crosses causally-distinct work."
+  [visible-iterations iter-entry-fn show-silent? group-ctx]
   (let [tagged (mapv (fn [pair]
-                       [pair (git-only-form (visible-iteration-entry (second pair) show-silent?))])
+                       [pair (groupable-tool-form
+                               (visible-iteration-entry (second pair) show-silent?))])
                  visible-iterations)]
     (loop [out (transient [])
            xs  (seq tagged)]
       (if (nil? xs)
         (persistent! out)
-        (let [[pair f] (first xs)]
-          (if f
-            (let [run (take-while (fn [[_ g]] (some? g)) xs)
+        (let [[pair tf] (first xs)]
+          (if tf
+            (let [tool-name (first tf)
+                  ;; A run is consecutive iterations of the SAME groupable tool;
+                  ;; a nil tag OR a different tool ends it.
+                  run (take-while (fn [[_ g]] (and (some? g) (= tool-name (first g)))) xs)
                   cnt (count run)]
               (if (>= cnt 2)
-                (let [forms     (mapv (fn [[_ g]] g) run)
+                (let [forms     (mapv (fn [[_ g]] (second g)) run)
                       first-idx (first (first (first run)))
                       iter-num  (inc (long first-idx))
-                      entries   (git-group-entries forms (assoc git-ctx :iteration-number iter-num))
+                      ctx       (assoc group-ctx :iteration-number iter-num)
+                      entries   (case tool-name
+                                  "git" (git-group-entries forms ctx)
+                                  "rg"  (rg-group-entries forms ctx))
                       ;; The band opens with its OWN colored breathe row (padding
                       ;; 1 up, symmetric with a native op-card). When the previous
                       ;; iteration closed with a terminal-bg iteration-pad gap, that
                       ;; gap + this band's breathe would read as a doubled empty
-                      ;; line above the GIT band. Drop the trailing gap so the
+                      ;; line above the band. Drop the trailing gap so the
                       ;; band's leading breathe coalesces with the prior card's
                       ;; trailing pad into ONE clean boundary row.
                       out*      (if (and (pos? (count out))

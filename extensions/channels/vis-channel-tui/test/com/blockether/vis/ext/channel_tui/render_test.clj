@@ -2056,7 +2056,12 @@
         (expect (= (str node-id) (:node-id meta)))
         (expect (true? (:collapsed? meta)))))))
 
-(def ^:private git-only-form @#'render/git-only-form)
+(defn- git-only-form
+  ;; Thin git filter over the generalized tagger — the source keeps only
+  ;; `groupable-tool-form`; this preserves the original git-only assertions.
+  [entry]
+  (let [tf (@#'render/groupable-tool-form entry)]
+    (when (= "git" (first tf)) (second tf))))
 (def ^:private git-command-parts @#'render/git-command-parts)
 (def ^:private git-group-entries @#'render/git-group-entries)
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
@@ -2181,3 +2186,92 @@
         ;; breathe (result-marker), NOT the popped iteration-pad gap.
         (expect (= rm-ch (first before)))
         (expect (not= ip-ch (first before)))))))
+
+(def ^:private groupable-tool-form @#'render/groupable-tool-form)
+(def ^:private rg-command-parts @#'render/rg-command-parts)
+(def ^:private rg-group-entries @#'render/rg-group-entries)
+
+(defn- rg-form [summary render]
+  {:vis/tool-name "rg" :success? true :code ""
+   :result-summary summary :result-render render
+   :tool-color-role :tool-color/search :result {}})
+
+(defdescribe rg-band-grouping-test
+  ;; A RUN of consecutive rg-only iterations coalesces into ONE collapsible RG
+  ;; band — the SAME machinery as the GIT band, keyed on tool name. A lone rg
+  ;; call, or a run broken by other work / a different groupable tool, renders
+  ;; per iteration.
+  (let [ctx {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        ri  (fn [i s r] [i {:forms [(rg-form s r)]}])
+        gf  (fn [i s] [i {:forms [(git-form s nil)]}])
+        py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        rg-band-count (fn [pairs]
+                        (->> (render-iteration-entries pairs iter-fn false ctx)
+                          entry-text
+                          (filter #(str/includes? % "searches"))
+                          count))
+        git-band-count (fn [pairs]
+                         (->> (render-iteration-entries pairs iter-fn false ctx)
+                           entry-text
+                           (filter #(str/includes? % "commands"))
+                           count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))]
+    (it "groupable-tool-form tags git AND rg, rejects other tools + impure steps"
+      (expect (= ["git" (git-form "status" nil)]
+                (update (groupable-tool-form {:forms [(git-form "status" nil)]}) 1 identity)))
+      (expect (= "rg" (first (groupable-tool-form {:forms [(rg-form "`x` · 1 file" nil)]}))))
+      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]})))
+      (expect (nil? (groupable-tool-form {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
+    (it "rg-command-parts drops the query prefix for the collapsed chip, keeps the full summary"
+      (let [content (rg-command-parts (rg-form "`a` OR `b` · 6 hits in 1 file" "\n`c.clj`\n\n```\n 1: x\n```"))
+            files   (rg-command-parts (rg-form "`q` · 4 files" "\n```\n  a\n```"))]
+        (expect (= "6 hits in 1 file" (:chip content)))
+        (expect (= "`a` OR `b` · 6 hits in 1 file" (:summary content)))
+        (expect (= "4 files" (:chip files)))))
+    (it "two consecutive rg iterations collapse into ONE band"
+      (let [pairs [(ri 0 "`a` · 4 files" nil) (ri 1 "`b` · 2 hits in 1 file" nil)]]
+        (expect (= 1 (rg-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone rg iteration renders normally (no band)"
+      (let [pairs [(ri 0 "`a` · 1 file" nil)]]
+        (expect (= 0 (rg-band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a non-rg step between two rg calls breaks the run"
+      (let [pairs [(ri 0 "`a` · 1 file" nil) (py 1) (ri 2 "`b` · 1 file" nil)]]
+        (expect (= 0 (rg-band-count pairs)))
+        (expect (= 3 (normal-count pairs)))))
+    (it "adjacent git-run and rg-run stay TWO separate bands, never merged"
+      (let [pairs [(gf 0 "add -A") (gf 1 "commit -m x")
+                   (ri 2 "`a` · 1 file" nil) (ri 3 "`b` · 2 files" nil)]]
+        (expect (= 1 (git-band-count pairs)))
+        (expect (= 1 (rg-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "collapsed band shows count chips; expanded shows each search's full query + matches"
+      (let [forms   [(rg-form "`paste` OR `Pasted` · 4 files" "\n```\n  a.clj\n```")
+                     (rg-form "`render-find` · 6 hits in 1 file" "\n`core.clj`\n\n```\n 12: foo\n```")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 5
+                                               :section :iteration :kind :rg-group})
+            collapsed (entry-text (rg-group-entries forms (assoc ctx :iteration-number 5)))
+            expanded  (entry-text (rg-group-entries forms (assoc ctx :iteration-number 5
+                                                            :detail-expansions {["s1" node-id] true})))]
+        (expect (some #(str/includes? % "2 searches") collapsed))
+        (expect (some #(str/includes? % "6 hits in 1 file") collapsed))
+        ;; The long query does NOT ride the collapsed row.
+        (expect (not-any? #(str/includes? % "render-find") collapsed))
+        ;; Expanded restores each full query + its matching files.
+        (expect (some #(str/includes? % "render-find") expanded))
+        (expect (some #(str/includes? % "core.clj") expanded))
+        (expect (some #(str/includes? % "12: foo") expanded))
+        ;; Nested search-headline rows carry the child left-pad, like the GIT
+        ;; band (the collapsed summary header is excluded — it leads with a chevron).
+        (expect (every? #(str/starts-with? % "  ")
+                  (filter #(str/includes? % "render-find ·") expanded)))))
+    (it "the rg band opens with a leading breathe row, like an op-card"
+      (let [texts (entry-text (rg-group-entries [(rg-form "`a` · 1 file" nil) (rg-form "`b` · 2 files" nil)]
+                                (assoc ctx :iteration-number 9)))]
+        (expect (str/blank? (first texts)))
+        (expect (str/includes? (second texts) "2 searches"))))))
