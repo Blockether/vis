@@ -326,6 +326,26 @@
       (expect (not (str/includes? body "provider response:")))
       (expect (not (str/includes? body "{\"type\":"))))))
 
+(defdescribe provider-transport-error-test
+  (it "renders a transport blip (no HTTP status) as a structured provider error, not one plain line"
+    (let [lines (format-iteration-entry
+                  {:error {:type :svar.core/http-error
+                           ;; A socket that died before any byte arrived carries
+                           ;; NO :status/:body/:request-id — only the wrapper text.
+                           :message "HTTP/1.1 header parser received no bytes"
+                           :data {:stream? true}}}
+                  120 1 {})
+          body  (->> lines
+                  (map (comp str/trim strip-ansi body-of))
+                  (str/join " "))]
+      ;; It must get the shared provider-error treatment: the split
+      ;; explanation / NEXT STEP / facts rows — NOT the raw wrapper dumped as a
+      ;; single generic "error" line.
+      (expect (str/includes? body "WHAT HAPPENED: Vis could not complete the HTTP request"))
+      (expect (str/includes? body "NEXT STEP: this is a network/connection blip, not a rejection"))
+      ;; the wrapper is a compact fact row, not the whole message
+      (expect (str/includes? body "Wrapper: HTTP/1.1 header parser received no bytes")))))
+
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
    empty, plain whitespace, or composed entirely of the invisible

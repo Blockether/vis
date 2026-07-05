@@ -83,6 +83,35 @@
                (str/includes? text "rate limit")
                (str/includes? text "rate-limit")))))
 
+(defn- transport-error?
+  "True for a TRANSPORT/connection failure — the HTTP request never got a
+   response back: the socket closed with no bytes, the connection was reset /
+   refused / timed out, DNS failed, TLS was torn down. The model NEVER saw the
+   request, so it is emphatically NOT a rejection — surfacing it as one (\"the
+   provider rejected the request\") is both false and useless. These carry no
+   usable HTTP status (nothing answered), so we key off the wrapper/cause text."
+  [status message wrapper-message]
+  (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
+    (boolean
+      (and (nil? status)
+        (or (str/includes? text "received no bytes")
+          (str/includes? text "header parser")
+          (str/includes? text "no bytes")
+          (str/includes? text "unexpected end of stream")
+          (str/includes? text "end of stream")
+          (str/includes? text "connection reset")
+          (str/includes? text "connection closed")
+          (str/includes? text "connection refused")
+          (str/includes? text "connection timed out")
+          (str/includes? text "broken pipe")
+          (str/includes? text "no route to host")
+          (str/includes? text "network is unreachable")
+          (str/includes? text "unknownhostexception")
+          (str/includes? text "name or service not known")
+          (str/includes? text "handshake")
+          (str/includes? text "premature")
+          (str/includes? text "eof"))))))
+
 (defn- provider-id-of [data]
   (or (:provider-id data) (:provider data) (:provider/id data)))
 
@@ -97,6 +126,11 @@
 
 (defn- rate-limit-next-step []
   "NEXT STEP: rate limit — wait and retry, re-authenticate, or switch provider/model.")
+
+(defn- transport-next-step []
+  (str "NEXT STEP: this is a network/connection blip, not a rejection — just retry "
+    "(Vis resends the same request). If it keeps failing, check your internet "
+    "connection, any VPN/proxy/firewall, and the provider's status page."))
 
 (defn provider-error-explanation
   "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
@@ -116,6 +150,9 @@
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected credentials before the model ran."
         (when (seq provider-message) (str " Provider message: " provider-message)))
+
+      (transport-error? status provider-message message)
+      "WHAT HAPPENED: Vis could not complete the HTTP request to the provider — the connection dropped before any response came back (a network/transport failure; here the socket closed with no bytes). The model never saw the request, so nothing was rejected and nothing was lost."
 
       (rate-limit-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rate-limited the request before the model ran."
@@ -140,6 +177,7 @@
       :invalid-thinking-signature "Provider rejected the request"
       :auth                       "Provider authentication failed"
       :rate-limit                 "Provider rate-limited"
+      :transport                  "Could not reach provider"
       (if (= "All providers exhausted" message)
         "All providers unavailable"
         "Provider unavailable"))))
@@ -155,6 +193,7 @@
       "NEXT STEP: retry — Vis will resend with only normal transcript/trailer context. If it persists, don't replay preserved-thinking across a provider/model switch."
       :auth       (auth-provider-next-step data)
       :rate-limit (rate-limit-next-step)
+      :transport  (transport-next-step)
       (if (= "All providers exhausted" message)
         "NEXT STEP: retry once (transient outages recover), then check provider status, auth, and quota — or switch provider/model (TUI: Ctrl+K · CLI: `vis providers`)."
         "NEXT STEP: retry; if it persists, check the provider's status page, your auth, and your quota."))))
@@ -196,6 +235,7 @@
       (invalid-thinking-signature-message? provider-message)             :invalid-thinking-signature
       (auth-provider-error? status provider-message message)             :auth
       (rate-limit-error? status provider-message message)                :rate-limit
+      (transport-error? status provider-message message)                 :transport
       :else                                                              :generic)))
 
 (defn provider-error-facts
