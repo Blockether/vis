@@ -2131,4 +2131,29 @@
         (expect (not-any? #(str/includes? % "$ add -A") collapsed))
         (expect (some #(str/includes? % "$ add -A") expanded))
         (expect (some #(str/includes? % "$ push") expanded))
-        (expect (some #(str/includes? % "main -> main") expanded))))))
+        (expect (some #(str/includes? % "main -> main") expanded))))
+    (it "the band opens with a leading breathe row (padding 1 up, like an op-card)"
+      (let [entries (git-group-entries [(git-form "commit -m x" nil) (git-form "push" nil)]
+                      (assoc ctx :iteration-number 9))
+            texts   (entry-text entries)]
+        ;; The FIRST row is a blank breathe; the chevron header sits BELOW it,
+        ;; so the band's colored top edge has padding above the summary.
+        (expect (str/blank? (first texts)))
+        (expect (str/includes? (second texts) "2 commands"))))
+    (it "a GIT band drops a preceding iteration-pad gap so the seam is one blank"
+      (let [ip-ch   (first (str @#'render/iteration-pad-marker))
+            rm-ch   (first (str @#'render/result-marker))
+            ;; Fake a non-git iteration that closes with an iteration-pad gap
+            ;; (what a real op-card iteration emits), then two git iterations.
+            pad-fn  (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}
+                                   {:line (str @#'render/iteration-pad-marker) :meta nil}])
+            pairs   [(py 0) (gi 1 "commit -m x") (gi 2 "push")]
+            out     (render-iteration-entries pairs pad-fn false ctx)
+            band-ix (first (keep-indexed
+                             (fn [i e] (when (str/includes? (str (:line e)) "commands") i))
+                             out))
+            before  (str (:line (nth out (dec band-ix))))]
+        ;; The row immediately before the band header is the band's OWN colored
+        ;; breathe (result-marker), NOT the popped iteration-pad gap.
+        (expect (= rm-ch (first before)))
+        (expect (not= ip-ch (first before)))))))
