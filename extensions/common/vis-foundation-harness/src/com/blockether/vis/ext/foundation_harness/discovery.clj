@@ -143,8 +143,8 @@
   [leaf]
   (let [cache (dir home ".claude" "plugins" "cache")]
     (when (existing-dir? cache)
-      (for [plugin  (.listFiles cache)  :when (existing-dir? plugin)
-            version (.listFiles plugin)  :when (existing-dir? version)
+      (for [plugin  (.listFiles ^java.io.File cache)  :when (existing-dir? plugin)
+            version (.listFiles ^java.io.File plugin)  :when (existing-dir? version)
             :let [d (io/file version leaf)] :when (existing-dir? d)]
         d))))
 
@@ -187,7 +187,7 @@
    up to the git repo root, nearest first."
   [[tool kind & parts]]
   (->> (case kind
-         :rel     (let [f (apply dir parts)]
+         :rel     (let [^java.io.File f (apply dir parts)]
                     [(if (.isAbsolute f) f (io/file (project-root) (str f)))])
          :rel-walk (walk-dirs parts)
          :home    [(apply dir home parts)]

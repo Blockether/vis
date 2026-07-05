@@ -55,7 +55,7 @@
   ;;      (off inside tmux); force with -Dlanterna.appleTerminalWidths=true|false.
   ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.20"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.21"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
