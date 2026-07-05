@@ -1,6 +1,6 @@
-name: Audit doc (AUDIT.md)
+name: Audit doc (audit/README.md)
 
-# Keeps AUDIT.md — the dependency / license / footprint inventory — generated
+# Keeps audit/README.md — the dependency / license / footprint inventory — generated
 # straight from the deps.edn graph, so it can never drift from the code.
 #
 # scripts/gen-audit.bb walks every deps.edn, resolves each artifact's license
@@ -48,31 +48,31 @@ jobs:
         with:
           bb: latest # babashka runs scripts/gen-audit.bb
 
-      - name: Regenerate AUDIT.md
+      - name: Regenerate audit/README.md
         run: bb scripts/gen-audit.bb
 
       # On a PR we must NOT push to the contributor's branch — just fail if the
       # committed AUDIT.md is stale, pointing them at the one command to fix it.
-      - name: Fail if AUDIT.md drifted (pull requests)
+      - name: Fail if audit/README.md drifted (pull requests)
         if: github.event_name == 'pull_request'
         run: |
-          if ! git diff --quiet -- AUDIT.md; then
-            echo '::error::AUDIT.md is out of date. Run `bb scripts/gen-audit.bb` and commit the result.'
-            git --no-pager diff -- AUDIT.md
+          if ! git diff --quiet -- audit/README.md; then
+            echo '::error::audit/README.md is out of date. Run `bb scripts/gen-audit.bb` and commit the result.'
+            git --no-pager diff -- audit/README.md
             exit 1
           fi
-          echo 'AUDIT.md is up to date.'
+          echo 'audit/README.md is up to date.'
 
       # On main / schedule / manual, commit the refreshed doc back automatically.
-      - name: Commit refreshed AUDIT.md
+      - name: Commit refreshed audit/README.md
         if: github.event_name != 'pull_request'
         run: |
-          if git diff --quiet -- AUDIT.md; then
-            echo 'AUDIT.md already up to date — nothing to commit.'
+          if git diff --quiet -- audit/README.md; then
+            echo 'audit/README.md already up to date — nothing to commit.'
             exit 0
           fi
           git config user.name  'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add AUDIT.md
-          git commit -m 'chore(audit): regenerate AUDIT.md [skip ci]'
+          git add audit/README.md
+          git commit -m 'chore(audit): regenerate audit/README.md [skip ci]'
           git push

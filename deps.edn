@@ -304,7 +304,7 @@
 
   ;; clj-watson - software composition analysis (SCA): scans EVERY dependency
   ;; (direct + transitive, this deps.edn + all :local/root extensions via -a '*')
-  ;; for known CVEs. Pinned to a tag+sha so the scan is reproducible. See AUDIT.md
+  ;; for known CVEs. Pinned to a tag+sha so the scan is reproducible. See audit/README.md
   ;; and .github/workflows/security-audit.yml. Run locally:
   ;;   GITHUB_TOKEN=... clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s
   ;; (github-advisory needs only a GITHUB_TOKEN; the dependency-check/NVD strategy

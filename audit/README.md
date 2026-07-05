@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-05 by `scripts/gen-audit.bb` (run in CI — see §7). Dependency
+> Generated 2026-07-05 by `scripts/gen-audit.bb` (run in CI — see §9). Dependency
 > versions, licenses and jar sizes are pulled straight from the resolved
 > `deps.edn` graph and the Clojars / Maven Central POMs. **Do not edit by hand**
 > — rerun `bb scripts/gen-audit.bb` (or let the `audit-md` workflow regenerate it).
@@ -63,7 +63,7 @@ failing PRs once the baseline is clean.
 
 **This document** — `.github/workflows/audit-md.yml` reruns
 `bb scripts/gen-audit.bb` on every `deps.edn` change and weekly, and commits any
-resulting AUDIT.md diff, so the inventory below can never drift from the code.
+resulting audit/README.md diff, so the inventory below can never drift from the code.
 
 ### Database strategies
 
@@ -245,7 +245,74 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 
 ---
 
-## 5. Resource footprint
+## 5. GraalVM, native image & commercial-use rights
+
+`vis` ships as a **GraalVM native binary**, and two distinct GraalVM layers are
+involved — they carry different licenses, and the distinction is what matters to
+anyone who wants to **sell or redistribute vis for a fee**.
+
+### The two layers
+
+| Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
+|---|---|---|---|---|
+| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.1.3` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
+| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **Oracle GraalVM for JDK 25.1.3**, via `graalvm/setup-graalvm` (`distribution: graalvm` in `.github/workflows/native.yml`) | **GFTC** (GraalVM Free Terms & Conditions) | **Restricted — see below** |
+
+### What GFTC allows — and the one catch
+
+Oracle GraalVM under the **GFTC** is *free for any user, including commercial and
+production use* — no license fee, no subscription, no click-through. You may
+develop, run and internally deploy vis at zero cost, indefinitely.
+
+The catch is **redistribution**. GFTC §3(b) permits redistributing the Program
+only *"provided that You do not charge Your licensees any fees … including …
+fees for products that include or are bundled with a copy of the Program"*, and
+it explicitly extends that to native-image output:
+
+> *"those portions of a Program … produced as output resulting from running the
+> unmodified Program (such as may be produced by use of GraalVM Native Image)
+> shall be deemed to be an unmodified Program for the purposes of this license."*
+
+**In plain terms:** because vis's release binary is built with **Oracle** GraalVM
+native-image, the GraalVM runtime bits baked into that binary count as "the
+Program", so distributing *that specific binary* **for a fee** falls outside the
+free GFTC grant. (The embedded GraalPy/Truffle Maven artifacts above are UPL and
+are unaffected — this catch is purely about the Oracle build tool.)
+
+### What the owner of vis can do
+
+- **Use it, run it, deploy it internally — for free.** Commercial and production
+  use of Oracle GraalVM is explicitly permitted at no cost.
+- **Modify vis.** First-party code is **Apache-2.0**; every dependency is
+  permissive (see §4). You own your changes.
+- **Redistribute the vis source + its permissive deps for a fee.** Apache-2.0 /
+  UPL / MIT / EPL / BSD all allow commercial redistribution, including charging.
+- **Redistribute the Oracle-GraalVM-built *binary* at no charge.** GFTC permits
+  free redistribution — the restriction is only on charging a fee for it.
+
+### To charge a fee for the binary — the clean paths (pick one, confirm with legal)
+
+1. **Build the release binary with a GPL-2.0+CE native-image** instead of Oracle
+   GraalVM — **GraalVM Community Edition**, **Mandrel** (Red Hat) or **Liberica
+   NIK**. Their native-image is **GPL-2.0 with Classpath Exception**, and that
+   Classpath Exception explicitly lets the *output binary* be distributed and
+   sold under any terms. This is the standard route for commercial native-image
+   products, and only the CI build step changes (`distribution:` in
+   `.github/workflows/native.yml`) — not a line of vis code.
+2. **Hold an Oracle Java SE Universal Subscription**, which covers commercial
+   distribution of Oracle-GraalVM-built binaries and adds Oracle support.
+3. **Charge only for services** (support, hosting, integration) and hand the
+   Oracle-GraalVM binary over at no charge.
+
+> **Action for legal:** vis is currently built with Oracle GraalVM
+> (`distribution: graalvm`). If Blockether / RBI will charge a fee for the
+> *binary itself*, switch the release build to GraalVM CE / Mandrel (option 1)
+> or secure an Oracle subscription (option 2). Selling **services** around a
+> free binary (option 3) needs no change.
+
+---
+
+## 6. Resource footprint
 
 Heaviest direct artifacts (>= 1 MB):
 
@@ -271,11 +338,36 @@ Notes:
 
 ---
 
-## 6. Pending / follow-ups
+## 7. Warranty & disclaimer
+
+`vis` and its first-party code are distributed **"AS IS", without warranty of
+any kind**, express or implied — as stated in the Apache-2.0 `LICENSE` and in the
+license of every third-party dependency in §3. The open-source grant carries
+**no warranty, no guarantee of fitness, and no liability** on the part of
+Blockether or any upstream author.
+
+**Warranties, SLAs and support are provided solely under a paid commercial
+agreement with Blockether** (<https://blockether.com>). Only a signed Blockether
+service contract confers:
+
+- warranty / fitness commitments and defect remediation;
+- a security-response and vulnerability-remediation SLA (see §2);
+- maintenance, updates and prioritised support;
+- any indemnification.
+
+Absent such an agreement, use of vis is governed exclusively by the open-source
+licenses above and is entirely at the user's own risk.
+
+---
+
+## 8. Pending / follow-ups
 
 - [ ] Add the free **NVD API key** secret and evaluate switching CI to the
       `dependency-check` strategy for full CVSS scoring.
 - [ ] Resolve the **LGPL / Lanterna** distribution question (§4) with legal.
+- [ ] Decide the **native-image distribution** for paid delivery (§5): keep Oracle
+      GraalVM (free binary only) or switch the release build to GraalVM CE /
+      Mandrel to charge a fee for the binary.
 - [ ] Flip on the CI **fail gate** (`-f` / `-c`) once the first clean baseline lands.
 - [ ] _(from Wojtek — pending input)_ additional compliance / threat-model items.
 
@@ -284,17 +376,17 @@ everything else on this page is generated.)
 
 ---
 
-## 7. Maintenance
+## 9. Maintenance
 
 This file is generated. To refresh it after a dependency bump:
 
 ```bash
-bb scripts/gen-audit.bb        # regenerate AUDIT.md from the deps graph
+bb scripts/gen-audit.bb        # regenerate audit/README.md from the deps graph
 clojure -M:antq                # list outdated deps
 clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s   # re-scan CVEs
 ```
 
-CI enforces freshness: the `audit-md` workflow regenerates and commits AUDIT.md
+CI enforces freshness: the `audit-md` workflow regenerates and commits audit/README.md
 whenever any `deps.edn` changes, and `bb scripts/gen-audit.bb --check` fails a PR
 that leaves it stale. Keep the `:clj-watson` alias pinned to a released tag
 **and** its `:git/sha` so scans stay reproducible.
