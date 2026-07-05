@@ -508,7 +508,20 @@ if [[ ! -s "$patch_file" ]]; then
 fi
 
 reward_file=""
-found_reward="$(find "$out" \( -name '*reward*.json' -o -name '*score*.json' \) -print | head -1 || true)"
+found_reward=""
+for candidate in \
+  "$out/harbor-output/trial/verifier/reward_details.json" \
+  "$out/harbor-output/trial/verifier/reward.json" \
+  "$out/harbor-output/trial/verifier/score.json"
+do
+  if [[ -s "$candidate" ]]; then
+    found_reward="$candidate"
+    break
+  fi
+done
+if [[ -z "$found_reward" ]]; then
+  found_reward="$(find "$out" \( -name '*reward*.json' -o -name '*score*.json' \) -print | head -1 || true)"
+fi
 if [[ -n "$found_reward" ]]; then reward_file="--harbor-reward $found_reward"; fi
 python3 "$here/metrics.py" \
   --task-id "$task_id" \
