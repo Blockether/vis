@@ -690,7 +690,8 @@ def __vis_install_matplotlib__():
         # so `plt.show()` actually shows the plot in a text environment.
         if _state.get('series'):
             print(_render_ascii(_spec(), kwargs.get('width', 74),
-                                kwargs.get('height', 24)))
+                                kwargs.get('height', 22),
+                                kwargs.get('color', True)))
         return None
 
     class _Line(object):
@@ -951,22 +952,66 @@ def __vis_install_matplotlib__():
     def gcf(*args, **kwargs):
         return _Figure()
 
-    def _render_ascii(spec, width=74, height=24):
-        # Pure-Python ASCII rendering of the current figure spec - no JVM, no
-        # image. Walks the same series list savefig sends to Java2D and
-        # rasterises line/scatter/step/fill/bar/hist/hline/vline into a
-        # character grid with a framed axis, y/x tick labels, title, axis
-        # labels and a per-series marker legend.
+    _TAB10 = [(31, 119, 180), (255, 127, 14), (44, 160, 44), (214, 39, 40),
+              (148, 103, 189), (140, 86, 75), (227, 119, 194),
+              (127, 127, 127), (188, 189, 34), (23, 190, 207)]
+    _CNAMED = {
+        'b': (31, 119, 180), 'g': (44, 160, 44), 'r': (214, 39, 40),
+        'c': (23, 190, 207), 'm': (191, 0, 191), 'y': (188, 189, 34),
+        'k': (70, 70, 70), 'w': (230, 230, 230), 'blue': (31, 119, 180),
+        'orange': (255, 127, 14), 'green': (44, 160, 44), 'red': (214, 39, 40),
+        'purple': (148, 103, 189), 'brown': (140, 86, 75),
+        'pink': (227, 119, 194), 'gray': (127, 127, 127),
+        'grey': (127, 127, 127), 'olive': (188, 189, 34),
+        'cyan': (23, 190, 207), 'magenta': (191, 0, 191),
+        'yellow': (188, 189, 34), 'black': (70, 70, 70),
+        'white': (230, 230, 230),
+    }
+
+    def _rgb(color, idx):
+        # Resolve a matplotlib color spec to an (r,g,b) triple; fall back to the
+        # tab10 cycle by series index when unknown/None.
+        if color is None:
+            return _TAB10[idx % len(_TAB10)]
+        if isinstance(color, (tuple, list)) and len(color) >= 3:
+            return tuple(max(0, min(255, int(round(float(v) * 255))))
+                         for v in color[:3])
+        s = str(color).strip()
+        if s.startswith('#'):
+            h = s[1:]
+            if len(h) == 3:
+                h = ''.join(ch * 2 for ch in h)
+            if len(h) >= 6:
+                try:
+                    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+                except ValueError:
+                    pass
+        if len(s) >= 2 and s[0] == 'C' and s[1:].isdigit():
+            return _TAB10[int(s[1:]) % len(_TAB10)]
+        return _CNAMED.get(s.lower(), _TAB10[idx % len(_TAB10)])
+
+    # Braille dot bit for (col in 0..1, row in 0..3) inside one 2x4 cell.
+    _BRAILLE = ((0x01, 0x08), (0x02, 0x10), (0x04, 0x20), (0x40, 0x80))
+
+    def _render_ascii(spec, width=74, height=22, color=False):
+        # Pure-Python renderer of the current figure spec - no JVM, no image.
+        # Rasterises line/scatter/step/fill/bar/hline/vline into a Unicode
+        # BRAILLE canvas (2x4 sub-cell dots => smooth high-res curves) inside a
+        # box-drawing frame with y/x tick labels, title, axis labels and a
+        # per-series legend. `color=True` adds ANSI truecolor per series.
         series = spec.get('series') or []
         title = spec.get('title')
         xlabel = spec.get('xlabel')
         ylabel = spec.get('ylabel')
-        has_bar = any(str(s.get('kind')) == 'bar' for s in series)
         all_x = []
         all_y = []
+        has_bar = False
         for s in series:
-            if str(s.get('kind')) in ('pie', 'image', 'box'):
+            k = str(s.get('kind'))
+            if k in ('pie', 'image', 'box'):
                 continue
+            if k == 'bar':
+                has_bar = True
             all_x += [float(v) for v in (s.get('x') or [])]
             all_y += [float(v) for v in (s.get('y') or [])]
             if s.get('y2') is not None:
@@ -995,102 +1040,153 @@ def __vis_install_matplotlib__():
         pad = 0.05 * (ymax - ymin)
         ymin -= pad
         ymax += pad
-        W = max(20, int(width))
-        H = max(8, int(height))
-        grid = [[' '] * W for _ in range(H)]
-        def cx(x):
-            return int(round((float(x) - xmin) / (xmax - xmin) * (W - 1)))
-        def cy(y):
-            return int(round((ymax - float(y)) / (ymax - ymin) * (H - 1)))
-        def put(r, c, ch):
-            if 0 <= r < H and 0 <= c < W:
-                grid[r][c] = ch
-        markers = '*+xo#@%=.~'
+        Wc = max(20, int(width))
+        Hc = max(8, int(height))
+        DW = Wc * 2
+        DH = Hc * 4
+        cell = [[[0, None] for _ in range(Wc)] for _ in range(Hc)]
+
+        def dput(dx, dy, rgb):
+            if 0 <= dx < DW and 0 <= dy < DH:
+                cc = cell[dy // 4][dx // 2]
+                cc[0] |= _BRAILLE[dy % 4][dx % 2]
+                cc[1] = rgb
+
+        def dxof(x):
+            return int(round((float(x) - xmin) / (xmax - xmin) * (DW - 1)))
+
+        def dyof(y):
+            return int(round((ymax - float(y)) / (ymax - ymin) * (DH - 1)))
+
         legend = []
-        for mi, s in enumerate(series):
+        ci = 0
+        for s in series:
             k = str(s.get('kind'))
             if k in ('pie', 'image', 'box'):
                 continue
+            rgb = _rgb(s.get('color'), ci)
             xs = [float(v) for v in (s.get('x') or [])]
             ysv = [float(v) for v in (s.get('y') or [])]
-            ch = markers[mi % len(markers)]
             if k == 'bar':
-                base = cy(max(ymin, min(ymax, 0.0)))
+                base = dyof(max(ymin, min(ymax, 0.0)))
                 for x, y in zip(xs, ysv):
-                    c = cx(x)
-                    r = cy(y)
-                    lo, hi = (r, base) if r <= base else (base, r)
+                    dc = dxof(x)
+                    dr = dyof(y)
+                    lo, hi = (dr, base) if dr <= base else (base, dr)
                     for rr in range(lo, hi + 1):
-                        put(rr, c, ch)
+                        for off in (-1, 0, 1):
+                            dput(dc + off, rr, rgb)
             elif k == 'hline':
                 for y in ysv:
-                    r = cy(y)
-                    for c in range(W):
-                        put(r, c, '-')
+                    dr = dyof(y)
+                    for dc in range(DW):
+                        dput(dc, dr, rgb)
             elif k == 'vline':
                 for x in xs:
-                    c = cx(x)
-                    for r in range(H):
-                        put(r, c, '|')
+                    dc = dxof(x)
+                    for dr in range(DH):
+                        dput(dc, dr, rgb)
+            elif k == 'fill':
+                y2 = [float(v) for v in (s.get('y2') or [])]
+                for i2, x in enumerate(xs):
+                    if i2 >= len(ysv):
+                        break
+                    dc = dxof(x)
+                    r1 = dyof(ysv[i2])
+                    r2 = dyof(y2[i2] if i2 < len(y2) else 0.0)
+                    lo, hi = (r1, r2) if r1 <= r2 else (r2, r1)
+                    for rr in range(lo, hi + 1):
+                        dput(dc, rr, rgb)
             elif k == 'scatter':
                 for x, y in zip(xs, ysv):
-                    put(cy(y), cx(x), ch)
+                    dput(dxof(x), dyof(y), rgb)
+            elif k == 'step':
+                pts = list(zip(xs, ysv))
+                for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+                    c1, c2 = dxof(x1), dxof(x2)
+                    r1, r2 = dyof(y1), dyof(y2)
+                    for dc in range(min(c1, c2), max(c1, c2) + 1):
+                        dput(dc, r1, rgb)
+                    for dr in range(min(r1, r2), max(r1, r2) + 1):
+                        dput(c2, dr, rgb)
             else:
                 pts = list(zip(xs, ysv))
                 for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
-                    c1, r1, c2, r2 = cx(x1), cy(y1), cx(x2), cy(y2)
+                    c1, r1 = dxof(x1), dyof(y1)
+                    c2, r2 = dxof(x2), dyof(y2)
                     n = max(abs(c2 - c1), abs(r2 - r1), 1)
                     for t in range(n + 1):
                         f = t / n
-                        put(int(round(r1 + (r2 - r1) * f)),
-                            int(round(c1 + (c2 - c1) * f)), ch)
+                        dput(int(round(c1 + (c2 - c1) * f)),
+                             int(round(r1 + (r2 - r1) * f)), rgb)
                 for x, y in pts:
-                    put(cy(y), cx(x), ch)
+                    dput(dxof(x), dyof(y), rgb)
             lbl = s.get('label')
-            if lbl:
-                legend.append((ch, str(lbl)))
+            legend.append((rgb, str(lbl) if lbl else None))
+            ci += 1
+
         def fmt(v):
             if abs(v) < 1e15 and float(v) == int(v):
                 return str(int(v))
             return '%.3g' % v
-        nyt = 5 if H >= 5 else H
-        ylabels = {}
+
+        def paint(txt, rgb):
+            if not color or rgb is None:
+                return txt
+            return '\\x1b[38;2;%d;%d;%dm%s\\x1b[0m' % (
+                rgb[0], rgb[1], rgb[2], txt)
+
+        def dim(txt):
+            return ('\\x1b[90m' + txt + '\\x1b[0m') if color else txt
+
+        nyt = min(5, Hc)
+        yticks = {}
         for i in range(nyt):
             t = (i / (nyt - 1)) if nyt > 1 else 0.0
-            yv = ymax - t * (ymax - ymin)
-            ylabels[int(round(t * (H - 1)))] = fmt(yv)
-        lw = max((len(v) for v in ylabels.values()), default=1)
-        lines = []
-        if ylabel:
-            lines.append('  ' + str(ylabel))
+            yticks[int(round(t * (Hc - 1)))] = fmt(ymax - t * (ymax - ymin))
+        lw = max((len(v) for v in yticks.values()), default=1)
+        out = []
         if title:
-            lines.append(' ' * (lw + 1) + str(title).center(W))
-        for r in range(H):
-            lines.append(ylabels.get(r, '').rjust(lw) + '|' + ''.join(grid[r]))
-        lines.append(' ' * lw + '+' + '-' * W)
-        nxt = 5 if W >= 5 else 1
-        xrow = [' '] * W
+            out.append(' ' * (lw + 1) + str(title).center(Wc))
+        if ylabel:
+            out.append(' ' * (lw + 1) + str(ylabel)[:Wc])
+        for r in range(Hc):
+            buf = []
+            for cc in cell[r]:
+                bits, rgb = cc
+                buf.append(paint(chr(0x2800 + bits), rgb) if bits else ' ')
+            axis = '┤' if r in yticks else '│'
+            out.append(yticks.get(r, '').rjust(lw) + dim(axis) + ''.join(buf))
+        axisrow = ['─'] * Wc
+        nxt = min(5, Wc)
+        xt = {}
         for i in range(nxt):
             t = (i / (nxt - 1)) if nxt > 1 else 0.0
-            xv = xmin + t * (xmax - xmin)
-            c = int(round(t * (W - 1)))
-            label = fmt(xv)
-            start = min(max(0, c - len(label) // 2), W - len(label))
+            xt[int(round(t * (Wc - 1)))] = fmt(xmin + t * (xmax - xmin))
+        for col in xt:
+            if 0 <= col < Wc:
+                axisrow[col] = '┬'
+        out.append(' ' * lw + dim('└' + ''.join(axisrow)))
+        xrow = [' '] * Wc
+        for col, label in xt.items():
+            start = min(max(0, col - len(label) // 2), Wc - len(label))
             for j, chc in enumerate(label):
-                if 0 <= start + j < W:
+                if 0 <= start + j < Wc:
                     xrow[start + j] = chc
-        lines.append(' ' * (lw + 1) + ''.join(xrow))
+        out.append(' ' * (lw + 1) + ''.join(xrow))
         if xlabel:
-            lines.append(' ' * (lw + 1) + str(xlabel).center(W))
-        if legend:
-            lines.append('')
-            for ch, lbl in legend:
-                lines.append('  ' + ch + '  ' + lbl)
-        return '\\n'.join(lines)
+            out.append(' ' * (lw + 1) + str(xlabel).center(Wc))
+        labs = [(rgb, l) for (rgb, l) in legend if l]
+        if labs:
+            out.append('')
+            out.append(' ' * (lw + 1) +
+                       '   '.join(paint('●', rgb) + ' ' + l
+                                  for rgb, l in labs))
+        return '\\n'.join(out)
 
-    def to_ascii(width=74, height=24):
+    def to_ascii(width=74, height=22, color=False):
         # Return the current figure as an ASCII-art string (no image, no file).
-        return _render_ascii(_spec(), width, height)
+        return _render_ascii(_spec(), width, height, color)
 
     def _spec():
         return {

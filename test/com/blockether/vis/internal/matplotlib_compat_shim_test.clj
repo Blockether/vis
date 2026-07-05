@@ -257,10 +257,19 @@
       (expect (true? (ev python-context
                        "import matplotlib.pyplot as plt\nplt.clf()\nisinstance(plt.to_ascii(), str)")))))
 
-  (it "to_ascii honours a bar chart with a marker column"
+  (it "to_ascii renders a bar chart into the braille canvas"
     (let [{:keys [^Context python-context]} (ep/create-python-context {})]
       (expect (true? (ev python-context
                        (str "import matplotlib.pyplot as plt\nplt.clf()\n"
                          "plt.bar([1,2,3,4],[3,7,2,5])\n"
                          "s=plt.to_ascii(40,12)\n"
-                         "isinstance(s,str) and any(c in s for c in '*+#')")))))))
+                         "isinstance(s,str) and any(0x2800<=ord(c)<=0x28ff for c in s)"))))))
+
+  (it "to_ascii(color=True) emits ANSI escapes; default stays plain"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                         "plt.plot([0,1,2,3],[0,1,4,9],label='q')\nplt.legend()\n"
+                         "c=plt.to_ascii(40,12,color=True)\np=plt.to_ascii(40,12)\n"
+                         "(chr(27) in c) and (chr(27) not in p) "
+                         "and '\u2502' in p and '\u2514' in p")))))))
