@@ -134,3 +134,46 @@
     (let [out (prompt/with-reasoning-comments-nudge [{:role "user" :content "x"}])]
       (expect (= "system" (:role (first out))))
       (expect (= 2 (count out))))))
+
+(defdescribe assemble-initial-messages-images-test
+  "Image attachments turn the initial user message multimodal."
+  (it "keeps text-only messages as a plain content string"
+    (let [msgs (prompt/assemble-initial-messages
+                 {:stable-prompt-messages [{:role "system" :content "sys"}]
+                  :initial-user-content   "hello"})
+          user (last msgs)]
+      (expect (= "user" (:role user)))
+      (expect (string? (:content user)))
+      (expect (str/includes? (:content user) "CURRENT-USER-MESSAGE"))
+      (expect (not (str/includes? (:content user) "ATTACHED-IMAGES")))))
+
+  (it "rides svar image blocks ahead of the text block and lists a manifest"
+    (let [msgs (prompt/assemble-initial-messages
+                 {:stable-prompt-messages []
+                  :initial-user-content   "what is on /tmp/shot.png?"
+                  :user-images  [{:path "/tmp/shot.png" :media-type "image/png"
+                                  :base64 "aGVsbG8=" :size 5 :size-label "5B"}]
+                  :skipped-images [{:path "/tmp/huge.png" :reason "6.0MB exceeds the 5.0MB attachment limit"}]})
+          user (last msgs)
+          blocks (:content user)]
+      (expect (= "user" (:role user)))
+      (expect (vector? blocks))
+      ;; image block first (svar/user contract), text block last
+      (expect (= "image_url" (:type (first blocks))))
+      (expect (str/includes? (get-in (first blocks) [:image_url :url])
+                "data:image/png;base64,aGVsbG8="))
+      (let [text (:text (last blocks))]
+        (expect (str/includes? text "CURRENT-USER-MESSAGE"))
+        (expect (str/includes? text "ATTACHED-IMAGES"))
+        (expect (str/includes? text "/tmp/shot.png (image/png, 5B)"))
+        (expect (str/includes? text "NOT attached"))
+        (expect (str/includes? text "/tmp/huge.png")))))
+
+  (it "omits the manifest when there is no user content at all"
+    (let [msgs (prompt/assemble-initial-messages
+                 {:stable-prompt-messages [{:role "system" :content "sys"}]
+                  :user-images [{:path "p" :media-type "image/png"
+                                 :base64 "eA==" :size 1 :size-label "1B"}]})]
+      ;; no user message without initial-user-content — images can't ride alone
+      (expect (= 1 (count msgs)))
+      (expect (= "system" (:role (first msgs)))))))
