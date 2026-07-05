@@ -37,13 +37,15 @@
    A file that fails to load becomes a load-failure warning (surfaced via
    `vis doctor`), never a crash."
   (:require
-   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.extension-aggregate :as aggregate]
    [com.blockether.vis.internal.notifications :as notifications]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt-templates :as prompt-templates]
    [taoensso.telemere :as tel])
   (:import
@@ -226,36 +228,43 @@ def __vis_registration__():
     :else x))
 
 ;; =============================================================================
-;; Durable state (`vis.state`) — one EDN file per extension FILE (keyed by
-;; basename, so a project-local override of a global extension shares its
-;; state). Values are the boundary view of Python data: identifier-shaped
-;; dict keys become snake keywords and convert back on read.
+;; Durable state (`vis.state`) — backed by the `extension_aggregate` table
+;; (one row per key, kind "py-state", :global scope), NOT the filesystem.
+;; State is owned by the extension NAME and survives `/reload` and restarts.
+;; The live session env (carrying :db-info) is threaded in through `*state-env*`
+;; when an adapter has it; otherwise `state-env` falls back to the process-wide
+;; shared DB connection (the same vis.db sessions use) — all :global scope
+;; needs. Values are the boundary view of Python data (plain EDN data).
 ;; =============================================================================
 
-(def ^:dynamic *state-dir*
-  "Directory holding per-extension `vis.state` EDN files. Dynamic so tests
-   can confine state to a temp dir."
+(def ^:private state-kind "py-state")
+
+(def ^:private ^:dynamic *state-env*
+  "Live session env (carrying :db-info and session/turn ids) bound around a
+   call into an extension so `vis.state` reaches the extension-aggregate API
+   with the session's own DB. nil outside a call — then `state-env` falls
+   back to the process-wide shared connection. Also the seam tests use to
+   confine `vis.state` to an in-memory DB."
   nil)
 
-(defn- state-dir ^File []
-  (or (some-> *state-dir* io/file)
-    (io/file (System/getProperty "user.home") ".vis" "python-extensions" "state")))
+(defn- state-env []
+  (or *state-env*
+    {:db-info (persistance/db-shared-connection! (config/resolve-db-spec))}))
 
-(defn- state-file ^File [state-name]
-  (io/file (state-dir) (str state-name ".edn")))
+(defn- state-get* [k]
+  (some-> (aggregate/extension-aggregate-get (state-env)
+            {:key (str k) :kind state-kind :scope :global})
+    :content))
 
-(defn- read-state [^File f]
-  (or (when (.exists f)
-        (try (edn/read-string (slurp f))
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::state-read-failed
-                       :data {:file (str f) :error (ex-message t)}})
-            nil)))
-    {}))
+(defn- state-put!* [k v]
+  (aggregate/extension-aggregate-put! (state-env)
+    {:key (str k) :kind state-kind :scope :global :content (plainify v)})
+  nil)
 
-(defn- persist-state! [^File f m]
-  (io/make-parents f)
-  (spit f (pr-str m)))
+(defn- state-del!* [k]
+  (aggregate/extension-delete-aggregate! (state-env)
+    {:key (str k) :kind state-kind :scope :global})
+  nil)
 
 ;; =============================================================================
 ;; Trusted extension context
@@ -288,26 +297,22 @@ def __vis_registration__():
 
 (defn- bind-host!
   "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
-   module. `state-name` keys the durable state file; `state-atom` holds
-   the live state map."
-  [^Context ctx state-name state-atom]
-  (let [g (.getBindings ctx "python")
-        sf (state-file state-name)]
+   module. `label` is the file's name — used only for log context; durable
+   state lives in the `extension_aggregate` table, owned by the running
+   extension's identity (see `*state-env*`)."
+  [^Context ctx label]
+  (let [g (.getBindings ctx "python")]
     (.putMember g "__vis_host_state_get__"
-      (->executable (fn [k] (get @state-atom (str k)))))
+      (->executable (fn [k] (state-get* k))))
     (.putMember g "__vis_host_state_put__"
-      (->executable (fn [k v]
-                      (persist-state! sf (swap! state-atom assoc (str k) (plainify v)))
-                      nil)))
+      (->executable (fn [k v] (state-put!* k v))))
     (.putMember g "__vis_host_state_del__"
-      (->executable (fn [k]
-                      (persist-state! sf (swap! state-atom dissoc (str k)))
-                      nil)))
+      (->executable (fn [k] (state-del!* k))))
     (.putMember g "__vis_host_log__"
       (->executable (fn [level msg]
                       (let [lvl (get log-levels (str level) :info)]
                         (tel/log! {:level lvl :id ::extension-log
-                                   :data {:extension state-name}
+                                   :data {:extension label}
                                    :msg (str msg)}))
                       nil)))
     (.putMember g "__vis_host_notify__"
@@ -333,6 +338,28 @@ def __vis_registration__():
    "session_id" (some-> (:session-id env) str)
    "channel" (some-> (:channel env) str)})
 
+(defn- call-py-ext
+  "Invoke a Python callable with the extension identity bound (so `vis.state`
+   host callbacks own their aggregate rows) and the live session env threaded
+   through `*state-env*` (so state uses the session's own DB when available).
+   Only an env that actually carries :db-info overrides the ambient
+   `*state-env*` — a db-less env (or nil) keeps it, so global state still
+   resolves through the shared connection / the test binding.
+   Returns the `->clj` view of the result."
+  [ext-name env ^Context ctx ^Value f args]
+  (binding [extension/*current-extension* (or extension/*current-extension*
+                                            {:ext/name ext-name})
+            *state-env* (if (:db-info env) env *state-env*)]
+    (call-py ctx f args)))
+
+(defn- sctx->env
+  "Minimal state env for a slash callback: the persistence handle and session
+   id the dispatcher stamps onto the slash ctx (see `slash/dispatch`)."
+  [sctx]
+  (cond-> {}
+    (:db-info sctx) (assoc :db-info (:db-info sctx))
+    (:session/id sctx) (assoc :session-id (:session/id sctx))))
+
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
    payload; a raised Python exception = failure envelope (message + trace
@@ -340,7 +367,7 @@ def __vis_registration__():
   [ext-name sym ^Context ctx ^Value pyfn]
   (fn [& args]
     (try
-      (extension/success {:result (call-py ctx pyfn (vec args))})
+      (extension/success {:result (call-py-ext ext-name nil ctx pyfn (vec args))})
       (catch Throwable t
         (extension/failure
           {:result nil
@@ -351,7 +378,7 @@ def __vis_registration__():
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env]
     (try
-      (boolean (call-py ctx pyfn [(slim-env env)]))
+      (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env)]))
       (catch Throwable t
         (tel/log! {:level :warn :id ::activation-failed
                    :data {:extension ext-name :error (ex-message t)}})
@@ -361,7 +388,7 @@ def __vis_registration__():
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env]
     (try
-      (let [r (call-py ctx pyfn [(slim-env env)])]
+      (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
         (when (string? r) r))
       (catch Throwable t
         (tel/log! {:level :warn :id ::prompt-failed
@@ -380,7 +407,7 @@ def __vis_registration__():
                    "args" (mapv str (:command/argv sctx))
                    "raw" (str (:command/raw sctx))
                    "session_id" (some-> (:session/id sctx) str)}
-          res (call-py ctx pyfn [payload])]
+          res (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
       (cond
         (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
         (string? res) {:slash/status :ok :slash/title res}
@@ -397,9 +424,9 @@ def __vis_registration__():
    A hook error fails OPEN (op runs) — a broken guard must not brick the
    loop."
   [ext-name ^Context ctx ^Value pyfn]
-  (fn [_env op-kw args next-fn]
+  (fn [env op-kw args next-fn]
     (let [res (try
-                (call-py ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
+                (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
                 (catch Throwable t
                   (tel/log! {:level :warn :id ::op-hook-failed
                              :data {:extension ext-name :op op-kw :error (ex-message t)}})
@@ -417,9 +444,9 @@ def __vis_registration__():
    the callable receives `{'op', 'args', 'result'}`; its return value is
    ignored and the original result always flows on."
   [ext-name ^Context ctx ^Value pyfn]
-  (fn [_env op-kw args result]
+  (fn [env op-kw args result]
     (try
-      (call-py ctx pyfn [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
+      (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
       (catch Throwable t
         (tel/log! {:level :warn :id ::op-hook-failed
                    :data {:extension ext-name :op op-kw :error (ex-message t)}})))
@@ -590,11 +617,9 @@ def __vis_registration__():
   (let [path (.getCanonicalPath f)
         source (slurp f)
         sha (extension/sha256-hex source)
-        state-name (str/replace (.getName f) #"\.py$" "")
-        state-atom (atom (read-state (state-file state-name)))
         ctx (build-context)]
     (try
-      (bind-host! ctx state-name state-atom)
+      (bind-host! ctx (.getName f))
       (locking ctx
         (.eval ctx "python" ^String bootstrap-python)
         (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
