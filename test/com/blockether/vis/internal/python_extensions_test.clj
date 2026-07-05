@@ -227,6 +227,56 @@ vis.extension(
         (expect (true? ((:ext/activation-fn (registered "moods")) {})))))))
 
 ;; =============================================================================
+;; Ctx contribution — vis.extension(ctx=...) folds into the session bag
+;; =============================================================================
+
+(def ^:private ctxer-py
+  "\"\"\"Ctx-contribution fixture.\"\"\"
+import vis
+
+
+def _ctx(env):
+    return {\"session_env\": {\"demo\": {\"cwd\": env[\"cwd\"], \"hits\": vis.state.get(\"hits\", 0)}}}
+
+
+def _bad_ctx(env):
+    return \"not a dict\"
+
+
+vis.extension(
+    name=\"ctxer\",
+    description=\"Ctx fixture extension.\",
+    kind=\"fun\",
+    ctx=_ctx,
+)
+")
+
+(defdescribe ctx-contribution-test
+  (it "vis.extension(ctx=...) registers an :ext/ctx-fn that folds into the session bag"
+    (with-loaded {"ctxer.py" ctxer-py}
+      (fn [_ _]
+        (let [ext (registered "ctxer")
+              contribution ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
+          ;; STRING-keyed all the way down, ready to deep-merge into `session`
+          (expect (= 0 (get-in contribution ["session_env" "demo" "hits"])))
+          (expect (string? (get-in contribution ["session_env" "demo" "cwd"])))
+          ;; and it merges through the real aggregation path
+          (let [merged (extension/ctx-contributions {:workspace/root "/p"} [ext])]
+            (expect (= 0 (get-in merged ["session_env" "demo" "hits"]))))))))
+
+  (it "a ctx fn that returns a non-map degrades to an empty contribution"
+    (with-loaded {"badctx.py" (str/replace ctxer-py "ctx=_ctx" "ctx=_bad_ctx")}
+      (fn [_ _]
+        (expect (= {} ((:ext/ctx-fn (registered "ctxer")) {:workspace/root "/p"}))))))
+
+  (it "a non-callable ctx= is rejected at load"
+    (with-loaded {"badctx2.py" (str "import vis\n"
+                                 "vis.extension(name='bc2', description='d', kind='x', ctx=42)\n")}
+      (fn [result _]
+        (expect (= 1 (:failed result)))
+        (expect (str/includes? (:error (first (pyx/load-failures))) "ctx="))))))
+
+;; =============================================================================
 ;; Op hooks — before(=guard) blocks, after observes
 ;; =============================================================================
 
