@@ -1342,8 +1342,14 @@
   [previous-db db]
   (and previous-db
     (:loading? db)
-    (= (dissoc previous-db :progress :render-version :layout)
-      (dissoc db :progress :render-version :layout))))
+    ;; Exclude `:tab-locals` — a BACKGROUND tab's spinner tick mutates it every
+    ;; frame but never touches the active view, so without this a turn that runs
+    ;; while other tabs are open (or streaming) fell to a FULL repaint on every
+    ;; 80ms tick instead of the cheap partial-live path. partial-live still
+    ;; repaints the header, so the background tab's spinner keeps animating.
+    ;; Mirrors `active-view-unchanged?` / `scroll-only-change?`.
+    (= (dissoc previous-db :progress :tab-locals :render-version :layout)
+      (dissoc db :progress :tab-locals :render-version :layout))))
 (defn- partial-live-frame?
   "True when the render loop may use the live-bubble-only repaint path."
   [previous-db db same-size? last-layout]
@@ -1495,19 +1501,20 @@
                         :cancelling? (boolean cancelling?),
                         :viewport-rows inner-h,
                         :pending-sends (:pending-sends db)}
-        layout (virtual/layout
-                 messages
-                 bubble-w
-                 settings
-                 messages-scroll
-                 inner-h
-                 {:progress progress, :loading? loading?, :progress-extra progress-extra}
-                 {:session-id (get-in db [:session :id]),
-                  :detail-expansions (:detail-expansions db)
-                  ;; Anchor for paint parity with the full-frame path.
-                  ;; This partial path doesn't republish `:offsets`, so
-                  ;; the next full frame persists the corrected scroll.
-                  :prev-offsets (get-in db [:layout :offsets])})
+        layout (cfg/diag-phase! :live-layout
+                 (virtual/layout
+                   messages
+                   bubble-w
+                   settings
+                   messages-scroll
+                   inner-h
+                   {:progress progress, :loading? loading?, :progress-extra progress-extra}
+                   {:session-id (get-in db [:session :id]),
+                    :detail-expansions (:detail-expansions db)
+                    ;; Anchor for paint parity with the full-frame path.
+                    ;; This partial path doesn't republish `:offsets`, so
+                    ;; the next full frame persists the corrected scroll.
+                    :prev-offsets (get-in db [:layout :offsets])}))
         ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
         ;; message-idx in O(1). One-shot: clear pending so subsequent
@@ -1597,12 +1604,13 @@
           (when (< y0 y1)
             (p/set-colors! clip t/text-fg t/terminal-bg)
             (p/fill-rect! clip 0 y0 cols (- y1 y0)))
-          (render/draw-chat-bubble! clip
-            (:projected live-entry)
-            (:top live-entry)
-            render/MESSAGE_MARGIN_LEFT
-            bubble-w
-            {:viewport-top text-top, :viewport-h inner-h})))
+          (cfg/diag-phase! :live-draw
+            (render/draw-chat-bubble! clip
+              (:projected live-entry)
+              (:top live-entry)
+              render/MESSAGE_MARGIN_LEFT
+              bubble-w
+              {:viewport-top text-top, :viewport-h inner-h}))))
       ;; Chrome refresh - cheap text writes, kept inside the partial
       ;; path so notification banners and footer status update on
       ;; every spinner tick instead of waiting for the next full
