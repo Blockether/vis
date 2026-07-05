@@ -638,8 +638,8 @@
 
 (defn- raw-response-map
   [iteration]
-  (let [blocks (when (seq (:llm-executable-blocks iteration))
-                 (vec (:llm-executable-blocks iteration)))]
+  (let [blocks (when-let [b (seq (force (:llm-executable-blocks iteration)))]
+                 (vec b))]
     (cond-> {}
       (some? (:llm-raw-response-preview iteration))
       (assoc :preview (:llm-raw-response-preview iteration))
