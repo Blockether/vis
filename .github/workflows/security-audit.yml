@@ -10,9 +10,10 @@ name: Security audit (clj-watson)
 #
 # Strategy: `github-advisory` — queries the GitHub Advisory Database over the
 # GraphQL API using the workflow's built-in GITHUB_TOKEN. Zero setup, no
-# secrets to provision, no multi-minute NVD database download. (The alternative
-# `dependency-check`/NIST-NVD strategy is documented in audit/README.md for teams that
-# want the deeper CVSS coverage — it needs an NVD_API_KEY secret.)
+# secrets to provision, no multi-minute NVD database download. The deeper
+# `dependency-check`/NIST-NVD strategy (full CVSS scoring) runs as the separate
+# `nvd-scan` job below — weekly + on demand — as soon as an NVD_API_KEY secret
+# is provisioned; it self-skips until then.
 #
 # Findings are emitted as SARIF and uploaded to GitHub code scanning, so they
 # show up under the repository Security tab, and archived as a build artifact.
@@ -118,3 +119,94 @@ jobs:
       #   run: |
       #     clojure -M:clj-watson scan -p deps.edn -a '*' \
       #       -t github-advisory -o stdout-simple -f
+
+  # ---------------------------------------------------------------------------
+  # DEEPER SCAN — NIST NVD via OWASP Dependency-Check (full CVSS scoring).
+  #
+  # The github-advisory job above is the fast, zero-setup default on every
+  # push/PR. This job adds the compliance-grade strategy regulated reviewers
+  # ask for: CVSS base scores sourced from the NIST National Vulnerability
+  # Database. It is SLOW (downloads the NVD data feed into ~/.m2 on first run),
+  # so it runs ONLY on the weekly schedule and manual dispatch, and it needs a
+  # free NVD API key as the `NVD_API_KEY` repo secret. Without the secret the
+  # job SKIPS cleanly (no failure), so forks and a not-yet-provisioned repo
+  # stay green.
+  #   Get a key: https://nvd.nist.gov/developers/request-an-api-key
+  #   Add it:    repo Settings → Secrets and variables → Actions → New secret,
+  #              name NVD_API_KEY
+  nvd-scan:
+    name: clj-watson NVD scan (dependency-check)
+    runs-on: ubuntu-latest
+    # NVD DB download is multi-minute; don't run it on every push/PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    env:
+      # clj-watson maps any CLJ_WATSON_* env var to the matching DependencyCheck
+      # system property, so CLJ_WATSON_NVD_API_KEY -> nvd.api.key.
+      CLJ_WATSON_NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check NVD API key is provisioned
+        id: guard
+        run: |
+          if [ -z "${CLJ_WATSON_NVD_API_KEY}" ]; then
+            echo "::warning::NVD_API_KEY secret not set — skipping the NVD/dependency-check scan. Add it in repo Settings → Secrets and variables → Actions."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        if: steps.guard.outputs.run == 'true'
+        with:
+          cli: latest
+
+      # The NVD data feed is cached under ~/.m2 (dependency-check-utils/.../data).
+      # Cache it so weekly runs fetch only the incremental delta, not the full DB.
+      - uses: actions/cache@v4
+        if: steps.guard.outputs.run == 'true'
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: clj-watson-nvd-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            clj-watson-nvd-${{ runner.os }}-
+            clj-watson-${{ runner.os }}-
+
+      - name: Run clj-watson NVD scan
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          set -uo pipefail
+          # -t dependency-check is clj-watson's default; explicit here for clarity.
+          clojure -M:clj-watson scan -p deps.edn -a '*' \
+            -t dependency-check -o sarif > clj-watson-nvd.raw 2> clj-watson-nvd.stderr || true
+          # Keep only the top-level JSON object (drops the trailing summary lines).
+          sed -n '/^{/,/^}/p' clj-watson-nvd.raw > clj-watson-nvd.sarif
+          {
+            echo "## clj-watson NVD scan (dependency-check)"
+            echo ''
+            grep -E '^(Dependencies scanned|Vulnerable dependencies found):' clj-watson-nvd.raw \
+              || echo 'No summary produced — see the raw log below.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(Dependencies scanned|Vulnerable dependencies found):' clj-watson-nvd.raw || true
+
+      - name: Upload NVD SARIF to GitHub code scanning
+        if: steps.guard.outputs.run == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true # a repo without code scanning still gets the artifact below
+        with:
+          sarif_file: clj-watson-nvd.sarif
+          category: clj-watson-nvd
+
+      - name: Archive NVD scan results
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clj-watson-nvd-sarif
+          path: |
+            clj-watson-nvd.sarif
+            clj-watson-nvd.raw
+            clj-watson-nvd.stderr
+          retention-days: 90

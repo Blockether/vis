@@ -307,6 +307,7 @@
   ;; for known CVEs. Pinned to a tag+sha so the scan is reproducible. See audit/README.md
   ;; and .github/workflows/security-audit.yml. Run locally:
   ;;   GITHUB_TOKEN=... clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s
+  ;;   CLJ_WATSON_NVD_API_KEY=... clojure -M:clj-watson scan -p deps.edn -a '*' -t dependency-check -s
   ;; (github-advisory needs only a GITHUB_TOKEN; the dependency-check/NVD strategy
   ;;  needs a NIST NVD API key and downloads the full NVD database on first run.)
   :clj-watson {:replace-deps {io.github.clj-holmes/clj-watson
