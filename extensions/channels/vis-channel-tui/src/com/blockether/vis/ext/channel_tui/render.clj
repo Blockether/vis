@@ -3832,7 +3832,8 @@
                            {:marker result-marker, :max-w fill-w, :summary head,
                             :collapsed? (not expanded?),
                             :session-id session-id, :node-id node-id, :color-role color-role})]
-        (vec (concat header
+        (vec (concat [{:line (str result-marker ""), :meta nil}]
+               header
                (if expanded?
                  (conj body-entries {:line (str result-marker ""), :meta nil})
                  [{:line (str result-marker ""), :meta nil}]))))
@@ -3844,7 +3845,8 @@
                           (max 1 (- fill-w 1))))
             body-rows (when (seq entries)
                         (into [(->result {:line ""})] (mapv ->result entries)))]
-        (vec (concat headline body-rows [{:line (str result-marker ""), :meta nil}]))))))
+        (vec (concat [{:line (str result-marker ""), :meta nil}]
+               headline body-rows [{:line (str result-marker ""), :meta nil}]))))))
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A
@@ -3869,8 +3871,20 @@
                 (let [forms     (mapv (fn [[_ g]] g) run)
                       first-idx (first (first (first run)))
                       iter-num  (inc (long first-idx))
-                      entries   (git-group-entries forms (assoc git-ctx :iteration-number iter-num))]
-                  (recur (reduce conj! out entries) (seq (drop cnt xs))))
+                      entries   (git-group-entries forms (assoc git-ctx :iteration-number iter-num))
+                      ;; The band opens with its OWN colored breathe row (padding
+                      ;; 1 up, symmetric with a native op-card). When the previous
+                      ;; iteration closed with a terminal-bg iteration-pad gap, that
+                      ;; gap + this band's breathe would read as a doubled empty
+                      ;; line above the GIT band. Drop the trailing gap so the
+                      ;; band's leading breathe coalesces with the prior card's
+                      ;; trailing pad into ONE clean boundary row.
+                      out*      (if (and (pos? (count out))
+                                      (= (str iteration-pad-marker "")
+                                        (str (:line (nth out (dec (count out)))))))
+                                  (pop! out)
+                                  out)]
+                  (recur (reduce conj! out* entries) (seq (drop cnt xs))))
                 (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))
             (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))))))
 
