@@ -6,6 +6,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
+            [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.iteration :as iteration]
@@ -1138,6 +1139,16 @@
 ;; Telegram tagline read identically. The TUI is the only surface that floats
 ;; the note on its own faint row; CLI/Telegram fold it inline via
 ;; `vis/format-meta-line`.
+(def ^:dynamic *image-placements*
+  "When bound to an atom holding a vector, `draw-chat-bubble!` conj's the
+   EXACT painted screen position of every inline-image row it draws:
+   `{:row abs-screen-row :col abs-screen-col :img {...}}`. The screen loop
+   drains it after the delta refresh to place Kitty/iTerm2 graphics precisely
+   over the reserved cells — recording from inside the paint loop avoids
+   re-deriving the bubble's chrome offsets (role banner, top pad, turn
+   separator) that the copy-region geometry deliberately skips."
+  nil)
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1421,6 +1432,12 @@
                       fbx (if output-indented? (+ fbx tool-output-indent-cols) fbx)]
                   ;; Pre-fill answer zone bg so ALL line types get it
                   (when in-answer? (p/set-bg! g t/answer-bg) (p/fill-rect! g fbx y iw 1))
+                  ;; Reserved inline-image row: record its EXACT painted
+                  ;; position (absolute screen coords) for the post-refresh
+                  ;; graphics pass. The row itself paints blank below.
+                  (when (and *image-placements* (= :image (:kind meta)))
+                    (swap! *image-placements* conj
+                      {:row (+ (long viewport-top) y), :col x, :img (:img meta)}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -4431,8 +4448,12 @@
     (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? opts))))
 (defn- user-prompt-margin-entry?
   [entry]
-  (let [visible (strip-paint-markers-line (:line entry))]
-    (or (str/blank? visible) (boolean (re-matches #"^\s*│\s*$" visible)))))
+  ;; Reserved inline-image rows LOOK blank but must survive trimming — the
+  ;; graphics sequence is painted over them after the delta refresh.
+  (if (#{:image :image-pad} (:kind (:meta entry)))
+    false
+    (let [visible (strip-paint-markers-line (:line entry))]
+      (or (str/blank? visible) (boolean (re-matches #"^\s*│\s*$" visible))))))
 (defn- trim-user-prompt-margin-entries
   [entries]
   (let [trimmed-leading (vec (drop-while user-prompt-margin-entry? entries))
@@ -4447,6 +4468,33 @@
   (and (vector? node)
     (= :code (first node))
     (= "vis-paste" (:lang (second node)))))
+
+(defn- image-code-block?
+  "True for a `vis-image` code node — the collapsed-transcript shape
+   `input/collapse-paste-placeholders` emits for an `[Image #N: ...]`
+   token. Body lines: summary, absolute path, mime, `WxH`, size-label."
+  [node]
+  (and (vector? node)
+    (= :code (first node))
+    (= "vis-image" (:lang (second node)))))
+
+(defn- disclosure-code-block?
+  [node]
+  (or (paste-code-block? node) (image-code-block? node)))
+
+(defn- image-block-parts
+  "Parse a `vis-image` node body into `{:summary :path :mime :width :height
+   :size-label}`. Missing fields come back nil."
+  [node]
+  (let [lines (str/split (str (nth node 2 "")) #"\n" -1)
+        [summary path mime dims size-label] lines
+        [w h] (when (seq dims) (str/split (str dims) #"x"))]
+    {:summary    (str/trim (str summary))
+     :path       (str path)
+     :mime       (when (seq mime) mime)
+     :width      (some-> w str/trim not-empty parse-long)
+     :height     (some-> h str/trim not-empty parse-long)
+     :size-label (not-empty (str/trim (str size-label)))}))
 
 (defn- paste-block-parts
   "Split a `vis-paste` code node body into `[summary payload]` — the
@@ -4487,7 +4535,59 @@
                       (vec (ir-tui/ir->entries [:ir {} [:code {:wrap? true} payload]]
                              content-w opts))
                       node-id payload))]
-    (vec (concat header body [{:line "", :meta nil}]))))
+    (vec (concat header body))))
+
+(def ^:private image-max-cols
+  "Cap the inline-image box width so a big screenshot doesn't consume the
+   whole bubble; matches pi's default `maxWidthCells`."
+  60)
+
+(defn- image-disclosure-entries
+  "Render one `vis-image` block as a collapsible disclosure: the
+   `[Image #N: ...]` token is the chevron summary row; expanding it reserves
+   `rows` blank body rows whose FIRST row carries `:kind :image` meta so the
+   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over them
+   AFTER Lanterna's delta refresh. Terminals without inline-image support (or
+   an unreadable file) fall back to a single descriptive text row."
+  [node content-w {:keys [session-id session-turn-id detail-expansions]}]
+  (let [{:keys [summary path mime width height size-label]} (image-block-parts node)
+        id        (or (some-> (re-find #"#(\d+)" summary) second) "0")
+        node-id   (detail-node-id {:session-turn-id session-turn-id
+                                   :section :user
+                                   :kind :image
+                                   :details-path [id]})
+        expanded? (detail-expanded? detail-expansions session-id node-id false)
+        header    (detail-summary-entries
+                    {:marker md-summary-marker
+                     :max-w content-w
+                     :summary summary
+                     :collapsed? (not expanded?)
+                     :session-id session-id
+                     :node-id node-id})
+        can-draw? (and expanded? (timg/images-protocol) width height)
+        body      (when expanded?
+                    (if can-draw?
+                      (let [box  (timg/cell-size {:w width :h height}
+                                   (min image-max-cols (max 1 content-w)) 40)
+                            rows (max 1 (long (:rows box)))
+                            img  {:path path, :mime mime, :cols (:cols box), :rows rows}]
+                        ;; First reserved row carries the paint meta; the rest
+                        ;; are blanks the graphics sequence spans over. Every
+                        ;; row is tagged so `trim-user-prompt-margin-entries`
+                        ;; doesn't mistake the reserved box for trailing margin
+                        ;; and collapse the space the image needs.
+                        (into [{:line "", :meta {:kind :image, :img img, :node-id (str node-id)}}]
+                          (repeat (dec rows) {:line "", :meta {:kind :image-pad}})))
+                      ;; Fallback: describe the image so headless / unsupported
+                      ;; terminals still see what was attached.
+                      (let [dims (when (and width height) (str width "×" height))
+                            desc (str "🖼  " (or (not-empty (last (str/split (str path) #"/"))) "image")
+                                   (when dims (str "  " dims))
+                                   (when size-label (str "  " size-label)))]
+                        (tag-copy-block-body
+                          (vec (ir-tui/ir->entries [:ir {} [:p {} desc]] content-w {}))
+                          node-id path))))]
+    (vec (concat header body))))
 
 (defn- paste-aware-ir->entries
   "`ir-tui/ir->entries`, but each top-level `vis-paste` code block becomes
@@ -4495,12 +4595,16 @@
    back to the plain walker (zero overhead) when the IR carries no paste."
   [answer content-w opts]
   (let [blocks (vec (drop 2 answer))]
-    (if (not-any? paste-code-block? blocks)
+    (if (not-any? disclosure-code-block? blocks)
       (vec (ir-tui/ir->entries answer content-w opts))
-      (->> (partition-by paste-code-block? blocks)
+      (->> (partition-by disclosure-code-block? blocks)
         (mapcat (fn [run]
-                  (if (paste-code-block? (first run))
-                    (mapcat #(paste-disclosure-entries % content-w opts) run)
+                  (if (disclosure-code-block? (first run))
+                    (mapcat (fn [node]
+                              (if (image-code-block? node)
+                                (image-disclosure-entries node content-w opts)
+                                (paste-disclosure-entries node content-w opts)))
+                      run)
                     (ir-tui/ir->entries (into [:ir {}] run) content-w opts))))
         vec))))
 
