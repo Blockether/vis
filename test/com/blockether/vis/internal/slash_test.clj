@@ -89,7 +89,16 @@
     (expect (nil? (slash/parse "hello world")))
     (expect (nil? (slash/parse "/")))
     (expect (nil? (slash/parse "")))
-    (expect (nil? (slash/parse nil)))))
+    (expect (nil? (slash/parse nil))))
+
+  (it "rejects absolute file paths (terminal drop shape)"
+    ;; A dropped file pastes `/var/…/shot.png …` — an interior `/` in the
+    ;; first token means PATH, not slash. Regression: this died as
+    ;; `Unknown slash command` before the turn (and its image attachment
+    ;; scan) ever ran.
+    (expect (nil? (slash/parse "/var/folders/T/shot.png what do you see")))
+    (expect (nil? (slash/parse "/Users/x/img.jpg")))
+    (expect (nil? (slash/parse "//weird")))))
 
 (defdescribe dispatch-test
   (it "{:handled? false} for non-slash text"
@@ -98,6 +107,12 @@
                 (slash/dispatch env {:channel/id :tui} "hello world")))
       (expect (= {:handled? false}
                 (slash/dispatch env {:channel/id :tui} "/")))))
+
+  (it "{:handled? false} for a dropped absolute file path"
+    (let [env (env-of [(ext "alpha" [workspace-spec])])]
+      (expect (= {:handled? false}
+                (slash/dispatch env {:channel/id :tui}
+                  "/var/folders/T/mozDraggedFiles/dog.jpg what do you see")))))
 
   (it "longest-prefix match resolves nested slash; trailing tokens become argv"
     (let [env (env-of [(ext "alpha" [workspace-spec workspace-apply])])
