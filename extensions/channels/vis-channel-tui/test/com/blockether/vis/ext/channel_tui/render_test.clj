@@ -2244,7 +2244,7 @@
       (expect (= ["git" (git-form "status" nil)]
                 (update (groupable-tool-form {:forms [(git-form "status" nil)]}) 1 identity)))
       (expect (= "rg" (first (groupable-tool-form {:forms [(rg-form "`x` · 1 file" nil)]}))))
-      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]})))
+      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]})))
       ;; Narration no longer disqualifies grouping — it renders above the band.
       (expect (some? (groupable-tool-form {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
     (it "rg-command-parts drops the query prefix for the collapsed chip, keeps the full summary"
@@ -2324,7 +2324,7 @@
                          count))]
     (it "groupable-tool-form tags a lone delete iteration"
       (expect (= "delete" (first (groupable-tool-form {:forms [(del-form "deleted `a.clj`")]}))))
-      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]}))))
+      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
     (it "delete-command-parts shows the basename chip, keeps the full summary"
       (let [p (delete-command-parts (del-form "deleted `src/com/blockether/vis/ports.clj`"))
             n (delete-command-parts (del-form "nothing to delete at `gone.clj`"))]
@@ -2361,3 +2361,46 @@
                                 (assoc ctx :iteration-number 9)))]
         (expect (str/blank? (first texts)))
         (expect (str/includes? (second texts) "2 deletes"))))))
+
+(defdescribe cat-merge-grouping-test
+  ;; Consecutive cat reads of the SAME file merge into ONE deduped ▾ CAT card;
+  ;; overlapping ranges show the union once (`cat L57-60` then `cat L58-62`
+  ;; reads as one `L57-62` slice). Reads of DIFFERENT files, or a run broken by
+  ;; other work, stay as separate cards.
+  (let [ctx {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        cat-form (fn [path a b]
+                   (let [rows (for [ln (range a (inc b))] (str (format "%5s" ln) "  code-" ln))]
+                     {:vis/tool-name "cat" :success? true :code ""
+                      :tool-color-role :tool-color/read
+                      :result {:path path}
+                      :result-summary (str "`" path "` · L" a "-" b)
+                      :result-render (str "\n```\n" (str/join "\n" rows) "\n```")}))
+        ci (fn [i path a b] [i {:forms [(cat-form path a b)]}])
+        py (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        ;; iter-fn is stubbed: it fires ONCE per rendered card, so a merged run
+        ;; that collapses N iterations into one card emits ONE stub row.
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        card-count (fn [pairs]
+                     (->> (render-iteration-entries pairs iter-fn false true ctx)
+                       (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                       count))
+        merge-cat-forms @#'render/merge-cat-forms]
+    (it "merges overlapping same-file reads into ONE L57-62 slice (overlap shown once)"
+      (let [m (merge-cat-forms [(cat-form "t/foo.clj" 57 60) (cat-form "t/foo.clj" 58 62)])]
+        (expect (= "`t/foo.clj` · L57-62" (:result-summary m)))
+        ;; each source line appears exactly once — 58-60 not duplicated
+        (expect (= 6 (count (re-seq #"code-\d+" (:result-render m)))))
+        (expect (str/includes? (:result-render m) "code-57"))
+        (expect (str/includes? (:result-render m) "code-62"))))
+    (it "disjoint same-file reads merge to a multi-range summary with a line count"
+      (let [m (merge-cat-forms [(cat-form "t/foo.clj" 1 3) (cat-form "t/foo.clj" 40 42)])]
+        (expect (str/includes? (:result-summary m) "(2 ranges)"))
+        (expect (str/includes? (:result-summary m) "6 lines"))))
+    (it "two overlapping same-file cat iterations collapse into ONE card"
+      (expect (= 1 (card-count [(ci 0 "t/foo.clj" 57 60) (ci 1 "t/foo.clj" 58 62)]))))
+    (it "reads of DIFFERENT files stay as separate cards"
+      (expect (= 2 (card-count [(ci 0 "t/foo.clj" 1 10) (ci 1 "t/bar.clj" 1 5)]))))
+    (it "a non-cat step between two same-file reads breaks the merge"
+      (expect (= 3 (card-count [(ci 0 "t/foo.clj" 1 10) (py 1) (ci 2 "t/foo.clj" 5 15)]))))
+    (it "a lone cat read renders normally (no merge)"
+      (expect (= 1 (card-count [(ci 0 "t/foo.clj" 1 10)]))))))
