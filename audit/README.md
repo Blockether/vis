@@ -44,6 +44,7 @@ vulnerable, and what does it do with data.*
 
 ### At a glance
 
+- **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
 - **Direct dependency coordinates:** 57 unique, across 15 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~218 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
@@ -66,7 +67,8 @@ a software consultancy and development company based in Kraków, Poland
   `spel`, `holy-lambda`) alongside its commercial engagements.
 - **Contact.** General enquiries and commercial support:
   <contact@blockether.com>. Security disclosure: <security@blockether.com>
-  (§11). Web: <https://blockether.com>.
+  (§11). Web: <https://blockether.com>. Source repository:
+  <https://github.com/Blockether/vis>.
 
 ---
 
@@ -450,11 +452,14 @@ agreement with Blockether** — request one at <contact@blockether.com>
 
 **What commercial engagement covers.** Blockether can, under contract:
 
-- **ship and integrate the base** into your environment;
+- **ship, deploy and integrate the base** into your environment — installation,
+  release/upgrade management and CI wiring;
+- **maintain it** — dependency and security updates, version pinning, and
+  keeping this audit and the SCA scans current;
 - **guide teams** on how to *use*, *secure* and *distribute* vis to match your
   regulatory and internal requirements;
-- **build custom extensions** (channels, language packs, workspace/tool
-  integrations) on the extension surface;
+- **build custom extensions** for a particular component (channels, language
+  packs, persistence, workspace / tool integrations) on the extension surface;
 - provide hardening, compliance-mapping and audit support for regulated
   deployments.
 
@@ -468,6 +473,12 @@ reproduction steps and impact. Do **not** open a public issue for an
 undisclosed vulnerability. Coordinated-disclosure timelines and any remediation
 SLA are governed by a commercial agreement (§10); absent one, Blockether
 addresses reports on a best-effort basis.
+
+**Non-security issues** — ordinary bugs, feature requests and any code problem
+*not* related to a vulnerability — belong in the public issue tracker at
+<https://github.com/Blockether/vis/issues>, **not** at the security address.
+Keep the two channels separate: security disclosures stay private
+(<security@blockether.com>); everything else is a GitHub issue.
 
 ---
 
