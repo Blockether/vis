@@ -8,6 +8,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
@@ -90,6 +91,26 @@
       (prompt-block "conversation-so-far"
         (str/join "\n\n" (keep-indexed render-turn turns))))))
 
+(defn- attached-images-block
+  "Manifest for image attachments riding this user message. Lists each
+   attached image (path/mime/size, in attachment order) so the model can
+   pair the opaque image blocks with the paths the user mentioned, and
+   names sniffed-but-skipped images with the WHY (size/count cap) so the
+   model doesn't hunt for an attachment that isn't there."
+  [attached skipped]
+  (when (or (seq attached) (seq skipped))
+    (prompt-block "attached-images"
+      (str/join "\n"
+        (concat
+          (map-indexed
+            (fn [i {:keys [path media-type size-label]}]
+              (str "- image " (inc i) ": " path
+                " (" media-type ", " size-label ") — attached to this message"))
+            attached)
+          (map (fn [{:keys [path reason]}]
+                 (str "- " path " — NOT attached: " reason))
+            skipped))))))
+
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
    dialog transcript: Vis state flows through persisted iterations,
@@ -97,16 +118,28 @@
    `CURRENT-USER-MESSAGE`.
 
    One full previous-turn context block may be prepended so short follow-ups
-   can inspect the prior exchange without replaying the whole session."
-  [{:keys [stable-prompt-messages initial-user-content previous-turn-context]}]
+   can inspect the prior exchange without replaying the whole session.
+
+   `:user-images` (from `attachments/collect-user-images`) turns the user
+   message multimodal: svar image blocks ride ahead of the text block and
+   an `ATTACHED-IMAGES` manifest inside the text names each one.
+   `:skipped-images` entries appear in the manifest only."
+  [{:keys [stable-prompt-messages initial-user-content previous-turn-context
+           user-images skipped-images]}]
   (let [previous-block (previous-turn-context-block previous-turn-context)
         user-block     (when initial-user-content
-                         (prompt-block "current-user-message" initial-user-content))]
+                         (prompt-block "current-user-message" initial-user-content))
+        images-block   (when user-block
+                         (attached-images-block user-images skipped-images))
+        text           (str/join "\n\n" (keep identity [previous-block user-block images-block]))]
     (vec
       (concat
         (or stable-prompt-messages [])
         (when user-block
-          [{:role "user" :content (str/join "\n\n" (keep identity [previous-block user-block]))}])))))
+          [(if (seq user-images)
+             (apply svar/user text
+               (map #(svar/image (:base64 %) (:media-type %)) user-images))
+             {:role "user" :content text})])))))
 
 ;; =============================================================================
 ;; System prompt

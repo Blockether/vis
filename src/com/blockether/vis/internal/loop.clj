@@ -9,6 +9,7 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
+   [com.blockether.vis.internal.attachments :as attachments]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -800,7 +801,11 @@
 (defn- last-user-message-preview [messages]
   (when-let [c (some (fn [m] (when (= (:role m) "user") (:content m)))
                  (reverse messages))]
-    (let [s (str c)]
+    (let [s (if (sequential? c)
+              ;; Multimodal content: preview the text blocks only — stringifying
+              ;; the vector would dump base64 image payloads into error logs.
+              (str/join " " (keep #(when (= "text" (:type %)) (:text %)) c))
+              (str c))]
       (if (> (count s) LAST_USER_PREVIEW_CHARS)
         (str (subs s 0 LAST_USER_PREVIEW_CHARS)
           " ...<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
@@ -3911,9 +3916,27 @@
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts
                                   :session-context   static-context-str})
+        ;; Image attachments: paths of readable image files mentioned in the
+        ;; user message (terminal drop pastes the path) become multimodal
+        ;; blocks on the initial user message. Engine-side so every channel
+        ;; (TUI/web/Telegram) gets the same behavior; never throws.
+        user-attachments (try (attachments/collect-user-images user-request
+                                {:workspace-root (:workspace/root environment)})
+                           (catch Throwable t
+                             (tel/log! {:level :warn :id ::user-image-scan-failed
+                                        :data {:error (ex-message t)}})
+                             {:attached [] :skipped []}))
+        _ (when (seq (:attached user-attachments))
+            (tel/log! {:level :info :id ::user-images-attached
+                       :data {:count (count (:attached user-attachments))
+                              :paths (mapv :path (:attached user-attachments))
+                              :skipped (mapv :path (:skipped user-attachments))}
+                       :msg "attached user-message images"}))
         initial-messages (prompt/assemble-initial-messages
                            {:stable-prompt-messages stable-prompt-messages
                             :initial-user-content   user-request
+                            :user-images            (:attached user-attachments)
+                            :skipped-images         (:skipped user-attachments)
                             :previous-turn-context  (previous-turn-context environment session-turn-id)})
         ;; The cumulative `:input-tokens` field sums `prompt_tokens`
         ;; from every iteration in this turn — useful for billing /
