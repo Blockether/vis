@@ -81,3 +81,11 @@ __pycache__/
 # transient slack dump / agent scratch (never commit)
 igor-dump/
 channels-*.csv
+.todos/
+.sidecar/
+.sidecar-agent
+.sidecar-task
+.sidecar-pr
+.sidecar-start.sh
+.sidecar-base
+.td-root
