@@ -1205,23 +1205,16 @@
   (try (mapv keyword (shared-theme/available-theme-ids))
     (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
 (defn- settings-ui-options
-  "Terminal-UI-owned settings in the Terminal UI section: the theme
-   picker plus the mouse-selection auto-copy switch (a TUI-channel
-   concern). The mouse-selection row is a `:registry-toggle` so flipping
-   it fans out through the toggles registry; it also carries a bare
-   `:key` so callers can address it semantically."
+  "Terminal-UI-owned settings in the Terminal UI section: currently just the
+   theme picker. Feature toggles (mouse-selection auto-copy, etc.) live in the
+   toggles registry, not here."
   []
   [{:key :theme-name,
     :type :choice,
     :choices (theme-choice-order),
     :label "Theme",
     :description
-    "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
-   {:key :mouse-selection-copy,
-    :type :registry-toggle,
-    :toggle-id :vis/mouse-selection-copy,
-    :label "Mouse selection auto-copy",
-    :description "Drag-select visible text; copied automatically on mouse release."}])
+    "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
 (declare titleize-label)
 
 (defn- registry-toggle-rows
@@ -1486,9 +1479,8 @@
        (concat
          [{:type :section, :label "Terminal UI"}]
          (settings-ui-options)
-         ;; ALL feature toggles, grouped by :group like the web. mouse-selection
-         ;; already shows in Terminal UI above, so exclude it here.
-         (or (registry-toggle-rows #(not= :vis/mouse-selection-copy (:id %))) [])
+         ;; ALL feature toggles, grouped by :group like the web.
+         (or (registry-toggle-rows) [])
          (or (contributor-rows) [])
          ;; Reasoning-effort moved OUT of Settings (own control: Ctrl+R); the
          ;; Models section only ever carried it, so it's gone too.
@@ -1729,6 +1721,40 @@
                            desc-lines)))))
            (range)
            rows))))
+(defn- settings-header-row? [{:keys [type]}] (contains? #{:section :subsection} type))
+(defn- settings-row-search-text
+  "Lowercased haystack for a row's search match: its label + description."
+  [{:keys [label description]}]
+  (str/lower-case (str label " " description)))
+(defn- filter-settings-rows
+  "Live-filter settings `rows` by `query` (case-insensitive substring over
+   label + description). Section / subsection headers survive only when a
+   matching option remains beneath them, so the grouped shape is preserved.
+   A blank query returns `rows` unchanged."
+  [rows query]
+  (let [rows (vec rows)
+        q    (str/lower-case (str/trim (str query)))]
+    (if (str/blank? q)
+      rows
+      (let [n        (count rows)
+            match?   (fn [i]
+                       (let [row (nth rows i)]
+                         (and (settings-selectable? row)
+                           (str/includes? (settings-row-search-text row) q))))
+            matched  (into #{} (filter match? (range n)))
+            next-idx (fn [i pred]
+                       (or (first (filter #(and (> % i) (pred (nth rows %))) (range n))) n))
+            headers  (for [i (range n)
+                           :let [row (nth rows i)]
+                           :when (case (:type row)
+                                   :section    (some matched (range (inc i) (next-idx i #(= :section (:type %)))))
+                                   :subsection (some matched (range (inc i) (next-idx i settings-header-row?)))
+                                   false)]
+                       i)
+            keep     (into matched headers)]
+        (vec (keep-indexed (fn [i row] (when (contains? keep i) row)) rows))))))
+(defn- settings-selectable-count [rows] (count (filter settings-selectable? rows)))
+
 (defn settings-dialog!
   "Show the tabbed settings dialog.
 
@@ -1747,12 +1773,16 @@
          scroll (atom 0)
          values (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)
+         query (atom "")
          ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
          ;; option descriptions indent to this so they sit under the label.
          check-w 2]
      (loop []
-       (let [rows (settings-rows extension-rows)
+       (let [all-rows (settings-rows extension-rows)
+             rows (filter-settings-rows all-rows @query)
              n (count rows)
+             total-count (settings-selectable-count all-rows)
+             shown-count (settings-selectable-count rows)
              size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
              cols (.getColumns size)
              screen-rows (.getRows size)
@@ -1765,8 +1795,9 @@
                       (settings-content-height screen-rows))
              {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-             list-top content-top
-             visible-h (max 1 content-h)
+             search-row content-top
+             list-top (+ content-top 2)
+             visible-h (max 1 (- content-h 2))
              _ (swap! selected #(clamp % 0 (max 0 (dec n))))
              option-indent (settings-option-indent)
              ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
@@ -1830,7 +1861,18 @@
                      start1 (if (>= selected-visual-end (+ start0 visible-h))
                               (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
                               start0)]
-                 (reset! scroll start1))]
+                 (reset! scroll start1))
+             ;; Frame 1 search bar: borderless query field + "N of M" count,
+             ;; sitting above the list. Returns the cursor position for the field.
+             search-cursor
+             (let [count-str (str shown-count " of " total-count)
+                   count-w   (count count-str)
+                   field-w   (max 1 (- inner-w count-w 1))
+                   cur (draw-text-input-field! g left search-row field-w
+                         @query (count @query) "Search settings…")]
+               (p/set-colors! g t/dialog-hint t/dialog-bg)
+               (p/put-str! g (- (+ left inner-w) count-w) search-row count-str)
+               cur)]
          (dotimes [i visible-h]
            (let [entry-idx (+ @scroll i)
                  row-y (+ list-top i)]
@@ -1892,11 +1934,11 @@
            left
            hint-row
            inner-w
-           [["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
-         (.setCursorPosition screen (p/cursor-pos 0 0))
+           [["type" "search"] ["↑/↓" "move"] ["Enter" "change"] ["Esc" "clear/close"]])
+         (.setCursorPosition screen search-cursor)
          (.refresh screen Screen$RefreshType/DELTA)
          (let [key (read-modal-key! screen)
-               selected-row (nth rows @selected)]
+               selected-row (when (pos? n) (nth rows (clamp @selected 0 (dec n))))]
            (when key
              (cond
                (instance? MouseAction key)
@@ -1965,18 +2007,38 @@
                    :else (recur)))
                :else
                (condp = (.getKeyType key)
-                 KeyType/Escape @values
+                 ;; Esc clears an active search first, then closes on the next press.
+                 KeyType/Escape (if (str/blank? @query)
+                                  @values
+                                  (do (reset! query "")
+                                    (reset! selected (first-selectable-index all-rows))
+                                    (reset! scroll 0)
+                                    (recur)))
                  KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
                                    (recur))
                  KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
                                      (recur))
+                 ;; Backspace edits the live search query.
+                 KeyType/Backspace
+                 (do (when (seq @query)
+                       (swap! query #(subs % 0 (dec (count %))))
+                       (reset! selected (first-selectable-index
+                                          (filter-settings-rows all-rows @query)))
+                       (reset! scroll 0))
+                   (recur))
+                 ;; Any printable character types into the search query (VS Code feel);
+                 ;; Enter is the only key that toggles/activates the selected row.
                  KeyType/Character
                  (let [c (.getCharacter key)]
-                   (if (= c \space)
-                     (do (activate-settings-row! screen values callbacks selected-row)
+                   (if (and c (>= (int c) 32))
+                     (do (swap! query str c)
+                       (reset! selected (first-selectable-index
+                                          (filter-settings-rows all-rows @query)))
+                       (reset! scroll 0)
                        (recur))
                      (recur)))
-                 KeyType/Enter (do (activate-settings-row! screen values callbacks selected-row)
+                 KeyType/Enter (do (when selected-row
+                                     (activate-settings-row! screen values callbacks selected-row))
                                  (recur))
                  (recur))))))))))
 ;;; ── Session picker ─────────────────────────────────────────────────────
