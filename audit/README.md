@@ -1,11 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-05 by `scripts/gen-audit.bb` (run in CI — see §12). The
-> dependency inventory (§5), license distribution (§6), CVE posture (§7) and
-> resource footprint (§8) are pulled straight from the resolved `deps.edn` graph
-> and the Clojars / Maven Central POMs — **do not edit those by hand**; rerun
-> `bb scripts/gen-audit.bb`. The surrounding prose (product, ownership,
-> technology, licensing, data-governance, warranty) is reviewed on change.
+> Generated 2026-07-05.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -265,9 +260,9 @@ _Clojure language pack (format/lint/structural edits)._
 |---|---|---|---|---|
 | `borkdude/edamame` | `1.5.39` | EPL-1.0 | 26 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.05.25` | EPL-1.0 | 701 KB | 3rd-party |
-| `com.fasterxml.jackson.core/jackson-core` | `2.19.4` | Apache-2.0 | 578 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.19.4` | Apache-2.0 | 70 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.19.4` | Apache-2.0 | 95 KB | 3rd-party |
+| `com.fasterxml.jackson.core/jackson-core` | `2.21.1` | Apache-2.0 | 581 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.21.1` | Apache-2.0 | 72 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.21.1` | Apache-2.0 | 95 KB | 3rd-party |
 | `dev.weavejester/cljfmt` | `0.16.4` | EPL-1.0 | 19 KB | 3rd-party |
 | `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
 
@@ -334,15 +329,20 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 
 ## 7. Vulnerability posture — clj-watson (CVEs)
 
-### Are there any CVEs?
+### Where to find live findings
 
-**No known CVEs are outstanding against the shipped dependency graph.**
-[clj-watson](https://github.com/clj-holmes/clj-watson) resolves the *entire*
-graph (direct **and** transitive) and matches every artifact against a
-vulnerability database on every dependency change; the current run reports no
-open advisories. Live findings — the always-current answer — are published to
-the repository **Security → Code scanning** tab; this document is not the
-system of record for live CVE state, the Security tab is.
+The **authoritative, always-current** list of vulnerabilities is the repository's
+GitHub **Security → Code scanning** tab — not this document:
+
+**<https://github.com/Blockether/vis/security/code-scanning>**
+
+Every [clj-watson](https://github.com/clj-holmes/clj-watson) run resolves the
+*entire* dependency graph (direct **and** transitive), matches each artifact
+against a vulnerability database on every dependency change, and publishes its
+findings (SARIF) there. Each run is also archived as a downloadable build
+artifact under **Actions → Security audit**
+(<https://github.com/Blockether/vis/actions/workflows/security-audit.yml>). This
+document is not the system of record for live CVE state — the Security tab is.
 
 ### What it is & why
 
