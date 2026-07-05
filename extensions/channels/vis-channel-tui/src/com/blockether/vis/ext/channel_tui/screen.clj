@@ -21,12 +21,11 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis.internal.config :as cfg]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
@@ -1135,22 +1134,21 @@
         ;; resulting `:total-h` feeds the scrollbar geometry +
         ;; gets published into app-db so input-thread scroll handlers
         ;; have an accurate ceiling.
-        layout (cfg/diag-phase! :layout
-                 (virtual/layout
-                   messages
-                   bubble-w
-                   settings
-                   messages-scroll
-                   inner-h
-                   {:progress progress, :loading? loading?, :progress-extra progress-extra}
-                   {:session-id (get-in db [:session :id]),
-                    :detail-expansions (:detail-expansions db)
-                    ;; Previous frame's cumulative offsets let `layout`
-                    ;; anchor the scroll to the message that was at the
-                    ;; top of the viewport, so estimate->real height
-                    ;; corrections (which move `total-h`) don't lurch the
-                    ;; viewport / scrollbar thumb mid-scroll.
-                    :prev-offsets (get-in db [:layout :offsets])}))
+        layout (virtual/layout
+                 messages
+                 bubble-w
+                 settings
+                 messages-scroll
+                 inner-h
+                 {:progress progress, :loading? loading?, :progress-extra progress-extra}
+                 {:session-id (get-in db [:session :id]),
+                  :detail-expansions (:detail-expansions db)
+                  ;; Previous frame's cumulative offsets let `layout`
+                  ;; anchor the scroll to the message that was at the
+                  ;; top of the viewport, so estimate->real height
+                  ;; corrections (which move `total-h`) don't lurch the
+                  ;; viewport / scrollbar thumb mid-scroll.
+                  :prev-offsets (get-in db [:layout :offsets])})
         ;; Persist the anchor-corrected scroll so the input thread's
         ;; wheel/drag math and the next layout share the same offset.
         ;; nil = auto-bottom (never written back). Skip the dispatch
@@ -1166,16 +1164,15 @@
         total-h (long (:total-h layout))
         text-top (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
-        transcript-bubble-copy-regions (cfg/diag-phase! :regions
-                                         (bubble-copy-regions layout
-                                           messages
-                                           text-top
-                                           inner-h
-                                           cols
-                                           settings
-                                           {:session-id (get-in db [:session :id]),
-                                            :detail-expansions (:detail-expansions
-                                                                db)}))
+        transcript-bubble-copy-regions (bubble-copy-regions layout
+                                         messages
+                                         text-top
+                                         inner-h
+                                         cols
+                                         settings
+                                         {:session-id (get-in db [:session :id]),
+                                          :detail-expansions (:detail-expansions
+                                                              db)})
         transcript-disclosure-copy-regions (disclosure-copy-regions layout text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
@@ -1189,7 +1186,7 @@
         ;; the exact painted position of each expanded `vis-image` row here;
         ;; the post-refresh graphics pass drains it below.
         image-sink        (atom [])]
-    (cfg/diag-phase! :fill (render/fill-background! g cols rows))
+    (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
     ;; row (links, image markers, file links). The header then
@@ -1200,17 +1197,15 @@
     ;; instead of a half-filled buffer (the bug that made the header
     ;; copy-id button feel \"sometimes broken\" when the spinner was
     ;; ticking).
-    (cfg/diag-phase! :messages
-      (binding [render/*image-placements* image-sink]
-        (render/draw-messages-area! g layout messages-top messages-bottom cols)))
-    (cfg/diag-phase! :header (header/draw-header! g db header-top cols))
+    (binding [render/*image-placements* image-sink]
+      (render/draw-messages-area! g layout messages-top messages-bottom cols))
+    (header/draw-header! g db header-top cols)
     ;; Bottom band (input box + footer + slash suggestions) — always painted so
     ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
-    (cfg/diag-phase! :chrome
-      (draw-bottom-chrome! screen g db
-        {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
-         :now-ms now-ms, :echo-row echo-row, :footer-row footer-row,
-         :slash-suggestions slash-suggestions, :slash-command-index slash-command-index}))
+    (draw-bottom-chrome! screen g db
+      {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
+       :now-ms now-ms, :echo-row echo-row, :footer-row footer-row,
+       :slash-suggestions slash-suggestions, :slash-command-index slash-command-index})
     ;; Atomically publish every chrome region painted above. Until this swap runs the input
     ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
     ;; frame matches what's actually still on the user's screen up to this instant.
@@ -1286,7 +1281,7 @@
       ;; each letter badge lands on the chevron the user sees. No-op when off.
       (render/draw-detail-labels! g (:detail-labels-active? db))
       (when-not *skip-frame-refresh?*
-        (cfg/diag-phase! :refresh (.refresh screen Screen$RefreshType/DELTA))
+        (.refresh screen Screen$RefreshType/DELTA)
         ;; Inline images ride the terminal's graphics layer, which Lanterna
         ;; doesn't model. Draw them AFTER the delta so they sit on top of the
         ;; blank cells the renderer reserved for each expanded `vis-image`.
@@ -1501,20 +1496,19 @@
                         :cancelling? (boolean cancelling?),
                         :viewport-rows inner-h,
                         :pending-sends (:pending-sends db)}
-        layout (cfg/diag-phase! :live-layout
-                 (virtual/layout
-                   messages
-                   bubble-w
-                   settings
-                   messages-scroll
-                   inner-h
-                   {:progress progress, :loading? loading?, :progress-extra progress-extra}
-                   {:session-id (get-in db [:session :id]),
-                    :detail-expansions (:detail-expansions db)
-                    ;; Anchor for paint parity with the full-frame path.
-                    ;; This partial path doesn't republish `:offsets`, so
-                    ;; the next full frame persists the corrected scroll.
-                    :prev-offsets (get-in db [:layout :offsets])}))
+        layout (virtual/layout
+                 messages
+                 bubble-w
+                 settings
+                 messages-scroll
+                 inner-h
+                 {:progress progress, :loading? loading?, :progress-extra progress-extra}
+                 {:session-id (get-in db [:session :id]),
+                  :detail-expansions (:detail-expansions db)
+                  ;; Anchor for paint parity with the full-frame path.
+                  ;; This partial path doesn't republish `:offsets`, so
+                  ;; the next full frame persists the corrected scroll.
+                  :prev-offsets (get-in db [:layout :offsets])})
         ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
         ;; message-idx in O(1). One-shot: clear pending so subsequent
@@ -1604,13 +1598,12 @@
           (when (< y0 y1)
             (p/set-colors! clip t/text-fg t/terminal-bg)
             (p/fill-rect! clip 0 y0 cols (- y1 y0)))
-          (cfg/diag-phase! :live-draw
-            (render/draw-chat-bubble! clip
-              (:projected live-entry)
-              (:top live-entry)
-              render/MESSAGE_MARGIN_LEFT
-              bubble-w
-              {:viewport-top text-top, :viewport-h inner-h}))))
+          (render/draw-chat-bubble! clip
+            (:projected live-entry)
+            (:top live-entry)
+            render/MESSAGE_MARGIN_LEFT
+            bubble-w
+            {:viewport-top text-top, :viewport-h inner-h})))
       ;; Chrome refresh - cheap text writes, kept inside the partial
       ;; path so notification banners and footer status update on
       ;; every spinner tick instead of waiting for the next full
@@ -1712,12 +1705,11 @@
                         :cancelling? false,
                         :viewport-rows inner-h,
                         :pending-sends (:pending-sends db)}
-        layout (cfg/diag-phase! :layout
-                 (virtual/layout messages bubble-w settings messages-scroll inner-h
-                   {:progress progress, :loading? false, :progress-extra progress-extra}
-                   {:session-id (get-in db [:session :id]),
-                    :detail-expansions (:detail-expansions db),
-                    :prev-offsets (get-in db [:layout :offsets])}))
+        layout (virtual/layout messages bubble-w settings messages-scroll inner-h
+                 {:progress progress, :loading? false, :progress-extra progress-extra}
+                 {:session-id (get-in db [:session :id]),
+                  :detail-expansions (:detail-expansions db),
+                  :prev-offsets (get-in db [:layout :offsets])})
         anchored-scroll (:anchored-scroll layout)]
     ;; Anchor correction, exactly as render-frame! — estimate→real height fixes
     ;; keep the scrolled content visually put instead of lurching.
@@ -1725,8 +1717,7 @@
             (not= anchored-scroll messages-scroll))
       (state/dispatch [:reanchor-scroll anchored-scroll
                        (- (long anchored-scroll) (long messages-scroll))]))
-    (cfg/diag-phase! :messages
-      (render/draw-messages-area! g layout messages-top messages-bottom cols))
+    (render/draw-messages-area! g layout messages-top messages-bottom cols)
     ;; Carry over chrome click regions (rows OUTSIDE the messages band). The
     ;; transcript regions in-band were just re-registered by draw-messages-area!
     ;; at their new scrolled rows, so they are deliberately NOT carried.
@@ -1740,7 +1731,7 @@
     (cr/commit-frame!)
     ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)
-    (cfg/diag-phase! :refresh (.refresh screen Screen$RefreshType/DELTA))
+    (.refresh screen Screen$RefreshType/DELTA)
     (merge previous-layout
       {:cols cols, :rows rows,
        :total-h (long (:total-h layout)), :inner-h inner-h,
@@ -1774,58 +1765,12 @@
         inner-h (long (or (:inner-h ly) 0))
         max-s (max 0 (- total-h inner-h))]
     (scroll/animating? (:scroll db) max-s)))
-(defn- snapshot-back-cells
-  "Row-major vector of the screen's BACK buffer TextCharacters — a cheap
-   full-frame fingerprint for the same-state scroll-frame self-verify."
-  [^TerminalScreen screen ^long cols ^long rows]
-  (vec (for [y (range rows) x (range cols)] (.getBackCharacter screen (int x) (int y)))))
-(defn- back-buffer-first-diff
-  "First [x y] in rows [y0,y1) where the current back buffer differs from
-   `other` (a snapshot vector), or nil when they match. The row window skips
-   the header band (background-tab spinner) and footer (live clock) — cells
-   the scroll fast path deliberately does not repaint and that vary with wall
-   time, so comparing them would flag benign time drift, not flicker."
-  [^TerminalScreen screen cols rows y0 y1 other]
-  (let [cols (long cols), y0 (long y0), y1 (long y1)]
-    (first (for [y (range y0 y1) x (range cols)
-                 :let [cur (.getBackCharacter screen (int x) (int y))
-                       old (nth other (+ (* y cols) x))]
-                 :when (not (.equals cur ^Object old))]
-             [x y]))))
-(defn- verify-scroll-frame!
-  "Same-state flicker gate (diag-only): the scroll fast path just painted the
-   back buffer for `db`; re-render the SAME `db` through the FULL painter (with
-   the terminal flush suppressed) and assert the back buffer is byte-identical.
-   Because it compares two renders of the EXACT same state at the same instant,
-   it is immune to the async height-warming timing that makes a cross-run A/B
-   flaky. Logs `SCROLL-VERIFY OK` or the first divergent cell."
-  [^TerminalScreen screen cols rows db now-ms]
-  (let [scroll-cells (snapshot-back-cells screen cols rows)
-        ;; Scroll frame owns the transcript band: below the header (3 rows)
-        ;; and above the footer (2 rows). The header spinner + footer clock
-        ;; tick with wall time and are not repainted here, so exclude them.
-        y0 (long 3)
-        y1 (long (max 3 (- (long rows) 2)))]
-    (binding [*skip-frame-refresh?* true]
-      (render-frame! screen cols rows db now-ms))
-    (if-let [[dx dy] (back-buffer-first-diff screen cols rows y0 y1 scroll-cells)]
-      (println "SCROLL-VERIFY MISMATCH at" dx dy
-        "| scroll=" (pr-str (.getCharacterString ^TextCharacter (nth scroll-cells (+ (* (long dy) (long cols)) (long dx)))))
-        "| full=" (pr-str (.getCharacterString (.getBackCharacter screen (int dx) (int dy)))))
-      (println "SCROLL-VERIFY OK"))))
-(def ^:private scroll-verify?
-  "When set (env `VIS_SCROLL_VERIFY`) every scroll fast frame is followed by a
-   same-state full re-render and a back-buffer comparison (`verify-scroll-frame!`),
-   logging SCROLL-VERIFY OK / MISMATCH. Separate from `VIS_RENDER_DIAG` because
-   the verify doubles render work — keep it off when measuring frame CPU."
-  (some? (System/getenv "VIS_SCROLL_VERIFY")))
 (def ^:private force-full-frame?
   "When set (env `VIS_FORCE_FULL_FRAME`) every render takes the FULL frame
-   path — all incremental fast paths (header-hover, partial-live,
-   header-spinner) are disabled. Two uses: (1) the A/B oracle for the flicker
-   harness — a fast path is only correct if its output is pixel-identical to
-   forcing full frames from the same state; (2) a production escape hatch if a
-   fast path ever mis-paints on some terminal."
+   path — all incremental fast paths (scroll, header-hover, partial-live,
+   header-spinner) are disabled. A production escape hatch: if a fast path ever
+   mis-paints on some terminal, this restores the always-full-repaint behaviour
+   without a rebuild."
   (some? (System/getenv "VIS_FORCE_FULL_FRAME")))
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
@@ -1953,29 +1898,20 @@
                             was-blocked?))
                       (let [[layout publish-layout?]
                             (cond header-hover-only?
-                              (do (vis/diag-loop! :header-hover)
-                                (render-header-hover-frame! screen cols rows db)
+                              (do (render-header-hover-frame! screen cols rows db)
                                 [last-layout false])
-                              partial-live? (do (vis/diag-loop! :partial-live)
-                                              [(render-live-bubble-frame! screen
-                                                 cols
-                                                 rows
-                                                 db
-                                                 now-ms
-                                                 last-layout) true])
+                              partial-live? [(render-live-bubble-frame! screen
+                                               cols
+                                               rows
+                                               db
+                                               now-ms
+                                               last-layout) true]
                               header-spinner-only?
-                              (do (vis/diag-loop! :header-spinner)
-                                (render-header-hover-frame! screen cols rows db)
+                              (do (render-header-hover-frame! screen cols rows db)
                                 [last-layout false])
                               scroll-frame?
-                              (do (vis/diag-loop! :scroll)
-                                (let [l (render-scroll-frame! screen cols rows db now-ms last-layout)]
-                                  ;; Same-state flicker gate (VIS_SCROLL_VERIFY only).
-                                  (when scroll-verify?
-                                    (verify-scroll-frame! screen cols rows db now-ms))
-                                  [l true]))
-                              :else (do (vis/diag-loop! :full)
-                                      [(render-frame! screen cols rows db now-ms) true]))]
+                              [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
+                              :else [(render-frame! screen cols rows db now-ms) true])]
                           ;; Publish layout back to app-db without bumping the version (see
                           ;; no-render-bump-events).
                         (when publish-layout? (state/dispatch [:set-layout layout]))
@@ -2012,7 +1948,6 @@
                      was-blocked?])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
-            (vis/diag-loop! nil)
             ;; Park until the next dispatch wakes us, or until the
             ;; spinner needs to tick. Idle sessions sleep up to
             ;; ~250ms (defensive cap on lost wakeups); active queries
@@ -2536,10 +2471,6 @@
            ;; the first frame as soon as `:render-version` is non-zero (every
            ;; init dispatch above bumps it).
            (vreset! render-thread (start-render-thread! screen))
-           ;; Self-diagnostics: one daemon logging per-second frame/byte
-           ;; rates to ~/.vis/vis.log when VIS_RENDER_DIAG is set. Off by
-           ;; default, so this is a no-op on a normal launch.
-           (vis/start-render-diagnostics-logger!)
            ;; Prewarm the slash-command machinery OFF the hot path so the
            ;; FIRST `/` keystroke doesn't pay cold JIT + registry harvest
            ;; (registry-slash-commands → menu-commands → slash/suggestions →
