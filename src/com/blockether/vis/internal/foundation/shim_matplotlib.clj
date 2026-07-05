@@ -4,15 +4,17 @@
    sandbox ships no CPython matplotlib wheel (it needs numpy's native core +
    freetype, all blocked by the deny-by-default Context); this extension instead
    contributes a `:ext/sandbox-shims` entry whose Python preamble accumulates the
-   familiar pyplot artists (`plot`/`scatter`/`bar`/`hist`/`title`/`xlabel`/…) and
-   whose `savefig` DELEGATES the whole figure spec across the boundary to the host
-   callable `__vis_mpl_render__`, which draws it with `java.awt`/`ImageIO` and
-   returns a base64 PNG. The Python side base64-decodes and writes it (to a path,
-   confined to the sandbox roots, or to any file-like buffer).
+   familiar pyplot artists (`plot`/`scatter`/`bar`/`hist`/`fill_between`/`step`/
+   `pie`/`axhline`/`axvline`/`title`/`xlabel`/… plus the OO `subplots`/`Axes`
+   API) and whose `savefig` DELEGATES the whole figure spec across the boundary
+   to the host callable `__vis_mpl_render__`, which draws it with `java.awt`/
+   `ImageIO` and returns a base64 PNG. The Python side base64-decodes and writes
+   it (to a path, confined to the sandbox roots, or to any file-like buffer).
 
-   It is a SUBSET, not real matplotlib: line/scatter/bar/hist with title, axis
-   labels, grid and legend — enough for the model to visualize data. Rendering
-   runs entirely on the JVM (no pip, no native wheels), and any render failure
+   It is a SUBSET, not real matplotlib: line/scatter/bar/hist/fill/step/pie with
+   title, axis labels, grid, legend, dashed line styles, markers, log scales and
+   text annotations — enough for the model to visualize data. Rendering runs
+   entirely on the JVM (no pip, no native wheels), and any render failure
    surfaces to Python as a catchable exception (never crashes the sandbox).
 
    Together with `shim-yaml` this demonstrates the sandbox-shim mechanism: an
@@ -65,80 +67,150 @@
 (defn- series-xs [s] (mapv as-double (get s "x")))
 (defn- series-ys [s] (mapv as-double (get s "y")))
 
-(defn- render-png-base64
-  "Render the figure `spec` (string-keyed map) to a PNG and return it base64.
-   Throws on any drawing failure (the caller wraps it in an envelope)."
-  ^String [spec]
-  (let [W        (int (as-double (or (get spec "width") 640)))
-        H        (int (as-double (or (get spec "height") 480)))
-        title    (get spec "title")
-        xlabel   (get spec "xlabel")
-        ylabel   (get spec "ylabel")
-        grid?    (boolean (get spec "grid"))
-        legend?  (boolean (get spec "legend"))
-        series   (vec (get spec "series"))
-        has-bar? (some #(= "bar" (get % "kind")) series)
+(defn- dash-stroke ^BasicStroke [linestyle width]
+  (let [w (float width)]
+    (case (str linestyle)
+      "--" (BasicStroke. w BasicStroke/CAP_BUTT BasicStroke/JOIN_ROUND 10.0
+             (float-array [9.0 6.0]) 0.0)
+      ":" (BasicStroke. w BasicStroke/CAP_ROUND BasicStroke/JOIN_ROUND 10.0
+            (float-array [2.0 5.0]) 0.0)
+      "-." (BasicStroke. w BasicStroke/CAP_BUTT BasicStroke/JOIN_ROUND 10.0
+             (float-array [10.0 5.0 2.0 5.0]) 0.0)
+      (BasicStroke. w BasicStroke/CAP_ROUND BasicStroke/JOIN_ROUND))))
+
+(defn- new-canvas [^long W ^long H]
+  (let [img (BufferedImage. W H BufferedImage/TYPE_INT_RGB)
+        g (.createGraphics img)]
+    (.setRenderingHint g RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
+    (.setRenderingHint g RenderingHints/KEY_TEXT_ANTIALIASING RenderingHints/VALUE_TEXT_ANTIALIAS_ON)
+    (.setColor g Color/WHITE)
+    (.fillRect g 0 0 W H)
+    [img g]))
+
+(defn- png-base64 ^String [^BufferedImage img]
+  (let [baos (ByteArrayOutputStream.)]
+    (ImageIO/write img "png" baos)
+    (.encodeToString (Base64/getEncoder) (.toByteArray baos))))
+
+(defn- draw-title [^Graphics2D g title px0 pw]
+  (when (and (string? title) (seq title))
+    (.setColor g (Color. 30 30 30))
+    (.setFont g (Font. "SansSerif" Font/BOLD 14))
+    (let [fm (.getFontMetrics g)]
+      (.drawString g ^String title
+        (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fm title) 2))) 18))))
+
+(defn- render-pie
+  "Full-canvas pie chart (ignores axes). `s` carries sizes in `x` and optional
+   `labels`."
+  ^String [^long W ^long H spec s]
+  (let [[img ^Graphics2D g] (new-canvas W H)]
+    (try
+      (let [vals (mapv #(Math/abs (as-double %)) (get s "x"))
+            labels (get s "labels")
+            total (reduce + 0.0 vals)
+            cx (/ W 2.0)
+            cy (+ 12.0 (/ H 2.0))
+            r (double (- (/ (min W H) 2) 66))
+            start (volatile! 90.0)]
+        (.setFont g (Font. "SansSerif" Font/PLAIN 11))
+        (dotimes [i (count vals)]
+          (let [frac (if (pos? total) (/ (nth vals i) total) 0.0)
+                ang (* 360.0 frac)
+                col (->color nil i)
+                mid (Math/toRadians (- @start (/ ang 2.0)))]
+            (.setColor g col)
+            (.fillArc g (int (- cx r)) (int (- cy r)) (int (* 2 r)) (int (* 2 r))
+              (int (Math/round (double @start))) (int (Math/round (- ang))))
+            (let [lx (+ cx (* (+ r 16) (Math/cos mid)))
+                  ly (- cy (* (+ r 16) (Math/sin mid)))
+                  lbl (if (and labels (< i (count labels)))
+                        (str (nth labels i))
+                        (str (Math/round (* 100.0 frac)) "%"))
+                  fm (.getFontMetrics g)]
+              (.setColor g (Color. 40 40 40))
+              (.drawString g lbl
+                (int (if (neg? (Math/cos mid)) (- lx (.stringWidth fm lbl)) lx))
+                (int ly)))
+            (vswap! start - ang)))
+        (draw-title g (get spec "title") 0 W)
+        (png-base64 img))
+      (finally (.dispose g)))))
+
+(defn- render-xy
+  "Line/scatter/bar/hist/fill/step/hline/vline figure with axes, ticks, grid,
+   labels, log scales, annotations and legend."
+  ^String [^long W ^long H spec series]
+  (let [title (get spec "title")
+        xlabel (get spec "xlabel")
+        ylabel (get spec "ylabel")
+        grid? (boolean (get spec "grid"))
+        legend? (boolean (get spec "legend"))
+        annotations (get spec "annotations")
+        xlog? (= "log" (str (get spec "xscale")))
+        ylog? (= "log" (str (get spec "yscale")))
+        xfwd (fn ^double [^double v] (if xlog? (Math/log10 (Math/max 1.0e-12 v)) v))
+        yfwd (fn ^double [^double v] (if ylog? (Math/log10 (Math/max 1.0e-12 v)) v))
+        xinv (fn ^double [^double v] (if xlog? (Math/pow 10.0 v) v))
+        yinv (fn ^double [^double v] (if ylog? (Math/pow 10.0 v) v))
+        has-bar? (some #(= "bar" (str (get % "kind"))) series)
         ml 62, mr 26
         mt (if (and (string? title) (seq title)) 46 22)
         mb (if (and (string? xlabel) (seq xlabel)) 58 42)
         px0 ml, py0 mt
         pw (max 1 (- W ml mr))
         ph (max 1 (- H mt mb))
-        all-x (mapcat series-xs series)
-        all-y (mapcat series-ys series)
+        all-x (map xfwd (mapcat series-xs series))
+        all-y (map yfwd (concat (mapcat series-ys series)
+                          (mapcat (fn [s] (mapv as-double (get s "y2"))) series)))
         xlim (get spec "xlim")
         ylim (get spec "ylim")
         [xmin xmax] (if (seq xlim)
-                      [(as-double (first xlim)) (as-double (second xlim))]
+                      [(xfwd (as-double (first xlim))) (xfwd (as-double (second xlim)))]
                       (if (seq all-x) [(apply min all-x) (apply max all-x)] [0.0 1.0]))
         raw-ys (cond-> (vec all-y) has-bar? (conj 0.0))
         [ymin ymax] (if (seq ylim)
-                      [(as-double (first ylim)) (as-double (second ylim))]
+                      [(yfwd (as-double (first ylim))) (yfwd (as-double (second ylim)))]
                       (if (seq raw-ys) [(apply min raw-ys) (apply max raw-ys)] [0.0 1.0]))
-        ;; guard zero-span + add a little headroom so points aren't on the frame
         [xmin xmax] (if (== xmin xmax) [(- xmin 1.0) (+ xmax 1.0)] [xmin xmax])
         [ymin ymax] (if (== ymin ymax) [(- ymin 1.0) (+ ymax 1.0)] [ymin ymax])
         ypad (* 0.05 (- ymax ymin))
         ymin (- ymin ypad)
         ymax (+ ymax ypad)
-        sx (fn ^double [^double x] (+ px0 (* pw (/ (- x xmin) (- xmax xmin)))))
-        sy (fn ^double [^double y] (+ py0 (* ph (- 1.0 (/ (- y ymin) (- ymax ymin))))))
-        img (BufferedImage. W H BufferedImage/TYPE_INT_RGB)
-        ^Graphics2D g (.createGraphics img)]
+        sxf (fn ^double [^double xf] (+ px0 (* pw (/ (- xf xmin) (- xmax xmin)))))
+        syf (fn ^double [^double yf] (+ py0 (* ph (- 1.0 (/ (- yf ymin) (- ymax ymin))))))
+        sx (fn ^double [^double x] (sxf (xfwd x)))
+        sy (fn ^double [^double y] (syf (yfwd y)))
+        [img ^Graphics2D g] (new-canvas W H)]
     (try
-      (.setRenderingHint g RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
-      (.setRenderingHint g RenderingHints/KEY_TEXT_ANTIALIASING RenderingHints/VALUE_TEXT_ANTIALIAS_ON)
-      ;; background
-      (.setColor g Color/WHITE)
-      (.fillRect g 0 0 W H)
       ;; gridlines + tick labels (5 divisions each axis)
-      (let [ticks 5
-            fm (.getFontMetrics g)]
+      (let [ticks 5]
         (.setFont g (Font. "SansSerif" Font/PLAIN 10))
-        (dotimes [i (inc ticks)]
-          (let [t (/ (double i) ticks)
-                xv (+ xmin (* t (- xmax xmin)))
-                yv (+ ymin (* t (- ymax ymin)))
-                xp (int (sx xv))
-                yp (int (sy yv))]
-            (when grid?
-              (.setColor g (Color. 230 230 230))
-              (.drawLine g xp py0 xp (+ py0 ph))
-              (.drawLine g px0 yp (+ px0 pw) yp))
-            (.setColor g (Color. 90 90 90))
-            (let [xl (fmt-num xv)]
-              (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
-            (let [yl (fmt-num yv)]
-              (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4)))))))
+        (let [fm (.getFontMetrics g)]
+          (dotimes [i (inc ticks)]
+            (let [t (/ (double i) ticks)
+                  xv (+ xmin (* t (- xmax xmin)))
+                  yv (+ ymin (* t (- ymax ymin)))
+                  xp (int (sxf xv))
+                  yp (int (syf yv))]
+              (when grid?
+                (.setColor g (Color. 230 230 230))
+                (.drawLine g xp py0 xp (+ py0 ph))
+                (.drawLine g px0 yp (+ px0 pw) yp))
+              (.setColor g (Color. 90 90 90))
+              (let [xl (fmt-num (xinv xv))]
+                (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
+              (let [yl (fmt-num (yinv yv))]
+                (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
       ;; axes frame
       (.setColor g (Color. 60 60 60))
       (.setStroke g (BasicStroke. 1.0))
       (.drawRect g px0 py0 pw ph)
       ;; series
-      (let [nbar (count (filter #(= "bar" (get % "kind")) series))
+      (let [nbar (count (filter #(= "bar" (str (get % "kind"))) series))
             bar-slots (max 1 (reduce max 1 (map #(count (series-xs %)) series)))]
         (doseq [[idx s] (map-indexed vector series)]
-          (let [kind (get s "kind")
+          (let [kind (str (get s "kind"))
                 xs (series-xs s)
                 ys (series-ys s)
                 col (->color (get s "color") idx)
@@ -148,45 +220,85 @@
               "scatter"
               (doseq [[x y] pts]
                 (.fillOval g (int (- (sx x) 3)) (int (- (sy y) 3)) 6 6))
+
               "bar"
               (let [bw (max 2 (int (* (/ pw bar-slots) (/ 0.7 (max 1 nbar)))))
-                    y0 (int (sy (max ymin (min ymax 0.0))))]
+                    y0 (int (syf (max ymin (min ymax 0.0))))]
                 (doseq [[x y] pts]
                   (let [yp (int (sy y))
                         top (min y0 yp)
                         hgt (Math/abs (- y0 yp))]
                     (.fillRect g (int (- (sx x) (/ bw 2))) top bw (max 1 hgt)))))
-              ;; default: line
+
+              "hline"
+              (when (seq ys)
+                (.setStroke g (dash-stroke (get s "linestyle") 1.5))
+                (let [yp (int (sy (first ys)))]
+                  (.drawLine g px0 yp (+ px0 pw) yp)))
+
+              "vline"
+              (when (seq xs)
+                (.setStroke g (dash-stroke (get s "linestyle") 1.5))
+                (let [xp (int (sx (first xs)))]
+                  (.drawLine g xp py0 xp (+ py0 ph))))
+
+              "fill"
+              (let [y2 (mapv as-double (get s "y2"))
+                    n (count xs)]
+                (when (and (pos? n) (= n (count y2)))
+                  (let [xsi (int-array (concat (map #(int (sx %)) xs)
+                                         (map #(int (sx %)) (reverse xs))))
+                        ysi (int-array (concat (map #(int (sy %)) ys)
+                                         (map #(int (sy %)) (reverse y2))))
+                        fc (Color. (.getRed col) (.getGreen col) (.getBlue col) 90)]
+                    (.setColor g fc)
+                    (.fillPolygon g xsi ysi (* 2 n)))))
+
+              "step"
               (do
-                (.setStroke g (BasicStroke. 2.0 BasicStroke/CAP_ROUND BasicStroke/JOIN_ROUND))
+                (.setStroke g (dash-stroke (get s "linestyle") 2.0))
                 (doseq [[[x1 y1] [x2 y2]] (partition 2 1 pts)]
-                  (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y2)))))))))
+                  (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y1)))
+                  (.drawLine g (int (sx x2)) (int (sy y1)) (int (sx x2)) (int (sy y2)))))
+
+              ;; default: line (+ optional markers)
+              (do
+                (.setStroke g (dash-stroke (get s "linestyle") 2.0))
+                (doseq [[[x1 y1] [x2 y2]] (partition 2 1 pts)]
+                  (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y2))))
+                (when (seq (str (get s "marker")))
+                  (doseq [[x y] pts]
+                    (.fillOval g (int (- (sx x) 3)) (int (- (sy y) 3)) 6 6))))))))
       ;; title / axis labels
+      (draw-title g title px0 pw)
       (.setColor g (Color. 30 30 30))
-      (when (and (string? title) (seq title))
-        (.setFont g (Font. "SansSerif" Font/BOLD 14))
-        (let [fmt2 (.getFontMetrics g)]
-          (.drawString g ^String title (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 title) 2))) 18)))
       (when (and (string? xlabel) (seq xlabel))
         (.setFont g (Font. "SansSerif" Font/PLAIN 12))
-        (let [fmt2 (.getFontMetrics g)]
-          (.drawString g ^String xlabel (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 xlabel) 2))) (int (- H 12)))))
+        (let [fm (.getFontMetrics g)]
+          (.drawString g ^String xlabel (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fm xlabel) 2))) (int (- H 12)))))
       (when (and (string? ylabel) (seq ylabel))
         (.setFont g (Font. "SansSerif" Font/PLAIN 12))
-        (let [fmt2 (.getFontMetrics g)
+        (let [fm (.getFontMetrics g)
               tx (.getTransform g)]
           (.translate g 16.0 (double (+ py0 (/ ph 2))))
           (.rotate g (- (/ Math/PI 2)))
-          (.drawString g ^String ylabel (int (- (/ (.stringWidth fmt2 ylabel) 2))) 0)
+          (.drawString g ^String ylabel (int (- (/ (.stringWidth fm ylabel) 2))) 0)
           (.setTransform g tx)))
+      ;; text annotations (data coords)
+      (when (seq annotations)
+        (.setFont g (Font. "SansSerif" Font/PLAIN 11))
+        (.setColor g (Color. 20 20 20))
+        (doseq [a annotations]
+          (.drawString g (str (get a "text"))
+            (int (sx (as-double (get a "x")))) (int (sy (as-double (get a "y")))))))
       ;; legend
       (let [labelled (filter #(let [l (get % "label")] (and (string? l) (seq l)))
                        (map-indexed (fn [i s] (assoc s "__idx" i)) series))]
         (when (and (seq labelled) (or legend? (seq labelled)))
           (.setFont g (Font. "SansSerif" Font/PLAIN 11))
-          (let [fmt2 (.getFontMetrics g)
+          (let [fm (.getFontMetrics g)
                 rows (vec labelled)
-                lw (+ 34 (reduce max 0 (map #(.stringWidth fmt2 (str (get % "label"))) rows)))
+                lw (+ 34 (reduce max 0 (map #(.stringWidth fm (str (get % "label"))) rows)))
                 lh (+ 8 (* 16 (count rows)))
                 lx (- (+ px0 pw) lw 8)
                 ly (+ py0 8)]
@@ -200,10 +312,21 @@
                 (.fillRect g (+ lx 8) (+ yy 3) 16 6)
                 (.setColor g (Color. 40 40 40))
                 (.drawString g (str (get s "label")) (+ lx 30) (+ yy 11)))))))
-      (let [baos (ByteArrayOutputStream.)]
-        (ImageIO/write img "png" baos)
-        (.encodeToString (Base64/getEncoder) (.toByteArray baos)))
+      (png-base64 img)
       (finally (.dispose g)))))
+
+(defn- render-png-base64
+  "Render the figure `spec` (string-keyed map) to a PNG and return it base64.
+   Dispatches to a pie chart when a pie series is present, else the XY renderer.
+   Throws on any drawing failure (the caller wraps it in an envelope)."
+  ^String [spec]
+  (let [W (int (as-double (or (get spec "width") 640)))
+        H (int (as-double (or (get spec "height") 480)))
+        series (vec (get spec "series"))
+        pie (first (filter #(= "pie" (str (get % "kind"))) series))]
+    (if pie
+      (render-pie W H spec pie)
+      (render-xy W H spec series))))
 
 (defn- mpl-envelope
   "Run thunk `f`, returning the 2-vector the pyplot shim expects: [true payload]
@@ -244,12 +367,16 @@ def __vis_install_matplotlib__():
         _state.clear()
         _state.update({'series': [], 'title': None, 'xlabel': None,
                        'ylabel': None, 'grid': False, 'legend': False,
-                       'xlim': None, 'ylim': None, 'width': 640, 'height': 480})
+                       'xlim': None, 'ylim': None, 'xscale': 'linear',
+                       'yscale': 'linear', 'annotations': [],
+                       'width': 640, 'height': 480})
 
     _reset()
 
     def _nums(v):
         out = []
+        if v is None:
+            return out
         try:
             for e in v:
                 try:
@@ -260,10 +387,14 @@ def __vis_install_matplotlib__():
             out.append(float(v))
         return out
 
-    def _add_series(kind, x, y, label, color):
+    def _add_series(kind, x, y, label, color, marker=None,
+                    linestyle=None, y2=None, labels=None):
         _state['series'].append({
             'kind': kind, 'x': _nums(x), 'y': _nums(y),
-            'label': label, 'color': color,
+            'label': label, 'color': color, 'marker': marker,
+            'linestyle': linestyle,
+            'y2': (_nums(y2) if y2 is not None else None),
+            'labels': labels,
         })
 
     def _parse_fmt(fmt):
@@ -305,7 +436,10 @@ def __vis_install_matplotlib__():
             return None
         color, marker, line = _parse_fmt(fmt)
         kind = 'scatter' if (marker and not line) else 'line'
-        _add_series(kind, x, y, kwargs.get('label'), kwargs.get('color', color))
+        _add_series(kind, x, y, kwargs.get('label'),
+                    kwargs.get('color', color),
+                    marker=kwargs.get('marker', marker),
+                    linestyle=kwargs.get('linestyle', kwargs.get('ls', line)))
         return None
 
     def scatter(x, y, s=None, c=None, label=None, color=None, **kwargs):
@@ -314,6 +448,10 @@ def __vis_install_matplotlib__():
 
     def bar(x, height, width=0.8, label=None, color=None, **kwargs):
         _add_series('bar', x, height, label, color)
+        return None
+
+    def barh(y, width, height=0.8, label=None, color=None, **kwargs):
+        _add_series('bar', y, width, label, color)
         return None
 
     def hist(x, bins=10, label=None, color=None, **kwargs):
@@ -338,7 +476,51 @@ def __vis_install_matplotlib__():
         _add_series('bar', centers, counts, label, color)
         return counts, centers
 
+    def fill_between(x, y1, y2=0, label=None, color=None, **kwargs):
+        xs = list(x)
+        n = len(xs)
+        y1l = _nums(y1)
+        if isinstance(y2, (int, float)):
+            y2l = [float(y2)] * n
+        else:
+            y2l = _nums(y2)
+        _add_series('fill', xs, y1l, label, color, y2=y2l)
+        return None
+
+    def step(x, y, *args, label=None, color=None, **kwargs):
+        _add_series('step', x, y, label, color)
+        return None
+
+    def axhline(y=0, color=None, linestyle=None, ls=None, label=None, **kwargs):
+        _add_series('hline', [], [y], label, color, linestyle=(linestyle or ls))
+        return None
+
+    def axvline(x=0, color=None, linestyle=None, ls=None, label=None, **kwargs):
+        _add_series('vline', [x], [], label, color, linestyle=(linestyle or ls))
+        return None
+
+    def pie(sizes, labels=None, colors=None, autopct=None, **kwargs):
+        _add_series('pie', list(sizes), [], None, None,
+                    labels=(list(labels) if labels else None))
+        return None
+
+    def errorbar(x, y, yerr=None, xerr=None, fmt='', label=None, color=None, **kwargs):
+        _add_series('line', x, y, label, color)
+        return None
+
+    def text(x, y, s, **kwargs):
+        _state['annotations'].append({'x': float(x), 'y': float(y), 'text': str(s)})
+        return None
+
+    def annotate(s, xy=None, xytext=None, **kwargs):
+        pt = xytext or xy or (0, 0)
+        _state['annotations'].append({'x': float(pt[0]), 'y': float(pt[1]), 'text': str(s)})
+        return None
+
     def title(s, **kwargs):
+        _state['title'] = str(s)
+
+    def suptitle(s, **kwargs):
         _state['title'] = str(s)
 
     def xlabel(s, **kwargs):
@@ -367,6 +549,40 @@ def __vis_install_matplotlib__():
             _state['ylim'] = [float(args[0][0]), float(args[0][1])]
         return _state['ylim']
 
+    def xscale(v, **kwargs):
+        _state['xscale'] = str(v)
+
+    def yscale(v, **kwargs):
+        _state['yscale'] = str(v)
+
+    def semilogx(*args, **kwargs):
+        r = plot(*args, **kwargs)
+        _state['xscale'] = 'log'
+        return r
+
+    def semilogy(*args, **kwargs):
+        r = plot(*args, **kwargs)
+        _state['yscale'] = 'log'
+        return r
+
+    def loglog(*args, **kwargs):
+        r = plot(*args, **kwargs)
+        _state['xscale'] = 'log'
+        _state['yscale'] = 'log'
+        return r
+
+    def xticks(*args, **kwargs):
+        return [], []
+
+    def yticks(*args, **kwargs):
+        return [], []
+
+    def tight_layout(*args, **kwargs):
+        return None
+
+    def subplots_adjust(*args, **kwargs):
+        return None
+
     def clf(*args, **kwargs):
         _reset()
 
@@ -380,13 +596,108 @@ def __vis_install_matplotlib__():
         # No display in the sandbox; savefig is the way to get an image out.
         return None
 
+    class _Axes(object):
+        # Minimal OO Axes: every method delegates to the module-level artist so
+        # `fig, ax = plt.subplots(); ax.plot(...)` works like the pyplot API.
+        def plot(self, *a, **k):
+            return plot(*a, **k)
+
+        def scatter(self, *a, **k):
+            return scatter(*a, **k)
+
+        def bar(self, *a, **k):
+            return bar(*a, **k)
+
+        def barh(self, *a, **k):
+            return barh(*a, **k)
+
+        def hist(self, *a, **k):
+            return hist(*a, **k)
+
+        def fill_between(self, *a, **k):
+            return fill_between(*a, **k)
+
+        def step(self, *a, **k):
+            return step(*a, **k)
+
+        def pie(self, *a, **k):
+            return pie(*a, **k)
+
+        def errorbar(self, *a, **k):
+            return errorbar(*a, **k)
+
+        def axhline(self, *a, **k):
+            return axhline(*a, **k)
+
+        def axvline(self, *a, **k):
+            return axvline(*a, **k)
+
+        def text(self, *a, **k):
+            return text(*a, **k)
+
+        def annotate(self, *a, **k):
+            return annotate(*a, **k)
+
+        def legend(self, *a, **k):
+            return legend(*a, **k)
+
+        def grid(self, *a, **k):
+            return grid(*a, **k)
+
+        def set_title(self, s, **k):
+            title(s)
+
+        def set_xlabel(self, s, **k):
+            xlabel(s)
+
+        def set_ylabel(self, s, **k):
+            ylabel(s)
+
+        def set_xlim(self, *a, **k):
+            return xlim(*a, **k)
+
+        def set_ylim(self, *a, **k):
+            return ylim(*a, **k)
+
+        def set_xscale(self, v, **k):
+            xscale(v)
+
+        def set_yscale(self, v, **k):
+            yscale(v)
+
+        def set_xticks(self, *a, **k):
+            return None
+
+        def set_yticks(self, *a, **k):
+            return None
+
+        def tick_params(self, *a, **k):
+            return None
+
+    def subplots(nrows=1, ncols=1, figsize=None, dpi=None, **kwargs):
+        figure(figsize=figsize, dpi=dpi)
+        n = int(nrows) * int(ncols)
+        if n <= 1:
+            return _state, _Axes()
+        return _state, [_Axes() for _ in range(n)]
+
+    def subplot(*args, **kwargs):
+        return _Axes()
+
+    def gca(*args, **kwargs):
+        return _Axes()
+
+    def gcf(*args, **kwargs):
+        return _state
+
     def _spec():
         return {
             'width': _state['width'], 'height': _state['height'],
             'title': _state['title'], 'xlabel': _state['xlabel'],
             'ylabel': _state['ylabel'], 'grid': _state['grid'],
             'legend': _state['legend'], 'xlim': _state['xlim'],
-            'ylim': _state['ylim'],
+            'ylim': _state['ylim'], 'xscale': _state['xscale'],
+            'yscale': _state['yscale'], 'annotations': list(_state['annotations']),
             'series': list(_state['series']),
         }
 
@@ -406,25 +717,40 @@ def __vis_install_matplotlib__():
         return fname
 
     pyplot = types.ModuleType('matplotlib.pyplot')
-    pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset (line/scatter/bar/hist).'
-    for _fn in (figure, plot, scatter, bar, hist, title, xlabel, ylabel,
-                grid, legend, xlim, ylim, clf, cla, close, show, savefig):
+    pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset.'
+    for _fn in (figure, plot, scatter, bar, barh, hist, fill_between, step,
+                axhline, axvline, pie, errorbar, text, annotate,
+                title, suptitle, xlabel, ylabel, grid, legend,
+                xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
+                xticks, yticks, tight_layout, subplots_adjust,
+                clf, cla, close, show, savefig,
+                subplots, subplot, gca, gcf):
         setattr(pyplot, _fn.__name__, _fn)
+    pyplot.Axes = _Axes
+    pyplot.rcParams = {}
+
+    style = types.ModuleType('matplotlib.style')
+    style.use = lambda *a, **k: None
+    style.available = ['default', 'classic']
 
     mpl = types.ModuleType('matplotlib')
     mpl.__doc__ = 'vis matplotlib-compat shim (no CPython matplotlib wheel).'
     mpl.__version__ = '3.0-vis-java2d'
     mpl.pyplot = pyplot
+    mpl.style = style
 
     sys.modules['matplotlib'] = mpl
     sys.modules['matplotlib.pyplot'] = pyplot
+    sys.modules['matplotlib.style'] = style
 
-    # Autoload: staple `matplotlib` onto builtins so `matplotlib.pyplot` works
-    # even without an explicit import (the model still usually does
-    # `import matplotlib.pyplot as plt`).
+    # Autoload: staple the module names onto builtins so `matplotlib.pyplot`,
+    # a bare `pyplot`, and the conventional `plt` alias all work WITHOUT any
+    # explicit import.
     try:
         import builtins as _b
         _b.matplotlib = mpl
+        _b.pyplot = pyplot
+        _b.plt = pyplot
     except Exception:
         pass
 
@@ -435,8 +761,8 @@ del __vis_install_matplotlib__
 (def vis-extension
   (vis/extension
     {:ext/name         "foundation-shim-matplotlib"
-     :ext/description  "Sandbox shim: a minimal matplotlib.pyplot (plot/scatter/bar/hist + title/labels/grid/legend) rendered to PNG by a pure-JVM Java2D backend. savefig writes the image; no pip, no native wheel."
-     :ext/version      "0.1.0"
+     :ext/description  "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/hist/fill_between/step/pie/axhline/axvline + subplots/Axes, log scales, markers, dashed styles, title/labels/grid/legend/text) rendered to PNG by a pure-JVM Java2D backend. savefig writes the image; no pip, no native wheel."
+     :ext/version      "0.2.0"
      :ext/author       "Blockether"
      :ext/owner        "vis"
      :ext/license      "Apache-2.0"

@@ -42,10 +42,37 @@
       ;; deliberately NO import
       (expect (true? (ev python-context "matplotlib.pyplot is not None")))))
 
+  (it "autoloads a bare `pyplot` and the `plt` alias onto builtins (no import)"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context "pyplot is not None")))
+      (expect (true? (ev python-context "plt is not None")))
+      ;; all three names resolve to the same module object
+      (expect (true? (ev python-context
+                       "plt is pyplot and plt is matplotlib.pyplot")))))
+
   (it "exposes a version string"
     (let [{:keys [^Context python-context]} (ep/create-python-context {})]
       (expect (= "3.0-vis-java2d"
-                (ev python-context "__import__('matplotlib').__version__"))))))
+                (ev python-context "__import__('matplotlib').__version__")))))
+
+  (it "exposes matplotlib.style with a no-op use()"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       "import matplotlib.style as st\nst.use('ggplot') is None"))))))
+
+(defdescribe matplotlib-api-surface-test
+  (it "publishes the expected pyplot callables"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\n"
+                         "all(callable(getattr(plt, n, None)) for n in "
+                         "['plot','scatter','bar','barh','hist','fill_between','step',"
+                         "'pie','axhline','axvline','errorbar','text','annotate',"
+                         "'title','suptitle','xlabel','ylabel','grid','legend',"
+                         "'xlim','ylim','xscale','yscale','semilogx','semilogy','loglog',"
+                         "'xticks','yticks','tight_layout','subplots_adjust',"
+                         "'clf','cla','close','show','savefig',"
+                         "'subplots','subplot','gca','gcf'])")))))))
 
 (defdescribe matplotlib-render-test
   (it "renders a line plot to a real PNG (correct magic bytes)"
@@ -57,12 +84,67 @@
     (let [{:keys [^Context python-context]} (ep/create-python-context {})]
       (expect (< 100 (png-len python-context "plt.scatter([1,2,3],[3,1,2])")))
       (expect (< 100 (png-len python-context "plt.bar([1,2,3],[4,5,6])")))
+      (expect (< 100 (png-len python-context "plt.barh([1,2,3],[4,5,6])")))
       (expect (< 100 (png-len python-context "plt.hist([1,1,2,3,3,3,4], bins=4)")))))
+
+  (it "renders fill_between / step / axhline / axvline"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context "plt.fill_between([0,1,2,3],[0,1,0,2],[0,0,0,0])")))
+      (expect (< 100 (png-len python-context "plt.step([0,1,2,3],[1,3,2,4])")))
+      (expect (< 100 (png-len python-context "plt.plot([0,1,2],[1,2,3])\nplt.axhline(2, linestyle='--')\nplt.axvline(1, linestyle=':')")))))
+
+  (it "renders a pie chart to a real PNG"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (png-magic? python-context
+                       "plt.pie([30,20,50], labels=['a','b','c'])\nplt.title('shares')")))))
+
+  (it "renders dashed line styles and markers"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context "plt.plot([0,1,2,3],[0,1,4,9], 'r--o')")))
+      (expect (< 100 (png-len python-context "plt.plot([0,1,2,3],[3,2,1,0], linestyle=':', marker='s')")))))
+
+  (it "renders log-scaled axes (semilogy / loglog)"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context "plt.semilogy([1,2,3,4],[10,100,1000,10000])")))
+      (expect (< 100 (png-len python-context "plt.loglog([1,10,100],[1,100,10000])")))))
+
+  (it "renders text annotations"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context "plt.plot([0,1,2],[0,1,2])\nplt.text(1,1,'peak')\nplt.annotate('note', xy=(0,0))")))))
+
+  (it "renders multiple series with a legend"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (< 100 (png-len python-context
+                       "plt.plot([0,1,2,3],[0,1,2,3], label='up')\nplt.plot([0,1,2,3],[3,2,1,0], label='down')\nplt.legend()")))))
 
   (it "renders an empty figure without error (no series)"
     (let [{:keys [^Context python-context]} (ep/create-python-context {})]
       (expect (< 100 (png-len python-context "plt.title('empty')")))))
 
+  (it "honours figure(figsize=...) — bigger canvas => more bytes"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})
+          small (png-len python-context "plt.figure(figsize=(2,2)); plt.plot([0,1,2],[0,1,2])")
+          big (png-len python-context "plt.figure(figsize=(10,8)); plt.plot([0,1,2],[0,1,2])")]
+      (expect (< 100 small))
+      (expect (< small big)))))
+
+(defdescribe matplotlib-oo-api-test
+  (it "supports the fig, ax = plt.subplots() object API"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (png-magic? python-context
+                       (str "fig, ax = plt.subplots()\n"
+                         "ax.plot([1,2,3],[1,4,9], label='sq')\n"
+                         "ax.set_title('oo'); ax.set_xlabel('x'); ax.set_ylabel('y')\n"
+                         "ax.grid(True); ax.legend()"))))))
+
+  (it "subplots(2,1) returns a list of axes, all drawing into the same figure"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       "import matplotlib.pyplot as plt\nplt.clf()\nfig, axes = plt.subplots(2,1)\nisinstance(axes, list) and len(axes) == 2")))
+      (expect (< 100 (png-len python-context
+                       "fig, axes = plt.subplots(2,1)\naxes[0].bar([1,2,3],[1,2,3])\naxes[1].scatter([1,2,3],[3,2,1])"))))))
+
+(defdescribe matplotlib-savefig-test
   (it "savefig returns the file-like object it wrote to"
     (let [{:keys [^Context python-context]} (ep/create-python-context {})]
       (expect (true? (ev python-context
