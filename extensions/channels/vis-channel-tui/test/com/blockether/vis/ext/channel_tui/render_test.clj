@@ -2088,17 +2088,18 @@
         py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
         iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
         band-count (fn [pairs]
-                     (->> (render-iteration-entries pairs iter-fn false ctx)
+                     (->> (render-iteration-entries pairs iter-fn false true ctx)
                        entry-text
                        (filter #(str/includes? % "commands"))
                        count))
         normal-count (fn [pairs]
-                       (->> (render-iteration-entries pairs iter-fn false ctx)
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
                          (filter #(str/includes? (str (:line %)) "NORMAL#"))
                          count))]
-    (it "git-only-form detects a pure single-git iteration"
+    (it "git-only-form still detects a single-git iteration (narration no longer disqualifies)"
       (expect (some? (git-only-form {:forms [(git-form "status" nil)]})))
-      (expect (nil? (git-only-form {:assistant-prose "hi" :forms [(git-form "status" nil)]})))
+      ;; Narration (thinking / prose) rides ABOVE the band now, so it still groups.
+      (expect (some? (git-only-form {:assistant-prose "hi" :forms [(git-form "status" nil)]})))
       (expect (nil? (git-only-form {:forms [(git-form "a" nil) (git-form "b" nil)]})))
       (expect (nil? (git-only-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]}))))
     (it "git-command-parts recovers subcommand + failure from the summary note"
@@ -2143,6 +2144,25 @@
       (let [pairs [(gi 0 "a") (gi 1 "b") (py 2) (gi 3 "c") (gi 4 "d")]]
         (expect (= 2 (band-count pairs)))
         (expect (= 1 (normal-count pairs)))))
+    (it "a narrated head still groups; its narration renders ABOVE the band"
+      ;; The assistant narrates, then add / commit / push — the WHOLE burst folds
+      ;; into ONE band and the narration (the iter-fn's NORMAL# lead) sits above it.
+      (let [pairs [[0 {:forms [(git-form "add -A" nil)] :thinking "let me commit"}]
+                   (gi 1 "commit -m x") (gi 2 "push")]
+            out   (entry-text (render-iteration-entries pairs iter-fn false true ctx))
+            band-ix   (first (keep-indexed (fn [i l] (when (str/includes? l "3 commands") i)) out))
+            normal-ix (first (keep-indexed (fn [i l] (when (str/includes? l "NORMAL#0") i)) out))]
+        (expect (= 1 (band-count pairs)))
+        (expect (some? band-ix))
+        (expect (some? normal-ix))
+        ;; Narration renders ABOVE the band, not swallowed by it.
+        (expect (< normal-ix band-ix))))
+    (it "an INTERIOR narrated call breaks the run (never floats above the band)"
+      (let [pairs [(gi 0 "add") [1 {:forms [(git-form "commit" nil)] :thinking "hmm"}] (gi 2 "push")]]
+        ;; add renders alone; the narrated commit + push form ONE band with the
+        ;; commit's narration above it — still exactly one band, add left outside.
+        (expect (= 1 (band-count pairs)))
+        (expect (= 2 (normal-count pairs)))))
     (it "collapsed band shows a chip per command; expanded shows each `$` row"
       (let [forms   [(git-form "add -A" nil)
                      (git-form "push" "```\nmain -> main\n```")]
@@ -2177,7 +2197,7 @@
             pad-fn  (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}
                                    {:line (str @#'render/iteration-pad-marker) :meta nil}])
             pairs   [(py 0) (gi 1 "commit -m x") (gi 2 "push")]
-            out     (render-iteration-entries pairs pad-fn false ctx)
+            out     (render-iteration-entries pairs pad-fn false true ctx)
             band-ix (first (keep-indexed
                              (fn [i e] (when (str/includes? (str (:line e)) "commands") i))
                              out))
@@ -2207,17 +2227,17 @@
         py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
         iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
         rg-band-count (fn [pairs]
-                        (->> (render-iteration-entries pairs iter-fn false ctx)
+                        (->> (render-iteration-entries pairs iter-fn false true ctx)
                           entry-text
                           (filter #(str/includes? % "searches"))
                           count))
         git-band-count (fn [pairs]
-                         (->> (render-iteration-entries pairs iter-fn false ctx)
+                         (->> (render-iteration-entries pairs iter-fn false true ctx)
                            entry-text
                            (filter #(str/includes? % "commands"))
                            count))
         normal-count (fn [pairs]
-                       (->> (render-iteration-entries pairs iter-fn false ctx)
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
                          (filter #(str/includes? (str (:line %)) "NORMAL#"))
                          count))]
     (it "groupable-tool-form tags git AND rg, rejects other tools + impure steps"
@@ -2225,7 +2245,8 @@
                 (update (groupable-tool-form {:forms [(git-form "status" nil)]}) 1 identity)))
       (expect (= "rg" (first (groupable-tool-form {:forms [(rg-form "`x` · 1 file" nil)]}))))
       (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]})))
-      (expect (nil? (groupable-tool-form {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
+      ;; Narration no longer disqualifies grouping — it renders above the band.
+      (expect (some? (groupable-tool-form {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
     (it "rg-command-parts drops the query prefix for the collapsed chip, keeps the full summary"
       (let [content (rg-command-parts (rg-form "`a` OR `b` · 6 hits in 1 file" "\n`c.clj`\n\n```\n 1: x\n```"))
             files   (rg-command-parts (rg-form "`q` · 4 files" "\n```\n  a\n```"))]
