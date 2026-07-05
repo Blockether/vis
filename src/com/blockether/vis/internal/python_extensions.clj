@@ -77,7 +77,7 @@ _registration = {'spec': None}
 
 def extension(name=None, description=None, version=None, kind=None, alias=None,
               activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None):
+              op_hooks=None, ctx=None):
     if _registration['spec'] is not None:
         raise ValueError('vis.extension() may only be called once per file')
     if not name or not isinstance(name, str):
@@ -86,12 +86,14 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         raise ValueError('vis.extension(...) requires description=<non-empty string>')
     if symbols and not alias:
         raise ValueError('vis.extension(...) requires alias=<string> when symbols= is declared')
+    if ctx is not None and not callable(ctx):
+        raise ValueError('vis.extension(...) ctx= must be a callable (env) -> dict of session contributions')
     _registration['spec'] = {
         'name': name, 'description': description, 'version': version,
         'kind': kind, 'alias': alias, 'activation': activation,
         'symbols': list(symbols or []), 'prompt': prompt,
         'slash_commands': list(slash_commands or []),
-        'op_hooks': list(op_hooks or []),
+        'op_hooks': list(op_hooks or []), 'ctx': ctx,
     }
 
 def symbol(fn, name=None, tag='observation', hidden=False):
@@ -395,6 +397,24 @@ def __vis_registration__():
                    :data {:extension ext-name :error (ex-message t)}})
         nil))))
 
+(defn- ctx-adapter
+  "`:ext/ctx-fn` for a Python `vis.extension(ctx=...)` callable. Runs per turn
+   during ctx render: hands the Python fn the `slim-env` dict and folds the
+   dict it returns into the model's `session` bag (deep-merged with every
+   other extension's slice). The returned map MUST be STRING-keyed all the way
+   down — the same contract as a Clojure `:ext/ctx-fn` (Python dict keys are
+   strings, so this holds naturally). Non-map / error => empty contribution;
+   bad optional context never blocks a turn."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [env]
+    (try
+      (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
+        (if (map? r) (plainify r) {}))
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::ctx-failed
+                   :data {:extension ext-name :error (ex-message t)}})
+        {}))))
+
 (defn- slash-adapter
   "`:slash/run-fn` for one `vis.slash(...)` entry. The Python callable
    receives `{'channel', 'args', 'raw', 'session_id'}` and returns
@@ -517,6 +537,7 @@ def __vis_registration__():
         slashes (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
         op-hooks (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
         prompt (get reg "prompt")
+        ctx-fn (get reg "ctx")
         activation (get reg "activation")]
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
@@ -529,7 +550,8 @@ def __vis_registration__():
       (seq op-hooks) (assoc :ext/op-hooks op-hooks)
       (string? prompt) (assoc :ext/prompt-fn prompt)
       (instance? Value prompt) (assoc :ext/prompt-fn (prompt-adapter ext-name ctx prompt))
-      (some? activation) (assoc :ext/activation-fn (activation-adapter ext-name ctx activation)))))
+      (some? activation) (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))
+      (instance? Value ctx-fn) (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn)))))
 
 ;; =============================================================================
 ;; Loader

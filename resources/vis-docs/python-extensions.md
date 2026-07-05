@@ -22,6 +22,7 @@ A Python extension can contribute:
 - **slash commands** — `/todos`, `/gh-repo …` for the user
 - **op hooks** — guards that can block file operations
 - **durable state** — a key/value store that survives restarts
+- **session context** — data folded into the model's `session` bag every turn
 
 Channels, providers, and TUI rendering stay Clojure-side.
 
@@ -69,9 +70,39 @@ Exactly one call per file. Keyword arguments:
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
 | `slash_commands` | list of `vis.slash(...)` | User-facing commands. |
 | `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over file ops. |
+| `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
 
 The **env dict** passed to `prompt`/`activation` callables is deliberately
 small: `{"cwd", "session_id", "channel"}`.
+
+## Session context
+
+The model sees a live `session` bag every turn — turn/iteration counters,
+workspace facts, per-language REPL state, and so on. A `ctx=` callable lets an
+extension **write its own slice** into that bag:
+
+```python
+def _ctx(env):
+    # STRING keys all the way down — the bag crosses into Python as the
+    # model's `session` dict, which rejects non-string keys.
+    return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
+
+vis.extension(
+    name="todo",
+    description="Todo list.",
+    ctx=_ctx,
+)
+```
+
+- Runs **once per turn** during context render, so the slice is always current.
+- The return **must be a string-keyed dict** (Python dict keys already are).
+  Slices from every extension are deep-merged, so nest under a unique key to
+  avoid clobbering another extension — `"session_env"` is the common home for
+  live environment facts.
+- A non-dict return or a raised exception degrades to an empty contribution —
+  bad optional context never blocks a turn.
+- The `env` dict is the same small `{"cwd", "session_id", "channel"}` handed to
+  `prompt`/`activation`.
 
 ## Tools
 
