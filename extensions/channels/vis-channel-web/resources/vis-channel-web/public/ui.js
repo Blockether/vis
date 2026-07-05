@@ -1284,7 +1284,11 @@
       if (!it) { return; }
       var p = pane(); if (!p) { return; }
       var sec = p.querySelector('.settings-group[data-group="' + it.dataset.group + '"]');
-      if (sec) { sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      var groups = p.querySelector(".settings-groups");
+      if (sec && groups) {
+        var top = sec.getBoundingClientRect().top - groups.getBoundingClientRect().top + groups.scrollTop;
+        groups.scrollTo({ top: top, behavior: "smooth" });
+      }
       setActive(it.dataset.group);
     });
 
@@ -1296,7 +1300,7 @@
       var best = null, bestDist = Infinity;
       groups.querySelectorAll(".settings-group").forEach(function (sec) {
         if (sec.hidden) { return; }
-        var dist = Math.abs(sec.offsetTop - groups.scrollTop);
+        var dist = Math.abs(sec.getBoundingClientRect().top - groups.getBoundingClientRect().top);
         if (dist < bestDist) { bestDist = dist; best = sec; }
       });
       if (best) { setActive(best.dataset.group); }
