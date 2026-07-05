@@ -234,7 +234,11 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
-    reward = load_json(args.harbor_reward) if args.harbor_reward else first_json(args.run_dir, "reward.json", "score.json")
+    reward = (
+        load_json(args.harbor_reward)
+        if args.harbor_reward
+        else first_json(args.run_dir, "reward_details.json", "reward.json", "score.json")
+    )
     verifier = first_json(args.run_dir, "verifier_results.json")
     judge_output = first_json(args.run_dir, "judge_output.json")
     harbor_exception = first_harbor_exception(args.run_dir)
