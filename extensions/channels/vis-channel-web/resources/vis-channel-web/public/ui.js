@@ -1,5 +1,6 @@
 /* vis web companion - chat interactions (vendored, no externals).
-   - prose with data-md re-renders through `marked` (vendored, MIT)
+   - prose with data-md re-renders through `marked` (vendored, MIT), then
+     sanitizes through `DOMPurify` (vendored, Apache-2.0/MPL-2.0) before DOM insert
    - code blocks highlight through `Prism` (vendored, MIT; manual mode)
    - composer: autogrow, Enter sends (Shift+Enter breaks)
    - `/` opens slash-command suggestions, `@word` opens the file picker;
@@ -184,7 +185,14 @@
         .forEach(function (el) {
           el.setAttribute("data-md-done", "1");
           try {
-            el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
+            var __md = marked.parse(el.getAttribute("data-md"), { breaks: true });
+            /* sanitize model/user-authored markdown before it hits the DOM:
+               strips <script>, on*=, javascript:/data: URLs, etc. DOMPurify is
+               vendored (Apache-2.0/MPL-2.0) and loads before ui.js; fall back to
+               the raw parse only if it somehow failed to load. */
+            el.innerHTML = (typeof DOMPurify !== "undefined")
+              ? DOMPurify.sanitize(__md, { USE_PROFILES: { html: true } })
+              : __md;
             foldPaste(el);
             foldCode(el);
 
