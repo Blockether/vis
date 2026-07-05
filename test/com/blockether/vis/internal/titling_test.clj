@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.titling-test
   (:require
+   [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.titling :as titling]
    [lazytest.core :refer [defdescribe it expect]]))
@@ -82,4 +83,27 @@
           (expect (= "hang test request words here for title" @title*))
           (expect (true? (provisional-title? sid))))
         (finally
-          (deliver blocker nil))))))
+          (deliver blocker nil)))))
+
+  (it "REGRESSION: a leading /new-session slash command is stripped so the title reflects the real prompt, not the command word"
+    ;; The `/new-session <task>` composer action leaked its command word into
+    ;; the titling request, so the tab was named after "session" instead of the
+    ;; task. Both the LLM prompt and the deterministic fallback must see the
+    ;; STRIPPED request.
+    (let [sid    (fresh-sid)
+          title* (atom "")
+          seen   (atom nil)]
+      (with-redefs [titling/set-title-with-broadcast! (fn [_ _ a t] (reset! a t))
+                    svar/ask! (fn [_ opts] (reset! seen opts) {:result {:title "JSON Parser Build"}})]
+        @(maybe-auto-title! (env* sid title*) "/new-session build a json parser")
+        (let [user-msg (-> @seen :messages second :content)]
+          (expect (str/includes? user-msg "build a json parser"))
+          (expect (not (str/includes? user-msg "/new-session"))))
+        (expect (= "JSON Parser Build" @title*))))
+    ;; provider chain down → fallback titles off the STRIPPED request too
+    (let [sid    (fresh-sid)
+          title* (atom "")]
+      (with-redefs [titling/set-title-with-broadcast! (fn [_ _ a t] (reset! a t))
+                    svar/ask! (fn [_ _] (throw (ex-info "429 rate limited" {})))]
+        @(maybe-auto-title! (env* sid title*) "/new-session build a json parser")
+        (expect (= "build a json parser" @title*))))))
