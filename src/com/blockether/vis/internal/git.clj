@@ -16,12 +16,16 @@
   (:import [java.io File]
            [java.util.concurrent TimeUnit]))
 
-(def ^:private default-cache-ms 5000)
+(def ^:private default-cache-ms 15000)
 
 (def ^:private default-git-timeout-secs 10)
 
 (defonce ^:private working-tree-status-cache
   (atom {:cwd nil :expires-at 0 :value nil}))
+
+;; One in-flight refresh at a time — a CAS guard so a burst of footer repaints
+;; can't spawn N concurrent git walks.
+(defonce ^:private status-refreshing? (atom false))
 
 (defn cwd-file
   "Canonical current working directory as a File. Indirected for tests."
@@ -331,37 +335,52 @@
        {:workspace? false})
      {:workspace? false})))
 
+(defn- refresh-status-async!
+  "Recompute the working-tree status for `cwd` (a path string; `start` is the
+   File to walk, or nil for the process cwd) OFF the caller's thread and publish
+   it into the cache. Deduped via `status-refreshing?` so a burst of repaints
+   spawns at most one git walk. Never throws."
+  [cwd ^File start ttl-ms]
+  (when (compare-and-set! status-refreshing? false true)
+    (future
+      (try
+        (let [value (if start (working-tree-status start) (working-tree-status))]
+          (reset! working-tree-status-cache
+            {:cwd cwd,
+             :expires-at (+ (System/currentTimeMillis) (long ttl-ms)),
+             :value value}))
+        (catch Throwable _ nil)
+        (finally (reset! status-refreshing? false))))))
+
+(defn- serve-cached-status
+  "Stale-while-revalidate read for the render hot path: return the cached
+   status for `cwd` IMMEDIATELY (never blocks on git) and kick off an async
+   refresh when the entry is missing, expired, or for another cwd. A repo
+   switch shows blank for one refresh cycle rather than stalling the frame —
+   git status is advisory chrome, never worth a synchronous ~2ms git walk on
+   the render thread (which caused a periodic hitch every time the TTL lapsed)."
+  [cwd ^File start now-ms ttl-ms]
+  (let [{:keys [expires-at value] cached-cwd :cwd} @working-tree-status-cache
+        same? (= cwd cached-cwd)]
+    (when (or (not same?) (>= (long now-ms) (long expires-at)))
+      (refresh-status-async! cwd start ttl-ms))
+    (when same? value)))
+
 (defn cached-working-tree-status
   "Cached `working-tree-status` for hot render paths.
 
-   The TUI footer repaints often; keep the cache here so every caller shares
-   one resolved view (5s TTL, keyed by cwd) instead of each UI namespace
-   shelling out to git independently."
+   Stale-while-revalidate: the TUI footer repaints often, so this NEVER shells
+   out to git on the caller's (render) thread. It returns the last resolved
+   value instantly and refreshes in the background when the 15s TTL lapses, so
+   a footer repaint costs a cache read, not a git walk. Keyed by cwd so every
+   UI namespace shares one resolved view."
   ([] (cached-working-tree-status (System/currentTimeMillis) default-cache-ms))
   ([^File start]
    (cached-working-tree-status start (System/currentTimeMillis) default-cache-ms))
   ([now-ms ttl-ms]
-   (let [cwd (.getPath (cwd-file))
-         {:keys [expires-at value]} @working-tree-status-cache]
-     (if (and (= cwd (:cwd @working-tree-status-cache))
-           (< (long now-ms) (long expires-at)))
-       value
-       (let [value (working-tree-status)]
-         (reset! working-tree-status-cache {:cwd cwd
-                                            :expires-at (+ (long now-ms) (long ttl-ms))
-                                            :value value})
-         value))))
+   (serve-cached-status (.getPath (cwd-file)) nil now-ms ttl-ms))
   ([^File start now-ms ttl-ms]
-   (let [cwd (.getPath (.getCanonicalFile start))
-         {:keys [expires-at value]} @working-tree-status-cache]
-     (if (and (= cwd (:cwd @working-tree-status-cache))
-           (< (long now-ms) (long expires-at)))
-       value
-       (let [value (working-tree-status start)]
-         (reset! working-tree-status-cache {:cwd cwd
-                                            :expires-at (+ (long now-ms) (long ttl-ms))
-                                            :value value})
-         value)))))
+   (serve-cached-status (.getPath (.getCanonicalFile start)) start now-ms ttl-ms)))
 
 ;; =============================================================================
 ;; file-picker helper: per-path status + ignore snapshot
