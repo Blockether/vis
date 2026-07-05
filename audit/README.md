@@ -103,7 +103,10 @@ dispatch. It emits **SARIF**, uploads it to GitHub **code scanning** (findings
 appear in the repository *Security -> Code scanning* tab) and archives it as a
 build artifact. The workflow is **non-blocking by default**; an opt-in gate
 (`-f`, or `-c <cvss>` for a threshold) is included, commented out, to start
-failing PRs once the baseline is clean.
+failing PRs once the baseline is clean. A second job, `nvd-scan`, runs the
+deeper NVD / `dependency-check` strategy (full CVSS scoring) weekly and on
+manual dispatch once the `NVD_API_KEY` secret is provisioned; it self-skips
+until then.
 
 **This document** — `.github/workflows/audit-md.yml` reruns
 `bb scripts/gen-audit.bb` on every `deps.edn` change and weekly, and commits any
@@ -116,9 +119,18 @@ resulting audit/README.md diff, so the inventory below can never drift from the 
 | `github-advisory` *(our default)* | GitHub Advisory Database (GraphQL) | built-in `GITHUB_TOKEN`, instant | CI + everyday local runs |
 | `dependency-check` | NIST NVD (OWASP Dependency-Check) | needs a free **NVD API key**, downloads the full NVD DB on first run (cached in `~/.m2`) | deeper CVSS coverage / compliance |
 
-To use the NVD strategy, get a key at
-<https://nvd.nist.gov/developers/request-an-api-key>, expose it to the scanner
-(`NVD_API_KEY` secret in CI), and switch `-t github-advisory` -> `-t dependency-check`.
+The deeper NVD / `dependency-check` strategy is already wired as the `nvd-scan`
+job in `.github/workflows/security-audit.yml` (weekly + manual dispatch). To
+activate it, request a free key at
+<https://nvd.nist.gov/developers/request-an-api-key> and add it as the
+`NVD_API_KEY` repository secret (repo *Settings -> Secrets and variables ->
+Actions*). clj-watson reads it via the `CLJ_WATSON_NVD_API_KEY` environment
+variable, which it maps to the `nvd.api.key` DependencyCheck property; the job
+self-skips until the secret is present. Locally:
+
+```bash
+CLJ_WATSON_NVD_API_KEY=<your-key> clojure -M:clj-watson scan -p deps.edn -a '*' -t dependency-check -s
+```
 
 ---
 
@@ -388,8 +400,9 @@ licenses above and is entirely at the user's own risk.
 
 ## 9. Pending / follow-ups
 
-- [ ] Add the free **NVD API key** secret and evaluate switching CI to the
-      `dependency-check` strategy for full CVSS scoring.
+- [ ] Provision the free **NVD API key** as the `NVD_API_KEY` repo secret to
+      activate the `nvd-scan` (dependency-check / CVSS) job. The CI wiring is
+      already in place; the job self-skips until the secret is set.
 - [ ] Resolve the **LGPL / Lanterna** distribution question (§5) with legal.
 - [x] **Native-image distribution** for paid delivery (§6): **done** — the release
       build uses **GraalVM CE** (GPL-2.0 + Classpath Exception), so the binary can
