@@ -115,11 +115,16 @@
 ;; =============================================================================
 
 (defn- slash-text?
-  "True when `text` begins with `/` followed by at least one non-space
-   character. Matches the channel convention: `/word ...`."
+  "True when `text` begins with `/` followed by a command-shaped token:
+   at least one character, NO interior `/`. Matches the channel
+   convention `/word ...` while rejecting absolute file paths — a
+   terminal drop pastes `/var/folders/…/shot.png what is this` and that
+   must run as a normal turn (image attachment scan included), not die
+   as `Unknown slash command`. Slash names never contain `/`; nested
+   commands are separate tokens (`/draft new`)."
   [text]
   (boolean (and (string? text)
-             (re-find #"^/\S" text))))
+             (re-find #"^/[^\s/]+(?:\s|$)" text))))
 
 (defn- tokenize
   [text]
