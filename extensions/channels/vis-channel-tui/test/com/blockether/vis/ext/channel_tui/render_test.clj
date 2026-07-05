@@ -2507,6 +2507,76 @@
         (expect (str/blank? (first texts)))
         (expect (str/includes? (second texts) "2 searches"))))))
 
+(def ^:private occurrences-command-parts @#'render/occurrences-command-parts)
+(def ^:private occurrences-group-entries @#'render/occurrences-group-entries)
+
+(defn- occ-form [summary render]
+  {:vis/tool-name "occurrences" :success? true :code ""
+   :result-summary summary :result-render render
+   :tool-color-role :tool-color/search :result {}})
+
+(defdescribe occurrences-band-grouping-test
+  ;; A RUN of consecutive occurrences-only iterations coalesces into ONE
+  ;; collapsible OCCURRENCES band — the SAME machinery as GIT / RG / DELETE /
+  ;; FIND_FILES, keyed on tool name. A lone lookup, or a run broken by other
+  ;; work, renders per iteration.
+  (let [ctx {:fill-w 90 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        oc  (fn [i s r] [i {:forms [(occ-form s r)]}])
+        py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        occ-band-count (fn [pairs]
+                         (->> (render-iteration-entries pairs iter-fn false true ctx)
+                           entry-text
+                           (filter #(str/includes? % "lookups"))
+                           count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))]
+    (it "groupable-iteration-forms tags a lone occurrences iteration"
+      (expect (= "occurrences" (first (groupable-iteration-forms {:forms [(occ-form "4 · 1 def in 3 files of `foo`" nil)]}))))
+      (expect (nil? (groupable-iteration-forms {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
+    (it "occurrences-command-parts rides the traced symbol on the chip, keeps the full summary"
+      (let [q (occurrences-command-parts (occ-form "4 · 1 def in 3 files of `ensure-repl-for-dir!`" "\n```\n  used: 239\n```"))
+            u (occurrences-command-parts (occ-form "3 · 0 defs in 1 file" nil))]
+        (expect (= "`ensure-repl-for-dir!`" (:chip q)))
+        (expect (= "4 · 1 def in 3 files of `ensure-repl-for-dir!`" (:summary q)))
+        ;; No trailing `of `name`` → the leading count segment rides the chip.
+        (expect (= "3" (:chip u)))))
+    (it "two consecutive occurrences iterations collapse into ONE band"
+      (let [pairs [(oc 0 "4 · 1 def in 3 files of `a`" nil) (oc 1 "6 · 1 def in 3 files of `b`" nil)]]
+        (expect (= 1 (occ-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone occurrences iteration renders normally (no band)"
+      (let [pairs [(oc 0 "4 · 1 def in 3 files of `a`" nil)]]
+        (expect (= 0 (occ-band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a non-occurrences step between two lookups breaks the run"
+      (let [pairs [(oc 0 "4 · 1 def in 3 files of `a`" nil) (py 1) (oc 2 "6 · 1 def in 3 files of `b`" nil)]]
+        (expect (= 0 (occ-band-count pairs)))
+        (expect (= 3 (normal-count pairs)))))
+    (it "collapsed shows the two traced symbols; expanded restores each full summary + uses"
+      (let [forms   [(occ-form "4 · 1 def in 3 files of `ensure-repl-for-dir!`" "\n```\n  used: 239\n```")
+                     (occ-form "6 · 1 def in 3 files of `resolve-target!`" "\n```\n  used: 84, 90\n```")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 5
+                                               :section :iteration :kind :occurrences-group})
+            collapsed (entry-text (occurrences-group-entries forms (assoc ctx :iteration-number 5)))
+            expanded  (entry-text (occurrences-group-entries forms (assoc ctx :iteration-number 5
+                                                                     :detail-expansions {["s1" node-id] true})))]
+        (expect (some #(str/includes? % "2 lookups") collapsed))
+        (expect (some #(str/includes? % "ensure-repl-for-dir!") collapsed))
+        (expect (some #(str/includes? % "resolve-target!") collapsed))
+        ;; The per-file uses stay OUT of the collapsed row.
+        (expect (not-any? #(str/includes? % "used:") collapsed))
+        ;; Expanded restores each full summary + its per-file uses.
+        (expect (some #(str/includes? % "used: 239") expanded))
+        (expect (some #(str/includes? % "used: 84, 90") expanded))))
+    (it "the occurrences band opens with a leading breathe row, like an op-card"
+      (let [texts (entry-text (occurrences-group-entries [(occ-form "4 · 1 def in 3 files of `a`" nil) (occ-form "6 · 1 def in 3 files of `b`" nil)]
+                                (assoc ctx :iteration-number 9)))]
+        (expect (str/blank? (first texts)))
+        (expect (str/includes? (second texts) "2 lookups"))))))
+
 (defdescribe cat-merge-grouping-test
   ;; Consecutive cat reads of the SAME file merge into ONE deduped ▾ CAT card;
   ;; overlapping ranges show the union once (`cat L57-60` then `cat L58-62`
