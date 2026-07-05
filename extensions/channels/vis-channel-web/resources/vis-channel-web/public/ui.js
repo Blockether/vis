@@ -1228,6 +1228,84 @@
       }
     });
   });
+  /* ── Settings: VS Code-style live search + category rail ────────────
+     The Settings modal is swapped into #modal by htmx. All wiring is
+     DELEGATED on document.body so it survives every swap without re-init:
+     typing in #settings-search filters rows live (hiding empty groups and
+     their rail entries), and clicking a category scrolls its section into
+     view. A scroll-spy keeps the active rail entry in sync. */
+  ready(function () {
+    function pane() { return document.querySelector(".settings-pane"); }
+
+    function applyFilter() {
+      var p = pane(); if (!p) { return; }
+      var input = p.querySelector("#settings-search");
+      var q = (input && input.value || "").trim().toLowerCase();
+      var shown = 0, total = 0;
+      p.querySelectorAll(".settings-group").forEach(function (sec) {
+        var vis = 0;
+        sec.querySelectorAll(".toggle-row").forEach(function (row) {
+          total++;
+          var label = (row.querySelector(".toggle-label") || {}).textContent || "";
+          var desc = (row.querySelector(".toggle-desc") || {}).textContent || "";
+          var match = !q || (label + " " + desc).toLowerCase().indexOf(q) >= 0;
+          row.hidden = !match;
+          if (match) { vis++; shown++; }
+        });
+        sec.hidden = vis === 0;
+        var toc = p.querySelector('.settings-toc-item[data-group="' + sec.dataset.group + '"]');
+        if (toc) { toc.hidden = vis === 0; }
+      });
+      var count = p.querySelector("#settings-count");
+      if (count) { count.textContent = q ? (shown + " of " + total) : ""; }
+    }
+
+    function setActive(group) {
+      var p = pane(); if (!p) { return; }
+      p.querySelectorAll(".settings-toc-item").forEach(function (x) {
+        x.classList.toggle("is-active", x.dataset.group === group);
+      });
+    }
+
+    document.body.addEventListener("input", function (e) {
+      if (e.target && e.target.id === "settings-search") { applyFilter(); }
+    });
+
+    document.body.addEventListener("click", function (e) {
+      var it = e.target.closest && e.target.closest(".settings-toc-item");
+      if (!it) { return; }
+      var p = pane(); if (!p) { return; }
+      var sec = p.querySelector('.settings-group[data-group="' + it.dataset.group + '"]');
+      if (sec) { sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      setActive(it.dataset.group);
+    });
+
+    /* scroll doesn't bubble → listen in the CAPTURE phase; spy the section
+       whose top is nearest the scroll container's top. */
+    document.body.addEventListener("scroll", function (e) {
+      var groups = e.target;
+      if (!groups.classList || !groups.classList.contains("settings-groups")) { return; }
+      var best = null, bestDist = Infinity;
+      groups.querySelectorAll(".settings-group").forEach(function (sec) {
+        if (sec.hidden) { return; }
+        var dist = Math.abs(sec.offsetTop - groups.scrollTop);
+        if (dist < bestDist) { bestDist = dist; best = sec; }
+      });
+      if (best) { setActive(best.dataset.group); }
+    }, true);
+
+    /* On (re)load of the Settings modal: highlight the first category and
+       focus the search box, once per swapped-in pane. */
+    document.body.addEventListener("htmx:afterSwap", function () {
+      var p = pane(); if (!p || p.dataset.init) { return; }
+      p.dataset.init = "1";
+      var first = p.querySelector(".settings-toc-item");
+      if (first) { first.classList.add("is-active"); }
+      var input = p.querySelector("#settings-search");
+      if (input) { input.focus(); }
+    });
+  });
+
 })();
 
 

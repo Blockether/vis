@@ -2244,21 +2244,43 @@
                   "Delete selected"]]]))}))
 
 (defn- settings-handler
-  "GET /ui/settings — the TUI settings dialog as an overlay: every
-   VISIBLE registered toggle, grouped, flippable in place.
-   Provider-specific knobs (e.g. OpenAI Codex verbosity) declare a
+  "GET /ui/settings — the settings dialog as a VS Code-style overlay: a
+   full-width search that filters every row live (ui.js), a left category
+   rail (table of contents), and the grouped, in-place-flippable toggles on
+   the right. Provider-specific knobs (e.g. OpenAI Codex verbosity) declare a
    `:visible-fn` and only appear when their provider is configured."
   [_request]
-  (let [toggles (vis/toggles-for-channel :web)
-        grouped (group-by #(or (:group %) :other) toggles)]
-    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (modal-shell "Settings" {:class "modal-wide"}
-             (for [[group specs] (sort-by (comp str key) grouped)]
-               [:section.modal-section
-                ;; Group keywords are internal (:provider, :display, …);
-                ;; present them title-cased ("Provider", "Display") not raw.
-                [:h3 (str/capitalize (str/replace (name group) #"[-_]+" " "))]
-                (map toggle-row specs)]))}))
+  (let [toggles     (vis/toggles-for-channel :web)
+        grouped     (sort-by (comp str key)
+                      (group-by #(or (:group %) :other) toggles))
+        ;; Group keywords are internal (:provider, :display, …); present them
+        ;; title-cased ("Provider", "Display") not raw.
+        group-title (fn [g] (str/capitalize (str/replace (name g) #"[-_]+" " ")))]
+    {:status  200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body    (modal-shell "Settings" {:class "modal-wide settings-modal"}
+                [:div.settings-pane
+                 [:div.settings-search
+                  [:svg.settings-search-icon {:aria-hidden      "true" :viewBox "0 0 24 24"
+                                              :fill             "none" :stroke "currentColor"
+                                              :stroke-width     "2" :stroke-linecap "round"
+                                              :stroke-linejoin  "round"}
+                   [:circle {:cx "11" :cy "11" :r "8"}]
+                   [:line {:x1 "21" :y1 "21" :x2 "16.65" :y2 "16.65"}]]
+                  [:input#settings-search
+                   {:type "text" :autocomplete "off" :spellcheck "false"
+                    :placeholder "Search settings…" :aria-label "Search settings"}]
+                  [:span#settings-count.settings-count]]
+                 [:div.settings-cols
+                  [:nav.settings-toc {:aria-label "Settings categories"}
+                   (for [[group _] grouped]
+                     [:button.settings-toc-item
+                      {:type "button" :data-group (name group)}
+                      (group-title group)])]
+                  [:div.settings-groups
+                   (for [[group specs] grouped]
+                     [:section.settings-group {:data-group (name group)}
+                      [:h3 (group-title group)]
+                      (map toggle-row specs)])]]])}))
 
 (defn- sessions-switch-handler
   "GET /ui/sessions/switch — a session picker modal (the web twin of the
