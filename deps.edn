@@ -1,23 +1,7 @@
-;; vis - single-package monorepo.
-;;
-;; ONE jar, ONE namespace (`com.blockether.vis.core`), ONE source file
-;; (`src/com/blockether/vis/core.clj`). The previous three-package layout
-;; (vis-sdk + vis-runtime + vis-main) collapsed into this one because the
-;; "library / runtime / binary" split was not buying us anything: there is
-;; only ever one runtime, and the binary, library, and SDK ship in the same
-;; classpath together for every consumer.
-;;
-;; What stayed split: the classpath plug-ins under `extensions/`. Those are
-;; genuinely optional (drop the jar, drop the feature) and each has its own
-;; deps.edn declaring `com.blockether/vis {:local/root "../../.."}` against
-;; this repo root.
-;;
-;; Daily use: `bin/vis <subcommand>` once `bin/` is on PATH.
 {:paths ["src" "resources"]
 
  :deps
- {;; Classpath plug-ins. Drop the jar, drop the feature.
-  com.blockether/vis-persistance-sqlite           {:local/root "extensions/persistance/vis-persistance-sqlite"}
+ {com.blockether/vis-persistance-sqlite           {:local/root "extensions/persistance/vis-persistance-sqlite"}
   com.blockether/vis-provider-github-copilot      {:local/root "extensions/providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex        {:local/root "extensions/providers/vis-provider-openai-codex"}
   com.blockether/vis-provider-anthropic           {:local/root "extensions/providers/vis-provider-anthropic"}
@@ -35,178 +19,46 @@
   com.blockether/vis-language-python              {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
 
-  ;; Core runtime deps. Each one supports a specific surface in this
-  ;; package; nothing here is shared with extensions through some
-  ;; transitive accident.
-  ;;
-  ;;   svar         - LLM router used by the iteration loop
-  ;;                  (`com.blockether.vis.loop`).
-  ;;   anomaly      - `incorrect!` / `unsupported!` ex-info builders
-  ;;                  used at every public-API guard.
-  ;;   telemere     - logging used everywhere.
-  ;;   clojure-plus - cond+/walk patches used across internal modules.
-  ;;   graalpy      - embedded Python sandbox (THE agent action substrate).
-  ;;   charred      - fast JSON for spec/router payloads + sandbox.
-  ;;   ring/reitit  - HTTP gateway (`internal.gateway.*`): Ring handler
-  ;;                  model + Jetty on virtual threads, reitit routing,
-  ;;                  SSE via StreamableResponseBody.
-  ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
-  ;;
-  ;; Extension-specific deps live in each extension's deps.edn:
-  ;;   flyway-core              -> vis-persistance-sqlite (migration runner)
-  ;;   sqlite-jdbc / HikariCP   -> vis-persistance-sqlite
-  ;;   honeysql / next.jdbc    -> vis-persistance-sqlite
-  ;;   nippy                    -> vis-persistance-sqlite
-  ;;   org.babashka/http-client -> vis-channel-telegram + provider/exa extensions
-  ;;   rewrite-clj              -> vis-language-clojure
-  ;;   lanterna                 -> vis-channel-tui
-  ;; 0.5.9: http-error message is never nil/blank. babashka's
-  ;; HttpClient surfaces low-level exceptions (stream finalisation,
-  ;; connection edge) with nil message; pre-fix that piped straight
-  ;; into `:com.blockether.anomaly.core/message nil` and downstream
-  ;; consumers (chat error bubble, telemetry) saw `ExceptionInfo:
-  ;; null` with no actionable signal (Vis conv c8dc39b1).
-  ;; 0.5.8: FenceBlocksParser nests inner ```clojure code samples
-  ;; emitted inside an :answer string of a (done {…}) form, instead of
-  ;; letting the sample's bare ``` close the outer block early
-  ;; (Vis conv 11d4f817 / t12/i1: torn (done …), dropped trailer keys,
-  ;; model retry burns an iteration).
-  ;; 0.7.7: ask-code! `:lenient` mode — whole reply IS the code, no fence
-  ;; required (Python engine emits raw source; svar drops nothing).
-  ;; 0.7.8: connect-phase failures (refused/host-down/DNS/connect-timeout)
-  ;; surface a human-readable, provider-aware message naming the host/URL
-  ;; instead of a bare nil-message java.net.ConnectException.
-  ;; 0.7.9: multi-part assistant message body reassembled verbatim — content
-  ;; parts joined with "" (not "\n") and whitespace-only parts kept, so lenient
-  ;; code mode no longer splits `a = b(c)` into per-line tokens or loses indent.
-  ;; 0.7.12: models.dev snapshot refresh — Claude Fable 5 / Mythos 5 become
-  ;; KNOWN models (context 1M, output 128k). On 0.7.11 they were absent from
-  ;; the bundled catalog, so the router fell to DEFAULT_CONTEXT_LIMIT 8192 and
-  ;; every turn overflowed before the provider call (TASKS VIS-9 root cause).
-  ;; 0.7.32: native tool calling across all wires (ask-code! fences removed);
-  ;; GLM rides the :anthropic endpoint. Released to Clojars — back on :mvn/version.
-  ;; 0.7.35: glm-5.2 :quick reasoning disables thinking (no light effort rung
-  ;; exists on z.ai) so reasoning-level=quick stops GLM over-reasoning.
-  ;; 0.7.36: tolerant dotted/dashed model lookup — dashed claude-opus-4-8 now
-  ;; resolves the Copilot :anthropic /v1/messages wire (was 404 on chat wire).
-  ;; 0.7.38: Responses input message items carry :type "message" — the ChatGPT
-  ;; Codex backend 400'd typeless items ("Unsupported content type") mid-turn.
-  ;; 0.7.40: streaming surfaces tool-call argument deltas as :tool-input so the
-  ;; TUI can paint the run_python code live (native tool calling moved the code
-  ;; out of text content into the tool args, which used to not stream).
-  ;; 0.7.41: replay hygiene — stamps the producing model on each assistant turn
-  ;; and DROPS cross-model reasoning at request-build (a model-bound thinking
-  ;; signature replayed to a DIFFERENT model is a hard provider 400); also skips
-  ;; aborted/errored turns. Matters because vis cycles models mid-session (C-x C-m).
-  ;; 0.7.42: pi-faithful tool-call handling — synthesizes a result for orphaned
-  ;; tool calls (failed/interrupted), flags them is_error, normalizes tool-call
-  ;; ids + remaps results consistently for the target wire, and round-trips the
-  ;; OpenAI Responses composite call_id|item_id so reasoning-model tool calls keep
-  ;; their fc_ pairing. Fixes "tool call sometimes has no result" (esp. Copilot).
-  ;; 0.7.43: Gemini tool-result uses {output}/{error} per the Gemini 3 contract.
-  ;; 0.7.44: a clean end_turn/stop with empty text is a legit (empty) completion,
-  ;;         not an error; Anthropic max_tokens cap classified as a token cap.
-  ;; 0.7.45: all-providers-exhausted carries per-provider :attempts (provider/model/
-  ;;         status/reason) so the failure names WHY each provider bowed out.
   com.blockether/svar                             {:mvn/version "0.7.45"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
-  ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
-  ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
-  ;; cognitect.aws, which breaks native-image), so vis owns it here for the
-  ;; plain-JVM path. The NATIVE build strips it from its classpath
-  ;; (`native-classpath`) and bundles the `*-native-<platform>` jars instead
-  ;; (`native-lib-jars`), so the binary loads natives from embedded resources.
   org.clojure/tools.deps                          {:mvn/version "0.31.1629"}
-  ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
-  ;; to lift LLM-emitted thinking strings + user-typed messages into
-  ;; canonical answer-IR. Standard CommonMark + GFM tables / strikethrough.
   org.commonmark/commonmark                       {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
   babashka/process                                {:mvn/version "0.6.25"}
-  ;; babashka.fs / java-diff-utils — back the `v/` kernel (cat/ls/rg/patch),
-  ;; now a CORE module under `internal.foundation` (was the vis-foundation-core
-  ;; extension). fs = cwd-safe filesystem wrappers; java-diff-utils = unified
-  ;; diff hunks for `v/patch` previews.
   babashka/fs                                     {:mvn/version "0.5.33"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.17"}
-  ;; tree-sitter structural index + unified structural editing (Clojure from
-  ;; our own grammar fork). The main jar's Clojure resolver auto-selects the
-  ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
-  ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
-  ;; Blockether fork — antq mistakes bare upstream versions for newer than the
-  ;; "-blockether.N" suffix; keep this pinned to the fork line manually.
-  ;; 1.12.3-blockether.4: upstream v1.12.3 core sync (34 grammar bumps, loading
-  ;; fixes, additive FFI) + Elixir structural intel; elixir/dart/zig grammars
-  ;; baked into the static dylib (dart/zig previously loaded via a runtime
-  ;; GitHub download that broke when upstream stopped publishing release assets).
+  ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
+  ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack        {:mvn/version "1.12.3-blockether.4"}
-  ;; ruff (in-process Python formatter via FFM) — the gateway beautifies the
-  ;; model's Python code before streaming it to the web trace. tools.deps is
-  ;; kept here (NOT excluded): ruff's native lib isn't bundled, so it resolves
-  ;; the per-platform `ruff-native-<rid>` jar at runtime via tools.deps. If
-  ;; unavailable, `ruff/format-or` returns the source verbatim (no beautify, no
-  ;; breakage). core.memoize backs the LRU cache in internal.pyfmt.
   com.blockether/ruff                             {:mvn/version "0.1.2"}
   org.clojure/core.memoize                        {:mvn/version "1.2.281"}
-  ;; 0.9.6-8: natives built from ORIGINAL upstream dmtrKovalenko/fff v0.9.6
-  ;; (Blockether/fff fork retired); binding default is now mmap-cache OFF —
-  ;; vis already passes :enable-mmap-cache? false at both fff/create sites.
   com.blockether/fff                              {:mvn/version "0.9.6-8"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
-  ;; SLF4J 2.x provider: routes Java-library logging (Jetty, …)
-  ;; into Telemere — kills the "No SLF4J providers were found" startup
-  ;; warning and puts library logs under Telemere's handler/min-level
-  ;; control. Version MUST match com.taoensso/telemere.
+  ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j                     {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
-  ;; Embedded GraalPy — THE agent action substrate. Version MUST match the
-  ;; native-image toolchain GraalVM (Truffle/SVM refuse mismatched versions).
-  ;; ~100MB (lang + stdlib vfs).
-  ;; GraalVM's release train changed mid-2026: NO JDK 26/27/28 releases; the
-  ;; JDK 25 baseline continues as quarterly LTS CPUs (25.0.x, on
-  ;; download.oracle.com/graalvm/25/latest) PLUS a monthly 25.1+ feature train
-  ;; (the "25i1" innovation channel). Oracle GraalVM 25.1.x is GDS-token gated
-  ;; and setup-graalvm's CE resolver predates the 25.1 innovation tag naming,
-  ;; so CI installs the graalvm-ce-builds asset directly (release tag
-  ;; `graal-25.1.3`, asset `graalvm-community-jdk-25i1-25.0.3`) via the
-  ;; `.github/actions/setup-graalvm-25` composite. We ride the feature train:
-  ;; bump these four together with that action's pinned version.
+  ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
+  ;; with the setup-graalvm-25 action's pinned version.
   org.graalvm.polyglot/polyglot                   {:mvn/version "25.1.3"}
   org.graalvm.python/python-language              {:mvn/version "25.1.3"}
   org.graalvm.python/python-resources             {:mvn/version "25.1.3"}
   org.graalvm.truffle/truffle-runtime             {:mvn/version "25.1.3"}
   com.cnuernber/charred                           {:mvn/version "1.039"}
-  ;; YAMLStar — pure-Clojure YAML 1.2 loader (zero SnakeYAML; deps: data.json).
-  ;; Backs the sandbox `import yaml` shim in `internal.env-python`, so agent
-  ;; Python gets a PyYAML-compatible `yaml` module without shipping CPython PyYAML.
   org.yamlstar/yamlstar                           {:mvn/version "0.1.11"}
-  ;; Ring + Reitit — the HTTP gateway (`internal.gateway.server`). Ring's
-  ;; standard handler/middleware model with the Jetty adapter running on
-  ;; JDK virtual threads (`:virtual-threads? true`, Java 21+); reitit-ring
-  ;; does data-driven route matching. SSE streams as a Ring
-  ;; StreamableResponseBody parked on its virtual thread. Internal core
-  ;; surface - deliberately NOT an extension: the bus it
-  ;; lifts onto the wire (channel-events) is internal, and it drops
-  ;; nothing from the classpath when absent.
   ring/ring-core                                  {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.5"}
   metosin/reitit-ring                             {:mvn/version "0.10.1"}}
 
  :aliases
- {  ;; Primary alias - the `vis` CLI.
-  :vis   {;; JVM flags here exist purely to keep stderr quiet so the TUI
-          ;; (Lanterna) is not corrupted by JVM-emitted warnings.
-          :jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
+ {:vis   {:jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
                       "--enable-native-access=ALL-UNNAMED"
                       "--enable-preview"
                       "--sun-misc-unsafe-memory-access=allow"]
           :main-opts ["-m" "com.blockether.vis.core"]}
-  ;; Aggregate test runner.
-  :test  {;; rift's FFM loader (exercised by the draft slash tests) needs
-          ;; native access, same as :vis / :dev.
-          :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
+
+  :test  {:jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
                         "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"]
@@ -228,15 +80,7 @@
                         "extensions/languages/vis-language-clojure/test"
                         "extensions/languages/vis-language-python/test"]
           :extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                        ;; Microbenchmarks. Pulled into `:test` so a
-                        ;; `*_bench_test.clj` file can `(require
-                        ;; '[criterium.core :refer [quick-benchmark]])`
-                        ;; without a separate alias. The benchmark
-                        ;; functions themselves are gated behind
-                        ;; `defn run-bench!` invocations, NOT auto-run
-                        ;; lazytest cases, so the default suite stays
-                        ;; fast.
-                        criterium/criterium                      {:mvn/version "0.4.6"}}
+                        criterium/criterium            {:mvn/version "0.4.6"}}
           :main-opts   ["-m" "lazytest.main"
                         "--dir" "test"
                         "--dir" "extensions/persistance/vis-persistance-sqlite/test"
@@ -256,66 +100,30 @@
                         "--dir" "extensions/languages/vis-language-clojure/test"
                         "--dir" "extensions/languages/vis-language-python/test"]}
 
-  ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default
-  ;; 7888), writes `.nrepl-port` for `clj-nrepl-eval --discover-ports`,
-  ;; and can launch entry points. `tui` opens Terminal.app running
-  ;; `terminal-tui`, where nREPL and the TUI live in the same JVM/process.
-  ;;
-  ;;   clojure -M:dev              # nREPL + wait
-  ;;   clojure -M:dev tui          # Terminal.app attached nREPL+TUI JVM
-  ;;   clojure -M:dev cli help     # nREPL + run a CLI entry point
   :dev   {:extra-paths ["dev" "test"]
-          ;; clj-reload lives ONLY in :dev so the production binary
-          ;; stays GraalVM-native-image-compatible. Engineers reload
-          ;; manually from the REPL via:
-          ;;   (require '[clj-reload.core :as r]) (r/init {:dirs [...]}) (r/reload)
-          ;; The docs file watcher (`bin/dev docs`, see docs-dev.clj) uses the
-          ;; JDK's own WatchService — no extra dep — so editing docs needs no
-          ;; gateway restart.
-          :extra-deps  {nrepl/nrepl                 {:mvn/version "1.7.0"}
-                        io.github.tonsky/clj-reload  {:mvn/version "1.0.0"}
-                        ;; lazytest on the dev nREPL classpath so run_tests takes
-                        ;; the FAST in-REPL path instead of shelling a cold
-                        ;; `clojure -M:test` (~30s JVM start) every run. Without
-                        ;; it, run-via-repl throws "Could not locate lazytest/core"
-                        ;; and falls back to the CLI even with a REPL up. Matches
-                        ;; the :test alias version.
-                        io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-        ;; Keep dev nREPL / terminal-tui stderr as quiet as `bin/vis`.
-        ;; Without these flags JDK native-access / Unsafe warnings can
-        ;; corrupt the Lanterna screen before Vis redirects app logs.
+          :extra-deps  {nrepl/nrepl                    {:mvn/version "1.7.0"}
+                        io.github.tonsky/clj-reload     {:mvn/version "1.0.0"}
+                        io.github.noahtheduke/lazytest  {:mvn/version "2.0.0"}}
           :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
                         "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"]
           :main-opts   ["-m" "com.blockether.vis.dev"]}
+
   :bench-micro
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                 criterium/criterium            {:mvn/version "0.4.6"}}}
 
   :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                        slipset/deps-deploy           {:mvn/version "0.2.5"}
-                       ;; --with-assets vendors the bz2 voice model at build time
                        org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
           :ns-default build}
 
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
           :main-opts ["-m" "antq.core"]}
 
-  ;; clj-watson - software composition analysis (SCA): scans EVERY dependency
-  ;; (direct + transitive, this deps.edn + all :local/root extensions via -a '*')
-  ;; for known CVEs. Pinned to a tag+sha so the scan is reproducible. See audit/README.md
-  ;; and .github/workflows/security-audit.yml. Run locally:
-  ;;   GITHUB_TOKEN=... clojure -M:clj-watson scan -p deps.edn -a '*' -t github-advisory -s
-  ;;   CLJ_WATSON_NVD_API_KEY=... clojure -M:clj-watson scan -p deps.edn -a '*' -t dependency-check -s
-  ;; (github-advisory needs only a GITHUB_TOKEN; the dependency-check/NVD strategy
-  ;;  needs a NIST NVD API key and downloads the full NVD database on first run.)
   :clj-watson {:replace-deps {io.github.clj-holmes/clj-watson
                               {:git/tag "v6.1.0" :git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"}}
                :main-opts   ["-m" "clj-watson.cli"]}
 
-  ;; GraalVM native-image build deps. `graal-build-time` initializes every
-  ;; Clojure-generated class at image-build time (the `InitClojureClasses`
-  ;; feature) so the binary doesn't hit "class not initialized" at runtime.
-  ;; Folded into the uber basis by `build/uber`; not a runtime dep of vis.
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}}}

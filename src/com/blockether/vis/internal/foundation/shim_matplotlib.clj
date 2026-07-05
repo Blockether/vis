@@ -162,45 +162,44 @@
                 (doseq [[[x1 y1] [x2 y2]] (partition 2 1 pts)]
                   (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y2)))))))))
       ;; title / axis labels
-      (let [fm (.getFontMetrics g)]
-        (.setColor g (Color. 30 30 30))
-        (when (and (string? title) (seq title))
-          (.setFont g (Font. "SansSerif" Font/BOLD 14))
-          (let [fmt2 (.getFontMetrics g)]
-            (.drawString g ^String title (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 title) 2))) 18)))
-        (when (and (string? xlabel) (seq xlabel))
-          (.setFont g (Font. "SansSerif" Font/PLAIN 12))
-          (let [fmt2 (.getFontMetrics g)]
-            (.drawString g ^String xlabel (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 xlabel) 2))) (int (- H 12)))))
-        (when (and (string? ylabel) (seq ylabel))
-          (.setFont g (Font. "SansSerif" Font/PLAIN 12))
+      (.setColor g (Color. 30 30 30))
+      (when (and (string? title) (seq title))
+        (.setFont g (Font. "SansSerif" Font/BOLD 14))
+        (let [fmt2 (.getFontMetrics g)]
+          (.drawString g ^String title (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 title) 2))) 18)))
+      (when (and (string? xlabel) (seq xlabel))
+        (.setFont g (Font. "SansSerif" Font/PLAIN 12))
+        (let [fmt2 (.getFontMetrics g)]
+          (.drawString g ^String xlabel (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fmt2 xlabel) 2))) (int (- H 12)))))
+      (when (and (string? ylabel) (seq ylabel))
+        (.setFont g (Font. "SansSerif" Font/PLAIN 12))
+        (let [fmt2 (.getFontMetrics g)
+              tx (.getTransform g)]
+          (.translate g 16.0 (double (+ py0 (/ ph 2))))
+          (.rotate g (- (/ Math/PI 2)))
+          (.drawString g ^String ylabel (int (- (/ (.stringWidth fmt2 ylabel) 2))) 0)
+          (.setTransform g tx)))
+      ;; legend
+      (let [labelled (filter #(let [l (get % "label")] (and (string? l) (seq l)))
+                       (map-indexed (fn [i s] (assoc s "__idx" i)) series))]
+        (when (and (seq labelled) (or legend? (seq labelled)))
+          (.setFont g (Font. "SansSerif" Font/PLAIN 11))
           (let [fmt2 (.getFontMetrics g)
-                tx (.getTransform g)]
-            (.translate g 16.0 (double (+ py0 (/ ph 2))))
-            (.rotate g (- (/ Math/PI 2)))
-            (.drawString g ^String ylabel (int (- (/ (.stringWidth fmt2 ylabel) 2))) 0)
-            (.setTransform g tx)))
-        ;; legend
-        (let [labelled (filter #(let [l (get % "label")] (and (string? l) (seq l)))
-                         (map-indexed (fn [i s] (assoc s "__idx" i)) series))]
-          (when (and (seq labelled) (or legend? (seq labelled)))
-            (.setFont g (Font. "SansSerif" Font/PLAIN 11))
-            (let [fmt2 (.getFontMetrics g)
-                  rows (vec labelled)
-                  lw (+ 34 (reduce max 0 (map #(.stringWidth fmt2 (str (get % "label"))) rows)))
-                  lh (+ 8 (* 16 (count rows)))
-                  lx (- (+ px0 pw) lw 8)
-                  ly (+ py0 8)]
-              (.setColor g (Color. 255 255 255))
-              (.fillRect g lx ly lw lh)
-              (.setColor g (Color. 180 180 180))
-              (.drawRect g lx ly lw lh)
-              (doseq [[ri s] (map-indexed vector rows)]
-                (let [yy (+ ly 8 (* ri 16))]
-                  (.setColor g (->color (get s "color") (get s "__idx")))
-                  (.fillRect g (+ lx 8) (+ yy 3) 16 6)
-                  (.setColor g (Color. 40 40 40))
-                  (.drawString g (str (get s "label")) (+ lx 30) (+ yy 11))))))))
+                rows (vec labelled)
+                lw (+ 34 (reduce max 0 (map #(.stringWidth fmt2 (str (get % "label"))) rows)))
+                lh (+ 8 (* 16 (count rows)))
+                lx (- (+ px0 pw) lw 8)
+                ly (+ py0 8)]
+            (.setColor g (Color. 255 255 255))
+            (.fillRect g lx ly lw lh)
+            (.setColor g (Color. 180 180 180))
+            (.drawRect g lx ly lw lh)
+            (doseq [[ri s] (map-indexed vector rows)]
+              (let [yy (+ ly 8 (* ri 16))]
+                (.setColor g (->color (get s "color") (get s "__idx")))
+                (.fillRect g (+ lx 8) (+ yy 3) 16 6)
+                (.setColor g (Color. 40 40 40))
+                (.drawString g (str (get s "label")) (+ lx 30) (+ yy 11)))))))
       (let [baos (ByteArrayOutputStream.)]
         (ImageIO/write img "png" baos)
         (.encodeToString (Base64/getEncoder) (.toByteArray baos)))

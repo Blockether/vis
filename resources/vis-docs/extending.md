@@ -66,6 +66,7 @@ my-extension/
 | `:ext/engine` | `{:ext.engine/alias 'weather :ext.engine/symbols [...]}` — the sandbox surface (below). |
 | `:ext/prompt-fn` | `(fn [env] -> string)` — the model-facing usage text for your tools. |
 | `:ext/ctx-fn` | `(fn [env] -> map)` — structured per-turn context contributed into the model's `session` dict. |
+| `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
 | `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis doctor`. |
 | `:ext/settings` `:ext/env` | Declared settings / environment variables (configurable via `~/.vis/config.edn` `:environment`). |
@@ -97,6 +98,44 @@ The rules:
 - Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
 Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render` + `:color-role` (custom TUI result card), `:hidden?` (bind but don't advertise).
+
+## Sandbox shims and autoloads
+
+The agent writes **Python**, but its sandbox ships only the pure-stdlib — no
+pip, no native wheels. A **shim** lets your extension publish a *host-backed*
+Python module into every sandbox (the main session and every `sub_loop` fork):
+the familiar Python API is a thin façade whose real work is DELEGATED across the
+boundary to Clojure/JVM callables you supply. This is exactly how `import yaml`
+(backed by the pure-Clojure YAMLStar loader) and `import matplotlib.pyplot`
+(backed by a Java2D PNG renderer) work — both ship as built-in shim extensions
+(`foundation.shim-yaml`, `foundation.shim-matplotlib`), and the engine installs
+them through the SAME generic path any extension uses.
+
+List one or more shim specs under `:ext/sandbox-shims`:
+
+```clojure
+{:shim/name        "yaml"
+ :shim/description "PyYAML-compatible module backed by YAMLStar."
+ ;; Host callables the preamble delegates to — a `{py-name -> fn}` map (or a
+ ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
+ ;; callable (args marshalled Python->Clojure, result back) BEFORE the preamble
+ ;; evals. Return a 2-vec envelope `[true payload]` / `[false message]` so a
+ ;; failure crosses the boundary as a catchable Python exception.
+ :shim/bindings    (fn [] {"__vis_yaml_load__" (fn [s] (try [true (yamlstar/load s)]
+                                                        (catch Throwable t [false (str t)])))})
+ ;; Python source eval'd into the sandbox: publish your module into
+ ;; `sys.modules` (so `import yaml` finds it) and optionally staple it onto
+ ;; `builtins` (autoload — `yaml.safe_load(...)` with no import). Use
+ ;; single-quoted Python string literals so the Clojure string needs no escaping.
+ :shim/preamble    "import sys, types\n..."}
+```
+
+Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
+and published module are hidden from the model's live-vars view. Install is
+best-effort: a shim that throws is logged and skipped — it never breaks the
+sandbox. Shims are a Clojure-extension capability (they need host callables);
+drop-in Python extensions contribute tools/prompts/slash/hooks instead.
+
 
 ## The prompt fragment
 
