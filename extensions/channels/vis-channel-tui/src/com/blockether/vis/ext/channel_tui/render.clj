@@ -2416,8 +2416,21 @@
   ([detail-expansions session-id node-id]
    (detail-expanded? detail-expansions session-id node-id true))
   ([detail-expansions session-id node-id default-expanded?]
-   (boolean (or (:vis.channel-tui/expand-all-details? detail-expansions)
-              (get detail-expansions [(str session-id) (str node-id)] default-expanded?)))))
+   ;; `:vis.channel-tui/expand-all-details?` is the copy-only FORCE flag (set on a
+   ;; throwaway map when rendering a fully-expanded body for copy) — it wins over
+   ;; everything. Otherwise a per-node override (mouse click / label toggle) wins,
+   ;; then the bulk `:baseline` (C-x c collapse-all / C-x e expand-all), then the
+   ;; row's own default. This ordering lets a bulk op and later per-item toggles
+   ;; compose instead of the global flag swallowing the click.
+   (if (:vis.channel-tui/expand-all-details? detail-expansions)
+     true
+     (let [k [(str session-id) (str node-id)]]
+       (if (contains? detail-expansions k)
+         (boolean (get detail-expansions k))
+         (case (:vis.channel-tui/baseline detail-expansions)
+           :expand   true
+           :collapse false
+           (boolean default-expanded?)))))))
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;;   - Render positions (ints), never UUIDs.
@@ -2519,29 +2532,34 @@
   "Per-message disclosure-expansion fingerprint for the height cache: the
    subset of `detail-expansions` whose disclosure node-ids belong to
    `message`'s turn (matched by the `:t<short-id>` token every node-id
-   carries), or `:expand-all` when the global expand flag is set. Lets the
+   carries), or `:expand-all` when the global expand flag is set. A bulk
+   `:baseline` (C-x [ collapse-all / C-x ] expand-all) is prepended so a bulk
+   op busts every message's cached height; with no bulk active the key keeps
+   its original shape so unrelated fold clicks don't churn the cache. Lets the
    height cache key a message's height to its OWN expand/collapse state
    without busting every other message's cached height — the SAME per-turn
    scoping this file already uses for its projection cache."
   [session-id message detail-expansions]
   (cond
     (:vis.channel-tui/expand-all-details? detail-expansions) :expand-all
-    ;; A bubble with no turn id can't be turn-scoped AND carries no
-    ;; disclosures (only user prompts with a `[Pasted #N]` marker do, and
-    ;; those always land with a `:client-turn-id`) — keep the cheap
-    ;; constant key so an unrelated fold click never busts its cached
-    ;; height. WITH a turn id, fall through to the same per-turn scoping
-    ;; assistant bubbles use, so opening a paste recomputes only THIS
-    ;; bubble's height.
-    (and (not= :assistant (:role message))
-      (nil? (:client-turn-id message))
-      (nil? (:session-turn-id message)))
-    []
     :else
-    (turn-detail-expansions-key {:session-id session-id,
-                                 :session-turn-id (or (:client-turn-id message)
-                                                    (:session-turn-id message)),
-                                 :detail-expansions detail-expansions})))
+    (let [baseline (:vis.channel-tui/baseline detail-expansions)
+          per-turn (if (and (not= :assistant (:role message))
+                         (nil? (:client-turn-id message))
+                         (nil? (:session-turn-id message)))
+                     ;; A bubble with no turn id can't be turn-scoped AND carries no
+                     ;; disclosures (only user prompts with a `[Pasted #N]` marker do,
+                     ;; and those always land with a `:client-turn-id`) — keep the
+                     ;; cheap constant key so an unrelated fold click never busts its
+                     ;; cached height.
+                     []
+                     (turn-detail-expansions-key {:session-id session-id,
+                                                  :session-turn-id (or (:client-turn-id message)
+                                                                     (:session-turn-id message)),
+                                                  :detail-expansions detail-expansions}))]
+      ;; Fold the bulk baseline in ONLY when a bulk op is active, so the no-bulk
+      ;; key shape (and every already-warmed cache entry) is unchanged.
+      (if baseline (into [baseline] per-turn) per-turn))))
 (defn- detail-summary-entries
   [{:keys [marker max-w summary collapsed? session-id node-id color-role],
     :as detail-ctx}]

@@ -2417,11 +2417,14 @@
   (try (.getCanonicalFile f) (catch Throwable _ (.getAbsoluteFile f))))
 
 (defn- list-subdirs
-  "Case-insensitively sorted names of the visible child directories of `dir`.
+  "Case-insensitively sorted names of the visible child directories of `dir`,
+   INCLUDING dot-directories (`.git`, `.config`, …) — a filesystem browser
+   that silently drops hidden folders is worse than useless when the thing
+   you're looking for lives in one.
    Unreadable dirs (permission denied → nil listing) yield an empty vec."
   [^java.io.File dir]
   (->> (try (.listFiles dir) (catch Throwable _ nil))
-    (filter (fn [^java.io.File f] (and (.isDirectory f) (not (.isHidden f)))))
+    (filter (fn [^java.io.File f] (.isDirectory f)))
     (map (fn [^java.io.File f] (.getName f)))
     (sort String/CASE_INSENSITIVE_ORDER)
     vec))

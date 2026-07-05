@@ -3479,6 +3479,8 @@
                                            :show-sessions   (show-sessions!)
                                            :open-dirs       (pick-dir!)
                                            :recenter        (state/dispatch [:scroll-to-bottom])
+                                           :collapse-all-details (state/dispatch [:collapse-all-details])
+                                           :expand-all-details   (state/dispatch [:expand-all-details])
                                            :close-tab       (do (state/dispatch [:close-tab])
                                                               (persist-tabs!))
                                            :toggle-voice-recording
@@ -3799,6 +3801,12 @@
                          :recenter (do (state/dispatch [:scroll-to-bottom])
                                      (state/dispatch [:bump-render-version])
                                      (recur))
+                         ;; C-x [ / C-x ] — collapse or expand every disclosure
+                         ;; in the conversation at once (bulk fold).
+                         :collapse-all-details (do (state/dispatch [:collapse-all-details])
+                                                 (recur))
+                         :expand-all-details (do (state/dispatch [:expand-all-details])
+                                               (recur))
                          ;; M-< (Emacs `beginning-of-buffer`): park at the very top.
                          :scroll-to-top (do (state/dispatch [:scroll-to-top])
                                           (state/dispatch [:bump-render-version])

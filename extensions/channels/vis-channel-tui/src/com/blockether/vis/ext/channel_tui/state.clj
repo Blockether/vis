@@ -836,6 +836,18 @@
           (fn [m]
             (let [expanded? (true? (get m k false))]
               (if expanded? (dissoc m k) (assoc (or m {}) k true)))))))))
+(reg-event-db :collapse-all-details
+  ;; C-x [ — collapse EVERY disclosure. Wipe per-node overrides and set the
+  ;; bulk baseline; `render/detail-expanded?` reads `:baseline` when a node has
+  ;; no explicit override, so a later click can still expand one item.
+  (fn [db _]
+    (-> (park-scroll-for-toggle db)
+      (assoc :detail-expansions {:vis.channel-tui/baseline :collapse}))))
+(reg-event-db :expand-all-details
+  ;; C-x ] — expand EVERY disclosure (per-node overrides wiped, baseline set).
+  (fn [db _]
+    (-> (park-scroll-for-toggle db)
+      (assoc :detail-expansions {:vis.channel-tui/baseline :expand}))))
 (reg-event-db :select-preview-mode
   (fn [db [_ session-id node-id mode]]
     (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))
