@@ -3733,11 +3733,12 @@
             :else (recur (conj! out e) nil (next xs))))))))
 (def ^:private groupable-tool-names
   "Native tools whose consecutive PURE single-call iterations coalesce into ONE
-   collapsible band (a GIT / RG / DELETE log) instead of N separately-stacked
-   op-cards. Only tools whose repeated back-to-back calls read as one logical
-   activity belong here: a burst of `git` commands, a burst of `rg` searches, a
-   burst of `delete`s."
-  #{"git" "rg" "delete"})
+   collapsible band (a GIT / RG / DELETE log) — or, for `cat`, merge into ONE
+   deduped slice — instead of N separately-stacked op-cards. Only tools whose
+   repeated back-to-back calls read as one logical activity belong here: a burst
+   of `git` commands, a burst of `rg` searches, a burst of `delete`s, and a run
+   of `cat` reads of the SAME file (which fold into a single ▾ CAT card)."
+  #{"git" "rg" "delete" "cat"})
 
 (defn- groupable-tool-form
   "The lone native-tool form of an iteration when it is a single call to a
@@ -3960,6 +3961,75 @@
                         :body-md body-md, :kind :delete-group}
       ctx)))
 
+(defn- cat-form-path
+  "The file a cat read acted on — the raw `:result` `:path` when live, else the
+   leading `` `path` `` chip of the summary (which survives a DB round-trip)."
+  [form]
+  (or (get-in form [:result :path])
+    (some-> (vis/result-card form) :summary str
+      (->> (re-find #"`([^`]+)`")) second)))
+
+(defn- band-run-key
+  "Grouping key for a band run. Most tools group by NAME alone (a burst of git /
+   rg / delete calls is one activity). Cat additionally keys on the FILE, so only
+   consecutive reads of the SAME path fold — a run of reads across different
+   files stays as separate cards."
+  [tool-name form]
+  (if (= "cat" tool-name) ["cat" (cat-form-path form)] tool-name))
+
+(defn- cat-body-rows
+  "The numbered rows of a cat card body as `[line-number raw-row]` tuples. Reads
+   the RENDERED body (`   57  text`), so it works on a live OR DB-restored card."
+  [body]
+  (keep (fn [row]
+          (when-let [ln (some-> (re-find #"^\s*(\d+)  " row) second parse-long)]
+            [ln row]))
+    (str/split-lines (str body))))
+
+(defn- cat-line-spans
+  "Sorted contiguous line-number runs from a set of line numbers — `[[57 62]]`."
+  [line-nos]
+  (reduce (fn [acc ^long x]
+            (let [[a ^long b] (peek acc)]
+              (if (and b (= x (inc b)))
+                (conj (pop acc) [a x])
+                (conj acc [x x]))))
+    [] (sort line-nos)))
+
+(defn- merge-cat-forms
+  "Merge a RUN of consecutive SAME-FILE cat reads into ONE synthetic cat form.
+   Duplicate/overlapping line rows dedupe by line number and the span label
+   recomputes off the merged line set, so `cat L57-60` then `cat L58-62` renders
+   as one `L57-62` slice (the 58-60 overlap shown once) rather than two
+   look-alike cards. Reads only the DB-stable summary/body, so a restored trace
+   merges identically to the live one."
+  [forms]
+  (let [cards    (mapv vis/result-card forms)
+        path     (cat-form-path (first forms))
+        by-ln    (reduce (fn [m [ln row]] (if (contains? m ln) m (assoc m ln row)))
+                   (sorted-map)
+                   (mapcat (comp cat-body-rows :body) cards))
+        rows     (vals by-ln)
+        n        (count rows)
+        spans    (cat-line-spans (keys by-ln))
+        span-str (fn [[a b]] (if (= a b) (str "L" a) (str "L" a "-" b)))
+        loc      (cond
+                   (empty? spans)      nil
+                   (= 1 (count spans)) (span-str (first spans))
+                   :else               (str "L" (ffirst spans) "-" (second (peek spans))
+                                         " (" (count spans) " ranges)"))
+        counted  (str n " line" (when (not= 1 n) "s"))
+        summary  (str "`" path "` · "
+                   (cond
+                     (nil? loc)          counted
+                     (= 1 (count spans)) loc
+                     :else               (str loc " · " counted)))
+        body     (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))]
+    (assoc (first forms)
+      :result-summary summary
+      :result-render  body
+      :cards          nil)))
+
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
    run (>= 2) of consecutive single-call iterations to the SAME groupable tool
@@ -3984,43 +4054,58 @@
         (let [[_pair tf] (first xs)]
           (if tf
             (let [tool-name (first tf)
-                  ;; A run is the head plus consecutive same-tool calls; a nil tag,
-                  ;; a DIFFERENT tool, OR interior narration ends it.
+                  head-form (second tf)
+                  ;; A run is the head plus consecutive same-tool calls; a nil
+                  ;; tag, a DIFFERENT tool, OR interior narration ends it. For
+                  ;; cat the run ALSO requires the SAME file (via `band-run-key`),
+                  ;; so only reads that merge into one slice fold together.
+                  head-key  (band-run-key tool-name head-form)
                   run (cons (first xs)
                         (take-while (fn [[_ g narr]]
-                                      (and (some? g) (= tool-name (first g)) (not narr)))
+                                      (and (some? g) (not narr)
+                                        (= head-key (band-run-key (first g) (second g)))))
                           (rest xs)))
                   cnt (count run)]
               (if (>= cnt 2)
                 (let [[[first-idx head-entry] _ head-narr?] (first run)
-                      forms     (mapv (fn [[_ g]] (second g)) run)
-                      iter-num  (inc (long first-idx))
-                      ctx       (assoc group-ctx :iteration-number iter-num)
-                      band      (case tool-name
-                                  "git" (git-group-entries forms ctx)
-                                  "rg"     (rg-group-entries forms ctx)
-                                  "delete" (delete-group-entries forms ctx))
-                      ;; The narrated head renders its thinking badge / prose ABOVE
-                      ;; the band — strip its tool form (and the re-emitted call
-                      ;; `:content-stream`, which `:forms []` would otherwise resurface
-                      ;; as a thinking bubble) so the action rides the band, not a
-                      ;; duplicate op-card.
-                      lead      (when head-narr?
-                                  (vec (iter-entry-fn
-                                         [first-idx (assoc head-entry :forms []
-                                                      :content-stream nil)])))
-                      ;; With no leading narration, drop a prior terminal-bg gap so the
-                      ;; band's OWN colored breathe row is the single boundary. A
-                      ;; narrated head brings its own spacing (coalesced upstream), so
-                      ;; leave the seam alone there.
-                      out*      (if (and (not head-narr?)
-                                      (pos? (count out))
-                                      (= (str iteration-pad-marker "")
-                                        (str (:line (nth out (dec (count out)))))))
-                                  (pop! out)
-                                  out)
-                      entries   (if (seq lead) (into lead band) band)]
-                  (recur (reduce conj! out* entries) (seq (drop cnt xs))))
+                      forms (mapv (fn [[_ g]] (second g)) run)]
+                  (if (= "cat" tool-name)
+                    ;; Same-file cat run: merge the reads into ONE deduped slice
+                    ;; and render it as a normal ▾ CAT card via `iter-entry-fn`,
+                    ;; so `cat L57-60` then `cat L58-62` reads as one `L57-62`
+                    ;; card (overlap shown once) instead of two look-alikes. The
+                    ;; head entry keeps its narration + collapse behaviour.
+                    (let [merged (iter-entry-fn
+                                   [first-idx (assoc head-entry
+                                                :forms [(merge-cat-forms forms)])])]
+                      (recur (reduce conj! out merged) (seq (drop cnt xs))))
+                    (let [iter-num (inc (long first-idx))
+                          ctx      (assoc group-ctx :iteration-number iter-num)
+                          band     (case tool-name
+                                     "git"    (git-group-entries forms ctx)
+                                     "rg"     (rg-group-entries forms ctx)
+                                     "delete" (delete-group-entries forms ctx))
+                          ;; The narrated head renders its thinking badge / prose ABOVE
+                          ;; the band — strip its tool form (and the re-emitted call
+                          ;; `:content-stream`, which `:forms []` would otherwise resurface
+                          ;; as a thinking bubble) so the action rides the band, not a
+                          ;; duplicate op-card.
+                          lead     (when head-narr?
+                                     (vec (iter-entry-fn
+                                            [first-idx (assoc head-entry :forms []
+                                                         :content-stream nil)])))
+                          ;; With no leading narration, drop a prior terminal-bg gap so the
+                          ;; band's OWN colored breathe row is the single boundary. A
+                          ;; narrated head brings its own spacing (coalesced upstream), so
+                          ;; leave the seam alone there.
+                          out*     (if (and (not head-narr?)
+                                         (pos? (count out))
+                                         (= (str iteration-pad-marker "")
+                                           (str (:line (nth out (dec (count out)))))))
+                                     (pop! out)
+                                     out)
+                          entries  (if (seq lead) (into lead band) band)]
+                      (recur (reduce conj! out* entries) (seq (drop cnt xs))))))
                 (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
             (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
