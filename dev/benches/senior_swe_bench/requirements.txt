@@ -1,0 +1,5 @@
+# Local plumbing for the Vis Senior SWE-Bench Harbor adapter.
+# Harbor CLI is an external tool. Install with:
+#   curl -LsSf https://astral.sh/uv/install.sh | sh
+#   ~/.local/bin/uv tool install harbor
+# This installs Python 3.12+ automatically if needed. Ensure ~/.local/bin is on PATH.

@@ -1,0 +1,7 @@
+{
+  "name": "smoke",
+  "description": "One public Investigate-and-Fix performance task with a runnable verifier and limited external-service weirdness.",
+  "task_ids": [
+    "paperless-ngx-perf-document-counts"
+  ]
+}

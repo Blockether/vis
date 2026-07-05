@@ -1,0 +1,11 @@
+{
+  "name": "public-5",
+  "description": "Five public tasks for the first expansion: three Investigate-and-Fix and two Design-and-Build.",
+  "task_ids": [
+    "paperless-ngx-perf-document-counts",
+    "better-auth-fix-resolve-dynamic-baseurl",
+    "electric-fix-resolve-pending-shapes",
+    "electric-feat-add-variadic-function",
+    "harbor-add-agent-file-retention"
+  ]
+}
