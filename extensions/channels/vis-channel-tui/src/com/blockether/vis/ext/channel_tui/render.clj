@@ -229,7 +229,7 @@
                                   (if (<= (+ used w) max-cols)
                                     (do (.append sb /) (recur (inc esc-idx) (+ used w)))
                                     (.toString sb)))
-                                (do (.append sb s esc-idx (inc m-idx))
+                                (do (.append sb s (int esc-idx) (int (inc m-idx)))
                                   (recur (inc m-idx) used))))))))))))
 (defn- clip-line-preserving-marker
   "Clip a formatted chat-bubble row to `max-width` display columns.

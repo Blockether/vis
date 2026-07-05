@@ -353,7 +353,7 @@
     (if (neg? first-bad)
       s
       (let [sb (StringBuilder. n)]
-        (.append sb s 0 first-bad)
+        (.append sb s (int 0) (int first-bad))
         (loop [k first-bad]
           (if (>= k n)
             (.toString sb)

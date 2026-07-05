@@ -173,6 +173,24 @@
   [messages]
   (let [totals (reduce add-message-tokens {} messages)]
     (when (seq totals) (merge {:input 0, :output 0, :cached-input 0} totals))))
+(defonce ^:private usage-cache (atom {:messages nil, :tokens nil, :cost nil}))
+(defn- session-usage
+  "Cumulative session `{:tokens :cost}`, MEMOIZED by the messages vector's
+   IDENTITY. Summing tokens+cost across the whole transcript is O(messages);
+   the totals only change when a message is appended/edited — which yields a
+   NEW persistent vector — so on the common repaint (same vector reference)
+   this is an `identical?` check instead of two full folds. That keeps the
+   footer from spiking CPU on a long session: the per-turn totals are computed
+   once when the turn lands, then reused every frame until the next change."
+  [messages]
+  (let [c @usage-cache]
+    (if (identical? (:messages c) messages)
+      c
+      (let [n {:messages messages,
+               :tokens (session-tokens messages),
+               :cost (session-cost messages)}]
+        (reset! usage-cache n)
+        n))))
 (def ^:private one-week-ms (* 7 24 60 60 1000))
 (def ^:private short-reset-formatter (DateTimeFormatter/ofPattern "EEE h:mm a" Locale/ROOT))
 (def ^:private long-reset-formatter (DateTimeFormatter/ofPattern "MMM d h:mm a" Locale/ROOT))
@@ -371,7 +389,7 @@
       ;; Git lives here. Provider usage moved to the second row so it sits
       ;; directly under the repository state instead of competing with it.
       )))
-(defn- build-usage-segments "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared." [{:keys [messages]}] (let [toks (session-tokens messages) cost (session-cost messages) tok-text (when toks (fmt/meta-tokens toks)) cost-text (fmt/meta-cost cost)] (cond-> [] tok-text (conj {:text tok-text, :fg t/footer-fg-muted, :bold? false, :region :right, :priority 2}) cost-text (conj {:text cost-text, :fg t/footer-fg-strong, :bold? false, :region :right, :priority 3}))))
+(defn- build-usage-segments "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared." [{:keys [messages]}] (let [{:keys [tokens cost]} (session-usage messages) toks tokens tok-text (when toks (fmt/meta-tokens toks)) cost-text (fmt/meta-cost cost)] (cond-> [] tok-text (conj {:text tok-text, :fg t/footer-fg-muted, :bold? false, :region :right, :priority 2}) cost-text (conj {:text cost-text, :fg t/footer-fg-strong, :bold? false, :region :right, :priority 3}))))
 (defn- build-limits-segments
   [db now-ms]
   ;; Limits/usage belong to the provider the SESSION actually routes through —
