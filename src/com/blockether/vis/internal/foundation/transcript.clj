@@ -433,7 +433,7 @@
 
 (defn- raw-response-map
   [iteration]
-  (let [blocks (vec (:llm-executable-blocks iteration))]
+  (let [blocks (vec (force (:llm-executable-blocks iteration)))]
     (cond-> {}
       (some? (:llm-raw-response-preview iteration))
       (assoc :preview (:llm-raw-response-preview iteration))
@@ -699,11 +699,12 @@
   (vec
     (mapcat (fn [turn]
               (keep (fn [iter]
-                      (when (or (some? (:llm-raw-response-preview iter))
+                      (let [blocks (force (:llm-executable-blocks iter))]
+                       (when (or (some? (:llm-raw-response-preview iter))
                               (some? (:llm-raw-response-length iter))
                               (some? (:llm-raw-response-sha256 iter))
-                              (seq (:llm-executable-blocks iter)))
-                        (let [executable-blocks (vec (:llm-executable-blocks iter))]
+                              (seq blocks))
+                        (let [executable-blocks (vec blocks)]
                           {:turn-id           (:id turn)
                            :turn-position     (:position turn)
                            :iteration         (:position iter)
@@ -714,7 +715,7 @@
                            :executable-blocks executable-blocks
                            :form-count       (count executable-blocks)
                            ;; STRING-keyed `<-json` blocks — lang by string key.
-                           :block-langs       (mapv #(get % "lang") executable-blocks)})))
+                           :block-langs       (mapv #(get % "lang") executable-blocks)}))))
                 (:iterations turn)))
       turns)))
 
@@ -773,7 +774,7 @@
                       :provider      (:provider iter)
                       :model         (:model iter)
                       :system-prompt (:llm-system-prompt iter)
-                      :messages      (vec (:llm-user-prompt iter))})
+                      :messages      (vec (force (:llm-user-prompt iter)))})
                 (:iterations turn)))
       (:turns data))))
 
@@ -870,7 +871,7 @@
           (render-system-prompt (:llm-system-prompt iter)
             (:llm-system-prompt prev-iter)
             (:position prev-iter))
-          (render-llm-messages (:llm-user-prompt iter))))
+          (render-llm-messages (force (:llm-user-prompt iter)))))
       (cond
         (empty? blocks)
         "_No code blocks (LLM returned an empty response)._\n"

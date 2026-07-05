@@ -1071,8 +1071,10 @@
         ;; :llm-executable-blocks is the single source of truth. JSON columns
         ;; round-trip with STRING keys (`<-json` never keywordizes).
         (expect (nil? (:llm-executable-code iter)))
+        ;; forensic JSON blobs are now parsed lazily on restore (a delay);
+        ;; `force` resolves it (no-op on the plain values live turns build).
         (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
-                  (:llm-executable-blocks iter))))))
+                  (force (:llm-executable-blocks iter)))))))
 
   (it "rejects negative token counts via the schema CHECK"
     (let [s   (h/store)

@@ -91,6 +91,17 @@
    here."
   [s]
   (when s (json/read-json s)))
+(defn- <-json-lazy
+  "Like `<-json` but DEFERRED: returns a `delay` that parses on first `force`.
+   Used for the big per-iteration forensic blobs (`llm_user_prompt`,
+   `llm_executable_code_blocks`, `llm_assistant_message`) that a session restore
+   materialises for EVERY turn but that only the on-demand transcript / resume
+   surfaces ever read. Boot was eager-parsing all of them (the top app cost in a
+   JFR restore profile); this keeps the small raw string and parses only when a
+   reader `force`s it. Readers must `force` — `clojure.core/force` is a no-op on
+   the plain values that LIVE turns build, so mixed live/restored data is safe."
+  [s]
+  (delay (<-json s)))
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
@@ -1749,7 +1760,7 @@
       ;; Forensic fields - the full transcript surface needs these on
       ;; the data shape even when callers don't render them by default.
       (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
-      (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
+      (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json-lazy (:llm_user_prompt row)))
       (some? (:llm_raw_response row))
       (assoc :llm-raw-response (:llm_raw_response row))
       (some? (:llm_raw_response_preview row))
@@ -1759,11 +1770,11 @@
       (some? (:llm_raw_response_sha256 row))
       (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
       (some? (:llm_executable_code_blocks row))
-      (assoc :llm-executable-blocks (<-json (:llm_executable_code_blocks row)))
+      (assoc :llm-executable-blocks (<-json-lazy (:llm_executable_code_blocks row)))
       ;; Canonical assistant message svar emitted on this iteration; rehydrated
       ;; on resume so preserved-thinking replay survives a vis restart.
       (some? (:llm_assistant_message row))
-      (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
+      (assoc :llm-assistant-message (<-json-lazy (:llm_assistant_message row)))
       (some? (:llm_returned_empty_code row))
       (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
       ;; Token / cost columns - ALWAYS present on the read side, with

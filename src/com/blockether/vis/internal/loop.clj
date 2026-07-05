@@ -4164,7 +4164,7 @@
                           ;; replayed across user turns. Keep row diagnostics,
                           ;; but `compatible-preserved-thinking-trailer-iters`
                           ;; rejects this entry before replay.
-                          :assistant-message (:llm-assistant-message it)
+                          :assistant-message (force (:llm-assistant-message it))
                           :preserved-thinking/replay? false}])
                   iters)))
             (catch Throwable t
