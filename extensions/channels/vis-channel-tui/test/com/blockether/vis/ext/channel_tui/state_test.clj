@@ -1130,3 +1130,37 @@
       ;; The LAST thing the bubble saw must still carry the code, not regress.
       (expect (= with-code (last @dispatched)))
       (expect (some #(seq (:forms %)) (:iterations (last @dispatched)))))))
+
+(defdescribe message-received-clears-cancel-flags-test
+  ;; Regression (the 4f0f6ac1 stuck tab): a turn that ends in a
+  ;; provider/transport ERROR must still clear the in-flight flags. :loading?
+  ;; drives the running border, :cancelling? the "Cancelling…" line, and both
+  ;; clear ONLY on :message-received; :cancel-token holds the (now dead) turn
+  ;; future. If a fatal turn skipped :message-received the tab would hang
+  ;; forever showing a running border + "Cancelling…" that no Esc can clear
+  ;; (Esc on a spent token is a no-op). The engine's fatal path returns
+  ;; {:status :error}, the turn-runner dispatches :message-received with that
+  ;; status, and this handler MUST reset all three.
+  (it "an error :message-received clears :loading?, :cancelling? and :cancel-token"
+    (reset! state/app-db
+      {:session       {:id "c1"}
+       :tabs          [{:id :main :label "s" :active? true}]
+       :active-tab-id :main
+       :messages      [{:role :user :text "hi"}
+                       {:role :assistant :pending? true :client-turn-id "t1"}]
+       :loading?      true
+       :cancelling?   true
+       :cancel-token  :tok
+       :turn-start-ms 0
+       :scroll        scroll/follow
+       :render-version 0})
+    (state/dispatch [:message-received
+                     (vis/markdown->ir "Could not reach provider")
+                     {:status :error :client-turn-id "t1"}])
+    (let [db @state/app-db]
+      (expect (false? (:loading? db)))
+      (expect (false? (:cancelling? db)))
+      (expect (nil? (:cancel-token db)))
+      ;; the pending assistant bubble was resolved, not left dangling
+      (expect (not (some #(and (= :assistant (:role %)) (true? (:pending? %)))
+                     (:messages db)))))))
