@@ -4,8 +4,8 @@
    RESOURCE (footer count, F4 dialog, `resource_stop`).
 
    DROPPABLE classpath plug-in. Gated behind the user-owned `:mcp/enabled`
-   toggle (OFF by default — connecting spawns processes / opens network calls,
-   so every verb short-circuits into a refusal until the user flips it).
+   toggle (ON by default — connects automatically when MCP servers are
+   configured; can still be turned off to short-circuit every verb).
 
    Servers are declared natively in `~/.vis/config.edn`:
 
@@ -46,8 +46,8 @@
                   " servers declared in ~/.vis/config.edn (:mcp :servers) and call"
                   " their tools (mcp_servers / mcp_tools / mcp_call). Each live"
                   " connection is a session resource (footer count, F4, resource_stop)."
-                  " OFF by default — connecting spawns processes / network calls.")
-   :default     false
+                  " ON by default — connects automatically when MCP servers are configured.")
+   :default     true
    :owner       "foundation-mcp"
    :group       :tools})
 
@@ -406,7 +406,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-mcp"
-     :ext/description    "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp_servers/mcp_tools/mcp_call), each live connection a session resource. Gated by :mcp/enabled (OFF by default). Activates when servers are configured."
+     :ext/description    "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp_servers/mcp_tools/mcp_call), each live connection a session resource. Gated by :mcp/enabled (ON by default). Activates when servers are configured."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

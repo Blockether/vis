@@ -419,18 +419,22 @@
     (register-toggle!
       {:id :vis/mouse-selection-copy :label "Mouse selection auto-copy"
        :description "Drag-select visible text; copied automatically on mouse release."
-       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
+       ;; ALWAYS ON — no longer a user-facing setting. Kept registered so the
+       ;; screen consumer + CLI overrides still resolve it, but `:settings? false`
+       ;; keeps it out of every Settings dialog.
+       :default true :settings? false :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
       {:id :network/enabled :label "Network access (Python sandbox)"
        :description (str "Let the Python sandbox open sockets (urllib/requests/socket). "
-                      "OFF by default — this toggle is the REAL boundary (off = no sockets). "
+                      "ALWAYS ON — the sandbox always has host socket access. "
                       "Host policy in config.edn :network is a best-effort GUARDRAIL for "
                       "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
                       "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
                       "cloud-metadata SSRF defaults.")
-       ;; A host capability, not a display concern — channel-neutral, persisted.
-       :default false :owner :vis :group :capabilities :persist? true})
+       ;; A host capability, not a display concern. ON by default and out of the
+       ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
+       :default true :settings? false :owner :vis :group :capabilities :persist? true})
 
     (register-toggle!
       {:id :voice/respond :label "Voice respond to answers"

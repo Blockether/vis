@@ -404,7 +404,11 @@
           ;; solarized themes ship in the core registry alongside vis-dark/light
           (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
                     (:choices (first (filter #(= :theme-name (:key %)) rows)))))
-          (expect (some #(= :mouse-selection-copy (:key %)) rows))
+          ;; Mouse auto-copy is now ALWAYS ON (`:settings? false`) — out of Settings.
+          (expect (not-any? #(= :mouse-selection-copy (:key %)) rows))
+          (expect (not-any? #(= :vis/mouse-selection-copy (:toggle-id %)) rows))
+          ;; Network access is ALWAYS ON too — also out of Settings.
+          (expect (not-any? #(= :network/enabled (:toggle-id %)) rows))
           ;; Remaining registry toggle (tools) shows; the retired display gates
           ;; (show-thinking/iterations/silent/timestamps) and the own-control
           ;; knobs (reasoning-effort :settings? false) are NOT in the list.
