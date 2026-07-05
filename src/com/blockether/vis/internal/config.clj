@@ -72,6 +72,98 @@
     (= (aget b 2) (byte 0x36))   ;; 6
     (= (aget b 3) (byte 0x6e)))) ;; n
 
+(def render-diagnostics
+  "Self-instrumentation for the TUI render path. When `VIS_RENDER_DIAG` is
+   set the render pipeline records terminal-AGNOSTIC counters here — bytes
+   emitted per frame, frame count, per-frame-type histogram, render-loop
+   wakeups — so we can measure the real per-frame work even inside tmux,
+   which batches the terminal's own paint cost out of view. nil = off, so
+   every call site is a single nil-check on the hot path when disabled."
+  (when (some? (System/getenv "VIS_RENDER_DIAG"))
+    (atom {:frames 0, :bytes 0, :max-frame-bytes 0,
+           :frame-types {}, :wakeups 0, :no-paint 0,
+           ;; phase-key -> {:ns cumulative-nanos, :n samples}. Populated by
+           ;; `diag-phase!` so the logger can show where a full frame's time
+           ;; actually goes (layout / draw-messages / header / chrome / …).
+           :phases {}})))
+
+(defmacro diag-phase!
+  "Time `body`, attributing its wall-nanos to phase `k` in the diagnostics
+   atom. When diagnostics are off this expands to plain `body` (zero
+   overhead — no timing, no atom touch). `k` is a keyword like :layout."
+  [k & body]
+  `(if-let [d# render-diagnostics]
+     (let [t0# (System/nanoTime)
+           res# (do ~@body)
+           dt# (- (System/nanoTime) t0#)]
+       (swap! d# update-in [:phases ~k]
+         (fn [p#] (-> (or p# {:ns 0, :n 0})
+                    (update :ns + dt#)
+                    (update :n inc))))
+       res#)
+     (do ~@body)))
+
+(defn diag-frame!
+  "Record one flushed frame of `n` bytes. No-op when diagnostics are off."
+  [^long n]
+  (when-let [d render-diagnostics]
+    (swap! d (fn [m]
+               (-> m
+                 (update :frames inc)
+                 (update :bytes + n)
+                 (update :max-frame-bytes max n))))))
+
+(defn diag-loop!
+  "Record one render-loop iteration: `frame-type` is the path taken
+   (:full / :partial-live / :header-hover / :header-spinner / :blocked) or
+   nil when the iteration parked without painting. No-op when off."
+  [frame-type]
+  (when-let [d render-diagnostics]
+    (swap! d (fn [m]
+               (-> m
+                 (update :wakeups inc)
+                 (cond-> (nil? frame-type) (update :no-paint inc)
+                         (some? frame-type) (update-in [:frame-types frame-type] (fnil inc 0))))))))
+
+(defn start-render-diagnostics-logger!
+  "When diagnostics are enabled, spawn a daemon that prints a one-line
+   `RENDER-DIAG` summary each second to *out* (redirected to ~/.vis/vis.log
+   under the TUI). Prints per-second DELTAS so the fields read as rates:
+   fps, bytes/s, average and high-water frame size, render-loop wakeups/s,
+   parked-without-paint/s, and the frame-type histogram for the interval.
+   No-op when diagnostics are off."
+  []
+  (when-let [d render-diagnostics]
+    (doto (Thread.
+            ^Runnable
+            (fn []
+              (loop [prev @d]
+                (Thread/sleep 1000)
+                (let [cur   @d
+                      df    (- (long (:frames cur))   (long (:frames prev)))
+                      db    (- (long (:bytes cur))    (long (:bytes prev)))
+                      dw    (- (long (:wakeups cur))  (long (:wakeups prev)))
+                      dnp   (- (long (:no-paint cur)) (long (:no-paint prev)))
+                      types (into {} (remove (comp zero? val)
+                                      (merge-with - (:frame-types cur) (:frame-types prev))))
+                      ;; Per-phase average microseconds over THIS interval:
+                      ;; (Δcumulative-ns / Δsamples) / 1000.
+                      phases (into (sorted-map)
+                               (keep (fn [[k pc]]
+                                       (let [pp (get (:phases prev) k {:ns 0, :n 0})
+                                             dn (- (long (:n pc)) (long (:n pp)))
+                                             dns (- (long (:ns pc)) (long (:ns pp)))]
+                                         (when (pos? dn)
+                                           [k (str (quot (quot dns dn) 1000) "us")])))
+                                 (:phases cur)))]
+                  (println (format "RENDER-DIAG fps=%d bytes/s=%d avg-frame=%d max-frame=%d wakeups/s=%d no-paint/s=%d types=%s phases=%s"
+                             df db (if (pos? df) (quot db df) 0) (long (:max-frame-bytes cur))
+                             dw dnp (pr-str types) (pr-str phases)))
+                  (recur cur)))))
+      (.setName "vis-render-diag")
+      (.setDaemon true)
+      (.start))))
+
 (defn frame-buffered-tty-out
   "Wrap the raw tty stream so a whole repaint reaches the terminal as ONE
    atomic write instead of one write(2) syscall PER CELL.
@@ -117,6 +209,7 @@
           (let [^ByteArrayOutputStream buf (.get buf-holder)
                 n (.size buf)]
             (when (pos? n)
+              (diag-frame! n)
               (.write raw sync-update-begin)
               (.writeTo buf raw)
               (.write raw sync-update-end)
