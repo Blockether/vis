@@ -248,67 +248,53 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 ## 5. GraalVM, native image & commercial-use rights
 
 `vis` ships as a **GraalVM native binary**, and two distinct GraalVM layers are
-involved — they carry different licenses, and the distinction is what matters to
-anyone who wants to **sell or redistribute vis for a fee**.
+involved. Both are now **FOSS**: the release binary is built with **GraalVM
+Community Edition**, so there is **no Oracle license on the distributed binary**
+at all — which is what matters to anyone who wants to **sell or redistribute
+vis**.
 
 ### The two layers
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
 | **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.1.3` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
-| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **Oracle GraalVM for JDK 25.1.3**, via `graalvm/setup-graalvm` (`distribution: graalvm` in `.github/workflows/native.yml`) | **GFTC** (GraalVM Free Terms & Conditions) | **Restricted — see below** |
+| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
-### What GFTC allows — and the one catch
+### Why GraalVM CE — the Classpath Exception is the whole point
 
-Oracle GraalVM under the **GFTC** is *free for any user, including commercial and
-production use* — no license fee, no subscription, no click-through. You may
-develop, run and internally deploy vis at zero cost, indefinitely.
+GraalVM CE's native-image compiler is licensed **GPL-2.0 with the Classpath
+Exception**. That exception is the decisive clause: it explicitly lets the
+**output** of the tool — the native binary vis produces — be distributed and
+**sold under any terms you choose**, with **no copyleft reaching your own
+code**. This is the same license posture the entire Java/OpenJDK ecosystem
+ships under, and it is the standard route for commercial native-image products.
 
-The catch is **redistribution**. GFTC §3(b) permits redistributing the Program
-only *"provided that You do not charge Your licensees any fees … including …
-fees for products that include or are bundled with a copy of the Program"*, and
-it explicitly extends that to native-image output:
+Because vis is built with **CE** (not Oracle GraalVM), the "redistribution for
+a fee" restriction that Oracle's GFTC imposes simply **does not apply**. There
+is no Oracle build-tool license baked into the binary to reason about — the
+story a bank's legal desk sees is just *"GPL-2.0 + Classpath Exception"*, a
+license they already know. (The embedded GraalPy/Truffle Maven artifacts above
+are UPL and independent of the build tool either way.)
 
-> *"those portions of a Program … produced as output resulting from running the
-> unmodified Program (such as may be produced by use of GraalVM Native Image)
-> shall be deemed to be an unmodified Program for the purposes of this license."*
-
-**In plain terms:** because vis's release binary is built with **Oracle** GraalVM
-native-image, the GraalVM runtime bits baked into that binary count as "the
-Program", so distributing *that specific binary* **for a fee** falls outside the
-free GFTC grant. (The embedded GraalPy/Truffle Maven artifacts above are UPL and
-are unaffected — this catch is purely about the Oracle build tool.)
+> **Historical note:** vis previously built with **Oracle GraalVM** under the
+> **GFTC** (GraalVM Free Terms & Conditions). GFTC permits free commercial and
+> production *use*, but restricts redistributing the built binary **for a fee**.
+> The release build was moved to **GraalVM CE** (`.github/actions/setup-graalvm-25`,
+> replacing `graalvm/setup-graalvm`'s `distribution: graalvm`) to remove that
+> restriction — and Oracle from the risk register — entirely.
 
 ### What the owner of vis can do
 
-- **Use it, run it, deploy it internally — for free.** Commercial and production
-  use of Oracle GraalVM is explicitly permitted at no cost.
+- **Use it, run it, deploy it internally — for free.** CE is free for any use,
+  commercial and production alike.
 - **Modify vis.** First-party code is **Apache-2.0**; every dependency is
-  permissive (see §4). You own your changes.
+  permissive (see §4); the CE Classpath Exception keeps your changes proprietary.
+  You own your changes.
 - **Redistribute the vis source + its permissive deps for a fee.** Apache-2.0 /
   UPL / MIT / EPL / BSD all allow commercial redistribution, including charging.
-- **Redistribute the Oracle-GraalVM-built *binary* at no charge.** GFTC permits
-  free redistribution — the restriction is only on charging a fee for it.
-
-### To charge a fee for the binary — the clean paths (pick one, confirm with legal)
-
-1. **Build the release binary with a GPL-2.0+CE native-image** instead of Oracle
-   GraalVM — **GraalVM Community Edition**, **Mandrel** (Red Hat) or **Liberica
-   NIK**. Their native-image is **GPL-2.0 with Classpath Exception**, and that
-   Classpath Exception explicitly lets the *output binary* be distributed and
-   sold under any terms. This is the standard route for commercial native-image
-   products, and only the CI build step changes (`distribution:` in
-   `.github/workflows/native.yml`) — not a line of vis code.
-2. **Hold an Oracle Java SE Universal Subscription**, which covers commercial
-   distribution of Oracle-GraalVM-built binaries and adds Oracle support.
-3. **Charge only for services** (support, hosting, integration) and hand the
-   Oracle-GraalVM binary over at no charge.
-
-> **Action for legal:** vis is currently built with Oracle GraalVM
-> (`distribution: graalvm`). If Blockether / RBI will charge a fee for the
-> *binary itself*, switch the release build to GraalVM CE / Mandrel (option 1)
-> or secure an Oracle subscription (option 2). Selling **services** around a
-> free binary (option 3) needs no change.
+- **Redistribute the native *binary* — free or for a fee.** The GPL-2.0+CE
+  Classpath Exception on the CE build tool puts **no charge restriction** on the
+  output binary. Sell it, bundle it, ship it to RBI — all clean.
 
 ---
 
@@ -365,9 +351,9 @@ licenses above and is entirely at the user's own risk.
 - [ ] Add the free **NVD API key** secret and evaluate switching CI to the
       `dependency-check` strategy for full CVSS scoring.
 - [ ] Resolve the **LGPL / Lanterna** distribution question (§4) with legal.
-- [ ] Decide the **native-image distribution** for paid delivery (§5): keep Oracle
-      GraalVM (free binary only) or switch the release build to GraalVM CE /
-      Mandrel to charge a fee for the binary.
+- [x] **Native-image distribution** for paid delivery (§5): **done** — the release
+      build uses **GraalVM CE** (GPL-2.0 + Classpath Exception), so the binary can
+      be shipped or sold under any terms. Oracle GraalVM/GFTC no longer applies.
 - [ ] Flip on the CI **fail gate** (`-f` / `-c`) once the first clean baseline lands.
 - [ ] _(from Wojtek — pending input)_ additional compliance / threat-model items.
 

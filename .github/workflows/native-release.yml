@@ -43,15 +43,17 @@ jobs:
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-voice.exe, args: ":profile :voice :with-assets true" }
     steps:
       - uses: actions/checkout@v4
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          # Exact pin on the newest GraalVM feature release (monthly 25.1+ train,
-          # Oracle 25i1 channel; GraalVM ships no JDK 26/27/28). Bump together
-          # with deps.edn's org.graalvm.* pins — Truffle/SVM refuse mismatches.
-          java-version: '25.1.3'
-          distribution: 'graalvm'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          native-image-job-reports: 'true'
+      # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
+      # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
+      # the distributed binary, so the redistribution/license story stays FOSS.
+      # Bump the version inside the action together with deps.edn's org.graalvm.*
+      # pins — Truffle/SVM refuse mismatches.
+      - uses: ./.github/actions/setup-graalvm-25
+      # native-image links through the platform C toolchain; on Windows that's
+      # MSVC, which graalvm/setup-graalvm used to configure for us. The CE
+      # composite doesn't, so set the MSVC dev environment up explicitly.
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
@@ -85,14 +87,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          # Exact pin on the newest GraalVM feature release (monthly 25.1+ train,
-          # Oracle 25i1 channel; GraalVM ships no JDK 26/27/28). Bump together
-          # with deps.edn's org.graalvm.* pins — Truffle/SVM refuse mismatches.
-          java-version: '25.1.3'
-          distribution: 'graalvm'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — same pinned
+      # graalvm-ce-builds asset CI installs. This job only builds the JVM uberjar
+      # (no native linker / MSVC needed). Bump the version inside the action
+      # together with deps.edn's org.graalvm.* pins — Truffle/SVM refuse mismatches.
+      - uses: ./.github/actions/setup-graalvm-25
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
