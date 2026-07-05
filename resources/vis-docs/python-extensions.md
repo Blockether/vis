@@ -139,9 +139,11 @@ handy for scanning op args for paths.
 
 ## Durable state
 
-`vis.state` is a dict-like store persisted to
-`~/.vis/python-extensions/state/<file>.edn` — it survives `/reload` and
-process restarts, and is scoped to the extension file (never shared).
+`vis.state` is a dict-like store persisted to the database (the same
+`vis.db` sessions live in, under the `extension_aggregate` table) — no files
+on disk. It survives `/reload` and process restarts, and is owned by the
+extension **name** (a project-local override of a global extension shares its
+state; two different extensions never do).
 
 ```python
 vis.state["repo"] = "acme/widgets"      # write-through
@@ -190,7 +192,7 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
 ## Reloading
 
 - `/reload` — tears down every Python extension (contexts closed) and loads
-  the current files fresh. State survives (it lives in the EDN file).
+  the current files fresh. State survives (it lives in the database).
 - Changes propagate to LIVE sessions immediately: new/changed slash
   commands dispatch right away and reloaded tools rebind into the sandbox
   — no restart, no new session.

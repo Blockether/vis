@@ -6,6 +6,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.persistance :as ps]
    [com.blockether.vis.internal.python-extensions :as pyx]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -26,18 +27,19 @@
 
 (defn- with-loaded
   "Load `.py` sources (map of filename -> source) from a temp dir with
-   state confined to a sibling temp dir, run `f` with the load result,
-   then tear everything down so tests stay isolated."
+   `vis.state` confined to a throwaway in-memory DB, run `f` with the load
+   result, then tear everything down so tests stay isolated."
   [sources f]
   (let [ext-dir (temp-dir)
-        state-dir (temp-dir)]
+        store   (ps/db-create-connection! :memory)]
     (doseq [[fname src] sources] (write-ext! ext-dir fname src))
-    (binding [pyx/*state-dir* (str state-dir)]
+    (binding [pyx/*state-env* {:db-info store}]
       (try
         (f (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-          {:ext-dir ext-dir :state-dir state-dir})
+          {:ext-dir ext-dir :store store})
         (finally
-          (pyx/reload-python-extensions! {:dirs []}))))))
+          (pyx/reload-python-extensions! {:dirs []})
+          (ps/db-dispose-connection! store))))))
 
 (defn- registered [ext-name]
   (some #(when (= ext-name (:ext/name %)) %) (extension/registered-extensions)))
@@ -143,7 +145,7 @@ vis.extension(
 ;; =============================================================================
 
 (defdescribe state-durability-test
-  (it "vis.state survives a full reload (fresh contexts, same EDN file)"
+  (it "vis.state survives a full reload (fresh contexts, same DB)"
     (with-loaded {"counter.py" counter-py}
       (fn [_ {:keys [ext-dir]}]
         (let [bump (symbol-fn (registered "counter") 'bump)]
@@ -334,14 +336,15 @@ vis.extension(
   (it "a later dir (project) wins over an earlier one (global) for the same extension name"
     (let [global (temp-dir)
           project (temp-dir)
-          state (temp-dir)]
+          store (ps/db-create-connection! :memory)]
       (write-ext! global "counter.py" counter-py)
       (write-ext! project "counter.py"
         (str/replace counter-py "Counter fixture extension." "Project counter."))
-      (binding [pyx/*state-dir* (str state)]
+      (binding [pyx/*state-env* {:db-info store}]
         (try
           (let [result (pyx/reload-python-extensions! {:dirs [(str global) (str project)]})]
             (expect (= 1 (:loaded result)))
             (expect (= "Project counter." (:ext/description (registered "counter")))))
           (finally
-            (pyx/reload-python-extensions! {:dirs []})))))))
+            (pyx/reload-python-extensions! {:dirs []})
+            (ps/db-dispose-connection! store)))))))
