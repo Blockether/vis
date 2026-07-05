@@ -145,6 +145,16 @@
 (def ^:private AUTO_TITLE_IDLE_MS 10000)
 (def ^:private AUTO_TITLE_SEMANTIC_MS 30000)
 
+(def ^:private AUTO_TITLE_HARD_DEADLINE_MS
+  "Absolute wall-clock cap on the whole auto-title provider attempt. svar's
+   soft ttft/idle/semantic timeouts have been observed NOT to fire on some
+   transport hangs (a socket that dies before headers, or trickles below the
+   idle threshold) — a title future then parked for HOURS, well past its turn,
+   which left the fallback (sequenced AFTER the call) unreachable and the tab
+   untitled. This hard cap guarantees the call returns so the deterministic
+   fallback that was already written up front stays put."
+  45000)
+
 (def ^:private auto-title-placeholder-labels
   #{"untitled" "untitled session"})
 
@@ -246,58 +256,109 @@
    :github-copilot-enterprise])
 
 (defn- model-auto-title!
-  "Generate a session title before the main provider call, off the model's
-   visible surface. A single `ask!` declares the preferred plan order via
-   `:prefer-providers`; svar walks it natively (cheapest+fastest model per
-   plan, falling through on model-unsupported / transient failure) so there is
-   no host-side provider loop. Returns nil if the whole chain fails (the caller
-   then keeps the previous title or uses the deterministic fallback)."
+  "Generate a session title off the model's visible surface. A single `ask!`
+   declares the preferred plan order via `:prefer-providers`; svar walks it
+   natively (cheapest+fastest model per plan, falling through on
+   model-unsupported / transient failure) so there is no host-side provider
+   loop. The whole call is wrapped in a HARD wall-clock deadline
+   (`AUTO_TITLE_HARD_DEADLINE_MS`) because svar's soft timeouts have been seen
+   to miss some transport hangs. Returns nil (loudly — at `:warn`, so failures
+   are visible, not a silent `:debug`) when the chain fails or the deadline
+   trips; the caller then keeps the deterministic fallback."
   [{:keys [router]} previous-title user-request]
-  (let [resp (try
-               (svar/ask! router
-                 (rt/with-default-ask-code-idle-timeout
-                   {:messages            (auto-title-prompt previous-title user-request)
-                    :spec                auto-title-spec
-                    :reasoning           :off
-                    :routing             {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
-                                          :optimize         [:cost :speed]}
-                    :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
-                    :idle-timeout-ms     AUTO_TITLE_IDLE_MS
-                    :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))
-               (catch Throwable t
-                 (tel/log! {:level :debug
-                            :id ::auto-title-call-failed
-                            :data {:error (ex-message t)}}
-                   "Auto-title call failed across all preferred providers")
-                 nil))]
-    (sanitize-auto-title (some-> resp :result :title))))
+  (let [fut     (future
+                  (try
+                    {:ok (svar/ask! router
+                           (rt/with-default-ask-code-idle-timeout
+                             {:messages            (auto-title-prompt previous-title user-request)
+                              :spec                auto-title-spec
+                              :reasoning           :off
+                              :routing             {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
+                                                    :optimize         [:cost :speed]}
+                              :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
+                              :idle-timeout-ms     AUTO_TITLE_IDLE_MS
+                              :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
+                    (catch Throwable t {:error t})))
+        outcome (deref fut AUTO_TITLE_HARD_DEADLINE_MS ::deadline)]
+    (cond
+      (= ::deadline outcome)
+      (do (future-cancel fut)
+          (tel/log! {:level :warn
+                     :id ::auto-title-deadline
+                     :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
+                            :providers   (vec AUTO_TITLE_PROVIDER_ORDER)}}
+            "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
+          nil)
+
+      (:error outcome)
+      (do (tel/log! {:level :warn
+                     :id ::auto-title-call-failed
+                     :data {:error     (ex-message (:error outcome))
+                            :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
+            "Auto-title provider chain failed; keeping deterministic fallback")
+          nil)
+
+      :else
+      (sanitize-auto-title (some-> outcome :ok :result :title)))))
+
+(defonce ^:private provisional-title-sessions
+  ;; #{session-id-uuid ...} — sessions whose CURRENT persisted title is a
+  ;; deterministic FALLBACK (first-words of the request), not an LLM title.
+  ;; These stay eligible for ONE more LLM upgrade on a later turn (once a
+  ;; degraded/rate-limited provider chain recovers), unlike a real LLM title
+  ;; which is generated once and then frozen. In-process only: a restart
+  ;; re-freezes a provisional title (its provenance is not persisted — that
+  ;; would need a `session_state` schema column).
+  (atom #{}))
+
+(defn- provisional-title?
+  [session-id]
+  (contains? @provisional-title-sessions (persistance/->uuid session-id)))
+
+(defn- mark-provisional-title!
+  [session-id provisional?]
+  (let [cid (persistance/->uuid session-id)]
+    (swap! provisional-title-sessions (if provisional? conj disj) cid))
+  nil)
+
+(defn- title-needs-generation?
+  "True when the session has NO usable title, OR its current title is a
+   PROVISIONAL deterministic fallback (eligible for one more LLM upgrade). A
+   real LLM title is frozen and re-titling is skipped."
+  [session-id session-title-atom]
+  (or (not (usable-existing-title (some-> session-title-atom deref)))
+    (provisional-title? session-id)))
 
 (defn maybe-auto-title!
-  "Generate the session title ONCE, asynchronously, the first time a normal
-   LLM turn runs without a usable title. After a title exists it is never
-   regenerated - re-titling every turn only churns the channel chrome. Titles
-   are host-owned; there is no model-facing override. Returns a
-   future or nil; callers intentionally do not wait."
+  "Title the session asynchronously on a normal LLM turn. Two-phase so a slow
+   or hung provider can never leave the tab untitled:
+
+   1. FALLBACK-FIRST — write a deterministic first-words title up front (it
+      cannot hang), marked PROVISIONAL, so the tab is titled instantly.
+   2. LLM UPGRADE — a hard-deadline-bounded `ask!` (`model-auto-title!`) that
+      OVERWRITES the fallback with a real title and freezes it. On failure the
+      provisional fallback stays and a LATER turn retries the upgrade.
+
+   A real (non-provisional) LLM title is generated once and never regenerated.
+   Titles are host-owned; there is no model-facing override. Returns a future
+   or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env)
-          (not (usable-existing-title (some-> session-title-atom deref))))
+          (title-needs-generation? session-id session-title-atom))
     (future
       ;; Announce "generating title" so a channel (TUI) can spinner the
       ;; tab; always clear it in the finally.
       (broadcast-title-pending! session-id true)
       (try
-        (let [title (or (try
-                          (model-auto-title! env nil user-request)
-                          (catch Throwable t
-                            (tel/log! {:level :warn
-                                       :id ::auto-title-failed
-                                       :data {:session-id session-id
-                                              :error (ex-message t)}}
-                              "Auto-title LLM call failed; using deterministic fallback")
-                            nil))
-                      (fallback-auto-title user-request))]
-          (when (seq title)
-            (set-title-with-broadcast! db-info session-id session-title-atom title)))
+        ;; 1. Fallback-first: never leave the tab untitled while the LLM runs.
+        (when-not (usable-existing-title (some-> session-title-atom deref))
+          (when-let [fallback (fallback-auto-title user-request)]
+            (set-title-with-broadcast! db-info session-id session-title-atom fallback)
+            (mark-provisional-title! session-id true)))
+        ;; 2. LLM upgrade: overwrite + freeze on success; keep fallback on fail.
+        (when-let [title (model-auto-title! env nil user-request)]
+          (set-title-with-broadcast! db-info session-id session-title-atom title)
+          (mark-provisional-title! session-id false))
         (catch Throwable t
           (tel/log! {:level :warn
                      :id ::auto-title-update-failed

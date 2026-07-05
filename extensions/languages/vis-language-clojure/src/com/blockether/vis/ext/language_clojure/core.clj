@@ -18,7 +18,6 @@
    [com.blockether.vis.ext.language-clojure.lint :as lint]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
-   [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
    [com.blockether.vis.internal.extension :as extension]
@@ -49,7 +48,7 @@
 
         ;; (2) project-file probe
         (some (fn [n] (.exists (io/file root n)))
-          ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn" ".nrepl-port"])
+          ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn"])
 
         ;; (3) bounded fallback scan
         (try
@@ -92,83 +91,89 @@
     :else            [(name a)]))
 
 (defn- repl-resource-id
-  ([dir] (repl-resource-id dir nil))
-  ([dir id]
-   (let [id (some-> id str str/trim)]
-     (if (seq id)
-       id
-       (str "nrepl:" dir)))))
+  "Stable session-resource id for the REPL rooted at `dir` — the SAME id
+   `repl-manager/id-of` stamps, so ctx, eval targeting, and the footer all agree
+   on one name per dir. Addressing a REPL is always by this id."
+  [dir]
+  (repl-manager/id-of dir))
 
 (defn register-repl-resource!
-  "Mirror a managed nREPL into the session-scoped resource registry so it shows
-   in ctx (resources) + the footer, and can be stopped/restarted by id
+  "Mirror a session's managed nREPL into the session-scoped resource registry so
+   it shows in ctx (resources) + the footer, and can be stopped/restarted by id
    from the agent or the UI. No-op without a session or a live spawn. The
    stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
-   resource_stop both drive repl-manager through them."
-  [session dir aliases result & [id]]
+   resource_stop both drive repl-manager through them, scoped to `session-id`."
+  [session-id dir aliases result]
   ;; `result` is repl-manager/start!'s STRING-keyed lifecycle map. The resource
   ;; map handed to `vis/register-resource!` is the CENTRAL resources.clj DATA
   ;; shape (keyword keys/values) — that projection is what crosses to the model,
   ;; and its strings-only migration lives in resources.clj (flagged hand-off).
-  (when (and session (or (get result "pid") (get result "port")))
-    (vis/register-resource! session
-      {:id     (repl-resource-id dir id)
-       :kind   :nrepl
-       :label  (str "nREPL " (.getName (io/file dir))
-                 (when (seq aliases) (apply str (map #(str " :" %) aliases))))
-       :status (or (get result "status") :up)
-       ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
-       ;; stringifies its own keys + the kind/status/owner/language enums), so it
-       ;; must already be STRING-keyed to survive the strings-only boundary.
-       :detail (cond-> {"dir" dir}
-                 (get result "port") (assoc "port" (get result "port"))
-                 (seq aliases)       (assoc "aliases" (vec aliases)))
-       :pid    (get result "pid")
-       :owner  :ext/language-clojure
-       :language :clojure}
-      {:stop-fn    (fn [] (repl-manager/stop! dir))
-       :restart-fn (fn []
-                     (repl-manager/stop! dir)
-                     (let [r (repl-manager/start! dir {:aliases aliases})]
-                       (register-repl-resource! session dir aliases r id)
-                       r))})
-    ;; Surface the registration in the TUI (header toast) so a spawned REPL is
-    ;; visible the moment it lands, not just as a silent ● bump in the footer.
-    (vis/notify! (str "● nREPL up — " (.getName (io/file dir))
-                   (when-let [p (get result "port")] (str " :" p)))
-      :level :success :ttl-ms 4000)))
+  (when (and session-id (or (get result "pid") (get result "port")))
+    (let [;; Prefer the aliases start! actually booted with (STRING names) so the
+          ;; label/detail reflect the real [:dev :test] classpath even when the
+          ;; caller passed none.
+          aliases (or (seq (get result "aliases")) (map name (or aliases [])))
+          id      (repl-resource-id dir)]
+      (vis/register-resource! session-id
+        {:id       id
+         :kind     :nrepl
+         :label    (str "nREPL " (.getName (io/file dir))
+                     (when (seq aliases) (apply str (map #(str " :" %) aliases))))
+         :status   (or (get result "status") :up)
+         ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
+         ;; stringifies its own keys + the kind/status/owner/language enums), so it
+         ;; must already be STRING-keyed to survive the strings-only boundary.
+         :detail   (cond-> {"dir" dir}
+                     (get result "port") (assoc "port" (get result "port"))
+                     (seq aliases)       (assoc "aliases" (vec aliases)))
+         :pid      (get result "pid")
+         :owner    :ext/language-clojure
+         :language :clojure}
+        {:stop-fn    (fn [] (repl-manager/stop! session-id dir))
+         :restart-fn (fn []
+                       (repl-manager/stop! session-id dir)
+                       (let [r (repl-manager/start! session-id dir {:aliases aliases})]
+                         (register-repl-resource! session-id dir aliases r)
+                         r))})
+      ;; Surface the registration in the TUI (header toast) so a spawned REPL is
+      ;; visible the moment it lands, not just as a silent ● bump in the footer.
+      (vis/notify! (str "● nREPL up — " (.getName (io/file dir))
+                     (when-let [p (get result "port")] (str " :" p)))
+        :level :success :ttl-ms 4000))))
 
 (defn clj-repl-fn
-  "Manage a workspace nREPL. Positional op (default \"status\") + optional opts
-   dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
+  "Manage THIS session's workspace nREPL(s). Positional op (default \"status\") +
+   optional opts dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
-     \"status\"  — managed-process + discovered-port view (always allowed)
-     \"start\"   — self-start a project nREPL subprocess (always allowed)
+     \"status\"  — managed-process view for this session (always allowed)
+     \"start\"   — self-start a project nREPL subprocess (always allowed, autostart
+                 is the norm; the model rarely needs to call this by hand)
      \"restart\" — stop then start (always allowed)
-     \"stop\"    — stop the Vis-managed nREPL (always allowed)
+     \"stop\"    — stop this session's Vis-managed nREPL (always allowed)
 
-   \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the
-   workspace root; \"aliases\" become deps.edn aliases / lein profiles. Live
-   nREPL state already rides in ctx under
-   `:session/env :languages :clojure :nrepl`; this tool acts on it."
+   \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the workspace
+   root — that's how MULTIPLE REPLs coexist, each addressed by its id. \"aliases\"
+   default to [:dev :test] (full deps/paths, user :main-opts dropped). Live nREPL
+   state already rides in ctx under `:session/env :languages :clojure :nrepl`;
+   this tool acts on it."
   ([env] (clj-repl-fn env "status" nil))
   ([env op] (clj-repl-fn env op nil))
   ([env op opts]
    (let [root    (env-root env)
+         sid     (:session-id env)
          ;; Positional op arrives as a STRING from the model (strings-only
          ;; boundary); dispatch on it directly, no keyword minting. Default
          ;; "status".
          op      (if (string? op) op "status")
          opts    (when (map? opts) opts)
-         id      (or (get opts "id") (get opts "repl_id"))
          dir     (resolve-repl-dir root (get opts "dir"))
          aliases (coerce-aliases (get opts "aliases"))]
      (case op
-       "status"  (extension/success {:result (repl-manager/status dir)})
-       "stop"    (let [r (repl-manager/stop! dir)]
+       "status"  (extension/success {:result (repl-manager/status sid dir)})
+       "stop"    (let [r (repl-manager/stop! sid dir)]
                    ;; Drop the session's resource mirror (best-effort; the thunk
                    ;; already ran the real teardown above).
-                   (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+                   (vis/unregister-resource! sid (repl-resource-id dir))
                    (extension/success {:result r}))
        ("start" "restart")
        (do
@@ -176,12 +181,11 @@
            (throw (ex-info (str "clj_repl \"" op "\" target dir does not exist: " dir)
                     {:type :clj/bad-args :dir dir})))
          (let [result (if (= op "restart")
-                        (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
-                        (repl-manager/start! dir {:aliases aliases}))]
+                        (do (repl-manager/stop! sid dir) (repl-manager/start! sid dir {:aliases aliases}))
+                        (repl-manager/start! sid dir {:aliases aliases}))]
            ;; Mirror the live REPL into the session resource registry → ctx +
-           ;; footer + stoppable by id. External (not-ours) REPLs carry no pid,
-           ;; so register-repl-resource! no-ops on them.
-           (register-repl-resource! (:session-id env) dir aliases result id)
+           ;; footer + stoppable by id.
+           (register-repl-resource! sid dir aliases result)
            (extension/success {:result result})))
        (throw (ex-info (str "clj_repl unknown op: " (pr-str op))
                 {:type :clj/bad-args :got op
@@ -192,19 +196,19 @@
 (defn ui-start-repl!
   "Channel-invokable nREPL start for the Resources UI (web modal / TUI F4).
    Resolves the workspace dir from `env`, starts a managed nREPL with `aliases`
-   (vec/seq of keyword-or-string names, or nil), and mirrors it into the session
-   resource registry (ctx + footer + stop/restart). ALWAYS allowed: the
-   `clj_repl` flag gates only the MODEL's self-start — a user clicking Start is
-   explicit consent. Returns the start result map."
+   (vec/seq of keyword-or-string names, or nil → [:dev :test]), and mirrors it
+   into the session resource registry (ctx + footer + stop/restart). ALWAYS
+   allowed: a user clicking Start is explicit consent. Returns the start result."
   [env aliases]
   (let [root (env-root env)
+        sid  (:session-id env)
         dir  (resolve-repl-dir root nil)
         als  (coerce-aliases aliases)]
     (when-not (.isDirectory (io/file dir))
       (throw (ex-info (str "REPL target dir does not exist: " dir)
                {:type :clj/bad-args :dir dir})))
-    (let [result (repl-manager/start! dir {:aliases als})]
-      (register-repl-resource! (:session-id env) dir als result)
+    (let [result (repl-manager/start! sid dir {:aliases als})]
+      (register-repl-resource! sid dir als result)
       result)))
 
 (defn available-aliases
@@ -238,46 +242,28 @@
                     :examples ["clj_eval(\"(+ 1 1)\")"
                                "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
-(defn- resolve-eval-port
-  "Pick the nREPL port for an eval. Priority:
-     1. explicit `port`;
-     2. the registered REPL resource named by `id`/`repl_id` — so the model can
-        TARGET a specific REPL it started (previously SILENTLY IGNORED, always
-        falling back to discovery); errors if that id isn't live;
-     3. the first DISCOVERED port that PROBES live (so a stale `.nrepl-port` no
-        longer wins over a live REPL elsewhere);
-     4. the first discovered (a lone stale port is still tried so its connect
-        error surfaces, instead of being silently preferred)."
-  [env root host port rid]
-  (cond
-    port port
-    ;; `get-resource` returns the STRING-keyed resources.clj DATA map; its
-    ;; "detail" is the verbatim string-keyed detail we registered.
-    rid  (or (some-> (vis/get-resource (:session-id env) rid) (get-in ["detail" "port"]))
-           (throw (ex-info (str "no nREPL registered under id '" rid
-                             "' — check session_resources for live REPL ids")
-                    {:type :clj/unknown-repl-id :id rid})))
-    :else
-    (let [cands (map :port (ports/discover-all root))]
-      (or (some (fn [p] (when (= :up (:status (nrepl-client/probe! {:host host :port p}))) p)) cands)
-        (first cands)))))
-
 (defn clj-eval-fn
+  "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
+     - explicit `port` → dial it directly (escape hatch);
+     - `id`/`repl_id`  → the REPL registered under that id in THIS session;
+     - no id, 0 REPLs  → AUTOSTART one in the workspace root (:dev :test) and use it;
+     - no id, 1 REPL   → use it (the implicit default);
+     - no id, >1 REPLs → error listing ids (the model must pick one).
+   The just-autostarted REPL is mirrored into the session resources on the next
+   ctx render (footer + stop/restart)."
   ([env arg]
-   (let [m         (coerce-eval-arg arg)
-         code      (get m "code")
-         port      (get m "port")
-         host      (get m "host")
-         ns        (get m "ns")
+   (let [m          (coerce-eval-arg arg)
+         code       (get m "code")
+         port       (get m "port")
+         host       (or (get m "host") "localhost")
+         ns         (get m "ns")
          timeout_ms (get m "timeout_ms")
-         id        (get m "id")
-         repl_id   (get m "repl_id")
-         root (env-root env)
-         host (or host "localhost")
-         rid  (some-> (or id repl_id) str str/trim not-empty)
-         port (resolve-eval-port env root host port rid)]
+         rid        (some-> (or (get m "id") (get m "repl_id")) str str/trim not-empty)
+         root       (env-root env)
+         sid        (:session-id env)
+         port       (or port (:port (repl-manager/resolve-target! sid rid root)))]
      (when-not port
-       (throw (ex-info "no nREPL port found — call clj_repl(\"start\") to boot a project nREPL now (autostart is ON by default), or clj_repl() to inspect candidates"
+       (throw (ex-info "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
                 {:type :clj/no-port
                  :workspace-root root})))
      (extension/success

@@ -18,7 +18,7 @@
    [clojure.java.shell :as shell]
    [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
-   [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.internal.test-contract :as contract]
    [com.blockether.vis.internal.extension :as extension]))
 
@@ -109,11 +109,11 @@
                                        "test" (str (:doc f))
                                        "type" (name (:type f))
                                        "message" (let [m (:message f)]
-                                                  (cond
-                                                    (seq (str m)) (str m)
-                                                    (:thrown f) (str (.getMessage (:thrown f)))
-                                                    :else (str "expected " (pr-str (:expected f))
-                                                            " actual " (pr-str (:actual f)))))
+                                                   (cond
+                                                     (seq (str m)) (str m)
+                                                     (:thrown f) (str (.getMessage (:thrown f)))
+                                                     :else (str "expected " (pr-str (:expected f))
+                                                             " actual " (pr-str (:actual f)))))
                                        "expected" (pr-str (:expected f))
                                        "actual" (pr-str (:actual f))
                                        "file" (str (:file f))
@@ -424,7 +424,10 @@
                arg)
          {:keys [nses] :as norm} (normalize-arg arg)
          sel (select-keys norm [:only :include :exclude])
-         port (ports/find-default root)]
+         ;; Autostart (or reuse) THIS session's nREPL for the workspace root — the
+         ;; fast inner loop. nil only when there's no launchable build file, then
+         ;; we fall back to the CLI suite gate below.
+         port (some-> (repl-manager/ensure-repl-for-dir! (:session-id env) root) :port)]
      (when (empty? nses)
        (throw (ex-info (if paths
                          (str "clj_test found no *_test.clj namespaces under " (pr-str (vec paths)))

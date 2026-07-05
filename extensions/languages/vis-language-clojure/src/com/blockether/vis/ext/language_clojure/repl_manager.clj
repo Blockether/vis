@@ -1,105 +1,71 @@
 (ns com.blockether.vis.ext.language-clojure.repl-manager
-  "nREPL lifecycle for the Clojure pack.
+  "Owned, session-scoped nREPL lifecycle for the Clojure pack.
 
-   Self-starting a REPL spawns a real subprocess in the workspace. Starting,
-   restarting and stopping a project nREPL is core and ALWAYS allowed — never
-   gated behind a flag or toggle.
+   OWNERSHIP: each vis SESSION owns its own nREPL subprocess(es). The `processes`
+   atom is keyed by `[session-id dir]`, so two sessions in the same directory get
+   two independent REPLs and neither can see or stop the other's. A managed REPL
+   lives and dies with THIS vis process — there is NO persistent registry and NO
+   PID re-attach across a vis restart. Restarting vis means a fresh REPL, exactly
+   like the Python pack.
 
-   The REPL runs as a SUBPROCESS in the workspace root — never in-process —
-   so `clj/eval` hits the project's own classpath (deps.edn / project.clj /
-   bb.edn deps), not Vis's JVM. The chosen launcher writes `.nrepl-port` on
-   boot, which `nrepl-ctx` discovery then surfaces in context automatically.
+   PORT: we PICK a free ephemeral port ourselves and pass it to the launcher
+   EXPLICITLY (`nrepl.cmdline --port N`, `lein repl :headless :port N`,
+   `bb nrepl-server N`), so we always KNOW our port without ever reading a
+   `.nrepl-port` file back. Any stray `.nrepl-port` a tool drops in the project is
+   deleted after boot — vis never depends on it and never leaves it behind.
 
-   Managed REPLs SURVIVE A VIS RESTART: each one is recorded by PID in a
-   persistent registry (`~/.vis/clj-nrepl/managed.edn`). The in-memory atom
-   only caches the `Process` handle for clean teardown in the same session;
-   across a restart we re-attach to the PID via `ProcessHandle`, so a
-   self-started REPL still reads as `:managed` and is still stoppable.
+   ALIASES: a REPL is ALWAYS booted with the project's `:dev :test` deps + paths
+   on its classpath (full dependency spec), with the user's `:main-opts` dropped
+   (our synthetic `:vis/nrepl-launch` alias appends last so `-m nrepl.cmdline`
+   wins). Unknown `:dev`/`:test` aliases are silently ignored by tools.deps, so
+   this is safe in any project.
 
-   `:status`/`:stop` read + clean up a Vis-managed proc; `:start`/`:restart`
-   spawn one. All four are always allowed."
+   Starting/stopping is CORE and ALWAYS allowed — never gated behind a flag."
   (:require
-   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
-   [com.blockether.vis.ext.language-clojure.ports :as ports])
+   [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client])
   (:import
-   (java.lang ProcessHandle)
+   (java.net ServerSocket)
    (java.util.concurrent TimeUnit)))
 
-;; In-memory cache of THIS session's spawns:
-;; { dir -> {:process ^Process :cmd [..] :tool kw :aliases [..] :started-at ms} }
+;; { [session-id dir] -> {:id :process ^Process :port int :cmd [..] :tool kw
+;;                        :aliases [kw..] :pid long :dir str :started-at ms} }
 ;; defonce so a `(require :reload)` during dev never orphans a live child.
-;; The cross-restart source of truth is the on-disk registry below.
+;; NO on-disk registry: a managed REPL is bound to THIS vis process + session.
 (defonce ^:private processes (atom {}))
 
 (defn- alive? [^Process p] (boolean (and p (.isAlive p))))
 
-;; ---------------------------------------------------------------------------
-;; PID re-attach — recognise our own REPLs across a vis restart
-;; ---------------------------------------------------------------------------
+(defn- proc-alive? [info] (alive? (:process info)))
 
-(defn- handle-of ^ProcessHandle [pid]
-  (when pid (.orElse (ProcessHandle/of (long pid)) nil)))
-
-(defn- pid-alive? [pid]
-  (boolean (some-> (handle-of pid) .isAlive)))
-
-(defn- kill-pid!
-  "Best-effort terminate a process by PID (used when we only have the PID from
-   the registry, e.g. after a vis restart — no `Process` handle to waitFor)."
-  [pid]
-  (when-let [h (handle-of pid)]
-    (try (.destroy h) (catch Throwable _ nil))
-    (try (when (.isAlive h) (.destroyForcibly h)) (catch Throwable _ nil))))
-
-;; ---------------------------------------------------------------------------
-;; Persistent registry — survives a vis/TUI restart
-;; { dir -> {:pid long :tool kw :aliases [..] :started-at ms} }
-;; ---------------------------------------------------------------------------
-
-(def ^:private state-dir
-  (io/file (System/getProperty "user.home") ".vis" "clj-nrepl"))
-
-(def ^:private registry-file (io/file state-dir "managed.edn"))
-
-(defonce ^:private registry-lock (Object.))
-
-(defn- read-registry []
-  (locking registry-lock
-    (try
-      (when (.isFile registry-file)
-        (let [m (edn/read-string (slurp registry-file))]
-          (when (map? m) m)))
-      (catch Throwable _ nil))))
-
-(defn- write-registry! [m]
-  (locking registry-lock
-    (try
-      (.mkdirs state-dir)
-      (spit registry-file (pr-str (or m {})))
-      (catch Throwable _ nil))))
-
-(defn- register! [dir info]
-  (locking registry-lock
-    (write-registry! (assoc (or (read-registry) {}) dir info))))
-
-(defn- unregister! [dir]
-  (locking registry-lock
-    (write-registry! (dissoc (or (read-registry) {}) dir))))
-
-(defn- dir-alive?
-  "Is the REPL for `dir` still running? Prefer this session's `Process`; fall
-   back to the registry PID via `ProcessHandle` (the cross-restart path)."
-  [dir reg-info]
-  (let [proc (:process (get @processes dir))]
-    (if proc (alive? proc) (pid-alive? (:pid reg-info)))))
-
-;; Kept in sync with the nrepl/nrepl version pinned in this extension's
-;; deps.edn. Injected via `-Sdeps` so the launcher works even in target
-;; projects that don't declare nREPL themselves.
+;; Kept in sync with the nrepl/nrepl version pinned in this extension's deps.edn.
+;; Injected via `-Sdeps` so the launcher works even in target projects that don't
+;; declare nREPL themselves.
 (def nrepl-version "1.3.0")
+
+(def ^:private default-aliases
+  "Every managed REPL boots with the project's dev + test deps/paths. Unknown
+   aliases are silently ignored by tools.deps, so this is safe everywhere."
+  [:dev :test])
+
+(defn id-of
+  "Stable session-resource id for the REPL rooted at `dir`."
+  [dir]
+  (str "nrepl:" dir))
+
+(defn- as-keywords [aliases]
+  (mapv #(if (keyword? %) % (keyword (name %))) aliases))
+
+(defn- free-port!
+  "Grab a free ephemeral TCP port from the OS, then release it so the launcher can
+   bind it. A tiny race window (the port taken between close and bind) is
+   acceptable — `start!` probes our OWN port and reports :starting/failure if it
+   never comes up."
+  []
+  (with-open [s (ServerSocket. 0)]
+    (.setReuseAddress s true)
+    (.getLocalPort s)))
 
 (defn- alias-suffix
   "deps.edn alias suffix, e.g. [:dev :test] -> \":dev:test\". nil when none."
@@ -108,43 +74,38 @@
     (apply str (map #(str ":" (name %)) aliases))))
 
 (defn launcher-for
-  "Pick a subprocess command to boot a project nREPL in `dir`, by build file,
+  "Subprocess command to boot a project nREPL in `dir` on the EXPLICIT `port`,
    honouring `aliases` (deps.edn aliases / lein profiles). Returns
-   `{:tool kw :cmd [strings]}` or nil when no known Clojure build file is
-   present. Each command writes `.nrepl-port` in its working dir on boot."
-  ([dir] (launcher-for dir nil))
-  ([dir aliases]
-   (let [present? (fn [n] (.isFile (io/file dir n)))]
-     (cond
-       (present? "deps.edn")
-       ;; Inject nREPL + the `nrepl.cmdline` main via a synthetic alias we
-       ;; append LAST. tools.deps resolves `:main-opts` last-alias-wins (while
-       ;; `:extra-deps`/`:extra-paths` accumulate), so a user alias that carries
-       ;; its OWN `:main-opts` — e.g. a `:test` alias whose main is the lazytest
-       ;; runner — still contributes its deps + source paths to the classpath,
-       ;; but our `-m nrepl.cmdline` is what actually runs. We want the user
-       ;; aliases' deps/paths, never their main.
-       {:tool :clj
-        :cmd  ["clojure"
-               "-Sdeps" (str "{:aliases {:vis/nrepl-launch "
-                          "{:extra-deps {nrepl/nrepl {:mvn/version \"" nrepl-version "\"}} "
-                          ":main-opts [\"-m\" \"nrepl.cmdline\"]}}}")
-               (str "-M" (alias-suffix aliases) ":vis/nrepl-launch")]}
+   `{:tool kw :cmd [strings]}` or nil when no known Clojure build file is present."
+  [dir aliases port]
+  (let [present? (fn [n] (.isFile (io/file dir n)))]
+    (cond
+      (present? "deps.edn")
+      ;; Inject nREPL + the `nrepl.cmdline` main via a synthetic alias we append
+      ;; LAST. tools.deps resolves `:main-opts` last-alias-wins (while
+      ;; `:extra-deps`/`:extra-paths` accumulate), so a user alias that carries
+      ;; its OWN `:main-opts` still contributes its deps + source paths to the
+      ;; classpath, but our `-m nrepl.cmdline --port N` is what actually runs. We
+      ;; want the user aliases' deps/paths, never their main.
+      {:tool :clj
+       :cmd  ["clojure"
+              "-Sdeps" (str "{:aliases {:vis/nrepl-launch "
+                         "{:extra-deps {nrepl/nrepl {:mvn/version \"" nrepl-version "\"}} "
+                         ":main-opts [\"-m\" \"nrepl.cmdline\" \"--port\" \"" port "\"]}}}")
+              (str "-M" (alias-suffix aliases) ":vis/nrepl-launch")]}
 
-       (present? "project.clj")
-       {:tool :lein
-        :cmd  (if (seq aliases)
-                ["lein" "with-profile"
-                 (str/join "," (map #(str "+" (name %)) aliases))
-                 "repl" ":headless"]
-                ["lein" "repl" ":headless"])}
+      (present? "project.clj")
+      {:tool :lein
+       :cmd  (if (seq aliases)
+               ["lein" "with-profile"
+                (str/join "," (map #(str "+" (name %)) aliases))
+                "repl" ":headless" ":port" (str port)]
+               ["lein" "repl" ":headless" ":port" (str port)])}
 
-       (present? "bb.edn")
-       {:tool :bb :cmd ["bb" "nrepl-server"]}
+      (present? "bb.edn")
+      {:tool :bb :cmd ["bb" "nrepl-server" (str port)]}
 
-       :else nil))))
-
-(defn- port-file ^java.io.File [dir] (io/file dir ".nrepl-port"))
+      :else nil)))
 
 (defn- log-file
   "Subprocess log path under the OS temp dir (never inside the user's project
@@ -155,146 +116,183 @@
                (str/replace #"(^_+|_+$)" ""))]
     (io/file (System/getProperty "java.io.tmpdir") (str "vis-nrepl-" safe ".log"))))
 
-(defn- read-port-file
-  "Read the port written DIRECTLY in `dir` (not ancestors — the launcher
-   writes `.nrepl-port` in its own cwd). Returns an int or nil."
+(defn- delete-stray-port-file!
+  "The launcher may still drop a `.nrepl-port` in `dir` even though we passed the
+   port explicitly. We never read it, so delete it so nothing downstream (or a
+   human) mistakes it for the source of truth. Best-effort."
   [dir]
-  (let [f (port-file dir)]
-    (when (.isFile f)
-      (try
-        (let [n (Long/parseLong (str/trim (slurp f)))]
-          (when (< 0 n 65536) (int n)))
-        (catch Throwable _ nil)))))
+  (try (io/delete-file (io/file dir ".nrepl-port") true) (catch Throwable _ nil)))
 
-(defn- wait-for-port
-  "Poll for `dir`'s OWN freshly-written `.nrepl-port` up to `deadline-ms`.
-   Returns the port int or nil on timeout."
-  [dir deadline-ms]
+(defn- wait-until-up
+  "Poll our OWN chosen `port` until the nREPL accepts a describe round-trip, up to
+   `deadline-ms`. Returns :up or :starting (timed out)."
+  [port deadline-ms]
   (let [deadline (+ (System/currentTimeMillis) (long deadline-ms))]
     (loop []
-      (or (read-port-file dir)
-        (when (< (System/currentTimeMillis) deadline)
-          (Thread/sleep 250)
-          (recur))))))
-
-(defn managed-ports
-  "Map of `{port {:managed true :tool :aliases :pid :dir}}` for every currently
-   ALIVE Vis-managed REPL, keyed by the live port each one wrote — sourced from
-   the persistent registry so it survives a vis restart (re-attach by PID).
-   Prunes dead entries from the registry as a side effect. Lets ctx mark which
-   ports vis owns and surface subdir REPLs discovery would otherwise miss."
-  []
-  (let [reg   (or (read-registry) {})
-        alive (into {} (filter (fn [[dir info]] (dir-alive? dir info)) reg))]
-    (when (not= alive reg)
-      (write-registry! alive))
-    (into {}
-      (keep (fn [[dir {:keys [pid tool aliases]}]]
-              (when-let [port (read-port-file dir)]
-                [port (cond-> {:managed true :dir dir}
-                        tool          (assoc :tool tool)
-                        (seq aliases) (assoc :aliases (vec aliases))
-                        pid           (assoc :pid pid))])))
-      alive)))
+      (let [st (:status (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 500}))]
+        (cond
+          (= :up st)                                   :up
+          (< (System/currentTimeMillis) deadline)      (do (Thread/sleep 250) (recur))
+          :else                                        :starting)))))
 
 (defn status
-  "Current managed-process + discovered-port view for `dir`. Always safe.
-   Reflects the persistent registry, so a REPL vis started before a restart
-   still reports as managed + running (re-attached by PID). Model-facing:
-   STRING keys + STRING enum values (crosses the strings-only boundary as a
-   tool `:result`)."
-  [dir]
-  (let [reg-info (get (read-registry) dir)
-        running? (dir-alive? dir reg-info)
-        tool     (:tool reg-info)
-        aliases  (:aliases reg-info)
-        pid      (or (some-> ^Process (:process (get @processes dir)) .pid)
-                   (:pid reg-info))]
-    {"result"        "status"
-     "dir"           dir
-     "managed"       (cond-> {"running" running?}
-                       tool          (assoc "tool" (name tool))
-                       (seq aliases) (assoc "aliases" (mapv name aliases))
-                       (and running? pid) (assoc "pid" pid))
-     "ports"         (mapv (fn [{:keys [port source]}] {"port" port "source" source})
-                       (ports/discover-all dir))}))
+  "Live view of THIS session's managed REPL for `dir`. Always safe. Model-facing:
+   STRING keys + STRING enum values (crosses as a tool `:result`)."
+  [session-id dir]
+  (let [{:keys [id port tool aliases pid] :as info} (get @processes [session-id dir])
+        running? (proc-alive? info)]
+    (cond-> {"result" "status"
+             "id"     (or id (id-of dir))
+             "dir"    dir
+             "status" (if running? "up" "down")}
+      running?                     (assoc "running" true)
+      (and running? port)          (assoc "port" port)
+      (and running? tool)          (assoc "tool" (name tool))
+      (and running? (seq aliases)) (assoc "aliases" (mapv name aliases))
+      (and running? pid)           (assoc "pid" pid))))
 
 (defn start!
-  "Self-start a project nREPL subprocess in `dir` with optional `:aliases`.
-   Always allowed — starting a project nREPL is core, never flag-gated.
+  "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
+   Always allowed — never flag-gated. Default `:aliases` are [:dev :test] (merged
+   with any explicitly passed). We pick a FREE port, pass it to the launcher, drop
+   any stray `.nrepl-port`, and wait briefly for OUR port to come up.
 
-   - If we already manage a live process for `dir` → :already-running.
-   - If `dir` already has a LIVE external nREPL (its own `.nrepl-port` probes
-     :up) → :already-running with `:is_external true` (we don't double-start).
-   - A stale `.nrepl-port` is cleared so we wait for the fresh one.
+   - Already ours + alive for `[session-id dir]` → :already-running.
+   - No known build file → :no-launcher.
+   - Else :started (port up) or :starting (still coming up; ctx will show it).
 
-   Waits briefly for the fresh port; returns :started (with port + liveness)
-   when it appears, else :starting (ctx surfaces it next turn). Model-facing:
-   STRING keys + STRING enum values (crosses as a tool `:result`)."
-  ([dir] (start! dir nil))
-  ([dir {:keys [aliases]}]
-   (let [reg-info (get (read-registry) dir)]
-     (cond
-       ;; already ours and alive — same session, or re-attached across restart
-       (or (alive? (:process (get @processes dir)))
-         (and reg-info (pid-alive? (:pid reg-info))))
-       (assoc (status dir) "result" "already-running")
-
-       :else
-       (let [existing (read-port-file dir)
-             live?    (and existing
-                        (= :up (:status (nrepl-client/probe! {:port existing :timeout-ms 500}))))]
-         (cond
-           ;; a live REPL we don't own (no registry entry) — don't double-start
-           live?
-           {"result" "already-running" "is_external" true "dir" dir "port" existing
-            "message" "An nREPL is already running in this directory."}
-
-           :else
-           (if-let [{:keys [tool cmd]} (launcher-for dir aliases)]
-             (do
-               ;; drop a stale port file so wait-for-port only sees the fresh one
-               (when existing (io/delete-file (port-file dir) true))
-               (let [log  (log-file dir)
-                     pb   (doto (ProcessBuilder. ^java.util.List cmd)
-                            (.directory (io/file dir))
-                            (.redirectErrorStream true)
-                            (.redirectOutput log))
-                     proc (.start pb)
-                     pid  (try (.pid proc) (catch Throwable _ nil))]
-                 (swap! processes assoc dir
-                   {:process proc :cmd cmd :tool tool :aliases (vec aliases)
-                    :started-at (System/currentTimeMillis)})
-                 ;; persist so we still recognise this REPL after a vis restart
-                 (register! dir {:pid pid :tool tool :aliases (vec aliases)
-                                 :started-at (System/currentTimeMillis)})
-                 (let [port  (wait-for-port dir 15000)
-                       probe (when port (nrepl-client/probe! {:port port :timeout-ms 500}))]
-                   (cond-> {"tool" (name tool) "dir" dir "aliases" (mapv name aliases) "cmd" cmd
-                            "log"  (.getAbsolutePath log) "pid" pid}
-                     port       (assoc "result" "started" "port" port
-                                  "status" (some-> (:status probe) name))
-                     (not port) (assoc "result" "starting"
-                                  "message" "nREPL launching; the port will appear in ctx shortly.")))))
-             {"result"  "no-launcher" "dir" dir
-              "message" "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
+   Model-facing: STRING keys + STRING enum values (crosses as a tool `:result`)."
+  ([session-id dir] (start! session-id dir nil))
+  ([session-id dir {:keys [aliases]}]
+   (let [k       [session-id dir]
+         aliases (as-keywords (if (seq aliases) aliases default-aliases))]
+     (if (proc-alive? (get @processes k))
+       (assoc (status session-id dir) "result" "already-running")
+       (let [port (free-port!)]
+         (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
+           (let [log  (log-file dir)
+                 pb   (doto (ProcessBuilder. ^java.util.List cmd)
+                        (.directory (io/file dir))
+                        (.redirectErrorStream true)
+                        (.redirectOutput log))
+                 proc (.start pb)
+                 pid  (try (.pid proc) (catch Throwable _ nil))
+                 info {:id         (id-of dir)
+                       :process    proc
+                       :port       port
+                       :cmd        cmd
+                       :tool       tool
+                       :aliases    (vec aliases)
+                       :pid        pid
+                       :dir        dir
+                       :started-at (System/currentTimeMillis)}]
+             (swap! processes assoc k info)
+             (let [st (wait-until-up port 20000)]
+               ;; We passed --port explicitly; never depend on the file the tool
+               ;; may still write. Remove it so it can't mislead anything.
+               (delete-stray-port-file! dir)
+               (cond-> {"result"  (if (= :up st) "started" "starting")
+                        "id"      (id-of dir)
+                        "dir"     dir
+                        "port"    port
+                        "tool"    (name tool)
+                        "aliases" (mapv name aliases)
+                        "pid"     pid
+                        "cmd"     cmd
+                        "log"     (.getAbsolutePath log)
+                        "status"  (name st)}
+                 (not= :up st)
+                 (assoc "message" "nREPL launching; it will report :up in ctx shortly."))))
+           {"result"  "no-launcher" "dir" dir
+            "message" "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."}))))))
 
 (defn stop!
-  "Stop the Vis-managed nREPL for `dir` (graceful, then forced). Uses this
-   session's `Process` when present, else the registry PID (cross-restart
-   path). Always clears the in-memory cache and the registry. No-op-safe."
-  [dir]
-  (let [{:keys [^Process process]} (get @processes dir)
-        reg-info (get (read-registry) dir)]
-    (if (or process reg-info)
+  "Stop THIS session's managed nREPL for `dir` (graceful, then forced). Clears the
+   in-memory cache. No-op-safe. Model-facing STRING-keyed result."
+  [session-id dir]
+  (let [k [session-id dir]
+        {:keys [^Process process]} (get @processes k)]
+    (if process
       (do
-        (cond
-          process (do (.destroy process)
-                    (when-not (.waitFor process 3 TimeUnit/SECONDS)
-                      (.destroyForcibly process)))
-          (:pid reg-info) (kill-pid! (:pid reg-info)))
-        (swap! processes dissoc dir)
-        (unregister! dir)
-        {"result" "stopped" "dir" dir})
-      {"result"  "not-managed" "dir" dir
-       "message" "No Vis-managed nREPL for this directory."})))
+        (.destroy process)
+        (when-not (.waitFor process 3 TimeUnit/SECONDS)
+          (.destroyForcibly process))
+        (swap! processes dissoc k)
+        {"result" "stopped" "id" (id-of dir) "dir" dir})
+      {"result"  "not-managed" "id" (id-of dir) "dir" dir
+       "message" "No Vis-managed nREPL for this directory in this session."})))
+
+(defn- prune-dead!
+  "Drop this session's dead entries from the process atom, best-effort."
+  [session-id]
+  (let [dead (for [[[sid _dir :as k] info] @processes
+                   :when (and (= sid session-id) (not (proc-alive? info)))]
+               k)]
+    (when (seq dead)
+      (apply swap! processes dissoc dead))))
+
+(defn session-repls
+  "Live REPLs OWNED by `session-id`, as a vec of
+   `{:id :dir :port :tool :aliases :pid}` sorted by dir. Prunes dead entries as a
+   side effect. This is the SINGLE source of truth for ctx + eval/test targeting —
+   there is no external-port discovery."
+  [session-id]
+  (prune-dead! session-id)
+  (->> @processes
+    (keep (fn [[[sid _dir] info]]
+            (when (and (= sid session-id) (proc-alive? info))
+              {:id      (:id info)
+               :dir     (:dir info)
+               :port    (:port info)
+               :tool    (:tool info)
+               :aliases (:aliases info)
+               :pid     (:pid info)})))
+    (sort-by :dir)
+    vec))
+
+(defn repl-by-id
+  "The session's live REPL info matching resource `id`, or nil."
+  [session-id id]
+  (first (filter #(= (:id %) id) (session-repls session-id))))
+
+(defn ensure-repl-for-dir!
+  "Return the live REPL info for `[session-id dir]`, AUTOSTARTING one (with the
+   default :dev :test aliases) when the session owns none for `dir`. Returns nil
+   only when there is no launchable Clojure build file in `dir`. Used by eval /
+   test to guarantee a REPL is up for the target dir."
+  [session-id dir]
+  (let [k [session-id dir]]
+    (if (proc-alive? (get @processes k))
+      (get @processes k)
+      (do (start! session-id dir nil)
+        (get @processes k)))))
+
+(defn resolve-target!
+  "Resolve — and AUTOSTART when needed — the REPL an eval should hit for
+   `session-id`. `id` is an optional explicit resource id; `default-dir` is where
+   we autostart when the session owns no REPL yet. Returns `{:id :dir :port}`.
+
+   Rules (the ownership contract):
+     - explicit `id` → that REPL (throws if no such live REPL in this session);
+     - 0 REPLs       → autostart `default-dir` with [:dev :test], use it;
+     - 1 REPL        → use it (it's the implicit default);
+     - >1 REPLs      → throw, listing the ids (the model MUST pass one)."
+  [session-id id default-dir]
+  (let [id (some-> id str str/trim not-empty)]
+    (if id
+      (or (repl-by-id session-id id)
+        (throw (ex-info (str "no nREPL registered under id '" id
+                          "' in this session — check ctx / session_resources for live REPL ids")
+                 {:type :clj/unknown-repl-id :id id})))
+      (let [repls (session-repls session-id)]
+        (case (count repls)
+          0 (let [r (ensure-repl-for-dir! session-id default-dir)]
+              (when-not r
+                (throw (ex-info (str "no Clojure build file in " default-dir
+                                  " to autostart an nREPL")
+                         {:type :clj/no-launcher :dir default-dir})))
+              (select-keys r [:id :dir :port]))
+          1 (select-keys (first repls) [:id :dir :port])
+          (throw (ex-info (str (count repls) " nREPLs are live in this session — pass an id to pick one: "
+                            (str/join ", " (map :id repls)))
+                   {:type :clj/ambiguous-repl :ids (mapv :id repls)})))))))
