@@ -133,6 +133,11 @@
       (expect (nil? (:error r)))
       (expect (= "aGk=" (:result r)))))
 
+  (it "makes math available without an import in run_python code"
+    (let [r (ep/run-python-block @py-ctx "round(math.sqrt(2) + math.pi, 6)")]
+      (expect (nil? (:error r)))
+      (expect (= 4.555806 (:result r)))))
+
   (it "makes glob available without an import in run_python code"
     (let [r (ep/run-python-block @py-ctx "hasattr(glob, 'glob') and callable(glob.glob)")]
       (expect (nil? (:error r)))
@@ -144,7 +149,7 @@
         (expect (= true (:result r)))))
 
     (it "does not expose auto-imported modules as apropos-listed tools/globals"
-      (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64', 'builtins']) & set(apropos('shlex') + apropos('json') + apropos('re') + apropos('hashlib') + apropos('glob') + apropos('os') + apropos('sys') + apropos('collections') + apropos('pathlib') + apropos('Path') + apropos('textwrap') + apropos('base64') + apropos('builtins')))")]
+      (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']) & set(apropos('shlex') + apropos('json') + apropos('re') + apropos('hashlib') + apropos('glob') + apropos('os') + apropos('sys') + apropos('collections') + apropos('pathlib') + apropos('Path') + apropos('textwrap') + apropos('base64') + apropos('math') + apropos('builtins')))")]
         (expect (nil? (:error r)))
         (expect (= false (:result r)))))))
 
