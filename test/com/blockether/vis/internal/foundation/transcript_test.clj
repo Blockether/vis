@@ -235,8 +235,9 @@
           ;; :llm-executable-blocks is the single source of truth. It is a
           ;; `<-json` DB column, so it round-trips STRING-keyed.
           (expect (nil? (:llm-executable-code iter)))
+          ;; forensic blobs parse lazily on restore (a delay); force resolves it
           (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
-                    (:llm-executable-blocks iter))))
+                    (force (:llm-executable-blocks iter)))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "surfaces :returned-empty-code? as a typed boolean"
