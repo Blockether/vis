@@ -2492,42 +2492,67 @@
 (defn- relevant-detail-expansions-key
   "Stable cache key for only the disclosure nodes this Markdown projection
    can render. A click in one old answer must not bust cached projections for
-   every other visible answer. Scope by session + node-id base."
+   every other visible answer. Scope by session + node-id base.
+
+   Like `turn-detail-expansions-key`, the bulk fold state lives under KEYWORD
+   keys (`:vis.channel-tui/baseline`, `:vis.channel-tui/expand-all-details?`)
+   that the per-node `keep` drops — so it is folded in explicitly here too, else
+   a bulk collapse/expand-all leaves this bubble on its stale cached render."
   [opts]
-  (let [session-id (some-> (:session-id opts)
+  (let [detail-expansions (:detail-expansions opts)
+        session-id (some-> (:session-id opts)
                      str)
         base (detail-node-base-id opts)
-        prefix (str base ":")]
-    (->> (:detail-expansions opts)
-      (keep (fn [[k expanded?]]
-              (when (vector? k)
-                (let [[cid node-id] k
-                      node-id (str node-id)]
-                  (when (and (= session-id (str cid))
-                          (or (= base node-id) (str/starts-with? node-id prefix)))
-                    [node-id expanded?])))))
-      sort
-      vec)))
+        prefix (str base ":")
+        per-node (->> detail-expansions
+                   (keep (fn [[k expanded?]]
+                           (when (vector? k)
+                             (let [[cid node-id] k
+                                   node-id (str node-id)]
+                               (when (and (= session-id (str cid))
+                                       (or (= base node-id) (str/starts-with? node-id prefix)))
+                                 [node-id expanded?])))))
+                   sort
+                   vec)]
+    (cond-> per-node
+      (:vis.channel-tui/baseline detail-expansions)
+      (conj [:vis.channel-tui/baseline (:vis.channel-tui/baseline detail-expansions)])
+      (:vis.channel-tui/expand-all-details? detail-expansions)
+      (conj [:vis.channel-tui/expand-all-details? true]))))
 (defn- turn-detail-expansions-key
   "Stable cache key for any disclosure belonging to this rendered assistant
    turn. Used by the outer trace+answer projection, which may contain thinking,
-   iteration, tool/result, and final-answer disclosures."
+   iteration, tool/result, and final-answer disclosures.
+
+   The bulk fold state — `:vis.channel-tui/baseline` (C-x [ collapse-all /
+   C-x ] expand-all) and the copy-only `:vis.channel-tui/expand-all-details?`
+   FORCE flag — lives under KEYWORD keys, not `[cid nid]` vectors, so it is
+   invisible to the per-node `keep` below. It MUST be folded into the key:
+   without it a bulk collapse/expand returns the previously-cached projection
+   and the transcript never repaints until a per-node click finally changes a
+   vector key (the \"C-x ] does nothing until I click something\" bug)."
   [opts]
-  (let [session-id (some-> (:session-id opts)
+  (let [detail-expansions (:detail-expansions opts)
+        session-id (some-> (:session-id opts)
                      str)
         turn-fragment (some-> (:session-turn-id opts)
                         short-id-fragment)
-        turn-token (when turn-fragment (str ":t" turn-fragment))]
-    (->> (:detail-expansions opts)
-      (keep (fn [[k expanded?]]
-              (when (vector? k)
-                (let [[cid node-id] k
-                      node-id (str node-id)]
-                  (when (and (= session-id (str cid))
-                          (or (nil? turn-token) (str/includes? node-id turn-token)))
-                    [node-id expanded?])))))
-      sort
-      vec)))
+        turn-token (when turn-fragment (str ":t" turn-fragment))
+        per-node (->> detail-expansions
+                   (keep (fn [[k expanded?]]
+                           (when (vector? k)
+                             (let [[cid node-id] k
+                                   node-id (str node-id)]
+                               (when (and (= session-id (str cid))
+                                       (or (nil? turn-token) (str/includes? node-id turn-token)))
+                                 [node-id expanded?])))))
+                   sort
+                   vec)]
+    (cond-> per-node
+      (:vis.channel-tui/baseline detail-expansions)
+      (conj [:vis.channel-tui/baseline (:vis.channel-tui/baseline detail-expansions)])
+      (:vis.channel-tui/expand-all-details? detail-expansions)
+      (conj [:vis.channel-tui/expand-all-details? true]))))
 (defn message-detail-expansions-key
   "Per-message disclosure-expansion fingerprint for the height cache: the
    subset of `detail-expansions` whose disclosure node-ids belong to
@@ -3472,9 +3497,12 @@
              ;; — the model's OWN program — keeps its code visible. A blank-code
              ;; form (or any non-tool form with no code) also drops the chrome.
              ;; Errors always keep the code so the inline caret has context.
-             native-non-python? (and tool-name* (not= tool-name* "python_execution"))
-             hide-code-chrome? (and (not is-error?)
-                                 (or (str/blank? code-text) native-non-python?))
+             ;; The native-tool code-chrome decision lives ONCE in the gateway
+             ;; (`vis/hide-tool-code?`) — a successful native non-python call drops
+             ;; its redundant `name(args)` source — so the TUI and web can't drift.
+             ;; A blank-code non-tool form also drops the (empty) chrome.
+             hide-code-chrome? (or (and (not is-error?) (str/blank? code-text))
+                                 (vis/hide-tool-code? form))
              code-block (cond hide-code-chrome?
                                   ;; When raw code is hidden (def-wrapped tool
                                   ;; call or any successful tool form), drop the

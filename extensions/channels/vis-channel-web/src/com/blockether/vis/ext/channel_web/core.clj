@@ -1043,7 +1043,7 @@
                             (remove engine-empty-iteration-form? (or (:forms it) [])))]
                  (list
                    (when-let [src (:src form)]
-                     (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
+                     (when-not (or (str/blank? (str src)) (engine-chrome-form? form) (vis/hide-tool-code? form))
                        (block-code src)))
                    (block-result (:result form) form)
                    (when (:error form)
@@ -1311,7 +1311,7 @@
     (when-not (:silent event)
       (let [code       (:code event)
             ;; Code row rides HERE (not block.started) so chrome never flashes.
-            code-frame (when-not (str/blank? (str code))
+            code-frame (when-not (or (str/blank? (str code)) (vis/hide-tool-code? event))
                          {:event "message" :html (html (block-code code))})
             ;; Human display surface: the block RETURN value, rendered as markdown.
             ;; Pass the whole EVENT so a native tool's result gets its colored label

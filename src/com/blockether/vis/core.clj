@@ -321,6 +321,8 @@
   [tool-label form/tool-label]
   [result-card form/result-card]
   [result-cards form/result-cards]
+  [native-tool-form? form/native-tool-form?]
+  [hide-tool-code? form/hide-tool-code?]
   [coalesce-forms form/coalesce-forms])
 ;; Canonical native-tool badge colour-role set — each channel's colour map must
 ;; cover every role here (guard tests lock it), so the two maps can't drift.

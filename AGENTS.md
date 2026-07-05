@@ -13,6 +13,11 @@ rules) lives in the CORE system prompt — do not restate it here.
   the body.
 - No `defrecord` / `deftype` / `gen-class` in GraalPy-sandbox-facing code
   (refused by `validate-no-banned-defs!`).
+- Documentation lives ONLY under `resources/vis-docs/` (plus each
+  extension's own `resources/vis-docs/`). The `internal.docs` renderer
+  serves those live and publishes them to the docs site. The root `docs/`
+  folder is gitignored local scratch — never edit or add tracked docs
+  there; change the canonical pages in `resources/vis-docs/` instead.
 
 ## Operator workflow
 

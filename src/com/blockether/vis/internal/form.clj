@@ -118,6 +118,28 @@
     (into [] (keep result-card) cards)
     (if-let [c (result-card form)] [c] [])))
 
+(defn native-tool-form?
+  "True when `form` is a NATIVE tool call (cat/rg/patch/…): it carries a
+   `:vis/tool-name` and therefore renders as an op-card via `result-card`."
+  [{tool-name :vis/tool-name}]
+  (some? tool-name))
+
+(defn hide-tool-code?
+  "Should a channel DROP a form's synthesized invocation source (the `name(args)`
+   code block) instead of showing it as code? YES for a SUCCESSFUL native tool
+   call (cat/rg/patch/…) that is NOT `python_execution`: the op-card
+   (`result-card`) already says what ran, so the source is redundant chrome.
+   `python_execution` — the model's OWN program — always keeps its code; an
+   ERRORED form keeps it too (the inline error needs the surrounding source).
+   The ONE predicate the TUI and web both consult so the code-chrome decision
+   can't drift between channels."
+  [{:keys [error success?] :as form}]
+  (let [errored? (or (some? error)
+                   (and (some? success?) (not success?)))]
+    (boolean (and (not errored?)
+               (native-tool-form? form)
+               (not= (name (:vis/tool-name form)) "python_execution")))))
+
 (def ^:private coalescable-tools
   "Native tools whose ADJACENT same-file op-cards fold into ONE card within an
    iteration: repeated reads (`cat`) and repeated edits (`patch`) of the SAME
