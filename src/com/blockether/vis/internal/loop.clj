@@ -203,6 +203,11 @@
         (str/includes? msg-lower "closed")
         (str/includes? msg-lower "eof")
         (str/includes? msg-lower "timed out")
+        ;; the wrapper socket died before any response bytes arrived (e.g.
+        ;; "HTTP/1.1 header parser received no bytes") — a transient blip, retry.
+        (str/includes? msg-lower "received no bytes")
+        (str/includes? msg-lower "header parser")
+        (str/includes? msg-lower "no bytes")
         ;; transient TLS blip — the server tore down the connection mid-handshake
         ;; (javax.net.ssl.SSLHandshakeException "Remote host terminated the
         ;; handshake"); retry / fall back instead of failing the turn.
@@ -212,6 +217,9 @@
         (str/includes? cause-lower "closed")
         (str/includes? cause-lower "eof")
         (str/includes? cause-lower "timed out")
+        (str/includes? cause-lower "received no bytes")
+        (str/includes? cause-lower "header parser")
+        (str/includes? cause-lower "no bytes")
         (str/includes? cause-lower "handshake")))))
 
 (defn- empty-content-error?

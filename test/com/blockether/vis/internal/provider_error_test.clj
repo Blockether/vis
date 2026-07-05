@@ -47,3 +47,27 @@
   (it "the bare `All providers exhausted` wrapper is NOT repeated as a fact row"
     ;; title + attempts already carry it — no redundant `Wrapper: …` line
     (expect (not-any? #(= "Wrapper" (first %)) (perr/provider-error-facts exhausted-err)))))
+
+(defdescribe transport-error-test
+  ;; A socket that dies before any response byte arrives ("HTTP/1.1 header
+  ;; parser received no bytes") is a network/transport failure, NOT a rejection
+  ;; — nothing answered, so there is no HTTP status and the model never ran.
+  (let [err {:message "HTTP/1.1 header parser received no bytes" :data {}}]
+    (it "classifies a no-bytes wrapper failure as :transport, not :generic"
+      (expect (= :transport (perr/provider-error-kind err))))
+
+    (it "titles it as an unreachable provider"
+      (expect (= "Could not reach provider" (perr/provider-error-title err))))
+
+    (it "the explanation does NOT falsely claim the provider rejected the request"
+      (let [ex (perr/provider-error-explanation err)]
+        (expect (str/includes? ex "connection dropped"))
+        (expect (not (str/includes? ex "rejected the request")))))
+
+    (it "the next step tells the user to just retry"
+      (expect (str/includes? (perr/provider-error-next-step err) "retry")))
+
+    (it "a real HTTP status is NOT mistaken for a transport failure"
+      (expect (= :generic (perr/provider-error-kind
+                            {:message "Exceptional status code: 400"
+                             :data {:status 400 :body "{\"error\":{\"message\":\"bad\"}}"}}))))))

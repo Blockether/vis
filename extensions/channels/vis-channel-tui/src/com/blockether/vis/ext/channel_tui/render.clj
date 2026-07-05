@@ -3202,7 +3202,14 @@
            [repeat-count (max 1 (long (or repeat-count 1)))
             badge (when (> repeat-count 1) (str "  x " repeat-count))
             data (:data error)
-            provider-error? (or (:status data) (:body data) (:request-id data) (:request_id data))
+            ;; A provider failure is one the shared classifier recognizes
+            ;; (`perr/provider-error-kind` ≠ :generic) OR one that carries HTTP
+            ;; facts. The kind check is what catches a TRANSPORT blip: it has NO
+            ;; :status/:body/:request-id (nothing answered), so the field probe
+            ;; alone would miss it and dump it as one plain generic line instead
+            ;; of the structured explanation / next-step / facts rows below.
+            provider-error? (or (:status data) (:body data) (:request-id data) (:request_id data)
+                              (not= :generic (perr/provider-error-kind error)))
             hdr-label (str (label-text (if provider-error? "provider error" "error"))
                         (or badge ""))
             hdr-pad (max 0 (- fill-w (count hdr-label) 1))
