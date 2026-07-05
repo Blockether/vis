@@ -698,6 +698,36 @@
 ;;    :check-id ::keyword     ; optional; renders as the prefix
 ;;    :data {...}}              ; optional; passthrough for callers
 (s/def :ext/doctor-fn fn?)
+;; ----------------------------------------------------------------------------
+;; Sandbox Python SHIMS / AUTOLOADS. An extension may publish one or more
+;; "shims": a host-backed Python module (optionally auto-loaded onto builtins)
+;; installed into EVERY model sandbox context — the main session AND every
+;; `sub_loop` fork — at creation time. This is how a pure-Clojure / JVM
+;; capability (YAMLStar's YAML 1.2 loader, a Java2D `matplotlib.pyplot`) is
+;; surfaced to the model's Python as a REAL importable module: no pip, no
+;; native wheels, no capability holes. `env-python/build-agent-context`
+;; consumes `extension/sandbox-shims` GENERICALLY — nothing about yaml or
+;; matplotlib is special-cased in the engine.
+;;
+;;   :shim/name        identity string (dedup / logging).
+;;   :shim/description one-liner (optional).
+;;   :shim/bindings    host callables the preamble delegates to — either a map
+;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
+;;                     Each fn is wired onto the sandbox globals as a Python
+;;                     ProxyExecutable (args marshalled Python->Clojure, result
+;;                     Clojure->Python) BEFORE the preamble evals, so the
+;;                     preamble can call across the boundary. Optional.
+;;   :shim/preamble    Python source string (or 0-arg fn -> string) eval'd into
+;;                     the context to publish the module into `sys.modules` and
+;;                     (for autoload) staple it onto builtins.
+(s/def :shim/name non-blank-string?)
+(s/def :shim/description non-blank-string?)
+(s/def :shim/bindings (s/or :map (s/map-of string? ifn?) :fn ifn?))
+(s/def :shim/preamble (s/or :str string? :fn ifn?))
+(s/def ::sandbox-shim
+  (s/keys :req [:shim/name :shim/preamble]
+    :opt [:shim/description :shim/bindings]))
+(s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.
 (s/def :ext.engine/symbols (s/coll-of ::symbol-entry :kind vector?))
 ;; Map of fully-qualified Java classes to expose in the sandbox.
@@ -740,6 +770,7 @@
              ::registry-id]))
 (defn ext-engine [ext] (or (:ext/engine ext) {}))
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
+(defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
 (declare symbol-active?)
 
@@ -885,7 +916,7 @@
                  :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
                  :ext/channels :ext/providers :ext/persistance :ext/workspace-backends
                  :ext/channel-contributions
-                 :ext/slash-commands :ext/startable-resources :ext/doctor-fn])
+                 :ext/slash-commands :ext/startable-resources :ext/doctor-fn :ext/sandbox-shims])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 ;; =============================================================================
@@ -2519,7 +2550,9 @@
        stay gated OFF behind :shell/enabled until the user enables it)."
   '[com.blockether.vis.internal.foundation.core
     com.blockether.vis.internal.foundation.git-tool
-    com.blockether.vis.internal.foundation.shell])
+    com.blockether.vis.internal.foundation.shell
+    com.blockether.vis.internal.foundation.shim-yaml
+    com.blockether.vis.internal.foundation.shim-matplotlib])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
    side-effect runs. Idempotent (require won't reload; register is idempotent)."
@@ -2618,6 +2651,18 @@
     (comp (filter ext-builtin?)
       (mapcat (fn [ext] (wrap-extension-thunked ext env-thunk))))
     (registered-extensions)))
+
+(defn sandbox-shims
+  "Every Python sandbox SHIM contributed across all registered extensions, in
+   registration order (built-ins first). `env-python/build-agent-context`
+   installs each into the model sandbox Context at creation time — wiring the
+   shim's host `:shim/bindings` onto the globals, then eval'ing its
+   `:shim/preamble` — turning a host / JVM capability into an importable Python
+   module. Loads built-ins first (idempotent) so the registry is populated
+   before we read it."
+  []
+  (load-builtin-extensions!)
+  (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
 ;; =============================================================================
 ;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,

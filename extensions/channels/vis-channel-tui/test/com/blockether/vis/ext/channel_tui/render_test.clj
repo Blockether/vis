@@ -2296,3 +2296,68 @@
                                 (assoc ctx :iteration-number 9)))]
         (expect (str/blank? (first texts)))
         (expect (str/includes? (second texts) "2 searches"))))))
+
+(def ^:private delete-command-parts @#'render/delete-command-parts)
+(def ^:private delete-group-entries @#'render/delete-group-entries)
+
+(defn- del-form [summary]
+  {:vis/tool-name "delete" :success? true :code ""
+   :result-summary summary :result-render nil
+   :tool-color-role :tool-color/delete :result {}})
+
+(defdescribe delete-band-grouping-test
+  ;; A RUN of consecutive delete-only iterations coalesces into ONE collapsible
+  ;; DELETE band — the SAME machinery as GIT / RG, keyed on tool name. A lone
+  ;; delete, or a run broken by other work, renders per iteration.
+  (let [ctx {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        dl  (fn [i s] [i {:forms [(del-form s)]}])
+        py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        del-band-count (fn [pairs]
+                         (->> (render-iteration-entries pairs iter-fn false true ctx)
+                           entry-text
+                           (filter #(str/includes? % "deletes"))
+                           count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))]
+    (it "groupable-tool-form tags a lone delete iteration"
+      (expect (= "delete" (first (groupable-tool-form {:forms [(del-form "deleted `a.clj`")]}))))
+      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]}))))
+    (it "delete-command-parts shows the basename chip, keeps the full summary"
+      (let [p (delete-command-parts (del-form "deleted `src/com/blockether/vis/ports.clj`"))
+            n (delete-command-parts (del-form "nothing to delete at `gone.clj`"))]
+        (expect (= "ports.clj" (:chip p)))
+        (expect (= "deleted `src/com/blockether/vis/ports.clj`" (:summary p)))
+        (expect (= "gone.clj" (:chip n)))))
+    (it "two consecutive delete iterations collapse into ONE band"
+      (let [pairs [(dl 0 "deleted `a/ports.clj`") (dl 1 "deleted `a/ports_test.clj`")]]
+        (expect (= 1 (del-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone delete iteration renders normally (no band)"
+      (let [pairs [(dl 0 "deleted `a.clj`")]]
+        (expect (= 0 (del-band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a non-delete step between two deletes breaks the run"
+      (let [pairs [(dl 0 "deleted `a.clj`") (py 1) (dl 2 "deleted `b.clj`")]]
+        (expect (= 0 (del-band-count pairs)))
+        (expect (= 3 (normal-count pairs)))))
+    (it "collapsed band shows a basename chip per delete; expanded shows each full path"
+      (let [forms   [(del-form "deleted `a/ports.clj`") (del-form "deleted `a/ports_test.clj`")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 5
+                                               :section :iteration :kind :delete-group})
+            collapsed (entry-text (delete-group-entries forms (assoc ctx :iteration-number 5)))
+            expanded  (entry-text (delete-group-entries forms (assoc ctx :iteration-number 5
+                                                                :detail-expansions {["s1" node-id] true})))]
+        (expect (some #(str/includes? % "2 deletes") collapsed))
+        (expect (some #(str/includes? % "ports.clj") collapsed))
+        ;; Full paths stay OUT of the collapsed row.
+        (expect (not-any? #(str/includes? % "a/ports_test.clj") collapsed))
+        ;; Expanded restores each full path.
+        (expect (some #(str/includes? % "a/ports_test.clj") expanded))))
+    (it "the delete band opens with a leading breathe row, like an op-card"
+      (let [texts (entry-text (delete-group-entries [(del-form "deleted `a.clj`") (del-form "deleted `b.clj`")]
+                                (assoc ctx :iteration-number 9)))]
+        (expect (str/blank? (first texts)))
+        (expect (str/includes? (second texts) "2 deletes"))))))

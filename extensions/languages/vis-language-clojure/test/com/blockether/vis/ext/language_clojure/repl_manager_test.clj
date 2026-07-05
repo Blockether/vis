@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.language-clojure.repl-manager-test
-  "Hermetic tests for the REPL manager. The actual subprocess
-   self-start is exercised in REPL-driven verification, not here, so these
-   stay fast and side-effect-free."
+  "Hermetic tests for the owned, session-scoped REPL manager. The actual
+   subprocess self-start is exercised in REPL-driven verification, not here, so
+   these stay fast and side-effect-free."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -21,52 +21,96 @@
   dir)
 
 (defdescribe launcher-for-test
+  ;; launcher-for is now 3-arity: [dir aliases port]. We always know our port.
   (it "selects clojure for deps.edn"
-    (expect (= :clj (:tool (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}"))))))
+    (expect (= :clj (:tool (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") nil 12345)))))
   (it "selects lein for project.clj"
-    (expect (= :lein (:tool (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)"))))))
+    (expect (= :lein (:tool (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)") nil 12345)))))
   (it "selects bb for bb.edn"
-    (expect (= :bb (:tool (rm/launcher-for (with-file (tmp-dir) "bb.edn" "{}"))))))
+    (expect (= :bb (:tool (rm/launcher-for (with-file (tmp-dir) "bb.edn" "{}") nil 12345)))))
   (it "returns nil when no known build file is present"
-    (expect (nil? (rm/launcher-for (tmp-dir)))))
-  (it "the clojure launcher injects the nrepl dep and runs nrepl.cmdline"
-    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}")))]
+    (expect (nil? (rm/launcher-for (tmp-dir) nil 12345))))
+
+  (it "the clojure launcher injects the nrepl dep and runs nrepl.cmdline on our explicit port"
+    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") nil 61234))]
       (expect (= "clojure" (first cmd)))
-      ;; nrepl.cmdline now rides the synthetic `:vis/nrepl-launch` alias's
-      ;; :main-opts inside the -Sdeps EDN, not as a bare cmd element.
+      ;; nrepl.cmdline rides the synthetic `:vis/nrepl-launch` alias's :main-opts
+      ;; inside the -Sdeps EDN, with --port <ours> so we never read a file back.
       (expect (some #(str/includes? (str %) "nrepl.cmdline") cmd))
+      (expect (some #(str/includes? (str %) "--port") cmd))
+      (expect (some #(str/includes? (str %) "61234") cmd))
       ;; -M carries only the synthetic launch alias when no user aliases
       (expect (some #(= "-M:vis/nrepl-launch" %) cmd))))
 
   (it "threads deps.edn aliases into the clojure -M flag"
-    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") [:dev :test]))]
+    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") [:dev :test] 12345))]
       ;; user aliases come first, then the synthetic launch alias (last-wins)
       (expect (some #(= "-M:dev:test:vis/nrepl-launch" %) cmd))))
 
-  (it "threads lein profiles via with-profile"
-    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)") [:dev :test]))]
+  (it "threads lein profiles via with-profile and passes our port"
+    (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)") [:dev :test] 55123))]
       (expect (some #(= "with-profile" %) cmd))
-      (expect (some #(= "+dev,+test" %) cmd)))))
+      (expect (some #(= "+dev,+test" %) cmd))
+      (expect (some #(= "55123" %) cmd)))))
 
 (defdescribe status+stop-test
-  ;; status/stop return STRING-keyed lifecycle maps (they cross the strings-only
-  ;; boundary as tool `:result`s).
-  (it "status reports no managed process and a port vector for a fresh root"
-    (let [s (rm/status (tmp-dir))]
+  ;; status/stop are SESSION-scoped and return STRING-keyed lifecycle maps (they
+  ;; cross the strings-only boundary as tool `:result`s).
+  (it "status reports a down, unmanaged REPL with a stable id for a fresh dir"
+    (let [dir (tmp-dir)
+          s   (rm/status "sess-a" dir)]
       (expect (= "status" (get s "result")))
-      (expect (false? (get-in s ["managed" "running"])))
-      (expect (vector? (get s "ports")))))
+      (expect (= "down" (get s "status")))
+      (expect (= (rm/id-of dir) (get s "id")))
+      (expect (nil? (get s "running")))))
 
   (it "stop is a safe no-op when nothing is managed"
-    (expect (= "not-managed" (get (rm/stop! (tmp-dir)) "result")))))
+    (let [dir (tmp-dir)
+          r   (rm/stop! "sess-a" dir)]
+      (expect (= "not-managed" (get r "result")))
+      (expect (= (rm/id-of dir) (get r "id"))))))
+
+(defdescribe id-of-test
+  (it "derives a stable nrepl:<dir> id"
+    (expect (= "nrepl:/x/y" (rm/id-of "/x/y")))))
+
+(defdescribe resolve-target-ownership-test
+  ;; The ownership contract: an explicit id names a REPL; one owned REPL is the
+  ;; implicit default; several demand an id. session-repls is stubbed so no
+  ;; subprocess is spawned.
+  (it "uses the single owned REPL as the implicit default (no id needed)"
+    (with-redefs [rm/session-repls (fn [_] [{:id "nrepl:/p" :dir "/p" :port 7001}])]
+      (expect (= {:id "nrepl:/p" :dir "/p" :port 7001}
+                (rm/resolve-target! "sess" nil "/p")))))
+
+  (it "resolves an explicit id to that owned REPL"
+    (with-redefs [rm/session-repls (fn [_] [{:id "nrepl:/a" :dir "/a" :port 1}
+                                            {:id "nrepl:/b" :dir "/b" :port 2}])]
+      (expect (= {:id "nrepl:/b" :dir "/b" :port 2}
+                (rm/resolve-target! "sess" "nrepl:/b" "/a")))))
+
+  (it "throws :clj/unknown-repl-id for an id with no live REPL"
+    (with-redefs [rm/session-repls (fn [_] [])]
+      (let [t (try (rm/resolve-target! "sess" "nrepl:/nope" "/p")
+                :no-throw
+                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+        (expect (= :clj/unknown-repl-id t)))))
+
+  (it "throws :clj/ambiguous-repl when >1 REPLs live and no id is given"
+    (with-redefs [rm/session-repls (fn [_] [{:id "nrepl:/a" :dir "/a" :port 1}
+                                            {:id "nrepl:/b" :dir "/b" :port 2}])]
+      (let [t (try (rm/resolve-target! "sess" nil "/a")
+                :no-throw
+                (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (expect (= :clj/ambiguous-repl (:type t)))
+        (expect (= ["nrepl:/a" "nrepl:/b"] (:ids t)))))))
 
 (defdescribe clj-repl-tool-gating-test
-
   (it "\"status\" always succeeds (start/stop are never flag-gated)"
-    (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir)} "status"))))
+    (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir) :session-id "s"} "status"))))
 
   (it "rejects an unknown op"
-    (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir)} "frobnicate")
+    (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir) :session-id "s"} "frobnicate")
               :no-throw
               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
       (expect (= :clj/bad-args t)))))
@@ -89,26 +133,3 @@
       (let [root (tmp-dir)
             abs  (tmp-dir)]
         (expect (= (canon abs) (resolve root abs)))))))
-
-(defdescribe registry-reattach-test
-  ;; The persistent registry is what lets a managed REPL survive a vis restart:
-  ;; managed-ports re-attaches to the recorded PID via ProcessHandle. We stub
-  ;; the registry IO so the user's real ~/.vis file is never touched, and use
-  ;; the current JVM's PID as a guaranteed-alive process.
-  (it "re-attaches a registry entry by live PID (survives restart)"
-    (let [dir    (tmp-dir)
-          my-pid (.pid (java.lang.ProcessHandle/current))]
-      (spit (io/file dir ".nrepl-port") "54321")
-      (with-redefs [rm/read-registry   (fn [] {dir {:pid my-pid :tool :clj :aliases [:dev]}})
-                    rm/write-registry! (fn [_] nil)]
-        (expect (= {:managed true :dir dir :tool :clj :aliases [:dev] :pid my-pid}
-                  (get (rm/managed-ports) 54321))))))
-
-  (it "drops a dead PID and prunes it from the registry"
-    (let [dir   (tmp-dir)
-          wrote (atom :unset)]
-      (spit (io/file dir ".nrepl-port") "55555")
-      (with-redefs [rm/read-registry   (fn [] {dir {:pid 2147483646 :tool :clj}}) ; not a live pid
-                    rm/write-registry! (fn [m] (reset! wrote m))]
-        (expect (empty? (rm/managed-ports)))
-        (expect (= {} @wrote))))))           ; dead entry pruned

@@ -3733,10 +3733,11 @@
             :else (recur (conj! out e) nil (next xs))))))))
 (def ^:private groupable-tool-names
   "Native tools whose consecutive PURE single-call iterations coalesce into ONE
-   collapsible band (a GIT / RG log) instead of N separately-stacked op-cards.
-   Only tools whose repeated back-to-back calls read as one logical activity
-   belong here: a burst of `git` commands, a burst of `rg` searches."
-  #{"git" "rg"})
+   collapsible band (a GIT / RG / DELETE log) instead of N separately-stacked
+   op-cards. Only tools whose repeated back-to-back calls read as one logical
+   activity belong here: a burst of `git` commands, a burst of `rg` searches, a
+   burst of `delete`s."
+  #{"git" "rg" "delete"})
 
 (defn- groupable-tool-form
   "The lone native-tool form of an iteration when it is a single call to a
@@ -3924,6 +3925,40 @@
     (tool-band-entries {:head head, :color-role :tool-color/search,
                         :body-md body-md, :kind :rg-group}
       ctx)))
+(defn- delete-command-parts
+  "Project one delete form into a grouped DELETE band's fields: the compact
+   collapsed `:chip` (the deleted path's basename — full paths would blow out
+   the collapsed row) and the FULL `:summary` (`deleted `<path>`` or the no-op
+   note) for the expanded `deleted …` row. Reads only the DB-stable card
+   summary, so a restored trace groups identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card) str str/trim not-empty)
+        ;; The delete summary is `deleted `<path>`` (or a no-op note); pull the
+        ;; backticked path and show just its basename on the collapsed chip.
+        path    (some-> summary (->> (re-find #"`([^`]+)`")) second)
+        chip    (if path
+                  (or (not-empty (last (str/split path #"/"))) path)
+                  (or summary "delete"))]
+    {:chip chip, :summary (or summary "deleted")}))
+
+(defn- delete-group-entries
+  "Coalesce a RUN of consecutive delete-only iterations into ONE collapsible
+   DELETE band instead of N separately-stacked delete op-cards.
+
+   Collapsed (default) — a single badge row with each deleted basename:
+     ▸ DELETE · 2 deletes  ports.clj · ports_test.clj
+   Expanded — each delete's full `deleted `<path>`` summary as its own row, so
+   the burst reads as one deletion log."
+  [delete-forms ctx]
+  (let [parts   (mapv delete-command-parts delete-forms)
+        n       (count parts)
+        chips   (str/join " · " (map :chip parts))
+        head    (str "**DELETE** · " n " delete" (when (not= 1 n) "s") "  " chips)
+        body-md (str/join "\n\n" (map :summary parts))]
+    (tool-band-entries {:head head, :color-role :tool-color/delete,
+                        :body-md body-md, :kind :delete-group}
+      ctx)))
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
@@ -3963,7 +3998,8 @@
                       ctx       (assoc group-ctx :iteration-number iter-num)
                       band      (case tool-name
                                   "git" (git-group-entries forms ctx)
-                                  "rg"  (rg-group-entries forms ctx))
+                                  "rg"     (rg-group-entries forms ctx)
+                                  "delete" (delete-group-entries forms ctx))
                       ;; The narrated head renders its thinking badge / prose ABOVE
                       ;; the band — strip its tool form (and the re-emitted call
                       ;; `:content-stream`, which `:forms []` would otherwise resurface

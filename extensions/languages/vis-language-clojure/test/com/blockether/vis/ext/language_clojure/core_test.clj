@@ -6,7 +6,7 @@
    [clojure.java.io :as io]
    [com.blockether.vis.ext.language-clojure.core :as core]
    [com.blockether.vis.ext.language-clojure.format :as fmt]
-   [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -30,13 +30,6 @@
     (let [root (tmp-dir)]
       (try
         (spit (io/file root "deps.edn") "{:paths [\"src\"]}")
-        (expect (true? ((activation-fn) {:workspace/root (.getAbsolutePath root)})))
-        (finally (cleanup root)))))
-
-  (it "activates when only a .nrepl-port is present"
-    (let [root (tmp-dir)]
-      (try
-        (spit (io/file root ".nrepl-port") "7888")
         (expect (true? ((activation-fn) {:workspace/root (.getAbsolutePath root)})))
         (finally (cleanup root)))))
 
@@ -243,7 +236,7 @@
 (defdescribe test-runner-fallback-test
   (it "falls back to the project test CLI when the live nREPL lacks lazytest"
     (let [called (atom false)
-          result (with-redefs-fn {#'ports/find-default (constantly 54321)
+          result (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port 54321})
                                   #'test-runner/run-via-repl (fn [& _]
                                                                {"error" "Could not locate lazytest/core"})
                                   #'test-runner/run-via-cli (fn [_root norm]
