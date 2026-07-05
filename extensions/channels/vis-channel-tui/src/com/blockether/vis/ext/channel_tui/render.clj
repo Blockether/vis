@@ -3804,27 +3804,33 @@
    fold into a single ▾ CAT card)."
   #{"git" "rg" "delete" "find_files" "cat"})
 
-(defn- groupable-tool-form
-  "The lone native-tool form of an iteration when it is a single call to a
-   groupable tool (`groupable-tool-names`) — returns `[tool-name form]`, else nil.
-   An iter-level error, a recap, a provider fallback, a print-many `:cards` block,
-   or any non-single / multi-form shape disqualifies it. NARRATION (a thinking
-   badge or a streamed-prose block) does NOT: a narrated git/rg call still groups,
-   and its narration renders ABOVE the band (see `render-iteration-entries`), so a
-   `<narrate> then add / commit / push` burst folds whole instead of leaving the
-   narrated first command stranded outside the band."
+(defn- groupable-iteration-forms
+  "Every native-tool form of an iteration when it is a PURE run of the SAME
+   groupable tool (`groupable-tool-names`) — returns `[tool-name [forms…]]`, else
+   nil. A lone call yields a one-element vector; a parallel GATHER of N same-tool
+   calls fired in ONE iteration (e.g. two `rg` searches launched together) yields
+   an N-form vector, so they band exactly like N consecutive single-call
+   iterations would. NARRATION (a thinking badge / streamed prose) does NOT
+   disqualify: a narrated git/rg call still groups and its narration renders ABOVE
+   the band (see `render-iteration-entries`). `cat` is
+   excluded from the multi-form case (a multi-file gather is merged per-file by
+   `form/coalesce-forms`, never banded) — a lone cat still groups by file across
+   iterations. An iter-level error / recap / provider-fallback, a print-many
+   `:cards` block, a MIXED-tool iteration, or any non-tool form disqualifies it."
   [entry]
   (let [{:keys [forms recaps provider-fallbacks error]} entry]
     (when (and (nil? error)
             (empty? recaps)
             (empty? provider-fallbacks)
-            (= 1 (count forms)))
-      (let [f  (first forms)
-            tn (some-> (:vis/tool-name f)
-                 str)]
-        (when (and (contains? groupable-tool-names tn)
-                (empty? (:cards f)))
-          [tn f])))))
+            (seq forms))
+      (let [tns (mapv #(some-> (:vis/tool-name %) str) forms)
+            tn  (first tns)]
+        (when (and tn
+                (contains? groupable-tool-names tn)
+                (apply = tns)
+                (every? #(empty? (:cards %)) forms)
+                (or (= 1 (count forms)) (not= "cat" tn)))
+          [tn (vec forms)])))))
 (defn- iteration-narration?
   "True when an iteration carries visible NARRATION that must render on its own —
    a thinking badge (only when `show-thinking?`, since hidden thinking paints
@@ -4149,7 +4155,7 @@
   [visible-iterations iter-entry-fn show-silent? show-thinking? group-ctx]
   (let [tagged (mapv (fn [pair]
                        (let [e (visible-iteration-entry (second pair) show-silent?)]
-                         [pair (groupable-tool-form e) (iteration-narration? e show-thinking?)]))
+                         [pair (groupable-iteration-forms e) (iteration-narration? e show-thinking?)]))
                  visible-iterations)]
     (loop [out (transient [])
            xs  (seq tagged)]
@@ -4158,7 +4164,7 @@
         (let [[_pair tf] (first xs)]
           (if tf
             (let [tool-name (first tf)
-                  head-form (second tf)
+                  head-form (first (second tf))
                   ;; A run is the head plus consecutive same-tool calls; a nil
                   ;; tag, a DIFFERENT tool, OR interior narration ends it. For
                   ;; cat the run ALSO requires the SAME file (via `band-run-key`),
@@ -4167,12 +4173,12 @@
                   run (cons (first xs)
                         (take-while (fn [[_ g narr]]
                                       (and (some? g) (not narr)
-                                        (= head-key (band-run-key (first g) (second g)))))
+                                        (= head-key (band-run-key (first g) (first (second g))))))
                           (rest xs)))
-                  cnt (count run)]
-              (if (>= cnt 2)
-                (let [[[first-idx head-entry] _ head-narr?] (first run)
-                      forms (mapv (fn [[_ g]] (second g)) run)]
+                  cnt (count run)
+                  forms (into [] (mapcat (fn [[_ g]] (second g))) run)]
+              (if (>= (count forms) 2)
+                (let [[[first-idx head-entry] _ head-narr?] (first run)]
                   (if (= "cat" tool-name)
                     ;; Same-file cat run: merge the reads into ONE deduped slice
                     ;; and render it as a normal ▾ CAT card via `iter-entry-fn`,
