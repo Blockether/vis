@@ -2033,6 +2033,34 @@
             out (find-search [{"query" "zzzqqq wwwvvv" "paths" [dir]}])]
         (expect (zero? (get out "item_count")))))))
 
+(defdescribe render-find-single-match-test
+  "A SINGLE find match has nothing worth folding — the one path IS the result —
+   so `render-find-result` rides it on the summary chip and emits NO body. With
+   no body the shared `result-card` marks the card non-collapsible, so neither
+   channel paints a pointless one-line disclosure. 2+ matches (and the 0-match
+   steer) keep their body."
+  (let [render-find-result (private-fn "render-find-result")]
+    (it "one match: path rides the summary, NO body (→ non-collapsible)"
+      (let [{:keys [summary body]}
+            (render-find-result {"item_count" 1 "query" "PERSONA.md"
+                                 "paths" ["docs/PERSONA.md"]})]
+        (expect (nil? body))
+        (expect (string/includes? summary "1 match"))
+        (expect (string/includes? summary "`docs/PERSONA.md`"))))
+    (it "two matches: summary stays plural and the ranked paths ride the body"
+      (let [{:keys [summary body]}
+            (render-find-result {"item_count" 2 "query" "render"
+                                 "paths" ["a/render.clj" "b/render.clj"]})]
+        (expect (string/includes? summary "2 matches"))
+        (expect (string/includes? (str body) "a/render.clj"))
+        (expect (string/includes? (str body) "b/render.clj"))))
+    (it "zero matches: the filename-vs-content steer still rides the body"
+      (let [{:keys [summary body]}
+            (render-find-result {"item_count" 0 "query" "zzz" "paths" []
+                                 "hint" "No FILENAME matched"})]
+        (expect (string/includes? summary "0 matches"))
+        (expect (string/includes? (str body) "No FILENAME matched"))))))
+
 (defdescribe structural-tool-gating-test
   "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
    structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."
