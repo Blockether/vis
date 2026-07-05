@@ -30,6 +30,22 @@
    [javax.imageio ImageIO]))
 
 ;; ----------------------------------------------------------------------------
+;; macOS/AWT guard — MUST run before the toolkit initializes.
+;;
+;; If AWT's `createGraphics` / `GraphicsEnvironment.getLocalGraphicsEnvironment`
+;; runs WITHOUT headless mode, macOS boots the Cocoa AWT toolkit: a Java Dock
+;; icon appears, the app can steal focus, and image ops may pop a Preview
+;; window — none of which the user asked for. This shim is the process's only
+;; AWT consumer and it loads at boot (built-in extension), so we force headless
+;; HERE, at ns-load, which is guaranteed to precede the first render. Setting it
+;; after the toolkit inits is a no-op, hence the top-level side effect rather
+;; than a per-render bind. `apple.awt.UIElement` is a macOS belt: even if some
+;; other path forces non-headless AWT, the process stays a background UI element
+;; (no Dock icon, no menu bar).
+(System/setProperty "java.awt.headless" "true")
+(System/setProperty "apple.awt.UIElement" "true")
+
+;; ----------------------------------------------------------------------------
 ;; Host renderer — Java2D. Input is the pyplot figure spec (string-keyed map
 ;; marshalled from the sandbox); output is a base64 PNG string. Kept dependency
 ;; free (only the JDK's AWT + ImageIO, already reachable in the native image).
