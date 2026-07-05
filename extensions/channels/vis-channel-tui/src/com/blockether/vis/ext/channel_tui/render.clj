@@ -3800,9 +3800,9 @@
    deduped slice — instead of N separately-stacked op-cards. Only tools whose
    repeated back-to-back calls read as one logical activity belong here: a burst
    of `git` commands, a burst of `rg` searches, a burst of `delete`s, a run of
-   `find_files` discoveries, and a run of `cat` reads of the SAME file (which
-   fold into a single ▾ CAT card)."
-  #{"git" "rg" "delete" "find_files" "cat"})
+   `find_files` discoveries, a run of `occurrences` symbol traces, and a run of
+   `cat` reads of the SAME file (which fold into a single ▾ CAT card)."
+  #{"git" "rg" "delete" "find_files" "occurrences" "cat"})
 
 (defn- groupable-iteration-forms
   "Every native-tool form of an iteration when it is a PURE run of the SAME
@@ -4071,6 +4071,47 @@
                         :body-md body-md, :kind :find-group}
       ctx)))
 
+(defn- occurrences-command-parts
+  "Project one occurrences form into a grouped OCCURRENCES band's fields: the
+   compact collapsed `:chip` (the traced symbol name — what differs between
+   consecutive lookups), the FULL `:summary` (`N · K defs in M files of `name``)
+   as the expanded headline, and the per-file defs/uses `:body`. Reads only the
+   DB-stable card, so a restored trace groups identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card) str str/trim not-empty)
+        ;; The occurrences summary ends with `… of `<name>``; the traced symbol
+        ;; is what differs between consecutive lookups, so it rides the chip.
+        nm      (some-> summary (->> (re-find #"of `([^`]+)`\s*$")) second)
+        chip    (cond
+                  nm      (str "`" nm "`")
+                  summary (str/trim (first (str/split summary #" · ")))
+                  :else   "occurrences")]
+    {:chip chip, :summary summary, :body (:body card)}))
+
+(defn- occurrences-group-entries
+  "Coalesce a RUN of consecutive occurrences-only iterations into ONE
+   collapsible OCCURRENCES band instead of N separately-stacked op-cards.
+
+   Collapsed (default) — a single badge row with each traced symbol:
+     ▸ OCCURRENCES · 2 lookups  `ensure-repl-for-dir!` · `resolve-target!`
+   Expanded — each lookup as its full `N · K defs in M files of `…`` headline
+   with the per-file defs/uses nested underneath, so the burst reads as one
+   symbol-trace log."
+  [occ-forms ctx]
+  (let [parts   (mapv occurrences-command-parts occ-forms)
+        n       (count parts)
+        chips   (str/join " · " (map :chip parts))
+        head    (str "**OCCURRENCES** · " n " lookup" (when (not= 1 n) "s") "  " chips)
+        body-md (str/join "\n\n"
+                  (map (fn [{:keys [summary body]}]
+                         (str (or summary "occurrences")
+                           (when (seq (str body)) (str "\n" body))))
+                    parts))]
+    (tool-band-entries {:head head, :color-role :tool-color/search,
+                        :body-md body-md, :kind :occurrences-group}
+      ctx)))
+
 (defn- cat-form-path
   "The file a cat read acted on — the raw `:result` `:path` when live, else the
    leading `` `path` `` chip of the summary (which survives a DB round-trip)."
@@ -4195,7 +4236,8 @@
                                      "git"    (git-group-entries forms ctx)
                                      "rg"     (rg-group-entries forms ctx)
                                      "delete" (delete-group-entries forms ctx)
-                                     "find_files" (find-group-entries forms ctx))
+                                     "find_files" (find-group-entries forms ctx)
+                                     "occurrences" (occurrences-group-entries forms ctx))
                           ;; The narrated head renders its thinking badge / prose ABOVE
                           ;; the band — strip its tool form (and the re-emitted call
                           ;; `:content-stream`, which `:forms []` would otherwise resurface
@@ -4815,3 +4857,29 @@
            :track-bg t/terminal-bg,
            :thumb-fg t/dialog-hint-key,
            :thumb-bg t/terminal-bg})))))
+
+(defn draw-detail-labels!
+  "Vim-style jump-label overlay for collapsible disclosures.
+
+   When `active?`, stamps a highlighted single-character badge over each visible
+   `:toggle-details` disclosure glyph (in paint order) so the next keypress can
+   toggle that one fold — the keyboard analogue of clicking the chevron. When
+   inactive, paints nothing.
+
+   Called by the full-frame painter right AFTER `cr/commit-frame!`, so
+   `cr/current` holds this frame's freshly-registered regions and every badge
+   lands exactly on the chevron the user sees. The input handler derives the
+   same label->region map via `cr/assign-labels` on the same frame, so a typed
+   label resolves to the region under its badge without any shared state."
+  [^TextGraphics g active?]
+  (when active?
+    (doseq [[label {:keys [bounds]}] (cr/assign-labels (cr/current))]
+      ;; Loud avy-style lead badge: ground-colored text on the saturated
+      ;; `warning-fg` fill so the label pops in EVERY theme (the old pairing
+      ;; painted terminal-bg on the pale `warning-bg`, ~1.1:1 contrast — invisible
+      ;; on Solarized). warning-fg gives 8:1+ AAA contrast light or dark. Letters
+      ;; are upper-cased so they stand out of the surrounding lowercase prose;
+      ;; the input handler lower-cases the keypress, so the match still holds.
+      (p/set-colors! g t/terminal-bg t/warning-fg)
+      (p/styled g [p/BOLD]
+        (p/put-str! g (:col bounds) (:row bounds) (.toUpperCase ^String label))))))
