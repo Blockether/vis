@@ -1753,8 +1753,6 @@
                        i)
             keep     (into matched headers)]
         (vec (keep-indexed (fn [i row] (when (contains? keep i) row)) rows))))))
-(defn- settings-selectable-count [rows] (count (filter settings-selectable? rows)))
-
 (defn- settings-toc
   "Table-of-contents entries for the VS Code-style left sidebar: one per
    top-level `:section`, each with the count of selectable rows beneath it
@@ -1804,8 +1802,6 @@
        (let [all-rows (settings-rows extension-rows)
              rows (filter-settings-rows all-rows @query)
              n (count rows)
-             total-count (settings-selectable-count all-rows)
-             shown-count (settings-selectable-count rows)
              size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
              cols (.getColumns size)
              screen-rows (.getRows size)
@@ -1893,17 +1889,13 @@
                               (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
                               start0)]
                  (reset! scroll start1))
-             ;; Frame 1 search bar: borderless query field + "N of M" count,
-             ;; sitting above the split (full width). Returns the cursor pos.
+             ;; Frame 1 search bar: borderless full-width query field sitting
+             ;; above the split — identical to the command palette
+             ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
+             ;; which draw no count on the query row. Returns the cursor pos.
              search-cursor
-             (let [count-str (str shown-count " of " total-count)
-                   count-w   (count count-str)
-                   field-w   (max 1 (- inner-w count-w 1))
-                   cur (draw-text-input-field! g left search-row field-w
-                         @query (count @query) "Search settings…")]
-               (p/set-colors! g t/dialog-hint t/dialog-bg)
-               (p/put-str! g (- (+ left inner-w) count-w) search-row count-str)
-               cur)]
+             (draw-text-input-field! g left search-row inner-w
+               @query (count @query) "Search settings…")]
          ;; Full-width rule under the search bar — the same framed-input
          ;; compartment the command palette (`list-dialog!`) and the session
          ;; switcher (`navigator-dialog!`) draw under their query fields, so
