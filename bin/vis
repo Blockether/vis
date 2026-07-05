@@ -144,7 +144,12 @@ run_measured_or_exec() {
 #   --jar      force the AOT uberjar (target/vis.jar)
 #   --native   force the native binary (target/vis[.exe])
 #   --jvm      back-compat alias for --source
+#   --jfr      record a JFR "profile" session to ~/.vis/vis-<ts>.jfr, dumped on
+#              exit (source/jar only; the native binary would need to be built
+#              with --enable-monitoring=jfr). Snapshot mid-run with
+#              `jcmd <pid> JFR.dump name=vis`.
 dist=""   # "" = auto; else "source" | "jar" | "native"
+jfr=0
 args=()
 for arg in "$@"; do
   case "$arg" in
@@ -152,6 +157,7 @@ for arg in "$@"; do
     --source|--jvm)   dist="source" ;;
     --jar)            dist="jar" ;;
     --native)         dist="native" ;;
+    --jfr)            jfr=1 ;;
     *)                args+=("$arg") ;;
   esac
 done
@@ -159,6 +165,26 @@ if (( ${#args[@]} > 0 )); then
   set -- "${args[@]}"
 else
   set --
+fi
+
+# ── --jfr: Java Flight Recorder profiling ────────────────────────────────────
+# Populate two forms of the StartFlightRecording opt — `-J`-prefixed for the
+# clojure launcher (source), bare for `java -jar`. Empty arrays otherwise, so
+# the launch sites can splice them unconditionally. The native binary can't take
+# it (it rejects unknown -XX options unless built with --enable-monitoring=jfr),
+# so we warn and skip it there.
+jfr_clj_opts=()
+jfr_java_opts=()
+if (( jfr )); then
+  jfr_dir="$HOME/.vis"
+  mkdir -p "$jfr_dir" 2>/dev/null || true
+  jfr_file="$jfr_dir/vis-$(date +%Y%m%d-%H%M%S).jfr"
+  jfr_spec="name=vis,settings=profile,filename=$jfr_file,dumponexit=true,maxsize=500m"
+  jfr_clj_opts=("-J-XX:StartFlightRecording=$jfr_spec")
+  jfr_java_opts=("-XX:StartFlightRecording=$jfr_spec")
+  echo "vis: JFR profiling → $jfr_file (settings=profile, dumped on exit)." >&2
+  echo "vis:   snapshot mid-run: jcmd \$(pgrep -f vis) JFR.dump name=vis" >&2
+  echo "vis:   analyze: jfr print --events jdk.ExecutionSample $jfr_file" >&2
 fi
 
 # ── Managed install + self-update ───────────────────────────────────────────
@@ -306,13 +332,14 @@ case "$dist" in
   jar)
     if [[ -f "$uber_jar" ]]; then
       measure_log "--jar → $uber_jar"; cd "$invocation_cwd"
-      run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" -jar "$uber_jar" "$@"
+      run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" "${jfr_java_opts[@]}" -jar "$uber_jar" "$@"
     else
       echo "vis: --jar requested but $uber_jar is missing (build it with 'vis uber'); using live source." >&2
     fi ;;
   native)
     nb="$native_bin"; [[ -x "$nb" ]] || nb="$vis_install_dir/native"
     if [[ -x "$nb" ]]; then
+      (( jfr )) && echo "vis: --jfr ignored — the native binary needs to be built with --enable-monitoring=jfr." >&2
       measure_log "--native → $nb"; cd "$invocation_cwd"
       run_measured_or_exec "process native binary" "$nb" "$@"
     else
@@ -336,17 +363,19 @@ if [[ -z "$dist" ]]; then
       case "$(cat "$vis_install_dir/mode" 2>/dev/null)" in
         native)
           if [[ -x "$vis_install_dir/native" ]]; then
+            (( jfr )) && echo "vis: --jfr ignored — the native binary needs --enable-monitoring=jfr; use 'vis --jfr --source'." >&2
             measure_log "exec managed native $vis_install_dir/native"; cd "$invocation_cwd"
             run_measured_or_exec "managed native" "$vis_install_dir/native" "$@"
           fi ;;
         jvm-sha)
           if [[ -d "$vis_install_dir/src" ]]; then
             measure_log "exec managed jvm-sha src"; cd "$vis_install_dir/src"
-            run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+            run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" "${jfr_clj_opts[@]}" -M:vis "$@"
           fi ;;
       esac
     fi
     if [[ -x "$native_bin" ]]; then
+      (( jfr )) && echo "vis: --jfr ignored — the native binary needs --enable-monitoring=jfr; use 'vis --jfr --source'." >&2
       measure_log "exec native binary $native_bin"; cd "$invocation_cwd"
       run_measured_or_exec "process native binary" "$native_bin" "$@"
     fi
@@ -375,7 +404,7 @@ esac
 
 measure_log "exec cold clojure -M:vis"
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${vis_extension_sdeps[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${jfr_clj_opts[@]}" "${vis_extension_sdeps[@]}" -M:vis "$@"
 else
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${jfr_clj_opts[@]}" -M:vis "$@"
 fi
