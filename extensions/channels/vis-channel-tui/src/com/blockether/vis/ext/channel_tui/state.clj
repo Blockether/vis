@@ -519,6 +519,11 @@
    here for callers (and tests) that already reach in via the state
    namespace."
   vh/untitled-session-label)
+(def ^:private starting-session-label
+  "Placeholder tab label shown while an optimistically-opened new session's
+   environment is still building on a background worker (see
+   `:open-building-tab`)."
+  "Starting…")
 (def ^:private transcript-dump-markers
   ["▾ REASONING [" "▾ RESULT [" "▾ ERROR [" "RESULT [iteration" "REASONING [iteration"])
 (defn transcript-dump-input?
@@ -1064,6 +1069,76 @@
                         :messages (or history [])
                         :input-history (history-user-texts history)))]
             (seed-ctx db')))))))
+(reg-event-db
+  :open-building-tab
+  ;; Optimistic new tab for a session whose cold env/runtime is still being
+  ;; built on a background worker (chat/make-session-async's `:building`
+  ;; branch), so the input thread NEVER blocks on the 3-4s build. Mints a fresh
+  ;; active tab with NO session bound yet and `:loading? true`: any Enter while
+  ;; it builds queues into `:pending-sends` (`:send-message` enqueues when
+  ;; `:loading?`) instead of being lost or sent to a dead session. `build-id`
+  ;; tags the tab entry so the async callback (`:bind-built-session`) can find
+  ;; it again across intervening tab churn.
+  (fn [db [_ build-id]]
+    (let [db      (-> db ensure-tabs sync-active-tab)
+          entries (vec (:tabs db))
+          n       (next-tab-number entries)
+          id      (keyword (str "tab-" n))
+          entry   {:id id, :label starting-session-label, :active? true, :build-id build-id}]
+      (-> db
+        (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+          :active-tab-id id)
+        (merge (empty-tab-state))
+        (assoc :title nil
+          :loading? true
+          :progress {:iterations []}
+          :turn-start-ms (System/currentTimeMillis))))))
+(reg-event-fx
+  :bind-built-session
+  ;; The background build for an optimistic `:open-building-tab` finished. Find
+  ;; the tab tagged with `build-id`, bind the freshly built `session` (+ its
+  ;; `history`/`workspace`) into that tab's state, clear the loading flag, and
+  ;; drain anything the user queued while it built. If the tab was closed in the
+  ;; meantime, close the now-orphan session instead of leaking it.
+  (fn [db [_ build-id session history workspace]]
+    (let [db      (-> db ensure-tabs sync-active-tab)
+          entries (vec (:tabs db))
+          entry   (some #(when (= build-id (:build-id %)) %) entries)]
+      (if-not entry
+        {:db db
+         :fx [[:gateway-close-session (:id session)]]}
+        (let [tab-id   (:id entry)
+              entries' (mapv (fn [e]
+                               (if (= (:id e) tab-id)
+                                 (cond-> (-> e
+                                           (dissoc :build-id)
+                                           (assoc :label (or (some-> workspace :label not-empty)
+                                                           (:label e))))
+                                   workspace         (assoc :workspace workspace)
+                                   (:root workspace) (assoc :workspace/root (:root workspace)))
+                                 e))
+                         entries)
+              db       (assoc db :tabs entries')
+              db       (update-tab db tab-id
+                         (fn [w]
+                           (assoc w
+                             :session        session
+                             :workspace      workspace
+                             :workspace/root (:root workspace)
+                             :messages       (or history [])
+                             :input-history  (history-user-texts history)
+                             :title          nil
+                             :loading?       false
+                             :progress       nil
+                             :turn-start-ms  nil
+                             :cancel-token   nil
+                             :cancelling?    false)))
+              tab-view (if (= tab-id (current-tab-id db))
+                         db
+                         (get-in db [:tab-locals tab-id]))
+              pending? (seq (:pending-sends tab-view))]
+          {:db db
+           :fx (cond-> [] pending? (conj [:dispatch [:drain-pending tab-id]]))})))))
 (reg-event-db :title-loading
               ;; Host auto-title generation started (true) or ended (false). Drives the
               ;; header spinner on the active tab's title. `:set-title` also clears it so
@@ -2108,3 +2183,7 @@
   (fn [sid tid]
     (when (and sid tid)
       (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+(reg-fx :gateway-close-session
+  (fn [sid]
+    (when sid
+      (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))
