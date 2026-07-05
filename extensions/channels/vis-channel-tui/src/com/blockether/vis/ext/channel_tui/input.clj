@@ -817,10 +817,11 @@
 ;; what's actually still referenced).
 
 (def placeholder-regex
-  "Anchored shape `[Pasted #N: ...]`. The non-greedy negated-bracket
-   body keeps the regex idempotent against nested-bracket text the
-   user may have typed adjacent to the placeholder."
-  #"\[Pasted #(\d+): [^\]]*?\]")
+  "Anchored shape `[Pasted #N: ...]` / `[Image #N: ...]`. The non-greedy
+   negated-bracket body keeps the regex idempotent against nested-bracket
+   text the user may have typed adjacent to the placeholder. Group 1 is
+   always the numeric id — the leading kind word is non-capturing."
+  #"\[(?:Pasted|Image) #(\d+): [^\]]*?\]")
 
 (defn- format-bytes
   "Human-readable byte count: 1234 -> 1.2KB, 12 -> 12B. Locale-safe
@@ -847,13 +848,22 @@
 
    `lines` is correctly pluralised; size is locale-safe via
    `format-bytes` so a Polish JVM doesn't render `1,2KB`."
-  [{:keys [id content]}]
-  (let [text       (str content)
-        line-count (inc (count (filter #(= % \newline) text)))
-        char-count (count text)
-        line-word  (if (= 1 line-count) "line" "lines")]
-    (str "[Pasted #" id ": " line-count " " line-word ", "
-      (format-bytes char-count) "]")))
+  [{:keys [id content image]}]
+  (if image
+    ;; Image drop: name the file + its intrinsic size instead of the
+    ;; pasted PATH's line/byte weight, which is meaningless to the user.
+    (let [{:keys [filename width height size-label]} image
+          dims (when (and width height (pos? (long width)) (pos? (long height)))
+                 (str width "×" height))]
+      (str "[Image #" id ": " (or filename "image")
+        (when dims (str " " dims))
+        (when size-label (str ", " size-label)) "]"))
+    (let [text       (str content)
+          line-count (inc (count (filter #(= % \newline) text)))
+          char-count (count text)
+          line-word  (if (= 1 line-count) "line" "lines")]
+      (str "[Pasted #" id ": " line-count " " line-word ", "
+        (format-bytes char-count) "]"))))
 
 (def ^:const PASTE_INLINE_MAX_CHARS
   "Threshold below which we DON'T use a placeholder - a short
@@ -947,12 +957,27 @@
     (fn [[whole id-str]]
       (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
             entry (when id (get pastes-map id))]
-        (if entry
+        (cond
+          (nil? entry) whole
+          ;; Image drop: a `vis-image` fence carries the file path +
+          ;; metadata the renderer reads to draw the picture inline (it
+          ;; re-reads the file, so no base64 rides in the transcript and
+          ;; the image survives a session reopen). Body lines, in order:
+          ;; summary, absolute path, mime, `WxH`, size-label.
+          (:image entry)
+          (let [{:keys [path mime width height size-label]} (:image entry)]
+            (str "\n````vis-image\n"
+              (format-paste-placeholder entry) "\n"
+              path "\n"
+              (or mime "") "\n"
+              (if (and width height) (str width "x" height) "") "\n"
+              (or size-label "") "\n"
+              "````\n"))
+          :else
           (str "\n````vis-paste\n"
             (format-paste-placeholder entry) "\n"
             (:content entry)
-            "\n````\n")
-          whole)))))
+            "\n````\n"))))))
 
 (defn placeholder-id-before-cursor
   "When the cursor of `state` sits IMMEDIATELY AFTER the closing `]`

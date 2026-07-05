@@ -215,7 +215,7 @@
 ;; Collection
 ;; =============================================================================
 
-(defn- size-label [^long n]
+(defn size-label [^long n]
   (cond
     (>= n (* 1024 1024)) (format "%.1fMB" (/ (double n) (* 1024.0 1024.0)))
     (>= n 1024)          (format "%.0fKB" (/ (double n) 1024.0))
@@ -228,6 +228,40 @@
      :base64     (.encodeToString (Base64/getEncoder) data)
      :size       (alength data)
      :size-label (size-label (alength data))}))
+
+(defn- resolved-image-files
+  "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
+   token in `text` that resolves to a readable image-extension file.
+   The magic-byte sniff still owns the final image verdict downstream."
+  [text workspace-root]
+  (into []
+    (comp
+      (keep #(resolve-candidate % workspace-root))
+      (map (fn [^File f] [(.getCanonicalPath f) f]))
+      (distinct))
+    (path-candidates (str text))))
+
+(defn scan-image-descriptors
+  "Resolve every image the user text points at, WITHOUT loading pixel bytes.
+   Returns `[{:path :media-type :size :size-label :filename}]` for files whose
+   magic bytes sniff to a supported still image — ordered, de-duped. Cheap
+   enough to run on every paste (only a small file-head read per candidate).
+   Never throws."
+  ([text] (scan-image-descriptors text {}))
+  ([text {:keys [workspace-root]}]
+   (if (str/blank? (str text))
+     []
+     (into []
+       (keep (fn [[_canonical ^File f]]
+               (try
+                 (when-let [mime (sniff-file-mime f)]
+                   {:path       (.getAbsolutePath f)
+                    :media-type mime
+                    :size       (.length f)
+                    :size-label (size-label (.length f))
+                    :filename   (.getName f)})
+                 (catch Throwable _ nil))))
+       (resolved-image-files text workspace-root)))))
 
 (defn collect-user-images
   "Scan `text` (one user message) for paths of readable image files and
@@ -249,12 +283,7 @@
           :or   {max-bytes max-image-bytes max-images max-image-count}}]
    (if (str/blank? (str text))
      {:attached [] :skipped []}
-     (let [files (into []
-                   (comp
-                     (keep #(resolve-candidate % workspace-root))
-                     (map (fn [^File f] [(.getCanonicalPath f) f]))
-                     (distinct))
-                   (path-candidates (str text)))]
+     (let [files (resolved-image-files text workspace-root)]
        (reduce
          (fn [acc [_canonical ^File f]]
            (try

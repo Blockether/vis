@@ -4,6 +4,7 @@
    [com.blockether.vis.ext.channel-tui.click-regions :as cr]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
    [com.blockether.vis.ext.channel-tui.theme :as t]
    [com.blockether.vis.internal.iteration :as iteration]
    [clojure.string :as str]
@@ -2055,6 +2056,42 @@
         (expect (= :toggle-details (:kind meta)))
         (expect (= (str node-id) (:node-id meta)))
         (expect (true? (:collapsed? meta)))))))
+
+(defdescribe image-disclosure-render-test
+  ;; A dropped image renders as a collapsible `vis-image` disclosure: the
+  ;; `[Image #N: ...]` token is the chevron summary; expanding it reserves a
+  ;; box of rows the screen loop paints the picture over (or a text fallback
+  ;; on image-incapable terminals).
+  (let [ir      [:ir {}
+                 [:code {:lang "vis-image"}
+                  "[Image #1: shot.png 1200×800, 245KB]\n/tmp/shot.png\nimage/png\n1200x800\n245KB\n"]]
+        sid     "s1"
+        turn    "client-turn-1"
+        opts    (fn [de] {:session-id sid :session-turn-id turn
+                          :detail-expansions de :section :user})
+        node-id (@#'render/detail-node-id
+                 {:session-turn-id turn :section :user :kind :image :details-path ["1"]})]
+    (it "collapsed by default: `Image` chevron shows, no reserved rows"
+      (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
+        (expect (str/includes? txt "▸ [Image #1: shot.png 1200×800, 245KB]"))))
+    (it "expanded on an image terminal: a paint-meta row + reserved box survive trimming"
+      (with-redefs [timg/images-protocol (constantly :kitty)]
+        (let [{:keys [line-meta]} (render/format-answer-markdown-data
+                                    ir 76 (opts {[sid node-id] true}))
+              img-rows (filter #(= :image (:kind %)) line-meta)
+              pad-rows (filter #(= :image-pad (:kind %)) line-meta)
+              img      (:img (first img-rows))]
+          (expect (= 1 (count img-rows)))
+          (expect (= "/tmp/shot.png" (:path img)))
+          (expect (pos? (long (:rows img))))
+          ;; reserved box height = 1 paint row + (rows-1) pad rows
+          (expect (= (dec (long (:rows img))) (count pad-rows))))))
+    (it "expanded on a plain terminal: a text fallback describes the image"
+      (with-redefs [timg/images-protocol (constantly nil)]
+        (let [txt (:text (render/format-answer-markdown-data
+                           ir 76 (opts {[sid node-id] true})))]
+          (expect (str/includes? txt "shot.png"))
+          (expect (str/includes? txt "1200×800")))))))
 
 (defn- git-only-form
   ;; Thin git filter over the generalized tagger — the source keeps only

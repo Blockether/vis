@@ -17,10 +17,12 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.tabs :as tabs]
+            [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
@@ -872,6 +874,58 @@
            :height 1,
            :text (:text m),
            :node-id (:node-id m)})))))
+(defn- fitting-image-placements
+  "Keep only inline-image placements whose full `:rows` box fits inside the
+   transcript viewport `[messages-top, messages-bottom)`. The graphics layer
+   can't be clipped to the scroll region, so a partially-scrolled image is
+   dropped rather than drawn over the input/footer. `placements` are the exact
+   painted positions `draw-chat-bubble!` recorded via `render/*image-placements*`."
+  [placements messages-top messages-bottom]
+  (let [top    (long messages-top)
+        bottom (long messages-bottom)]
+    (vec
+      (for [{:keys [row img] :as p} placements
+            :when (and (>= (long row) top)
+                    (<= (+ (long row) (long (:rows img))) bottom))]
+        p))))
+
+(defonce ^:private image-paint-state
+  ;; Signature of the images currently drawn on the terminal's graphics layer.
+  ;; Guards the post-refresh emit so a multi-KB Kitty/iTerm2 sequence rides
+  ;; the wire ONLY when the visible image set (path / position / box) changes,
+  ;; not on every spinner heartbeat.
+  (atom nil))
+
+(defn- paint-terminal-images!
+  "Draw every region from `image-regions` onto the terminal's graphics layer,
+   AFTER Lanterna's delta refresh has painted the reserved blank cells. Wrapped
+   in DECSC/DECRC so the shell cursor lands back where Lanterna left it. Kitty
+   placements are cleared first (`d=A`) so scrolling doesn't stack ghosts. Skips
+   the whole write when the signature matches the last paint."
+  [regions]
+  (let [proto     (timg/images-protocol)
+        signature (mapv (fn [{:keys [row col img]}]
+                          [row col (:path img) (:cols img) (:rows img)])
+                    regions)]
+    (when (and proto (not= signature @image-paint-state))
+      (let [^java.io.OutputStream out @vis/tty-out
+            sb (StringBuilder.)]
+        (.append sb "\u001b7") ;; DECSC save cursor
+        (when (and (= proto :kitty) (seq @image-paint-state))
+          (.append sb "\u001b_Ga=d,d=A,q=2\u001b\\")) ;; drop prior kitty images
+        (doseq [{:keys [row col img]} regions]
+          (when-let [seqstr (timg/render-sequence (:path img) (:mime img)
+                              {:cols (:cols img), :rows (:rows img)})]
+            (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
+            (.append sb seqstr)))
+        (.append sb "\u001b8") ;; DECRC restore cursor
+        (try
+          (when out
+            (.write out (.getBytes (.toString sb) "UTF-8"))
+            (.flush out))
+          (catch Throwable _ nil)))
+      (reset! image-paint-state signature))))
+
 (defn- bubble-copy-hit
   [point regions]
   (let [col (long (:col point))
@@ -1127,7 +1181,11 @@
         ;; slash-suggestions) from the active session's cache, refreshed at each
         ;; turn end. The paint body just reads it; no inline let, no DB hit.
         ctx-snapshot      (get-in db [:ctx-by-session (get-in db [:session :id])]
-                            {:tasks {} :facts {} :archived {}})]
+                            {:tasks {} :facts {} :archived {}})
+        ;; Collector for inline-image placements. `draw-messages-area!` conj's
+        ;; the exact painted position of each expanded `vis-image` row here;
+        ;; the post-refresh graphics pass drains it below.
+        image-sink        (atom [])]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
@@ -1139,7 +1197,8 @@
     ;; instead of a half-filled buffer (the bug that made the header
     ;; copy-id button feel \"sometimes broken\" when the spinner was
     ;; ticking).
-    (render/draw-messages-area! g layout messages-top messages-bottom cols)
+    (binding [render/*image-placements* image-sink]
+      (render/draw-messages-area! g layout messages-top messages-bottom cols))
     (header/draw-header! g db header-top cols)
     ;; Bottom band (input box + footer + slash suggestions) — always painted so
     ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
@@ -1217,7 +1276,16 @@
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
       (cr/commit-frame!)
-      (when-not *skip-frame-refresh?* (.refresh screen Screen$RefreshType/DELTA))
+      (when-not *skip-frame-refresh?*
+        (.refresh screen Screen$RefreshType/DELTA)
+        ;; Inline images ride the terminal's graphics layer, which Lanterna
+        ;; doesn't model. Draw them AFTER the delta so they sit on top of the
+        ;; blank cells the renderer reserved for each expanded `vis-image`.
+        ;; `draw-messages-area!` recorded the EXACT painted position of each
+        ;; image row into `image-sink`; only those whose full box fits the
+        ;; viewport are placed.
+        (paint-terminal-images!
+          (fitting-image-placements @image-sink messages-top messages-bottom)))
       {:cols cols,
        :rows rows,
        :total-h total-h,
@@ -2636,7 +2704,23 @@
                        (let [text (.toString sb)]
                          (vreset! paste-buffer nil)
                          (when-not (.isEmpty text)
-                           (if (input/use-placeholder? text)
+                           (if-let [image (timg/probe-paste-image text
+                                            {:workspace-root (try (str (workspace/cwd))
+                                                               (catch Throwable _ nil))})]
+                               ;; Dropped image file: the terminal pasted its
+                               ;; PATH. Always chip it (never inline the raw
+                               ;; path) with an `[Image #N: ...]` placeholder
+                               ;; carrying the sniffed file metadata; the send
+                               ;; path expands it back to the path text so the
+                               ;; engine attaches the pixels.
+                             (do (state/dispatch [:add-paste text image])
+                               (let [{:keys [paste-counter pastes]} @state/app-db
+                                     entry (get pastes paste-counter)
+                                     token (input/format-paste-placeholder entry)
+                                     db' @state/app-db]
+                                 (state/dispatch [:update-input
+                                                  (input/paste-text (:input db') token)])))
+                             (if (input/use-placeholder? text)
                                ;; Stash the payload, insert a
                                ;; one-line `[Pasted #N: ...]` placeholder.
                                ;; The send path expands every active
@@ -2646,18 +2730,18 @@
                                ;; after the dispatch is safe: every db
                                ;; event handler runs on the dispatching
                                ;; thread, so the swap is already visible.
-                             (do (state/dispatch [:add-paste text])
-                               (let [{:keys [paste-counter pastes]} @state/app-db
-                                     entry (get pastes paste-counter)
-                                     token (input/format-paste-placeholder entry)
-                                     db' @state/app-db]
-                                 (state/dispatch [:update-input
-                                                  (input/paste-text (:input db') token)])))
+                               (do (state/dispatch [:add-paste text])
+                                 (let [{:keys [paste-counter pastes]} @state/app-db
+                                       entry (get pastes paste-counter)
+                                       token (input/format-paste-placeholder entry)
+                                       db' @state/app-db]
+                                   (state/dispatch [:update-input
+                                                    (input/paste-text (:input db') token)])))
                                ;; Short single-line paste: inline,
                                ;; matches the natural feel of
                                ;; `git rev-parse HEAD`-style copies.
-                             (state/dispatch [:update-input
-                                              (input/paste-text (:input db) text)])))))
+                               (state/dispatch [:update-input
+                                                (input/paste-text (:input db) text)]))))))
                      (recur))
                    ;; Mouse events: scrollbar grab/drag + wheel scroll.
                    ;; Bypass `input/handle-key` entirely - those events

@@ -1313,11 +1313,13 @@
               ;; Stashes a clipboard payload in the registry, returns the new
               ;; id (Integer) via a side-channel atom that the screen loop reads
               ;; right after dispatch - see `:paste-counter` increment below.
-  (fn [db [_ content]]
+  (fn [db [_ content image]]
     (let [next-id (inc (or (:paste-counter db) 0))]
       (-> db
         (assoc :paste-counter next-id)
-        (assoc-in [:pastes next-id] {:id next-id, :content content})))))
+        (assoc-in [:pastes next-id]
+          (cond-> {:id next-id, :content content}
+            image (assoc :image image)))))))
 (reg-event-db :remove-paste
               ;; Drop a single paste entry by id. Used when the user backspaces
               ;; over the closing `]` of a placeholder - the screen loop deletes
