@@ -197,14 +197,37 @@
   [key]
   (when-let [delta (modal-wheel-delta key)]
     (* (long delta) (max 1 (long (.getButton ^MouseAction key))))))
+(defn- key-type
+  [key]
+  (when (instance? KeyStroke key)
+    (.getKeyType ^KeyStroke key)))
+
+(defn- key-character
+  [key]
+  (when (instance? KeyStroke key)
+    (.getCharacter ^KeyStroke key)))
+
+(defn- lower-character
+  [^Character c]
+  (when c
+    (Character/toLowerCase (.charValue c))))
+
+(defn- lower-key-character
+  [key]
+  (lower-character (key-character key)))
+
+(defn- iso-control-character?
+  [^Character c]
+  (boolean (and c (Character/isISOControl (.charValue c)))))
+
 (def ^:private modal-pending-key (ThreadLocal/withInitial #(atom nil)))
 (defn normalize-modal-key
   "Normalize raw terminal CR/LF/ESC character keystrokes to Lanterna
    Enter/Escape key types. Some terminals surface modal Enter/Escape as
    `KeyType/Character`; modal code should not need to special-case that."
   [key]
-  (if (and key (not (instance? MouseAction key)) (= KeyType/Character (.getKeyType key)))
-    (case (.getCharacter key)
+  (if (and key (not (instance? MouseAction key)) (= KeyType/Character (key-type key)))
+    (case (key-character key)
       (\newline \return)
       (KeyStroke. KeyType/Enter)
 
@@ -216,11 +239,11 @@
 (defn modal-enter-key?
   [key]
   (let [key (normalize-modal-key key)]
-    (and key (not (instance? MouseAction key)) (= KeyType/Enter (.getKeyType key)))))
+    (and key (not (instance? MouseAction key)) (= KeyType/Enter (key-type key)))))
 (defn modal-escape-key?
   [key]
   (let [key (normalize-modal-key key)]
-    (and key (not (instance? MouseAction key)) (= KeyType/Escape (.getKeyType key)))))
+    (and key (not (instance? MouseAction key)) (= KeyType/Escape (key-type key)))))
 (def ^:private modal-close-bounds (ThreadLocal/withInitial #(atom nil)))
 (defn modal-close-click?
   "True when `key` is a mouse click on the dialog close (✕) button."
@@ -841,7 +864,7 @@
           (when key
             (if-let [wheel-step (modal-wheel-step key)]
               (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
-              (condp = (.getKeyType key)
+              (condp = (key-type key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
@@ -853,7 +876,7 @@
                                       (recur))
                 KeyType/Character (do
                                     (when filter?
-                                      (let [c (.getCharacter key)]
+                                      (let [c (key-character key)]
                                         (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
                                           (swap! query str c)
                                           (reset! selected 0))))
@@ -949,13 +972,13 @@
         (let [key (read-modal-key! screen)]
           (if (nil? key)
             (recur)
-            (condp = (.getKeyType key)
+            (condp = (key-type key)
               KeyType/Escape nil
               KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Enter (mapv #(nth items %) (sort @checked))
               KeyType/Character
-              (let [c (Character/toLowerCase ^char (.getCharacter key))]
+              (let [c (lower-key-character key)]
                 (cond (= c \space) (do (when (pos? total)
                                          (swap! checked #(if (contains? % @selected)
                                                            (disj % @selected)
@@ -1137,14 +1160,14 @@
                 (some? @paste) (do (when-let [ch (input/keystroke->paste-char key)]
                                      (.append ^StringBuilder @paste ch))
                                    (recur))
-                :else (condp = (.getKeyType key)
+                :else (condp = (key-type key)
                         KeyType/Escape ::cancel
                         KeyType/Enter (or (submit!) (recur))
                         KeyType/Tab (do (swap! focus #(mod (inc %) (inc n))) (recur))
                         KeyType/ArrowDown (do (swap! focus #(mod (inc %) (inc n))) (recur))
                         KeyType/ArrowUp (do (swap! focus #(mod (+ % n) (inc n))) (recur))
                         KeyType/Character (do (when cur-field
-                                                (let [c (.getCharacter key)]
+                                                (let [c (key-character key)]
                                                   (swap! (:text cur-field)
                                                     #(into (subvec % 0 @(:cursor cur-field))
                                                            (cons c
@@ -1316,12 +1339,12 @@
         (let [key (read-modal-key! screen)]
           (if (nil? key)
             (recur)
-            (condp = (.getKeyType key)
+            (condp = (key-type key)
               KeyType/Escape nil
               KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Character
-              (let [c (Character/toLowerCase ^char (.getCharacter key))]
+              (let [c (lower-key-character key)]
                 (if (= c \a)
                   ;; start a NEW resource — available even with 0 resources.
                   ;; Fully generic: drives the declarative startable registry
@@ -1384,7 +1407,7 @@
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
-            (condp = (.getKeyType key)
+            (condp = (key-type key)
               KeyType/Escape nil
               KeyType/Enter nil
               KeyType/ArrowUp (do (swap! scroll dec) (recur))
@@ -1560,10 +1583,10 @@
                                           (.append ^StringBuilder @paste-buffer ch))
                                         (recur))
               ;; -- Regular key dispatch -------------------------
-              :else (condp = (.getKeyType key)
+              :else (condp = (key-type key)
                       KeyType/Escape nil
                       KeyType/Enter (str/trim (apply str @text))
-                      KeyType/Character (let [c (.getCharacter key)]
+                      KeyType/Character (let [c (key-character key)]
                                           (swap! text #(into (subvec % 0 @cursor)
                                                              (cons c (subvec % @cursor))))
                                           (swap! cursor inc)
@@ -1679,13 +1702,13 @@
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
-            (condp = (.getKeyType key)
+            (condp = (key-type key)
               KeyType/Escape nil
               KeyType/Enter (= @focus 0) ;; true if Yes focused
               KeyType/ArrowLeft (do (reset! focus 0) (recur))
               KeyType/ArrowRight (do (reset! focus 1) (recur))
               KeyType/Tab (do (swap! focus #(if (zero? %) 1 0)) (recur))
-              KeyType/Character (let [c (Character/toLowerCase (.getCharacter key))]
+              KeyType/Character (let [c (lower-key-character key)]
                                   (cond (= c \y) true
                                         (= c \n) false
                                         :else (recur)))
@@ -2312,7 +2335,7 @@
           (.refresh screen Screen$RefreshType/DELTA)
           (let [key (read-modal-key! screen)]
             (when key
-              (condp = (.getKeyType key)
+              (condp = (key-type key)
                 KeyType/Escape (do (preview! original) nil)
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
@@ -2901,7 +2924,7 @@
                                                                 (recur))
                    :else (recur)))
                :else
-               (condp = (.getKeyType key)
+               (condp = (key-type key)
                  ;; Esc clears an active search first, then closes on the next press.
                  KeyType/Escape (if (str/blank? @query)
                                   @values
@@ -2920,7 +2943,7 @@
                                        (recur))
                  ;; Any printable character types into the search query (VS Code feel);
                  ;; Enter is the only key that toggles/activates the selected row.
-                 KeyType/Character (let [c (.getCharacter key)]
+                 KeyType/Character (let [c (key-character key)]
                                      (if (and c (>= (int c) 32))
                                        (do (swap! query str c)
                                            (reset! selected (first-selectable-index
@@ -3228,14 +3251,14 @@
           (when key
             (if-let [wheel-step (modal-wheel-step key)]
               (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
-              (condp = (.getKeyType key)
+              (condp = (key-type key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                       (recur))
                 KeyType/Enter (when (pos? total) (select-keys (nth items @selected) [:action :id]))
-                KeyType/Character (let [raw-c (.getCharacter key)
-                                        c (when raw-c (Character/toLowerCase raw-c))]
+                KeyType/Character (let [raw-c (key-character key)
+                                        c (lower-character raw-c)]
 
                                     (case c
                                       \n
@@ -3378,10 +3401,8 @@
   "True when `key` is Ctrl+<letter> (case-insensitive)."
   [key letter]
   (and (input/ctrl-modifier? key)
-       (= KeyType/Character (.getKeyType key))
-       (some-> (.getCharacter key)
-               Character/toLowerCase
-               (= letter))))
+       (= KeyType/Character (key-type key))
+       (= (lower-key-character key) letter)))
 
 (defn directory-picker-dialog!
   "Browse the filesystem like a file explorer and manage this session's
@@ -3846,7 +3867,7 @@
                                                    (reset-list!)))
                                                (recur))
                   (modal-enter-key? key) (or (enter!) (recur))
-                  :else (condp = (.getKeyType key)
+                  :else (condp = (key-type key)
                           KeyType/ArrowUp
                           (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                           KeyType/ArrowDown
@@ -3858,11 +3879,11 @@
                           (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
                               (reset-list!)
                               (recur))
-                          KeyType/Character (let [c (.getCharacter key)]
+                          KeyType/Character (let [c (key-character key)]
                                               (when (and c
                                                          (not (input/alt-modifier? key))
                                                          (not (input/ctrl-modifier? key))
-                                                         (not (Character/isISOControl c)))
+                                                         (not (iso-control-character? c)))
                                                 (swap! query str c)
                                                 (reset-list!))
                                               (recur))
@@ -4153,26 +4174,20 @@
               ;; New session is a MODIFIER (Ctrl+N), not a list row and not a
               ;; bare key — so plain typing (incl. the letter `n`) filters.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key)
-                           Character/toLowerCase
-                           (= \n)))
+                   (= KeyType/Character (key-type key))
+                   (= (lower-key-character key) \n))
               {:action :new}
               ;; Ctrl+F → fork the highlighted session into a new tab.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key)
-                           Character/toLowerCase
-                           (= \f)))
+                   (= KeyType/Character (key-type key))
+                   (= (lower-key-character key) \f))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :fork :id id}
                 (recur))
               ;; Ctrl+D → delete the highlighted session.
               (and (input/ctrl-modifier? key)
-                   (= KeyType/Character (.getKeyType key))
-                   (some-> (.getCharacter key)
-                           Character/toLowerCase
-                           (= \d)))
+                   (= KeyType/Character (key-type key))
+                   (= (lower-key-character key) \d))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :delete :id id}
                 (recur))
@@ -4184,7 +4199,7 @@
                                                (reset-list!)))
                                            (recur))
               :else
-              (condp = (.getKeyType key)
+              (condp = (key-type key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
@@ -4194,11 +4209,11 @@
                 (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %)) (reset-list!) (recur))
                 ;; Plain printable character → filter query. Skip control
                 ;; chars and Alt/Ctrl-modified keys (those are commands).
-                KeyType/Character (let [c (.getCharacter key)]
+                KeyType/Character (let [c (key-character key)]
                                     (when (and c
                                                (not (input/alt-modifier? key))
                                                (not (input/ctrl-modifier? key))
-                                               (not (Character/isISOControl c)))
+                                               (not (iso-control-character? c)))
                                       (swap! query str c)
                                       (reset-list!))
                                     (recur))
@@ -4373,7 +4388,7 @@
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
-            (condp = (.getKeyType key)
+            (condp = (key-type key)
               KeyType/Escape nil
               KeyType/ArrowUp (do (swap! scroll #(max 0 (dec %))) (recur))
               KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc %))) (recur))
@@ -4513,7 +4528,7 @@
           (.refresh screen Screen$RefreshType/DELTA)
           (let [key (read-modal-key! screen)]
             (when key
-              (condp = (.getKeyType key)
+              (condp = (key-type key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! scroll #(max 0 (dec %))) (recur))
                 KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc %))) (recur))
@@ -4585,7 +4600,7 @@
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
-            (let [ktype (.getKeyType key)]
+            (let [ktype (key-type key)]
               (condp = ktype
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
@@ -4593,7 +4608,7 @@
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                       (recur status))
                 KeyType/Character
-                (let [c (Character/toLowerCase (.getCharacter key))]
+                (let [c (lower-key-character key)]
                   (cond (= c \space) (do (when (pos? total)
                                            (swap! checked (fn [s]
                                                             (if (contains? s @selected)
