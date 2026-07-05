@@ -2151,7 +2151,11 @@
         (expect (not-any? #(str/includes? % "$ add -A") collapsed))
         (expect (some #(str/includes? % "$ add -A") expanded))
         (expect (some #(str/includes? % "$ push") expanded))
-        (expect (some #(str/includes? % "main -> main") expanded))))
+        (expect (some #(str/includes? % "main -> main") expanded))
+        ;; Nested command rows carry a left pad so they read as CHILDREN of the
+        ;; band (indented under the label, not hugging the chevron column).
+        (expect (every? #(str/starts-with? % "  ")
+                  (filter #(str/includes? % "$ ") expanded)))))
     (it "the band opens with a leading breathe row (padding 1 up, like an op-card)"
       (let [entries (git-group-entries [(git-form "commit -m x" nil) (git-form "push" nil)]
                       (assoc ctx :iteration-number 9))

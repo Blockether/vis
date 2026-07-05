@@ -3822,7 +3822,10 @@
         ->result   (fn [e]
                      (let [l        (str (:line e))
                            stripped (or (second (split-structural-line-marker l)) l)]
-                       (assoc e :line (str result-marker stripped))))
+                       (assoc e :line (str result-marker
+                                        (if (str/blank? stripped)
+                                          stripped
+                                          (str tool-output-indent stripped))))))
         body-md    (str/join "\n\n"
                      (map (fn [{:keys [headline body]}]
                             (str "`$ " headline "`"
@@ -3830,7 +3833,8 @@
                        parts))
         entries    (when (seq body-md)
                      (tag-copy-block-body
-                       (vec (ir-tui/ir->entries (vis/markdown->ir body-md) fill-w {:mode :channel}))
+                       (vec (ir-tui/ir->entries (vis/markdown->ir body-md)
+                              (max 1 (- fill-w tool-output-indent-cols)) {:mode :channel}))
                        node-id body-md))]
     (if (and node-id (seq entries))
       (let [expanded?    (detail-expanded? detail-expansions session-id node-id false)
