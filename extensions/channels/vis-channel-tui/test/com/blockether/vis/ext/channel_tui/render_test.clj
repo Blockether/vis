@@ -2126,9 +2126,9 @@
 
 (defn- git-only-form
   ;; Thin git filter over the generalized tagger — the source keeps only
-  ;; `groupable-tool-form`; this preserves the original git-only assertions.
+  ;; `groupable-iteration-forms`; this preserves the original git-only assertions.
   [entry]
-  (let [tf (@#'render/groupable-tool-form entry)]
+  (let [tf (@#'render/groupable-iteration-forms entry)]
     (when (= "git" (first tf)) (second tf))))
 (def ^:private git-command-parts @#'render/git-command-parts)
 (def ^:private git-group-entries @#'render/git-group-entries)
@@ -2166,9 +2166,9 @@
                          count))]
     (it "git-only-form still detects a single-git iteration (narration no longer disqualifies)"
       (expect (some? (git-only-form {:forms [(git-form "status" nil)]})))
-      ;; Narration (thinking / prose) rides ABOVE the band now, so it still groups.
+      ;; A parallel GATHER of git calls in one iteration groups too (both forms).
       (expect (some? (git-only-form {:assistant-prose "hi" :forms [(git-form "status" nil)]})))
-      (expect (nil? (git-only-form {:forms [(git-form "a" nil) (git-form "b" nil)]})))
+      (expect (some? (git-only-form {:forms [(git-form "a" nil) (git-form "b" nil)]})))
       (expect (nil? (git-only-form {:forms [{:vis/tool-name "cat" :result-summary "x"}]}))))
     (it "git-command-parts recovers subcommand + failure from the summary note"
       (let [ok (git-command-parts (git-form "status --short" nil))
@@ -2275,7 +2275,7 @@
         (expect (= rm-ch (first before)))
         (expect (not= ip-ch (first before)))))))
 
-(def ^:private groupable-tool-form @#'render/groupable-tool-form)
+(def ^:private groupable-iteration-forms @#'render/groupable-iteration-forms)
 (def ^:private rg-command-parts @#'render/rg-command-parts)
 (def ^:private rg-group-entries @#'render/rg-group-entries)
 
@@ -2308,13 +2308,13 @@
                        (->> (render-iteration-entries pairs iter-fn false true ctx)
                          (filter #(str/includes? (str (:line %)) "NORMAL#"))
                          count))]
-    (it "groupable-tool-form tags git AND rg, rejects other tools + impure steps"
-      (expect (= ["git" (git-form "status" nil)]
-                (update (groupable-tool-form {:forms [(git-form "status" nil)]}) 1 identity)))
-      (expect (= "rg" (first (groupable-tool-form {:forms [(rg-form "`x` · 1 file" nil)]}))))
-      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]})))
+    (it "groupable-iteration-forms tags git AND rg, rejects other tools + impure steps"
+      (expect (= ["git" [(git-form "status" nil)]]
+                (groupable-iteration-forms {:forms [(git-form "status" nil)]})))
+      (expect (= "rg" (first (groupable-iteration-forms {:forms [(rg-form "`x` · 1 file" nil)]}))))
+      (expect (nil? (groupable-iteration-forms {:forms [{:vis/tool-name "ls" :result-summary "x"}]})))
       ;; Narration no longer disqualifies grouping — it renders above the band.
-      (expect (some? (groupable-tool-form {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
+      (expect (some? (groupable-iteration-forms {:assistant-prose "hi" :forms [(rg-form "`x` · 1 file" nil)]}))))
     (it "rg-command-parts drops the query prefix for the collapsed chip, keeps the full summary"
       (let [content (rg-command-parts (rg-form "`a` OR `b` · 6 hits in 1 file" "\n`c.clj`\n\n```\n 1: x\n```"))
             files   (rg-command-parts (rg-form "`q` · 4 files" "\n```\n  a\n```"))]
@@ -2323,6 +2323,13 @@
         (expect (= "4 files" (:chip files)))))
     (it "two consecutive rg iterations collapse into ONE band"
       (let [pairs [(ri 0 "`a` · 4 files" nil) (ri 1 "`b` · 2 hits in 1 file" nil)]]
+        (expect (= 1 (rg-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a parallel GATHER of rg calls in ONE iteration still collapses into a band"
+      ;; Two rg searches fired together land as TWO forms in ONE iteration; they
+      ;; must band just like two consecutive single-call iterations.
+      (let [pairs [[0 {:forms [(rg-form "`a` · 4 files" nil)
+                               (rg-form "`b` · 2 hits in 1 file" nil)]}]]]
         (expect (= 1 (rg-band-count pairs)))
         (expect (= 0 (normal-count pairs)))))
     (it "a lone rg iteration renders normally (no band)"
@@ -2390,9 +2397,9 @@
                        (->> (render-iteration-entries pairs iter-fn false true ctx)
                          (filter #(str/includes? (str (:line %)) "NORMAL#"))
                          count))]
-    (it "groupable-tool-form tags a lone delete iteration"
-      (expect (= "delete" (first (groupable-tool-form {:forms [(del-form "deleted `a.clj`")]}))))
-      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
+    (it "groupable-iteration-forms tags a lone delete iteration"
+      (expect (= "delete" (first (groupable-iteration-forms {:forms [(del-form "deleted `a.clj`")]}))))
+      (expect (nil? (groupable-iteration-forms {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
     (it "delete-command-parts shows the basename chip, keeps the full summary"
       (let [p (delete-command-parts (del-form "deleted `src/com/blockether/vis/ports.clj`"))
             n (delete-command-parts (del-form "nothing to delete at `gone.clj`"))]
@@ -2456,9 +2463,9 @@
                        (->> (render-iteration-entries pairs iter-fn false true ctx)
                          (filter #(str/includes? (str (:line %)) "NORMAL#"))
                          count))]
-    (it "groupable-tool-form tags a lone find_files iteration"
-      (expect (= "find_files" (first (groupable-tool-form {:forms [(find-form "2 matches for \"x\"" nil)]}))))
-      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
+    (it "groupable-iteration-forms tags a lone find_files iteration"
+      (expect (= "find_files" (first (groupable-iteration-forms {:forms [(find-form "2 matches for \"x\"" nil)]}))))
+      (expect (nil? (groupable-iteration-forms {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
     (it "find-command-parts rides the quoted query on the chip, keeps the full summary"
       (let [q (find-command-parts (find-form "20 matches for \"tui render tool\" · terms: render, tool" "\n```\n  a.clj\n```"))
             u (find-command-parts (find-form "3 matches" nil))]
