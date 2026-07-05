@@ -56,18 +56,12 @@
                       "--enable-native-access=ALL-UNNAMED"
                       "--enable-preview"
                       "--sun-misc-unsafe-memory-access=allow"
-                      ;; MEMORY: the TUI's live heap is ~285MB, but G1 defaults
-                      ;; to over-committing (measured 962MB committed) and never
-                      ;; hands it back, so idle RSS ballooned to ~1.6-2.0GB. The
-                      ;; heap ceiling is NOT the lever (a low -Xmx just risks
-                      ;; OOM on a heavy GraalPy computation and G1 still commits
-                      ;; to it). Instead: a periodic idle GC + tight free-ratios
-                      ;; make G1 shrink committed toward the live set and UNCOMMIT
-                      ;; the pages back to the OS. Measured: idle committed
-                      ;; 962MB -> 384MB, idle RSS ~1.6-2.0GB -> ~0.98GB (~45%
-                      ;; less), and it re-commits smoothly under scroll load then
-                      ;; returns when idle. No -Xmx cap → heavy user Python can
-                      ;; still burst.
+                      ;; The TUI's live heap is small, but G1 over-commits and
+                      ;; never hands the pages back, so idle RSS balloons. A
+                      ;; periodic idle GC + tight free-ratios make G1 shrink
+                      ;; committed toward the live set and uncommit to the OS;
+                      ;; it re-commits smoothly under load. No -Xmx cap so heavy
+                      ;; GraalPy user code can still burst.
                       "-XX:+G1PeriodicGCInvokesConcurrent"
                       "-XX:G1PeriodicGCInterval=10000"
                       "-XX:MinHeapFreeRatio=10"
@@ -135,20 +129,6 @@
   :bench-micro
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                 criterium/criterium            {:mvn/version "0.4.6"}}}
-
-  ;; Objective flicker/delta-correctness harness for the Lanterna delta
-  ;; emitter — replays refresh(DELTA) onto a reference DefaultVirtualTerminal
-  ;; and asserts the buffer matches. See dev/flicker_harness.clj.
-  ;; Measure the retained heap cost of one GraalPy sandbox context.
-  ;; Run: clojure -M:vis:mem   (uses :vis deps + jvm-opts, mem-context main)
-  :mem {:extra-paths ["dev"]
-        :main-opts   ["-m" "mem-context"]}
-
-  :flicker {:extra-paths ["dev"]
-            :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
-                          "--enable-native-access=ALL-UNNAMED"
-                          "-Djava.awt.headless=true"]
-            :main-opts   ["-m" "flicker-harness"]}
 
   :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                        slipset/deps-deploy           {:mvn/version "0.2.5"}

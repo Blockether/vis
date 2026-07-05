@@ -1678,11 +1678,9 @@
    Header, footer, input box and the background OUTSIDE the messages band are
    left exactly as the previous frame painted them — their inputs didn't
    change, so a full repaint would produce byte-identical cells and the
-   Lanterna delta emits nothing for them. That removes the ~60% of every scroll
-   frame a full render wastes rebuilding static chrome (measured: chrome
-   ~1.25ms + header ~0.37ms + full-fill ~0.3ms of a ~3.3ms frame). Proven
-   pixel-identical to `render-frame!` for this state by the A/B flicker gate
-   (`dev/tui_ab_flicker.sh`); force it off with `force-full-frame?`."
+   Lanterna delta emits nothing for them. That skips the bulk of a full scroll
+   frame (static chrome rebuild) while staying pixel-identical to
+   `render-frame!` for this state; force it off with `force-full-frame?`."
   [^TerminalScreen screen cols rows
    {:keys [messages input progress settings] :as db} now-ms previous-layout]
   (let [g (.newTextGraphics screen)
