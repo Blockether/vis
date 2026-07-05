@@ -1,0 +1,7 @@
+{
+  "dataset_repo": "snorkel-ai/senior-swe-bench-v2026.06",
+  "dataset_commit": "01cd0e9908c5a7b10351de3aa389cea40c2b44c0",
+  "harbor_version": "0.17.0",
+  "vis_revision": "56cd15afbadffdbd35b50da2fa1ef0deef388baf",
+  "default_subset": "subsets/smoke.json"
+}
