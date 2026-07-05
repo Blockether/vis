@@ -223,3 +223,44 @@
       (expect (< 100 off))
       (expect (< off on))
       (expect (< 100 (png-len python-context "plt.plot([1,2,3],[1,2,3])\nplt.axis([0,5,0,10])"))))))
+
+(defdescribe matplotlib-ascii-test
+  (it "to_ascii returns a framed multi-line ASCII plot with title + legend"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt, math\nplt.clf()\n"
+                         "xs=[i*0.3 for i in range(21)]\n"
+                         "plt.plot(xs,[math.sin(x) for x in xs],label='sin')\n"
+                         "plt.plot(xs,[math.cos(x) for x in xs],label='cos')\n"
+                         "plt.title('trig'); plt.legend()\n"
+                         "s=plt.to_ascii(50,14)\n"
+                         "isinstance(s,str) and 'trig' in s and 'sin' in s "
+                         "and 'cos' in s and s.count(chr(10))>=14"))))))
+
+  (it "savefig(format='txt') writes an ASCII render (not a PNG) to a buffer"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                         "plt.plot([0,1,2,3],[0,1,4,9])\n"
+                         "b=io.StringIO()\nplt.savefig(b, format='txt')\nv=b.getvalue()\n"
+                         "len(v)>0 and chr(10) in v and not v.startswith(chr(137))"))))))
+
+  (it "show() renders ASCII to stdout and returns None"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                         "plt.bar([1,2,3],[3,7,2]); plt.title('bars')\n"
+                         "plt.show() is None"))))))
+
+  (it "to_ascii on an empty figure returns a string without error"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       "import matplotlib.pyplot as plt\nplt.clf()\nisinstance(plt.to_ascii(), str)")))))
+
+  (it "to_ascii honours a bar chart with a marker column"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                       (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                         "plt.bar([1,2,3,4],[3,7,2,5])\n"
+                         "s=plt.to_ascii(40,12)\n"
+                         "isinstance(s,str) and any(c in s for c in '*+#')")))))))
