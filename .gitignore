@@ -60,6 +60,7 @@ packages/vis-benchmark/swebench-harness/
 
 # verify.sh transient output (run logs)
 .verification/
+jobs/
 dev/benches/4clojure/autoresearch/
 dev/benches/4clojure/.prompt_sizes.cache.json
 dev/benches/4clojure/.system_prompt_chars.cache.json
