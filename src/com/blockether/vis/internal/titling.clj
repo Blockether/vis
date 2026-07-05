@@ -283,12 +283,12 @@
     (cond
       (= ::deadline outcome)
       (do (future-cancel fut)
-          (tel/log! {:level :warn
-                     :id ::auto-title-deadline
-                     :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
-                            :providers   (vec AUTO_TITLE_PROVIDER_ORDER)}}
-            "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
-          nil)
+        (tel/log! {:level :warn
+                   :id ::auto-title-deadline
+                   :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
+                          :providers   (vec AUTO_TITLE_PROVIDER_ORDER)}}
+          "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
+        nil)
 
       (:error outcome)
       (do (tel/log! {:level :warn
@@ -296,7 +296,7 @@
                      :data {:error     (ex-message (:error outcome))
                             :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
             "Auto-title provider chain failed; keeping deterministic fallback")
-          nil)
+        nil)
 
       :else
       (sanitize-auto-title (some-> outcome :ok :result :title)))))
@@ -329,6 +329,26 @@
   (or (not (usable-existing-title (some-> session-title-atom deref)))
     (provisional-title? session-id)))
 
+(def ^:private leading-slash-command-pattern
+  "A composer slash-command word (e.g. `/new-session`, `/new`, `/fork-session`)
+   that a CHANNEL action leaked into the titling request. Matches ONLY a single
+   leading `/<word>` token (letters/digits/-/_) up to whitespace or end — so a
+   genuine path like `/usr/bin/foo` (interior slashes) is left untouched."
+  #"(?i)^\s*/[\p{L}][\p{L}\p{N}_-]*(?:\s+|$)")
+
+(defn- strip-leading-slash-command
+  "Drop a leading composer slash-command word from `user-request` so an
+   auto-title reflects the real prompt, not the command (the `/new-session
+   <task>` title-says-\"session\" bug). Returns the request unchanged when it
+   doesn't start with a `/<word>` token, or when stripping would leave nothing
+   (a bare command carries no title-worthy content anyway)."
+  [user-request]
+  (let [s (str user-request)]
+    (if-let [m (re-find leading-slash-command-pattern s)]
+      (let [rest (str/trim (subs s (count m)))]
+        (if (str/blank? rest) s rest))
+      s)))
+
 (defn maybe-auto-title!
   "Title the session asynchronously on a normal LLM turn. Two-phase so a slow
    or hung provider can never leave the tab untitled:
@@ -343,27 +363,28 @@
    Titles are host-owned; there is no model-facing override. Returns a future
    or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
-  (when (and db-info session-id (:router env)
-          (title-needs-generation? session-id session-title-atom))
-    (future
+  (let [user-request (strip-leading-slash-command user-request)]
+    (when (and db-info session-id (:router env)
+            (title-needs-generation? session-id session-title-atom))
+      (future
       ;; Announce "generating title" so a channel (TUI) can spinner the
       ;; tab; always clear it in the finally.
-      (broadcast-title-pending! session-id true)
-      (try
+        (broadcast-title-pending! session-id true)
+        (try
         ;; 1. Fallback-first: never leave the tab untitled while the LLM runs.
-        (when-not (usable-existing-title (some-> session-title-atom deref))
-          (when-let [fallback (fallback-auto-title user-request)]
-            (set-title-with-broadcast! db-info session-id session-title-atom fallback)
-            (mark-provisional-title! session-id true)))
+          (when-not (usable-existing-title (some-> session-title-atom deref))
+            (when-let [fallback (fallback-auto-title user-request)]
+              (set-title-with-broadcast! db-info session-id session-title-atom fallback)
+              (mark-provisional-title! session-id true)))
         ;; 2. LLM upgrade: overwrite + freeze on success; keep fallback on fail.
-        (when-let [title (model-auto-title! env nil user-request)]
-          (set-title-with-broadcast! db-info session-id session-title-atom title)
-          (mark-provisional-title! session-id false))
-        (catch Throwable t
-          (tel/log! {:level :warn
-                     :id ::auto-title-update-failed
-                     :data {:session-id session-id
-                            :error (ex-message t)}}
-            "Auto-title update failed; keeping existing title"))
-        (finally
-          (broadcast-title-pending! session-id false))))))
+          (when-let [title (model-auto-title! env nil user-request)]
+            (set-title-with-broadcast! db-info session-id session-title-atom title)
+            (mark-provisional-title! session-id false))
+          (catch Throwable t
+            (tel/log! {:level :warn
+                       :id ::auto-title-update-failed
+                       :data {:session-id session-id
+                              :error (ex-message t)}}
+              "Auto-title update failed; keeping existing title"))
+          (finally
+            (broadcast-title-pending! session-id false)))))))

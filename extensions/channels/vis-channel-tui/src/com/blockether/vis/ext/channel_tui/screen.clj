@@ -2252,6 +2252,11 @@
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
            (when-let [config (:config @state/app-db)]
+             ;; Start warming the empty-session pool the MOMENT a config exists —
+             ;; BEFORE the (possibly slow) resume/restore below — so it is hot by
+             ;; the first Ctrl+N. Idempotent; the post-open `prewarm-session!` just
+             ;; tops it up toward the pool depth.
+             (chat/prewarm-session! config)
              (let [{:keys [id history]}
                    (cond
                      (:session-id opts)
@@ -2458,6 +2463,40 @@
                                          (vis/notify! "Opened session"
                                            :level :success
                                            :ttl-ms copy-success-ttl-ms))))
+                 start-new-session!
+                 ;; Ctrl+N / `+` / `/new-session`. NEVER blocks the input thread on
+                 ;; the cold env/runtime build: a warm pool session opens instantly,
+                 ;; and on a pool MISS we open an optimistic "Starting…" placeholder
+                 ;; tab now and bind the real session once the background build lands
+                 ;; (chat/make-session-async). Text typed meanwhile queues into the
+                 ;; tab's `:pending-sends` and drains the moment it is bound.
+                 (fn [config seed-text]
+                   (let [seed   (some-> seed-text str/trim not-empty)
+                         result (chat/make-session-async config)]
+                     (if-let [session (:session result)]
+                       (do
+                         (open-session-tab! session true)
+                         (when seed (state/dispatch [:send-message seed])))
+                       (let [build-id (str (java.util.UUID/randomUUID))
+                             fut      (:building result)]
+                         (state/dispatch [:open-building-tab build-id])
+                         (when seed (state/dispatch [:send-message seed]))
+                         (vis/worker-future
+                           "tui-new-session-bind"
+                           (fn []
+                             (try
+                               (let [{:keys [id history]} @fut]
+                                 (ensure-title-listener! id)
+                                 (state/dispatch [:bind-built-session build-id
+                                                  {:id id} history (session-workspace id)])
+                                 (persist-tabs!)
+                                 (vis/notify! "Opened session"
+                                   :level :success
+                                   :ttl-ms copy-success-ttl-ms))
+                               (catch Throwable e
+                                 (vis/notify! (str "Failed to open new session: " (ex-message e))
+                                   :level :error
+                                   :ttl-ms copy-success-ttl-ms)))))))))
                  refresh-active-tab!
                  (fn [notify?]
 
@@ -2477,14 +2516,7 @@
                    ;; nothing to wait for. Every action lands on a tab.
                    (cond
                      (= :new (:action choice)) (when-let [config (:config @state/app-db)]
-                                                 (open-session-tab! (chat/make-session config)
-                                                   true)
-                                                 ;; `/new-session <TEXT>` (optional): once the fresh
-                                                 ;; tab is focused, submit the trailing text as its
-                                                 ;; FIRST message so the new session starts on that
-                                                 ;; prompt instead of an empty buffer.
-                                                 (when-let [seed (some-> (:seed-text choice) str/trim not-empty)]
-                                                   (state/dispatch [:send-message seed])))
+                                                 (start-new-session! config (:seed-text choice)))
                      (= :fork (:action choice))
                      (if-let [current-id (or (:id choice) (current-session-id))]
                        (let [db (vis/db-info)
