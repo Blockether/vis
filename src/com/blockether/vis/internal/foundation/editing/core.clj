@@ -3343,27 +3343,37 @@
 
 (defn- render-find-result
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
-   `{:paths [path…] :item_count :query}`."
+   `{:paths [path…] :item_count :query}`.
+
+   A SINGLE match carries nothing worth folding — the one path IS the whole
+   result — so it rides the summary chip and emits NO body. With no body the
+   shared `result-card` marks the card non-collapsible, so both the TUI (no `▸`)
+   and web (no `<details>`) paint a plain headline instead of a pointless
+   one-line disclosure."
   [r]
-  (let [n (or (get r "item_count") (count (get r "paths")) 0)
-        q (some-> (get r "query") str not-empty)
-        hint (some-> (get r "hint") kw->str not-empty)
+  (let [n     (or (get r "item_count") (count (get r "paths")) 0)
+        q     (some-> (get r "query") str not-empty)
+        hint  (some-> (get r "hint") kw->str not-empty)
+        paths (get r "paths")
         ;; When the strict whole-query pass found nothing, find_files fell back
         ;; to per-TERM matching (see `find-search`). Name the terms that landed
         ;; so a fuzzy result reads honestly — `3 matches for "…" · terms: render,
         ;; native` — instead of implying an exact whole-query hit.
         terms (when (get r "fuzzy")
-                (seq (keep #(some-> % kw->str not-empty) (get r "matched_terms"))))]
-    {:summary (str n " match" (when (not= 1 n) "es")
+                (seq (keep #(some-> % kw->str not-empty) (get r "matched_terms"))))
+        head  (str n " match" (when (not= 1 n) "es")
                 (when q (str " for \"" q "\""))
-                (when terms (str " · terms: " (str/join ", " terms))))
-     :body    (cond
-                (seq (get r "paths"))
-                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (get r "paths"))) "\n```")
-                ;; 0 results: show the steer (filename-vs-content) instead of a
-                ;; blank card — the same hint the model reads, so the user sees
-                ;; WHY it found nothing.
-                hint (str "\n" hint))}))
+                (when terms (str " · terms: " (str/join ", " terms))))]
+    (if (= 1 n)
+      {:summary (str head (when-let [p (first paths)] (str " · `" (kw->str p) "`")))}
+      {:summary head
+       :body    (cond
+                  (seq paths)
+                  (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
+                  ;; 0 results: show the steer (filename-vs-content) instead of a
+                  ;; blank card — the same hint the model reads, so the user sees
+                  ;; WHY it found nothing.
+                  hint (str "\n" hint))})))
 
 (defn- render-outline-result
   "outline → `{:summary :body}`: a path headline (like cat) + the skeleton
