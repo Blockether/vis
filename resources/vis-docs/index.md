@@ -1,10 +1,80 @@
 ## What is Vis
 
-Other agents shovel every message into a growing window and panic-compact when it overflows. Vis keeps state in a real runtime the model talks to through code: vars, a database, query results. The window holds only what the model needs right now. **No emergency compaction. No sliding windows. Works with any text model.**
+Vis is a coding agent with a different memory model. Instead of piling every
+message into one growing chat transcript, it keeps its working state in a real
+runtime — Python vars, a database, query results — that the model talks to
+through code. The context window holds only what the model needs *right now*;
+everything else is one call away. It is written in Clojure, ships as a single
+native binary, and works with **any** text model.
 
-Concretely, Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects and changes your project through tools. It is written in Clojure and ships as a single native binary.
+## Why it's different
 
-Vis also knows itself. Ask a running Vis what it can do and it describes its own tools and features by reading these same docs. And it doesn't just *use* extensions — it can **write** them: when a task needs a tool Vis doesn't have, it can author a Python extension, `/reload` it into the live session, and keep going without a restart. The agent grows its own surface mid-task.
+Every coding agent fights the same enemy: the context window fills up, gets
+expensive, and eventually has to be compacted. What sets Vis apart is *who*
+manages that window and *when*.
+
+- **The engine owns the context, not the transcript.** Each step is tagged and
+  addressable. Once a step has served its purpose, the engine folds it away —
+  the tool call *and* its output collapse into a one-line summary you write
+  (`session_fold`), or drop entirely (`session_drop`). The window stays a
+  curated ledger of live facts, not an append-only log.
+
+- **Summarization is continuous, not an emergency.** Other agents compact
+  *reactively* — a separate, ad-hoc pass that fires only when the window is
+  about to overflow, throwing away context in a panic. Vis compacts
+  *proactively, while it works*: finished steps are folded in the same flow as
+  the real task. No sliding window, no emergency truncation, no losing the
+  thread mid-task.
+
+- **The compression is structural, done by the same agent.** Because the agent
+  that did the work is the one that folds it, the summary is written with full
+  understanding of what mattered and what didn't — "http timeout fixed @
+  http.clj:52", not a lossy mechanical digest of raw bytes. Same agent, same
+  task, a fundamentally different *view* of what the context should contain.
+
+The payoff is cost. A long task might touch forty steps, but only a handful
+stay "live" at any moment — the rest are folded to a sentence each. You pay for
+a working set, not a full transcript, on every turn.
+
+## Two gears: native tools and the Python sandbox
+
+Vis is hybrid by design, and the two modes trade off directness against context
+cost:
+
+- **Native tools** — call a tool directly and its result comes straight back.
+  Simple, low-latency, ideal for a quick read or a single edit on a small task.
+
+- **The Python sandbox** — *every* native tool is also a callable inside an
+  embedded GraalPython runtime. The agent writes Python that runs many tools,
+  filters and chains their output, and `print()`s only the slice worth keeping.
+  Ten file reads, one search, and a transform can happen in a single step — and
+  the context only ever sees what the agent chose to print.
+
+That second gear is where context utilization drops on advanced tasks: the raw
+tool output lives in Python vars, never in the window, and the model decides
+what surfaces.
+
+```text
+        NATIVE TOOL                    PYTHON SANDBOX
+   ┌───────────────────┐        ┌────────────────────────────┐
+   │ cat(a)  ──► ctx    │        │ rows = [cat(f) for f in fs] │  20 files
+   │ cat(b)  ──► ctx    │        │ hits = grep(rows, "TODO")   │  in vars
+   │ cat(c)  ──► ctx    │        │ print(hits[:3])  ──► ctx    │  3 lines out
+   └───────────────────┘        └────────────────────────────┘
+     every result lands            the agent chooses what
+     in the context window          reaches the context window
+```
+
+## Extensible
+
+- **Python extensions.** Drop a `.py` file into `.vis/extensions/` to add
+  project-local tools, prompts, and slash commands — no rebuild, `/reload`able
+  in a live session. Vis can even **write these for itself**: when a task needs
+  a tool it doesn't have, it authors one, reloads it, and keeps going.
+- **Clojure extensions.** The full-surface path — new tools, channels,
+  providers, slash commands, and doc pages — compiled into the binary.
+- **Two runtimes.** Run it from source on the JVM, or build a GraalVM
+  native-image and ship a single self-contained binary with no JVM install.
 
 ## Install
 

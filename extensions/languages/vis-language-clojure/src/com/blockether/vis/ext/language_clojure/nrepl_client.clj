@@ -60,7 +60,7 @@
       :timeout (long timeout-ms))
     (catch Throwable t
       (throw (ex-info (str "nREPL connect failed on " (or host "localhost") ":" port
-                        " — is the REPL running? Check ctx for nREPL state or call clj_repl().")
+                        " — is the REPL running? Check ctx (session_env.languages.clojure.nrepl) or repl_start(\"clojure\").")
                {:type :clj/nrepl-connect-failed
                 :host (or host "localhost")
                 :port port

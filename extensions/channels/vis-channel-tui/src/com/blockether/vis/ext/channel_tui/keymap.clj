@@ -94,8 +94,7 @@
    {:action :show-sessions          :key \b :label "switch session"}
    {:action :close-tab              :key \k :label "close tab"}
    {:action :recenter               :key \j :label "jump to bottom"}
-   {:action :collapse-all-details   :key \[ :label "collapse all"}
-   {:action :expand-all-details     :key \] :label "expand all"}])
+   {:action :toggle-detail-labels   :key \t :label "label folds"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -136,7 +135,8 @@
    second key for the letters where it survives, so old muscle memory keeps
    working — the displayed hint is just the reliable one.) palette-only → nil."
   [action]
-  (or (some-> (binding-by-action action) :key chord)
+  (or (when (= action :toggle-all-details) "C-x TAB")
+    (some-> (binding-by-action action) :key chord)
     (when-let [b (prefix-binding-by-action action)]
       (str "C-x " (str/lower-case (str (:key b)))))))
 

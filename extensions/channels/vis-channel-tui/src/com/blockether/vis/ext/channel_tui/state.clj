@@ -848,6 +848,22 @@
   (fn [db _]
     (-> (park-scroll-for-toggle db)
       (assoc :detail-expansions {:vis.channel-tui/baseline :expand}))))
+(reg-event-db :toggle-all-details
+  ;; C-x TAB / C-x S-TAB — Emacs global fold cycle (org/magit `<backtab>`): if the
+  ;; bulk baseline is currently expanded, collapse EVERY disclosure; otherwise
+  ;; expand them all. One keystroke flips the whole transcript (per-node overrides
+  ;; wiped), mirroring org-mode's buffer-wide visibility cycle.
+  (fn [db _]
+    (let [expanded? (= :expand (get-in db [:detail-expansions :vis.channel-tui/baseline]))]
+      (-> (park-scroll-for-toggle db)
+        (assoc :detail-expansions {:vis.channel-tui/baseline (if expanded? :collapse :expand)})))))
+(reg-event-db :set-detail-labels
+              ;; C-x t — vim-style jump labels. `on?` true turns the overlay ON
+              ;; (the renderer stamps a letter badge on every visible disclosure
+              ;; and the next keypress toggles that one); false turns it off. A
+              ;; pure flag flip — no height changes, so no scroll parking.
+  (fn [db [_ on?]]
+    (assoc db :detail-labels-active? (boolean on?))))
 (reg-event-db :select-preview-mode
   (fn [db [_ session-id node-id mode]]
     (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))

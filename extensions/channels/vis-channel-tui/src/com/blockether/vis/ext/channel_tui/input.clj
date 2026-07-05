@@ -1146,6 +1146,12 @@
        :workspace-index (dec (Character/digit c 10))
        :state state}
 
+      ;; C-x TAB / C-x S-TAB → Emacs global fold cycle (org/magit `<backtab>`):
+      ;; toggle EVERY disclosure collapsed↔expanded in one keystroke. Living behind
+      ;; the C-x prefix keeps it off bare Tab/S-Tab (which switch workspaces).
+      (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key))
+      {:action :toggle-all-details :state state}
+
       :else {:action :continue :state state})))
 
 (defn handle-key

@@ -244,13 +244,20 @@
 
 (defn clj-eval-fn
   "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
-     - explicit `port` → dial it directly (escape hatch);
+     - explicit `port` → dial it directly (escape hatch; no autostart/recovery);
      - `id`/`repl_id`  → the REPL registered under that id in THIS session;
      - no id, 0 REPLs  → AUTOSTART one in the workspace root (:dev :test) and use it;
      - no id, 1 REPL   → use it (the implicit default);
      - no id, >1 REPLs → error listing ids (the model must pick one).
    The just-autostarted REPL is mirrored into the session resources on the next
-   ctx render (footer + stop/restart)."
+   ctx render (footer + stop/restart).
+
+   AUTO-RECOVERY: a managed REPL whose OS process is alive but whose nREPL socket
+   is dead/wedged (a boot that never bound its port, or a crashed server thread)
+   makes the resolver hand back a port nothing listens on. On that connect
+   failure we restart THIS session's REPL for the target dir and retry the eval
+   ONCE — so an eval Just Works instead of surfacing a dead-port error. A pinned
+   `port`, or a real eval/timeout error, is never retried."
   ([env arg]
    (let [m          (coerce-eval-arg arg)
          code       (get m "code")
@@ -261,19 +268,40 @@
          rid        (some-> (or (get m "id") (get m "repl_id")) str str/trim not-empty)
          root       (env-root env)
          sid        (:session-id env)
-         port       (or port (:port (repl-manager/resolve-target! sid rid root)))]
-     (when-not port
-       (throw (ex-info "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
-                {:type :clj/no-port
-                 :workspace-root root})))
-     (extension/success
-       {:result (nrepl-client/eval!
-                  {:host       host
-                   :port       port
-                   :code       code
-                   :ns         ns
-                   :pretty?    true
-                   :timeout-ms (or timeout_ms 30000)})}))))
+         run        (fn [p]
+                      (nrepl-client/eval!
+                        {:host       host
+                         :port       p
+                         :code       code
+                         :ns         ns
+                         :pretty?    true
+                         :timeout-ms (or timeout_ms 30000)}))]
+     (if port
+       ;; Explicit port: the escape hatch — dial exactly what was asked, with no
+       ;; autostart and no auto-recovery.
+       (extension/success {:result (run port)})
+       (let [target (repl-manager/resolve-target! sid rid root)
+             tport  (:port target)]
+         (when-not tport
+           (throw (ex-info "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
+                    {:type :clj/no-port
+                     :workspace-root root})))
+         (extension/success
+           {:result
+            (try
+              (run tport)
+              (catch clojure.lang.ExceptionInfo e
+                (if (and (= :clj/nrepl-connect-failed (:type (ex-data e)))
+                      (:dir target))
+                  ;; Managed target's process is alive but not serving nREPL:
+                  ;; restart it and retry the eval once.
+                  (let [fresh (repl-manager/restart-for-dir! sid (:dir target))]
+                    (when-not (:port fresh) (throw e))
+                    ;; Drop the stale resource mirror so ctx re-adds it with the
+                    ;; fresh port on the next render.
+                    (vis/unregister-resource! sid (repl-resource-id (:dir target)))
+                    (run (:port fresh)))
+                  (throw e))))}))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:

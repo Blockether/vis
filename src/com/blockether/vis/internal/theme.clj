@@ -786,17 +786,19 @@
    "--fg" :text-fg
    "--panel2" :dialog-bg
    "--code-bg" :code-block-bg
-   ;; "--gold"/"--gold2" are LEGACY VAR NAMES the stylesheet still uses;
-   ;; they now carry the theme's ACCENT (the active-tab slab color and its
-   ;; lighter companion) — the web accent is indigo/blue, not gold, and
-   ;; "--cream" is the neutral panel ground, not beige.
-   "--cream" :dialog-bg
-   "--gold" :header-active-tab-bg
-   "--gold2" :header-active-tab-accent
-   "--amber" :code-result-fg
-   "--amber-deep" :warning-fg
-   "--warn-bg" :warning-bg
-   "--indigo" :header-active-tab-bg
+   ;; Semantic accent/status vars (renamed from the legacy color-named
+   ;; --gold/--gold2/--amber/--indigo the stylesheet used to carry). Values
+   ;; still come STRAIGHT from the shared palette, so every theme tracks:
+   ;;   --primary   the accent (active-tab slab)   --primary-fg its on-accent label
+   ;;   --accent    the lighter accent companion   --surface    the neutral panel ground
+   ;;   --secondary emphasis ink  --warning/-bg warn text+ground  --ok/--err status.
+   "--surface" :dialog-bg
+   "--primary" :header-active-tab-bg
+   "--primary-fg" :header-active-tab-fg
+   "--accent" :header-active-tab-accent
+   "--secondary" :code-result-fg
+   "--warning" :warning-fg
+   "--warning-bg" :warning-bg
    "--ok" :status-ok
    "--err" :status-bad
    ;; Per-tool BADGE colors — the SAME palette tokens the TUI paints native

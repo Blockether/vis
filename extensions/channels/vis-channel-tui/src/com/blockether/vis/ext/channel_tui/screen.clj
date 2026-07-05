@@ -1276,6 +1276,10 @@
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
       (cr/commit-frame!)
+      ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
+      ;; the commit so `cr/current` holds this frame's fresh toggle regions and
+      ;; each letter badge lands on the chevron the user sees. No-op when off.
+      (render/draw-detail-labels! g (:detail-labels-active? db))
       (when-not *skip-frame-refresh?*
         (.refresh screen Screen$RefreshType/DELTA)
         ;; Inline images ride the terminal's graphics layer, which Lanterna
@@ -3366,6 +3370,22 @@
                                (vreset! pending-input-key
                                  (into [key] @pending-input-key)))))))
                      (recur))
+                   ;; Vim-style jump labels own the keyboard while active: a
+                   ;; letter toggles the fold under its badge, Esc / C-g / any
+                   ;; other key cancels. Sits above the fall-through so the
+                   ;; label keys never reach the draft or the app-verb dispatch.
+                   (and (instance? KeyStroke key) (:detail-labels-active? db))
+                   (let [ks    ^KeyStroke key
+                         ktype (.getKeyType ks)
+                         chr   (when (= ktype KeyType/Character) (.getCharacter ks))
+                         hit   (when (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
+                                 (get (into {} (cr/assign-labels (cr/current)))
+                                   (str (Character/toLowerCase ^char chr))))]
+                     (when hit
+                       (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit) (:collapsed? hit)]))
+                     (state/dispatch [:set-detail-labels false])
+                     (state/dispatch [:bump-render-version])
+                     (recur))
                    :else
                    (let [{:keys [action state workspace-index]} (input/handle-key key
                                                                   (:input db))]
@@ -3479,8 +3499,8 @@
                                            :show-sessions   (show-sessions!)
                                            :open-dirs       (pick-dir!)
                                            :recenter        (state/dispatch [:scroll-to-bottom])
-                                           :collapse-all-details (state/dispatch [:collapse-all-details])
-                                           :expand-all-details   (state/dispatch [:expand-all-details])
+                                           :toggle-all-details   (state/dispatch [:toggle-all-details])
+                                           :toggle-detail-labels (state/dispatch [:set-detail-labels true])
                                            :close-tab       (do (state/dispatch [:close-tab])
                                                               (persist-tabs!))
                                            :toggle-voice-recording
@@ -3801,12 +3821,23 @@
                          :recenter (do (state/dispatch [:scroll-to-bottom])
                                      (state/dispatch [:bump-render-version])
                                      (recur))
-                         ;; C-x [ / C-x ] — collapse or expand every disclosure
-                         ;; in the conversation at once (bulk fold).
-                         :collapse-all-details (do (state/dispatch [:collapse-all-details])
-                                                 (recur))
-                         :expand-all-details (do (state/dispatch [:expand-all-details])
+                         ;; C-x TAB / C-x S-TAB — Emacs global fold cycle: toggle
+                         ;; every disclosure collapsed↔expanded in one keystroke.
+                         :toggle-all-details (do (state/dispatch [:toggle-all-details])
                                                (recur))
+                         ;; C-x t — vim-style jump labels: badge every visible
+                         ;; disclosure so a letter toggles that one fold.
+                         :toggle-detail-labels
+                         (do (if (:detail-labels-active? @state/app-db)
+                               (state/dispatch [:set-detail-labels false])
+                               (if (seq (cr/assign-labels (cr/current)))
+                                 (do (state/dispatch [:set-detail-labels true])
+                                   (vis/notify! "Jump to fold: press a highlighted letter · Esc / C-g to cancel"
+                                     :level :info :ttl-ms 4000))
+                                 (vis/notify! "No collapsible elements on screen to label."
+                                   :level :info :ttl-ms 2000)))
+                           (state/dispatch [:bump-render-version])
+                           (recur))
                          ;; M-< (Emacs `beginning-of-buffer`): park at the very top.
                          :scroll-to-top (do (state/dispatch [:scroll-to-top])
                                           (state/dispatch [:bump-render-version])

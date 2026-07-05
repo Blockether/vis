@@ -411,14 +411,19 @@
           :fg       t/footer-fg
           :bold?    true
           :region   :center
-          :priority 1}]
+          :priority 1}
+         {:text     "TAB fold all"
+          :fg       t/footer-fg
+          :bold?    true
+          :region   :center
+          :priority 2}]
     (map-indexed
       (fn [i {:keys [key label]}]
         {:text     (str key \space label)
          :fg       t/footer-fg
          :bold?    true
          :region   :center
-         :priority (+ i 2)})
+         :priority (+ i 3)})
       keymap/prefix-commands)))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────

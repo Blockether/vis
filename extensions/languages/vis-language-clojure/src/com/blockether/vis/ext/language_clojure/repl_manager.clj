@@ -267,6 +267,25 @@
       (do (start! session-id dir nil)
         (get @processes k)))))
 
+(defn restart-for-dir!
+  "Recover THIS session's REPL for `dir` when its recorded process is dead OR
+   alive-but-UNREACHABLE (a boot that never bound its port, or a wedged server
+   thread) — the failure `proc-alive?` alone cannot see. Gives a still-present
+   process a brief grace window to finish booting before killing it, so a slow
+   cold-deps start is not needlessly restarted; otherwise stops the stale
+   process and autostarts a fresh one. Returns the live REPL info, or nil when
+   `dir` has no launchable Clojure build file."
+  [session-id dir]
+  (let [info (get @processes [session-id dir])]
+    (if (and (proc-alive? info)
+          (:port info)
+          (= :up (wait-until-up (:port info) 5000)))
+      info
+      (do
+        (stop! session-id dir)
+        (start! session-id dir nil)
+        (get @processes [session-id dir])))))
+
 (defn resolve-target!
   "Resolve — and AUTOSTART when needed — the REPL an eval should hit for
    `session-id`. `id` is an optional explicit resource id; `default-dir` is where
