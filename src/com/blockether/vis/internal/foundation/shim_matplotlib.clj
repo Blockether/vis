@@ -48,9 +48,18 @@
    "orange" [255 127 14] "purple" [148 103 189] "gray" [127 127 127]
    "grey" [127 127 127] "brown" [140 86 75] "pink" [227 119 194]})
 
+(defn- hex->rgb [^String s]
+  (let [h (.replace s "#" "")]
+    (when (= 6 (count h))
+      (try [(Integer/parseInt (subs h 0 2) 16)
+            (Integer/parseInt (subs h 2 4) 16)
+            (Integer/parseInt (subs h 4 6) 16)]
+        (catch Exception _ nil)))))
+
 (defn- ->color ^Color [c idx]
-  (let [rgb (or (when (and (string? c) (seq c))
-                  (get named-colors (.toLowerCase ^String (str c))))
+  (let [cs (when (and (string? c) (seq c)) (.toLowerCase ^String (str c)))
+        rgb (or (when cs (get named-colors cs))
+              (when (and cs (.startsWith ^String cs "#")) (hex->rgb cs))
               (nth palette (mod (int idx) (count palette))))]
     (Color. (int (nth rgb 0)) (int (nth rgb 1)) (int (nth rgb 2)))))
 
@@ -91,6 +100,18 @@
   (let [baos (ByteArrayOutputStream.)]
     (ImageIO/write img "png" baos)
     (.encodeToString (Base64/getEncoder) (.toByteArray baos))))
+
+(defn- lerp-col [[r1 g1 b1] [r2 g2 b2] ^double t]
+  [(+ r1 (* (- r2 r1) t)) (+ g1 (* (- g2 g1) t)) (+ b1 (* (- b2 b1) t))])
+
+(defn- viridis ^Color [^double t]
+  (let [t (double (max 0.0 (min 1.0 t)))
+        stops [[68 1 84] [59 82 139] [33 145 140] [94 201 98] [253 231 37]]
+        n (dec (count stops))
+        f (* t n)
+        i (min (int f) (dec n))
+        [a b c] (lerp-col (nth stops i) (nth stops (inc i)) (- f i))]
+    (Color. (int a) (int b) (int c))))
 
 (defn- draw-title [^Graphics2D g title px0 pw]
   (when (and (string? title) (seq title))
@@ -146,6 +167,7 @@
         ylabel (get spec "ylabel")
         grid? (boolean (get spec "grid"))
         legend? (boolean (get spec "legend"))
+        axis-off? (boolean (get spec "axis_off"))
         annotations (get spec "annotations")
         xlog? (= "log" (str (get spec "xscale")))
         ylog? (= "log" (str (get spec "yscale")))
@@ -183,29 +205,30 @@
         sy (fn ^double [^double y] (syf (yfwd y)))
         [img ^Graphics2D g] (new-canvas W H)]
     (try
-      ;; gridlines + tick labels (5 divisions each axis)
-      (let [ticks 5]
-        (.setFont g (Font. "SansSerif" Font/PLAIN 10))
-        (let [fm (.getFontMetrics g)]
-          (dotimes [i (inc ticks)]
-            (let [t (/ (double i) ticks)
-                  xv (+ xmin (* t (- xmax xmin)))
-                  yv (+ ymin (* t (- ymax ymin)))
-                  xp (int (sxf xv))
-                  yp (int (syf yv))]
-              (when grid?
-                (.setColor g (Color. 230 230 230))
-                (.drawLine g xp py0 xp (+ py0 ph))
-                (.drawLine g px0 yp (+ px0 pw) yp))
-              (.setColor g (Color. 90 90 90))
-              (let [xl (fmt-num (xinv xv))]
-                (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
-              (let [yl (fmt-num (yinv yv))]
-                (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
-      ;; axes frame
-      (.setColor g (Color. 60 60 60))
-      (.setStroke g (BasicStroke. 1.0))
-      (.drawRect g px0 py0 pw ph)
+      ;; gridlines + tick labels + frame (all skipped when axis('off'))
+      (when-not axis-off?
+        (let [ticks 5]
+          (.setFont g (Font. "SansSerif" Font/PLAIN 10))
+          (let [fm (.getFontMetrics g)]
+            (dotimes [i (inc ticks)]
+              (let [t (/ (double i) ticks)
+                    xv (+ xmin (* t (- xmax xmin)))
+                    yv (+ ymin (* t (- ymax ymin)))
+                    xp (int (sxf xv))
+                    yp (int (syf yv))]
+                (when grid?
+                  (.setColor g (Color. 230 230 230))
+                  (.drawLine g xp py0 xp (+ py0 ph))
+                  (.drawLine g px0 yp (+ px0 pw) yp))
+                (.setColor g (Color. 90 90 90))
+                (let [xl (fmt-num (xinv xv))]
+                  (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
+                (let [yl (fmt-num (yinv yv))]
+                  (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
+        ;; axes frame
+        (.setColor g (Color. 60 60 60))
+        (.setStroke g (BasicStroke. 1.0))
+        (.drawRect g px0 py0 pw ph))
       ;; series
       (let [nbar (count (filter #(= "bar" (str (get % "kind"))) series))
             bar-slots (max 1 (reduce max 1 (map #(count (series-xs %)) series)))]
@@ -260,6 +283,51 @@
                 (doseq [[[x1 y1] [x2 y2]] (partition 2 1 pts)]
                   (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y1)))
                   (.drawLine g (int (sx x2)) (int (sy y1)) (int (sx x2)) (int (sy y2)))))
+
+              "image"
+              (let [rows (get s "rows")
+                    nr (int (as-double (get s "nrows")))
+                    nc (int (as-double (get s "ncols")))
+                    vmin (as-double (get s "vmin"))
+                    vmax (as-double (get s "vmax"))
+                    span (let [d (- vmax vmin)] (if (zero? d) 1.0 d))]
+                (dotimes [ri nr]
+                  (let [row (nth rows ri nil)]
+                    (dotimes [ci nc]
+                      (let [v (as-double (nth row ci 0))
+                            col (viridis (/ (- v vmin) span))
+                            x0 (int (sx ci))
+                            x1 (int (sx (inc ci)))
+                            yt (int (sy (- nr ri)))
+                            yb (int (sy (- nr (inc ri))))]
+                        (.setColor g col)
+                        (.fillRect g (min x0 x1) (min yt yb)
+                          (max 1 (Math/abs (- x1 x0))) (max 1 (Math/abs (- yb yt)))))))))
+
+              "box"
+              (let [stats (get s "stats")
+                    pos (mapv as-double (get s "positions"))
+                    bw 24]
+                (doseq [[bi st] (map-indexed vector stats)]
+                  (let [xc (int (sx (nth pos bi (inc bi))))
+                        q1 (int (sy (as-double (get st "q1"))))
+                        q2 (int (sy (as-double (get st "q2"))))
+                        q3 (int (sy (as-double (get st "q3"))))
+                        lo (int (sy (as-double (get st "lo"))))
+                        hi (int (sy (as-double (get st "hi"))))
+                        hw (int (/ bw 2))
+                        col (->color nil bi)]
+                    (.setStroke g (BasicStroke. 1.5))
+                    (.setColor g (Color. 60 60 60))
+                    (.drawLine g xc lo xc q1)
+                    (.drawLine g xc q3 xc hi)
+                    (.drawLine g (- xc hw) lo (+ xc hw) lo)
+                    (.drawLine g (- xc hw) hi (+ xc hw) hi)
+                    (.setColor g col)
+                    (.fillRect g (- xc hw) (min q1 q3) bw (max 1 (Math/abs (- q3 q1))))
+                    (.setColor g (Color. 30 30 30))
+                    (.drawRect g (- xc hw) (min q1 q3) bw (max 1 (Math/abs (- q3 q1))))
+                    (.drawLine g (- xc hw) q2 (+ xc hw) q2))))
 
               ;; default: line (+ optional markers)
               (do
@@ -369,7 +437,7 @@ def __vis_install_matplotlib__():
                        'ylabel': None, 'grid': False, 'legend': False,
                        'xlim': None, 'ylim': None, 'xscale': 'linear',
                        'yscale': 'linear', 'annotations': [],
-                       'width': 640, 'height': 480})
+                       'width': 640, 'height': 480, 'axis_off': False})
 
     _reset()
 
@@ -389,13 +457,15 @@ def __vis_install_matplotlib__():
 
     def _add_series(kind, x, y, label, color, marker=None,
                     linestyle=None, y2=None, labels=None):
-        _state['series'].append({
+        s = {
             'kind': kind, 'x': _nums(x), 'y': _nums(y),
             'label': label, 'color': color, 'marker': marker,
             'linestyle': linestyle,
             'y2': (_nums(y2) if y2 is not None else None),
             'labels': labels,
-        })
+        }
+        _state['series'].append(s)
+        return s
 
     def _parse_fmt(fmt):
         color = None
@@ -419,28 +489,35 @@ def __vis_install_matplotlib__():
         if figsize:
             _state['width'] = int(float(figsize[0]) * d)
             _state['height'] = int(float(figsize[1]) * d)
-        return _state
+        return _Figure()
 
     def plot(*args, **kwargs):
         a = list(args)
-        fmt = ''
-        if a and isinstance(a[-1], str):
-            fmt = a.pop()
-        if len(a) == 1:
-            y = list(a[0])
-            x = list(range(len(y)))
-        elif len(a) >= 2:
-            x = list(a[0])
-            y = list(a[1])
-        else:
-            return None
-        color, marker, line = _parse_fmt(fmt)
-        kind = 'scatter' if (marker and not line) else 'line'
-        _add_series(kind, x, y, kwargs.get('label'),
-                    kwargs.get('color', color),
-                    marker=kwargs.get('marker', marker),
-                    linestyle=kwargs.get('linestyle', kwargs.get('ls', line)))
-        return None
+        handles = []
+        i = 0
+        n = len(a)
+        while i < n:
+            if i + 1 < n and not isinstance(a[i + 1], str):
+                x = list(a[i])
+                y = list(a[i + 1])
+                i += 2
+            else:
+                y = list(a[i])
+                x = list(range(len(y)))
+                i += 1
+            fmt = ''
+            if i < n and isinstance(a[i], str):
+                fmt = a[i]
+                i += 1
+            color, marker, line = _parse_fmt(fmt)
+            kind = 'scatter' if (marker and not line) else 'line'
+            s = _add_series(kind, x, y, kwargs.get('label'),
+                            kwargs.get('color', color),
+                            marker=kwargs.get('marker', marker),
+                            linestyle=kwargs.get('linestyle',
+                                                  kwargs.get('ls', line)))
+            handles.append(_Line(s))
+        return handles
 
     def scatter(x, y, s=None, c=None, label=None, color=None, **kwargs):
         _add_series('scatter', x, y, label, color or c)
@@ -596,6 +673,107 @@ def __vis_install_matplotlib__():
         # No display in the sandbox; savefig is the way to get an image out.
         return None
 
+    class _Line(object):
+        # Handle returned by plot(); supports `line, = plt.plot(...)` unpacking
+        # and the common set_* mutators (they edit the accumulated series).
+        def __init__(self, s):
+            self._s = s
+        def set_label(self, v):
+            self._s['label'] = v
+            return None
+        def set_color(self, v):
+            self._s['color'] = v
+            return None
+        def set_linestyle(self, v):
+            self._s['linestyle'] = v
+            return None
+        def set_linewidth(self, *a, **k):
+            return None
+        def get_label(self):
+            return self._s.get('label')
+
+    def axis(*args, **kwargs):
+        if not args:
+            return (0.0, 1.0, 0.0, 1.0)
+        a = args[0]
+        if a is False or a == 'off':
+            _state['axis_off'] = True
+        elif a is True or a == 'on':
+            _state['axis_off'] = False
+        elif isinstance(a, (list, tuple)) and len(a) == 4:
+            _state['xlim'] = [float(a[0]), float(a[1])]
+            _state['ylim'] = [float(a[2]), float(a[3])]
+        return (0.0, 1.0, 0.0, 1.0)
+
+    def _quartiles(vals):
+        xs = sorted(_nums(vals))
+        if not xs:
+            return None
+        def q(p):
+            if len(xs) == 1:
+                return xs[0]
+            idx = p * (len(xs) - 1)
+            lo = int(idx)
+            hi = min(lo + 1, len(xs) - 1)
+            return xs[lo] + (xs[hi] - xs[lo]) * (idx - lo)
+        return {'lo': xs[0], 'q1': q(0.25), 'q2': q(0.5),
+                'q3': q(0.75), 'hi': xs[-1]}
+
+    def boxplot(data, positions=None, labels=None, **kwargs):
+        try:
+            first = data[0]
+            seqs = data if hasattr(first, '__iter__') else [data]
+        except Exception:
+            seqs = [data]
+        stats = []
+        for d in seqs:
+            st = _quartiles(d)
+            if st:
+                stats.append(st)
+        pos = ([float(p) for p in positions] if positions
+               else list(range(1, len(stats) + 1)))
+        ally = []
+        for st in stats:
+            ally.append(st['lo'])
+            ally.append(st['hi'])
+        s = _add_series('box', pos, ally, None, None)
+        s['stats'] = stats
+        s['positions'] = pos
+        return {'boxes': stats}
+
+    def imshow(data, cmap=None, aspect=None, extent=None,
+               vmin=None, vmax=None, **kwargs):
+        rows = [_nums(r) for r in data]
+        nr = len(rows)
+        nc = max((len(r) for r in rows), default=0)
+        flat = [v for r in rows for v in r]
+        lo = float(vmin) if vmin is not None else (min(flat) if flat else 0.0)
+        hi = float(vmax) if vmax is not None else (max(flat) if flat else 1.0)
+        s = _add_series('image', [0.0, float(nc)], [0.0, float(nr)], None, None)
+        s['rows'] = rows
+        s['nrows'] = nr
+        s['ncols'] = nc
+        s['vmin'] = lo
+        s['vmax'] = hi
+        return s
+
+    def colorbar(*args, **kwargs):
+        return None
+
+    def hlines(y, xmin=None, xmax=None, colors=None, color=None,
+               linestyles=None, linestyle=None, label=None, **kwargs):
+        for yy in _nums(y):
+            _add_series('hline', [], [yy], label, color or colors,
+                        linestyle=(linestyle or linestyles))
+        return None
+
+    def vlines(x, ymin=None, ymax=None, colors=None, color=None,
+               linestyles=None, linestyle=None, label=None, **kwargs):
+        for xx in _nums(x):
+            _add_series('vline', [xx], [], label, color or colors,
+                        linestyle=(linestyle or linestyles))
+        return None
+
     class _Axes(object):
         # Minimal OO Axes: every method delegates to the module-level artist so
         # `fig, ax = plt.subplots(); ax.plot(...)` works like the pyplot API.
@@ -674,12 +852,73 @@ def __vis_install_matplotlib__():
         def tick_params(self, *a, **k):
             return None
 
+        def twinx(self, *a, **k):
+            return _Axes()
+
+        def twiny(self, *a, **k):
+            return _Axes()
+
+        def axis(self, *a, **k):
+            return axis(*a, **k)
+
+        def imshow(self, *a, **k):
+            return imshow(*a, **k)
+
+        def boxplot(self, *a, **k):
+            return boxplot(*a, **k)
+
+        def hlines(self, *a, **k):
+            return hlines(*a, **k)
+
+        def vlines(self, *a, **k):
+            return vlines(*a, **k)
+
+        def set_xticklabels(self, *a, **k):
+            return None
+
+        def set_yticklabels(self, *a, **k):
+            return None
+
+    class _Figure(object):
+        # Wraps the single global figure state so the OO idiom
+        # `fig, ax = plt.subplots(); ...; fig.savefig(...)` works. Every method
+        # delegates to the module-level artist / renderer.
+        def savefig(self, *a, **k):
+            return savefig(*a, **k)
+        def suptitle(self, s, **k):
+            _state['title'] = str(s)
+            return None
+        def tight_layout(self, *a, **k):
+            return None
+        def subplots_adjust(self, *a, **k):
+            return None
+        def set_size_inches(self, w, h=None, **k):
+            if h is None and hasattr(w, '__len__'):
+                w, h = w[0], w[1]
+            _state['width'] = int(float(w) * 100)
+            _state['height'] = int(float(h) * 100)
+            return None
+        def add_subplot(self, *a, **k):
+            return _Axes()
+        def add_axes(self, *a, **k):
+            return _Axes()
+        def gca(self, *a, **k):
+            return _Axes()
+        def colorbar(self, *a, **k):
+            return None
+        def legend(self, *a, **k):
+            return legend(*a, **k)
+        def clf(self, *a, **k):
+            _reset()
+        def align_labels(self, *a, **k):
+            return None
+
     def subplots(nrows=1, ncols=1, figsize=None, dpi=None, **kwargs):
         figure(figsize=figsize, dpi=dpi)
         n = int(nrows) * int(ncols)
         if n <= 1:
-            return _state, _Axes()
-        return _state, [_Axes() for _ in range(n)]
+            return _Figure(), _Axes()
+        return _Figure(), [_Axes() for _ in range(n)]
 
     def subplot(*args, **kwargs):
         return _Axes()
@@ -688,7 +927,7 @@ def __vis_install_matplotlib__():
         return _Axes()
 
     def gcf(*args, **kwargs):
-        return _state
+        return _Figure()
 
     def _spec():
         return {
@@ -697,7 +936,8 @@ def __vis_install_matplotlib__():
             'ylabel': _state['ylabel'], 'grid': _state['grid'],
             'legend': _state['legend'], 'xlim': _state['xlim'],
             'ylim': _state['ylim'], 'xscale': _state['xscale'],
-            'yscale': _state['yscale'], 'annotations': list(_state['annotations']),
+            'yscale': _state['yscale'], 'axis_off': _state.get('axis_off', False),
+            'annotations': list(_state['annotations']),
             'series': list(_state['series']),
         }
 
@@ -719,10 +959,11 @@ def __vis_install_matplotlib__():
     pyplot = types.ModuleType('matplotlib.pyplot')
     pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset.'
     for _fn in (figure, plot, scatter, bar, barh, hist, fill_between, step,
-                axhline, axvline, pie, errorbar, text, annotate,
-                title, suptitle, xlabel, ylabel, grid, legend,
+                axhline, axvline, hlines, vlines, pie, errorbar, text, annotate,
+                title, suptitle, xlabel, ylabel, grid, legend, axis,
                 xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
                 xticks, yticks, tight_layout, subplots_adjust,
+                boxplot, imshow, colorbar,
                 clf, cla, close, show, savefig,
                 subplots, subplot, gca, gcf):
         setattr(pyplot, _fn.__name__, _fn)
@@ -761,15 +1002,15 @@ del __vis_install_matplotlib__
 (def vis-extension
   (vis/extension
     {:ext/name         "foundation-shim-matplotlib"
-     :ext/description  "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/hist/fill_between/step/pie/axhline/axvline + subplots/Axes, log scales, markers, dashed styles, title/labels/grid/legend/text) rendered to PNG by a pure-JVM Java2D backend. savefig writes the image; no pip, no native wheel."
-     :ext/version      "0.2.0"
+     :ext/description  "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) rendered to PNG by a pure-JVM Java2D backend. savefig writes the image; no pip, no native wheel."
+     :ext/version      "0.3.0"
      :ext/author       "Blockether"
      :ext/owner        "vis"
      :ext/license      "Apache-2.0"
      :ext/kind         "foundation"
      :ext/sandbox-shims
      [{:shim/name        "matplotlib"
-       :shim/description "matplotlib.pyplot subset backed by a Java2D PNG renderer."
+       :shim/description "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) backed by a Java2D PNG renderer."
        :shim/bindings    mpl-bridge-bindings
        :shim/preamble    matplotlib-shim-src}]}))
 
