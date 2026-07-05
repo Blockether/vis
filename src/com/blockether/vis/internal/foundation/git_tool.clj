@@ -65,6 +65,20 @@
     (nil? args)        []
     :else              [(str args)]))
 
+(defn- verbose-add-tokens
+  "`git add` is silent by design, so a bare `add` gives no feedback on WHAT it
+   staged — the op-card / GIT band paints an empty `$ add`. When the tokens are
+   an `add` with no reporting flag already present (`-v`/`--verbose`, or the
+   self-reporting `-n`/`--dry-run`), append `--verbose` so git itself lists each
+   staged path (`add 'file'` / `remove 'file'`) on stdout. Only the SUBPROCESS
+   runs verbose; the echoed `cmd`/`args` stay the caller's original tokens,
+   since `--verbose` only adds reporting, not a different index mutation."
+  [tokens]
+  (if (and (= "add" (first tokens))
+        (not (some #{"-v" "--verbose" "-n" "--dry-run"} tokens)))
+    (conj (vec tokens) "--verbose")
+    (vec tokens)))
+
 (defn- git-impl
   ([env args] (git-impl env args nil))
   ([_env args _opts]
@@ -75,7 +89,7 @@
      (let [dir  ^File (.getCanonicalFile (workspace/cwd))
            t0   (now-ms)
            {:keys [exit out err timed-out? duration-ms]}
-           (git/run-git dir tokens {:timeout-secs default-timeout-secs})
+           (git/run-git dir (verbose-add-tokens tokens) {:timeout-secs default-timeout-secs})
            t1   (now-ms)]
        (extension/success
          {:result (cond-> {"cmd"         (str "git " (str/join " " tokens))

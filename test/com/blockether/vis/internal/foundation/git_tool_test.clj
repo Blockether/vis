@@ -5,6 +5,27 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private render #'gt/render-git-result)
+(def ^:private verbose-add #'gt/verbose-add-tokens)
+
+(defdescribe verbose-add-tokens-test
+  ;; `git add` is silent, so a bare `add` gets --verbose appended for the
+  ;; SUBPROCESS run — git then lists each staged path — while the echoed
+  ;; command stays the caller's original tokens.
+  (it "appends --verbose to a bare add so it reports what it staged"
+    (expect (= ["add" "-A" "--verbose"] (verbose-add ["add" "-A"])))
+    (expect (= ["add" "." "--verbose"] (verbose-add ["add" "."]))))
+
+  (it "never double-adds when a reporting flag is already present"
+    (expect (= ["add" "-A" "--verbose"] (verbose-add ["add" "-A" "--verbose"])))
+    (expect (= ["add" "-v" "-A"] (verbose-add ["add" "-v" "-A"])))
+    ;; --dry-run / -n already self-reports, so leave it be.
+    (expect (= ["add" "-n" "-A"] (verbose-add ["add" "-n" "-A"])))
+    (expect (= ["add" "--dry-run" "."] (verbose-add ["add" "--dry-run" "."]))))
+
+  (it "leaves every other subcommand untouched"
+    (expect (= ["commit" "-m" "x"] (verbose-add ["commit" "-m" "x"])))
+    (expect (= ["push"] (verbose-add ["push"])))
+    (expect (= ["status" "--short"] (verbose-add ["status" "--short"])))))
 
 (defdescribe render-git-result-test
   ;; The op-card a LONE `git` call paints (a single commit that is NOT part of a
