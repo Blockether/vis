@@ -11,7 +11,7 @@ name: Security audit (clj-watson)
 # Strategy: `github-advisory` — queries the GitHub Advisory Database over the
 # GraphQL API using the workflow's built-in GITHUB_TOKEN. Zero setup, no
 # secrets to provision, no multi-minute NVD database download. (The alternative
-# `dependency-check`/NIST-NVD strategy is documented in AUDIT.md for teams that
+# `dependency-check`/NIST-NVD strategy is documented in audit/README.md for teams that
 # want the deeper CVSS coverage — it needs an NVD_API_KEY secret.)
 #
 # Findings are emitted as SARIF and uploaded to GitHub code scanning, so they
