@@ -60,6 +60,7 @@
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
    "marked.min.js" "vis-channel-web/public/marked.min.js"
    "prism.min.js"  "vis-channel-web/public/prism.min.js"
+   "purify.min.js" "vis-channel-web/public/purify.min.js"
    "ui.js"         "vis-channel-web/public/ui.js"
    ;; AudioWorklet module (voice capture off the main thread) — fetched by
    ;; ui.js via audioWorklet.addModule, not a <script> tag.
@@ -371,6 +372,7 @@
           [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
           [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
           [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
+          [:script {:src (str "/ui/js/purify.min.js?v=" asset-version) :defer true}]
           [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
          (into [:body] body)]))))
 
@@ -3366,12 +3368,11 @@
 
 ;; =============================================================================
 ;; CSS - the whole theme, one file, no inline styles.
-;; vis-light tokens (internal/theme.clj light-palette):
-;;   --bg :terminal-bg | --fg :text-fg | --panel2 :dialog-bg
-;;   --code-bg :code-block-bg | --cream :turn-separator-bg
-;;   --gold :header-tab-number-fg | --gold2 :turn-separator-fg
-;;   --amber :code-result-fg | --amber-deep :warning-fg
-;;   --warn-bg :warning-bg | --indigo :header-active-tab-bg
+;; vis-light tokens (internal/theme.clj -> theme->web-css-vars):
+;;   --bg :terminal-bg | --fg :text-fg | --panel2 / --surface :dialog-bg
+;;   --code-bg :code-block-bg
+;;   --primary / --accent :header-active-tab-bg / -accent | --primary-fg :header-active-tab-fg
+;;   --secondary :code-result-fg | --warning :warning-fg | --warning-bg :warning-bg
 ;;   --ok :status-ok | --err :status-bad
 ;; =============================================================================
 
@@ -3799,7 +3800,7 @@
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
-                "/ui/js/prism.min.js" "/ui/js/ui.js" "/ui/js/rec-worklet.js"
+                "/ui/js/prism.min.js" "/ui/js/purify.min.js" "/ui/js/ui.js" "/ui/js/rec-worklet.js"
                 "/ui/fonts/hanken-grotesk.woff2" "/ui/fonts/jetbrains-mono.woff2"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
