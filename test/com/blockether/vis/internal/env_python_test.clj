@@ -191,7 +191,7 @@
               (catch clojure.lang.ExceptionInfo e e))]
       (expect (some? e))
       (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
-      (expect (= [ "outer" ] (:path (ex-data e))))))
+      (expect (= ["outer"] (:path (ex-data e))))))
   (it "a keyword VALUE throws at any depth"
     (let [e (try (ep/boundary-view {"changes" [{"status" :added}]}) nil
               (catch clojure.lang.ExceptionInfo e e))]
