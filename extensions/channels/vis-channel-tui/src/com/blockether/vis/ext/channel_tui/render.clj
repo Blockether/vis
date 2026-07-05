@@ -2909,10 +2909,18 @@
                   (or (= (int Character/FORMAT) (int (Character/getType c)))
                     (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
             (subs s 1)
-            s)]
-    (->> s
-      (remove (fn [c] (let [i (int c)] (<= 0xE110 i 0xE2FF))))
-      (apply str))))
+            s)
+        ;; Drop the inline paint sentinels (PUA E110..E2FF) in ONE StringBuilder
+        ;; pass instead of a lazy char seq + apply-str — this runs per projected
+        ;; line and showed up as a render/restore hotspot.
+        ^String s s
+        n (.length s)
+        sb (StringBuilder. n)]
+    (dotimes [i n]
+      (let [c (.charAt s i)]
+        (when-not (<= 0xE110 (int c) 0xE2FF)
+          (.append sb c))))
+    (.toString sb)))
 (defn- entries->payload
   [entries]
   (let [lines (mapv :line entries)
