@@ -4,4 +4,6 @@
  ollama
  {:nses [com.blockether.vis.ext.provider-ollama]}
  lmstudio
- {:nses [com.blockether.vis.ext.provider-lmstudio]}}
+ {:nses [com.blockether.vis.ext.provider-lmstudio]}
+ mistral
+ {:nses [com.blockether.vis.ext.provider-mistral]}}
