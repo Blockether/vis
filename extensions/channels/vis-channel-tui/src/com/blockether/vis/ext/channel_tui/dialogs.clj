@@ -3017,6 +3017,8 @@
    {:id :close-tab,       :label "Close Tab"}
    {:id :providers,       :label "Configure Providers"}
    {:id :settings,        :label "Settings"}
+   {:id :toggle-all-details,   :label "Fold / Unfold All"}
+   {:id :toggle-detail-labels, :label "Label Folds — jump to one"}
    {:id :toggle-help,     :label "Keyboard Shortcuts"}])
 (defn searchable-select!
   "Type-to-filter selection list — the searchable spine of the command palette.

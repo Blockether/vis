@@ -38,6 +38,8 @@
     (expect (= :toggle-help            (keymap/prefix-action-for \h)))
       ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
     (expect (= :recenter               (keymap/prefix-action-for \j)))
+      ;; C-x t → vim-style jump labels overlay (toggle one visible fold).
+    (expect (= :toggle-detail-labels    (keymap/prefix-action-for \t)))
     (expect (nil? (keymap/prefix-action-for \z)))
     (expect (= \x keymap/prefix-key)))
   (it "no emacs editing key is a direct app verb (action-for returns nil)"

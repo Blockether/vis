@@ -443,6 +443,9 @@
            ["C-x b" "Switch workspace — the buffer-list picker"]
            ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]
            [(keymap/label-for :close-tab) "Close (kill) the current workspace tab"]]}
+   {:title "Folding"
+    :rows [["C-x TAB · C-x S-Tab" "Fold / unfold every disclosure (thinking, tool calls)"]
+           [(keymap/label-for :toggle-detail-labels) "Label every fold — press a letter to jump-toggle one"]]}
    {:title "Text editing"
     :rows [["C-a · C-e" "Beginning · end of line"]
            ["C-b · C-f" "Backward · forward char"]
