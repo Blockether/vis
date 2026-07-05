@@ -55,13 +55,17 @@
  {:vis   {:jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
                       "--enable-native-access=ALL-UNNAMED"
                       "--enable-preview"
-                      "--sun-misc-unsafe-memory-access=allow"]
+                      "--sun-misc-unsafe-memory-access=allow"
+                      "-Djava.awt.headless=true"
+                      "-Dapple.awt.UIElement=true"]
           :main-opts ["-m" "com.blockether.vis.core"]}
 
   :test  {:jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
                         "--enable-preview"
-                        "--sun-misc-unsafe-memory-access=allow"]
+                        "--sun-misc-unsafe-memory-access=allow"
+                        "-Djava.awt.headless=true"
+                        "-Dapple.awt.UIElement=true"]
           :extra-paths ["test"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/providers/vis-provider-github-copilot/test"
@@ -107,7 +111,9 @@
           :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
                         "--enable-preview"
-                        "--sun-misc-unsafe-memory-access=allow"]
+                        "--sun-misc-unsafe-memory-access=allow"
+                        "-Djava.awt.headless=true"
+                        "-Dapple.awt.UIElement=true"]
           :main-opts   ["-m" "com.blockether.vis.dev"]}
 
   :bench-micro
