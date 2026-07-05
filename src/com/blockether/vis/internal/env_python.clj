@@ -1419,6 +1419,7 @@ import collections as __vis_collections__
 import pathlib as __vis_pathlib__
 import textwrap as __vis_textwrap__
 import base64 as __vis_base64__
+import math as __vis_math__
 __vis_builtins__.json = __vis_json__
 __vis_builtins__.shlex = __vis_shlex__
 __vis_builtins__.re = __vis_re__
@@ -1431,8 +1432,9 @@ __vis_builtins__.pathlib = __vis_pathlib__
 __vis_builtins__.Path = __vis_pathlib__.Path
 __vis_builtins__.textwrap = __vis_textwrap__
 __vis_builtins__.base64 = __vis_base64__
+__vis_builtins__.math = __vis_math__
 __vis_builtins__.builtins = __vis_builtins__
-del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__
+del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__, __vis_math__
 ")
 
 (defn- install-auto-imports!
