@@ -476,18 +476,24 @@
                                                        :name "gpt-5.5"
                                                        :reasoning? true})
                   vis/notify! (fn [& _])]
-      (reset! state/app-db {:settings {:reasoning-level :balanced
-                                       :openai-codex-verbosity :low}
-                            :render-version 0})
-      (state/dispatch [:cycle-codex-verbosity])
-      (expect (= :medium
-                (get-in @state/app-db [:settings :openai-codex-verbosity])))
-      (state/dispatch [:cycle-codex-verbosity])
-      (expect (= :high
-                (get-in @state/app-db [:settings :openai-codex-verbosity])))
-      (state/dispatch [:cycle-codex-verbosity])
-      (expect (= :low
-                (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
+      ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
+      ;; to its :low default so a value another test left in the shared
+      ;; registry can't shift where the first step lands (order-dependent flake).
+      (vis/toggle-reset-to-default! :openai-codex/verbosity)
+      (try
+        (reset! state/app-db {:settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-codex-verbosity])
+        (expect (= :medium
+                  (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (state/dispatch [:cycle-codex-verbosity])
+        (expect (= :high
+                  (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (state/dispatch [:cycle-codex-verbosity])
+        (expect (= :low
+                  (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))))
 
 (defdescribe model-shortcut-test
   ;; Ctrl+T sets the ACTIVE SESSION's persisted model preference (the shared,

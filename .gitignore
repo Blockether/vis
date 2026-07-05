@@ -47,9 +47,11 @@ packages/vis-benchmark/swebench-harness/
 .nrepl.log
 .nrepl.boot.log
 .nrepl.pid
-# mdbook-mermaid install assets - regenerable via `mdbook-mermaid install docs`
-docs/mermaid.min.js
-docs/mermaid-init.js
+# The root docs/ folder is LOCAL SCRATCH only (e.g. mdbook-mermaid assets,
+# regenerable via `mdbook-mermaid install docs`). Canonical documentation is
+# tracked under resources/vis-docs/ — never the root docs/ tree. Leading slash
+# scopes this to the repo root, so extension `*/docs/` dirs stay tracked.
+/docs/
 
 # verify.sh transient output (run logs)
 .verification/

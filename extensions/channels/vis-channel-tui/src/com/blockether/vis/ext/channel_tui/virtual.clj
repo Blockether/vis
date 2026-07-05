@@ -248,8 +248,22 @@
   (boolean
     (when detail-expansions
       (let [k (render/message-detail-expansions-key session-id message detail-expansions)]
+        ;; `k` is `:expand-all`, or a vector whose FIRST element may be the bulk
+        ;; `:baseline` keyword (`:collapse` / `:expand`) prepended by
+        ;; `message-detail-expansions-key`, followed by `[node-id exp?]` pairs.
+        ;; `:expand` means every disclosure is open; otherwise ANY per-node
+        ;; override that is `true` counts. Skip the non-pair keyword element —
+        ;; destructuring it as a pair blows up with `nth on Keyword` and takes
+        ;; the height/paint thread down (freezing the TUI).
         (or (= :expand-all k)
-          (and (vector? k) (some (fn [[_ exp?]] (true? exp?)) k)))))))
+          (and (vector? k)
+            (boolean
+              (some (fn [e]
+                      (cond
+                        (= e :expand)  true
+                        (vector? e)    (true? (second e))
+                        :else          false))
+                k))))))))
 
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width

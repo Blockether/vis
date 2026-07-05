@@ -2025,6 +2025,37 @@
                   {:role :assistant :session-turn-id "abc12345-0000-0000"}
                   {:vis.channel-tui/expand-all-details? true}))))))
 
+(defdescribe bulk-baseline-projection-key-test
+  ;; Regression: the projection caches (`format-answer-with-thinking-data`,
+  ;; `format-answer-markdown-data`) key each bubble by `turn-`/`relevant-
+  ;; detail-expansions-key`. Those used to `keep` only [cid nid] VECTOR keys,
+  ;; silently dropping the bulk `:vis.channel-tui/baseline` (C-x [ collapse-all /
+  ;; C-x ] expand-all) and the copy-only `:expand-all-details?` FORCE flag —
+  ;; both KEYWORD keys. A bulk fold therefore collided with the cached render
+  ;; and the transcript never repainted until a per-node click finally changed a
+  ;; vector key ("C-x ] does nothing until I click something"). The bulk state
+  ;; MUST alter the key.
+  (let [turn-key    @#'render/turn-detail-expansions-key
+        relevant-key @#'render/relevant-detail-expansions-key
+        base        {:session-id "cid" :session-turn-id "abc12345-0000"
+                     :node-id "iteration:tabc1234:i1:result"}
+        with        (fn [f de] (f (assoc base :detail-expansions de)))]
+    (it "turn key differs for collapse vs expand baseline"
+      (expect (not= (with turn-key {:vis.channel-tui/baseline :collapse})
+                (with turn-key {:vis.channel-tui/baseline :expand}))))
+    (it "turn key differs from the no-bulk baseline"
+      (expect (not= (with turn-key {})
+                (with turn-key {:vis.channel-tui/baseline :expand}))))
+    (it "turn key picks up the expand-all FORCE flag"
+      (expect (not= (with turn-key {})
+                (with turn-key {:vis.channel-tui/expand-all-details? true}))))
+    (it "relevant (markdown) key differs for collapse vs expand baseline"
+      (expect (not= (with relevant-key {:vis.channel-tui/baseline :collapse})
+                (with relevant-key {:vis.channel-tui/baseline :expand}))))
+    (it "relevant key picks up the expand-all FORCE flag"
+      (expect (not= (with relevant-key {})
+                (with relevant-key {:vis.channel-tui/expand-all-details? true}))))))
+
 (defdescribe paste-disclosure-render-test
   ;; A user prompt's `[Pasted #N]` marker (the `vis-paste` fence
   ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
