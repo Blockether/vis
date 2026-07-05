@@ -686,7 +686,11 @@ def __vis_install_matplotlib__():
         _reset()
 
     def show(*args, **kwargs):
-        # No display in the sandbox; savefig is the way to get an image out.
+        # No GUI in the sandbox: render the current figure as ASCII to stdout,
+        # so `plt.show()` actually shows the plot in a text environment.
+        if _state.get('series'):
+            print(_render_ascii(_spec(), kwargs.get('width', 74),
+                                kwargs.get('height', 24)))
         return None
 
     class _Line(object):
@@ -901,6 +905,8 @@ def __vis_install_matplotlib__():
         # delegates to the module-level artist / renderer.
         def savefig(self, *a, **k):
             return savefig(*a, **k)
+        def to_ascii(self, *a, **k):
+            return to_ascii(*a, **k)
         def suptitle(self, s, **k):
             _state['title'] = str(s)
             return None
@@ -945,6 +951,147 @@ def __vis_install_matplotlib__():
     def gcf(*args, **kwargs):
         return _Figure()
 
+    def _render_ascii(spec, width=74, height=24):
+        # Pure-Python ASCII rendering of the current figure spec - no JVM, no
+        # image. Walks the same series list savefig sends to Java2D and
+        # rasterises line/scatter/step/fill/bar/hist/hline/vline into a
+        # character grid with a framed axis, y/x tick labels, title, axis
+        # labels and a per-series marker legend.
+        series = spec.get('series') or []
+        title = spec.get('title')
+        xlabel = spec.get('xlabel')
+        ylabel = spec.get('ylabel')
+        has_bar = any(str(s.get('kind')) == 'bar' for s in series)
+        all_x = []
+        all_y = []
+        for s in series:
+            if str(s.get('kind')) in ('pie', 'image', 'box'):
+                continue
+            all_x += [float(v) for v in (s.get('x') or [])]
+            all_y += [float(v) for v in (s.get('y') or [])]
+            if s.get('y2') is not None:
+                all_y += [float(v) for v in s.get('y2')]
+        xlim = spec.get('xlim')
+        ylim = spec.get('ylim')
+        if xlim:
+            xmin, xmax = float(xlim[0]), float(xlim[1])
+        elif all_x:
+            xmin, xmax = min(all_x), max(all_x)
+        else:
+            xmin, xmax = 0.0, 1.0
+        ys = list(all_y)
+        if has_bar:
+            ys.append(0.0)
+        if ylim:
+            ymin, ymax = float(ylim[0]), float(ylim[1])
+        elif ys:
+            ymin, ymax = min(ys), max(ys)
+        else:
+            ymin, ymax = 0.0, 1.0
+        if xmax == xmin:
+            xmin, xmax = xmin - 1.0, xmax + 1.0
+        if ymax == ymin:
+            ymin, ymax = ymin - 1.0, ymax + 1.0
+        pad = 0.05 * (ymax - ymin)
+        ymin -= pad
+        ymax += pad
+        W = max(20, int(width))
+        H = max(8, int(height))
+        grid = [[' '] * W for _ in range(H)]
+        def cx(x):
+            return int(round((float(x) - xmin) / (xmax - xmin) * (W - 1)))
+        def cy(y):
+            return int(round((ymax - float(y)) / (ymax - ymin) * (H - 1)))
+        def put(r, c, ch):
+            if 0 <= r < H and 0 <= c < W:
+                grid[r][c] = ch
+        markers = '*+xo#@%=.~'
+        legend = []
+        for mi, s in enumerate(series):
+            k = str(s.get('kind'))
+            if k in ('pie', 'image', 'box'):
+                continue
+            xs = [float(v) for v in (s.get('x') or [])]
+            ysv = [float(v) for v in (s.get('y') or [])]
+            ch = markers[mi % len(markers)]
+            if k == 'bar':
+                base = cy(max(ymin, min(ymax, 0.0)))
+                for x, y in zip(xs, ysv):
+                    c = cx(x)
+                    r = cy(y)
+                    lo, hi = (r, base) if r <= base else (base, r)
+                    for rr in range(lo, hi + 1):
+                        put(rr, c, ch)
+            elif k == 'hline':
+                for y in ysv:
+                    r = cy(y)
+                    for c in range(W):
+                        put(r, c, '-')
+            elif k == 'vline':
+                for x in xs:
+                    c = cx(x)
+                    for r in range(H):
+                        put(r, c, '|')
+            elif k == 'scatter':
+                for x, y in zip(xs, ysv):
+                    put(cy(y), cx(x), ch)
+            else:
+                pts = list(zip(xs, ysv))
+                for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+                    c1, r1, c2, r2 = cx(x1), cy(y1), cx(x2), cy(y2)
+                    n = max(abs(c2 - c1), abs(r2 - r1), 1)
+                    for t in range(n + 1):
+                        f = t / n
+                        put(int(round(r1 + (r2 - r1) * f)),
+                            int(round(c1 + (c2 - c1) * f)), ch)
+                for x, y in pts:
+                    put(cy(y), cx(x), ch)
+            lbl = s.get('label')
+            if lbl:
+                legend.append((ch, str(lbl)))
+        def fmt(v):
+            if abs(v) < 1e15 and float(v) == int(v):
+                return str(int(v))
+            return '%.3g' % v
+        nyt = 5 if H >= 5 else H
+        ylabels = {}
+        for i in range(nyt):
+            t = (i / (nyt - 1)) if nyt > 1 else 0.0
+            yv = ymax - t * (ymax - ymin)
+            ylabels[int(round(t * (H - 1)))] = fmt(yv)
+        lw = max((len(v) for v in ylabels.values()), default=1)
+        lines = []
+        if ylabel:
+            lines.append('  ' + str(ylabel))
+        if title:
+            lines.append(' ' * (lw + 1) + str(title).center(W))
+        for r in range(H):
+            lines.append(ylabels.get(r, '').rjust(lw) + '|' + ''.join(grid[r]))
+        lines.append(' ' * lw + '+' + '-' * W)
+        nxt = 5 if W >= 5 else 1
+        xrow = [' '] * W
+        for i in range(nxt):
+            t = (i / (nxt - 1)) if nxt > 1 else 0.0
+            xv = xmin + t * (xmax - xmin)
+            c = int(round(t * (W - 1)))
+            label = fmt(xv)
+            start = min(max(0, c - len(label) // 2), W - len(label))
+            for j, chc in enumerate(label):
+                if 0 <= start + j < W:
+                    xrow[start + j] = chc
+        lines.append(' ' * (lw + 1) + ''.join(xrow))
+        if xlabel:
+            lines.append(' ' * (lw + 1) + str(xlabel).center(W))
+        if legend:
+            lines.append('')
+            for ch, lbl in legend:
+                lines.append('  ' + ch + '  ' + lbl)
+        return '\\n'.join(lines)
+
+    def to_ascii(width=74, height=24):
+        # Return the current figure as an ASCII-art string (no image, no file).
+        return _render_ascii(_spec(), width, height)
+
     def _spec():
         return {
             'width': _state['width'], 'height': _state['height'],
@@ -958,6 +1105,19 @@ def __vis_install_matplotlib__():
         }
 
     def savefig(fname, format=None, dpi=None, **kwargs):
+        # Text targets (.txt/.asc filename, or format 'ascii'/'txt') get the
+        # pure-Python ASCII render; everything else goes through the Java2D PNG
+        # backend and writes the returned bytes.
+        is_text = str(format).lower() in ('ascii', 'txt') or (
+            isinstance(fname, str) and fname.lower().endswith(('.txt', '.asc')))
+        if is_text:
+            txt = _render_ascii(_spec())
+            if hasattr(fname, 'write'):
+                fname.write(txt)
+            else:
+                with open(fname, 'w') as _f:
+                    _f.write(txt)
+            return fname
         render = globals().get('__vis_mpl_render__')
         if render is None:
             raise RuntimeError('vis: matplotlib Java2D backend is not bound in this sandbox.')
@@ -980,7 +1140,7 @@ def __vis_install_matplotlib__():
                 xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
                 xticks, yticks, tight_layout, subplots_adjust,
                 boxplot, imshow, colorbar,
-                clf, cla, close, show, savefig,
+                clf, cla, close, show, savefig, to_ascii,
                 subplots, subplot, gca, gcf):
         setattr(pyplot, _fn.__name__, _fn)
     pyplot.Axes = _Axes
@@ -1018,15 +1178,15 @@ del __vis_install_matplotlib__
 (def vis-extension
   (vis/extension
     {:ext/name         "foundation-shim-matplotlib"
-     :ext/description  "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) rendered to PNG by a pure-JVM Java2D backend. savefig writes the image; no pip, no native wheel."
-     :ext/version      "0.3.0"
+     :ext/description  "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) with TWO renderers: a pure-JVM Java2D PNG backend (savefig writes the image) and a pure-Python ASCII backend (plt.show() prints the plot as text, plt.to_ascii() returns it, savefig('*.txt') writes it). No pip, no native wheel."
+     :ext/version      "0.4.0"
      :ext/author       "Blockether"
      :ext/owner        "vis"
      :ext/license      "Apache-2.0"
      :ext/kind         "foundation"
      :ext/sandbox-shims
      [{:shim/name        "matplotlib"
-       :shim/description "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) backed by a Java2D PNG renderer."
+       :shim/description "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with a Java2D PNG renderer and a pure-Python ASCII renderer (show/to_ascii/savefig .txt)."
        :shim/bindings    mpl-bridge-bindings
        :shim/preamble    matplotlib-shim-src}]}))
 
