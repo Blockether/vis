@@ -214,21 +214,21 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   text-wrap:balance}
 .hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
 .hero-cta{display:flex;flex-direction:column;align-items:center;gap:0;width:100%}
-.hero-install{width:100%;max-width:34rem;display:flex;flex-direction:column;
+.hero-install{width:100%;max-width:46rem;display:flex;flex-direction:column;
   background:var(--code-bg);border:1px solid var(--line);border-radius:0;
   box-shadow:var(--shadow);overflow:hidden;transition:border-color .2s var(--ease-out),box-shadow .2s var(--ease-out)}
 .hero-install:hover,.hero-install:focus-within{border-color:rgba(37,99,235,.4);box-shadow:0 1px 2px rgba(30,30,30,.05),0 0 0 3px rgba(37,99,235,.08)}
 .hero-install-head{display:flex;align-items:center;gap:.15rem;
   padding:.45rem .5rem .45rem .25rem;border-bottom:1px solid var(--line)}
 .hero-install-spacer{flex:1}
-.install-tab{margin:0;padding:.55rem .85rem;border:0;background:transparent;cursor:pointer;
-  font-family:var(--sans);font-size:.77rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
+.install-tab{margin:0;padding:.6rem 1rem;border:0;background:transparent;cursor:pointer;
+  font-family:var(--sans);font-size:.82rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
   border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px;
   transition:color .15s var(--ease-out),background .15s var(--ease-out)}
 .install-tab:hover{color:var(--link);background:rgba(37,99,235,.06)}
 .install-tab[aria-selected='true']{color:var(--primary-press);border-bottom-color:var(--primary)}
-.install-cmd{display:block;min-width:0;font-family:var(--mono);font-size:clamp(.72rem,3.1vw,.84rem);
-  color:var(--code-fg);padding:1rem 1.1rem;overflow-x:auto;white-space:pre;text-align:left;
+.install-cmd{display:block;min-width:0;font-family:var(--mono);font-size:clamp(.82rem,2.2vw,.98rem);
+  color:var(--code-fg);padding:1.15rem 1.35rem;overflow-x:auto;white-space:pre;text-align:left;
   scrollbar-width:thin}
 .install-cmd[hidden]{display:none}
 .copy-btn{flex:0 0 auto;align-self:center;margin:.1rem 0;padding:.4rem .85rem;
@@ -431,8 +431,8 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<span class=\"hero-install-spacer\"></span>"
           "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
           "</div>"
-          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash</code>"
-          "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\">iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile $env:TEMP\\vis.ps1; & $env:TEMP\\vis.ps1</code>"
+          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
+          "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\"><span class=\"token function\">iwr</span> <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1</span> -OutFile <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1<span class=\"token punctuation\">;</span> <span class=\"token punctuation\">&amp;</span> <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1</code>"
           "</div>"
           "</div></section>"))
       (rewrite-md-links html mode)

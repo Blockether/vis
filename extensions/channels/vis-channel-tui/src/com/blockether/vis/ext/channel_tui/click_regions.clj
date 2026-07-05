@@ -127,6 +127,32 @@
   []
   @regions-atom)
 
+(def label-alphabet
+  "Single-character jump labels for the vim-style disclosure overlay, home row
+   first so the common case is a no-reach keypress. Caps how many folds one
+   screen can label; any beyond the alphabet stay mouse-clickable."
+  (mapv str "asdfghjklqwertyuiopzxcvbnm"))
+
+(defn assign-labels
+  "Assign jump labels to the visible `:toggle-details` regions in `regions`
+   (pass `(current)`), in paint order. Returns an ordered vec of `[label
+   region]` pairs. Dedupes by `[session-id node-id]` (one fold can register
+   more than one glyph row) keeping the first occurrence, and caps at
+   `label-alphabet` length. Deterministic: the renderer (painting the badges)
+   and the input handler (resolving a keypress) derive the SAME assignment from
+   the same frame, so neither needs to share mutable state with the other."
+  [regions]
+  (let [toggles (:out (reduce (fn [{:keys [seen] :as acc} r]
+                                (if (= :toggle-details (:kind r))
+                                  (let [k [(:session-id r) (:node-id r)]]
+                                    (if (contains? seen k)
+                                      acc
+                                      (-> acc (update :seen conj k) (update :out conj r))))
+                                  acc))
+                        {:seen #{}, :out []}
+                        regions))]
+    (mapv vector label-alphabet toggles)))
+
 (defn- contains-point?
   "True when (col, row) lies inside `bounds`. Inclusive on the left
    edge, exclusive on the right edge."
