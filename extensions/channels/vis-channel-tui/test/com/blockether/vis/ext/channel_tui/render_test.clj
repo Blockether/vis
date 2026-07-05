@@ -2399,6 +2399,76 @@
         (expect (str/blank? (first texts)))
         (expect (str/includes? (second texts) "2 deletes"))))))
 
+(def ^:private find-command-parts @#'render/find-command-parts)
+(def ^:private find-group-entries @#'render/find-group-entries)
+
+(defn- find-form [summary render]
+  {:vis/tool-name "find_files" :success? true :code ""
+   :result-summary summary :result-render render
+   :tool-color-role :tool-color/search :result {}})
+
+(defdescribe find-band-grouping-test
+  ;; A RUN of consecutive find_files-only iterations coalesces into ONE
+  ;; collapsible FIND_FILES band — the SAME machinery as GIT / RG / DELETE,
+  ;; keyed on tool name. A lone find, or a run broken by other work, renders
+  ;; per iteration.
+  (let [ctx {:fill-w 90 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        ff  (fn [i s r] [i {:forms [(find-form s r)]}])
+        py  (fn [i] [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        find-band-count (fn [pairs]
+                          (->> (render-iteration-entries pairs iter-fn false true ctx)
+                            entry-text
+                            (filter #(str/includes? % "searches"))
+                            count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))]
+    (it "groupable-tool-form tags a lone find_files iteration"
+      (expect (= "find_files" (first (groupable-tool-form {:forms [(find-form "2 matches for \"x\"" nil)]}))))
+      (expect (nil? (groupable-tool-form {:forms [{:vis/tool-name "ls" :result-summary "x"}]}))))
+    (it "find-command-parts rides the quoted query on the chip, keeps the full summary"
+      (let [q (find-command-parts (find-form "20 matches for \"tui render tool\" · terms: render, tool" "\n```\n  a.clj\n```"))
+            u (find-command-parts (find-form "3 matches" nil))]
+        (expect (= "\"tui render tool\"" (:chip q)))
+        (expect (= "20 matches for \"tui render tool\" · terms: render, tool" (:summary q)))
+        ;; No quoted query → the leading count segment rides the chip.
+        (expect (= "3 matches" (:chip u)))))
+    (it "two consecutive find iterations collapse into ONE band"
+      (let [pairs [(ff 0 "20 matches for \"a\"" nil) (ff 1 "5 matches for \"b\"" nil)]]
+        (expect (= 1 (find-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone find iteration renders normally (no band)"
+      (let [pairs [(ff 0 "1 match for \"a\"" nil)]]
+        (expect (= 0 (find-band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a non-find step between two finds breaks the run"
+      (let [pairs [(ff 0 "1 match for \"a\"" nil) (py 1) (ff 2 "1 match for \"b\"" nil)]]
+        (expect (= 0 (find-band-count pairs)))
+        (expect (= 3 (normal-count pairs)))))
+    (it "collapsed shows the two queries; expanded restores each full summary + paths"
+      (let [forms   [(find-form "20 matches for \"tui render tool\" · terms: render, tool, tui" "\n```\n  a/render.clj\n```")
+                     (find-form "20 matches for \"web tool call render\" · terms: render, tool, web" "\n```\n  dev/x.md\n```")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 5
+                                               :section :iteration :kind :find-group})
+            collapsed (entry-text (find-group-entries forms (assoc ctx :iteration-number 5)))
+            expanded  (entry-text (find-group-entries forms (assoc ctx :iteration-number 5
+                                                              :detail-expansions {["s1" node-id] true})))]
+        (expect (some #(str/includes? % "2 searches") collapsed))
+        (expect (some #(str/includes? % "tui render tool") collapsed))
+        (expect (some #(str/includes? % "web tool call render") collapsed))
+        ;; The ranked paths stay OUT of the collapsed row.
+        (expect (not-any? #(str/includes? % "render.clj") collapsed))
+        ;; Expanded restores each full summary + its ranked paths.
+        (expect (some #(str/includes? % "terms: render, tool, web") expanded))
+        (expect (some #(str/includes? % "dev/x.md") expanded))))
+    (it "the find band opens with a leading breathe row, like an op-card"
+      (let [texts (entry-text (find-group-entries [(find-form "1 match for \"a\"" nil) (find-form "2 matches for \"b\"" nil)]
+                                (assoc ctx :iteration-number 9)))]
+        (expect (str/blank? (first texts)))
+        (expect (str/includes? (second texts) "2 searches"))))))
+
 (defdescribe cat-merge-grouping-test
   ;; Consecutive cat reads of the SAME file merge into ONE deduped ▾ CAT card;
   ;; overlapping ranges show the union once (`cat L57-60` then `cat L58-62`

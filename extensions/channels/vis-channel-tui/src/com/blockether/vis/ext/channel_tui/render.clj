@@ -3771,9 +3771,10 @@
    collapsible band (a GIT / RG / DELETE log) — or, for `cat`, merge into ONE
    deduped slice — instead of N separately-stacked op-cards. Only tools whose
    repeated back-to-back calls read as one logical activity belong here: a burst
-   of `git` commands, a burst of `rg` searches, a burst of `delete`s, and a run
-   of `cat` reads of the SAME file (which fold into a single ▾ CAT card)."
-  #{"git" "rg" "delete" "cat"})
+   of `git` commands, a burst of `rg` searches, a burst of `delete`s, a run of
+   `find_files` discoveries, and a run of `cat` reads of the SAME file (which
+   fold into a single ▾ CAT card)."
+  #{"git" "rg" "delete" "find_files" "cat"})
 
 (defn- groupable-tool-form
   "The lone native-tool form of an iteration when it is a single call to a
@@ -3995,6 +3996,46 @@
     (tool-band-entries {:head head, :color-role :tool-color/delete,
                         :body-md body-md, :kind :delete-group}
       ctx)))
+(defn- find-command-parts
+  "Project one find_files form into a grouped FIND_FILES band's fields: the
+   compact collapsed `:chip` (the quoted query — what differs between searches),
+   the FULL `:summary` (match count + query + fuzzy terms) as the expanded
+   headline, and the ranked-paths `:body`. Reads only the DB-stable card, so a
+   restored trace groups identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card) str str/trim not-empty)
+        ;; The find summary leads with `N matches for "<query>" · terms: …`; the
+        ;; quoted query is what differs between consecutive searches, so it rides
+        ;; the collapsed chip. Fall back to the count segment when unquoted.
+        query   (some-> summary (->> (re-find #"for \"([^\"]+)\"")) second)
+        chip    (cond
+                  query   (str "\"" query "\"")
+                  summary (str/trim (first (str/split summary #" · ")))
+                  :else   "find")]
+    {:chip chip, :summary summary, :body (:body card)}))
+
+(defn- find-group-entries
+  "Coalesce a RUN of consecutive find_files-only iterations into ONE collapsible
+   FIND_FILES band instead of N separately-stacked find op-cards.
+
+   Collapsed (default) — a single badge row with each search's query:
+     ▸ FIND_FILES · 2 searches  \"tui render tool\" · \"web tool call render\"
+   Expanded — each search as its full `N matches for \"…\"` headline with the
+   ranked paths nested underneath, so the burst reads as one discovery log."
+  [find-forms ctx]
+  (let [parts   (mapv find-command-parts find-forms)
+        n       (count parts)
+        chips   (str/join " · " (map :chip parts))
+        head    (str "**FIND_FILES** · " n " search" (when (not= 1 n) "es") "  " chips)
+        body-md (str/join "\n\n"
+                  (map (fn [{:keys [summary body]}]
+                         (str (or summary "find")
+                           (when (seq (str body)) (str "\n" body))))
+                    parts))]
+    (tool-band-entries {:head head, :color-role :tool-color/search,
+                        :body-md body-md, :kind :find-group}
+      ctx)))
 
 (defn- cat-form-path
   "The file a cat read acted on — the raw `:result` `:path` when live, else the
@@ -4119,7 +4160,8 @@
                           band     (case tool-name
                                      "git"    (git-group-entries forms ctx)
                                      "rg"     (rg-group-entries forms ctx)
-                                     "delete" (delete-group-entries forms ctx))
+                                     "delete" (delete-group-entries forms ctx)
+                                     "find_files" (find-group-entries forms ctx))
                           ;; The narrated head renders its thinking badge / prose ABOVE
                           ;; the band — strip its tool form (and the re-emitted call
                           ;; `:content-stream`, which `:forms []` would otherwise resurface
