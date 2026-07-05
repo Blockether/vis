@@ -2509,6 +2509,8 @@
 
 (def ^:private occurrences-command-parts @#'render/occurrences-command-parts)
 (def ^:private occurrences-group-entries @#'render/occurrences-group-entries)
+(def ^:private edit-command-parts @#'render/edit-command-parts)
+(def ^:private edit-group-entries @#'render/edit-group-entries)
 
 (defn- occ-form [summary render]
   {:vis/tool-name "occurrences" :success? true :code ""
@@ -2576,6 +2578,68 @@
                                 (assoc ctx :iteration-number 9)))]
         (expect (str/blank? (first texts)))
         (expect (str/includes? (second texts) "2 lookups"))))))
+
+(defdescribe edit-band-grouping-test
+  ;; A RUN of consecutive same-edit-tool iterations (struct_patch / patch /
+  ;; write) coalesces into ONE collapsible band — the SAME machinery as GIT /
+  ;; RG / DELETE, keyed on tool name. A lone edit, a run broken by other work,
+  ;; or a MIXED edit run (patch then struct_patch) never folds.
+  (let [ctx {:fill-w 90 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+        ef  (fn [tool path]
+              {:vis/tool-name (symbol tool)
+               :result {:path path}
+               :result-summary (str "update `" path "`")
+               :result-render (str "\n```diff\n+edit " path "\n```")})
+        ei  (fn [i tool path] [i {:forms [(ef tool path)]}])
+        iter-fn (fn [[idx _]] [{:line (str "NORMAL#" idx) :meta nil}])
+        edit-band-count (fn [pairs]
+                          (->> (render-iteration-entries pairs iter-fn false true ctx)
+                            entry-text
+                            (filter #(str/includes? % "edit"))
+                            count))
+        normal-count (fn [pairs]
+                       (->> (render-iteration-entries pairs iter-fn false true ctx)
+                         (filter #(str/includes? (str (:line %)) "NORMAL#"))
+                         count))
+        base "a/b/chat.clj"]
+    (it "groupable-iteration-forms tags a lone struct_patch/patch/write iteration"
+      (expect (= "struct_patch" (first (groupable-iteration-forms {:forms [(ef "struct_patch" base)]}))))
+      (expect (= "patch" (first (groupable-iteration-forms {:forms [(ef "patch" base)]}))))
+      (expect (= "write" (first (groupable-iteration-forms {:forms [(ef "write" base)]})))))
+    (it "edit-command-parts rides the file basename on the chip, keeps the full summary"
+      (let [q (edit-command-parts (ef "struct_patch" base))]
+        (expect (= "chat.clj" (:chip q)))
+        (expect (= "update `a/b/chat.clj`" (:summary q)))))
+    (it "two consecutive struct_patch iterations collapse into ONE band"
+      (let [pairs [(ei 0 "struct_patch" base) (ei 1 "struct_patch" base)]]
+        (expect (= 1 (edit-band-count pairs)))
+        (expect (= 0 (normal-count pairs)))))
+    (it "a lone struct_patch iteration renders normally (no band)"
+      (let [pairs [(ei 0 "struct_patch" base)]]
+        (expect (= 0 (edit-band-count pairs)))
+        (expect (= 1 (normal-count pairs)))))
+    (it "a MIXED patch+struct_patch run never crosses (different tools)"
+      (let [pairs [(ei 0 "patch" base) (ei 1 "struct_patch" base)]]
+        (expect (= 0 (edit-band-count pairs)))
+        (expect (= 2 (normal-count pairs)))))
+    (it "the band label is honest about which edit tool ran"
+      (let [sp (entry-text (edit-group-entries "struct_patch" [(ef "struct_patch" base) (ef "struct_patch" base)] (assoc ctx :iteration-number 5)))
+            wr (entry-text (edit-group-entries "write" [(ef "write" base) (ef "write" base)] (assoc ctx :iteration-number 6)))]
+        (expect (some #(str/includes? % "STRUCT_PATCH · 2 edits") sp))
+        (expect (some #(str/includes? % "WRITE · 2 writes") wr))))
+    (it "collapsed shows each basename; expanded restores each diff"
+      (let [forms   [(ef "struct_patch" "a/chat.clj") (ef "struct_patch" "b/state.clj")]
+            node-id (@#'render/detail-node-id {:session-turn-id "t" :iteration-number 7
+                                               :section :iteration :kind :edit-group})
+            collapsed (entry-text (edit-group-entries "struct_patch" forms (assoc ctx :iteration-number 7)))
+            expanded  (entry-text (edit-group-entries "struct_patch" forms (assoc ctx :iteration-number 7
+                                                                             :detail-expansions {["s1" node-id] true})))]
+        (expect (some #(str/includes? % "chat.clj") collapsed))
+        (expect (some #(str/includes? % "state.clj") collapsed))
+        ;; The diffs stay OUT of the collapsed row.
+        (expect (not-any? #(str/includes? % "+edit") collapsed))
+        (expect (some #(str/includes? % "+edit a/chat.clj") expanded))
+        (expect (some #(str/includes? % "+edit b/state.clj") expanded))))))
 
 (defdescribe cat-merge-grouping-test
   ;; Consecutive cat reads of the SAME file merge into ONE deduped ▾ CAT card;

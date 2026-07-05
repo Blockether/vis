@@ -3800,9 +3800,11 @@
    deduped slice — instead of N separately-stacked op-cards. Only tools whose
    repeated back-to-back calls read as one logical activity belong here: a burst
    of `git` commands, a burst of `rg` searches, a burst of `delete`s, a run of
-   `find_files` discoveries, a run of `occurrences` symbol traces, and a run of
-   `cat` reads of the SAME file (which fold into a single ▾ CAT card)."
-  #{"git" "rg" "delete" "find_files" "occurrences" "cat"})
+   `find_files` discoveries, a run of `occurrences` symbol traces, a run of
+   `cat` reads of the SAME file (which fold into a single ▾ CAT card), and a
+   run of edits by the SAME edit tool (`struct_patch` / `patch` / `write`)."
+  #{"git" "rg" "delete" "find_files" "occurrences" "cat"
+    "struct_patch" "patch" "write"})
 
 (defn- groupable-iteration-forms
   "Every native-tool form of an iteration when it is a PURE run of the SAME
@@ -4112,6 +4114,58 @@
                         :body-md body-md, :kind :occurrences-group}
       ctx)))
 
+(def ^:private edit-tool-band
+  "Per edit-tool band presentation: uppercase LABEL, badge color, and the noun
+   for the count. `write` reads as a CREATE (green), the rest as edits."
+  {"struct_patch" {:label "STRUCT_PATCH" :color :tool-color/edit   :noun "edit"}
+   "patch"        {:label "PATCH"        :color :tool-color/edit   :noun "edit"}
+   "write"        {:label "WRITE"        :color :tool-color/create :noun "write"}})
+
+(defn- edit-command-parts
+  "Project one patch/struct_patch/write form into a grouped edit band's fields:
+   the compact collapsed `:chip` (the edited file's basename — full paths blow
+   out the row), the FULL `:summary` (`update `path` · …`) as the expanded
+   header row, and the unified-diff `:body`. Reads only the DB-stable card, so a
+   restored trace groups identically to the live one."
+  [form]
+  (let [card    (vis/result-card form)
+        summary (some-> (:summary card) str str/trim not-empty)
+        paths   (map second (re-seq #"`([^`]+)`" (str summary)))
+        bases   (map #(or (not-empty (last (str/split % #"/"))) %) paths)
+        chip    (cond
+                  (seq bases) (str/join ", " bases)
+                  summary     summary
+                  :else       "edit")]
+    {:chip chip, :summary (or summary "edit"), :body (:body card)}))
+
+(defn- edit-group-entries
+  "Coalesce a RUN of consecutive same-edit-tool iterations (struct_patch / patch
+   / write) into ONE collapsible band instead of N separately-stacked edit
+   op-cards.
+
+   Collapsed (default) — a single badge row with each edit's file basename:
+     ▸ STRUCT_PATCH · 2 edits  chat.clj · chat.clj
+   Expanded — each edit as its full `update `path`` header with its unified diff
+   nested underneath, so the burst reads as one edit log. Only a run of the SAME
+   edit tool folds (mixed patch+struct_patch never crosses), so the band label
+   is always honest about what ran."
+  [tool-name edit-forms ctx]
+  (let [{:keys [label color noun]} (get edit-tool-band tool-name
+                                     {:label (str/upper-case (str tool-name))
+                                      :color :tool-color/edit :noun "edit"})
+        parts   (mapv edit-command-parts edit-forms)
+        n       (count parts)
+        chips   (str/join " · " (map :chip parts))
+        head    (str "**" label "** · " n " " noun (when (not= 1 n) "s") "  " chips)
+        body-md (str/join "\n\n"
+                  (map (fn [{:keys [summary body]}]
+                         (str (or summary "edit")
+                           (when (seq (str body)) (str "\n" body))))
+                    parts))]
+    (tool-band-entries {:head head, :color-role color,
+                        :body-md body-md, :kind :edit-group}
+      ctx)))
+
 (defn- cat-form-path
   "The file a cat read acted on — the raw `:result` `:path` when live, else the
    leading `` `path` `` chip of the summary (which survives a DB round-trip)."
@@ -4237,7 +4291,8 @@
                                      "rg"     (rg-group-entries forms ctx)
                                      "delete" (delete-group-entries forms ctx)
                                      "find_files" (find-group-entries forms ctx)
-                                     "occurrences" (occurrences-group-entries forms ctx))
+                                     "occurrences" (occurrences-group-entries forms ctx)
+                                     ("struct_patch" "patch" "write") (edit-group-entries tool-name forms ctx))
                           ;; The narrated head renders its thinking badge / prose ABOVE
                           ;; the band — strip its tool form (and the re-emitted call
                           ;; `:content-stream`, which `:forms []` would otherwise resurface
