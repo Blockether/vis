@@ -19,7 +19,7 @@
   com.blockether/vis-language-python              {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
 
-  com.blockether/svar                             {:mvn/version "0.7.45"}
+  com.blockether/svar                             {:mvn/version "0.7.46"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   org.clojure/tools.deps                          {:mvn/version "0.31.1629"}
   org.commonmark/commonmark                       {:mvn/version "0.29.0"}
