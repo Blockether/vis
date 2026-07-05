@@ -3739,22 +3739,19 @@
   #{"git" "rg"})
 
 (defn- groupable-tool-form
-  "The lone native-tool form of an iteration entry when the iteration is a PURE
-   single call to a groupable tool (`groupable-tool-names`) — returns
-   `[tool-name form]`, else nil. Thinking, streamed prose, recaps, provider
-   fallbacks, an iter-level error, a print-many `:cards` block, or any non-single
-   / multi-form shape all disqualify it, so a group never swallows a
-   causally-distinct iteration."
+  "The lone native-tool form of an iteration when it is a single call to a
+   groupable tool (`groupable-tool-names`) — returns `[tool-name form]`, else nil.
+   An iter-level error, a recap, a provider fallback, a print-many `:cards` block,
+   or any non-single / multi-form shape disqualifies it. NARRATION (a thinking
+   badge or a streamed-prose block) does NOT: a narrated git/rg call still groups,
+   and its narration renders ABOVE the band (see `render-iteration-entries`), so a
+   `<narrate> then add / commit / push` burst folds whole instead of leaving the
+   narrated first command stranded outside the band."
   [entry]
-  (let [{:keys [thinking content-stream assistant-prose forms recaps
-                provider-fallbacks error]}
-        entry]
+  (let [{:keys [forms recaps provider-fallbacks error]} entry]
     (when (and (nil? error)
             (empty? recaps)
             (empty? provider-fallbacks)
-            (str/blank? (str thinking))
-            (str/blank? (str content-stream))
-            (str/blank? (str assistant-prose))
             (= 1 (count forms)))
       (let [f  (first forms)
             tn (some-> (:vis/tool-name f)
@@ -3762,6 +3759,15 @@
         (when (and (contains? groupable-tool-names tn)
                 (empty? (:cards f)))
           [tn f])))))
+(defn- iteration-narration?
+  "True when an iteration carries visible NARRATION that must render on its own —
+   a thinking badge (only when `show-thinking?`, since hidden thinking paints
+   nothing) or an assistant-prose block. A narrated call may still OPEN a tool band
+   (its narration renders above the band); narration on an INTERIOR call breaks the
+   run so mid-burst commentary never floats out of place."
+  [entry show-thinking?]
+  (boolean (or (and show-thinking? (not (str/blank? (str (:thinking entry)))))
+             (not (str/blank? (str (:assistant-prose entry)))))))
 
 (defn- git-command-parts
   "Project one git form into the fields a grouped GIT band needs: the chip
@@ -3921,50 +3927,66 @@
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
-   run (>= 2) of consecutive pure single-call iterations to the SAME groupable
-   tool collapses into ONE band (`git-group-entries` / `rg-group-entries`); every
-   other iteration — including a lone groupable call, a run broken by other work,
-   or a switch to a DIFFERENT groupable tool — renders through `iter-entry-fn` as
-   before, so grouping never crosses causally-distinct work."
-  [visible-iterations iter-entry-fn show-silent? group-ctx]
+   run (>= 2) of consecutive single-call iterations to the SAME groupable tool
+   collapses into ONE band (`git-group-entries` / `rg-group-entries`); every other
+   iteration — a lone groupable call, a run broken by other work, or a switch to a
+   DIFFERENT groupable tool — renders through `iter-entry-fn` as before, so grouping
+   never crosses causally-distinct work.
+
+   The run's HEAD may carry narration (a thinking badge / prose): it renders ABOVE
+   the band while the call itself still joins it, so a `<narrate> then add / commit
+   / push` burst folds whole. An INTERIOR narrated call breaks the run instead, so
+   mid-burst commentary never floats out of its place."
+  [visible-iterations iter-entry-fn show-silent? show-thinking? group-ctx]
   (let [tagged (mapv (fn [pair]
-                       [pair (groupable-tool-form
-                               (visible-iteration-entry (second pair) show-silent?))])
+                       (let [e (visible-iteration-entry (second pair) show-silent?)]
+                         [pair (groupable-tool-form e) (iteration-narration? e show-thinking?)]))
                  visible-iterations)]
     (loop [out (transient [])
            xs  (seq tagged)]
       (if (nil? xs)
         (persistent! out)
-        (let [[pair tf] (first xs)]
+        (let [[_pair tf] (first xs)]
           (if tf
             (let [tool-name (first tf)
-                  ;; A run is consecutive iterations of the SAME groupable tool;
-                  ;; a nil tag OR a different tool ends it.
-                  run (take-while (fn [[_ g]] (and (some? g) (= tool-name (first g)))) xs)
+                  ;; A run is the head plus consecutive same-tool calls; a nil tag,
+                  ;; a DIFFERENT tool, OR interior narration ends it.
+                  run (cons (first xs)
+                        (take-while (fn [[_ g narr]]
+                                      (and (some? g) (= tool-name (first g)) (not narr)))
+                          (rest xs)))
                   cnt (count run)]
               (if (>= cnt 2)
-                (let [forms     (mapv (fn [[_ g]] (second g)) run)
-                      first-idx (first (first (first run)))
+                (let [[[first-idx head-entry] _ head-narr?] (first run)
+                      forms     (mapv (fn [[_ g]] (second g)) run)
                       iter-num  (inc (long first-idx))
                       ctx       (assoc group-ctx :iteration-number iter-num)
-                      entries   (case tool-name
+                      band      (case tool-name
                                   "git" (git-group-entries forms ctx)
                                   "rg"  (rg-group-entries forms ctx))
-                      ;; The band opens with its OWN colored breathe row (padding
-                      ;; 1 up, symmetric with a native op-card). When the previous
-                      ;; iteration closed with a terminal-bg iteration-pad gap, that
-                      ;; gap + this band's breathe would read as a doubled empty
-                      ;; line above the band. Drop the trailing gap so the
-                      ;; band's leading breathe coalesces with the prior card's
-                      ;; trailing pad into ONE clean boundary row.
-                      out*      (if (and (pos? (count out))
+                      ;; The narrated head renders its thinking badge / prose ABOVE
+                      ;; the band — strip its tool form (and the re-emitted call
+                      ;; `:content-stream`, which `:forms []` would otherwise resurface
+                      ;; as a thinking bubble) so the action rides the band, not a
+                      ;; duplicate op-card.
+                      lead      (when head-narr?
+                                  (vec (iter-entry-fn
+                                         [first-idx (assoc head-entry :forms []
+                                                      :content-stream nil)])))
+                      ;; With no leading narration, drop a prior terminal-bg gap so the
+                      ;; band's OWN colored breathe row is the single boundary. A
+                      ;; narrated head brings its own spacing (coalesced upstream), so
+                      ;; leave the seam alone there.
+                      out*      (if (and (not head-narr?)
+                                      (pos? (count out))
                                       (= (str iteration-pad-marker "")
                                         (str (:line (nth out (dec (count out)))))))
                                   (pop! out)
-                                  out)]
+                                  out)
+                      entries   (if (seq lead) (into lead band) band)]
                   (recur (reduce conj! out* entries) (seq (drop cnt xs))))
-                (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))
-            (recur (reduce conj! out (iter-entry-fn pair)) (next xs))))))))
+                (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
+            (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
 (defn- trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
@@ -4020,7 +4042,7 @@
       ;; collapsible header was removed (it only hid the blocks and carried no
       ;; information the per-block headers + op rows don't already convey).
       (coalesce-bubble-blanks
-        (render-iteration-entries visible-iterations iter-entry-fn show-silent?
+        (render-iteration-entries visible-iterations iter-entry-fn show-silent? show-thinking?
           {:fill-w (max 1 (dec (long content-w)))
            :session-id session-id
            :session-turn-id session-turn-id
