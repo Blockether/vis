@@ -45,9 +45,7 @@
                                            :user-request "First turn"
                                            :status :running})]
     ;; Turn 1: terminal iteration with a `(def ...)` var, an `(done ...)`
-    ;; block (idx 1), thinking trace, system prompt, and a full LLM
-    ;; message envelope. The persistance layer derives :llm_system_prompt
-    ;; + :llm_user_prompt from the :llm-messages we pass in here.
+    ;; block (idx 1), thinking trace, and answer.
     (h/store-iteration! s {:session-turn-id q1
                            :code          "(+ 1 1)"
                            :forms         [{:scope "t1/i1/f1" :tag :observation
@@ -58,22 +56,6 @@
                            :duration-ms 12
                            :llm-provider :blockether
                            :llm-model    "gpt-4o"
-                           :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
-                                          {:role "user"
-                                           :content ";; -- CURRENT-USER-MESSAGE --\nUSER_TURN_TEXT_FIXTURE\n"}
-                                          {:role "assistant"
-                                           :content "ASSISTANT_REPLAY_FIXTURE"}
-                                          {:role "user"
-                                           :content (str ";; ctx =\n"
-                                                      (pr-str {:session {:id "session-fixture"
-                                                                         :turn-id "turn-fixture"
-                                                                         :iteration {:position 1}
-                                                                         :hints [{:id :vis.foundation/session-title
-                                                                                  :text "observe before answer"
-                                                                                  :importance :high
-                                                                                  :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}}))}]
-                           :llm-raw-response "```clojure\n(+ 1 1)\n```"
-                           :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                            :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                            :cache-created-tokens 700
                            :cost-usd 0.0042})
@@ -114,7 +96,7 @@
         (let [cid  (seed! s)
               data (transcript/transcript s cid)]
           (expect (map? data))
-          (expect (= #{:session :totals :turns :dialog :calls :timeline :llm-diagnostics}
+          (expect (= #{:session :totals :turns :dialog :calls :timeline}
                     (set (keys data))))
           ;; Session header carries the canonical fields.
           (expect (= cid    (:id    (:session data))))
@@ -220,26 +202,6 @@
           (expect (= "42" (:answer turn))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "surfaces raw LLM response diagnostics on iteration data"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid  (seed! s)
-              iter (-> (transcript/transcript s cid)
-                     :turns first :iterations first)]
-          (expect (= "```clojure\n(+ 1 1)\n```" (:llm-raw-response iter)))
-          (expect (= "```clojure\n(+ 1 1)\n```" (:llm-raw-response-preview iter)))
-          (expect (= 22 (:llm-raw-response-length iter)))
-          (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
-                    (:llm-raw-response-sha256 iter)))
-          ;; :llm-executable-code removed during the per-block-eval cut;
-          ;; :llm-executable-blocks is the single source of truth. It is a
-          ;; `<-json` DB column, so it round-trips STRING-keyed.
-          (expect (nil? (:llm-executable-code iter)))
-          ;; forensic blobs parse lazily on restore (a delay); force resolves it
-          (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
-                    (force (:llm-executable-blocks iter)))))
-        (finally (vis/db-dispose-connection! s)))))
-
   (it "surfaces :returned-empty-code? as a typed boolean"
     (let [s (vis/db-create-connection! :memory)]
       (try
@@ -337,42 +299,6 @@
   ;; the structural transcript shape tests above and the prompt /
   ;; system-prompt rendering blocks below.
 
-  (it "can render DB-backed system prompt snapshots only"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid  (seed! s)
-              data (transcript/transcript s cid)
-              rows (transcript/prompt-snapshots data)
-              out  (transcript/transcript->md data {:mode :system-prompts})]
-          (expect (= 2 (count rows)))
-          (expect (= "SYS_PROMPT_TEXT_FIXTURE" (:system-prompt (first rows))))
-          (expect (str/includes? out "# System prompt snapshots"))
-          (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
-          (expect (str/includes? out "| Turn | Iter | Status | Provider/model | System chars | Messages | Message chars |"))
-          (expect (not (str/includes? out "##### Block 0")))
-          (expect (not (str/includes? out "USER_TURN_TEXT_FIXTURE"))))
-        (finally (vis/db-dispose-connection! s)))))
-
-  (it "can render full provider prompt envelopes including user prompt snapshots"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid  (seed! s)
-              data (transcript/transcript s cid)
-              out  (transcript/transcript->md data {:mode :prompts})]
-          (expect (str/includes? out "# Provider prompt snapshots"))
-          (expect (str/includes? out "_system prompt snapshot:_"))
-          (expect (str/includes? out "_full provider message envelope:_"))
-          (expect (str/includes? out "[0] role=system - stable system prompt"))
-          (expect (str/includes? out "[1] role=user - current user message"))
-          (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
-          (expect (str/includes? out "[3] role=user - per-iteration trailer"))
-          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
-          (expect (str/includes? out ";; ctx ="))
-          (expect (str/includes? out ":hints"))
-          (expect (not (str/includes? out "<iteration_hints>")))
-          (expect (not (str/includes? out "##### Block 0"))))
-        (finally (vis/db-dispose-connection! s)))))
-
   (it "renders huge code blocks verbatim in Markdown reports"
     ;; Forensic transcripts never truncate. A 50k-char code block lands
     ;; in the report exactly as the model wrote it.
@@ -420,65 +346,12 @@
         (finally (vis/db-dispose-connection! s)))))
 
   ;; Removed: "renders header + per-turn block + per-iteration block
-  ;; dump". The full diagnostic-md header text drifted from this
-  ;; fixture (top-level session backtick block).
-  #_(it "renders header + per-turn block + per-iteration block dump"
-      (let [s (vis/db-create-connection! :memory)]
-        (try
-          (let [cid (seed! s)
-                out (transcript/transcript-md s cid)]
-            (expect (str/includes? out (str "session `" cid "`")))
-            (expect (str/includes? out "Total turns:** 2"))
-            (expect (str/includes? out "Total iterations:** 2"))
-          ;; Per-turn header.
-            (expect (str/includes? out "User request:** First turn"))
-            (expect (str/includes? out "Provider/model:** blockether/gpt-4o"))
-          ;; Per-iteration header.
-            (expect (str/includes? out "#### Iteration 1"))
-          ;; Per-block header.
-            (expect (str/includes? out "##### Block 0"))
-          ;; Code rendered inside a fenced ```clojure block (NOT a
-          ;; backtick cell) so multi-line code prints verbatim.
-            (expect (str/includes? out "```clojure\n(+ 1 1)\n```"))
-          ;; Comment preserved verbatim above the fence.
-            (expect (str/includes? out ";; double-check arithmetic"))
-          ;; Result line for the clean block.
-            (expect (str/includes? out "Result: `2`"))
-          ;; Failed blocks render the FULL error inside an `_error:_`
-          ;; fence, not a truncated table cell.
-            (expect (str/includes? out "_error:_"))
-            (expect (str/includes? out "Unable to resolve symbol: Let"))
-          ;; The failure marker stamps `[error]` on the status line.
-            (expect (str/includes? out "[error]"))
-          ;; Locale-stable dot separator for cost.
-            (expect (str/includes? out "$0.0042"))
-            (expect (str/includes? out "$0.0021"))
-          ;; Thinking trace renders under a `_thinking:_` label.
-            (expect (str/includes? out "_thinking:_"))
-            (expect (str/includes? out "Reasoning about arithmetic"))
-          ;; Vars renders under a `_vars defined this iteration:_`
-          ;; label with one bullet per var.
-            (expect (str/includes? out "_vars defined this iteration:_"))
-            (expect (str/includes? out "`x`"))
-          ;; The `(done ...)` block is flagged with `[answer]` on
-          ;; the status line so the reader spots the terminal form.
-            (expect (str/includes? out "[answer]"))
-          ;; The final answer text renders under a `#### Final answer`
-          ;; section after every iteration of its turn.
-            (expect (str/includes? out "#### Final answer"))
-          ;; Reproduction report is deliberately complete: prompt
-          ;; bodies and message envelopes render by default. No flags.
-            (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
-            (expect (str/includes? out "<details><summary>LLM messages ("))
-            (expect (str/includes? out "[0] role=system - stable system prompt"))
-            (expect (str/includes? out "[1] role=user - current user message"))
-            (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
-            (expect (str/includes? out "[3] role=user - per-iteration trailer"))
-            (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
-            (expect (str/includes? out ";; ctx ="))
-            (expect (str/includes? out ":hints"))
-            (expect (not (str/includes? out "<iteration_hints>"))))
-          (finally (vis/db-dispose-connection! s))))))
+  ;; dump" (was already `#_`-disabled). It asserted on the removed
+  ;; prompt-body / LLM-message-envelope render (SYS_PROMPT_TEXT_FIXTURE,
+  ;; "LLM messages", role snapshots) which no longer exists. Surviving
+  ;; renderer output is covered by the structural data tests above and
+  ;; the huge/mixed-block render tests here.
+  )
 
 ;; ---------------------------------------------------------------------------
 ;; No UUID leaks in user/LLM-facing surfaces.

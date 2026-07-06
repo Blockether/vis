@@ -35,7 +35,6 @@
    (java.io File RandomAccessFile)
    (java.nio.channels FileLock)
    (java.nio.file Files LinkOption Paths)
-   (java.security MessageDigest)
    (java.sql SQLException)
    (java.util.concurrent.atomic AtomicLong)
    (javax.sql DataSource)
@@ -93,13 +92,11 @@
   (when s (json/read-json s)))
 (defn- <-json-lazy
   "Like `<-json` but DEFERRED: returns a `delay` that parses on first `force`.
-   Used for the big per-iteration forensic blobs (`llm_user_prompt`,
-   `llm_executable_code_blocks`, `llm_assistant_message`) that a session restore
-   materialises for EVERY turn but that only the on-demand transcript / resume
-   surfaces ever read. Boot was eager-parsing all of them (the top app cost in a
-   JFR restore profile); this keeps the small raw string and parses only when a
-   reader `force`s it. Readers must `force` — `clojure.core/force` is a no-op on
-   the plain values that LIVE turns build, so mixed live/restored data is safe."
+   Used for `llm_assistant_message` — a per-iteration blob a session restore
+   materialises for EVERY turn but that only the resume / transcript surfaces
+   read. Restore keeps the small raw string and parses only when a reader
+   `force`s it. Readers must `force` — `clojure.core/force` is a no-op on the
+   plain values that LIVE turns build, so mixed live/restored data is safe."
   [s]
   (delay (<-json s)))
 
@@ -112,16 +109,6 @@
   "Deserialize a Nippy byte array from a BLOB column back to a Clojure value."
   [^bytes bs]
   (when bs (nippy/thaw bs)))
-
-(def ^:private raw-response-preview-chars 4000)
-
-(defn- sha256-hex [^String s]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                 (.getBytes s "UTF-8"))]
-    (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
-
-(defn- raw-response-preview [^String s]
-  (subs s 0 (min raw-response-preview-chars (count s))))
 
 ;; =============================================================================
 ;; Error translation + bootstrap error normalization
@@ -1481,8 +1468,8 @@
   [db-info {:keys [session-turn-id thinking assistant-prose answer llm-full-duration-ms
                    error
                    llm-routing cache-created-tokens
-                   llm-messages llm-provider llm-model llm-raw-response
-                   llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
+                   llm-provider llm-model
+                   llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
@@ -1517,8 +1504,7 @@
                         (when (or llm-provider llm-model)
                           (cond-> {}
                             llm-provider (assoc-in [:actual :provider] (->kw llm-provider))
-                            llm-model    (assoc-in [:actual :model] (str llm-model)))))
-              raw-response-s (some-> llm-raw-response str)]
+                            llm-model    (assoc-in [:actual :model] (str llm-model)))))]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
           (let [iteration-cols (prepare-iteration-columns opts)]
@@ -1528,25 +1514,15 @@
                                         :session_turn_state_id session-turn-state-id-s
                                         :position             position
                                         :status               (normalize-status (cond answer :done error :error (:error iteration-cols) :error :else :done))
-                                        :llm_system_prompt    (when (seq llm-messages)
-                                                                (:content (first (filter #(= "system" (:role %)) llm-messages))))
-                                        :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
                                         :llm_thinking         (str/trim (or thinking ""))
                                         :llm_assistant_prose  (str/trim (or assistant-prose ""))
                                         :llm_full_duration_ms (long (or llm-full-duration-ms 0))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :llm_executable_code_blocks (when (some? llm-executable-blocks)
-                                                                      (->json (vec llm-executable-blocks)))
                                         :llm_assistant_message (when (some? llm-assistant-message)
                                                                  (->json llm-assistant-message))
                                         :created_at           now
                                         :finished_at          now}
                                   iteration-cols)
-                          raw-response-s
-                          (assoc :llm_raw_response         raw-response-s
-                            :llm_raw_response_preview (raw-response-preview raw-response-s)
-                            :llm_raw_response_length  (count raw-response-s)
-                            :llm_raw_response_sha256  (sha256-hex raw-response-s))
                           ;; Token / cost columns - omitted when nil so the
                           ;; row keeps NULL (the schema marks them nullable
                           ;; for exactly this reason: an LLM call that
@@ -1757,20 +1733,6 @@
       (some? (:llm_actual_provider row))   (assoc :llm-actual-provider (->kw-back (:llm_actual_provider row)))
       (some? (:llm_actual_model row))      (assoc :llm-actual-model (:llm_actual_model row))
       (some? (:llm_fallback row))          (assoc :llm-fallback? (= 1 (long (:llm_fallback row))))
-      ;; Forensic fields - the full transcript surface needs these on
-      ;; the data shape even when callers don't render them by default.
-      (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
-      (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json-lazy (:llm_user_prompt row)))
-      (some? (:llm_raw_response row))
-      (assoc :llm-raw-response (:llm_raw_response row))
-      (some? (:llm_raw_response_preview row))
-      (assoc :llm-raw-response-preview (:llm_raw_response_preview row))
-      (some? (:llm_raw_response_length row))
-      (assoc :llm-raw-response-length (:llm_raw_response_length row))
-      (some? (:llm_raw_response_sha256 row))
-      (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
-      (some? (:llm_executable_code_blocks row))
-      (assoc :llm-executable-blocks (<-json-lazy (:llm_executable_code_blocks row)))
       ;; Canonical assistant message svar emitted on this iteration; rehydrated
       ;; on resume so preserved-thinking replay survives a vis restart.
       (some? (:llm_assistant_message row))
@@ -1796,54 +1758,19 @@
       true (assoc :output-reasoning-tokens  (long   (or (:output_reasoning_tokens row) 0)))
       true (assoc :cost-usd                 (double (or (:cost_usd row) 0.0))))))
 
-;; The session_turn_iteration columns, and the subset the DEFAULT (render/
-;; restore) read pulls. The three excluded columns are large FORENSIC blobs
-;; that only the on-demand transcript / introspection surfaces read — chiefly
-;; `llm_user_prompt`, which stores the WHOLE per-turn prompt (full history), so
-;; it grows quadratically and dwarfs the DB (measured: 713MB of one 843MB DB).
-;; `SELECT *`-ing it on restore loaded hundreds of MB of prompt strings the TUI
-;; never renders. Restore selects everything else; forensic callers opt back in
-;; with `with-forensics?`.
-(def ^:private iteration-all-columns
-  [:id :session_turn_state_id :position :status
-   :llm_system_prompt :llm_user_prompt
-   :llm_selected_provider :llm_selected_model :llm_actual_provider :llm_actual_model
-   :llm_fallback :llm_full_duration_ms :llm_thinking :llm_assistant_prose
-   :llm_returned_empty_code :llm_raw_response :llm_raw_response_preview
-   :llm_raw_response_length :llm_raw_response_sha256 :llm_executable_code_blocks
-   :llm_assistant_message :input_tokens :input_regular_tokens :input_cache_write_tokens
-   :input_cache_read_tokens :output_tokens :output_reasoning_tokens :cost_usd
-   :code :tool_calls :eval_duration_ms :created_at :finished_at])
-(def ^:private iteration-forensic-columns
-  "Large forensic blobs excluded from the default restore SELECT."
-  #{:llm_user_prompt :llm_system_prompt :llm_raw_response})
-(def ^:private iteration-restore-columns
-  (vec (remove iteration-forensic-columns iteration-all-columns)))
-
 (defn- iterations-for-state-id
-  "Iteration views for one concrete `session_turn_state.id`, position-ordered.
-   `with-forensics?` (default false) selects the big forensic blobs too — pass
-   it only from the on-demand transcript / introspection surfaces; the TUI
-   restore + resume never render them and must stay slim."
-  ([db-info state-id-s] (iterations-for-state-id db-info state-id-s false))
-  ([db-info state-id-s with-forensics?]
-   (mapv (fn [row]
-           (let [trace   (routing-events-for-iteration db-info (:id row))
-                 routing (row-routing-summary row trace)]
-             (attach-routing (row->iteration row) routing)))
-     (query! db-info
-       {:select   (if with-forensics? [:*] iteration-restore-columns)
-        :from :session_turn_iteration
-        :where    [:= :session_turn_state_id state-id-s]
-        :order-by [[:position :asc]]}))))
+  "Iteration views for one concrete `session_turn_state.id`, position-ordered."
+  [db-info state-id-s]
+  (mapv (fn [row]
+          (let [trace   (routing-events-for-iteration db-info (:id row))
+                routing (row-routing-summary row trace)]
+            (attach-routing (row->iteration row) routing)))
+    (query! db-info
+      {:select   [:*] :from :session_turn_iteration
+       :where    [:= :session_turn_state_id state-id-s]
+       :order-by [[:position :asc]]})))
 
-(defn db-list-session-turn-iterations
-  ;; `with-forensics?` (default false) also loads the big forensic blobs
-  ;; (llm_user_prompt/system_prompt/raw_response) — pass it only from the
-  ;; on-demand transcript / introspection surfaces that render them. Default
-  ;; slim keeps a session RESTORE from pulling hundreds of MB of prompt text.
-  ([db-info session-turn-id] (db-list-session-turn-iterations db-info session-turn-id false))
-  ([db-info session-turn-id with-forensics?]
+(defn db-list-session-turn-iterations [db-info session-turn-id]
   ;; `session-turn-id` arrives as EITHER a `session_turn_soul` id (the
   ;; canonical turn id `row->turn`/`db-turn-history` expose, the one history
   ;; views carry) OR a concrete `session_turn_state` id (the engine's
@@ -1855,11 +1782,11 @@
   (if (and (ds db-info) session-turn-id)
     (let [id-s     (->ref session-turn-id)
           state    (latest-session-turn-state db-info id-s)
-          via-soul (when state (iterations-for-state-id db-info (:id state) with-forensics?))]
+          via-soul (when state (iterations-for-state-id db-info (:id state)))]
       (if (seq via-soul)
         via-soul
-        (iterations-for-state-id db-info id-s with-forensics?)))
-    [])))
+        (iterations-for-state-id db-info id-s)))
+    []))
 
 ;; -----------------------------------------------------------------------------
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
