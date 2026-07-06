@@ -152,7 +152,7 @@
                        (ir-tui/ir->lines [:ir [:code {:lang "clj"} src]] 10)
 
                        ts
-                       (texts lines)]
+                       (mapv #(str/replace (or % "") #"\u001b\[[0-9;]*m" "") (texts lines))]
 
                    (expect (some #(= "(let [x 1]" %) ts))
                    (expect (some #(= "  (println x))" %) ts))
