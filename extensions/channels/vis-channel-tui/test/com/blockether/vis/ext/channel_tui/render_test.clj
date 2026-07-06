@@ -2334,7 +2334,10 @@
                                     {:viewport-h 40})
 
           code-put
-          (first (filter #(str/includes? (:text %) "(+ 1 2)") @puts))
+          ;; Colorization splits the code line into one putString per color run,
+          ;; so the leading chunk (which starts the code at text-x) no longer
+          ;; contains the whole form. Match that leading chunk, ANSI-stripped.
+          (first (filter #(str/includes? (strip-ansi (str (:text %))) "(+") @puts))
 
           code-fill
           (first (filter #(and (= t/code-block-bg (:bg %)) (= (:row code-put) (:row %))) @fills))]
