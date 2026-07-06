@@ -436,16 +436,16 @@
   (let [calls-by-parent (group-by :parent-ref calls)]
     (vec (mapcat (fn [turn]
                    (concat
-                    [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
-                    (mapcat (fn [iteration]
-                              (mapcat (fn [block]
-                                        (let [ref (block-ref turn iteration block)]
-                                          (cons (code-event turn iteration block)
-                                                (get calls-by-parent ref))))
-                                      (:blocks iteration)))
-                            (:iterations turn))
-                    (when (:answer turn)
-                      [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
+                     [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
+                     (mapcat (fn [iteration]
+                               (mapcat (fn [block]
+                                         (let [ref (block-ref turn iteration block)]
+                                           (cons (code-event turn iteration block)
+                                                 (get calls-by-parent ref))))
+                                       (:blocks iteration)))
+                             (:iterations turn))
+                     (when (:answer turn)
+                       [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
                  turns))))
 
 (defn transcript
@@ -658,19 +658,19 @@
   [code render-segments]
   (if (seq render-segments)
     (let [body (apply str
-                      (keep (fn [{:keys [kind source value]}]
-                              (case kind
-                                :code
-                                (when-not (str/blank? (str source)) (render-fenced "python" source))
+                 (keep (fn [{:keys [kind source value]}]
+                         (case kind
+                           :code
+                           (when-not (str/blank? (str source)) (render-fenced "python" source))
 
-                                :title
-                                (str "_session title:_ `" (or value "") "`\n")
+                           :title
+                           (str "_session title:_ `" (or value "") "`\n")
 
-                                :answer-ref
-                                nil
+                           :answer-ref
+                           nil
 
-                                nil))
-                            render-segments))]
+                           nil))
+                       render-segments))]
       (when-not (str/blank? body) body))
     (render-fenced "python" code)))
 
@@ -787,9 +787,9 @@
          (render-iter-error (:error iter))
          (cond (empty? blocks) "_No code blocks (LLM returned an empty response)._\n"
                :else (apply str
-                            (map-indexed (fn [idx block]
-                                           (render-block-section idx (= idx ans-idx) block))
-                                         blocks))))))
+                       (map-indexed (fn [idx block]
+                                      (render-block-section idx (= idx ans-idx) block))
+                                    blocks))))))
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
@@ -850,15 +850,14 @@
                   "vis transcript")]
     (str "# " title
          "\n\n" (apply str
-                       (for [[label rows] (session-summary data)]
-                         (str "## "
-                              label
-                              "\n\n"
-                              (apply str
-                                     (for [[k v _] rows]
-
-                                       (str "- **" k ":** " v "\n")))
-                              "\n"))))))
+                  (for [[label rows] (session-summary data)]
+                    (str "## "
+                         label
+                         "\n\n"
+                         (apply str
+                           (for [[k v _] rows]
+                             (str "- **" k ":** " v "\n")))
+                         "\n"))))))
 
 (defn- render-dialog-message
   [{:keys [role content]}]
@@ -982,26 +981,26 @@
   [md]
   (let [lines (str/split-lines (str md))]
     (letfn
-     [(flush-para [buf] (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
-      (flush-list [buf]
-        (when (seq buf)
-          [(str "<ul>" (apply str (map #(str "<li>" (render-inline %) "</li>") buf)) "</ul>")]))
-      (flush [state buf lang]
-        (case state
-          :para
-          (flush-para buf)
+      [(flush-para [buf] (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
+       (flush-list [buf]
+         (when (seq buf)
+           [(str "<ul>" (apply str (map #(str "<li>" (render-inline %) "</li>") buf)) "</ul>")]))
+       (flush [state buf lang]
+         (case state
+           :para
+           (flush-para buf)
 
-          :list
-          (flush-list buf)
+           :list
+           (flush-list buf)
 
-          :code
-          [(str "<pre><code"
-                (when lang (str " class=\"language-" (html-escape lang) "\""))
-                ">"
-                (html-escape (str/join "\n" buf))
-                "</code></pre>")]
+           :code
+           [(str "<pre><code"
+                 (when lang (str " class=\"language-" (html-escape lang) "\""))
+                 ">"
+                 (html-escape (str/join "\n" buf))
+                 "</code></pre>")]
 
-          nil))]
+           nil))]
       (loop [ls lines
              out []
              state :none
@@ -1045,43 +1044,41 @@
    theme's shared CSS vars. Maps the transcript's block structure onto the
    vis palette - ground, ink, accent headers, code panels, hairline rules."
   (str
-   "body{margin:0;background:var(--bg);color:var(--fg);"
-   "font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
-   ".transcript{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 6rem;}"
-   "@media (max-width:640px){.transcript{padding:1.25rem .9rem 3.5rem;}}"
-   "h1{font-size:1.9rem;margin:.2em 0 .6em;}"
-   "h2{font-size:1.4rem;margin:2.2rem 0 .9rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);}"
-   "h3{font-size:1.18rem;margin:1.8rem 0 .6rem;color:var(--primary);}"
-   "h4{font-size:1.02rem;margin:1.3rem 0 .5rem;color:var(--secondary);}"
-   "h5{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--dim);"
-   "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;}"
-   "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}" "a{color:var(--primary);}"
-   "p{margin:.6em 0;}" "ul{margin:.4em 0;padding-left:1.4em;}"
-   "li{margin:.2em 0;}" "strong{color:var(--fg);font-weight:650;}"
-   "em{color:var(--dim);font-style:normal;}"
-   "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;"
-   "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
-   "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
-   "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
-   "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
+    "body{margin:0;background:var(--bg);color:var(--fg);"
+    "font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
+    ".transcript{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 6rem;}"
+    "@media (max-width:640px){.transcript{padding:1.25rem .9rem 3.5rem;}}"
+    "h1{font-size:1.9rem;margin:.2em 0 .6em;}"
+    "h2{font-size:1.4rem;margin:2.2rem 0 .9rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);}"
+    "h3{font-size:1.18rem;margin:1.8rem 0 .6rem;color:var(--primary);}"
+    "h4{font-size:1.02rem;margin:1.3rem 0 .5rem;color:var(--secondary);}"
+    "h5{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--dim);"
+    "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;}"
+    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}" "a{color:var(--primary);}"
+    "p{margin:.6em 0;}" "ul{margin:.4em 0;padding-left:1.4em;}"
+    "li{margin:.2em 0;}" "strong{color:var(--fg);font-weight:650;}"
+    "em{color:var(--dim);font-style:normal;}"
+    "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;"
+    "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
+    "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
+    "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
+    "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
     ;; Summary card - full-viewport responsive grid of stat cards (one per
     ;; session-summary group), breaking out of the 860px transcript column.
-   ".tx-summary{position:relative;left:50%;transform:translateX(-50%);"
-   "width:min(1360px,94vw);display:grid;gap:.9rem;align-items:start;margin:.4rem 0 2.2rem;"
-   "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));font-size:.92rem;}"
-   ".tx-card{border:1px solid var(--line);border-radius:10px;background:var(--code-bg);"
-   "padding:.4rem 1rem .9rem;}"
-   ".tx-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-   "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem;}"
-   ".tx-row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"
-   "padding:.4rem 0;border-top:1px solid var(--line);}"
-   ".tx-card-title + .tx-row{border-top:0;}"
-   ".tx-k{color:var(--dim);white-space:nowrap;flex:0 0 auto;}"
-   ".tx-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0;}"
-   ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-   "font-size:.88em;}"
-   "@media (max-width:640px){.tx-summary{width:100%;left:0;transform:none;}"
-   ".tx-card{padding:.35rem .85rem .8rem;}}"))
+    ".tx-summary{position:relative;left:50%;transform:translateX(-50%);"
+    "width:min(1360px,94vw);display:grid;gap:.9rem;align-items:start;margin:.4rem 0 2.2rem;"
+    "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));font-size:.92rem;}"
+    ".tx-card{border:1px solid var(--line);border-radius:10px;background:var(--code-bg);"
+    "padding:.4rem 1rem .9rem;}"
+    ".tx-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+    "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem;}"
+    ".tx-row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"
+    "padding:.4rem 0;border-top:1px solid var(--line);}" ".tx-card-title + .tx-row{border-top:0;}"
+    ".tx-k{color:var(--dim);white-space:nowrap;flex:0 0 auto;}"
+    ".tx-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0;}"
+    ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;" "font-size:.88em;}"
+    "@media (max-width:640px){.tx-summary{width:100%;left:0;transform:none;}"
+    ".tx-card{padding:.35rem .85rem .8rem;}}"))
 
 (def ^:private prism-token-css
   "The vis-light Prism token theme, mirrored from vis-channel-web/public/app.css
@@ -1089,15 +1086,15 @@
    CSS vars the web /ui does, so exported code highlights IDENTICALLY. Tiny,
    stable 9-rule block kept in sync by hand."
   (str
-   ".token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}"
-   ".token.punctuation{color:var(--dim)}"
-   ".token.keyword,.token.boolean,.token.important{color:var(--primary);font-weight:600}"
-   ".token.string,.token.char,.token.attr-value,.token.triple-quoted-string{color:var(--ok)}"
-   ".token.number,.token.constant,.token.symbol{color:var(--secondary)}"
-   ".token.function,.token.class-name,.token.decorator{color:var(--warning)}"
-   ".token.builtin,.token.attr-name,.token.property{color:var(--accent)}"
-   ".token.operator,.token.entity,.token.url{color:var(--fg)}"
-   ".token.variable,.token.regex{color:var(--err)}"))
+    ".token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}"
+    ".token.punctuation{color:var(--dim)}"
+    ".token.keyword,.token.boolean,.token.important{color:var(--primary);font-weight:600}"
+    ".token.string,.token.char,.token.attr-value,.token.triple-quoted-string{color:var(--ok)}"
+    ".token.number,.token.constant,.token.symbol{color:var(--secondary)}"
+    ".token.function,.token.class-name,.token.decorator{color:var(--warning)}"
+    ".token.builtin,.token.attr-name,.token.property{color:var(--accent)}"
+    ".token.operator,.token.entity,.token.url{color:var(--fg)}"
+    ".token.variable,.token.regex{color:var(--err)}"))
 
 (def ^:private prism-js
   "The vendored Prism highlighter (from the web channel's resources), read once
@@ -1122,19 +1119,20 @@
          "</h1>\n"
          "<div class=\"tx-summary\">\n"
          (apply str
-                (for [[label rows] (session-summary data)]
-                  (str "<div class=\"tx-card\"><div class=\"tx-card-title\">" (html-escape label)
-                       "</div>\n"
-                       (apply str
-                              (for [[k v mono?] rows]
-                                (str "<div class=\"tx-row\"><span class=\"tx-k\">"
-                                     (html-escape k)
-                                     "</span><span class=\"tx-v"
-                                     (when mono? " tx-mono")
-                                     "\">"
-                                     (render-inline v)
-                                     "</span></div>\n")))
-                       "</div>\n")))
+           (for [[label rows] (session-summary data)]
+             (str "<div class=\"tx-card\"><div class=\"tx-card-title\">"
+                  (html-escape label)
+                  "</div>\n"
+                  (apply str
+                    (for [[k v mono?] rows]
+                      (str "<div class=\"tx-row\"><span class=\"tx-k\">"
+                           (html-escape k)
+                           "</span><span class=\"tx-v"
+                           (when mono? " tx-mono")
+                           "\">"
+                           (render-inline v)
+                           "</span></div>\n")))
+                  "</div>\n")))
          "</div>\n")))
 
 (defn transcript->html
