@@ -2584,7 +2584,7 @@
                                       (if (and id
                                                (contains? wanted id)
                                                (not (contains? m id))
-                                               (contains? form :result))
+                                               (some? (:result form)))
                                         (assoc m id (:result form))
                                         m)))
                                   acc
