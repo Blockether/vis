@@ -1329,7 +1329,7 @@
                                {:id "P" :name "python_execution"}]
                   :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
                               {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
-                              {:scope "t1/i1/f3" :svar/tool-call-id "P" :stdout "PPP"}]})
+                              {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
             by-id
             (into {} (map (juxt :tool_use_id :content)) (:content m))]
