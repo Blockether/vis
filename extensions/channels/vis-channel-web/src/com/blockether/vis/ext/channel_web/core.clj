@@ -2479,6 +2479,7 @@
   ([sid] (resources-modal sid nil))
   ([sid notice]
    (modal-shell "Backgrounds"
+     {:class "modal-mid"}
      (when notice [:p.slash-error notice])
     ;; One collapsed card PER declared startable ENTRY (data-driven from
     ;; :ext/startable-resources). Clicking a card's Add button reveals its
@@ -3548,6 +3549,112 @@
 /* theme override - generated from the shared theme registry */
 "
            (current-web-css-root))})
+
+;; =============================================================================
+;; Standalone HTML export — the SAME chat view /ui paints, self-contained.
+;; Reuses `user-bubble` / `trace-body` / `vis-bubble` so the exported thread is
+;; byte-identical to the live UI; app.css + theme + the vendored
+;; marked/DOMPurify/Prism scripts are INLINED so the file renders + highlights
+;; offline. A session-summary card sits on top; no SSE/composer/sidebar chrome.
+;; =============================================================================
+
+(defn- inline-js
+  "Slurp a vendored /public JS asset for inlining. nil (skipped) when absent."
+  [name]
+  (some-> (io/resource (str "vis-channel-web/public/" name)) slurp))
+
+(def ^:private export-render-js
+  "Static-export render, distilled from ui.js: render every `[data-md]` through
+   marked -> DOMPurify -> innerHTML, then Prism-highlight every `language-*`
+   block. No htmx/SSE — a standalone file has no server to talk to."
+  (str "(function(){function render(){"
+    "if(typeof marked!=='undefined'){"
+    "document.querySelectorAll('[data-md]:not([data-md-done])').forEach(function(el){"
+    "try{var raw=el.getAttribute('data-md')||'';"
+    "var out=marked.parse?marked.parse(raw):marked(raw);"
+    "if(typeof DOMPurify!=='undefined')out=DOMPurify.sanitize(out);"
+    "el.innerHTML=out;el.setAttribute('data-md-done','1');}catch(e){}});}"
+    "if(typeof Prism!=='undefined'&&Prism.highlightElement){"
+    "document.querySelectorAll('code[class*=\"language-\"]:not([data-hl-done])').forEach(function(el){"
+    "try{Prism.highlightElement(el);el.setAttribute('data-hl-done','1');}catch(e){}});}}"
+    "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',render);}else{render();}"
+    "})();"))
+
+(def ^:private export-css
+  "Layout override for the standalone export: the live UI centers the thread via
+   the `.app/.layout/.center` grid (which carries the sidebars we DON'T export),
+   so re-center `.thread` here and style the summary card. Colors/bubbles/op-cards
+   all come from the inlined app.css + theme."
+  (str "body.export{margin:0}"
+    ".export .thread{max-width:860px;margin:0 auto;padding:1rem 1.25rem 4rem}"
+    ".export .column{width:100%}"
+    ".export-summary{max-width:860px;margin:1.75rem auto .5rem;padding:1rem 1.25rem;"
+    "border:1px solid var(--line);border-radius:14px;background:var(--code-bg)}"
+    ".export-title{margin:0 0 .6rem;font-size:1.5rem;color:var(--fg)}"
+    ".export-meta{display:flex;flex-wrap:wrap;gap:.4rem .9rem;color:var(--dim);font-size:.85rem}"
+    ".export-meta span{white-space:nowrap}"))
+
+(defn- export-summary-card
+  "Session summary shown ABOVE the transcript — title, id, model/provider, and
+   the turn/iteration/token/cost totals from the canonical transcript `data`."
+  [sid title data]
+  (let [totals (:totals data)
+        sess   (:session data)
+        tokens (:tokens totals)]
+    [:section.export-summary
+     [:h1.export-title title]
+     [:div.export-meta
+      [:span "id " (subs (str sid) 0 8)]
+      (when-let [m (:model sess)]    [:span "model " m])
+      (when-let [p (:provider sess)] [:span "provider " (name p)])
+      [:span (str (:turns totals 0)) " turns"]
+      [:span (str (:iterations totals 0)) " iterations"]
+      (when tokens [:span (str (+ (long (:input tokens 0)) (long (:output tokens 0)))) " tokens"])
+      (when-let [c (:cost-usd totals)] [:span (format "$%.4f" (double c))])]]))
+
+(defn- export-turn-static
+  "Turn rendered for a STATIC export — identical to `turn-block`, but the trace
+   op-cards render INLINE (`trace-body`) instead of the lazy hx-get placeholder,
+   since a standalone file can't fetch them."
+  [turn]
+  (list
+    [:div.tsep]
+    (user-bubble (pick turn :request) (pick turn :started_at) nil)
+    (trace-body turn)
+    (when (or (pick turn :answer_md) (pick turn :error))
+      (vis-bubble turn))))
+
+(defn export-session-html
+  "Standalone, self-contained HTML export of `sid` — the SAME chat view the web
+   /ui renders (user/vis bubbles + inline op-card trace), styled with the inlined
+   app.css + theme + the vendored marked/DOMPurify/Prism scripts, with a session-
+   summary card on top. Returns the HTML string; a 'Session not found' note (no
+   throw) on a bad id so pipelines stay clean."
+  [sid]
+  (let [data (try (transcript/transcript (vis/db-info) sid) (catch Throwable _ nil))
+        soul (try (vis/gateway-soul sid) (catch Throwable _ nil))]
+    (if-not (or data soul)
+      (str "Session not found: " sid "\n")
+      (let [turns (remove #(= "queued" (pick % :status))
+                    (reverse (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
+            title (or (:title soul) (get-in data [:session :title]) "vis session")
+            css   (str (or @app-css "") "\n" (current-web-css-root) "\n" export-css)
+            js    (str/join "\n" (keep inline-js ["marked.min.js" "purify.min.js" "prism.min.js"]))]
+        (str "<!doctype html>\n"
+          (html
+            [:html {:lang "en"}
+             [:head
+              [:meta {:charset "utf-8"}]
+              [:meta {:name "viewport" :content "width=device-width, initial-scale=1"}]
+              [:title (str title " — transcript")]
+              [:style (h/raw css)]]
+             [:body.export
+              [:main.thread
+               [:div.column
+                (export-summary-card sid title data)
+                (map export-turn-static turns)]]
+              [:script (h/raw js)]
+              [:script (h/raw export-render-js)]]]))))))
 
 ;; =============================================================================
 ;; Route contribution (whiteboard slot) + channel registration

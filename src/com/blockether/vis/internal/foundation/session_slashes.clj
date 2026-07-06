@@ -20,6 +20,18 @@
   (delay (requiring-resolve
            'com.blockether.vis.internal.foundation.transcript/transcript-html)))
 
+(defn- export-html
+  "Styled standalone HTML for a session. PREFERS the web channel's export —
+   the SAME chat view /ui renders (bubbles + inline op-cards + inlined
+   scripts) — which is present whenever a live slash runs; falls back to the
+   plain transcript renderer if that ext isn't on the classpath."
+  [db sid]
+  (or (try (when-let [f (requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html)]
+             (let [h (str (f sid))]
+               (when-not (str/starts-with? h "Session not found") h)))
+        (catch Throwable _ nil))
+    (@transcript-html-fn db sid)))
+
 (defn- err [msg & {:as extras}]
   (merge {:slash/status :error, :slash/title msg} extras))
 
@@ -58,7 +70,7 @@
             target (io/file fname)]
         (when-let [parent (.getParentFile target)]
           (.mkdirs parent))
-        (spit target (@transcript-html-fn db sid))
+        (spit target (export-html db sid))
         {:slash/status :ok,
          :slash/title  (str "Exported HTML transcript to " (.getPath target)),
          :slash/data   {:session-id sid, :path (.getPath target)}}))))
