@@ -2241,11 +2241,11 @@
   ;; re-split (result[i] ↔ entry[i]), per-call error isolation (a missing file
   ;; only fails ITS slot), and — with slow fake tools — real concurrency.
   (it "runs an all-cat batch concurrently, preserving order + isolating one failure"
-      (let [env (lp/create-environment ::router {:db :memory})]
-        (try (let [root (env-root env)
-                   pa (write-tmp! root "AAA-content")
-                   pc (write-tmp! root "CCC-content")
-                   ;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
+      (let [env (lp/create-environment ::router {:db :memory})
+            root (env-root env)
+            pa (write-tmp! root "AAA-content")
+            pc (write-tmp! root "CCC-content")]
+        (try (let [;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
                    entries [{:expr (str "cat(" (pr-str pa) ", {})")
                              :svar/tool-call-id "id-0"
                              :vis/tool-name "cat"}
@@ -2268,7 +2268,9 @@
                (expect (nil? (:result (nth out 1))))
                (expect (some? (:error (nth out 1))))
                (expect (map? (:error (nth out 1)))))
-             (finally (lp/dispose-environment! env)))))
+             (finally (lp/dispose-environment! env)
+                      (.delete (java.io.File. ^String pa))
+                      (.delete (java.io.File. ^String pc))))))
   (it "actually overlaps calls on virtual threads (wall ≈ max, not sum)"
       ;; Bind two SLOW fake observation tools via set-python-binding! so their
       ;; host bodies (Thread/sleep) overlap. 3×250ms serial=750ms; concurrent≈250.
@@ -2301,24 +2303,13 @@
   ;; PAIRED to its own tool_use_id in the emitted blocks + :form-result chunks.
   (it
     "pairs each batched observation result to its tool_use_id, in order"
-    (let [env
-          (lp/create-environment ::router {:db :memory})
-
-          chunks
-          (atom [])]
-
+    (let [env (lp/create-environment ::router {:db :memory})
+          chunks (atom [])
+          root (env-root env)
+          pa (write-tmp! root "FIRST-file")
+          pb (write-tmp! root "SECOND-file")]
       (try
-        (let [root
-              (env-root env)
-
-              pa
-              (write-tmp! root "FIRST-file")
-
-              pb
-              (write-tmp! root "SECOND-file")
-
-              active
-              (deref (:extensions env))]
+        (let [active (deref (:extensions env))]
 
           (with-redefs [svar/ask-code! (fn [_router _opts]
                                          {:stop-reason :tool-calls
@@ -2349,7 +2340,9 @@
               ;; at positions 0 and 1
               (expect (= 2 (count frs)))
               (expect (= [0 1] (mapv :position frs))))))
-        (finally (lp/dispose-environment! env)))))
+        (finally (lp/dispose-environment! env)
+                 (.delete (java.io.File. ^String pa))
+                 (.delete (java.io.File. ^String pb))))))
   (it "keeps a mutation-bearing iteration serial (patch is never batched)"
       ;; A cat + patch iteration must NOT batch. We assert the gate rejects it via
       ;; the real tags; the serial path still runs (both blocks present, paired).
