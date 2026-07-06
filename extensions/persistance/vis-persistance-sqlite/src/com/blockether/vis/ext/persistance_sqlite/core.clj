@@ -1480,7 +1480,7 @@
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
   [db-info session-turn-id
-   {:keys [answer-markdown iteration-count duration-ms status tokens cost prior-outcome ctx]}]
+   {:keys [answer-markdown iteration-count duration-ms status tokens cost prior-outcome ctx error]}]
   (when (and (ds db-info) session-turn-id)
     (sqlite-write-tx!
       db-info
@@ -1534,7 +1534,12 @@
                       ;; for the latest turn-soul; history = walking the
                       ;; soul chain.
                       (some? ctx)
-                      (assoc :ctx (->blob (freeze-safe ctx))))
+                      (assoc :ctx (->blob (freeze-safe ctx)))
+
+                      ;; First-class STRUCTURED terminal error (queryable),
+                      ;; nippy-encoded like ctx — an error is not an answer.
+                      (some? error)
+                      (assoc :error (->blob (freeze-safe error))))
                :where [:= :id (:id state)]})))))))
 
 ;; Extra workflow persistence removed.
@@ -1834,6 +1839,11 @@
     (:answer_markdown row)
     (assoc :answer-markdown (:answer_markdown row))
 
+    ;; First-class structured terminal error (nippy BLOB) for a failed turn —
+    ;; channels render the error CARD from this instead of re-deriving it.
+    (:error row)
+    (assoc :error (<-blob (:error row)))
+
     (:llm_root_provider row)
     (assoc :provider (->kw-back (:llm_root_provider row)))
 
@@ -1852,7 +1862,7 @@
             ;; Phase B canonical columns on session_turn_state.
             :qst.input_tokens :qst.input_regular_tokens :qst.input_cache_write_tokens
             :qst.input_cache_read_tokens :qst.output_tokens :qst.output_reasoning_tokens
-            :qst.total_cost_usd :qst.llm_root_provider :qst.llm_root_model]
+            :qst.total_cost_usd :qst.llm_root_provider :qst.llm_root_model :qst.error]
    :from [[:session_turn_soul :qs]]
    :join [[:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
    :where [:and where-clause
