@@ -2411,10 +2411,10 @@
      (when fields
        [:div.modal-res-fields (map bg-field fields)])
      [:div.modal-res-form-actions
-      [:button.btn-sm {:type "button"
-                       :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid "&collapse=1")
-                       :hx-target (str "#bg-" eid) :hx-swap "innerHTML"} "Cancel"]
-      [:button.btn-sm.btn-go {:type "submit"} "Connect"]]]))
+      [:button.btn-secondary {:type "button"
+                              :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid "&collapse=1")
+                              :hx-target (str "#bg-" eid) :hx-swap "innerHTML"} "Cancel"]
+      [:button.btn-primary {:type "submit"} "Connect"]]]))
 
 (defn- bg-expanded
   "Expanded card body. A grouped entry shows a segmented transport chooser
