@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.form :as form]
    [com.blockether.vis.internal.session-model :as smodel]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+   [com.blockether.vis.internal.gateway.bus :as bus]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.titling :as titling]
@@ -63,8 +64,20 @@
       (subvec events (- n EVENT_RING_MAX))
       events)))
 
+(defn- fan-out!
+  "Deliver `event` to every local SSE sink for `sid`. A sink that throws is
+   dropped - one dead connection must never poison the appender or siblings."
+  [sid event]
+  (doseq [[sub-id sink] (get-in @registry [sid :subscribers])]
+    (try
+      (sink event)
+      (catch Throwable t
+        (swap! registry update-in [sid :subscribers] dissoc sub-id)
+        (tel/log! :debug ["gateway: dropped dead subscriber" sub-id (ex-message t)])))))
+
 (defn append-event!
-  "Append one event for `sid` and fan it out to subscribers.
+  "Append one event for `sid`, fan it out to LOCAL subscribers, and publish
+   it on the cross-process bus so watchers in OTHER processes stream it too.
 
    Assigns the next monotonic `:seq` atomically. `:store? false` events
    are fanned out live but kept OUT of the replay ring, so neither a
@@ -90,13 +103,44 @@
            (cond-> (assoc entry :next-seq n :last-active (System/currentTimeMillis))
              store? (update :events #(trim-ring (conj (or % []) event)))))))
      (let [event @captured]
-       (doseq [[sub-id sink] (get-in @registry [sid :subscribers])]
-         (try
-           (sink event)
-           (catch Throwable t
-             (swap! registry update-in [sid :subscribers] dissoc sub-id)
-             (tel/log! :debug ["gateway: dropped dead subscriber" sub-id (ex-message t)]))))
+       (fan-out! sid event)
+       ;; Mirror to sibling processes. `turn.started` truncates the journal so
+       ;; a file only ever holds the current turn's live deltas.
+       (bus/publish! sid event {:store? store?
+                                :truncate? (= type "turn.started")})
        event))))
+
+(defn ingest-mirrored-event!
+  "Deliver a FOREIGN gateway event (produced in another process, arriving via
+   the cross-process bus) into THIS process's registry: stored in the ring
+   when `store?`, `:next-seq` advanced to the producer's authoritative seq, and
+   fanned to local subscribers - so a web / Telegram / TUI watcher streams a
+   turn running elsewhere in real time. Ignores sessions this process has never
+   touched (no local registry entry), so no state accrues for conversations
+   nobody here is watching."
+  [sid store? event]
+  (when (contains? @registry sid)
+    (let [seq  (:seq event)
+          type (:type event)
+          tid  (:turn_id event)]
+      (swap! registry update sid
+        (fn [entry]
+          (if entry
+            (cond-> (assoc entry :last-active (System/currentTimeMillis))
+              (and seq (> (long seq) (long (:next-seq entry 0))))
+              (assoc :next-seq (long seq))
+              store?
+              (update :events #(trim-ring (conj (or % []) event)))
+              ;; mirror the running/idle status so a watcher's session list lights
+              ;; up (`soul` reads :current-turn) while the turn runs elsewhere.
+              (= type "turn.started")
+              (assoc :current-turn tid)
+              (and (contains? #{"turn.completed" "turn.failed"} type)
+                (= tid (:current-turn entry)))
+              (assoc :current-turn nil))
+            entry)))
+      (fan-out! sid event)))
+  nil)
 
 (defn subscribe!
   "Register an SSE sink and return the replay vector (events with
@@ -1004,6 +1048,7 @@
   (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
   (try (lp/delete! sid) (catch Throwable _ nil))
   (swap! registry dissoc sid)
+  (bus/forget! sid)
   nil)
 
 (defn set-title! [sid title]
@@ -1039,6 +1084,17 @@
           :when (not= other sid)]
     (append-event! other "session.title_updated"
       {:session_id (str sid) :title (str title)})))
+
+(defonce bus-wiring
+  ;; Wire the cross-process bus ONCE at namespace load: foreign events tailed
+  ;; from sibling processes flow into `ingest-mirrored-event!`, and the
+  ;; background tailer starts. Every process that touches the gateway (web,
+  ;; TUI, Telegram, the `serve` daemon) both publishes and consumes.
+  (do
+    ;; pass the VAR so a dev-time ns reload is picked up without re-wiring.
+    (bus/set-deliver-fn! #'ingest-mirrored-event!)
+    (bus/start!)
+    true))
 
 (defonce title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation
