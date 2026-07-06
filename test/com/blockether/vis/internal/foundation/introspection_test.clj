@@ -12,12 +12,13 @@
     (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
       (expect (contains? symbols 'session-state))
       (expect (contains? symbols 'session-report-md))
+      (expect (contains? symbols 'session-report-html))
       (expect (contains? symbols 'sessions))
       ;; engine-symbol-* tools were retired in favour of the bare
       ;; `doc` / `apropos` engine system calls.
       (expect (not (contains? symbols 'engine-symbol-documentation)))
       (expect (not (contains? symbols 'engine-symbol-apropos)))
-      (expect (= 3 (count symbols))))))
+      (expect (= 4 (count symbols))))))
 
 (defdescribe session-state-envelope-test
   (it "returns a canonical envelope so observed symbol wrapping can unwrap it"

@@ -112,34 +112,44 @@
 
 (defn ingest-mirrored-event!
   "Deliver a FOREIGN gateway event (produced in another process, arriving via
-   the cross-process bus) into THIS process's registry: stored in the ring
-   when `store?`, `:next-seq` advanced to the producer's authoritative seq, and
-   fanned to local subscribers - so a web / Telegram / TUI watcher streams a
-   turn running elsewhere in real time. Ignores sessions this process has never
-   touched (no local registry entry), so no state accrues for conversations
-   nobody here is watching."
+   the cross-process bus) into THIS process's registry so a web / Telegram /
+   TUI watcher streams a turn running elsewhere in real time.
+
+   The foreign event is RE-SEQUENCED onto this process's OWN monotonic `:seq`,
+   never the producer's. Each process runs an independent seq counter, but the
+   SSE wire treats `:seq` as a single strictly-increasing per-connection cursor;
+   adopting the producer's raw counter would let a watcher whose local seq is
+   already past that value (e.g. it ran an earlier turn on this session) silently
+   drop the entire foreign turn. Re-sequencing keeps THIS process's stream
+   monotonic for its own subscribers regardless of the producer's counter — and
+   is safe because only the producer persists the turn; the mirror is live-only.
+
+   Stored in the ring when `store?`; `:current-turn` mirrored so the session
+   list lights up while the turn runs elsewhere. Ignores sessions this process
+   has never touched (no local registry entry), so no state accrues for
+   conversations nobody here is watching."
   [sid store? event]
   (when (contains? @registry sid)
-    (let [seq  (:seq event)
-          type (:type event)
-          tid  (:turn_id event)]
+    (let [type     (:type event)
+          tid      (:turn_id event)
+          captured (volatile! nil)]
       (swap! registry update sid
         (fn [entry]
           (if entry
-            (cond-> (assoc entry :last-active (System/currentTimeMillis))
-              (and seq (> (long seq) (long (:next-seq entry 0))))
-              (assoc :next-seq (long seq))
-              store?
-              (update :events #(trim-ring (conj (or % []) event)))
-              ;; mirror the running/idle status so a watcher's session list lights
-              ;; up (`soul` reads :current-turn) while the turn runs elsewhere.
-              (= type "turn.started")
-              (assoc :current-turn tid)
-              (and (contains? #{"turn.completed" "turn.failed"} type)
-                (= tid (:current-turn entry)))
-              (assoc :current-turn nil))
+            (let [n  (inc (:next-seq entry 0))
+                  ev (assoc event :seq n)]
+              (vreset! captured ev)
+              (cond-> (assoc entry :next-seq n :last-active (System/currentTimeMillis))
+                store?
+                (update :events #(trim-ring (conj (or % []) ev)))
+                (= type "turn.started")
+                (assoc :current-turn tid)
+                (and (contains? #{"turn.completed" "turn.failed"} type)
+                  (= tid (:current-turn entry)))
+                (assoc :current-turn nil)))
             entry)))
-      (fan-out! sid event)))
+      (when-let [ev @captured]
+        (fan-out! sid ev))))
   nil)
 
 (defn subscribe!

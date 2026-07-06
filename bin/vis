@@ -370,7 +370,7 @@ if [[ -z "$dist" ]]; then
         jvm-sha)
           if [[ -d "$vis_install_dir/src" ]]; then
             measure_log "exec managed jvm-sha src"; cd "$vis_install_dir/src"
-            run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" "${jfr_clj_opts[@]}" -M:vis "$@"
+            run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" ${jfr_clj_opts[@]+"${jfr_clj_opts[@]}"} -M:vis "$@"
           fi ;;
       esac
     fi
@@ -404,7 +404,7 @@ esac
 
 measure_log "exec cold clojure -M:vis"
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${jfr_clj_opts[@]}" "${vis_extension_sdeps[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${jfr_clj_opts[@]+"${jfr_clj_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
 else
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${jfr_clj_opts[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${jfr_clj_opts[@]+"${jfr_clj_opts[@]}"} -M:vis "$@"
 fi
