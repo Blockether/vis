@@ -4335,36 +4335,38 @@
   (str "body.export{margin:0}"
        ".export .thread{max-width:860px;margin:0 auto;padding:1rem 1.25rem 4rem}"
        ".export .column{width:100%}"
-       ".export-summary{width:100%;margin:1.75rem 0 .5rem;padding:1rem 1.25rem;"
-       "border:1px solid var(--line);background:var(--code-bg)}"
-       ;; Borderless, grouped two-column summary table (canonical session-summary).
-       ".export-summary-table{width:100%;border-collapse:collapse;font-size:.9rem;margin:.1rem 0 0}"
-       ".export-summary-table td{padding:.4rem .2rem;vertical-align:top;border:0;border-top:1px solid var(--line)}"
-       ".export-summary-table tr:first-child td{border-top:0}"
-       ".export-summary-table .esum-group td{border-top:0;padding:1.1rem .2rem .3rem;color:var(--dim);"
-       "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}"
-       ".export-summary-table tr:first-child .esum-group td{padding-top:.2rem}"
-       ".esum-k{color:var(--dim);white-space:nowrap;padding-right:1.2rem;width:1%}"
-       ".esum-v{color:var(--fg);word-break:break-word}"
+       ;; Session-summary breaks out of the 860px thread to use the FULL
+       ;; viewport (capped + centered) as a responsive grid of stat cards.
+       ".export-summary{position:relative;left:50%;transform:translateX(-50%);"
+       "width:min(1360px,94vw);margin:1.75rem 0 1.25rem}"
+       ".export-summary-grid{display:grid;gap:.9rem;align-items:start;"
+       "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr))}"
+       ".esum-card{border:1px solid var(--line);border-radius:10px;background:var(--code-bg);"
+       "padding:.4rem 1rem .9rem}"
+       ".esum-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+       "font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem}"
+       ".esum-row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"
+       "padding:.4rem 0;border-top:1px solid var(--line)}"
+       ".esum-card-title + .esum-row{border-top:0}"
+       ".esum-k{color:var(--dim);white-space:nowrap;flex:0 0 auto}"
+       ".esum-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0}"
        ".esum-v.esum-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}"
-       "@media (max-width:640px){.export-summary{padding:.85rem .9rem}"
-       ".export-summary-table td,.export-summary-table tr{display:block}"
-       ".esum-k{padding:.5rem 0 0;white-space:normal;width:auto}.esum-v{padding:.05rem 0 .1rem}}"))
+       "@media (max-width:640px){.export-summary{width:100%;left:0;transform:none}"
+       ".esum-card{padding:.35rem .85rem .8rem}}"))
 
 (defn- export-summary-card
   "Session summary shown ABOVE the transcript - the CANONICAL grouped
    `transcript/session-summary` rows (Session / Timing / Activity / Providers &
-   models / Cost & tokens) rendered as a borderless two-column table, the SAME
-   shape the Markdown + standalone-HTML surfaces emit. One source of truth."
+   models / Cost & tokens). Each group is its own stat card in a full-viewport
+   responsive grid, the SAME data every summary surface emits. One source of truth."
   [_sid _title data]
   [:section.export-summary
-   [:table.export-summary-table
-    [:tbody
-     (for [[label rows] (transcript/session-summary data)]
-       (list [:tr.esum-group [:td {:colspan 2} label]]
-             (for [[k v mono?] rows]
-               [:tr [:td.esum-k k]
-                [:td {:class (str "esum-v" (when mono? " esum-mono"))} (str v)]])))]]])
+   [:div.export-summary-grid
+    (for [[label rows] (transcript/session-summary data)]
+      [:div.esum-card [:div.esum-card-title label]
+       (for [[k v mono?] rows]
+         [:div.esum-row [:span.esum-k k]
+          [:span {:class (str "esum-v" (when mono? " esum-mono"))} (str v)]])])]])
 
 (defn- export-turn-static
   "Turn rendered for a STATIC export — identical to `turn-block`, but the trace
