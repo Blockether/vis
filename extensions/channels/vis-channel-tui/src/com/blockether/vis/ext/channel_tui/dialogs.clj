@@ -989,8 +989,6 @@
                       :else (recur)))
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
-(declare text-input-dialog!)  ; defined below; used by the start-resource action
-(declare draw-button!)        ; defined below; the shared button component
 (defn- startable-fields-form!
   "Single inline card form for a startable's declared `:fields` — the TUI twin of
    the web modal's inline form (replacing the old one-modal-per-field sequence).

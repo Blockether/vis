@@ -5,7 +5,8 @@
    works) and backed by a pure-JVM Java2D renderer. `savefig` delegates the
    accumulated figure across the boundary to the host `__vis_mpl_render__`,
    which returns a PNG the shim writes to a path or file-like buffer."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -57,19 +58,66 @@
                            "import matplotlib.style as st\nst.use('ggplot') is None"))))))
 
 (defdescribe
+  matplotlib-backend-and-rcparams-test
+  (it
+    "use / switch_backend record a backend and get_backend reads it back"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context "import matplotlib; matplotlib.use('Qt5Agg') is None")))
+      (expect (= "svg" (ev python-context "matplotlib.use('svg'); matplotlib.get_backend()")))
+      (expect
+        (=
+          "agg"
+          (ev
+            python-context
+            "import matplotlib.pyplot as plt\nplt.switch_backend('agg')\nmatplotlib.get_backend()")))))
+  (it
+    "rcParams tolerates unknown keys, update() and item assignment (no KeyError)"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (true? (ev python-context
+                         "import matplotlib\nmatplotlib.rcParams['no.such.key'] is None")))
+      (expect (= [6.4 4.8] (ev python-context "list(matplotlib.rcParams['figure.figsize'])")))
+      (expect
+        (=
+          3
+          (ev
+            python-context
+            "matplotlib.rcParams.update({'lines.linewidth': 3})\nmatplotlib.rcParams['lines.linewidth']")))
+      (expect
+        (=
+          14
+          (ev
+            python-context
+            "matplotlib.rcParams['axes.titlesize'] = 14\nmatplotlib.rcParams['axes.titlesize']")))))
+  (it
+    "interactive-mode + draw stubs are callable no-ops"
+    (let [{:keys [^Context python-context]} (ep/create-python-context {})]
+      (expect (false?
+                (ev python-context
+                    "import matplotlib.pyplot as plt\nplt.ion()\nplt.ioff()\nplt.isinteractive()")))
+      (expect
+        (true?
+          (ev
+            python-context
+            "import matplotlib.pyplot as plt\nplt.draw() is None and plt.pause(0.001) is None and plt.figtext(0.5, 0.5, 'x') is None"))))))
+
+(defdescribe
   matplotlib-api-surface-test
   (it "publishes the expected pyplot callables"
       (let [{:keys [^Context python-context]} (ep/create-python-context {})]
         (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\n"
-                                "all(callable(getattr(plt, n, None)) for n in "
-                                "['plot','scatter','bar','barh','hist','fill_between','step',"
-                                "'pie','axhline','axvline','errorbar','text','annotate',"
-                                "'title','suptitle','xlabel','ylabel','grid','legend',"
-                                "'xlim','ylim','xscale','yscale','semilogx','semilogy','loglog',"
-                                "'xticks','yticks','tight_layout','subplots_adjust',"
-                                "'clf','cla','close','show','savefig',"
-                                "'subplots','subplot','gca','gcf'])")))))))
+                           (str
+                             "import matplotlib.pyplot as plt\n"
+                             "all(callable(getattr(plt, n, None)) for n in "
+                             "['plot','scatter','bar','barh','hist','fill_between','step',"
+                             "'pie','axhline','axvline','errorbar','text','annotate',"
+                             "'title','suptitle','xlabel','ylabel','grid','legend',"
+                             "'xlim','ylim','xscale','yscale','semilogx','semilogy','loglog',"
+                             "'xticks','yticks','tight_layout','subplots_adjust',"
+                             "'clf','cla','close','show','savefig',"
+                             "'subplots','subplot','gca','gcf',"
+                             "'use','switch_backend','get_backend','rc','rcdefaults',"
+                             "'ion','ioff','isinteractive','draw','pause','set_cmap',"
+                             "'margins','minorticks_on','minorticks_off','clim','figtext'])")))))))
 
 (defdescribe
   matplotlib-render-test
@@ -286,12 +334,40 @@
                                 "plt.plot([0,1,2,3],[0,1,4,9])\n"
                                 "b=io.StringIO()\nplt.savefig(b, format='txt')\nv=b.getvalue()\n"
                                 "len(v)>0 and chr(10) in v and not v.startswith(chr(137))"))))))
-  (it "show() renders ASCII to stdout and returns None"
+  (it "show() emits a vis-image fence to stdout and returns None"
       (let [{:keys [^Context python-context]} (ep/create-python-context {})]
         (expect (true? (ev python-context
-                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                           (str "import matplotlib.pyplot as plt, io, sys\n" "plt.clf()\n"
                                 "plt.bar([1,2,3],[3,7,2]); plt.title('bars')\n"
-                                "plt.show() is None"))))))
+                                "_o=sys.stdout; sys.stdout=io.StringIO()\n"
+                                "_r=plt.show()\n" "_v=sys.stdout.getvalue(); sys.stdout=_o\n"
+                                "_r is None and _v.startswith('````vis-image') "
+                                "and 'image/png' in _v and 'bars' in _v"))))))
+  (it "show() writes a real PNG on disk for the fence path (works even IO-NONE)"
+      (let [{:keys [^Context python-context]}
+            (ep/create-python-context {})
+
+            out
+            (ev python-context
+                (str "import matplotlib.pyplot as plt, io, sys\n"
+                     "plt.clf()\n" "plt.plot([0,1,2],[0,1,4]); plt.title('line')\n"
+                     "_o=sys.stdout; sys.stdout=io.StringIO()\nplt.show()\n"
+                     "_v=sys.stdout.getvalue(); sys.stdout=_o\n_v"))
+
+            lines
+            (str/split-lines out)
+
+            path
+            (nth lines 2)
+
+            f
+            (java.io.File. ^String path)]
+
+        (expect (str/starts-with? out "````vis-image"))
+        (expect (= "image/png" (nth lines 3)))
+        (expect (= "640x480" (nth lines 4)))
+        (expect (.exists f))
+        (expect (> (.length f) 100))))
   (it "to_ascii on an empty figure returns a string without error"
       (let [{:keys [^Context python-context]} (ep/create-python-context {})]
         (expect

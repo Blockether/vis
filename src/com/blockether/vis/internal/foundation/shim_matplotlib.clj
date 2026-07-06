@@ -611,10 +611,27 @@
 (defn- mpl-bridge-bindings
   "Host callables the matplotlib shim delegates to. `__vis_mpl_render__` takes a
    figure spec (string-keyed map with a `series` list) and returns
-   `[true base64-png]` / `[false message]`."
+   `[true base64-png]` / `[false message]` (savefig decodes + writes it).
+   `__vis_mpl_render_file__` renders the same spec but WRITES the PNG to a host
+   temp file with HOST IO — so it works even when the sandbox's own Python
+   filesystem is denied (the inline-image path for `plt.show()`) — returning
+   `[true [abs-path width height byte-count]]`."
   []
-  {"__vis_mpl_render__" (fn [spec]
-                          (mpl-envelope #(render-png-base64 spec)))})
+  {"__vis_mpl_render__"
+   (fn [spec]
+     (mpl-envelope #(render-png-base64 spec)))
+   "__vis_mpl_render_file__"
+   (fn [spec]
+     (mpl-envelope
+       #(let [bytes (.decode (Base64/getDecoder) ^String (render-png-base64 spec))
+              dir (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl")
+                    (.mkdirs))
+              f (java.io.File/createTempFile "fig-" ".png" dir)
+              w (int (as-double (or (get spec "width") 640)))
+              h (int (as-double (or (get spec "height") 480)))]
+          (with-open [o (java.io.FileOutputStream. f)]
+            (.write o ^bytes bytes))
+          [(.getAbsolutePath f) w h (alength bytes)])))})
 
 (def ^:private matplotlib-shim-src
   "Pure-Python preamble publishing a minimal `matplotlib` package with a
@@ -872,10 +889,61 @@ def __vis_install_matplotlib__():
     def close(*args, **kwargs):
         _reset()
 
+    def _human_size(n):
+        # Compact byte-size label for the vis-image fence (B / KB / MB).
+        n = float(n)
+        for unit in ('B', 'KB', 'MB'):
+            if n < 1024.0 or unit == 'MB':
+                return (str(int(n)) + ' B') if unit == 'B' else ('%.1f %s' % (n, unit))
+            n = n / 1024.0
+
+    _img_seq = [0]
+
+    def _emit_image():
+        # Render the current figure to a PNG on the HOST (Java2D) and print a
+        # `vis-image` fence: 5 header lines (summary / path / mime / WxH / size) the
+        # channel reads to paint the picture inline, plus the ASCII plot appended as
+        # the fallback body for non-graphical terminals. The PNG is written HOST-side
+        # (`__vis_mpl_render_file__`), so this works even when the sandbox's own
+        # Python filesystem is denied. Returns True on success, False (no bridge /
+        # render error) so show() can fall back to the plain ASCII print.
+        render = globals().get('__vis_mpl_render_file__')
+        if render is None:
+            return False
+        try:
+            spec = _spec()
+            env = render(spec)
+            if not env[0]:
+                return False
+            path, w, h, nbytes = env[1]
+            path = str(path)
+            w = int(w)
+            h = int(h)
+            size = _human_size(int(nbytes))
+            _img_seq[0] += 1
+            title = spec.get('title') or 'matplotlib figure'
+            summary = ('[Image #' + str(_img_seq[0]) + ': ' + str(title) + ' '
+                       + str(w) + '×' + str(h) + ', ' + size + ']')
+            fence = '`' * 4
+            lines = [fence + 'vis-image', summary, path, 'image/png',
+                     str(w) + 'x' + str(h), size]
+            if spec.get('series'):
+                lines.append(_render_ascii(spec, 74, 22, False))
+            lines.append(fence)
+            print('\\n'.join(lines))
+            return True
+        except Exception:
+            return False
+
     def show(*args, **kwargs):
-        # No GUI in the sandbox: render the current figure as ASCII to stdout,
-        # so `plt.show()` actually shows the plot in a text environment.
+        # Prefer the Java2D PNG backend: write the figure to a temp file and emit a
+        # `vis-image` fence so a graphical TUI/web paints it inline, the ASCII plot
+        # riding along as the fence's text fallback. No bridge (or a render failure)
+        # falls back to printing the ASCII plot straight to stdout, so `plt.show()`
+        # still shows the plot in a purely textual environment.
         if _state.get('series'):
+            if _emit_image():
+                return None
             print(_render_ascii(_spec(), kwargs.get('width', 74),
                                 kwargs.get('height', 22),
                                 kwargs.get('color', True)))
@@ -1415,6 +1483,78 @@ def __vis_install_matplotlib__():
                 _f.write(data)
         return fname
 
+    class _RcParams(dict):
+        # matplotlib.rcParams: a dict that never KeyErrors on unknown keys and
+        # tolerates `.update(...)` / item assignment, so user rc tweaks are
+        # harmless no-ops that still read back instead of blowing up the sandbox.
+        def __missing__(self, key):
+            return None
+
+    _rcparams = _RcParams()
+    _rcparams.update({
+        'figure.figsize': [6.4, 4.8], 'figure.dpi': 100.0,
+        'savefig.dpi': 100.0, 'lines.linewidth': 1.5, 'font.size': 10.0,
+        'axes.grid': False, 'interactive': False, 'backend': 'Agg',
+    })
+
+    _backend = ['Agg']
+
+    def use(backend=None, *a, **k):
+        # matplotlib.use(...) — record the requested backend name; the vis shim
+        # always renders through its Java2D backend regardless of the choice.
+        if backend is not None:
+            _backend[0] = str(backend)
+        return None
+
+    def switch_backend(backend=None, *a, **k):
+        return use(backend)
+
+    def get_backend():
+        return _backend[0]
+
+    def rc(*a, **k):
+        return None
+
+    def rcdefaults(*a, **k):
+        return None
+
+    def ion(*a, **k):
+        return None
+
+    def ioff(*a, **k):
+        return None
+
+    def isinteractive(*a, **k):
+        return False
+
+    def draw(*a, **k):
+        return None
+
+    def draw_if_interactive(*a, **k):
+        return None
+
+    def pause(*a, **k):
+        return None
+
+    def set_cmap(*a, **k):
+        return None
+
+    def margins(*a, **k):
+        return None
+
+    def minorticks_on(*a, **k):
+        return None
+
+    def minorticks_off(*a, **k):
+        return None
+
+    def clim(*a, **k):
+        return None
+
+    def figtext(x, y, s, *a, **k):
+        _state['annotations'].append({'x': float(x), 'y': float(y), 'text': str(s)})
+        return None
+
     pyplot = types.ModuleType('matplotlib.pyplot')
     pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset.'
     for _fn in (figure, plot, scatter, bar, barh, hist, fill_between, step,
@@ -1424,10 +1564,13 @@ def __vis_install_matplotlib__():
                 xticks, yticks, tight_layout, subplots_adjust,
                 boxplot, imshow, colorbar,
                 clf, cla, close, show, savefig, to_ascii,
-                subplots, subplot, gca, gcf):
+                subplots, subplot, gca, gcf,
+                use, switch_backend, get_backend, rc, rcdefaults,
+                ion, ioff, isinteractive, draw, draw_if_interactive, pause,
+                set_cmap, margins, minorticks_on, minorticks_off, clim, figtext):
         setattr(pyplot, _fn.__name__, _fn)
     pyplot.Axes = _Axes
-    pyplot.rcParams = {}
+    pyplot.rcParams = _rcparams
 
     style = types.ModuleType('matplotlib.style')
     style.use = lambda *a, **k: None
@@ -1438,6 +1581,11 @@ def __vis_install_matplotlib__():
     mpl.__version__ = '3.0-vis-java2d'
     mpl.pyplot = pyplot
     mpl.style = style
+    mpl.use = use
+    mpl.get_backend = get_backend
+    mpl.rc = rc
+    mpl.rcdefaults = rcdefaults
+    mpl.rcParams = _rcparams
 
     sys.modules['matplotlib'] = mpl
     sys.modules['matplotlib.pyplot'] = pyplot

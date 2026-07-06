@@ -36,7 +36,7 @@
 ;; Marshalling  Clojure  <->  Python (polyglot Value)
 ;; =============================================================================
 
-(declare ->py ->clj)
+(declare ->py)
 
 (defn boundary-violation!
   "Throw on a keyword/symbol trying to cross the Clojure->Python boundary.

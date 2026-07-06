@@ -367,6 +367,101 @@
            (keep ir->hiccup inline))
          (catch Throwable _ [(str s)]))))
 
+(def ^:private mpl-image-dir
+  "Confinement root for the matplotlib PNGs the sandbox shim writes host-side
+   (`__vis_mpl_render_file__` → <java.io.tmpdir>/vis-mpl). Only files DIRECTLY
+   under this dir are inlined; any other path leaves its fence untouched."
+  (delay (.getCanonicalFile (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl"))))
+
+(defn- mpl-confined-file
+  "The figure `path` as a File IFF it canonicalizes to a regular file directly
+   inside the vis-mpl temp dir, else nil — a path-traversal / foreign-path guard
+   so a crafted `vis-image` fence can't make the server read arbitrary files."
+  [path]
+  (try (let [f (.getCanonicalFile (java.io.File. (str path)))]
+         (when (and (.isFile f)
+                    (= @mpl-image-dir
+                       (some-> (.getParentFile f)
+                               .getCanonicalFile)))
+           f))
+       (catch Throwable _ nil)))
+
+(defn- html-text-escape
+  "Minimal HTML escape for text spliced into the raw `<figure>`/`<pre>` block
+   below — marked passes raw HTML through verbatim, so we escape it ourselves."
+  [s]
+  (-> (str s)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")))
+
+(defn- vis-image-fence->html
+  "Turn one `vis-image` fence BODY (header lines summary / abs-path / mime / WxH /
+   size, then the optional ASCII plot) into a SELF-CONTAINED HTML block: the PNG
+   inlined as a base64 data-URI `<figure><img>` (so a downloaded export stays
+   offline-complete), the ASCII plot kept as a collapsed `<details>` fallback.
+   nil when the file can't be read confined — the caller then leaves the fence
+   as-is, degrading to the plain code-block (path + ASCII)."
+  [body]
+  (let [lines
+        (str/split (str body) #"\n" -1)
+
+        [summary path _mime dims size-label]
+        lines
+
+        [w h]
+        (when (seq dims) (str/split (str dims) #"x"))
+
+        ascii
+        (let [a (str/join "\n" (drop 5 lines))]
+          (when-not (str/blank? a) a))]
+
+    (when-let [f (mpl-confined-file path)]
+      (let [b64 (.encodeToString (java.util.Base64/getEncoder)
+                                 (java.nio.file.Files/readAllBytes (.toPath f)))
+            cap (html-text-escape (str/trim (str summary)))]
+
+        (str "\n\n<figure class=\"mpl-fig\">"
+             "<img src=\"data:image/png;base64,"
+             b64
+             "\" alt=\""
+             cap
+             "\""
+             (when (not-empty (some-> w
+                                      str/trim))
+               (str " width=\"" (str/trim w) "\""))
+             (when (not-empty (some-> h
+                                      str/trim))
+               (str " height=\"" (str/trim h) "\""))
+             " loading=\"lazy\">"
+             "<figcaption>"
+             cap
+             (when (not-empty (str/trim (str size-label)))
+               (str " · " (html-text-escape (str/trim (str size-label)))))
+             "</figcaption></figure>"
+             (when ascii
+               (str "<details class=\"mpl-ascii\"><summary>ASCII plot</summary>"
+                    "<pre>"
+                    (html-text-escape ascii)
+                    "</pre></details>"))
+             "\n\n")))))
+
+(defn- resolve-image-fences
+  "Replace every ````vis-image```` fence in a tool-result markdown string with an
+   inline base64 `<img>` (+ ASCII `<details>` fallback) so the web paints
+   matplotlib `plt.show()` figures INLINE — the web twin of the TUI's
+   Kitty/iTerm2 inline paint, decided from the SAME channel-neutral fence. Cheap
+   no-op when the string carries no fence; an unreadable PNG leaves its fence
+   untouched (degrades to the code-block path/ASCII)."
+  [md]
+  (if (and md (str/includes? md "````vis-image"))
+    (str/replace md
+                 #"(?s)````vis-image\r?\n(.*?)\r?\n````"
+                 (fn [[whole body]]
+                   (or (vis-image-fence->html body) whole)))
+    md))
+
 (defn- normalize-thinking-text
   "Collapse blank-line runs in reasoning before rendering the web thinking block.
    Delegates to the SHARED `vis/normalize-reasoning` so the web card and the TUI
@@ -919,7 +1014,7 @@
   [{:keys [label color-role summary body]}]
   (let
     [body-md
-     (result-markdown body)
+     (resolve-image-fences (result-markdown body))
 
      ;; A body that STARTS with a blank line is the tool's BREATHE signal
      ;; (rg emits one so the hits don't glue to `N hits in M files`). The

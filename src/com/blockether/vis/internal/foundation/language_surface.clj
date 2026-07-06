@@ -467,9 +467,10 @@
   "One labeled body SECTION — a bold uppercase header over a fenced monospace block,
    the shape the collapsed/expanded repl_eval card stacks (RESULT / STDOUT / …). nil
    when there's nothing to show, so an empty section drops out of the join."
-  [label s]
-  (let [s (str/trimr (str s))]
-    (when (seq s) (str "**" label "**\n```\n" s "\n```"))))
+  ([label s] (sect label s nil))
+  ([label s lang]
+   (let [s (str/trimr (str s))]
+     (when (seq s) (str "**" label "**\n```" (or lang "") "\n" s "\n```")))))
 
 (defn- render-repl-eval-result
   "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge
@@ -540,9 +541,10 @@
         ;; RESULT on failure and sits LAST, after any captured stdout.
         sections
         (if error?
-          [(when long-form? (sect "FORM" code)) (sect "STDOUT" out) (sect "ERROR" error-body)]
-          [(when long-form? (sect "FORM" code)) (sect "RESULT" value) (sect "STDOUT" out)
-           (sect "STDERR" err)])
+          [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
+           (sect "ERROR" error-body)]
+          [(when long-form? (sect "FORM" code "clojure")) (sect "RESULT" value "clojure")
+           (sect "STDOUT" out) (sect "STDERR" err)])
 
         body
         (->> sections

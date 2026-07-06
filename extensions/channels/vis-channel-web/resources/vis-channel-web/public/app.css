@@ -156,6 +156,16 @@ pointer-events:none;background:linear-gradient(to bottom,transparent,var(--bg))}
 .paste-fold-summary:hover{color:var(--fg);border-color:color-mix(in srgb,var(--fg) 30%,var(--line))}
 .paste-fold .paste-chevron{color:var(--accent);font-size:.7rem;width:.7rem;text-align:center}
 .paste-fold-body{margin:.35rem 0 0}
+/* ── inline matplotlib figure (vis-image fence): the web twin of the TUI's
+   Kitty/iTerm2 inline paint. `plt.show()` rides a base64 <img>; the ASCII plot
+   stays as a collapsed <details> fallback. */
+.mpl-fig{margin:.5rem 0;max-width:100%}
+.mpl-fig img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:var(--r-md);background:#fff}
+.mpl-fig figcaption{margin-top:.3rem;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.mpl-ascii{margin:.25rem 0 .4rem}
+.mpl-ascii summary{cursor:pointer;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.mpl-ascii summary:hover{color:var(--fg)}
+.mpl-ascii pre{margin:.3rem 0 0;overflow-x:auto;font-family:var(--mono);font-size:.72rem;line-height:1.2}
 /* ── .md: ONE complete markdown typography system. Styles BOTH the
    server-side IR fallback and marked's client-rendered output, in
    bubbles AND Context-rail fact contents. Headings stay close to body
