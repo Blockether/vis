@@ -6,71 +6,74 @@
  ;; resolves `com.blockether.vis.ext.channel-tui.screen/run-chat!` lazily
  ;; via `requiring-resolve`, so omitting this jar still leaves the rest
  ;; of vis usable.
- :deps
- {org.clojure/clojure              {:mvn/version "1.12.5"}
-  com.blockether/vis          {:local/root "../../.."}
-  com.taoensso/telemere            {:mvn/version "1.2.1"}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 — STANDARD Unicode widths, so
-  ;; lanterna's column model matches what the terminal paints (mismatch shoves
-  ;; following cells / borders out of alignment). Patches on top of 3.1.5:
-  ;;   1. PR #625 cherry-pick — grapheme-aware emoji rendering in
-  ;;      StreamBasedTerminal/AbstractTextGraphics putString.
-  ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ✨ ☔ ☕ ⏰ …) and
-  ;;      genuine astral/surrogate emoji (🏷️ 😊 👀) → 2 columns.
-  ;;   3. VS-16 (emoji presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️ count as
-  ;;      2 columns, matching how the target terminals paint emoji-presentation
-  ;;      sequences. This is independent of the BARE base glyph: a bare ⚠ / ● / ▶
-  ;;      (no VS-16) is text/geometric presentation and stays 1 column (patch #5).
-  ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
-  ;;   5. Geometric / symbol glyphs ● ○ ◯ ◎ ◐ ◑ (status dots), ▶ ◀ (media
-  ;;      triangles), ⚠ (warning sign) are ONE column (standard width). They were
-  ;;      briefly force-widened; that mis-aligned e.g. a focused tab's `● ` prefix
-  ;;      (its trailing │ slid one column left). Disclosure chevrons ▸ ▾ already
-  ;;      narrow (EAW=N).
-  ;;   6. East-Asian-Ambiguous (EAW=A) punctuation/letters (· — … λ “” • ™, Greek,
-  ;;      Cyrillic) are NARROW by default (modern terminals); opt into wide with
-  ;;      the JVM flag `-Dlanterna.eastAsianAmbiguousWide=true`.
-  ;;   7. East-Asian Wide/Fullwidth (EAW=W/F) table from Unicode 15.1 for W/F
-  ;;      symbols OUTSIDE the CJK blocks (〈〉, Yi, Bopomofo, CJK compat/vertical)
-  ;;      that isCharCJK missed → 2 columns. One shared source for display-width
-  ;;      and the paint. Chrome (box/block/geometric/arrows) stays single-width.
-  ;;   8. Control chars degrade to a space instead of throwing on the render thread.
-  ;;   9. Scroll-ghost fix: refreshByDelta skips a wide glyph's trailing half-cell
-  ;;      (the 2-cell glyph covers it), but when content scrolls out from under a
-  ;;      wide char that skipped column kept a stale half-glyph — a "floating"
-  ;;      ghost ONLY on emoji/CJK rows. Now the wide char is re-emitted whenever its
-  ;;      trailing cell changed, repainting over the ghost.
-  ;;  10. Text-flow utilities (TerminalTextUtils, grapheme/EAW-aware, plain text):
-  ;;      displayWidth / wordWrap / justify / justifyLine, and `foldColumns` — a
-  ;;      terminal-style SOFT WRAP (char-fold that preserves whitespace/alignment,
-  ;;      unlike word-wrap) used by the TUI to fold pathologically wide single
-  ;;      lines (one-line commit-message args, wide clj_eval values) at the bubble
-  ;;      edge instead of clipping them.
-  ;;  11. Apple Terminal.app width mode (vis.19): Terminal.app IGNORES the VS-16
-  ;;      (U+FE0F) emoji-presentation selector and paints the base glyph at its
-  ;;      TEXT width — ⚠️ ✔️ ☑️ ▶️ ⏺️ ❤️ = ONE column there, vs TWO on
-  ;;      iTerm2/Ghostty/Kitty/tmux. Trusting the two-column model on Terminal.app
-  ;;      over-advanced the cursor, merging following text into the icon and
-  ;;      leaving scroll ghosts. Auto-detected from TERM_PROGRAM=Apple_Terminal
-  ;;      (off inside tmux); force with -Dlanterna.appleTerminalWidths=true|false.
-  ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
-  ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.21"}
-  ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
-  ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
-  ;; jcodec-javase. Only pulled in when the TUI jar is present.
-  org.jcodec/jcodec                {:mvn/version "0.2.5"}
-  org.jcodec/jcodec-javase         {:mvn/version "0.2.5"}
-  com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
-  com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
-
- :aliases
- {:test
-  {:extra-paths ["test"]
-   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                ;; Used by `render_bench_test.clj` for the inline
-                ;; Markdown hot-path microbenchmarks. Test-only;
-                ;; never reaches the runtime jar.
-                criterium/criterium {:mvn/version "0.4.6"}}
-   :main-opts  ["-m" "lazytest.main"]}}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        com.blockether/vis {:local/root "../../.."}
+        com.taoensso/telemere {:mvn/version "1.2.1"}
+        ;; Blockether fork of mabe02/lanterna 3.1.5 — STANDARD Unicode widths, so
+        ;; lanterna's column model matches what the terminal paints (mismatch shoves
+        ;; following cells / borders out of alignment). Patches on top of 3.1.5:
+        ;;   1. PR #625 cherry-pick — grapheme-aware emoji rendering in
+        ;;      StreamBasedTerminal/AbstractTextGraphics putString.
+        ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ✨ ☔ ☕ ⏰ …) and
+        ;;      genuine astral/surrogate emoji (🏷️ 😊 👀) → 2 columns.
+        ;;   3. VS-16 (emoji presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️ count as
+        ;;      2 columns, matching how the target terminals paint emoji-presentation
+        ;;      sequences. This is independent of the BARE base glyph: a bare ⚠ / ● / ▶
+        ;;      (no VS-16) is text/geometric presentation and stays 1 column (patch #5).
+        ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
+        ;;   5. Geometric / symbol glyphs ● ○ ◯ ◎ ◐ ◑ (status dots), ▶ ◀ (media
+        ;;      triangles), ⚠ (warning sign) are ONE column (standard width). They were
+        ;;      briefly force-widened; that mis-aligned e.g. a focused tab's `● ` prefix
+        ;;      (its trailing │ slid one column left). Disclosure chevrons ▸ ▾ already
+        ;;      narrow (EAW=N).
+        ;;   6. East-Asian-Ambiguous (EAW=A) punctuation/letters (· — … λ “” • ™, Greek,
+        ;;      Cyrillic) are NARROW by default (modern terminals); opt into wide with
+        ;;      the JVM flag `-Dlanterna.eastAsianAmbiguousWide=true`.
+        ;;   7. East-Asian Wide/Fullwidth (EAW=W/F) table from Unicode 15.1 for W/F
+        ;;      symbols OUTSIDE the CJK blocks (〈〉, Yi, Bopomofo, CJK compat/vertical)
+        ;;      that isCharCJK missed → 2 columns. One shared source for display-width
+        ;;      and the paint. Chrome (box/block/geometric/arrows) stays single-width.
+        ;;   8. Control chars degrade to a space instead of throwing on the render thread.
+        ;;   9. Scroll-ghost fix: refreshByDelta skips a wide glyph's trailing half-cell
+        ;;      (the 2-cell glyph covers it), but when content scrolls out from under a
+        ;;      wide char that skipped column kept a stale half-glyph — a "floating"
+        ;;      ghost ONLY on emoji/CJK rows. Now the wide char is re-emitted whenever its
+        ;;      trailing cell changed, repainting over the ghost.
+        ;;  10. Text-flow utilities (TerminalTextUtils, grapheme/EAW-aware, plain text):
+        ;;      displayWidth / wordWrap / justify / justifyLine, and `foldColumns` — a
+        ;;      terminal-style SOFT WRAP (char-fold that preserves whitespace/alignment,
+        ;;      unlike word-wrap) used by the TUI to fold pathologically wide single
+        ;;      lines (one-line commit-message args, wide clj_eval values) at the bubble
+        ;;      edge instead of clipping them.
+        ;;  11. Apple Terminal.app width mode (vis.19): Terminal.app IGNORES the VS-16
+        ;;      (U+FE0F) emoji-presentation selector and paints the base glyph at its
+        ;;      TEXT width — ⚠️ ✔️ ☑️ ▶️ ⏺️ ❤️ = ONE column there, vs TWO on
+        ;;      iTerm2/Ghostty/Kitty/tmux. Trusting the two-column model on Terminal.app
+        ;;      over-advanced the cursor, merging following text into the icon and
+        ;;      leaving scroll ghosts. Auto-detected from TERM_PROGRAM=Apple_Terminal
+        ;;      (off inside tmux); force with -Dlanterna.appleTerminalWidths=true|false.
+        ;;  12. Inline terminal images (vis.23): com.googlecode.lanterna.terminal.image.TerminalImage
+        ;;      — Kitty graphics protocol / iTerm2 inline images, graphics-capability
+        ;;      detection (isGraphicalTerminal → graphical vs non-graphical terminal),
+        ;;      pixel-dimension sniffing, cell-box sizing, escape encoding. vis's
+        ;;      channel-tui.terminal-image is now a thin adapter over it.
+        ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
+        ;; Retire when upstream ships equivalent fixes.
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.23"}
+        ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
+        ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
+        ;; jcodec-javase. Only pulled in when the TUI jar is present.
+        org.jcodec/jcodec {:mvn/version "0.2.5"}
+        org.jcodec/jcodec-javase {:mvn/version "0.2.5"}
+        com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
+        com.blockether/vis-provider-github-copilot {:local/root
+                                                    "../../providers/vis-provider-github-copilot"}
+        com.blockether/vis-provider-openai-codex {:local/root
+                                                  "../../providers/vis-provider-openai-codex"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+                               ;; Used by `render_bench_test.clj` for the inline
+                               ;; Markdown hot-path microbenchmarks. Test-only;
+                               ;; never reaches the runtime jar.
+                               criterium/criterium {:mvn/version "0.4.6"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main"]}}}
