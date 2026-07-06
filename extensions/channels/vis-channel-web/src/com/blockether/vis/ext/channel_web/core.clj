@@ -35,6 +35,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.foundation.transcript :as transcript]
    [hiccup2.core :as h]
    [ring.core.protocols :as ring-protocols]
    [taoensso.telemere :as tel])
@@ -529,11 +530,11 @@
     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
       [:section.rail-section
        [:div.rail-head-row
-        [:h3 (str "Resources" (when (seq rs) (str " · " (count rs))))]
+        [:h3 (str "Backgrounds" (when (seq rs) (str " · " (count rs))))]
         [:button.ctx-action {:type "button"
                              :hx-get (str "/ui/session/" sid "/resources")
                              :hx-target "#modal" :hx-swap "innerHTML"
-                             :aria-label "Manage this session's resources"}
+                             :aria-label "Manage this session's backgrounds"}
          (icon "layers") [:span "Manage"]]]
        (if (seq rs)
          [:ul.ctx-resources
@@ -550,7 +551,7 @@
                  (when kind [:span.ctx-res-type kind])
                  [:span.ctx-res-name (str (or (pick r :label) (pick r :id) "resource"))]]
                 (when (seq meta) [:span.ctx-res-meta meta])]]))]
-         [:p.empty "no managed resources"])])))
+         [:p.empty "no backgrounds running"])])))
 
 (defn- context-rail
   "Right rail for session-scoped gateway capabilities. This is where web exposes
@@ -1668,7 +1669,10 @@
       (icon "zap") [:span "Providers"]]
      [:button.side-foot-btn {:type "button" :aria-label "Settings"
                              :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "settings") [:span "Settings"]]]))
+      (icon "settings") [:span "Settings"]]
+     [:a.side-foot-btn {:href (str "/ui/session/" active-sid "/export.html")
+                        :download true :aria-label "Export transcript as HTML"}
+      (icon "download") [:span "Export"]]]))
 
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
@@ -1876,6 +1880,23 @@
        :body (session-page sid)}
       ;; Unknown / deleted session id: show a real "session not found" page so a
       ;; wrong address reads as an error, with a one-click way back.
+      {:status 404
+       :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (not-found-page {:title "session not found"
+                              :detail "that conversation doesn't exist or was deleted."})})))
+
+(defn- export-handler
+  "GET /ui/session/:sid/export.html — download the session transcript as a
+   STANDALONE, vis-light-styled HTML document (the same renderer the CLI's
+   `vis sessions export --html` uses, so every surface exports identically)."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+    (if (and sid (vis/gateway-soul sid))
+      (let [fname (str "vis-transcript-" (subs (str sid) 0 8) ".html")]
+        {:status 200
+         :headers {"Content-Type"        "text/html; charset=utf-8"
+                   "Content-Disposition" (str "attachment; filename=\"" fname "\"")}
+         :body (transcript/transcript-html (vis/db-info) sid)})
       {:status 404
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (not-found-page {:title "session not found"
@@ -2316,6 +2337,140 @@
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
 
+;; ── Backgrounds (managed resources): progressive "add" flow ──────────
+;;
+;; The Start section is data-driven from :ext/startable-resources. Rather
+;; than dump every field of every startable at once, each startable (or a
+;; :group of variant startables, e.g. MCP Local/Remote) renders COLLAPSED —
+;; one card with a label + an Add button. Clicking Add swaps the card's
+;; inner HTML for the form (htmx fragment), an SPA "smooth filling" feel
+;; with no modal repaint. Grouped startables get a segmented transport
+;; chooser (Local/Remote) that swaps only the field panel.
+
+(defn- bg-slug
+  "URL/CSS/id-safe token from an arbitrary string (lowercase, non-alnum → -)."
+  [s]
+  (-> (str s) str/lower-case (str/replace #"[^a-z0-9]+" "-")
+    (str/replace #"(^-+|-+$)" "")))
+
+(defn- startable-entries
+  "Fold the flat startable list into ordered ENTRIES, collapsing startables
+   that share a :group into one entry with several :variants (first-seen
+   order preserved). Each entry: {:eid :label :variants}."
+  [startables]
+  (reduce
+    (fn [acc sr]
+      (let [k (or (some->> (:group sr) bg-slug (str "g-"))
+                (str "k-" (name (:kind sr))))
+            i (first (keep-indexed (fn [i e] (when (= (:eid e) k) i)) acc))]
+        (if i
+          (update-in acc [i :variants] conj sr)
+          (conj acc {:eid     k
+                     :label   (or (:group sr) (:label sr))
+                     :variants [sr]}))))
+    [] startables))
+
+(defn- entry-by-eid [startables eid]
+  (some #(when (= eid (:eid %)) %) (startable-entries startables)))
+
+(defn- bg-field
+  "One declared field → its labelled control. Honours :type (:textarea,
+   :password, else text) and an optional :hint under the input."
+  [{fname :name :keys [label placeholder required type hint]}]
+  [:label.modal-res-field
+   [:span (or label (name fname))]
+   (if (= type :textarea)
+     [:textarea {:name (str "field_" (name fname)) :rows 3
+                 :placeholder (or placeholder "")
+                 :required (when required "required")}]
+     [:input {:type (if (= type :password) "password" "text")
+              :name (str "field_" (name fname))
+              :placeholder (or placeholder "")
+              :required (when required "required")}])
+   (when hint [:span.modal-res-fieldhint hint])])
+
+(defn- bg-start-form
+  "The submit form for ONE startable variant `sr`: its option chips or its
+   declared fields, ending in Cancel + Connect. Posts the canonical
+   /resources/start; `eid` lets Cancel restore the collapsed card."
+  [sid eid sr env]
+  (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
+        olabel (or (:options-label sr) "options")
+        fields (seq (:fields sr))]
+    [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
+                                 :hx-target "#modal" :hx-swap "innerHTML"}
+     [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
+     (when (:options-fn sr)
+       (if (seq opts)
+         [:div.alias-chips
+          (for [o opts]
+            [:label.alias-chip
+             [:input {:type "checkbox" :name "option" :value (str o)}]
+             [:span (str o)]])]
+         [:p.modal-res-hint (str "no " olabel " here")]))
+     (when fields
+       [:div.modal-res-fields (map bg-field fields)])
+     [:div.modal-res-form-actions
+      [:button.btn-sm {:type "button"
+                       :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid "&collapse=1")
+                       :hx-target (str "#bg-" eid) :hx-swap "innerHTML"} "Cancel"]
+      [:button.btn-sm.btn-go {:type "submit"} "Connect"]]]))
+
+(defn- bg-expanded
+  "Expanded card body. A grouped entry shows a segmented transport chooser
+   (its variants) above the selected variant's form; a single startable
+   shows its form directly."
+  [sid entry variant-id env]
+  (let [variants (:variants entry)
+        grouped? (> (count variants) 1)
+        sel      (or (some #(when (= variant-id (get-in % [:variant :id])) %) variants)
+                   (first variants))
+        eid      (:eid entry)]
+    (list
+      [:div.modal-res-start-head
+       [:span.modal-res-start-label (:label entry)
+        (when-let [h (get-in sel [:variant :hint])]
+          [:span.modal-res-start-hint h])]]
+      (when grouped?
+        [:div.bg-seg
+         (for [v variants
+               :let [vid (get-in v [:variant :id])]]
+           [:button {:type "button"
+                     :class (str "bg-seg-btn" (when (= v sel) " is-active"))
+                     :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid "&variant=" vid)
+                     :hx-target (str "#bg-" eid) :hx-swap "innerHTML"}
+            (get-in v [:variant :label])])])
+      (bg-start-form sid eid sel env))))
+
+(defn- bg-collapsed
+  "Collapsed card body: label + one-line summary + a single Add button that
+   reveals the form via an htmx fragment swap."
+  [sid entry]
+  (let [eid  (:eid entry)
+        vs   (:variants entry)
+        v0   (first vs)
+        hint (cond
+               (> (count vs) 1)   (str/join " · " (map #(get-in % [:variant :label]) vs))
+               (:fields v0)       "configure and connect"
+               (:options-fn v0)   (str "pick " (or (:options-label v0) "options") " and start")
+               :else              "start")]
+    (list
+      [:div.modal-res-start-head
+       [:span.modal-res-start-label (:label entry)
+        [:span.modal-res-start-hint hint]]
+       [:button.modal-res-go {:type "button"
+                              :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid)
+                              :hx-target (str "#bg-" eid) :hx-swap "innerHTML"
+                              :aria-label (str "Add " (:label entry))
+                              :title (str "Add " (:label entry))}
+        (icon "plus")]])))
+
+(defn- bg-card
+  "Collapsed background card, a stable `#bg-<eid>` swap target."
+  [sid entry]
+  [:div.modal-res-start {:id (str "bg-" (:eid entry))}
+   (bg-collapsed sid entry)])
+
 (defn- resources-modal
   "The managed-resources panel (the web twin of the TUI F4 dialog): a Start
    nREPL control (deps.edn aliases as selectable chips, from the clojure ext) +
@@ -2323,51 +2478,15 @@
    modal-shell HTML string. `notice` is an optional status line at the top."
   ([sid] (resources-modal sid nil))
   ([sid notice]
-   (modal-shell "Resources"
+   (modal-shell "Backgrounds"
      (when notice [:p.slash-error notice])
-    ;; Start nREPL: pick deps.edn aliases (chips) then Start. Always allowed —
-    ;; the clj_repl flag gates only the model; a user clicking Start is consent.
-    ;; One Start section PER declared startable resource (data-driven): each
-    ;; extension's :ext/startable-resources gives a label + proposed options +
-    ;; start-fn. Nothing nREPL-specific here.
-     (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
-           startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
-       (for [sr startables]
-         (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
-               olabel (or (:options-label sr) "options")
-               fields (seq (:fields sr))]
-           [:div.modal-res-start
-            [:div.modal-res-start-head
-             [:span.modal-res-start-label (:label sr)
-              (cond
-                fields [:span.modal-res-start-hint " configure and connect"]
-                (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional")])]
-             [:button.modal-res-go {:type "submit"
-                                    :form (str "start-resource-" (name (:kind sr)))
-                                    :aria-label (str "Add " (:label sr))
-                                    :title (str "Add " (:label sr))}
-              (icon "plus")]]
-            [:form.modal-res-start-form {:id (str "start-resource-" (name (:kind sr)))
-                                         :hx-post (str "/ui/session/" sid "/resources/start")
-                                         :hx-target "#modal" :hx-swap "innerHTML"}
-             [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
-             (when (:options-fn sr)
-               (if (seq opts)
-                 [:div.alias-chips
-                  (for [o opts]
-                    [:label.alias-chip
-                     [:input {:type "checkbox" :name "option" :value (str o)}]
-                     [:span (str o)]])]
-                 [:p.modal-res-hint (str "no " olabel " here")]))
-             (when fields
-               [:div.modal-res-fields
-                (for [{:keys [name label placeholder required]} fields]
-                  [:label.modal-res-field
-                   [:span (or label (some-> name name))]
-                   [:input {:type "text"
-                            :name (str "field_" (name name))
-                            :placeholder (or placeholder "")
-                            :required (when required "required")}]])])]])))
+    ;; One collapsed card PER declared startable ENTRY (data-driven from
+    ;; :ext/startable-resources). Clicking a card's Add button reveals its
+    ;; form via an htmx fragment swap — grouped startables (e.g. MCP) show a
+    ;; Local/Remote transport chooser. Nothing resource-specific here.
+     (let [startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
+       (for [entry (startable-entries startables)]
+         (bg-card sid entry)))
      (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
        (if (seq rs)
          [:ul.modal-resources
@@ -2402,7 +2521,7 @@
                                             :hx-post (str "/ui/session/" sid "/resources/stop")
                                             :hx-vals (json-text {:rid rid})
                                             :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
-         [:p.empty "no managed resources yet — pick aliases above and Start"])))))
+         [:p.empty "nothing running yet — add a background above"])))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -2410,6 +2529,25 @@
   (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"} :body (resources-modal sid)}
     {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body "unknown session"}))
+
+(defn- backgrounds-add-handler
+  "GET /ui/session/:sid/backgrounds/add?entry=&variant=&collapse= — swap ONE
+   background card between its collapsed row and its expanded add-form
+   (transport chooser + fields). Pure htmx fragment, no modal repaint."
+  [request]
+  (let [sid   (some-> (get-in request [:path-params :sid]) parse-uuid)
+        eid   (get-in request [:query-params "entry"])
+        vid   (get-in request [:query-params "variant"])
+        coll? (some? (get-in request [:query-params "collapse"]))
+        stbls (try (vis/registered-startable-resources) (catch Throwable _ []))
+        entry (entry-by-eid stbls eid)]
+    (if (and sid entry)
+      (let [env (try (vis/env-for sid) (catch Throwable _ nil))]
+        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (html (if coll?
+                       (bg-collapsed sid entry)
+                       (bg-expanded sid entry vid env)))})
+      {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body ""})))
 
 (defn- resource-action-handler
   "POST /ui/session/:sid/resources/:rid/(stop|restart) — run the canonical
@@ -2443,9 +2581,9 @@
         sr   (some #(when (= kind (:kind %)) %)
                (try (vis/registered-startable-resources) (catch Throwable _ [])))
         submitted-fields (into {}
-                           (keep (fn [{:keys [name]}]
-                                   (let [k (keyword name)
-                                         v (str/trim (str (get-in request [:form-params (str "field_" (name k))])))]
+                           (keep (fn [{fname :name}]
+                                   (let [k (keyword fname)
+                                         v (str/trim (str (get-in request [:form-params (str "field_" (name fname))])))]
                                      (when-not (str/blank? v) [k v]))))
                            (:fields sr))
         selected (if (seq (:fields sr)) submitted-fields opts)
@@ -3547,10 +3685,7 @@
                                 :hx-target "#dir-browser" :hx-swap "outerHTML"}
             [:input {:type "hidden" :name "path" :value canon}]
             [:button.fs-root-btn {:type "submit"}
-             (icon "home")
-             [:span.fs-add-text
-              [:span.fs-add-main "Make this the session's root"]
-              [:span.fs-add-sub "Shell, file tools, and search will work here"]]]]]
+             (icon "home") [:span "Make this the session's root"]]]]
        (cond
          ;; the session's current root — nothing to add or change here
          workspace?
@@ -3574,10 +3709,7 @@
                               :hx-target "#dir-browser" :hx-swap "outerHTML"}
            [:input {:type "hidden" :name "path" :value canon}]
            [:button.fs-add-btn {:type "submit"}
-            (icon "check")
-            [:span.fs-add-text
-             [:span.fs-add-main "Add this folder to the session"]
-             [:span.fs-add-sub canon]]]]
+            (icon "check") [:span "Add this folder as a root"]]]
           set-root-form]))]))
 
 (defn- fs-picker-modal
@@ -3588,10 +3720,8 @@
   [sid dir]
   (modal-shell "Filesystem Permissions"
     [:p.dir-intro (icon "info")
-     [:span "Choose the folders vis can read and edit, for "
-      [:strong "this session only"] " — inside this project or anywhere else on your computer. "
-      "Add a folder as an extra root, or make it the session's root to work there. "
-      "The roots on this session sit up top; ● marks a folder that's already one. Tap the path to go up, a subfolder to go in, or Home to jump out."]]
+     [:span "Folders vis can read and edit, "
+      [:strong "this session only"] ". Add extra roots or set the session root — here or anywhere on your computer."]]
     (dir-browser sid dir)))
 
 (defn- fs-picker-handler
@@ -3741,6 +3871,7 @@
    ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
    ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
    ["/ui/session/:sid/resources/start" {:post #'resource-start-handler}]
+   ["/ui/session/:sid/backgrounds/add" {:get #'backgrounds-add-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
@@ -3769,6 +3900,7 @@
    ["/ui/session/:sid" {:get #'session-handler
                         :delete #'delete-session-ui-handler}]
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
+   ["/ui/session/:sid/export.html" {:get #'export-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/fs-picker" {:get #'fs-picker-handler}]
    ["/ui/session/:sid/fs-create" {:post #'fs-create-handler}]

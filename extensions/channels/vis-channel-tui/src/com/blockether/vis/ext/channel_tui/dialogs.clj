@@ -842,7 +842,10 @@
       (let [sr (if (= 1 (count startables))
                  (first startables)
                  (select-dialog! screen "Start resource"
-                   (mapv #(assoc % :label (str "Start " (:label %))) startables)))]
+                   (mapv #(assoc % :label (str "Start " (:label %)
+                                            (when-let [v (get-in % [:variant :label])]
+                                              (str " · " v))))
+                     startables)))]
         (when sr
           (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
                 opts (when-let [f (:options-fn sr)]
@@ -880,7 +883,7 @@
             ;; chat shows around it instead of a blank wipe. The box's own bg fill
             ;; clears its interior each frame, so a shrinking list leaves nothing.
             footer [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]]
-            bounds (draw-dialog-chrome! g cols rows "Resources"
+            bounds (draw-dialog-chrome! g cols rows "Backgrounds"
                      (footer-content-width cols footer) (max 1 total))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
@@ -3007,7 +3010,7 @@
    {:id :cycle-reasoning, :label "Cycle Reasoning Effort"}
    {:id :cycle-verbosity, :label "Cycle Answer Length"}
    {:id :search-open,     :label "Search in Session"}
-   {:id :open-resources,  :label "Managed Resources"}
+   {:id :open-resources,  :label "Backgrounds"}
    {:id :show-sessions,   :label "Switch Session"}
    {:id :open-dirs,       :label "Filesystem Permissions"}
    {:id :pick-file,       :label "Attach File"}
