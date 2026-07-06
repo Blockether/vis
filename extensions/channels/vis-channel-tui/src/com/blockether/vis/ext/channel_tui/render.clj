@@ -5716,7 +5716,7 @@
                                  :node-id node-id})
 
         can-draw?
-        (and expanded? (timg/images-protocol) width height)
+        (and expanded? (timg/graphical-terminal?) width height)
 
         body
         (when expanded?
