@@ -88,7 +88,7 @@
    {:action :pick-file              :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
    {:action :open-dirs              :key \d :label "filesystem"}
-   {:action :open-resources         :key \s :label "resources"}
+   {:action :open-resources         :key \s :label "backgrounds"}
    {:action :toggle-help            :key \h :label "help"}
    {:action :new-session            :key \n :label "new session"}
    {:action :show-sessions          :key \b :label "switch session"}
