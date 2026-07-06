@@ -360,6 +360,57 @@
    so source / patch alignment survives."
   #{"text" "plain" "output" "log"})
 
+(def ^:private clj-code-langs
+  "Fence langs the TUI syntax-colorizes as Clojure/EDN."
+  #{"clojure" "clj" "cljc" "cljs" "cljd" "edn" "bb"})
+
+(def ^:private clj-special-forms
+  "Core special forms / macros painted in the `special` slot (SGR 35)."
+  #{"def" "defn" "defn-" "defmacro" "definline" "defmulti" "defmethod" "defprotocol" "defrecord"
+    "deftype" "definterface" "let" "let*" "letfn" "fn" "fn*" "if" "if-not" "if-let" "if-some" "when"
+    "when-not" "when-let" "when-some" "when-first" "do" "cond" "condp" "case" "for" "doseq"
+    "dotimes" "while" "loop" "recur" "ns" "require" "import" "use" "refer" "try" "catch" "finally"
+    "throw" "quote" "var" "new" "set!" "locking" "and" "or" "->" "->>" "as->" "some->" "some->>"
+    "cond->" "cond->>" "binding" "with-open" "with-local-vars" "with-redefs" "declare" "reify"
+    "proxy" "extend-type" "extend-protocol" "future" "delay" "lazy-seq" "comment" "assert" "doto"
+    ".." "monitor-enter" "monitor-exit"})
+
+(def ^:private clj-token-re
+  "One master alternation matching Clojure lexemes left-to-right:
+   comment | string | char | keyword | number | symbol. No capturing
+   groups, so `str/replace` hands each match to the fn as a bare string
+   and copies the gaps between tokens through untouched."
+  #";[^\n]*|\"(?:\\.|[^\"\\])*\"|\\(?:newline|space|tab|return|formfeed|backspace|u[0-9a-fA-F]{4}|.)|::?[\w.*+!?<>=$%&|'/-]+|-?\d[\w./]*|[a-zA-Z_*+!?<>=.&/-][\w.*+!?<>=$%&|'/-]*")
+
+(defn- colorize-clojure
+  "Wrap the Clojure tokens on `line` in ANSI SGR foreground codes so the
+   `paint-ansi-line!` TUI painter lights up eval FORM/RESULT bodies —
+   keywords\u219236, strings\u219231, numbers/chars\u219234, comments\u219290, special
+   forms\u219235 — the SAME translation the theme already reserves slots for.
+   The escapes are zero-width to the painter, so column alignment on the
+   verbatim fence is untouched. Web channels colour the same fence via
+   Prism off the `clojure` lang tag, so this is TUI-only."
+  [^String line]
+  (str/replace
+    line
+    clj-token-re
+    (fn [^String tok]
+      (let [c
+            (.charAt tok 0)
+
+            code
+            (cond (= c \;) "90"
+                  (= c \") "31"
+                  (= c \\) "34"
+                  (= c \:) "36"
+                  (or (Character/isDigit c)
+                      (and (= c \-) (> (.length tok) 1) (Character/isDigit (.charAt tok 1))))
+                  "34"
+                  (contains? clj-special-forms tok) "35"
+                  :else nil)]
+
+        (if code (str "\u001b[" code "m" tok "\u001b[0m") tok)))))
+
 (defn- code-block->lines
   "Code block: by default the TUI shows the body verbatim — source code
    relies on its indentation, and diff/patch output on its column
@@ -410,6 +461,14 @@
            (some-> lang
                    str/lower-case))
 
+        clojure?
+        (contains? clj-code-langs
+                   (some-> lang
+                           str/lower-case))
+
+        colorize?
+        (and clojure? (not fold?))
+
         ;; A `diff` fence (patch / write / format evidence) is colored by
         ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
         ;; through `paint-ansi-line!`, which translates the codes to Lanterna fg
@@ -433,7 +492,11 @@
 
         runs-of
         (fn [line]
-          [{:text (if diff? (ansi-diff line) line) :style #{:code} :node node}])
+          [{:text (cond diff? (ansi-diff line)
+                        colorize? (colorize-clojure line)
+                        :else line)
+            :style #{:code}
+            :node node}])
 
         verbatim-line
         (fn [line]

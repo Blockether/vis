@@ -29,14 +29,40 @@
   (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack ProcessConfig ProcessResult
             StructureItem Span]))
 
+(def ^:private extra-extension->language
+  "Clojure-family file extensions the pack's grammar table does NOT map, but that
+   the `clojure` grammar parses cleanly — EDN is a subset of the Clojure reader,
+   so `deps.edn` / `vis.edn` / config data get real structural editing (sexpr,
+   node replace) instead of a refused-`patch` fallback. Consulted ONLY when the
+   pack's own `detectLanguageFromPath` returns nil, so it never overrides the
+   pack. Drop an entry here once the pack ships it on the `clojure` grammar."
+  {"edn" "clojure"})
+
+(defn- path-extension
+  "Lower-cased extension of `path`'s final segment (no leading dot), or nil when
+   the file name has none."
+  [^String path]
+  (let [name
+        (str/replace path #"^.*[/\\]" "")
+
+        dot
+        (.lastIndexOf name ".")]
+
+    (when (pos? dot) (str/lower-case (subs name (inc dot))))))
+
 (defn detect-language
   "tree-sitter language name for `path` (by extension/shebang), or nil. NOTE: the
    pack recognizes HUNDREDS of grammars, including prose/markup — `.txt` maps to
    `vimdoc` (Vim `:help` files), `.md`→markdown, `.csv`→csv — which parse WITH error
    nodes on ordinary content. For 'is a syntax error meaningful here?' use
-   `code-language`, not this."
+   `code-language`, not this.
+
+   Falls back to `extra-extension->language` (currently `.edn`→`clojure`) ONLY
+   when the pack returns nil, covering Clojure-family extensions the pack's table
+   omits so their files still get structural editing."
   [^String path]
-  (TreeSitterLanguagePack/detectLanguageFromPath path))
+  (or (TreeSitterLanguagePack/detectLanguageFromPath path)
+      (get extra-extension->language (path-extension path))))
 
 (def code-languages
   "Curated allowlist of tree-sitter languages vis treats as CODE — where a parse

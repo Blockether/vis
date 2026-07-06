@@ -306,6 +306,24 @@
                                :examples ["clj_eval(\"(+ 1 1)\")"
                                           "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
+(defn- strip-blank-repl-fields
+  "Prune result fields the model gains nothing from seeing: nil, blank strings,
+   empty collections, and the pr-str of nil (a bare `\"nil\"` value, or a `values`
+   vector that is only nils). Keeps every informative field — a real value,
+   captured stdout/stderr, errors, status, ns and timing — so a `(println …)`
+   run surfaces its STDOUT WITHOUT a redundant `\"value\": \"nil\"`, and a plain
+   `(+ 1 2)` shows only its value, no empty `out`/`err`/`ex`/`root_ex` noise.
+   Presentation-only: the UI op-card and the internal `eval!` callers still see
+   the full nREPL shape; this trims just the map that crosses to the model."
+  [m]
+  (into {}
+        (remove (fn [[_ v]]
+                  (or (nil? v)
+                      (= "nil" v)
+                      (and (string? v) (str/blank? v))
+                      (and (coll? v) (or (empty? v) (every? #(= "nil" %) v))))))
+        m))
+
 (defn clj-eval-fn
   "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
      - explicit `port` → dial it directly (escape hatch; no autostart/recovery);
@@ -359,13 +377,14 @@
            ;; strings-only boundary) so the repl_eval op-card can show it in the
            ;; collapsed chip / expanded FORM section — the render fn sees only the
            ;; result map, never the call args.
-           (assoc (nrepl-client/eval! {:host host
-                                       :port p
-                                       :code code
-                                       :ns ns
-                                       :pretty? true
-                                       :timeout-ms (or timeout_ms 30000)})
-             "code" code))]
+           (-> (nrepl-client/eval! {:host host
+                                    :port p
+                                    :code code
+                                    :ns ns
+                                    :pretty? true
+                                    :timeout-ms (or timeout_ms 30000)})
+               strip-blank-repl-fields
+               (assoc "code" code)))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked, with no

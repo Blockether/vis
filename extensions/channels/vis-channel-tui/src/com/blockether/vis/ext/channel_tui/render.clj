@@ -3429,6 +3429,7 @@
         (mapv :meta entries)]
 
     {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
+(declare paste-aware-ir->entries)
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
 ;; `markdown->inline` is forward-declared once at the top of the
@@ -3501,7 +3502,8 @@
    (no body) is a single painted headline row with no expand triangle. The per-card
    renderer shared by a single native-tool form AND each card of a print-many block,
    so every op-card paints identically however many results one form carries."
-  [{:keys [label color-role summary body]} {:keys [fill-w session-id detail-expansions node-id]}]
+  [{:keys [label color-role summary body]}
+   {:keys [fill-w session-id detail-expansions node-id] :as opts}]
   (let [body-text
         (some-> body
                 str
@@ -3529,10 +3531,11 @@
 
         entries
         (when body-text
-          (tag-copy-block-body
-            (vec (ir-tui/ir->entries (vis/markdown->ir body-text) fill-w {:mode :channel}))
-            node-id
-            body-text))]
+          (tag-copy-block-body (vec (paste-aware-ir->entries (vis/markdown->ir body-text)
+                                                             fill-w
+                                                             (assoc opts :mode :channel)))
+                               node-id
+                               body-text))]
 
     (if (and node-id (seq entries))
       (let [expanded?
@@ -3976,10 +3979,15 @@
                   (or result-text head-summary)
                   (let [entries
                         (when result-text
-                          (tag-copy-block-body (vec (ir-tui/ir->entries (vis/markdown->ir
-                                                                          result-text)
-                                                                        fill-w
-                                                                        {:mode :channel}))
+                          (tag-copy-block-body (vec (paste-aware-ir->entries
+                                                      (vis/markdown->ir result-text)
+                                                      fill-w
+                                                      {:mode :channel
+                                                       :session-id session-id
+                                                       :session-turn-id session-turn-id
+                                                       :detail-expansions detail-expansions
+                                                       :image-section :iteration
+                                                       :image-default-expanded? true}))
                                                result-node-id
                                                result-text))
 
@@ -5608,7 +5616,11 @@
         lines
 
         [w h]
-        (when (seq dims) (str/split (str dims) #"x"))]
+        (when (seq dims) (str/split (str dims) #"x"))
+
+        ascii
+        (let [a (str/join "\n" (drop 5 lines))]
+          (when-not (str/blank? a) a))]
 
     {:summary (str/trim (str summary))
      :path (str path)
@@ -5621,7 +5633,8 @@
                      str/trim
                      not-empty
                      parse-long)
-     :size-label (not-empty (str/trim (str size-label)))}))
+     :size-label (not-empty (str/trim (str size-label)))
+     :ascii ascii}))
 
 (defn- paste-block-parts
   "Split a `vis-paste` code node body into `[summary payload]` — the
@@ -5691,8 +5704,8 @@
    screen loop can paint the actual picture (Kitty/iTerm2 graphics) over them
    AFTER Lanterna's delta refresh. Terminals without inline-image support (or
    an unreadable file) fall back to a single descriptive text row."
-  [node content-w {:keys [session-id session-turn-id detail-expansions]}]
-  (let [{:keys [summary path mime width height size-label]}
+  [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
+  (let [{:keys [summary path mime width height size-label ascii]}
         (image-block-parts node)
 
         id
@@ -5701,11 +5714,16 @@
             "0")
 
         node-id
-        (detail-node-id
-          {:session-turn-id session-turn-id :section :user :kind :image :details-path [id]})
+        (detail-node-id {:session-turn-id session-turn-id
+                         :section (:image-section opts :user)
+                         :kind :image
+                         :details-path [id]})
 
         expanded?
-        (detail-expanded? detail-expansions session-id node-id false)
+        (detail-expanded? detail-expansions
+                          session-id
+                          node-id
+                          (:image-default-expanded? opts (timg/graphical-terminal?)))
 
         header
         (detail-summary-entries {:marker md-summary-marker
@@ -5746,11 +5764,12 @@
                   (str "🖼  "
                        (or (not-empty (last (str/split (str path) #"/"))) "image")
                        (when dims (str "  " dims))
-                       (when size-label (str "  " size-label)))]
+                       (when size-label (str "  " size-label)))
 
-              (tag-copy-block-body (vec (ir-tui/ir->entries [:ir {} [:p {} desc]] content-w {}))
-                                   node-id
-                                   path))))]
+                  ir
+                  (if ascii [:ir {} [:p {} desc] [:code {} ascii]] [:ir {} [:p {} desc]])]
+
+              (tag-copy-block-body (vec (ir-tui/ir->entries ir content-w {})) node-id path))))]
 
     (vec (concat header body))))
 
@@ -5909,26 +5928,49 @@
 (defn draw-detail-labels!
   "Vim-style jump-label overlay for collapsible disclosures.
 
-   When `active?`, stamps a highlighted single-character badge over each visible
-   `:toggle-details` disclosure glyph (in paint order) so the next keypress can
-   toggle that one fold — the keyboard analogue of clicking the chevron. When
-   inactive, paints nothing.
+   `frozen` is the `[label region]` assignment captured ONCE when the mode
+   opened (`cr/assign-labels` on that frame), read from `db` — NOT re-derived
+   per frame. Freezing matters mid-turn: a live stream keeps re-registering
+   `cr/current` as the trace grows, so a per-frame `assign-labels` would
+   reshuffle the letters under the user's fingers and race the keypress. With a
+   frozen map the letter→fold binding is stable. Each badge is re-anchored to
+   its fold's CURRENT painted position — the region is matched by
+   `[session-id node-id]` against this frame's `cr/current`, so the letter
+   tracks the fold as the transcript scrolls and is simply dropped when the
+   fold scrolls off. Falls back to a live `assign-labels` when no frozen set is
+   present (the command-palette entry can open the mode from a dialog frame
+   that had nothing to freeze). Inactive / empty ⇒ paints nothing.
 
    Called by the full-frame painter right AFTER `cr/commit-frame!`, so
-   `cr/current` holds this frame's freshly-registered regions and every badge
-   lands exactly on the chevron the user sees. The input handler derives the
-   same label->region map via `cr/assign-labels` on the same frame, so a typed
-   label resolves to the region under its badge without any shared state."
-  [^TextGraphics g active?]
+   `cr/current` holds this frame's freshly-registered regions. The input
+   handler resolves a typed letter against the SAME frozen map, so a badge and
+   its keypress always point at the same fold without shared mutable state."
+  [^TextGraphics g active? frozen]
   (when active?
-    (doseq [[label {:keys [bounds]}] (cr/assign-labels (cr/current))]
-      ;; Loud avy-style lead badge: ground-colored text on the saturated
-      ;; `warning-fg` fill so the label pops in EVERY theme (the old pairing
-      ;; painted terminal-bg on the pale `warning-bg`, ~1.1:1 contrast — invisible
-      ;; on Solarized). warning-fg gives 8:1+ AAA contrast light or dark. Letters
-      ;; are upper-cased so they stand out of the surrounding lowercase prose;
-      ;; the input handler lower-cases the keypress, so the match still holds.
-      (p/set-colors! g t/terminal-bg t/warning-fg)
-      (p/styled g
-                [p/BOLD]
-                (p/put-str! g (:col bounds) (:row bounds) (.toUpperCase ^String label))))))
+    (let [labels
+          (if (seq frozen) frozen (cr/assign-labels (cr/current)))
+
+          live-by-node
+          (reduce (fn [m r]
+                    (if (= :toggle-details (:kind r)) (assoc m [(:session-id r) (:node-id r)] r) m))
+                  {}
+                  (cr/current))]
+
+      (doseq [[label region]
+              labels
+
+              :let [live
+                    (get live-by-node [(:session-id region) (:node-id region)])]
+              :when live]
+
+        (let [{:keys [bounds]} live]
+          ;; Loud avy-style lead badge: ground-colored text on the saturated
+          ;; `warning-fg` fill so the label pops in EVERY theme (the old pairing
+          ;; painted terminal-bg on the pale `warning-bg`, ~1.1:1 contrast — invisible
+          ;; on Solarized). warning-fg gives 8:1+ AAA contrast light or dark. Letters
+          ;; are upper-cased so they stand out of the surrounding lowercase prose;
+          ;; the input handler lower-cases the keypress, so the match still holds.
+          (p/set-colors! g t/terminal-bg t/warning-fg)
+          (p/styled g
+                    [p/BOLD]
+                    (p/put-str! g (:col bounds) (:row bounds) (.toUpperCase ^String label))))))))
