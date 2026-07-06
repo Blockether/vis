@@ -141,10 +141,11 @@
                            :start-repl-fn (fn [env op opts] (py-start-repl-fn env op opts))}]
      :ext/startable-resources
      [{:kind     :repl
+       :dir?     true
        :label    "Python REPL"
        :start-fn (fn [env _selected]
                    (let [root (env-root env)
-                         dir  (resolve-dir root nil)
+                         dir  (resolve-dir root (:startable/dir env))
                          r    (repl/start! dir {})]
                      (register-repl-resource! (:session-id env) dir r)
                      r))}]
