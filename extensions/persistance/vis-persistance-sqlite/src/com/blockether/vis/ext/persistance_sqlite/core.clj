@@ -1380,10 +1380,11 @@
 ;; =============================================================================
 
 (defn- store-turn-attachments!
-  "Insert one `session_turn_attachment` row per validated inline image. Each
+  "Insert one `session_turn_attachment` row per validated image attached to the
+   turn - INLINE web/API uploads AND terminal-drop disk images alike. Each
    attachment is `{:media-type :base64 :size? :filename? :kind?}`; the base64
    payload decodes to raw bytes for the BLOB column. Skips any entry whose
-   base64 fails to decode — never aborts the enclosing turn insert."
+   base64 fails to decode - never aborts the enclosing turn insert."
   [tx-info soul-id-s attachments now]
   (doseq [[position att] (map-indexed vector (or attachments []))]
     (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
@@ -1405,11 +1406,11 @@
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
 
-   `:attachments` — validated INLINE image uploads `[{:media-type :base64 :size
-   :filename}]` (web/API, no durable disk path) — persist as
-   `session_turn_attachment` rows so resume + history re-render survive a
-   restart. Disk-path images are re-derivable from `:user-request` text and are
-   NOT stored here.
+   `:attachments` - EVERY validated image attached to the turn `[{:media-type
+   :base64 :size :filename}]`, both INLINE (web/API) uploads and terminal-drop
+   disk images - persist as `session_turn_attachment` BLOB rows so resume +
+   history re-render survive a restart even after the source file moves or is
+   deleted.
 
    Returns the session-turn-soul UUID."
   [db-info {:keys [parent-session-id user-request status attachments]}]
