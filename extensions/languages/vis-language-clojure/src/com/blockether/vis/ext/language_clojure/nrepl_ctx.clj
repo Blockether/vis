@@ -22,12 +22,11 @@
 
    All best-effort: any failure degrades to an empty contribution and never
    blocks the render."
-  (:require
-   [clojure.java.io :as io]
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
-   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
+            [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
+            [taoensso.telemere :as tel]))
 
 (def ^:private probe-timeout-ms 100)
 
@@ -39,20 +38,24 @@
   "Read the live turn off the engine ctx-atom for per-turn cache keying. Falls
    back to 0 when no ctx-atom is on env (e.g. tests / bare calls)."
   [env]
-  (or (some-> (:ctx-atom env) deref :session/turn) 0))
+  (or (some-> (:ctx-atom env)
+              deref
+              :session/turn)
+      0))
 
 (defn- probe-all
   "Probe every port in parallel, each under a hard deadline so one slow host can
    never stall the render. Returns `{port {:status .. [:versions ..]}}`."
   [host ports]
   (let [futs (mapv (fn [p]
-                     [p (future
-                          (nrepl-client/probe!
-                            {:host host :port p :timeout-ms probe-timeout-ms}))])
-               ports)]
+                     [p
+                      (future (nrepl-client/probe!
+                                {:host host :port p :timeout-ms probe-timeout-ms}))])
+                   ports)]
     (into {}
-      (map (fn [[p f]] [p (deref f (+ probe-timeout-ms 50) {:status :down})]))
-      futs)))
+          (map (fn [[p f]]
+                 [p (deref f (+ probe-timeout-ms 50) {:status :down})]))
+          futs)))
 
 (defn- liveness-for
   "Statuses for `ports`, reusing the per-turn cache when the `[turn port-set]` key
@@ -71,19 +74,23 @@
    Managed REPLs get stop + restart thunks driving repl-manager."
   [session-id {:keys [id dir port aliases]}]
   (when (and session-id id (nil? (vis/get-resource session-id id)))
-    (vis/register-resource! session-id
-      {:id       id
-       :kind     :nrepl
+    (vis/register-resource!
+      session-id
+      {:id id
+       :kind :nrepl
        :language :clojure
-       :label    (str "nREPL " (.getName (io/file dir))
+       :label (str "nREPL "
+                   (.getName (io/file dir))
                    (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-       :status   :up
+       :status :up
        ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
        ;; so it must be boundary-safe already.
-       :detail   (cond-> {"dir" dir "port" port}
-                   (seq aliases) (assoc "aliases" (mapv name aliases)))
-       :owner    :ext/language-clojure}
-      {:stop-fn    (fn [] (repl-manager/stop! session-id dir))
+       :detail (cond-> {"dir" dir "port" port}
+                 (seq aliases)
+                 (assoc "aliases" (mapv name aliases)))
+       :owner :ext/language-clojure}
+      {:stop-fn (fn []
+                  (repl-manager/stop! session-id dir))
        :restart-fn (fn []
                      (repl-manager/stop! session-id dir)
                      (let [r (repl-manager/start! session-id dir {:aliases aliases})]
@@ -96,18 +103,22 @@
    STRING keys + STRING enum values. `default` is the SINGLE owned REPL's id."
   [repls statuses]
   {"default" (when (= 1 (count repls)) (:id (first repls)))
-   "repls"   (mapv (fn [{:keys [id dir port tool aliases]}]
-                     (let [st (get statuses port {:status :unknown})]
-                       (cond-> {"id"      id
-                                "dir"     dir
-                                "port"    port
-                                "status"  (name (:status st))
-                                "managed" true}
-                         tool                 (assoc "tool" (name tool))
-                         (seq aliases)        (assoc "aliases" (mapv name aliases))
-                         (seq (:versions st)) (assoc "versions" (update-keys (:versions st) name))
-                         (:dialect st)        (assoc "dialect" (name (:dialect st))))))
-               repls)})
+   "repls" (mapv
+             (fn [{:keys [id dir port tool aliases]}]
+               (let [st (get statuses port {:status :unknown})]
+                 (cond-> {"id" id "dir" dir "port" port "status" (name (:status st)) "managed" true}
+                   tool
+                   (assoc "tool" (name tool))
+
+                   (seq aliases)
+                   (assoc "aliases" (mapv name aliases))
+
+                   (seq (:versions st))
+                   (assoc "versions" (update-keys (:versions st) name))
+
+                   (:dialect st)
+                   (assoc "dialect" (name (:dialect st))))))
+             repls)})
 
 (defn contribute
   "`:ext/ctx-fn` fn. Returns the `{\"session_env\" {\"languages\" {\"clojure\"
@@ -115,22 +126,29 @@
    mirrors each into the session resource registry (footer + F4 dialog). `{}` when
    no workspace root is on env. Never throws — degrades to an empty contribution."
   [env]
-  (try
-    (if (:workspace/root env)
-      (let [sid      (:session-id env)
-            repls    (repl-manager/session-repls sid)
-            host     "localhost"
-            statuses (when (seq repls)
-                       (liveness-for host (current-turn env) (map :port repls)))]
-        (doseq [r repls]
-          (try (ensure-resource! sid r)
-            (catch Throwable e
-              (tel/log! {:level :warn :id ::sync-resource-failed
-                         :data {:id (:id r) :error (ex-message e)}}
-                "Failed to mirror nREPL into the session resource registry"))))
-        {"session_env" {"languages" {"clojure" {"nrepl" (nrepl-block repls statuses)}}}})
-      {})
-    (catch Throwable e
-      (tel/log! {:level :warn :id ::contribute-failed :data {:error (ex-message e)}}
-        "Clojure nREPL ctx contribution failed; degrading to empty")
-      {})))
+  (try (if (:workspace/root env)
+         (let [sid
+               (:session-id env)
+
+               repls
+               (repl-manager/session-repls sid)
+
+               host
+               "localhost"
+
+               statuses
+               (when (seq repls) (liveness-for host (current-turn env) (map :port repls)))]
+
+           (doseq [r repls]
+             (try (ensure-resource! sid r)
+                  (catch Throwable e
+                    (tel/log! {:level :warn
+                               :id ::sync-resource-failed
+                               :data {:id (:id r) :error (ex-message e)}}
+                              "Failed to mirror nREPL into the session resource registry"))))
+           {"session_env" {"languages" {"clojure" {"nrepl" (nrepl-block repls statuses)}}}})
+         {})
+       (catch Throwable e
+         (tel/log! {:level :warn :id ::contribute-failed :data {:error (ex-message e)}}
+                   "Clojure nREPL ctx contribution failed; degrading to empty")
+         {})))

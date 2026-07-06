@@ -18,12 +18,13 @@
 
    Values are `{:provider <id-string-or-nil> :model <name>}` or nil. Keyed by
    the session-soul id (the gateway's `sid` and the engine env's `:session-id`)."
-  (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.persistance :as persistance])
-  (:import
-   (java.util.concurrent Executors ScheduledExecutorService ScheduledFuture
-     ThreadFactory TimeUnit)))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.persistance :as persistance])
+  (:import (java.util.concurrent Executors
+                                 ScheduledExecutorService
+                                 ScheduledFuture
+                                 ThreadFactory
+                                 TimeUnit)))
 
 (def ^:private debounce-ms 600)
 
@@ -34,17 +35,17 @@
 
 (defonce ^:private scheduler
   (Executors/newSingleThreadScheduledExecutor
-    (reify ThreadFactory
-      (newThread [_ r]
-        (doto (Thread. ^Runnable r "vis-session-model-flush") (.setDaemon true))))))
+    (reify
+      ThreadFactory
+        (newThread [_ r]
+          (doto (Thread. ^Runnable r "vis-session-model-flush") (.setDaemon true))))))
 
 ;; Short-TTL cache for per-frame DISPLAY readers (the TUI footer renders every
 ;; frame; the codebase avoids per-paint DB reads). Pending always wins over it.
 (defonce ^:private display-cache (atom {})) ; sid-string -> {:v val :at ms}
 (def ^:private display-ttl-ms 1500)
 
-(defn- db-read [db-info sid]
-  (persistance/db-get-session-model-pref db-info sid)) ; {:provider :model} or nil
+(defn- db-read [db-info sid] (persistance/db-get-session-model-pref db-info sid)) ; {:provider :model} or nil
 
 (defn- pending->val
   "The {:provider :model} for a pending entry, or nil when its model is blank
@@ -52,13 +53,11 @@
   [{:keys [provider model]}]
   (when model {:provider provider :model model}))
 
-(defn- flush-one! [k]
+(defn- flush-one!
+  [k]
   (when-let [{:keys [db-info provider model]} (get @pending k)]
-    (try
-      (persistance/db-set-session-model-pref! db-info k provider model)
-      (finally
-        (swap! pending dissoc k)
-        (swap! flush-futures dissoc k)))))
+    (try (persistance/db-set-session-model-pref! db-info k provider model)
+         (finally (swap! pending dissoc k) (swap! flush-futures dissoc k)))))
 
 (defn model-of
   "The preference for session `sid` as `{:provider :model}`, or nil for the
@@ -67,9 +66,7 @@
   [db-info sid]
   (when (and db-info sid)
     (let [k (str sid)]
-      (if (contains? @pending k)
-        (pending->val (get @pending k))
-        (db-read db-info sid)))))
+      (if (contains? @pending k) (pending->val (get @pending k)) (db-read db-info sid)))))
 
 (defn model-of-cached
   "Like `model-of` but DISPLAY-oriented: when no pending value exists, a recent
@@ -81,7 +78,8 @@
       (if (contains? @pending k)
         (pending->val (get @pending k))
         (let [now (System/currentTimeMillis)
-              c   (get @display-cache k)]
+              c (get @display-cache k)]
+
           (if (and c (< (- now (long (:at c))) display-ttl-ms))
             (:v c)
             (let [v (db-read db-info sid)]
@@ -94,15 +92,35 @@
    rapid cycling coalesces to one write. Returns `{:provider :model}` (or nil)."
   [db-info sid provider model]
   (when (and db-info sid)
-    (let [model    (some-> model str str/trim not-empty)
-          provider (some-> provider str str/trim not-empty)
-          k        (str sid)]
+    (let [model
+          (some-> model
+                  str
+                  str/trim
+                  not-empty)
+
+          provider
+          (some-> provider
+                  str
+                  str/trim
+                  not-empty)
+
+          k
+          (str sid)]
+
       (swap! pending assoc k {:db-info db-info :provider provider :model model})
       (swap! display-cache dissoc k)
       (when-let [^ScheduledFuture old (get @flush-futures k)]
         (.cancel old false))
-      (let [^ScheduledExecutorService s scheduler
-            f (.schedule s ^Runnable (fn [] (flush-one! k))
-                (long debounce-ms) TimeUnit/MILLISECONDS)]
+      (let [^ScheduledExecutorService s
+            scheduler
+
+            f
+            (.schedule s
+                       ^Runnable
+                       (fn []
+                         (flush-one! k))
+                       (long debounce-ms)
+                       TimeUnit/MILLISECONDS)]
+
         (swap! flush-futures assoc k f))
       (when model {:provider provider :model model}))))

@@ -18,18 +18,16 @@
    the registered provider's `:provider/get-token-fn`, so the
    token-refresh policy stays inside each provider implementation
    instead of leaking up here."
-  (:require
-   [clojure+.error]
-   [clojure.edn :as edn]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.svar.internal.router :as svar-router]
-   [com.blockether.vis.internal.registry :as registry]
-   [taoensso.telemere :as tel])
-  (:import
-   (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)))
+  (:require [clojure+.error]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.internal.registry :as registry]
+            [taoensso.telemere :as tel])
+  (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)))
 
-(def config-dir  (str (System/getProperty "user.home") "/.vis"))
+(def config-dir (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
 (defn project-config-path
   "Project-local config override path. `bin/vis` preserves the invocation cwd
@@ -44,12 +42,12 @@
    `.vis/config.edn`."
   []
   (str (System/getProperty "user.dir") "/vis.edn"))
-(def db-path     (str config-dir "/vis.mdb"))
+(def db-path (str config-dir "/vis.mdb"))
 (def default-db-spec {:backend :sqlite :path db-path})
 
 (def ^:private ^String log-path (str config-dir "/vis.log"))
 
-(def tty-in  (delay (FileInputStream.  "/dev/tty")))
+(def tty-in (delay (FileInputStream. "/dev/tty")))
 
 (def ^:private ^"[B" sync-update-begin
   ;; DEC private mode 2026 "synchronized update" — the terminal HOLDS
@@ -67,10 +65,10 @@
    through on sight or every resize/size-probe stalls to the 5s timeout."
   [^bytes b]
   (and (= 4 (alength b))
-    (= (aget b 0) (byte 0x1b))
-    (= (aget b 1) (byte 0x5b))   ;; [
-    (= (aget b 2) (byte 0x36))   ;; 6
-    (= (aget b 3) (byte 0x6e)))) ;; n
+       (= (aget b 0) (byte 0x1b))
+       (= (aget b 1) (byte 0x5b)) ;; [
+       (= (aget b 2) (byte 0x36)) ;; 6
+       (= (aget b 3) (byte 0x6e)))) ;; n
 
 (defn frame-buffered-tty-out
   "Wrap the raw tty stream so a whole repaint reaches the terminal as ONE
@@ -90,32 +88,42 @@
    PrintStream) already flushes explicitly, so nothing can sit in the
    buffer across frames."
   ^OutputStream [^OutputStream raw]
-  (let [initial-capacity (* 64 1024)
+  (let [initial-capacity
+        (* 64 1024)
+
         ;; `ByteArrayOutputStream/reset` keeps the grown backing array forever,
         ;; so one outsized frame (full repaint on a huge terminal) would pin
         ;; megabytes. Over the retention cap the buffer is REPLACED after the
         ;; flush instead of reset. Mutable holder because the swap needs a new
         ;; instance; all access goes through `lock`.
-        retain-capacity (* 512 1024)
-        lock (Object.)
-        buf-holder (java.util.concurrent.atomic.AtomicReference.
-                     (ByteArrayOutputStream. initial-capacity))]
+        retain-capacity
+        (* 512 1024)
+
+        lock
+        (Object.)
+
+        buf-holder
+        (java.util.concurrent.atomic.AtomicReference. (ByteArrayOutputStream. initial-capacity))]
+
     (proxy [OutputStream] []
       (write
         ([b]
          (if (bytes? b)
            (do (locking lock
                  (.write ^ByteArrayOutputStream (.get buf-holder) ^bytes b 0 (alength ^bytes b)))
-             (when (cursor-report-query? b)
-               (.flush ^OutputStream this)))
+               (when (cursor-report-query? b) (.flush ^OutputStream this)))
            (locking lock (.write ^ByteArrayOutputStream (.get buf-holder) (int b)))))
         ([b off len]
          (locking lock
            (.write ^ByteArrayOutputStream (.get buf-holder) ^bytes b (int off) (int len)))))
       (flush []
         (locking lock
-          (let [^ByteArrayOutputStream buf (.get buf-holder)
-                n (.size buf)]
+          (let [^ByteArrayOutputStream buf
+                (.get buf-holder)
+
+                n
+                (.size buf)]
+
             (when (pos? n)
               (.write raw sync-update-begin)
               (.writeTo buf raw)
@@ -124,12 +132,9 @@
                 (.set buf-holder (ByteArrayOutputStream. initial-capacity))
                 (.reset buf)))
             (.flush raw))))
-      (close []
-        (.flush ^OutputStream this)
-        (.close raw)))))
+      (close [] (.flush ^OutputStream this) (.close raw)))))
 
-(def tty-out
-  (delay ^OutputStream (frame-buffered-tty-out (FileOutputStream. "/dev/tty"))))
+(def tty-out (delay ^OutputStream (frame-buffered-tty-out (FileOutputStream. "/dev/tty"))))
 
 (def ^java.io.PrintStream original-stdout System/out)
 
@@ -147,8 +152,12 @@
   (alter-var-root #'*print-length* (constantly 100))
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
-  (let [raw-out    (FileOutputStream. log-path true)
-        log-stream (java.io.PrintStream. raw-out true)]
+  (let [raw-out
+        (FileOutputStream. log-path true)
+
+        log-stream
+        (java.io.PrintStream. raw-out true)]
+
     (System/setOut log-stream)
     (System/setErr log-stream))
   (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
@@ -162,12 +171,13 @@
   ;; handler so only one writer remains.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-    (tel/handler:file {:path              log-path
-                       :interval          :monthly
-                       :max-file-size     4000000
-                       :max-num-parts     8
-                       :max-num-intervals 6}))
-  (tel/call-on-shutdown! (fn [] (tel/stop-handlers!))))
+                    (tel/handler:file {:path log-path
+                                       :interval :monthly
+                                       :max-file-size 4000000
+                                       :max-num-parts 8
+                                       :max-num-intervals 6}))
+  (tel/call-on-shutdown! (fn []
+                           (tel/stop-handlers!))))
 
 (defn init-cli!
   "Logging init for non-TUI processes. Same redirects as init! but
@@ -183,8 +193,12 @@
   (alter-var-root #'*print-length* (constantly 100))
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
-  (let [raw-out    (FileOutputStream. log-path true)
-        log-stream (java.io.PrintStream. raw-out true)]
+  (let [raw-out
+        (FileOutputStream. log-path true)
+
+        log-stream
+        (java.io.PrintStream. raw-out true)]
+
     (System/setOut log-stream)
     (System/setErr log-stream))
   (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
@@ -196,11 +210,11 @@
   ;; takes over as the single writer.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-    (tel/handler:file {:path              log-path
-                       :interval          :monthly
-                       :max-file-size     4000000
-                       :max-num-parts     8
-                       :max-num-intervals 6})))
+                    (tel/handler:file {:path log-path
+                                       :interval :monthly
+                                       :max-file-size 4000000
+                                       :max-num-parts 8
+                                       :max-num-intervals 6})))
 
 (defn shutdown!
   "Flush and stop all telemere handlers. Call after the TUI screen
@@ -210,15 +224,13 @@
 
 ;;; ── Provider presets ──────────────────────────────────────────────────────
 
-(def ^:private removed-provider-ids
-  #{:blockether :openrouter :github-models :github-copilot})
+(def ^:private removed-provider-ids #{:blockether :openrouter :github-models :github-copilot})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
-  [:openai :anthropic :anthropic-coding-plan :openai-codex
-   :github-copilot-business :github-copilot-individual
-   :zai :zai-coding-plan :ollama :lmstudio])
+  [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot-business
+   :github-copilot-individual :zai :zai-coding-plan :ollama :lmstudio])
 
 (defn- registered-provider-metadata
   "Provider-owned preset metadata. First-party provider extensions put
@@ -227,14 +239,14 @@
   [pid]
   (when-let [provider (registry/provider-by-id pid)]
     (merge (:provider/preset provider)
-      (when-let [label (:provider/label provider)]
-        {:label label}))))
+           (when-let [label (:provider/label provider)]
+             {:label label}))))
 
 (defn- known-provider-base-url
   "Base URL for a provider id: provider extension first, svar table last."
   [pid]
   (or (:base-url (registered-provider-metadata pid))
-    (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
+      (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
 
 (defn provider-template
   "Preset descriptor for a provider id, merged from a provider
@@ -242,49 +254,67 @@
    intentionally removed ids."
   [pid]
   (when-not (contains? removed-provider-ids pid)
-    (let [provider-md (registered-provider-metadata pid)
-          svar-md     (get svar-router/KNOWN_PROVIDERS pid)]
+    (let [provider-md
+          (registered-provider-metadata pid)
+
+          svar-md
+          (get svar-router/KNOWN_PROVIDERS pid)]
+
       (when (or provider-md svar-md (registry/provider-by-id pid))
         (cond-> {:id pid}
-          (:label provider-md)             (assoc :label (:label provider-md))
-          (known-provider-base-url pid)    (assoc :base-url (known-provider-base-url pid))
-          (or (:api-style provider-md)
-            (:api-style svar-md))          (assoc :api-style (or (:api-style provider-md)
-                                                               (:api-style svar-md)))
-          (:default-models provider-md)    (assoc :default-models (:default-models provider-md))
-          (:extra-body provider-md)        (assoc :extra-body (:extra-body provider-md))
-          (:hidden? provider-md)           (assoc :hidden? true))))))
+          (:label provider-md)
+          (assoc :label (:label provider-md))
+
+          (known-provider-base-url pid)
+          (assoc :base-url (known-provider-base-url pid))
+
+          (or (:api-style provider-md) (:api-style svar-md))
+          (assoc :api-style (or (:api-style provider-md) (:api-style svar-md)))
+
+          (:default-models provider-md)
+          (assoc :default-models (:default-models provider-md))
+
+          (:extra-body provider-md)
+          (assoc :extra-body (:extra-body provider-md))
+
+          (:hidden? provider-md)
+          (assoc :hidden? true))))))
 
 (defn provider-presets
   "All known provider presets, sorted for the 'Add Provider' picker."
   []
-  (let [order-rank (zipmap PRESET_ORDER (range))
-        ids        (into #{} (concat (keys svar-router/KNOWN_PROVIDERS)
-                               (map :provider/id (registry/registered-providers))))]
+  (let [order-rank
+        (zipmap PRESET_ORDER (range))
+
+        ids
+        (into #{}
+              (concat (keys svar-router/KNOWN_PROVIDERS)
+                      (map :provider/id (registry/registered-providers))))]
+
     (->> ids
-      (remove removed-provider-ids)
-      (keep provider-template)
-      (remove :hidden?)
-      ;; Drop presets with no human label. A label is only set when a vis
-      ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
-      ;; keys with no matching extension (e.g. :github-copilot-enterprise,
-      ;; :zai-coding) would otherwise render as blank, selectable rows after
-      ;; the last named preset in the "Add Provider" picker — and the TUI has
-      ;; no handling for them anyway.
-      (remove #(str/blank? (:label %)))
-      (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
-      vec)))
+         (remove removed-provider-ids)
+         (keep provider-template)
+         (remove :hidden?)
+         ;; Drop presets with no human label. A label is only set when a vis
+         ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
+         ;; keys with no matching extension (e.g. :github-copilot-enterprise,
+         ;; :zai-coding) would otherwise render as blank, selectable rows after
+         ;; the last named preset in the "Add Provider" picker — and the TUI has
+         ;; no handling for them anyway.
+         (remove #(str/blank? (:label %)))
+         (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
+         vec)))
 
 (defn display-label
   "Human-readable label for a provider id. Never persisted."
   [pid]
   (or (:label (registered-provider-metadata pid))
-    (some-> pid name str/capitalize)
-    "Provider"))
+      (some-> pid
+              name
+              str/capitalize)
+      "Provider"))
 
-(defn- trim-trailing-slashes
-  [s]
-  (str/replace (or s "") #"/+$" ""))
+(defn- trim-trailing-slashes [s] (str/replace (or s "") #"/+$" ""))
 
 (defn- catalog-base-url?
   "True when `url` is just Vis/svar catalog metadata for `provider-id`,
@@ -292,28 +322,26 @@
    fresher LLM endpoint from token exchange (for Copilot, the proxy host),
    and catalog defaults must not pin traffic to the stale bootstrap host."
   [provider-id url]
-  (= (some-> url trim-trailing-slashes)
-    (some-> (known-provider-base-url provider-id) trim-trailing-slashes)))
+  (= (some-> url
+             trim-trailing-slashes)
+     (some-> (known-provider-base-url provider-id)
+             trim-trailing-slashes)))
 
 (defn- provider-token-base-url
   [provider-id explicit-url api-url]
-  (cond
-    (and api-url (or (nil? explicit-url)
-                   (catalog-base-url? provider-id explicit-url)))
-    api-url
+  (cond (and api-url (or (nil? explicit-url) (catalog-base-url? provider-id explicit-url))) api-url
+        explicit-url explicit-url
+        :else api-url))
 
-    explicit-url explicit-url
-    :else api-url))
-
-(defn- github-copilot-provider-id? [provider-id]
-  (contains? #{:github-copilot-individual :github-copilot-business :github-copilot-enterprise} provider-id))
+(defn- github-copilot-provider-id?
+  [provider-id]
+  (contains? #{:github-copilot-individual :github-copilot-business :github-copilot-enterprise}
+             provider-id))
 
 (defn provider-model-visible?
   "True when svar's provider-scoped model filters allow this model id."
   [provider-id model-id]
-  (let [catalog-id (if (github-copilot-provider-id? provider-id)
-                     :github-copilot
-                     provider-id)]
+  (let [catalog-id (if (github-copilot-provider-id? provider-id) :github-copilot provider-id)]
     (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
       (boolean (visible? catalog-id model-id))
       true)))
@@ -329,14 +357,11 @@
 (defn model-name
   "Extract the model name string from a model (string or `{:name str}`)."
   [model]
-  (cond
-    (string? model) model
-    (map? model)    (:name model)
-    :else           nil))
+  (cond (string? model) model
+        (map? model) (:name model)
+        :else nil))
 
-(defn- zai-provider-id?
-  [provider-id]
-  (contains? #{:zai :zai-coding-plan} provider-id))
+(defn- zai-provider-id? [provider-id] (contains? #{:zai :zai-coding-plan} provider-id))
 
 (defn- zai-thinking-model?
   [model-name]
@@ -344,10 +369,12 @@
 
 (defn ->svar-model
   "Coerce a model representation to svar-native `{:name str}`."
-  ([model]
-   (->svar-model nil model))
+  ([model] (->svar-model nil model))
   ([provider-id model]
-   (when-let [n (some-> (model-name model) str str/trim not-empty)]
+   (when-let [n (some-> (model-name model)
+                        str
+                        str/trim
+                        not-empty)]
      (let [m (when (map? model) model)]
        (cond-> {:name n}
          ;; Carry through model metadata svar honors but vis historically
@@ -356,9 +383,14 @@
          ;; it's persisted into config from `svar/models!`'s native-endpoint
          ;; detection so the router uses the real window instead of svar's
          ;; conservative DEFAULT_CONTEXT_LIMIT. No value → svar falls back.
-         (:context m)      (assoc :context (:context m))
-         (:output-limit m) (assoc :output-limit (:output-limit m))
-         (some? (:tool-call? m)) (assoc :tool-call? (:tool-call? m))
+         (:context m)
+         (assoc :context (:context m))
+
+         (:output-limit m)
+         (assoc :output-limit (:output-limit m))
+
+         (some? (:tool-call? m))
+         (assoc :tool-call? (:tool-call? m))
 
          ;; Copilot model wire/reasoning policy lives in svar's
          ;; `:github-copilot` KNOWN overlay (Claude→:anthropic /v1/messages,
@@ -367,12 +399,11 @@
          ;; `normalize-provider`. Don't duplicate it here — a stale per-model
          ;; api-style would either be clobbered by the overlay or leak fields
          ;; (e.g. `:reasoning-effort?`) onto the Anthropic wire.
-
-         (and (zai-provider-id? provider-id)
-           (zai-thinking-model? n))
-         (assoc :reasoning? true
-           :reasoning-style :zai-thinking
-           :reasoning-effort? false))))))
+         (and (zai-provider-id? provider-id) (zai-thinking-model? n))
+         (assoc :reasoning?
+           true :reasoning-style
+           :zai-thinking :reasoning-effort?
+           false))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
@@ -394,46 +425,98 @@
    provider-agnostic and never references a concrete provider ns by
    name."
   [provider]
-  (let [pid                   (:id provider)
-        template              (provider-template pid)
-        api-key               (:api-key provider)
+  (let [pid
+        (:id provider)
+
+        template
+        (provider-template pid)
+
+        api-key
+        (:api-key provider)
+
         ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
         ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
         ;; nil value throws (null HTTP header value) — the reason local model
         ;; catalogs come back empty. Forward the catalog key when the caller
         ;; configured none. Cloud presets have no catalog key, so unaffected.
-        catalog-api-key       (:api-key (get svar-router/KNOWN_PROVIDERS pid))
-        models                (->> (:models provider) (keep #(->svar-model pid %)) vec)
-        explicit-url          (:base-url provider)
-        explicit-api-style    (or (:api-style provider) (:api-style template))
-        explicit-headers      (:llm-headers provider)
-        explicit-responses    (:responses-path provider)
+        catalog-api-key
+        (:api-key (get svar-router/KNOWN_PROVIDERS pid))
+
+        models
+        (->> (:models provider)
+             (keep #(->svar-model pid %))
+             vec)
+
+        explicit-url
+        (:base-url provider)
+
+        explicit-api-style
+        (or (:api-style provider) (:api-style template))
+
+        explicit-headers
+        (:llm-headers provider)
+
+        explicit-responses
+        (:responses-path provider)
+
         ;; Provider-default request-body params (e.g. LM Studio sampler
         ;; defaults from the preset). svar merges these as the lowest
         ;; precedence layer, so an explicit per-provider config override
         ;; and any per-turn :extra-body still win.
-        merged-extra-body     (not-empty (merge (:extra-body template) (:extra-body provider)))
-        get-token-fn          (when (nil? api-key)
-                                (some-> (registry/provider-by-id pid) :provider/get-token-fn))]
+        merged-extra-body
+        (not-empty (merge (:extra-body template) (:extra-body provider)))
+
+        get-token-fn
+        (when (nil? api-key)
+          (some-> (registry/provider-by-id pid)
+                  :provider/get-token-fn))]
+
     (if get-token-fn
-      (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)
-            url             (provider-token-base-url pid explicit-url api-url)
-            merged-headers  (or explicit-headers llm-headers)
-            merged-response (or explicit-responses responses-path)]
+      (let [{:keys [token api-url llm-headers responses-path]}
+            (get-token-fn)
+
+            url
+            (provider-token-base-url pid explicit-url api-url)
+
+            merged-headers
+            (or explicit-headers llm-headers)
+
+            merged-response
+            (or explicit-responses responses-path)]
+
         (cond-> {:id pid :models models :api-key token}
-          url               (assoc :base-url url)
-          explicit-api-style (assoc :api-style explicit-api-style)
-          merged-response   (assoc :responses-path merged-response)
-          merged-headers    (assoc :llm-headers merged-headers)
-          merged-extra-body (assoc :extra-body merged-extra-body)))
+          url
+          (assoc :base-url url)
+
+          explicit-api-style
+          (assoc :api-style explicit-api-style)
+
+          merged-response
+          (assoc :responses-path merged-response)
+
+          merged-headers
+          (assoc :llm-headers merged-headers)
+
+          merged-extra-body
+          (assoc :extra-body merged-extra-body)))
       (cond-> {:id pid :models models}
-        (or api-key
-          catalog-api-key) (assoc :api-key (or api-key catalog-api-key))
-        explicit-url        (assoc :base-url explicit-url)
-        explicit-api-style  (assoc :api-style explicit-api-style)
-        explicit-responses  (assoc :responses-path explicit-responses)
-        explicit-headers    (assoc :llm-headers explicit-headers)
-        merged-extra-body   (assoc :extra-body merged-extra-body)))))
+        (or api-key catalog-api-key)
+        (assoc :api-key (or api-key catalog-api-key))
+
+        explicit-url
+        (assoc :base-url explicit-url)
+
+        explicit-api-style
+        (assoc :api-style explicit-api-style)
+
+        explicit-responses
+        (assoc :responses-path explicit-responses)
+
+        explicit-headers
+        (assoc :llm-headers explicit-headers)
+
+        merged-extra-body
+        (assoc :extra-body merged-extra-body)))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
@@ -441,19 +524,17 @@
   [path]
   (let [f (io/file path)]
     (when (.exists f)
-      (try
-        (let [raw (edn/read-string (slurp f))]
-          (when (map? raw) raw))
-        (catch Exception _ nil)))))
+      (try (let [raw (edn/read-string (slurp f))]
+             (when (map? raw) raw))
+           (catch Exception _ nil)))))
 
 (defn- deep-merge-config
   [& maps]
   (letfn [(merge* [a b]
-            (cond
-              (nil? a) b
-              (nil? b) a
-              (and (map? a) (map? b)) (merge-with merge* a b)
-              :else b))]
+            (cond (nil? a) b
+                  (nil? b) a
+                  (and (map? a) (map? b)) (merge-with merge* a b)
+                  :else b))]
     (reduce merge* nil maps)))
 
 (defn load-global-config-raw
@@ -464,8 +545,12 @@
 (defn load-project-config-raw
   "Load only `<invocation-cwd>/.vis/config.edn` (or nil on read/parse error)."
   []
-  (let [global-file (io/file config-path)
-        project-file (io/file (project-config-path))]
+  (let [global-file
+        (io/file config-path)
+
+        project-file
+        (io/file (project-config-path))]
+
     (when-not (= (.getCanonicalPath global-file) (.getCanonicalPath project-file))
       (read-config-map (.getPath project-file)))))
 (defn load-project-root-config-raw
@@ -479,8 +564,8 @@
    win; nested maps merge; scalar/vector values replace."
   []
   (deep-merge-config (load-global-config-raw)
-    (load-project-config-raw)
-    (load-project-root-config-raw)))
+                     (load-project-config-raw)
+                     (load-project-root-config-raw)))
 
 (defn- apply-provider-metadata
   "Attach catalog metadata needed by the runtime while preserving the
@@ -494,40 +579,39 @@
       (and (nil? (:api-style provider)) (:api-style template))
       (assoc :api-style (:api-style template)))))
 
-(defn- apply-config-metadata [config]
-  (update config :providers #(mapv apply-provider-metadata %)))
+(defn- apply-config-metadata [config] (update config :providers #(mapv apply-provider-metadata %)))
 
 (defn load-config
   "Load provider config in svar-native syntax from `~/.vis/config.edn`."
   []
   (some-> (load-config-raw)
-    ((fn [raw] (when (seq (:providers raw)) raw)))
-    apply-config-metadata))
+          ((fn [raw]
+             (when (seq (:providers raw)) raw)))
+          apply-config-metadata))
 
-(defn- active-provider-entry [config]
-  (first (:providers config)))
+(defn- active-provider-entry [config] (first (:providers config)))
 
 (defn- provider-selection-changed?
   [previous-provider selected-provider]
-  (and selected-provider
-    (not= (:id previous-provider) (:id selected-provider))))
+  (and selected-provider (not= (:id previous-provider) (:id selected-provider))))
 
 (defn- emit-provider-selected!
   [{:keys [previous-provider provider config source]}]
-  (when-let [hook (some-> (:id provider) registry/provider-by-id :provider/on-selected-fn)]
-    (try
-      (hook {:previous-provider previous-provider
-             :provider          provider
-             :config            config
-             :source            source})
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::provider-on-selected-failed
-                   :data  {:provider (:id provider)
-                           :source   source
-                           :error    (ex-message t)
-                           :ex-class (.getName (class t))}
-                   :msg   (str "Provider on-selected hook for " (:id provider)
-                            " threw; selection continues")})))))
+  (when-let [hook (some-> (:id provider)
+                          registry/provider-by-id
+                          :provider/on-selected-fn)]
+    (try (hook
+           {:previous-provider previous-provider :provider provider :config config :source source})
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-on-selected-failed
+                      :data {:provider (:id provider)
+                             :source source
+                             :error (ex-message t)
+                             :ex-class (.getName (class t))}
+                      :msg (str "Provider on-selected hook for "
+                                (:id provider)
+                                " threw; selection continues")})))))
 
 (defn save-config!
   "Persist provider config to `~/.vis/config.edn`.
@@ -538,16 +622,22 @@
    config persistence."
   ([config] (save-config! config nil))
   ([config source]
-   (let [previous-provider (active-provider-entry (load-global-config-raw))
-         selected-provider (active-provider-entry config)
-         dir (io/file config-dir)]
+   (let [previous-provider
+         (active-provider-entry (load-global-config-raw))
+
+         selected-provider
+         (active-provider-entry config)
+
+         dir
+         (io/file config-dir)]
+
      (when-not (.exists dir) (.mkdirs dir))
      (spit config-path (pr-str config))
      (when (provider-selection-changed? previous-provider selected-provider)
        (emit-provider-selected! {:previous-provider previous-provider
-                                 :provider          selected-provider
-                                 :config            config
-                                 :source            source})))))
+                                 :provider selected-provider
+                                 :config config
+                                 :source source})))))
 
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from
@@ -556,14 +646,18 @@
    true when the global file changed."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
-   (let [raw        (or (load-global-config-raw) {})
-         providers  (vec (:providers raw))
-         providers* (vec (remove #(= provider-id (:id %)) providers))]
+   (let [raw
+         (or (load-global-config-raw) {})
+
+         providers
+         (vec (:providers raw))
+
+         providers*
+         (vec (remove #(= provider-id (:id %)) providers))]
+
      (when (not= providers providers*)
-       (save-config! (if (seq providers*)
-                       (assoc raw :providers providers*)
-                       (dissoc raw :providers))
-         source)
+       (save-config! (if (seq providers*) (assoc raw :providers providers*) (dissoc raw :providers))
+                     source)
        true))))
 
 (defn resolve-config
@@ -572,16 +666,17 @@
   ([] (resolve-config nil))
   ([explicit-config]
    (or explicit-config
-     (load-config)
-     (throw (ex-info "No AI provider is configured yet."
-              {:type :vis/no-provider})))))
+       (load-config)
+       (throw (ex-info "No AI provider is configured yet." {:type :vis/no-provider})))))
 
 (defn provider-configured?
   "True when at least one provider is configured (global or project config).
    The single predicate entry points use to branch onboarding vs normal start —
    never trips the `resolve-config` throw."
   []
-  (boolean (some-> (load-config) :providers seq)))
+  (boolean (some-> (load-config)
+                   :providers
+                   seq)))
 
 (defn first-run?
   "True on a genuine FIRST run: no provider configured AND no global
@@ -589,15 +684,13 @@
    (brand-new user) from a returning user who merely has no provider right now
    (e.g. removed their only one)."
   []
-  (and (not (provider-configured?))
-    (not (.exists (io/file config-path)))))
+  (and (not (provider-configured?)) (not (.exists (io/file config-path)))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
    opts map. Anything else is silently dropped so unknown keys can't crash
    the router build."
-  #{:rate-limit :network :budget :tokens
-    :failure-threshold :recovery-ms :transient-status-codes
+  #{:rate-limit :network :budget :tokens :failure-threshold :recovery-ms :transient-status-codes
     :window-ms :cooldown-ms :max-wait-ms})
 
 (defn router-opts
@@ -623,9 +716,7 @@
    authoritative key reference."
   [config]
   (let [block (:router config)]
-    (if (map? block)
-      (select-keys block router-opts-keys)
-      {})))
+    (if (map? block) (select-keys block router-opts-keys) {})))
 
 (def ^:private extension-env-config-key :environment)
 
@@ -636,22 +727,29 @@
    environment; extension code should call `extension-env-value` when
    it wants config-over-env resolution."
   []
-  (let [raw (load-config-raw)
-        m   (when (map? raw) (get raw extension-env-config-key))]
+  (let [raw
+        (load-config-raw)
+
+        m
+        (when (map? raw) (get raw extension-env-config-key))]
+
     (if (map? m)
       (into {}
-        (keep (fn [[k v]]
-                (when (and (string? k) (string? v) (not (str/blank? v)))
-                  [k v])))
-        m)
+            (keep (fn [[k v]]
+                    (when (and (string? k) (string? v) (not (str/blank? v))) [k v])))
+            m)
       {})))
 
 (defn extension-env-status
   "Return source and value metadata for an extension-declared env var.
    `:source` is one of `:config`, `:env`, or `:unset`."
   [name]
-  (let [name'     (str name)
-        overrides (extension-env-overrides)]
+  (let [name'
+        (str name)
+
+        overrides
+        (extension-env-overrides)]
+
     (if-let [configured (get overrides name')]
       {:name name' :source :config :value configured}
       (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]
@@ -669,16 +767,27 @@
    Blank/nil `value` removes the override, revealing the process env
    value again if one exists. Preserves all other config keys."
   [name value]
-  (let [name' (str name)
-        raw   (or (load-global-config-raw) {})
-        value' (when (string? value) (not-empty (str/trim value)))
-        envs  (cond-> (or (get raw extension-env-config-key) {})
-                value' (assoc name' value')
-                (not value') (dissoc name'))]
+  (let [name'
+        (str name)
+
+        raw
+        (or (load-global-config-raw) {})
+
+        value'
+        (when (string? value) (not-empty (str/trim value)))
+
+        envs
+        (cond-> (or (get raw extension-env-config-key) {})
+          value'
+          (assoc name' value')
+
+          (not value')
+          (dissoc name'))]
+
     (save-config! (if (seq envs)
                     (assoc raw extension-env-config-key envs)
                     (dissoc raw extension-env-config-key))
-      :environment)
+                  :environment)
     (extension-env-status name')))
 
 (defn resolve-db-spec
@@ -687,10 +796,10 @@
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec
-     (when-let [env-path (System/getenv "VIS_DB_PATH")]
-       {:backend :sqlite :path env-path})
-     (:db-spec (load-config-raw))
-     default-db-spec)))
+       (when-let [env-path (System/getenv "VIS_DB_PATH")]
+         {:backend :sqlite :path env-path})
+       (:db-spec (load-config-raw))
+       default-db-spec)))
 
 ;; =============================================================================
 ;; Active provider state
@@ -714,9 +823,9 @@
   "Return the current provider config. Loads from disk on first call."
   []
   (or @active-config
-    (let [cfg (load-config)]
-      (reset! active-config cfg)
-      cfg)))
+      (let [cfg (load-config)]
+        (reset! active-config cfg)
+        cfg)))
 
 (defn active-provider
   "Return the first (primary) provider from config, or nil."
@@ -726,16 +835,17 @@
 (defn active-model
   "Return the primary model name string, or nil."
   []
-  (some-> (active-provider) :models first model-name))
+  (some-> (active-provider)
+          :models
+          first
+          model-name))
 
 (defn provider-ids
   "Set of configured provider `:id` keywords."
   []
   (into #{} (map :id) (:providers (or (current-config) {:providers []}))))
 
-(defn has-provider? [provider-id]
-  (contains? (provider-ids) provider-id))
+(defn has-provider? [provider-id] (contains? (provider-ids) provider-id))
 
-(defn reload-config! []
-  (reset! active-config (load-config)))
+(defn reload-config! [] (reset! active-config (load-config)))
 

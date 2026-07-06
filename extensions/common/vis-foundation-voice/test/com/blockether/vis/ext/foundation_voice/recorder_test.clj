@@ -3,8 +3,8 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe recorder-test
-  (it "builds the expected mono 16k PCM format"
-    (let [fmt (recorder/audio-format)]
-      (expect (= 16000.0 (.getSampleRate fmt)))
-      (expect (= 1 (.getChannels fmt)))
-      (expect (= 16 (.getSampleSizeInBits fmt))))))
+             (it "builds the expected mono 16k PCM format"
+                 (let [fmt (recorder/audio-format)]
+                   (expect (= 16000.0 (.getSampleRate fmt)))
+                   (expect (= 1 (.getChannels fmt)))
+                   (expect (= 16 (.getSampleSizeInBits fmt))))))

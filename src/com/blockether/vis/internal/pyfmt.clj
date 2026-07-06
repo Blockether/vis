@@ -17,7 +17,10 @@
 
 (def ^:private format*
   ;; LRU-bounded so a long session's distinct code blocks can't grow unbounded.
-  (memo/lru (fn [^String code] (ruff/format-or code)) :lru/threshold 1024))
+  (memo/lru (fn [^String code]
+              (ruff/format-or code))
+            :lru/threshold
+            1024))
 
 (defn beautify-python
   "ruff-format `code` (cached). nil/blank -> \"\". Never throws — falls back to

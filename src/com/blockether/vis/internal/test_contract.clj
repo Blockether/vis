@@ -40,56 +40,54 @@
      :failures  [{:ns :test :message :file :line} ...]
      :errors    the erroring-test subset of :failures
      :output    captured run log (framework report + error/exception traces)"
-  (:require
-   [clojure.spec.alpha :as s]
-   [clojure.string :as str]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]))
 
 ;; =============================================================================
 ;; Selector specs
 ;; =============================================================================
 
-(s/def ::ns       (s/or :one string? :many (s/coll-of string?)))
-(s/def ::only     (s/coll-of string?))
-(s/def ::include  (s/coll-of string?))
-(s/def ::exclude  (s/coll-of string?))
+(s/def ::ns
+  (s/or :one string?
+        :many (s/coll-of string?)))
+(s/def ::only (s/coll-of string?))
+(s/def ::include (s/coll-of string?))
+(s/def ::exclude (s/coll-of string?))
 
 ;; The selector map a runner tool accepts on its opts dict (all keys optional).
-(s/def ::selectors
-  (s/keys :opt-un [::ns ::only ::include ::exclude]))
+(s/def ::selectors (s/keys :opt-un [::ns ::only ::include ::exclude]))
 
 ;; =============================================================================
 ;; Result specs
 ;; =============================================================================
 
-(s/def ::language  string?)
-(s/def ::mode      #{"repl" "cli"})
+(s/def ::language string?)
+(s/def ::mode #{"repl" "cli"})
 (s/def ::framework string?)
-(s/def ::tool      string?)
-(s/def ::test      (s/nilable string?))
-(s/def ::message   (s/nilable string?))
-(s/def ::file      (s/nilable string?))
-(s/def ::line      (s/nilable int?))
+(s/def ::tool string?)
+(s/def ::test (s/nilable string?))
+(s/def ::message (s/nilable string?))
+(s/def ::file (s/nilable string?))
+(s/def ::line (s/nilable int?))
 
-(s/def ::failure
-  (s/keys :opt-un [::ns ::test ::message ::file ::line]))
+(s/def ::failure (s/keys :opt-un [::ns ::test ::message ::file ::line]))
 
-(s/def ::total    nat-int?)
-(s/def ::pass     nat-int?)
-(s/def ::fail     nat-int?)
+(s/def ::total nat-int?)
+(s/def ::pass nat-int?)
+(s/def ::fail nat-int?)
 (s/def ::selected nat-int?)
-(s/def ::skipped  nat-int?)
+(s/def ::skipped nat-int?)
 (s/def ::failures (s/coll-of ::failure))
-(s/def ::errors   (s/coll-of ::failure))
-(s/def ::output   string?)
+(s/def ::errors (s/coll-of ::failure))
+(s/def ::output string?)
 
 ;; The uniform result map every language pack's runner returns. :output is the
 ;; captured run log (the framework's own printed report plus any error /
 ;; exception stacktraces written to *out* / *err*); :errors is the erroring-test
 ;; subset of :failures.
 (s/def ::result
-  (s/keys :opt-un [::language ::mode ::framework ::tool ::ns
-                   ::total ::pass ::fail ::selected ::skipped
-                   ::failures ::errors ::output]))
+  (s/keys :opt-un [::language ::mode ::framework ::tool ::ns ::total ::pass ::fail ::selected
+                   ::skipped ::failures ::errors ::output]))
 
 ;; =============================================================================
 ;; Key vectors DERIVED from the specs (spec is the single source of truth)
@@ -103,7 +101,7 @@
   [spec]
   (let [opts (apply hash-map (rest (s/form spec)))]
     (->> (concat (:req-un opts) (:opt-un opts))
-      (mapv (comp keyword name)))))
+         (mapv (comp keyword name)))))
 
 (def selector-keys
   "The optional selector keys a runner tool accepts on its opts dict. Derived
@@ -124,11 +122,14 @@
    non-blank strings. Selector values arrive as strings (strings-only
    boundary), so `str` is total - no keyword branch."
   [x]
-  (let [xs (cond
-             (nil? x)        []
-             (sequential? x) x
-             :else           [x])]
-    (->> xs (map str) (map str/trim) (remove str/blank?) vec)))
+  (let [xs (cond (nil? x) []
+                 (sequential? x) x
+                 :else [x])]
+    (->> xs
+         (map str)
+         (map str/trim)
+         (remove str/blank?)
+         vec)))
 
 (defn normalize-selectors
   "Normalize a raw selector map (the Python dict the tool received) into the
@@ -136,8 +137,8 @@
    :ns accepts a string OR a vector; :namespace / :namespaces are aliases for :ns."
   [m]
   (let [m (or m {})]
-    {:nses    (->str-vec (or (:ns m) (:namespace m) (:namespaces m)))
-     :only    (->str-vec (:only m))
+    {:nses (->str-vec (or (:ns m) (:namespace m) (:namespaces m)))
+     :only (->str-vec (:only m))
      :include (->str-vec (:include m))
      :exclude (->str-vec (:exclude m))}))
 
@@ -147,12 +148,19 @@
    strings on it. Returns true when the test should RUN. exclude wins over
    include/only; only narrows by name; include gates by tag when present."
   [{:keys [only include exclude]} test-name tags]
-  (let [tags (set tags)
-        only (set only)
-        inc* (set include)
-        exc* (set exclude)]
-    (cond
-      (some exc* tags)                          false
-      (and (seq only) (not (only test-name)))   false
-      (and (seq inc*) (not (some inc* tags)))   false
-      :else                                     true)))
+  (let [tags
+        (set tags)
+
+        only
+        (set only)
+
+        inc*
+        (set include)
+
+        exc*
+        (set exclude)]
+
+    (cond (some exc* tags) false
+          (and (seq only) (not (only test-name))) false
+          (and (seq inc*) (not (some inc* tags))) false
+          :else true)))

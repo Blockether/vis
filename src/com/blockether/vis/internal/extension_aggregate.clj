@@ -7,69 +7,74 @@
 
    The db-* persistence facade remains the privileged/admin surface for
    inspecting rows across extensions."
-  (:require
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.persistance :as persistance]))
+  (:require [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.persistance :as persistance]))
 
-(defn- safe-deref [a]
-  (when a
-    (try
-      @a
-      (catch Throwable _ nil))))
+(defn- safe-deref [a] (when a (try @a (catch Throwable _ nil))))
 
-(defn- db-info! [env]
+(defn- db-info!
+  [env]
   (or (:db-info env)
-    (throw (ex-info "Extension aggregate API requires :db-info in env"
-             {:type :extension-aggregate/no-db-info}))))
+      (throw (ex-info "Extension aggregate API requires :db-info in env"
+                      {:type :extension-aggregate/no-db-info}))))
 
-(defn- current-extension-id! []
+(defn- current-extension-id!
+  []
   (or (extension/current-extension-id)
-    (throw (ex-info "Extension aggregate API requires extension callback context"
-             {:type :extension-aggregate/no-extension-context}))))
+      (throw (ex-info "Extension aggregate API requires extension callback context"
+                      {:type :extension-aggregate/no-extension-context}))))
 
-(defn- reject-extension-id! [m]
-  (when (or (contains? m :extension-id)
-          (contains? m :extension_id))
+(defn- reject-extension-id!
+  [m]
+  (when (or (contains? m :extension-id) (contains? m :extension_id))
     (throw (ex-info "extension-id is runtime-owned; extension callers must not supply it"
-             {:type :extension-aggregate/extension-id-forbidden
-              :keys (vec (filter #(contains? m %) [:extension-id :extension_id]))}))))
+                    {:type :extension-aggregate/extension-id-forbidden
+                     :keys (vec (filter #(contains? m %) [:extension-id :extension_id]))}))))
 
-(defn- require-non-blank [kind v]
+(defn- require-non-blank
+  [kind v]
   (when (or (nil? v) (and (string? v) (empty? (.trim ^String v))))
     (throw (ex-info (str "Extension aggregate requires " (name kind))
-             {:type :extension-aggregate/missing-required
-              :key kind})))
+                    {:type :extension-aggregate/missing-required :key kind})))
   v)
 
 (defn- read-turn-state-field
   "Helper: pull a field from the single :turn-state-atom on env."
   [env k]
-  (some-> (:turn-state-atom env) deref (get k)))
+  (some-> (:turn-state-atom env)
+          deref
+          (get k)))
 
-(defn- latest-turn-state-id [env]
-  (let [db-info (db-info! env)
-        turn-id (read-turn-state-field env :session-turn-id)]
+(defn- latest-turn-state-id
+  [env]
+  (let [db-info
+        (db-info! env)
+
+        turn-id
+        (read-turn-state-field env :session-turn-id)]
+
     (when turn-id
       (some->> (persistance/db-list-session-turn-states db-info turn-id)
-        (sort-by :version)
-        last
-        :id))))
+               (sort-by :version)
+               last
+               :id))))
 
-(defn- current-session-state-id [env]
+(defn- current-session-state-id
+  [env]
   (let [db-info (db-info! env)]
     (or (:session-state-id env)
-      (safe-deref (:session-state-id-atom env))
-      (when-let [session-id (:session-id env)]
-        (persistance/db-latest-session-state-id db-info session-id)))))
+        (safe-deref (:session-state-id-atom env))
+        (when-let [session-id (:session-id env)]
+          (persistance/db-latest-session-state-id db-info session-id)))))
 
-(defn- require-scope-id [scope k v]
+(defn- require-scope-id
+  [scope k v]
   (or v
-    (throw (ex-info (str "Cannot resolve extension aggregate " (name scope) " scope")
-             {:type :extension-aggregate/scope-unavailable
-              :scope scope
-              :missing k}))))
+      (throw (ex-info (str "Cannot resolve extension aggregate " (name scope) " scope")
+                      {:type :extension-aggregate/scope-unavailable :scope scope :missing k}))))
 
-(defn- explicit-scope [scope]
+(defn- explicit-scope
+  [scope]
   (cond-> {}
     (:session-soul-id scope)
     (assoc :session-soul-id (:session-soul-id scope))
@@ -101,74 +106,63 @@
     (:block-id scope)
     (assoc :iteration-block-id (:block-id scope))))
 
-(defn- resolve-scope [env scope]
-  (cond
-    (nil? scope)
-    {}
+(defn- resolve-scope
+  [env scope]
+  (cond (nil? scope) {}
+        (= :global scope) {}
+        (map? scope) (explicit-scope scope)
+        (= :session scope) {:session-soul-id (require-scope-id scope :session-id (:session-id env))}
+        (= :session-state scope)
+        {:session-soul-id (:session-id env)
+         :session-state-id
+         (require-scope-id scope :session-state-id (current-session-state-id env))}
+        (= :turn-state scope) {:session-soul-id (:session-id env)
+                               :session-state-id (current-session-state-id env)
+                               :session-turn-state-id (require-scope-id scope
+                                                                        :session-turn-state-id
+                                                                        (latest-turn-state-id env))}
+        (= :iteration scope)
+        {:session-soul-id (:session-id env)
+         :session-state-id (current-session-state-id env)
+         :session-turn-state-id (latest-turn-state-id env)
+         :iteration-id
+         (require-scope-id scope :iteration-id (read-turn-state-field env :iteration-id))}
+        (= :block scope)
+        (let [iteration-id
+              (require-scope-id scope :iteration-id (read-turn-state-field env :iteration-id))
 
-    (= :global scope)
-    {}
+              form-index
+              (read-turn-state-field env :form-idx)]
 
-    (map? scope)
-    (explicit-scope scope)
+          {:session-soul-id (:session-id env)
+           :session-state-id (current-session-state-id env)
+           :session-turn-state-id (latest-turn-state-id env)
+           :iteration-id iteration-id
+           :iteration-form-index (require-scope-id scope :iteration-form-index form-index)})
+        :else (throw (ex-info "Unknown extension aggregate scope"
+                              {:type :extension-aggregate/unknown-scope :scope scope}))))
 
-    (= :session scope)
-    {:session-soul-id (require-scope-id scope :session-id (:session-id env))}
-
-    (= :session-state scope)
-    {:session-soul-id  (:session-id env)
-     :session-state-id (require-scope-id scope :session-state-id
-                         (current-session-state-id env))}
-
-    (= :turn-state scope)
-    {:session-soul-id       (:session-id env)
-     :session-state-id      (current-session-state-id env)
-     :session-turn-state-id (require-scope-id scope :session-turn-state-id
-                              (latest-turn-state-id env))}
-
-    (= :iteration scope)
-    {:session-soul-id       (:session-id env)
-     :session-state-id      (current-session-state-id env)
-     :session-turn-state-id (latest-turn-state-id env)
-     :iteration-id               (require-scope-id scope :iteration-id
-                                   (read-turn-state-field env :iteration-id))}
-
-    (= :block scope)
-    (let [iteration-id (require-scope-id scope :iteration-id
-                         (read-turn-state-field env :iteration-id))
-          form-index  (read-turn-state-field env :form-idx)]
-      {:session-soul-id       (:session-id env)
-       :session-state-id      (current-session-state-id env)
-       :session-turn-state-id (latest-turn-state-id env)
-       :iteration-id               iteration-id
-       :iteration-form-index      (require-scope-id scope :iteration-form-index form-index)})
-
-    :else
-    (throw (ex-info "Unknown extension aggregate scope"
-             {:type :extension-aggregate/unknown-scope
-              :scope scope}))))
-
-(defn- normalize-row [env row]
+(defn- normalize-row
+  [env row]
   (when-not (map? row)
     (throw (ex-info "Extension aggregate row must be a map"
-             {:type :extension-aggregate/invalid-row
-              :got (type row)})))
+                    {:type :extension-aggregate/invalid-row :got (type row)})))
   (reject-extension-id! row)
   (merge (dissoc row :key :scope)
-    {:extension-id  (current-extension-id!)
-     :aggregate-key (require-non-blank :key (or (:aggregate-key row) (:key row)))
-     :kind          (require-non-blank :kind (:kind row))}
-    (resolve-scope env (or (:scope row) :global))))
+         {:extension-id (current-extension-id!)
+          :aggregate-key (require-non-blank :key (or (:aggregate-key row) (:key row)))
+          :kind (require-non-blank :kind (:kind row))}
+         (resolve-scope env (or (:scope row) :global))))
 
-(defn- normalize-query [env query]
+(defn- normalize-query
+  [env query]
   (when-not (map? query)
     (throw (ex-info "Extension aggregate query must be a map"
-             {:type :extension-aggregate/invalid-query
-              :got (type query)})))
+                    {:type :extension-aggregate/invalid-query :got (type query)})))
   (reject-extension-id! query)
   (cond-> (merge (dissoc query :key :scope)
-            {:extension-id (current-extension-id!)}
-            (resolve-scope env (:scope query)))
+                 {:extension-id (current-extension-id!)}
+                 (resolve-scope env (:scope query)))
     (or (:aggregate-key query) (:key query))
     (assoc :aggregate-key (or (:aggregate-key query) (:key query)))))
 
@@ -206,13 +200,14 @@
   "Atomic singleton update. Reads the current content for query, applies f, and
    writes the returned value as :content. Query must include :key and :kind."
   [env query f & args]
-  (let [row (normalize-query env (cond-> query (not (contains? query :scope)) (assoc :scope :global)))]
+  (let [row (normalize-query env
+                             (cond-> query
+                               (not (contains? query :scope))
+                               (assoc :scope :global)))]
     (when-not (:aggregate-key row)
       (throw (ex-info "extension-update-aggregate! requires :key"
-               {:type :extension-aggregate/missing-required
-                :key :key})))
+                      {:type :extension-aggregate/missing-required :key :key})))
     (when-not (:kind row)
       (throw (ex-info "extension-update-aggregate! requires :kind"
-               {:type :extension-aggregate/missing-required
-                :key :kind})))
+                      {:type :extension-aggregate/missing-required :key :kind})))
     (persistance/db-swap-extension-aggregate! (db-info! env) row f args)))

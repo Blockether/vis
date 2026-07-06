@@ -6,10 +6,9 @@
    sandbox `session` dict, emitting a fenced Python `session = {…}` block — so the
    visible embed and the runtime value share one canonical shape, and
    `render-ctx-delta` mutates that same `session` with `session[...] = …` lines."
-  (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.ctx-engine :as eng]
-   [com.blockether.vis.internal.env-python :as env]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.ctx-engine :as eng]
+            [com.blockether.vis.internal.env-python :as env]))
 
 ;; =============================================================================
 ;; Knobs
@@ -48,10 +47,10 @@
    (array-map) so the ctx-delta stays stable."
   [ws]
   (if (map? ws)
-    (reduce-kv
-      (fn [m k v]
-        (if (contains? workspace-drop-keys k) m (assoc m k v)))
-      (array-map) ws)
+    (reduce-kv (fn [m k v]
+                 (if (contains? workspace-drop-keys k) m (assoc m k v)))
+               (array-map)
+               ws)
     (or ws {})))
 
 (defn project-ctx
@@ -66,17 +65,26 @@
   ([view _opts]
    ;; Keys are BARE on purpose: the engine view's `session_*` prefix folds
    ;; to bare Python dict keys. Strings-only — this map crosses the boundary.
-   (cond-> (array-map
-             "id"    (get view "session_id")
-             "turn"  (get view "session_turn")
-             "scope" (get view "session_scope"))
+   (cond-> (array-map "id" (get view "session_id")
+                      "turn" (get view "session_turn")
+                      "scope" (get view "session_scope"))
      (get view "session_utilization")
      (assoc "utilization" (get view "session_utilization"))
-     true (assoc "workspace" (normalize-workspace (get view "session_workspace")))
-     (get view "session_env") (assoc "env" (get view "session_env"))
-     (not-empty (get view "session_routing")) (assoc "routing" (get view "session_routing"))
-     (not-empty (get view "session_resources")) (assoc "resources" (get view "session_resources"))
-     (not-empty (get view "session_symbols")) (assoc "symbols" (get view "session_symbols")))))
+
+     true
+     (assoc "workspace" (normalize-workspace (get view "session_workspace")))
+
+     (get view "session_env")
+     (assoc "env" (get view "session_env"))
+
+     (not-empty (get view "session_routing"))
+     (assoc "routing" (get view "session_routing"))
+
+     (not-empty (get view "session_resources"))
+     (assoc "resources" (get view "session_resources"))
+
+     (not-empty (get view "session_symbols"))
+     (assoc "symbols" (get view "session_symbols")))))
 
 (def ^:private static-context-keys
   "The ambient session keys the model needs as STANDING context — embedded
@@ -90,11 +98,18 @@
    The host clock (`[:env :host :clock]`) is stripped: it ticks every render,
    so leaving it in would make the per-iteration change-diff fire every time."
   [view]
-  (let [full (project-ctx view)
-        m    (reduce (fn [m k] (if (contains? full k) (assoc m k (get full k)) m))
-               (array-map) static-context-keys)]
+  (let [full
+        (project-ctx view)
+
+        m
+        (reduce (fn [m k]
+                  (if (contains? full k) (assoc m k (get full k)) m))
+                (array-map)
+                static-context-keys)]
+
     (cond-> m
-      (get-in m ["env" "host" "clock"]) (update-in ["env" "host"] dissoc "clock"))))
+      (get-in m ["env" "host" "clock"])
+      (update-in ["env" "host"] dissoc "clock"))))
 
 (defn render-ctx-static
   "Render the standing session context (workspace / env / routing / resources /
@@ -106,12 +121,11 @@
   [{:keys [ctx warnings]}]
   (let [m (project-ctx-static (eng/session-view ctx warnings))]
     (when (seq m)
-      (str "```python\n"
-        "# Your live session context (read-only — never reassign `session`).\n"
-        "# The host keeps it current; mid-session changes arrive as later\n"
-        "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
-        "session = " (env/ctx->python-str m) "\n"
-        "```"))))
+      (str "```python\n" "# Your live session context (read-only — never reassign `session`).\n"
+           "# The host keeps it current; mid-session changes arrive as later\n"
+           "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
+           "session = " (env/ctx->python-str m)
+           "\n" "```"))))
 
 (defn ctx-static-map
   "The standing ctx as a MAP (`project-ctx-static`) — the data behind
@@ -126,8 +140,12 @@
    stability); live token usage instead rides as a cheap appended
    `session[\"utilization\"] = …` delta against the frozen baseline."
   [{:keys [ctx warnings]}]
-  (let [view (eng/session-view ctx warnings)
-        m    (project-ctx-static view)]
+  (let [view
+        (eng/session-view ctx warnings)
+
+        m
+        (project-ctx-static view)]
+
     (cond-> m
       (get view "session_utilization")
       (assoc "utilization" (get view "session_utilization")))))
@@ -148,16 +166,19 @@
   [path prev cur]
   (if (and (map? prev) (map? cur))
     (mapcat (fn [k]
-              (let [pv (get prev k ::absent), cv (get cur k ::absent)]
-                (cond
-                  (= cv ::absent)           [(str "del session" (ctx-path-str (conj path k)))]
-                  (= pv cv)                 nil
-                  (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
-                  :else                     [(str "session" (ctx-path-str (conj path k))
-                                               " = " (env/ctx->python-str cv))])))
-      (distinct (concat (keys prev) (keys cur))))
-    (when (not= prev cur)
-      [(str "session" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
+              (let [pv
+                    (get prev k ::absent)
+
+                    cv
+                    (get cur k ::absent)]
+
+                (cond (= cv ::absent) [(str "del session" (ctx-path-str (conj path k)))]
+                      (= pv cv) nil
+                      (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
+                      :else [(str "session" (ctx-path-str (conj path k))
+                                  " = " (env/ctx->python-str cv))])))
+            (distinct (concat (keys prev) (keys cur))))
+    (when (not= prev cur) [(str "session" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
 
 (defn render-ctx-delta
   "Structural Python delta of the standing ctx between the previously-sent map
@@ -186,12 +207,13 @@
    loop)."
   [index]
   (or (get @op-index-fold-cache index)
-    (let [folded (into {}
-                   (map (fn [[op v]] [(env/sym->py-name (symbol op)) v]))
-                   index)]
-      (swap! op-index-fold-cache
-        (fn [m] (assoc (if (> (count m) 8) {} m) index folded)))
-      folded)))
+      (let [folded (into {}
+                         (map (fn [[op v]]
+                                [(env/sym->py-name (symbol op)) v]))
+                         index)]
+        (swap! op-index-fold-cache (fn [m]
+                                     (assoc (if (> (count m) 8) {} m) index folded)))
+        folded)))
 
 (defn render-form-value
   "THE model-facing string for one tool/form VALUE: the canonical

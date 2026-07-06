@@ -14,8 +14,12 @@
    fully-qualified, in-scope symbol). Copies the value and merges the source
    var's :doc/:arglists onto the alias var. Returns the new var."
   [alias src]
-  `(let [sv# (var ~src)
-         v#  (def ~alias ~src)]
+  `(let [sv#
+         (var ~src)
+
+         v#
+         (def ~alias ~src)]
+
      (alter-meta! v# merge (select-keys (meta sv#) [:doc :arglists]))
      v#))
 
@@ -30,9 +34,8 @@
    Replaces a wall of hand-written `(def alias ns/src)` lines with one declarative
    list — same value semantics, plus the source doc/arglists carried across."
   [& specs]
-  `(do
-     ~@(for [spec specs]
-         (if (vector? spec)
-           `(import-var ~(first spec) ~(second spec))
-           `(import-var ~(symbol (name spec)) ~spec)))
-     nil))
+  `(do ~@(for [spec specs]
+           (if (vector? spec)
+             `(import-var ~(first spec) ~(second spec))
+             `(import-var ~(symbol (name spec)) ~spec)))
+       nil))

@@ -26,8 +26,8 @@
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
-  (:import [dev.kreuzberg.treesitterlanguagepack
-            TreeSitterLanguagePack ProcessConfig ProcessResult StructureItem Span]))
+  (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack ProcessConfig ProcessResult
+            StructureItem Span]))
 
 (defn detect-language
   "tree-sitter language name for `path` (by extension/shebang), or nil. NOTE: the
@@ -46,10 +46,9 @@
    normal content and would fire false positives. Real programming languages plus
    the STRICT structured-config formats (json/yaml/toml). This is the vetted subset
    the syntax guard runs on; extend it as vis takes on more languages."
-  #{"clojure" "python" "rust" "javascript" "typescript" "tsx" "java" "kotlin"
-    "go" "ruby" "c" "cpp" "csharp" "php" "scala" "swift" "dart" "zig" "lua"
-    "bash" "elixir" "haskell" "ocaml" "elm" "julia" "r" "perl" "vim"
-    "json" "yaml" "toml"})
+  #{"clojure" "python" "rust" "javascript" "typescript" "tsx" "java" "kotlin" "go" "ruby" "c" "cpp"
+    "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml" "elm"
+    "julia" "r" "perl" "vim" "json" "yaml" "toml"})
 
 (defn code-language
   "The tree-sitter language for `path` IFF it is a vetted CODE language
@@ -63,11 +62,15 @@
 (defn- structure-items
   "List<StructureItem> for `source` parsed as `language` (empty when none)."
   [^String source ^String language]
-  (let [cfg            (-> (ProcessConfig/builder)
-                         (.withLanguage language)
-                         (.withStructure true)
-                         (.build))
-        ^ProcessResult res (TreeSitterLanguagePack/process source cfg)]
+  (let [cfg
+        (-> (ProcessConfig/builder)
+            (.withLanguage language)
+            (.withStructure true)
+            (.build))
+
+        ^ProcessResult res
+        (TreeSitterLanguagePack/process source cfg)]
+
     (or (.structure res) [])))
 
 (defn node-span
@@ -75,15 +78,22 @@
    `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
    Used by the structural `move` op to extract a node's exact source text by name."
   [^String source ^String language ^String target kind]
-  (let [k (some-> kind str str/lower-case)]
+  (let [k (some-> kind
+                  str
+                  str/lower-case)]
     (some (fn [^StructureItem it]
             (when (and (= target (.name it))
-                    (or (nil? k) (= k (some-> (.kind it) str str/lower-case))))
+                       (or (nil? k)
+                           (= k
+                              (some-> (.kind it)
+                                      str
+                                      str/lower-case))))
               (let [^Span span (.span it)]
                 [(.startLine span) (.endLine span)])))
-      (structure-items source language))))
+          (structure-items source language))))
 
-(defn- line-text [lines ln]
+(defn- line-text
+  [lines ln]
   ;; lines is 0-based; ln is 1-based.
   (nth lines (dec ln) ""))
 
@@ -93,56 +103,101 @@
    `docComment` for languages that carry docstrings (e.g. Clojure def-forms)."
   [^StructureItem it]
   (when-let [d (.docComment it)]
-    (when-let [line (->> (str/split-lines d) (map str/trim) (remove str/blank?) first)]
+    (when-let [line (->> (str/split-lines d)
+                         (map str/trim)
+                         (remove str/blank?)
+                         first)]
       (if (> (count line) 72) (str (subs line 0 71) "…") line))))
 
-(defn- fmt-item [lines ^StructureItem it depth]
-  (let [^Span span (.span it)
+(defn- fmt-item
+  [lines ^StructureItem it depth]
+  (let [^Span span
+        (.span it)
+
         ;; tree-sitter rows are 0-based; report 1-based inclusive line ranges.
-        start   (inc (.startLine span))
-        end     (inc (.endLine span))
-        kind    (some-> (.kind it) str str/lower-case)
+        start
+        (inc (.startLine span))
+
+        end
+        (inc (.endLine span))
+
+        kind
+        (some-> (.kind it)
+                str
+                str/lower-case)
+
         ;; The pack reports the clean name + a structured `visibility`
         ;; (public/private) — no more `^:private` glued onto the name.
-        vis     (some-> (.visibility it) str str/lower-case not-empty)
-        nm      (.name it)
-        sig     (some-> (.signature it) str/trim not-empty)
-        indent  (apply str (repeat depth "  "))
-        label   (str/trim (str kind
-                            (when vis (str " " vis))
-                            (when nm (str " " nm))
-                            (when sig (str "  " sig))))
-        from    (patch/line-anchor start (line-text lines start))
-        to      (patch/line-anchor end (line-text lines end))
-        doc     (doc-snippet it)]
+        vis
+        (some-> (.visibility it)
+                str
+                str/lower-case
+                not-empty)
+
+        nm
+        (.name it)
+
+        sig
+        (some-> (.signature it)
+                str/trim
+                not-empty)
+
+        indent
+        (apply str (repeat depth "  "))
+
+        label
+        (str/trim
+          (str kind (when vis (str " " vis)) (when nm (str " " nm)) (when sig (str "  " sig))))
+
+        from
+        (patch/line-anchor start (line-text lines start))
+
+        to
+        (patch/line-anchor end (line-text lines end))
+
+        doc
+        (doc-snippet it)]
+
     ;; The anchors already carry the line numbers, so no separate [start-end].
     ;; A doc string, when present, rides on an indented continuation line.
-    (str indent label "  @" from ".." to
-      (when doc (str "\n" indent "    " (pr-str doc))))))
+    (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
 
-(defn- walk-items [lines items depth]
+(defn- walk-items
+  [lines items depth]
   (mapcat (fn [^StructureItem it]
-            (cons (fmt-item lines it depth)
-              (walk-items lines (or (.children it) []) (inc depth))))
-    items))
+            (cons (fmt-item lines it depth) (walk-items lines (or (.children it) []) (inc depth))))
+          items))
 
 (defn- item->def
   [lines ^StructureItem it]
-  (let [^Span span (.span it)
+  (let [^Span span
+        (.span it)
+
         ;; tree-sitter rows are 0-based; anchors carry 1-based line numbers (like
         ;; the skeleton + `cat`).
-        start (inc (.startLine span))
-        end   (inc (.endLine span))]
-    {:name       (.name it)
-     :kind       (some-> (.kind it) str str/lower-case)
-     :visibility (some-> (.visibility it) str str/lower-case not-empty)
-     :signature  (some-> (.signature it) str/trim not-empty)
-     :doc        (doc-snippet it)
+        start
+        (inc (.startLine span))
+
+        end
+        (inc (.endLine span))]
+
+    {:name (.name it)
+     :kind (some-> (.kind it)
+                   str
+                   str/lower-case)
+     :visibility (some-> (.visibility it)
+                         str
+                         str/lower-case
+                         not-empty)
+     :signature (some-> (.signature it)
+                        str/trim
+                        not-empty)
+     :doc (doc-snippet it)
      ;; The def's span as patch-ready `lineno:hash` anchors — the SOLE position
      ;; (the lineno lives in the anchor, so no redundant start-line/end-line). One
      ;; hop `outline` DATA → `patch`; same anchors the skeleton (`@from..to`) + `cat`
      ;; emit; `patch/anchor->line` recovers the number when arithmetic is needed.
-     :anchor     (patch/line-anchor start (line-text lines start))
+     :anchor (patch/line-anchor start (line-text lines start))
      :end-anchor (patch/line-anchor end (line-text lines end))}))
 
 (defn definitions
@@ -159,11 +214,11 @@
    (let [lines (str/split-lines source)]
      (letfn [(walk [items]
                (mapcat (fn [^StructureItem it]
-                         (cons (item->def lines it)
-                           (walk (or (.children it) []))))
-                 items))]
+                         (cons (item->def lines it) (walk (or (.children it) []))))
+                       items))]
        (cond->> (walk (structure-items source language))
-         (some? name) (filterv #(= name (:name %))))))))
+         (some? name)
+         (filterv #(= name (:name %))))))))
 
 (defn file-skeleton
   "Skeleton string for `path` (items + line ranges + full start..end anchors),

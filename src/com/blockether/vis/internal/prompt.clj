@@ -5,15 +5,14 @@
    project instructions (AGENTS.md / CLAUDE.md when present), extension
    fragments, current user message. Per-iteration user-role context is the
    engine snapshot rendered as a Python dict (`session`) by the loop."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.svar.core :as svar]
-   [com.blockether.vis.internal.agents :as agents]
-   [com.blockether.vis.internal.config :as config]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Iteration context assembly
@@ -28,17 +27,22 @@
 (defn- prompt-block
   [tag body]
   (when (and (string? body) (not (str/blank? body)))
-    (str ";; -- " (-> (str tag)
-                    (str/replace "_" "-")
-                    str/upper-case)
-      " --\n"
-      body
-      (when-not (str/ends-with? body "\n") "\n"))))
+    (str ";; -- "
+         (-> (str tag)
+             (str/replace "_" "-")
+             str/upper-case)
+         " --\n"
+         body
+         (when-not (str/ends-with? body "\n") "\n"))))
 
 (defn- call-extension-callback
   [ext f & args]
-  (binding [extension/*current-extension* ext
-            extension/*current-symbol* nil]
+  (binding [extension/*current-extension*
+            ext
+
+            extension/*current-symbol*
+            nil]
+
     (apply f args)))
 
 ;; =============================================================================
@@ -63,33 +67,56 @@
    knows the pending work."
   [turns]
   (when (seq turns)
-    (let [n (count turns)
-          render-turn
-          (fn [i {:keys [user-request answer interrupted? results]}]
-            (let [last?  (= i (dec n))
-                  req    (some-> user-request str str/trim not-empty)
-                  ans    (some-> answer str str/trim not-empty)
-                  ans    (when ans
-                           (if (or last? (<= (count ans) prev-answer-cap))
-                             ans
-                             (str (subs ans 0 prev-answer-cap) " …")))]
-              (when (or req ans (seq results))
-                (str "# ── turn " (inc i) " ──\n"
-                  (when req (str "user asked:\n" req "\n"))
-                  (when (seq results)
-                    (str "you ran:\n"
+    (let
+      [n
+       (count turns)
+
+       render-turn
+       (fn [i {:keys [user-request answer interrupted? results]}]
+         (let [last?
+               (= i (dec n))
+
+               req
+               (some-> user-request
+                       str
+                       str/trim
+                       not-empty)
+
+               ans
+               (some-> answer
+                       str
+                       str/trim
+                       not-empty)
+
+               ans
+               (when ans
+                 (if (or last? (<= (count ans) prev-answer-cap))
+                   ans
+                   (str (subs ans 0 prev-answer-cap) " …")))]
+
+           (when (or req ans (seq results))
+             (str
+               "# ── turn "
+               (inc i)
+               " ──\n"
+               (when req (str "user asked:\n" req "\n"))
+               (when (seq results)
+                 (str "you ran:\n"
                       (str/join "\n"
-                        (map (fn [r] (str "  " (cond
-                                                 (:gist r)     (str "(folded) " (:gist r))
-                                                 (:dropped? r) (str "(dropped)" (when (:note r) (str " " (:note r))))
-                                                 :else         (:src r))))
-                          results))
+                                (map (fn [r]
+                                       (str "  "
+                                            (cond (:gist r) (str "(folded) " (:gist r))
+                                                  (:dropped? r) (str "(dropped)"
+                                                                     (when (:note r)
+                                                                       (str " " (:note r))))
+                                                  :else (:src r))))
+                                     results))
                       "\n"))
-                  (when ans (str "you answered:\n" ans))
-                  (when (and interrupted? (not ans))
-                    "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
-      (prompt-block "conversation-so-far"
-        (str/join "\n\n" (keep-indexed render-turn turns))))))
+               (when ans (str "you answered:\n" ans))
+               (when (and interrupted? (not ans))
+                 "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
+
+      (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (defn- attached-images-block
   "Manifest for image attachments riding this user message. Lists each
@@ -100,16 +127,21 @@
   [attached skipped]
   (when (or (seq attached) (seq skipped))
     (prompt-block "attached-images"
-      (str/join "\n"
-        (concat
-          (map-indexed
-            (fn [i {:keys [path media-type size-label]}]
-              (str "- image " (inc i) ": " path
-                " (" media-type ", " size-label ") — attached to this message"))
-            attached)
-          (map (fn [{:keys [path reason]}]
-                 (str "- " path " — NOT attached: " reason))
-            skipped))))))
+                  (str/join "\n"
+                            (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
+                                                   (str "- image "
+                                                        (inc i)
+                                                        ": "
+                                                        path
+                                                        " ("
+                                                        media-type
+                                                        ", "
+                                                        size-label
+                                                        ") — attached to this message"))
+                                                 attached)
+                                    (map (fn [{:keys [path reason]}]
+                                           (str "- " path " — NOT attached: " reason))
+                                         skipped))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
@@ -124,22 +156,26 @@
    message multimodal: svar image blocks ride ahead of the text block and
    an `ATTACHED-IMAGES` manifest inside the text names each one.
    `:skipped-images` entries appear in the manifest only."
-  [{:keys [stable-prompt-messages initial-user-content previous-turn-context
-           user-images skipped-images]}]
-  (let [previous-block (previous-turn-context-block previous-turn-context)
-        user-block     (when initial-user-content
-                         (prompt-block "current-user-message" initial-user-content))
-        images-block   (when user-block
-                         (attached-images-block user-images skipped-images))
-        text           (str/join "\n\n" (keep identity [previous-block user-block images-block]))]
-    (vec
-      (concat
-        (or stable-prompt-messages [])
-        (when user-block
-          [(if (seq user-images)
-             (apply svar/user text
-               (map #(svar/image (:base64 %) (:media-type %)) user-images))
-             {:role "user" :content text})])))))
+  [{:keys [stable-prompt-messages initial-user-content previous-turn-context user-images
+           skipped-images]}]
+  (let [previous-block
+        (previous-turn-context-block previous-turn-context)
+
+        user-block
+        (when initial-user-content (prompt-block "current-user-message" initial-user-content))
+
+        images-block
+        (when user-block (attached-images-block user-images skipped-images))
+
+        text
+        (str/join "\n\n" (keep identity [previous-block user-block images-block]))]
+
+    (vec (concat
+           (or stable-prompt-messages [])
+           (when user-block
+             [(if (seq user-images)
+                (apply svar/user text (map #(svar/image (:base64 %) (:media-type %)) user-images))
+                {:role "user" :content text})])))))
 
 ;; =============================================================================
 ;; System prompt
@@ -154,16 +190,14 @@
    text and no tool call."
   (str
     "You are vis — an autonomous coding agent. You act by writing code.\n\n"
-    "## Identity\n"
-    "- You operate inside the host project — the repo the user opened, whatever\n"
+    "## Identity\n" "- You operate inside the host project — the repo the user opened, whatever\n"
     "  it is. Your job is that codebase, not your own engine. Never assume the\n"
     "  host is any particular project; read it to find out what it is.\n\n"
     "## Epistemic stance\n"
     "- Trust order: runtime > source > docs > assumption. Probe the live project\n"
     "  (read files, run reads) before you believe a doc or a guess. When unsure,\n"
     "  look — don't assume.\n\n"
-    "## Autonomy\n"
-    "- Drive the task end-to-end. Assume the ask means make the change, not\n"
+    "## Autonomy\n" "- Drive the task end-to-end. Assume the ask means make the change, not\n"
     "  describe it: locate → edit → verify → answer, carried to the finish across\n"
     "  as many steps as it takes (these are separate replies, not one call — for\n"
     "  multi-step work, think the steps through first and drive them). Don't stop\n"
@@ -288,8 +322,7 @@
     "  TOOLS / `session[\"language_tools\"]`), or re-inspect a value you already captured.\n"
     "  One run beats ten re-reads; once a read/run answers your question, ACT.\n"
     "- Discover tools with `apropos(\"\")` (all) / `apropos(\"struct\")` (filter) and\n"
-    "  `doc(\"struct_patch\")`.\n\n"
-    "## Your context\n"
+    "  `doc(\"struct_patch\")`.\n\n" "## Your context\n"
     "- `session` is your live session bag — a READ-ONLY Python dict, rebuilt each\n"
     "  turn: `turn`, `routing`, `utilization` (`saturation` %, `headroom_tokens`),\n"
     "  plus slower `workspace` / `env` /\n"
@@ -339,31 +372,34 @@
    Tolerant: any read/parse failure yields nil so prompt assembly never breaks
    on a malformed config."
   []
-  (try
-    (let [raw (config/load-config-raw)
-          sp  (when (map? raw) (:system-prompt raw))
-          [s replace?] (cond
-                         (string? sp) [sp false]
-                         (map? sp)    [(:text sp) (boolean (:replace? sp))]
-                         :else        [nil false])]
-      (when (string? s)
-        (let [t (extension/normalize-prompt-text s)]
-          (when-not (str/blank? t)
-            {:text t :replace? replace?}))))
-    (catch Throwable _ nil)))
+  (try (let [raw
+             (config/load-config-raw)
+
+             sp
+             (when (map? raw) (:system-prompt raw))
+
+             [s replace?]
+             (cond (string? sp) [sp false]
+                   (map? sp) [(:text sp) (boolean (:replace? sp))]
+                   :else [nil false])]
+
+         (when (string? s)
+           (let [t (extension/normalize-prompt-text s)]
+             (when-not (str/blank? t) {:text t :replace? replace?}))))
+       (catch Throwable _ nil)))
 
 (defn- read-prompt-file
   "Slurp + normalize a markdown prompt file. nil when absent, blank, or
    unreadable — prompt assembly never breaks on a bad file."
   [^java.io.File f]
-  (try
-    (when (.isFile f)
-      (let [s (extension/normalize-prompt-text (slurp f))]
-        (when-not (str/blank? s) s)))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::system-prompt-file-read-failed
-                 :data  {:path (.getAbsolutePath f) :error (ex-message t)}})
-      nil)))
+  (try (when (.isFile f)
+         (let [s (extension/normalize-prompt-text (slurp f))]
+           (when-not (str/blank? s) s)))
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::system-prompt-file-read-failed
+                    :data {:path (.getAbsolutePath f) :error (ex-message t)}})
+         nil)))
 
 (defn- system-prompt-file-overrides
   "pi-style SYSTEM.md / APPEND_SYSTEM.md markdown overrides.
@@ -375,15 +411,18 @@
 
    Returns `{:replace <text|nil> :appends [text …]}`."
   []
-  (let [global-dir (io/file (System/getProperty "user.home") ".vis")
-        proj-dir   (try (io/file (workspace/cwd) ".vis")
-                     (catch Throwable _ nil))]
+  (let [global-dir
+        (io/file (System/getProperty "user.home") ".vis")
+
+        proj-dir
+        (try (io/file (workspace/cwd) ".vis") (catch Throwable _ nil))]
+
     {:replace (or (when proj-dir (read-prompt-file (io/file proj-dir "SYSTEM.md")))
-                (read-prompt-file (io/file global-dir "SYSTEM.md")))
+                  (read-prompt-file (io/file global-dir "SYSTEM.md")))
      :appends (vec (keep identity
-                     [(read-prompt-file (io/file global-dir "APPEND_SYSTEM.md"))
-                      (when proj-dir
-                        (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
+                         [(read-prompt-file (io/file global-dir "APPEND_SYSTEM.md"))
+                          (when proj-dir
+                            (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
 (defn build-system-prompt
   "Core system prompt + optional caller addendum + config prompt +
@@ -401,20 +440,32 @@
    `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
    append files are still appended after it."
   [{:keys [system-prompt]}]
-  (let [addendum     (when (string? system-prompt)
-                       (extension/normalize-prompt-text system-prompt))
-        cfg          (config-system-prompt)
-        files        (system-prompt-file-overrides)
-        file-replace (:replace files)
-        cfg-replace? (and (nil? file-replace) (boolean (:replace? cfg)))
-        cfg-prompt   (when (and cfg (not (:replace? cfg))) (:text cfg))
-        base         (or file-replace
-                       (when cfg-replace? (:text cfg))
-                       CORE_SYSTEM_PROMPT)
-        extras       (into []
-                       (comp (filter string?)
-                         (remove str/blank?))
-                       (into [addendum cfg-prompt] (:appends files)))]
+  (let [addendum
+        (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
+
+        cfg
+        (config-system-prompt)
+
+        files
+        (system-prompt-file-overrides)
+
+        file-replace
+        (:replace files)
+
+        cfg-replace?
+        (and (nil? file-replace) (boolean (:replace? cfg)))
+
+        cfg-prompt
+        (when (and cfg (not (:replace? cfg))) (:text cfg))
+
+        base
+        (or file-replace (when cfg-replace? (:text cfg)) CORE_SYSTEM_PROMPT)
+
+        extras
+        (into []
+              (comp (filter string?) (remove str/blank?))
+              (into [addendum cfg-prompt] (:appends files)))]
+
     (str/join "\n\n" (into [base] extras))))
 
 (defn- project-instructions-block
@@ -428,46 +479,60 @@
    or every file is empty."
   []
   (try
-    (let [{:keys [found? source path content files]} (agents/instructions)
+    (let [{:keys [found? source path content files]}
+          (agents/instructions)
+
           ;; Back-compat: a single-file legacy shape (no :files) still renders.
-          files (or (seq files)
-                  (when (and found? (string? content) (not (str/blank? content)))
-                    [{:scope   :project
-                      :source  (case source
-                                 :repo                    :agents-md
-                                 :repo:claude-md-fallback :claude-md
-                                 source)
-                      :path    path
-                      :content content}]))
-          files (filter (fn [f] (and (string? (:content f))
-                                  (not (str/blank? (:content f)))))
+          files
+          (or (seq files)
+              (when (and found? (string? content) (not (str/blank? content)))
+                [{:scope :project
+                  :source (case source
+                            :repo
+                            :agents-md
+
+                            :repo:claude-md-fallback
+                            :claude-md
+
+                            source)
+                  :path path
+                  :content content}]))
+
+          files
+          (filter (fn [f]
+                    (and (string? (:content f)) (not (str/blank? (:content f)))))
                   files)]
+
       (when (and found? (seq files))
-        (let [multi? (> (count files) 1)
-              header (str "Project rules from "
+        (let [multi?
+              (> (count files) 1)
+
+              header
+              (str "Project rules from "
+                   (if multi?
+                     (str (count files)
+                          " stacked guidance files — "
+                          "user-global first, then each ancestor directory, "
+                          "then the workspace root. NEARER (later) files "
+                          "override earlier ones on conflict.")
+                     (str (agents/origin-label (first files)) " (" (:path (first files)) ")."))
+                   " These are PROJECT-OWNED instructions; honor them "
+                   "alongside CORE rules. On conflict with CORE engine\n"
+                   "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")
+
+              body
+              (str/join
+                "\n\n"
+                (map (fn [f]
                        (if multi?
-                         (str (count files) " stacked guidance files — "
-                           "user-global first, then each ancestor directory, "
-                           "then the workspace root. NEARER (later) files "
-                           "override earlier ones on conflict.")
-                         (str (agents/origin-label (first files))
-                           " (" (:path (first files)) ")."))
-                       " These are PROJECT-OWNED instructions; honor them "
-                       "alongside CORE rules. On conflict with CORE engine\n"
-                       "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")
-              body   (str/join "\n\n"
-                       (map (fn [f]
-                              (if multi?
-                                (str "### " (agents/origin-label f)
-                                  " — " (:path f) "\n" (:content f))
-                                (:content f)))
-                         files))]
-          (prompt-block "project-instructions"
-            (str header "\n\n" body)))))
+                         (str "### " (agents/origin-label f) " — " (:path f) "\n" (:content f))
+                         (:content f)))
+                     files))]
+
+          (prompt-block "project-instructions" (str header "\n\n" body)))))
     (catch Throwable t
-      (tel/log! {:level :warn :id ::project-instructions-error
-                 :data  {:error (ex-message t)}}
-        "project-instructions-block read failed")
+      (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
+                "project-instructions-block read failed")
       nil)))
 
 (defn active-extensions
@@ -475,18 +540,18 @@
    truthy for `environment`, in registration order. Single source of truth for
    activation; call ONCE at the top of a turn."
   [environment]
-  (when-let [exts (some-> (:extensions environment) deref seq)]
-    (vec
-      (filter (fn [ext]
-                (try
-                  (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
-                  (catch Throwable t
-                    (tel/log! {:level :error :id ::ext-activation-error
-                               :data {:ext (:ext/name ext)
-                                      :error (ex-message t)}}
-                      (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-                    false)))
-        exts))))
+  (when-let [exts (some-> (:extensions environment)
+                          deref
+                          seq)]
+    (vec (filter (fn [ext]
+                   (try (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
+                        (catch Throwable t
+                          (tel/log! {:level :error
+                                     :id ::ext-activation-error
+                                     :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                    (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+                          false)))
+                 exts))))
 
 (defn extensions-snapshot
   "Build the active extension summary placed under `(:extensions ctx)` from a
@@ -517,27 +582,36 @@
    same value."
   [active-extensions]
   (->> (or active-extensions [])
-    (mapv (fn [ext]
-            (let [info (extension/extension-info ext)
-                  registry-id (:registry-id info)]
-              (cond-> {:name        (:name info)
-                       :alias       (:alias info)
-                       :description (:description info)
-                       :kind        (:kind info)
-                       :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/symbol
-                                      (remove :ext.symbol/hidden?
-                                        (extension/ext-symbols ext)))}
-                (nil? (:alias info)) (dissoc :alias)
-                (nil? (:description info)) (dissoc :description)
-                (nil? (:kind info)) (dissoc :kind)
-                (nil? registry-id) (dissoc :registry-id)))))))
+       (mapv
+         (fn [ext]
+           (let [info
+                 (extension/extension-info ext)
+
+                 registry-id
+                 (:registry-id info)]
+
+             (cond-> {:name (:name info)
+                      :alias (:alias info)
+                      :description (:description info)
+                      :kind (:kind info)
+                      :registry-id registry-id
+                      :symbols (mapv :ext.symbol/symbol
+                                     (remove :ext.symbol/hidden? (extension/ext-symbols ext)))}
+               (nil? (:alias info))
+               (dissoc :alias)
+
+               (nil? (:description info))
+               (dissoc :description)
+
+               (nil? (:kind info))
+               (dissoc :kind)
+
+               (nil? registry-id)
+               (dissoc :registry-id)))))))
 
 (defn- extension-prompt-id
   [ext]
-  (str (or (extension/ext-alias-symbol ext)
-         (:ext/name ext)
-         "unknown")))
+  (str (or (extension/ext-alias-symbol ext) (:ext/name ext) "unknown")))
 
 (defn- extension-prompt-fragment
   [ext body]
@@ -549,9 +623,11 @@
         ;; core surface, not a droppable plug-in fragment. Mirrors the bare
         ;; sandbox symbol binding.
         (str body (when-not (str/ends-with? body "\n") "\n"))
-        (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
-          body
-          (when-not (str/ends-with? body "\n") "\n"))))))
+        (str ";; -- EXTENSION "
+             (extension-prompt-id ext)
+             " --\n"
+             body
+             (when-not (str/ends-with? body "\n") "\n"))))))
 
 (defn- extensions-prompt-block
   "Collect prompt text from every active extension that declares
@@ -561,24 +637,24 @@
   [environment active-extensions]
   (let [;; Built-ins first so the core kernel prompt (foundation) leads the
         ;; block, header-less, before any third-party `;; -- EXTENSION --`.
-        active-extensions (sort-by (complement extension/ext-builtin?)
-                            (or active-extensions []))
-        fragments (keep (fn [ext]
-                          (when-let [f (:ext/prompt-fn ext)]
-                            (try
-                              (let [result (call-extension-callback ext f environment)]
-                                (when (and (string? result) (not (str/blank? result)))
-                                  (extension-prompt-fragment ext result)))
-                              (catch Throwable t
-                                (tel/log! {:level :warn
-                                           :id ::extension-prompt-error
-                                           :data {:ext (:ext/name ext)
-                                                  :error (ex-message t)}}
-                                  "Extension :ext/prompt-fn fn threw")
-                                nil))))
-                    active-extensions)]
-    (when (seq fragments)
-      (prompt-block "extensions" (str/join "\n\n" fragments)))))
+        active-extensions
+        (sort-by (complement extension/ext-builtin?) (or active-extensions []))
+
+        fragments
+        (keep (fn [ext]
+                (when-let [f (:ext/prompt-fn ext)]
+                  (try (let [result (call-extension-callback ext f environment)]
+                         (when (and (string? result) (not (str/blank? result)))
+                           (extension-prompt-fragment ext result)))
+                       (catch Throwable t
+                         (tel/log! {:level :warn
+                                    :id ::extension-prompt-error
+                                    :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                   "Extension :ext/prompt-fn fn threw")
+                         nil))))
+              active-extensions)]
+
+    (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime
@@ -595,8 +671,7 @@
 
 (defn- stable-prompt-message
   [content]
-  (when (and (string? content) (not (str/blank? content)))
-    {:role "system" :content content}))
+  (when (and (string? content) (not (str/blank? content))) {:role "system" :content content}))
 
 (def reason-via-comments-instruction
   "Reasoning fallback for models with no native thinking channel. The host
@@ -605,10 +680,10 @@
    giving weaker / local models (e.g. LM Studio) a scratchpad in the one
    channel they always have: the code itself."
   (str "You do not have a separate reasoning channel. Think before you act: "
-    "at the top of your Python code, reason through the problem step-by-step "
-    "in `#` comments — state the goal, your approach, and any edge cases — "
-    "then write the implementation below. Treat those comments as your "
-    "scratchpad; they are where your reasoning lives."))
+       "at the top of your Python code, reason through the problem step-by-step "
+       "in `#` comments — state the goal, your approach, and any edge cases — "
+       "then write the implementation below. Treat those comments as your "
+       "scratchpad; they are where your reasoning lives."))
 
 (def weak-model-operating-rules
   "The few rules weaker / local models most often break, restated in plain
@@ -616,7 +691,8 @@
    non-`:reasoning?` models — the same audience that drowns in the full system
    prompt. Recency-weighted: it rides right before the conversation. Keep it
    SHORT; it reinforces, it does not re-teach the whole surface."
-  (str "Nine rules that override any temptation to do more:\n"
+  (str
+    "Nine rules that override any temptation to do more:\n"
     "1. Two reply shapes: to ACT, call a tool — a DIRECT file tool "
     "(cat/rg/find/patch/move/delete/ls), or `python_execution` for transforms "
     "(`print(...)` what you want back). The result comes back next reply. To "
@@ -640,7 +716,6 @@
     "for one line, or add `\"to_anchor\"` for an inclusive span. "
     "To edit a file you already changed this turn, `cat` it AGAIN first. "
     "`patch` is ATOMIC (one bad anchor rejects the whole batch), so only batch edits "
-
     "whose anchors all came from the SAME fresh cat. For a whole-file rewrite just "
     "`write` it (no anchors, never stale). Read GENEROUSLY up front so you make all "
     "the edits at once.\n"
@@ -681,10 +756,10 @@
    requested but the model cannot reason natively. No-op-safe: returns
    `messages` unchanged if the nudge can't build."
   [messages]
-  (if-let [nudge (stable-prompt-message
-                   (prompt-block "reasoning-via-comments"
-                     (str reason-via-comments-instruction
-                       "\n\n" weak-model-operating-rules)))]
+  (if-let [nudge (stable-prompt-message (prompt-block "reasoning-via-comments"
+                                                      (str reason-via-comments-instruction
+                                                           "\n\n"
+                                                           weak-model-operating-rules)))]
     (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
       (vec (concat leading-systems [nudge] rest-msgs)))
     messages))
@@ -693,8 +768,7 @@
   "Join stable prompt message contents for token budgeting and debug bindings only.
    Provider sends the original message vector; this is not a send path."
   [messages]
-  (extension/normalize-prompt-text
-    (str/join "\n\n" (keep :content messages))))
+  (extension/normalize-prompt-text (str/join "\n\n" (keep :content messages))))
 
 (def cli-autonomous-rules
   "Override injected ONLY for the non-interactive `:cli` channel (headless
@@ -702,11 +776,11 @@
    must never wait for input — it makes reasonable assumptions and drives the
    work to a finished prose answer."
   (str "NON-INTERACTIVE ONE-SHOT RUN — no human is watching and nothing can "
-    "be approved mid-run.\n"
-    "- NEVER stop to wait for approval or input — there is no one to answer.\n"
-    "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
-    "the most reasonable assumption, STATE it in one line, and EXECUTE end-to-"
-    "end to a finished prose answer. Drive the work to completion in this single run."))
+       "be approved mid-run.\n"
+       "- NEVER stop to wait for approval or input — there is no one to answer.\n"
+       "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
+       "the most reasonable assumption, STATE it in one line, and EXECUTE end-to-"
+       "end to a finished prose answer. Drive the work to completion in this single run."))
 
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.
@@ -737,21 +811,29 @@
   [environment {:keys [system-prompt active-extensions session-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
-             {:type :vis/missing-active-extensions})))
-  (let [core-block (prompt-block "system-prompt"
-                     (build-system-prompt {:system-prompt system-prompt}))
+                    {:type :vis/missing-active-extensions})))
+  (let [core-block
+        (prompt-block "system-prompt" (build-system-prompt {:system-prompt system-prompt}))
+
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never
         ;; changes), so it doesn't churn the prefix cache.
-        cli-block (when (= :cli (:channel environment))
-                    (prompt-block "cli-autonomous" cli-autonomous-rules))
-        project-block (project-instructions-block)
-        turn-system-block (turn-system-context-block environment active-extensions)
+        cli-block
+        (when (= :cli (:channel environment)) (prompt-block "cli-autonomous" cli-autonomous-rules))
+
+        project-block
+        (project-instructions-block)
+
+        turn-system-block
+        (turn-system-context-block environment active-extensions)
+
         ;; Standing session context (workspace/env/routing/tools), rendered
         ;; into the cached prefix so it isn't re-billed every iteration. The
         ;; fenced `session = {…}` block is self-describing, so it rides as its own
         ;; system message (no `;; -- TAG --` wrapper).
-        session-context-block (not-empty (some-> session-context str/trim))]
-    (vec
-      (keep stable-prompt-message
-        [core-block cli-block project-block turn-system-block session-context-block]))))
+        session-context-block
+        (not-empty (some-> session-context
+                           str/trim))]
+
+    (vec (keep stable-prompt-message
+               [core-block cli-block project-block turn-system-block session-context-block]))))

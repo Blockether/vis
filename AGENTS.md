@@ -6,7 +6,9 @@ rules) lives in the CORE system prompt — do not restate it here.
 
 ## Code conventions
 
-- Clojure source: `cljfmt` for formatting, `clj-kondo` clean. Run
+- Clojure source: `codestyle` (zprint, config in `.zprint.edn`) for
+  formatting, `clj-kondo` clean. Format with `clojure -M:format fix
+  src extensions test build.clj`; check with `clojure -M:format check`. Run
   `./verify.sh --quick` before commits.
 - One namespace per file. Internal helpers `^:private`.
 - Prefer `:keys` destructuring at fn signatures over `(get m :k)` in

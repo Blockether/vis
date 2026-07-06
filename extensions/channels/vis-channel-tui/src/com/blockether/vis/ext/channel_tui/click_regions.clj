@@ -147,19 +147,19 @@
                                   (let [k [(:session-id r) (:node-id r)]]
                                     (if (contains? seen k)
                                       acc
-                                      (-> acc (update :seen conj k) (update :out conj r))))
+                                      (-> acc
+                                          (update :seen conj k)
+                                          (update :out conj r))))
                                   acc))
-                        {:seen #{}, :out []}
-                        regions))]
+                              {:seen #{} :out []}
+                              regions))]
     (mapv vector label-alphabet toggles)))
 
 (defn- contains-point?
   "True when (col, row) lies inside `bounds`. Inclusive on the left
    edge, exclusive on the right edge."
   [{:keys [row col width]} c r]
-  (and (= r row)
-    (>= c col)
-    (< c (+ col width))))
+  (and (= r row) (>= c col) (< c (+ col width))))
 
 (defn lookup
   "Return the topmost (last-registered) region containing (col, row),
@@ -170,9 +170,7 @@
     (loop [i (dec (count v))]
       (when (>= i 0)
         (let [region (nth v i)]
-          (if (contains-point? (:bounds region) col row)
-            region
-            (recur (dec i))))))))
+          (if (contains-point? (:bounds region) col row) region (recur (dec i))))))))
 
 ;; =============================================================================
 ;; Hover pointer
@@ -191,6 +189,4 @@
    inside the same row)."
   [region]
   (let [prev @hover-atom]
-    (when (not= prev region)
-      (clojure.core/reset! hover-atom region)
-      true)))
+    (when (not= prev region) (clojure.core/reset! hover-atom region) true)))

@@ -26,18 +26,16 @@
   "True when this JVM exposes Java virtual-thread APIs. Reflection keeps
    source compatible with older runtimes."
   []
-  (try
-    (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))
-    true
-    (catch Throwable _ false)))
+  (try (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))
+       true
+       (catch Throwable _ false)))
 
 (defn worker-runtime
   "Runtime probe for worker execution. `:worker-helper` is stable metadata for
    diagnostics; `:virtual-threads?` reports whether new worker tasks will use
    Java virtual threads."
   []
-  {:worker-helper :vis/worker-future
-   :virtual-threads? (virtual-threads-available?)})
+  {:worker-helper :vis/worker-future :virtual-threads? (virtual-threads-available?)})
 
 (defn worker-future
   "Run `f` on a cancellable worker Future. Uses a virtual thread when the JVM
@@ -48,36 +46,33 @@
    losing timeout/cancellation behavior."
   ([f] (worker-future "vis-worker" f))
   ([name f]
-   (let [task (java.util.concurrent.FutureTask.
-                ^java.util.concurrent.Callable
-                (reify java.util.concurrent.Callable
-                  (call [_] (f))))
-         _runner (if (virtual-threads-available?)
-                   (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
-                     (.invoke m nil (object-array [task])))
-                   (doto (Thread. ^Runnable task (str name))
-                     (.setDaemon true)
-                     (.start)))]
+   (let [task
+         (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                           (reify
+                                             java.util.concurrent.Callable
+                                               (call [_] (f))))
+
+         _runner
+         (if (virtual-threads-available?)
+           (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
+             (.invoke m nil (object-array [task])))
+           (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
+
      (reify
        java.util.concurrent.Future
-       (cancel [_ may-interrupt-if-running]
-         (.cancel task may-interrupt-if-running))
-       (isCancelled [_] (.isCancelled task))
-       (isDone [_] (.isDone task))
-       (get [_] (.get task))
-       (get [_ timeout unit] (.get task timeout unit))
-
+         (cancel [_ may-interrupt-if-running] (.cancel task may-interrupt-if-running))
+         (isCancelled [_] (.isCancelled task))
+         (isDone [_] (.isDone task))
+         (get [_] (.get task))
+         (get [_ timeout unit] (.get task timeout unit))
        clojure.lang.IDeref
-       (deref [_] (.get task))
-
+         (deref [_] (.get task))
        clojure.lang.IBlockingDeref
-       (deref [_ timeout-ms timeout-val]
-         (try
-           (.get task timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
-           (catch java.util.concurrent.TimeoutException _ timeout-val)))
-
+         (deref [_ timeout-ms timeout-val]
+           (try (.get task timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
+                (catch java.util.concurrent.TimeoutException _ timeout-val)))
        clojure.lang.IPending
-       (isRealized [_] (.isDone task))))))
+         (isRealized [_] (.isDone task))))))
 
 (defn cancellation-token
   "Construct a fresh cancellation token.
@@ -95,8 +90,7 @@
    call sites that have not migrated yet; it now routes through the
    callback registry too so behaviour stays identical."
   []
-  {::flag      (atom false)
-   ::callbacks (atom [])})
+  {::flag (atom false) ::callbacks (atom [])})
 
 (defn cancellation-atom
   "Cooperative flag atom — read with `@` at iteration boundaries when
@@ -107,7 +101,9 @@
 (defn cancelled?
   "True once `cancel!` has been called on this token."
   [token]
-  (boolean (some-> token ::flag deref)))
+  (boolean (some-> token
+                   ::flag
+                   deref)))
 
 (defn on-cancel!
   "Register a no-arg `thunk` to fire the moment `cancel!` is invoked
@@ -127,14 +123,18 @@
   [token thunk]
   (when (and token (fn? thunk))
     (if (cancelled? token)
-      (do (try (thunk) (catch Throwable _ nil))
-        (constantly nil))
-      (let [cb-id    (Object.) ; identity key; survives equal-by-value collisions
-            callbacks (::callbacks token)]
+      (do (try (thunk) (catch Throwable _ nil)) (constantly nil))
+      (let [cb-id
+            (Object.)
+
+            ; identity key; survives equal-by-value collisions
+            callbacks
+            (::callbacks token)]
+
         (swap! callbacks conj [cb-id thunk])
         (fn dispose! []
-          (swap! callbacks
-            (fn [cbs] (vec (remove #(identical? cb-id (first %)) cbs)))))))))
+          (swap! callbacks (fn [cbs]
+                             (vec (remove #(identical? cb-id (first %)) cbs)))))))))
 
 (defn cancellation-set-future!
   "Register a worker `Future` so `cancel!` interrupts it. Thin
@@ -146,7 +146,8 @@
   [token ^java.util.concurrent.Future fut]
   (when (and token fut)
     (on-cancel! token
-      (fn [] (try (.cancel fut true) (catch Throwable _ nil)))))
+                (fn []
+                  (try (.cancel fut true) (catch Throwable _ nil)))))
   fut)
 
 (defn cancel!
@@ -169,11 +170,10 @@
    the obvious `(instance? InterruptedException e)` check misses them."
   [^Throwable e]
   (loop [t e]
-    (cond
-      (nil? t)                            false
-      (instance? InterruptedException t)         true
-      (instance? java.util.concurrent.CancellationException t) true
-      :else                               (recur (.getCause t)))))
+    (cond (nil? t) false
+          (instance? InterruptedException t) true
+          (instance? java.util.concurrent.CancellationException t) true
+          :else (recur (.getCause t)))))
 
 (defn cancellation?
   "True if the given throwable was caused by a `cancel!` call. Channels

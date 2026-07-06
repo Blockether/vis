@@ -60,9 +60,8 @@
    CSS var). Hand-maintained per-channel maps were free to drift; a guard test in
    each channel asserts its map covers every role here, so a new role can't be
    added in one channel and silently forgotten in the other."
-  [:tool-color/read :tool-color/search :tool-color/preview :tool-color/edit
-   :tool-color/create :tool-color/delete :tool-color/move :tool-color/shell
-   :tool-color/meta :tool-color/test])
+  [:tool-color/read :tool-color/search :tool-color/preview :tool-color/edit :tool-color/create
+   :tool-color/delete :tool-color/move :tool-color/shell :tool-color/meta :tool-color/test])
 
 (defn tool-label
   "The op-card badge LABEL for a native tool's wire name: the name uppercased,
@@ -92,17 +91,27 @@
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
    channel-specific (raw value / stdout). The badge is whatever the tool's
    `:summary` already produced; no first-line-of-body heuristic."
-  [{:keys [tool-color-role result-summary result-render], tool-name :vis/tool-name}]
+  [{:keys [tool-color-role result-summary result-render] tool-name :vis/tool-name}]
   (when (some? tool-name)
-    (let [summary (some-> result-summary str str/trim not-empty)
-          body    (some-> result-render str str/trimr not-empty)]
-      {:tool?        true
-       :label        (tool-label tool-name)
-       :color-role   (cond (keyword? tool-color-role) tool-color-role
-                       (string? tool-color-role)  (keyword tool-color-role)
-                       :else                      nil)
-       :summary      summary
-       :body         body
+    (let [summary
+          (some-> result-summary
+                  str
+                  str/trim
+                  not-empty)
+
+          body
+          (some-> result-render
+                  str
+                  str/trimr
+                  not-empty)]
+
+      {:tool? true
+       :label (tool-label tool-name)
+       :color-role (cond (keyword? tool-color-role) tool-color-role
+                         (string? tool-color-role) (keyword tool-color-role)
+                         :else nil)
+       :summary summary
+       :body body
        :collapsible? (boolean body)})))
 
 (defn result-cards
@@ -116,7 +125,9 @@
   [form]
   (if-let [cards (seq (:cards form))]
     (into [] (keep result-card) cards)
-    (if-let [c (result-card form)] [c] [])))
+    (if-let [c (result-card form)]
+      [c]
+      [])))
 
 (defn native-tool-form?
   "True when `form` is a NATIVE tool call (cat/rg/patch/…): it carries a
@@ -134,11 +145,10 @@
    The ONE predicate the TUI and web both consult so the code-chrome decision
    can't drift between channels."
   [{:keys [error success?] :as form}]
-  (let [errored? (or (some? error)
-                   (and (some? success?) (not success?)))]
+  (let [errored? (or (some? error) (and (some? success?) (not success?)))]
     (boolean (and (not errored?)
-               (native-tool-form? form)
-               (not= (name (:vis/tool-name form)) "python_execution")))))
+                  (native-tool-form? form)
+                  (not= (name (:vis/tool-name form)) "python_execution")))))
 
 (def ^:private coalescable-tools
   "Native tools whose ADJACENT same-file op-cards fold into ONE card within an
@@ -160,10 +170,14 @@
    of the summary (which survives a DB round-trip that flattens `:result` to a
    string). nil for a non-coalescable / pathless form."
   [form]
-  (when (contains? coalescable-tools (some-> (:vis/tool-name form) str))
+  (when (contains? coalescable-tools
+                   (some-> (:vis/tool-name form)
+                           str))
     (or (get-in form [:result :path])
-      (some-> (:result-summary form) str
-        (->> (re-find #"`([^`]+)`")) second))))
+        (some-> (:result-summary form)
+                str
+                (->> (re-find #"`([^`]+)`"))
+                second))))
 
 (defn- merge-summaries
   "Fold N op-card summaries for the SAME path into ONE. Splits each on ` · `,
@@ -173,17 +187,40 @@
    render `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` ``
    instead of two look-alike cards."
   [summaries]
-  (let [parts    (map #(str/split (str %) #" · ") summaries)
-        chip     (ffirst parts)
-        tails    (mapcat rest parts)
-        count-re #"^(\d+) lines?$"
-        counts   (keep #(some-> (re-matches count-re %) second parse-long) tails)
-        spans    (remove #(re-matches count-re %) tails)
-        total    (reduce + 0 counts)
-        span-str (str/join " · " (distinct spans))
-        count-str (when (and (seq counts) (= (count counts) (count summaries)))
-                    (str total " line" (when (not= 1 total) "s")))
-        tail     (str/join " · " (remove str/blank? [span-str count-str]))]
+  (let [parts
+        (map #(str/split (str %) #" · ") summaries)
+
+        chip
+        (ffirst parts)
+
+        tails
+        (mapcat rest parts)
+
+        count-re
+        #"^(\d+) lines?$"
+
+        counts
+        (keep #(some-> (re-matches count-re %)
+                       second
+                       parse-long)
+              tails)
+
+        spans
+        (remove #(re-matches count-re %) tails)
+
+        total
+        (reduce + 0 counts)
+
+        span-str
+        (str/join " · " (distinct spans))
+
+        count-str
+        (when (and (seq counts) (= (count counts) (count summaries)))
+          (str total " line" (when (not= 1 total) "s")))
+
+        tail
+        (str/join " · " (remove str/blank? [span-str count-str]))]
+
     (if (str/blank? tail) chip (str chip " · " tail))))
 
 (defn- merge-run
@@ -191,17 +228,30 @@
    the combined multi-span/multi-diff summary plus every card's body slice stacked
    under the single headline, so a channel renders it as ONE collapsible card."
   [forms]
-  (let [f0      (first forms)
-        summary (merge-summaries (map :result-summary forms))
-        body    (str/join "\n" (keep (comp not-empty str :result-render) forms))
-        anchors (reduce merge {} (map #(get-in % [:result :anchors]) forms))
-        r0      (:result f0)]
-    (cond-> (assoc f0 :result-summary summary :result-render body)
+  (let [f0
+        (first forms)
+
+        summary
+        (merge-summaries (map :result-summary forms))
+
+        body
+        (str/join "\n" (keep (comp not-empty str :result-render) forms))
+
+        anchors
+        (reduce merge {} (map #(get-in % [:result :anchors]) forms))
+
+        r0
+        (:result f0)]
+
+    (cond-> (assoc f0
+              :result-summary summary
+              :result-render body)
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the
       ;; path/spans already live in the merged summary, so a non-map result
       ;; carries through untouched (assoc'ing onto a string throws).
-      (map? r0) (assoc :result (assoc r0 :anchors anchors)))))
+      (map? r0)
+      (assoc :result (assoc r0 :anchors anchors)))))
 
 (defn coalesce-forms
   "Merge each maximal run of ADJACENT, successful op-cards of the SAME coalescable
@@ -212,11 +262,14 @@
   [forms]
   (let [key-fn (fn [f]
                  (if-let [p (and (not (coalesce-error-form? f)) (form-file-path f))]
-                   [::run (some-> (:vis/tool-name f) str) p]
+                   [::run
+                    (some-> (:vis/tool-name f)
+                            str) p]
                    [::solo (gensym)]))]
     (into []
-      (map (fn [grp] (if (next grp) (merge-run grp) (first grp))))
-      (partition-by key-fn (vec forms)))))
+          (map (fn [grp]
+                 (if (next grp) (merge-run grp) (first grp))))
+          (partition-by key-fn (vec forms)))))
 
 (def ^:private keyword-valued
   "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
@@ -229,14 +282,20 @@
    restored row) — the ONE projection every form builder + the gateway uses
    instead of hand-listing keys. Drops nils so a merge never stamps empty keys."
   [m]
-  (reduce (fn [acc k] (if (some? (get m k)) (assoc acc k (get m k)) acc))
-    {} display-keys))
+  (reduce (fn [acc k]
+            (if (some? (get m k)) (assoc acc k (get m k)) acc))
+          {}
+          display-keys))
 
 (defn- spellings
   "Every keyword + string spelling of a base name, snake_case and kebab-case."
   [base]
-  (let [snake (str/replace base "-" "_")
-        kebab (str/replace base "_" "-")]
+  (let [snake
+        (str/replace base "-" "_")
+
+        kebab
+        (str/replace base "_" "-")]
+
     [(keyword base) (keyword snake) (keyword kebab) base snake kebab]))
 
 (defn- wire-key-variants
@@ -246,17 +305,23 @@
    spelling alongside the bare name so the round-trip survives however the wire
    encodes it."
   [k]
-  (let [n  (name k)
-        ns (namespace k)]
-    (distinct (concat [k]
-                (when ns (spellings (str ns "/" n)))
-                (spellings n)))))
+  (let [n
+        (name k)
+
+        ns
+        (namespace k)]
+
+    (distinct (concat [k] (when ns (spellings (str ns "/" n))) (spellings n)))))
 
 (defn- wire-get
   "Read one display key off a wire event, tolerant of snake_case / namespaced /
    string keys."
   [event k]
-  (some #(let [v (get event %)] (when (some? v) v)) (wire-key-variants k)))
+  (some #(let [v
+               (get event %)]
+
+           (when (some? v) v))
+        (wire-key-variants k)))
 
 (defn <-wire
   "Read the canonical display fields back off a gateway WIRE event into a form,
@@ -265,13 +330,13 @@
   [event]
   (reduce (fn [acc k]
             (let [v (wire-get event k)]
-              (cond
-                (nil? v)               acc
-                (keyword-valued k)     (assoc acc k (keyword v))
-                ;; `:cards` is a vector of canonical MINI-FORMS — each crossed the
-                ;; JSON wire with snake_case keys + a stringified `:tool-color-role`,
-                ;; exactly what `<-wire` itself normalizes. Recurse so the nested
-                ;; colour keyword survives the hop the same way the top-level one does.
-                (= k :cards)           (assoc acc k (mapv <-wire v))
-                :else                  (assoc acc k v))))
-    {} display-keys))
+              (cond (nil? v) acc
+                    (keyword-valued k) (assoc acc k (keyword v))
+                    ;; `:cards` is a vector of canonical MINI-FORMS — each crossed the
+                    ;; JSON wire with snake_case keys + a stringified `:tool-color-role`,
+                    ;; exactly what `<-wire` itself normalizes. Recurse so the nested
+                    ;; colour keyword survives the hop the same way the top-level one does.
+                    (= k :cards) (assoc acc k (mapv <-wire v))
+                    :else (assoc acc k v))))
+          {}
+          display-keys))

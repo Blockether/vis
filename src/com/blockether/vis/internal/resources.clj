@@ -32,11 +32,9 @@
    ctx stays PURE DATA: it advertises `can_stop`/`can_restart` but never carries a
    callable. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
-  (:require
-   [clojure.edn :as edn]
-   [clojure.java.io :as io])
-  (:import
-   (java.lang ProcessHandle)))
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io])
+  (:import (java.lang ProcessHandle)))
 
 ;; ---------------------------------------------------------------------------
 ;; In-memory registry: { session-id -> { id -> {:data {..} :stop-fn :restart-fn
@@ -45,8 +43,7 @@
 ;; ---------------------------------------------------------------------------
 (defonce ^:private registry (atom {}))
 
-(def ^:private state-dir
-  (io/file (System/getProperty "user.home") ".vis"))
+(def ^:private state-dir (io/file (System/getProperty "user.home") ".vis"))
 
 (def ^:private registry-file (io/file state-dir "resources.edn"))
 
@@ -60,29 +57,32 @@
 ;; thunks on init.
 ;; ---------------------------------------------------------------------------
 
-(defn- read-persisted []
+(defn- read-persisted
+  []
   (locking registry-lock
-    (try
-      (when (.isFile registry-file)
-        (let [m (edn/read-string (slurp registry-file))]
-          (when (map? m) m)))
-      (catch Throwable _ nil))))
+    (try (when (.isFile registry-file)
+           (let [m (edn/read-string (slurp registry-file))]
+             (when (map? m) m)))
+         (catch Throwable _ nil))))
 
-(defn- write-persisted! [session->id->data]
+(defn- write-persisted!
+  [session->id->data]
   (locking registry-lock
-    (try
-      (.mkdirs state-dir)
-      (spit registry-file (pr-str (or session->id->data {})))
-      (catch Throwable _ nil))))
+    (try (.mkdirs state-dir)
+         (spit registry-file (pr-str (or session->id->data {})))
+         (catch Throwable _ nil))))
 
 (defn- persist-snapshot!
   "Persist the DATA of every registered resource, partitioned by session."
   []
-  (write-persisted!
-    (into {}
-      (map (fn [[sid id->rec]]
-             [sid (into {} (map (fn [[id r]] [id (:data r)])) id->rec)]))
-      @registry)))
+  (write-persisted! (into {}
+                          (map (fn [[sid id->rec]]
+                                 [sid
+                                  (into {}
+                                        (map (fn [[id r]]
+                                               [id (:data r)]))
+                                        id->rec)]))
+                          @registry)))
 
 ;; ---------------------------------------------------------------------------
 ;; Liveness — generic pid check; owners may supply a richer `:alive-fn`.
@@ -94,12 +94,13 @@
   [pid]
   (if (nil? pid)
     true
-    (boolean (some-> (.orElse (ProcessHandle/of (long pid)) nil) .isAlive))))
+    (boolean (some-> (.orElse (ProcessHandle/of (long pid)) nil)
+                     .isAlive))))
 
-(defn- record-alive? [{:keys [data alive-fn]}]
-  (cond
-    alive-fn (boolean (try (alive-fn) (catch Throwable _ false)))
-    :else    (pid-alive? (get data "pid"))))
+(defn- record-alive?
+  [{:keys [data alive-fn]}]
+  (cond alive-fn (boolean (try (alive-fn) (catch Throwable _ false)))
+        :else (pid-alive? (get data "pid"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Data shape — STRING-KEYED. The DATA map is what ctx carries into
@@ -126,25 +127,35 @@
   "Project a caller `update!` patch (keyword-keyed host-side map) onto the
    canonical string-keyed DATA shape so a merge can't mix key types."
   [patch]
-  (reduce-kv (fn [m k v] (assoc m (data-key k) (sval v))) {} patch))
+  (reduce-kv (fn [m k v]
+               (assoc m (data-key k) (sval v)))
+             {}
+             patch))
 
 (defn- ->data
   "Normalise a caller resource map into the canonical serializable DATA map.
    `\"can_stop\"`/`\"can_restart\"` reflect whether a thunk was supplied;
    `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]} {:keys [stop-fn restart-fn]}]
-  (cond-> {"id"          (str id)
-           "session"     (skey session)
-           "kind"        (sval (or kind :resource))
-           "label"       (str (or label id))
-           "status"      (sval (or status :up))
-           "can_stop"    (boolean stop-fn)
+  (cond-> {"id" (str id)
+           "session" (skey session)
+           "kind" (sval (or kind :resource))
+           "label" (str (or label id))
+           "status" (sval (or status :up))
+           "can_stop" (boolean stop-fn)
            "can_restart" (boolean restart-fn)
-           "created_at"  (System/currentTimeMillis)}
-    detail   (assoc "detail" detail)
-    pid      (assoc "pid" pid)
-    owner    (assoc "owner" (sval owner))
-    language (assoc "language" (sval language))))
+           "created_at" (System/currentTimeMillis)}
+    detail
+    (assoc "detail" detail)
+
+    pid
+    (assoc "pid" pid)
+
+    owner
+    (assoc "owner" (sval owner))
+
+    language
+    (assoc "language" (sval language))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API — every verb is scoped to the owning `session`.
@@ -158,14 +169,26 @@
    `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
   ([session resource {:keys [stop-fn restart-fn alive-fn] :as fns}]
-   (let [sid  (skey session)
-         id   (str (:id resource))
-         data (->data session resource fns)]
-     (swap! registry assoc-in [sid id]
+   (let [sid
+         (skey session)
+
+         id
+         (str (:id resource))
+
+         data
+         (->data session resource fns)]
+
+     (swap! registry assoc-in
+       [sid id]
        (cond-> {:data data}
-         stop-fn    (assoc :stop-fn stop-fn)
-         restart-fn (assoc :restart-fn restart-fn)
-         alive-fn   (assoc :alive-fn alive-fn)))
+         stop-fn
+         (assoc :stop-fn stop-fn)
+
+         restart-fn
+         (assoc :restart-fn restart-fn)
+
+         alive-fn
+         (assoc :alive-fn alive-fn)))
      (persist-snapshot!)
      data)))
 
@@ -173,10 +196,15 @@
   "Patch the DATA of an existing resource (e.g. flip `:status`, refresh
    `:detail`). No-op if unknown. Returns the updated DATA map or nil."
   [session id patch]
-  (let [sid (skey session) id (str id)]
+  (let [sid
+        (skey session)
+
+        id
+        (str id)]
+
     (when (get-in @registry [sid id])
       (let [data (-> (swap! registry update-in [sid id :data] merge (normalize-patch patch))
-                   (get-in [sid id :data]))]
+                     (get-in [sid id :data]))]
         (persist-snapshot!)
         data))))
 
@@ -184,12 +212,18 @@
   "Drop a resource from `session` (does NOT run its stop-fn — caller decides).
    Returns true if something was removed."
   [session id]
-  (let [sid (skey session) id (str id)
-        present (boolean (get-in @registry [sid id]))]
+  (let [sid
+        (skey session)
+
+        id
+        (str id)
+
+        present
+        (boolean (get-in @registry [sid id]))]
+
     (when present
       (swap! registry update sid dissoc id)
-      (when (empty? (get @registry sid))
-        (swap! registry dissoc sid))
+      (when (empty? (get @registry sid)) (swap! registry dissoc sid))
       (persist-snapshot!))
     present))
 
@@ -197,15 +231,22 @@
   "Drop `session` resources whose process is gone (per `:alive-fn`/pid). Returns
    the vector of pruned ids. Cheap enough to call before every list/render."
   [session]
-  (let [sid  (skey session)
-        snap (get @registry sid)
-        dead (into [] (comp (filter (fn [[_ r]] (not (record-alive? r))))
-                        (map key))
-               snap)]
+  (let [sid
+        (skey session)
+
+        snap
+        (get @registry sid)
+
+        dead
+        (into []
+              (comp (filter (fn [[_ r]]
+                              (not (record-alive? r))))
+                    (map key))
+              snap)]
+
     (when (seq dead)
       (apply swap! registry update sid dissoc dead)
-      (when (empty? (get @registry sid))
-        (swap! registry dissoc sid))
+      (when (empty? (get @registry sid)) (swap! registry dissoc sid))
       (persist-snapshot!))
     dead))
 
@@ -227,38 +268,47 @@
    agent tool and the footer both land here, always scoped to `session` so no
    session can stop another's resource. Returns a result map."
   [session id]
-  (let [sid (skey session) id (str id)
-        r   (get-in @registry [sid id])]
-    (cond
-      (nil? r)            {:result :unknown :id id
-                           :message "No such resource in this session."}
-      (nil? (:stop-fn r)) {:result :not-stoppable :id id
-                           :message "Resource has no stop handle (owner must re-register after a restart)."}
-      :else
-      (let [res (try {:ok (do ((:stop-fn r)) true)}
-                  (catch Throwable t {:error (ex-message t)}))]
-        (unregister! session id)
-        (if (:error res)
-          {:result :error :id id :message (:error res)}
-          {:result :stopped :id id})))))
+  (let [sid
+        (skey session)
+
+        id
+        (str id)
+
+        r
+        (get-in @registry [sid id])]
+
+    (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
+          (nil? (:stop-fn r))
+          {:result :not-stoppable
+           :id id
+           :message "Resource has no stop handle (owner must re-register after a restart)."}
+          :else (let [res (try {:ok (do ((:stop-fn r)) true)}
+                               (catch Throwable t {:error (ex-message t)}))]
+                  (unregister! session id)
+                  (if (:error res)
+                    {:result :error :id id :message (:error res)}
+                    {:result :stopped :id id})))))
 
 (defn restart!
   "Run a resource's `:restart-fn` (kept registered). Scoped to `session`. The
    restart-fn owns re-registration of any changed DATA (e.g. a new port)."
   [session id]
-  (let [sid (skey session) id (str id)
-        r   (get-in @registry [sid id])]
-    (cond
-      (nil? r)               {:result :unknown :id id
-                              :message "No such resource in this session."}
-      (nil? (:restart-fn r)) {:result :not-restartable :id id
-                              :message "Resource has no restart handle."}
-      :else
-      (let [res (try {:ok ((:restart-fn r))}
-                  (catch Throwable t {:error (ex-message t)}))]
-        (if (:error res)
-          {:result :error :id id :message (:error res)}
-          {:result :restarted :id id})))))
+  (let [sid
+        (skey session)
+
+        id
+        (str id)
+
+        r
+        (get-in @registry [sid id])]
+
+    (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
+          (nil? (:restart-fn r))
+          {:result :not-restartable :id id :message "Resource has no restart handle."}
+          :else (let [res (try {:ok ((:restart-fn r))} (catch Throwable t {:error (ex-message t)}))]
+                  (if (:error res)
+                    {:result :error :id id :message (:error res)}
+                    {:result :restarted :id id})))))
 
 (defn stop-all!
   "Teardown spout for one `session` (engine end-of-session): stop every resource
@@ -280,7 +330,8 @@
    value crosses the Python boundary, so nothing keyword may survive."
   [{:keys [result id message]}]
   (cond-> {"result" (name result) "id" (str id)}
-    message (assoc "message" message)))
+    message
+    (assoc "message" message)))
 
 (defn- ->id
   "Normalize a model-supplied resource id. The tool is documented as taking a
@@ -288,9 +339,7 @@
    (or `resource_stop({:id x})`) — unwrap that single-key map to its id value so
    the call resolves instead of stringifying to a bogus `{id x}` literal."
   [id]
-  (if (map? id)
-    (str (or (get id "id") (get id :id) id))
-    (str id)))
+  (if (map? id) (str (or (get id "id") (get id :id) id)) (str id)))
 
 (defn sandbox-bindings
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
@@ -299,5 +348,7 @@
    boundary as the tool result; `stop!`/`restart!` stay keyword-keyed for
    internal callers (e.g. the REPL pack's `repl_stop`)."
   [session]
-  {'resource-stop    (fn [id] (->model-result (stop! session (->id id))))
-   'resource-restart (fn [id] (->model-result (restart! session (->id id))))})
+  {'resource-stop (fn [id]
+                    (->model-result (stop! session (->id id))))
+   'resource-restart (fn [id]
+                       (->model-result (restart! session (->id id))))})

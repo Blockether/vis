@@ -14,12 +14,12 @@
   (:import [dev.kreuzberg.treesitterlanguagepack StructuralApi StructuralApi$Op]))
 
 (def ^:private ops
-  {:replace        StructuralApi$Op/REPLACE
-   :insert-before  StructuralApi$Op/INSERT_BEFORE
-   :insert-after   StructuralApi$Op/INSERT_AFTER
-   :append         StructuralApi$Op/APPEND
-   :replace-doc    StructuralApi$Op/REPLACE_DOC
-   :add-doc        StructuralApi$Op/ADD_DOC})
+  {:replace StructuralApi$Op/REPLACE
+   :insert-before StructuralApi$Op/INSERT_BEFORE
+   :insert-after StructuralApi$Op/INSERT_AFTER
+   :append StructuralApi$Op/APPEND
+   :replace-doc StructuralApi$Op/REPLACE_DOC
+   :add-doc StructuralApi$Op/ADD_DOC})
 
 (defn- vis-ize-error
   "The Java engine is shared with maki, so its messages name maki's `index`
@@ -31,17 +31,18 @@
   [^String msg]
   (let [m (str/replace (str msg) "index(path)" "outline(path)")]
     (if (str/includes? m "No definition named")
-      (str m " (Re-check the name/`kind` against outline(path); or edit with"
-        " write(path, content) or patch(...).)")
+      (str m
+           " (Re-check the name/`kind` against outline(path); or edit with"
+           " write(path, content) or patch(...).)")
       m)))
 
 (defn- slice-lines
   "Inclusive 0-based `[start end]` line slice of `source` as a string."
   [^String source start end]
   (->> (str/split-lines source)
-    (drop start)
-    (take (inc (- end start)))
-    (str/join "\n")))
+       (drop start)
+       (take (inc (- end start)))
+       (str/join "\n")))
 
 (defn- cut-node-lines
   "Remove the inclusive 0-based `[s e]` line span (the moved node) from `source`,
@@ -49,16 +50,23 @@
    leaves no ragged gap WITHOUT touching whitespace anywhere else in the file.
    Returns the source with the span removed."
   [^String source s e]
-  (let [lines  (vec (str/split-lines source))
-        before (subvec lines 0 (min s (count lines)))
-        after  (vec (subvec lines (min (inc e) (count lines))))
+  (let [lines
+        (vec (str/split-lines source))
+
+        before
+        (subvec lines 0 (min s (count lines)))
+
+        after
+        (vec (subvec lines (min (inc e) (count lines))))
+
         ;; seam = end of `before` meets start of `after`. If both sides are blank
         ;; (the node had a blank line above AND below), drop one so a single blank
         ;; remains — local to this seam, nothing else.
-        after  (if (and (str/blank? (str (last before)))
-                     (seq after) (str/blank? (str (first after))))
-                 (vec (rest after))
-                 after)]
+        after
+        (if (and (str/blank? (str (last before))) (seq after) (str/blank? (str (first after))))
+          (vec (rest after))
+          after)]
+
     (str/join "\n" (concat before after))))
 
 (defn- move-source
@@ -73,17 +81,33 @@
   [^String source ^String language target kind anchor position]
   (when (str/blank? (str anchor))
     (throw (ex-info "move requires an `anchor` (the node to move next to)."
-             {:type :ext.foundation.editing/struct-move-no-anchor :target target})))
+                    {:type :ext.foundation.editing/struct-move-no-anchor :target target})))
   (when (= target anchor)
     (throw (ex-info (str "move: `target` and `anchor` are the same node (" target ").")
-             {:type :ext.foundation.editing/struct-move-same-node :target target})))
-  (let [span    (or (outline/node-span source language target (some-> kind name))
-                  (throw (ex-info (str "No definition named '" target "' to move (check outline(path)).")
-                           {:type :ext.foundation.editing/struct-move-no-target :target target})))
-        text    (slice-lines source (first span) (second span))
+                    {:type :ext.foundation.editing/struct-move-same-node :target target})))
+  (let [span
+        (or (outline/node-span source
+                               language
+                               target
+                               (some-> kind
+                                       name))
+            (throw (ex-info (str "No definition named '" target "' to move (check outline(path)).")
+                            {:type :ext.foundation.editing/struct-move-no-target :target target})))
+
+        text
+        (slice-lines source (first span) (second span))
+
         ;; delete the target ONLY (its own line span), seam-local cleanup
-        deleted (cut-node-lines source (first span) (second span))
-        jop     (case position :before StructuralApi$Op/INSERT_BEFORE StructuralApi$Op/INSERT_AFTER)]
+        deleted
+        (cut-node-lines source (first span) (second span))
+
+        jop
+        (case position
+          :before
+          StructuralApi$Op/INSERT_BEFORE
+
+          StructuralApi$Op/INSERT_AFTER)]
+
     ;; re-insert next to the anchor, with a blank line so it reads as its own form.
     ;; INSERT_* on the deleted (still-valid) tree; the caller's write re-parses and
     ;; REFUSES the whole edit if the relocate broke anything.
@@ -100,34 +124,66 @@
    `:code`; `:append` ignores `:target`; `:move-before`/`:move-after` relocate
    the node named `:target` next to the node named `:anchor`."
   [path source {:keys [op target kind code match anchor]}]
-  (let [language (or (outline/detect-language path)
-                   (throw (ex-info (str "Unknown language for " path " — use patch(...) or write(...) instead.")
-                            {:type :ext.foundation.editing/struct-unknown-language :path path})))]
+  (let [language
+        (or (outline/detect-language path)
+            (throw (ex-info
+                     (str "Unknown language for " path " — use patch(...) or write(...) instead.")
+                     {:type :ext.foundation.editing/struct-unknown-language :path path})))]
     (try
       (case op
-        :replace-node (StructuralApi/replaceNode source language match code target (some-> kind name))
-        :rename       (StructuralApi/rename source language target code)
-        :move-before  (move-source source language target kind anchor :before)
-        :move-after   (move-source source language target kind anchor :after)
+        :replace-node
+        (StructuralApi/replaceNode source
+                                   language
+                                   match
+                                   code
+                                   target
+                                   (some-> kind
+                                           name))
+
+        :rename
+        (StructuralApi/rename source language target code)
+
+        :move-before
+        (move-source source language target kind anchor :before)
+
+        :move-after
+        (move-source source language target kind anchor :after)
+
         (let [jop (or (ops op)
-                    (throw (ex-info (str "Unknown structural op: " op)
-                             {:type :ext.foundation.editing/struct-bad-op :op op})))]
-          (StructuralApi/edit source language jop target (some-> kind name) code)))
+                      (throw (ex-info (str "Unknown structural op: " op)
+                                      {:type :ext.foundation.editing/struct-bad-op :op op})))]
+          (StructuralApi/edit source
+                              language
+                              jop
+                              target
+                              (some-> kind
+                                      name)
+                              code)))
       (catch clojure.lang.ExceptionInfo e (throw e))
       (catch Throwable e
-        (let [raw   (vis-ize-error (.getMessage e))
-              synx? (str/includes? (str raw) "syntax error")
-              hint  (when (and synx? (string? code) (not (str/blank? code)))
-                      (try (or (zipper/describe-syntax-errors language code)
-                             ;; `code` parses clean alone → the fault is at the seam.
-                             (str "the replacement parses fine in isolation, so the fault is at the INSERTION SEAM"
-                               " — an enclosing delimiter was consumed/duplicated or the indentation disagrees"
-                               " with the parens; check the code's OUTER balance against the surrounding form."))
-                        (catch Throwable _ nil)))]
-          (throw (ex-info (cond-> raw hint (str "  " hint))
-                   {:type :ext.foundation.editing/struct-edit-failed
-                    :op op :target target :language language}
-                   e)))))))
+        (let
+          [raw (vis-ize-error (.getMessage e))
+           synx? (str/includes? (str raw) "syntax error")
+           hint
+           (when (and synx? (string? code) (not (str/blank? code)))
+             (try
+               (or
+                 (zipper/describe-syntax-errors language code)
+                 ;; `code` parses clean alone → the fault is at the seam.
+                 (str
+                   "the replacement parses fine in isolation, so the fault is at the INSERTION SEAM"
+                   " — an enclosing delimiter was consumed/duplicated or the indentation disagrees"
+                   " with the parens; check the code's OUTER balance against the surrounding form."))
+               (catch Throwable _ nil)))]
+
+          (throw (ex-info (cond-> raw
+                            hint
+                            (str "  " hint))
+                          {:type :ext.foundation.editing/struct-edit-failed
+                           :op op
+                           :target target
+                           :language language}
+                          e)))))))
 
 (defn references
   "Occurrences of identifier `name` in `path` as
@@ -139,10 +195,12 @@
     (let [lines (vec (str/split-lines source))]
       (mapv (fn [^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
               (let [line (.line h)]
-                {:line line :column (.column h)
-                 :start-byte (.startByte h) :end-byte (.endByte h)
+                {:line line
+                 :column (.column h)
+                 :start-byte (.startByte h)
+                 :end-byte (.endByte h)
                  :anchor (patch/line-anchor line (nth lines (dec line) ""))}))
-        (StructuralApi/findReferences source language name)))
+            (StructuralApi/findReferences source language name)))
     []))
 
 (defn occurrences
@@ -171,27 +229,34 @@
           defs (outline/definitions source language name)
           ;; claim: def → index of the first still-unclaimed hit inside its span.
           ;; The span is recovered from the def's anchors (its sole position).
-          claimed (reduce (fn [acc d]
-                            (let [lo (patch/anchor->line (:anchor d))
-                                  hi (patch/anchor->line (:end-anchor d))]
-                              (if-let [i (first (keep-indexed
-                                                  (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                                                    (when (and (not (contains? acc i))
-                                                            (<= lo (.line h) hi))
-                                                      i))
-                                                  hits))]
-                                (assoc acc i d)
-                                acc)))
-                    {} defs)]
-      (vec (map-indexed
-             (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-               (let [base {:anchor (line-anchor (.line h))}]
-                 (if-let [d (get claimed i)]
-                   (assoc base
-                     :is-definition true
-                     :kind (:kind d) :visibility (:visibility d)
-                     :signature (:signature d) :doc (:doc d)
-                     :end-anchor (:end-anchor d))
-                   base)))
-             hits)))
+          claimed
+          (reduce (fn [acc d]
+                    (let [lo (patch/anchor->line (:anchor d))
+                          hi (patch/anchor->line (:end-anchor d))]
+
+                      (if-let
+                        [i (first
+                             (keep-indexed
+                               (fn [i
+                                    ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit
+                                    h]
+                                 (when (and (not (contains? acc i)) (<= lo (.line h) hi)) i))
+                               hits))]
+                        (assoc acc i d)
+                        acc)))
+                  {}
+                  defs)]
+
+      (vec (map-indexed (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+                          (let [base {:anchor (line-anchor (.line h))}]
+                            (if-let [d (get claimed i)]
+                              (assoc base
+                                :is-definition true
+                                :kind (:kind d)
+                                :visibility (:visibility d)
+                                :signature (:signature d)
+                                :doc (:doc d)
+                                :end-anchor (:end-anchor d))
+                              base)))
+                        hits)))
     []))

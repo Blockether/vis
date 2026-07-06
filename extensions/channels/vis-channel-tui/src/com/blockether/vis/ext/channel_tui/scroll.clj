@@ -48,14 +48,12 @@
    as we close in. The render loop ticks `ease` a few times a second."
   0.35)
 
-(def follow
-  "The resting auto-bottom intent: track the latest message."
-  {:mode :follow})
+(def follow "The resting auto-bottom intent: track the latest message." {:mode :follow})
 
 (defn parked
   "A concrete parked intent at row `offset` (snapped, no in-flight ease)."
   [offset]
-  {:mode :at, :offset (max 0 (long offset))})
+  {:mode :at :offset (max 0 (long offset))})
 
 (defn- norm
   "Tolerate a missing/legacy `:scroll` by defaulting to FOLLOW."
@@ -70,8 +68,7 @@
   [sc]
   (= :at (:mode (norm sc))))
 
-(defn- clamp ^long [^long v ^long lo ^long hi]
-  (max lo (min v hi)))
+(defn- clamp ^long [^long v ^long lo ^long hi] (max lo (min v hi)))
 
 (defn desired
   "The row the view WANTS to show: bottom in `:follow`, the clamped
@@ -79,7 +76,9 @@
   ^long [sc ^long max-s]
   (let [sc (norm sc)]
     (case (:mode sc)
-      :at     (clamp (long (:offset sc)) 0 max-s)
+      :at
+      (clamp (long (:offset sc)) 0 max-s)
+
       ;; :follow (and any unknown mode) tracks the bottom.
       max-s)))
 
@@ -115,27 +114,31 @@
    returned while parked or mid-ease so the painter anchors / animates
    against it."
   [sc ^long max-s]
-  (let [sc (norm sc)
-        pos (:pos sc)]
+  (let [sc
+        (norm sc)
+
+        pos
+        (:pos sc)]
+
     (case (:mode sc)
       ;; Settled at (or below) the bottom ⇒ nil exact-bottom lock.
       ;; Mid-ease (pos above the bottom) ⇒ the concrete eased row.
-      :follow (when (and pos (< (long pos) max-s)) (long pos))
-      :at     (displayed sc max-s)
+      :follow
+      (when (and pos (< (long pos) max-s)) (long pos))
+
+      :at
+      (displayed sc max-s)
+
       nil)))
 
 (defn- step-toward
   "One ease-out step from `cur` toward `target`; snaps within one row."
   ^long [^long cur ^long target]
   (let [diff (- target cur)]
-    (cond
-      (zero? diff)          cur
-      (= 1 (Math/abs diff)) target
-      :else
-      (let [step (long (Math/max 1 (long (Math/ceil (* step-frac (Math/abs diff))))))]
-        (if (pos? diff)
-          (Math/min target (+ cur step))
-          (Math/max target (- cur step)))))))
+    (cond (zero? diff) cur
+          (= 1 (Math/abs diff)) target
+          :else (let [step (long (Math/max 1 (long (Math/ceil (* step-frac (Math/abs diff))))))]
+                  (if (pos? diff) (Math/min target (+ cur step)) (Math/max target (- cur step)))))))
 
 (defn ease
   "Advance the on-screen `:pos` one step toward `desired`. Called once per
@@ -146,41 +149,50 @@
    - Settled while FOLLOWING ⇒ KEEP `:pos` pinned at the bottom so the
      next content growth eases FROM here instead of teleporting."
   [sc ^long max-s]
-  (let [sc  (norm sc)
-        d   (desired sc max-s)
-        cur (displayed sc max-s)]
-    (cond
-      (not= cur d)            (assoc sc :pos (step-toward cur d))
-      (= :follow (:mode sc))  (assoc sc :pos d)
-      :else                   (dissoc sc :pos))))
+  (let [sc
+        (norm sc)
+
+        d
+        (desired sc max-s)
+
+        cur
+        (displayed sc max-s)]
+
+    (cond (not= cur d) (assoc sc :pos (step-toward cur d))
+          (= :follow (:mode sc)) (assoc sc :pos d)
+          :else (dissoc sc :pos))))
 
 (defn up
   "Wheel/key scroll UP by `amount`: park `amount` rows above the current
    on-screen row and ease there. Scrolling up is always a deliberate
    \"let me read history\" intent."
   [sc ^long amount ^long max-s]
-  (let [cur (displayed sc max-s)
-        t   (max 0 (- cur amount))]
-    {:mode :at, :offset t, :pos cur}))
+  (let [cur
+        (displayed sc max-s)
+
+        t
+        (max 0 (- cur amount))]
+
+    {:mode :at :offset t :pos cur}))
 
 (defn down
   "Wheel/key scroll DOWN by `amount`. Landing within `slack-rows` of the
    bottom re-arms FOLLOW (and eases the rest of the way); otherwise parks
    `amount` rows below the current row."
   [sc ^long amount ^long max-s]
-  (let [cur (displayed sc max-s)
-        t   (+ cur amount)]
-    (if (>= t (- max-s slack-rows))
-      (assoc follow :pos cur)
-      {:mode :at, :offset t, :pos cur})))
+  (let [cur
+        (displayed sc max-s)
+
+        t
+        (+ cur amount)]
+
+    (if (>= t (- max-s slack-rows)) (assoc follow :pos cur) {:mode :at :offset t :pos cur})))
 
 (defn to-y
   "Scrollbar drag/track click → `offset` (already mapped from cursor row).
    1:1, so SNAP (no ease). The very bottom re-enters FOLLOW."
   [^long offset ^long max-s]
-  (if (>= offset max-s)
-    follow
-    (parked offset)))
+  (if (>= offset max-s) follow (parked offset)))
 
 (defn reanchor
   "The layout corrected off-screen estimate→real heights and shifted the
@@ -191,6 +203,12 @@
   [sc ^long anchored ^long delta]
   (let [sc (norm sc)]
     (case (:mode sc)
-      :at     (-> sc (assoc :pos anchored) (update :offset + delta))
-      :follow (assoc sc :pos anchored)
+      :at
+      (-> sc
+          (assoc :pos anchored)
+          (update :offset + delta))
+
+      :follow
+      (assoc sc :pos anchored)
+
       sc)))
