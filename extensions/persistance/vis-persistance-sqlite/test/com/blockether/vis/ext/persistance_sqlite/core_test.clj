@@ -1061,7 +1061,9 @@
                              :duration-ms 5
                              :llm-raw-response raw
                              :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
-      (let [iter (first (vis/db-list-session-turn-iterations s qid))]
+      ;; forensic round-trip: raw response is a slim-excluded blob, so load
+      ;; with-forensics? (the restore read skips it by default).
+      (let [iter (first (vis/db-list-session-turn-iterations s qid true))]
         (expect (= raw (:llm-raw-response iter)))
         (expect (= raw (:llm-raw-response-preview iter)))
         (expect (= (count raw) (:llm-raw-response-length iter)))
