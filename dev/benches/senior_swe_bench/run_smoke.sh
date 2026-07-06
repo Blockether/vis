@@ -26,6 +26,7 @@ verifier_judge_model="${VIS_BENCH_VERIFIER_JUDGE_MODEL:-${SSB_OVERRIDE_ALL_JUDGE
 verifier_classifier_model="${VIS_BENCH_VERIFIER_CLASSIFIER_MODEL:-${SSB_OVERRIDE_CLASSIFIER_MODEL:-$verifier_model}}"
 verifier_openai_base_url="${VIS_BENCH_VERIFIER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-${OPENAI_API_BASE:-}}}"
 verifier_tool_choice_compat="${VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT:-}"
+verifier_timeout_multiplier="${VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER:-}"
 export VIS_BENCH_REMOTE_HOME="$remote_home"
 
 fail_pre_harbor() {
@@ -203,6 +204,7 @@ fi
 if [[ "$verifier_provider" == "lmstudio" ]]; then
   verifier_openai_base_url="${verifier_openai_base_url:-http://host.docker.internal:1234/v1}"
   verifier_tool_choice_compat="${verifier_tool_choice_compat:-required}"
+  verifier_timeout_multiplier="${verifier_timeout_multiplier:-3}"
   verifier_judge_model="$(ensure_openai_slug "$verifier_judge_model")"
   verifier_classifier_model="$(ensure_openai_slug "$verifier_classifier_model")"
   if [[ -z "$verifier_judge_model" || -z "$verifier_classifier_model" ]]; then
@@ -226,6 +228,23 @@ fi
 if [[ -n "$verifier_tool_choice_compat" && "$verifier_tool_choice_compat" != "required" ]]; then
   fail_pre_harbor "verifier_tool_choice_compat_invalid" \
     "VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT must be unset, none, or required; got '$verifier_tool_choice_compat'"
+fi
+if [[ -n "$verifier_timeout_multiplier" ]]; then
+  if ! python3 - <<'PY' "$verifier_timeout_multiplier"
+import math
+import sys
+
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+if not math.isfinite(value) or value <= 0:
+    raise SystemExit(1)
+PY
+  then
+    fail_pre_harbor "verifier_timeout_multiplier_invalid" \
+      "VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER must be a positive number; got '$verifier_timeout_multiplier'"
+  fi
 fi
 
 mounts_json=""
@@ -286,6 +305,7 @@ cat > "$out/command.json" <<EOF
   "vis_bench_verifier_judge_model": "$verifier_judge_model",
   "vis_bench_verifier_classifier_model": "$verifier_classifier_model",
   "vis_bench_verifier_tool_choice_compat": "$verifier_tool_choice_compat",
+  "vis_bench_verifier_timeout_multiplier": "$verifier_timeout_multiplier",
   "vis_bench_task_image": "$task_image_override",
   "vis_bench_prepare_python_dev_image_requested": "$requested_prepare_python_dev_image",
   "vis_bench_prepare_python_dev_image": "$prepare_python_dev_image",
@@ -443,6 +463,9 @@ harbor_args=(
   --agent-env "VIS_PROVIDER=$VIS_PROVIDER" \
   --agent-env "VIS_MODEL=$VIS_MODEL"
 )
+if [[ -n "$verifier_timeout_multiplier" ]]; then
+  harbor_args+=(--verifier-timeout-multiplier "$verifier_timeout_multiplier")
+fi
 if [[ -n "$verifier_env_file" ]]; then
   harbor_args+=(--env-file "$verifier_env_file")
 fi
@@ -461,6 +484,8 @@ if [[ -n "$verifier_classifier_model" ]]; then
 fi
 if [[ -n "$verifier_tool_choice_compat" ]]; then
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_TOOL_CHOICE=$verifier_tool_choice_compat")
+  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON=1")
+  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_RESPONSE_FORMAT=1")
 fi
 if [[ -n "$mounts_json" ]]; then
   harbor_args+=(--mounts "$mounts_json")
