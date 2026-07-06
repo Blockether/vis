@@ -262,3 +262,24 @@
         (expect (= [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
                     {:role "assistant" :content "old answer"} {:role :user :content "queued new"}]
                    (#'state/replace-last-user-message-content messages "queued new"))))))
+
+(defdescribe persisted-duplicate-of-live-test
+             ;; A FAILED/cancelled turn's error text lands ONLY on the durable row
+             ;; (`answer-markdown`); the transient live row's `answer_md` is blank, so
+             ;; a strict answer-equality check never matched an error turn and BOTH
+             ;; rows rendered — the same "Could not reach provider" twice. Request +
+             ;; terminal-status + created-after-start still identifies the one turn.
+             (let [dup? #'state/persisted-duplicate-of-live?
+                   at   (fn [ms] (java.util.Date. (long ms)))]
+               (it "dedups an error turn whose live row has no answer to compare"
+                   (expect (dup? {:engine_turn_id nil :status "error" :request "add zprint"
+                                  :answer_md "" :started_at 1000}
+                                 {:id "soul-1" :user-request "add zprint"
+                                  :answer-markdown "## Could not reach provider" :created-at (at 2000)})))
+               (it "does NOT over-dedup two distinct completed answers with the same request"
+                   (expect (not (dup? {:engine_turn_id nil :status "completed" :request "hi"
+                                       :answer_md "answer A" :started_at 1000}
+                                      {:id "soul-2" :user-request "hi"
+                                       :answer-markdown "answer B" :created-at (at 2000)}))))
+               (it "still matches on the engine-turn-id primary key"
+                   (expect (dup? {:engine_turn_id "eng-9" :status "completed"} {:id "eng-9"})))))
