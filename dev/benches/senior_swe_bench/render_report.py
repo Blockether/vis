@@ -414,6 +414,7 @@ def collect_run(
             "verifier_judge_model": command.get("vis_bench_verifier_judge_model"),
             "verifier_classifier_model": command.get("vis_bench_verifier_classifier_model"),
             "verifier_tool_choice_compat": command.get("vis_bench_verifier_tool_choice_compat"),
+            "verifier_timeout_multiplier": command.get("vis_bench_verifier_timeout_multiplier"),
         },
         "timing": collect_timings(trial, job_result),
         "metrics": metrics,
@@ -654,6 +655,7 @@ def harness_card(harness: dict[str, Any]) -> str:
       ("verifier judge model", params.get("verifier_judge_model")),
       ("verifier classifier", params.get("verifier_classifier_model")),
       ("verifier tool choice", params.get("verifier_tool_choice_compat") or MISSING),
+      ("verifier timeout x", params.get("verifier_timeout_multiplier") or MISSING),
       ("attempts / concurrency", f"{format_number(params.get('n_attempts'))} / {format_number(params.get('n_concurrent_trials'))}"),
   ], compact=True)}
   <h3>Time</h3>
