@@ -8,14 +8,13 @@
          :source :endpoint?}`
      - parse-arxiv-atom maps arxiv entries into the canonical citation
        shape"
-  (:require
-   [babashka.http-client :as http]
-   [clojure.string :as str]
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation-search.core :as search]
-   [com.blockether.vis.internal.env-python :as boundary]
-   [com.blockether.vis.internal.extension :as extension]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+  (:require [babashka.http-client :as http]
+            [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.foundation-search.core :as search]
+            [com.blockether.vis.internal.env-python :as boundary]
+            [com.blockether.vis.internal.extension :as extension]
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; ---------------------------------------------------------------------------
 ;; arxiv Atom sample
@@ -53,55 +52,49 @@
   [env]
   (get (envelope-result env) "citations"))
 
-(defdescribe papers-test
-  (describe "happy path: arxiv Atom → envelope with citations vec"
-    (with-redefs [http/get (fn [_url _opts] {:status 200 :body SAMPLE_ATOM})]
+(defdescribe
+  papers-test
+  (describe
+    "happy path: arxiv Atom → envelope with citations vec"
+    (with-redefs [http/get (fn [_url _opts]
+                             {:status 200 :body SAMPLE_ATOM})]
       (let [env (search/search-papers "reflexion")
-            r   (envelope-result env)
-            cs  (get r "citations")]
+            r (envelope-result env)
+            cs (get r "citations")]
 
         (it "envelope is a successful tool result"
-          (expect (extension/envelope-success? env))
-          (expect (= "search_papers" (get r "op")))
-          (expect (= :search-papers (:symbol env))))
-
-        (it "two citations"
-          (expect (= 2 (count cs)))
-          (expect (= 2 (get r "citation_count"))))
-
-        (it ":query echoed back on the envelope"
-          (expect (= "reflexion" (get r "query"))))
-
+            (expect (extension/envelope-success? env))
+            (expect (= "search_papers" (get r "op")))
+            (expect (= :search-papers (:symbol env))))
+        (it "two citations" (expect (= 2 (count cs))) (expect (= 2 (get r "citation_count"))))
+        (it ":query echoed back on the envelope" (expect (= "reflexion" (get r "query"))))
         (it "first citation shape paper + title + url + excerpt + source"
-          (let [e (first cs)]
-            (expect (= "paper" (get e "type")))
-            (expect (re-find #"Reflexion" (get e "title")))
-            (expect (= "http://arxiv.org/abs/2303.11366" (get e "url")))
-            (expect (re-find #"linguistic feedback" (get e "excerpt")))
-            (expect (= "arxiv" (get e "source")))))
-
-        (it "Self-Discover preserved"
-          (expect (re-find #"Self-Discover" (get (second cs) "title"))))
-
+            (let [e (first cs)]
+              (expect (= "paper" (get e "type")))
+              (expect (re-find #"Reflexion" (get e "title")))
+              (expect (= "http://arxiv.org/abs/2303.11366" (get e "url")))
+              (expect (re-find #"linguistic feedback" (get e "excerpt")))
+              (expect (= "arxiv" (get e "source")))))
+        (it "Self-Discover preserved" (expect (re-find #"Self-Discover" (get (second cs) "title"))))
         (it "source + endpoint url present on the envelope payload"
-          (expect (= "arxiv" (get r "source")))
-          (expect (string? (get r "endpoint")))
-          (expect (str/includes? (get r "endpoint") "arxiv.org/api/query"))))))
-
+            (expect (= "arxiv" (get r "source")))
+            (expect (string? (get r "endpoint")))
+            (expect (str/includes? (get r "endpoint") "arxiv.org/api/query"))))))
   (describe "http throws → failure envelope with single error citation"
-    (with-redefs [http/get (fn [_url _opts] (throw (ex-info "503" {})))]
-      (let [env (search/search-papers "anything")
-            r   (envelope-result env)]
-        (it "envelope is a failure"
-          (expect (extension/envelope-failure? env)))
-        (it "structured :error map carried on the envelope"
-          (expect (= "503" (get-in env [:error :message])))
-          (expect (= :arxiv (get-in env [:error :source])))
-          (expect (= "anything" (get-in env [:error :query]))))
-        (it "result error flag set + one error-flagged citation for in-band readers"
-          (expect (true? (get r "error")))
-          (expect (= 1 (count (get r "citations"))))
-          (expect (true? (get (first (get r "citations")) "error"))))))))
+            (with-redefs [http/get (fn [_url _opts]
+                                     (throw (ex-info "503" {})))]
+              (let [env (search/search-papers "anything")
+                    r (envelope-result env)]
+
+                (it "envelope is a failure" (expect (extension/envelope-failure? env)))
+                (it "structured :error map carried on the envelope"
+                    (expect (= "503" (get-in env [:error :message])))
+                    (expect (= :arxiv (get-in env [:error :source])))
+                    (expect (= "anything" (get-in env [:error :query]))))
+                (it "result error flag set + one error-flagged citation for in-band readers"
+                    (expect (true? (get r "error")))
+                    (expect (= 1 (count (get r "citations"))))
+                    (expect (true? (get (first (get r "citations")) "error"))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; web / code — Exa MCP layer
@@ -131,71 +124,64 @@ The spec library specifies the structure of data.")
    wire format entirely."
   [text]
   (fn [_tool _args]
-    {:endpoint "https://stub/mcp?exaApiKey=SECRET"
-     :result   {:content [{:type "text" :text text}]}}))
+    {:endpoint "https://stub/mcp?exaApiKey=SECRET" :result {:content [{:type "text" :text text}]}}))
 
-(defdescribe web-shape-test
-  (describe "search/web returns a tool envelope wrapping a structured citation map"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_TEXT)]
+(defdescribe
+  web-shape-test
+  (describe
+    "search/web returns a tool envelope wrapping a structured citation map"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp
+                                                                                 SAMPLE_EXA_TEXT)]
       (let [env (search/search-web "clojure malli" {"num_results" 2})
-            r   (envelope-result env)
-            cs  (get r "citations")]
+            r (envelope-result env)
+            cs (get r "citations")]
 
         (it "envelope is a successful tool result keyed :search-web"
-          (expect (extension/envelope-success? env))
-          (expect (= "search_web" (get r "op")))
-          (expect (= :search-web (:symbol env))))
-
-        (it ":query carried on the envelope payload"
-          (expect (= "clojure malli" (get r "query"))))
-
+            (expect (extension/envelope-success? env))
+            (expect (= "search_web" (get r "op")))
+            (expect (= :search-web (:symbol env))))
+        (it ":query carried on the envelope payload" (expect (= "clojure malli" (get r "query"))))
         (it "two citations + citation_count parity"
-          (expect (= 2 (count cs)))
-          (expect (= 2 (get r "citation_count"))))
-
+            (expect (= 2 (count cs)))
+            (expect (= 2 (get r "citation_count"))))
         (it "every citation has type web + title + url + excerpt + source"
-          (doseq [e cs]
-            (expect (= "web" (get e "type")))
-            (expect (string? (get e "title")))
-            (expect (string? (get e "url")))
-            (expect (string? (get e "excerpt")))
-            (expect (= "exa" (get e "source")))))
-
+            (doseq [e cs]
+              (expect (= "web" (get e "type")))
+              (expect (string? (get e "title")))
+              (expect (string? (get e "url")))
+              (expect (string? (get e "excerpt")))
+              (expect (= "exa" (get e "source")))))
         (it "first entry preserves title + url + markdown excerpt"
-          (let [e (first cs)]
-            (expect (= "metosin/malli" (get e "title")))
-            (expect (= "https://github.com/metosin/malli" (get e "url")))
-            (expect (str/includes? (get e "excerpt") "# Repository"))))
-
+            (let [e (first cs)]
+              (expect (= "metosin/malli" (get e "title")))
+              (expect (= "https://github.com/metosin/malli" (get e "url")))
+              (expect (str/includes? (get e "excerpt") "# Repository"))))
         (it "endpoint is redacted before it lands on the envelope"
-          (expect (str/includes? (get r "endpoint") "REDACTED"))
-          (expect (not (str/includes? (get r "endpoint") "SECRET"))))
-
+            (expect (str/includes? (get r "endpoint") "REDACTED"))
+            (expect (not (str/includes? (get r "endpoint") "SECRET"))))
         (it "non-N/A authors carried through; N/A is stripped"
-          (expect (nil? (get (first cs) "authors")))
-          (expect (= "Rich Hickey" (get (second cs) "authors"))))
-
+            (expect (nil? (get (first cs) "authors")))
+            (expect (= "Rich Hickey" (get (second cs) "authors"))))
         (it ":published preserved on the citation"
-          (expect (= "2019-05-17T19:21:51.000Z" (get (first cs) "published"))))))))
+            (expect (= "2019-05-17T19:21:51.000Z" (get (first cs) "published"))))))))
 
 (defdescribe code-shape-test
-  (describe "search/code mirrors search/web with :type :code"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env (search/search-code "clojure spec" {"tokens_num" 200})
-            r   (envelope-result env)
-            cs  (get r "citations")]
-        (it "envelope op = search_code"
-          (expect (= "search_code" (get r "op"))))
-        (it "type code on every entry"
-          (doseq [e cs]
-            (expect (= "code" (get e "type")))))
-        (it "shape parity with web / papers"
-          (doseq [e cs]
-            (expect (string? (get e "title")))
-            (expect (string? (get e "url")))
-            (expect (string? (get e "excerpt")))))))))
+             (describe "search/code mirrors search/web with :type :code"
+                       (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                                     (mock-mcp SAMPLE_EXA_TEXT)]
+                         (let [env (search/search-code "clojure spec" {"tokens_num" 200})
+                               r (envelope-result env)
+                               cs (get r "citations")]
+
+                           (it "envelope op = search_code" (expect (= "search_code" (get r "op"))))
+                           (it "type code on every entry"
+                               (doseq [e cs]
+                                 (expect (= "code" (get e "type")))))
+                           (it "shape parity with web / papers"
+                               (doseq [e cs]
+                                 (expect (string? (get e "title")))
+                                 (expect (string? (get e "url")))
+                                 (expect (string? (get e "excerpt")))))))))
 
 ;; Exa stitches non-contiguous page fragments with truncation markers on
 ;; their OWN line. Between block-level neighbours (a `# File:` heading and
@@ -238,46 +224,46 @@ def handler():
     ...
 ```")
 
-(defn- bare-marker-line?
-  [line]
-  (boolean (re-matches #"\s*(?:\[\.\.\.\]|\.\.\.|…)\s*" line)))
+(defn- bare-marker-line? [line] (boolean (re-matches #"\s*(?:\[\.\.\.\]|\.\.\.|…)\s*" line)))
 
-(defdescribe excerpt-truncation-marker-test
-  (describe "Exa `[...]` truncation markers never sit on their own line"
+(defdescribe
+  excerpt-truncation-marker-test
+  (describe
+    "Exa `[...]` truncation markers never sit on their own line"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TRUNCATED)]
       (let [e (first (get (envelope-result (search/search-code "core.async" {})) "citations"))
             excerpt (get e "excerpt")
             lines (str/split-lines excerpt)]
-        (it "no line in the excerpt is a bare truncation marker"
-          (expect (string? excerpt))
-          (expect (not-any? bare-marker-line? lines)))
-        (it "the heading absorbs the marker that preceded the code fence"
-          (expect (str/includes? excerpt
-                    "# File: clojure/core.async/examples/ex-go.clj [...]")))
-        (it "a code fence's own body is left intact"
-          (expect (str/includes? excerpt "(require '[clojure.core.async :as async])"))))))
 
+        (it "no line in the excerpt is a bare truncation marker"
+            (expect (string? excerpt))
+            (expect (not-any? bare-marker-line? lines)))
+        (it "the heading absorbs the marker that preceded the code fence"
+            (expect (str/includes? excerpt "# File: clojure/core.async/examples/ex-go.clj [...]")))
+        (it "a code fence's own body is left intact"
+            (expect (str/includes? excerpt "(require '[clojure.core.async :as async])"))))))
   (describe "spurious fences + bare lead markers + genuine code placeholders"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_FENCED)]
-      (let [e (first (get (envelope-result (search/search-code "asyncio" {})) "citations"))
-            excerpt (get e "excerpt")
-            lines (str/split-lines excerpt)]
-        (it "no `[...]` bracket marker survives on its own line anywhere"
-          (expect (not-any? #(re-matches #"\s*\[\.\.\.\]\s*" %) lines)))
-        (it "Exa's bare lead marker after the ```python fence is dropped"
-          ;; the `...` that abutted the opening fence is gone; the only
-          ;; bare line left is the genuine Ellipsis stub body
-          (expect (not (str/includes? excerpt "python\n...")))
-          (expect (= 1 (count (filter bare-marker-line? lines)))))
-        (it "`[...]` separators inside the wrapper fold onto prior content"
-          (expect (str/includes? excerpt "the structure of data. [...]"))
-          (expect (str/includes? excerpt "- get-spec [...]")))
-        (it "a genuine `...` Ellipsis stub body is preserved as real code"
-          ;; the `def handler():` stub keeps its `...` body line
-          (expect (str/includes? excerpt "def handler():"))
-          (expect (re-find #"def handler\(\):\n\s*\.\.\." excerpt)))))))
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_FENCED)]
+              (let [e (first (get (envelope-result (search/search-code "asyncio" {})) "citations"))
+                    excerpt (get e "excerpt")
+                    lines (str/split-lines excerpt)]
+
+                (it "no `[...]` bracket marker survives on its own line anywhere"
+                    (expect (not-any? #(re-matches #"\s*\[\.\.\.\]\s*" %) lines)))
+                (it "Exa's bare lead marker after the ```python fence is dropped"
+                    ;; the `...` that abutted the opening fence is gone; the only
+                    ;; bare line left is the genuine Ellipsis stub body
+                    (expect (not (str/includes? excerpt "python\n...")))
+                    (expect (= 1 (count (filter bare-marker-line? lines)))))
+                (it "`[...]` separators inside the wrapper fold onto prior content"
+                    (expect (str/includes? excerpt "the structure of data. [...]"))
+                    (expect (str/includes? excerpt "- get-spec [...]")))
+                (it "a genuine `...` Ellipsis stub body is preserved as real code"
+                    ;; the `def handler():` stub keeps its `...` body line
+                    (expect (str/includes? excerpt "def handler():"))
+                    (expect (re-find #"def handler\(\):\n\s*\.\.\." excerpt)))))))
 
 ;; Exa sometimes wraps a result's body PROSE in a bare, unterminated ```
 ;; fence, so the whole entry paints as one mono code block. A real
@@ -318,78 +304,96 @@ const total = add(1, 2);")
   [excerpt]
   (let [ir (vis/markdown->ir excerpt)]
     {:code (->> (tree-seq vector? seq ir)
-             (filter #(and (vector? %) (= :code (first %))))
-             (map (fn [c] (apply str (filter string? (rest c))))))
+                (filter #(and (vector? %) (= :code (first %))))
+                (map (fn [c]
+                       (apply str (filter string? (rest c))))))
      :headings (->> (tree-seq vector? seq ir)
-                 (filter #(and (vector? %) (= :h (first %))))
-                 (map (fn [h] (apply str (filter string? (tree-seq vector? seq h))))))}))
+                    (filter #(and (vector? %) (= :h (first %))))
+                    (map (fn [h]
+                           (apply str (filter string? (tree-seq vector? seq h))))))}))
 
-(defdescribe spurious-doc-fence-test
+(defdescribe
+  spurious-doc-fence-test
   (describe "a dangling bare ``` wrapping documentation prose is unwrapped"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_DOC_WRAP)]
-      (let [e (first (get (envelope-result (search/search-web "k8s" {})) "citations"))
-            {:keys [code headings]} (ir-nodes (get e "excerpt"))]
-        (it "the real ```yaml manifest survives as a code block"
-          (expect (some #(str/includes? % "apiVersion: apps/v1") code)))
-        (it "the wrapped headings render as real headings, not code"
-          (expect (some #(str/includes? % "Common Mistakes") headings))
-          (expect (some #(str/includes? % "Frequently Asked Questions") headings)))
-        (it "no code block contains the unwrapped prose"
-          (expect (not-any? #(str/includes? % "Common Mistakes") code))))))
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_DOC_WRAP)]
+              (let [e (first (get (envelope-result (search/search-web "k8s" {})) "citations"))
+                    {:keys [code headings]} (ir-nodes (get e "excerpt"))]
 
+                (it "the real ```yaml manifest survives as a code block"
+                    (expect (some #(str/includes? % "apiVersion: apps/v1") code)))
+                (it "the wrapped headings render as real headings, not code"
+                    (expect (some #(str/includes? % "Common Mistakes") headings))
+                    (expect (some #(str/includes? % "Frequently Asked Questions") headings)))
+                (it "no code block contains the unwrapped prose"
+                    (expect (not-any? #(str/includes? % "Common Mistakes") code))))))
   (describe "a dangling bare ``` wrapping real code is left ALONE"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_CODE_WRAP)]
-      (let [e (first (get (envelope-result (search/search-web "js" {})) "citations"))
-            {:keys [code]} (ir-nodes (get e "excerpt"))]
-        (it "the code stays inside a code block (no false unwrap)"
-          (expect (some #(str/includes? % "function add(a, b)") code)))))))
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_CODE_WRAP)]
+              (let [e (first (get (envelope-result (search/search-web "js" {})) "citations"))
+                    {:keys [code]} (ir-nodes (get e "excerpt"))]
 
-(defdescribe shape-parity-test
-  (describe "all three search/* fns return the same envelope+citation shape"
+                (it "the code stays inside a code block (no false unwrap)"
+                    (expect (some #(str/includes? % "function add(a, b)") code)))))))
+
+(defdescribe
+  shape-parity-test
+  (describe
+    "all three search/* fns return the same envelope+citation shape"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TEXT)
-                  http/get (fn [_url _opts] {:status 200 :body SAMPLE_ATOM})]
-      (let [w (envelope-result (search/search-web "x" {}))
-            c (envelope-result (search/search-code "x" {}))
-            p (envelope-result (search/search-papers "x" {}))
-            base-result-keys #{"op" "query" "citations" "citation_count" "truncated" "source"}
-            base-citation-keys #{"type" "title" "url" "excerpt" "source"}]
+
+                  http/get
+                  (fn [_url _opts]
+                    {:status 200 :body SAMPLE_ATOM})]
+
+      (let [w
+            (envelope-result (search/search-web "x" {}))
+
+            c
+            (envelope-result (search/search-code "x" {}))
+
+            p
+            (envelope-result (search/search-papers "x" {}))
+
+            base-result-keys
+            #{"op" "query" "citations" "citation_count" "truncated" "source"}
+
+            base-citation-keys
+            #{"type" "title" "url" "excerpt" "source"}]
+
         (it "every envelope payload has the canonical envelope keys"
-          (doseq [r [w c p]]
-            (expect (every? #(contains? r %) base-result-keys))))
+            (doseq [r [w c p]]
+              (expect (every? #(contains? r %) base-result-keys))))
         (it "op is set per fn"
-          (expect (= "search_web"    (get w "op")))
-          (expect (= "search_code"   (get c "op")))
-          (expect (= "search_papers" (get p "op"))))
+            (expect (= "search_web" (get w "op")))
+            (expect (= "search_code" (get c "op")))
+            (expect (= "search_papers" (get p "op"))))
         (it "every citation has the canonical citation key set"
-          (doseq [e [(first (get w "citations"))
-                     (first (get c "citations"))
-                     (first (get p "citations"))]]
-            (expect (every? #(contains? e %) base-citation-keys))))
+            (doseq [e [(first (get w "citations")) (first (get c "citations"))
+                       (first (get p "citations"))]]
+              (expect (every? #(contains? e %) base-citation-keys))))
         (it "source is `exa` for web/code, `arxiv` for papers"
-          (expect (= "exa"   (get w "source")))
-          (expect (= "exa"   (get c "source")))
-          (expect (= "arxiv" (get p "source"))))))))
+            (expect (= "exa" (get w "source")))
+            (expect (= "exa" (get c "source")))
+            (expect (= "arxiv" (get p "source"))))))))
 
 (defdescribe engine-scope-test
-  (describe "no search/* symbol declares an engine-scope (single agent surface)"
-    (doseq [[label sym-entry] [[:web    search/web-symbol]
-                               [:code   search/code-symbol]
-                               [:papers search/papers-symbol]]]
-      (it (str (name label) " omits :ext.symbol/engine-scope")
-        (expect (nil? (:ext.symbol/engine-scope sym-entry))))
-      (it (str (name label) " no longer ships as a :raw? helper")
-        (expect (not (true? (:ext.symbol/raw? sym-entry))))))))
+             (describe "no search/* symbol declares an engine-scope (single agent surface)"
+                       (doseq [[label sym-entry] [[:web search/web-symbol]
+                                                  [:code search/code-symbol]
+                                                  [:papers search/papers-symbol]]]
+                         (it (str (name label) " omits :ext.symbol/engine-scope")
+                             (expect (nil? (:ext.symbol/engine-scope sym-entry))))
+                         (it (str (name label) " no longer ships as a :raw? helper")
+                             (expect (not (true? (:ext.symbol/raw? sym-entry))))))))
 
-(defdescribe extension-shape-test
+(defdescribe
+  extension-shape-test
   (describe "engine binds builtin (bare); ext name is foundation-search"
-    (it "builtin?"
-      (expect (= true
-                (get-in search/vis-extension [:ext/engine :ext.engine/builtin?]))))
-    (it "name"
-      (expect (= "foundation-search" (:ext/name search/vis-extension))))
-    (it "no symbol carries an engine-scope"
-      (let [scopes (set (map :ext.symbol/engine-scope search/search-symbols))]
-        (expect (= #{nil} scopes))))))
+            (it "builtin?"
+                (expect (= true (get-in search/vis-extension [:ext/engine :ext.engine/builtin?]))))
+            (it "name" (expect (= "foundation-search" (:ext/name search/vis-extension))))
+            (it "no symbol carries an engine-scope"
+                (let [scopes (set (map :ext.symbol/engine-scope search/search-symbols))]
+                  (expect (= #{nil} scopes))))))

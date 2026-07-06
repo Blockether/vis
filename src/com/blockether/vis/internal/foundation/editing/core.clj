@@ -29,26 +29,24 @@
 
    Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
-  (:require
-   [babashka.fs :as fs]
-   [clojure.java.io :as io]
-   [clojure.set :as set]
-   [clojure.string :as str]
-   [com.blockether.fff :as fff]
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.foundation.editing.patch :as patch]
-   [com.blockether.vis.internal.foundation.editing.outline :as outline]
-   [com.blockether.vis.internal.foundation.editing.structural :as structural]
-   [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
-   [com.blockether.vis.internal.foundation.environment.core :as environment]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.git :as git]
-   [com.blockether.vis.internal.gitignore :as gitignore]
-   [com.blockether.vis.internal.paths :as paths]
-   [com.blockether.vis.internal.workspace :as workspace])
-  (:import
-   (com.github.difflib DiffUtils UnifiedDiffUtils)
-   (java.io File)))
+  (:require [babashka.fs :as fs]
+            [clojure.java.io :as io]
+            [clojure.set :as set]
+            [clojure.string :as str]
+            [com.blockether.fff :as fff]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.editing.patch :as patch]
+            [com.blockether.vis.internal.foundation.editing.outline :as outline]
+            [com.blockether.vis.internal.foundation.editing.structural :as structural]
+            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
+            [com.blockether.vis.internal.foundation.environment.core :as environment]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.gitignore :as gitignore]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.workspace :as workspace])
+  (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
+           (java.io File)))
 
 ;; Tools in this namespace (cat/patch/write/move/…) can execute DEFERRED on a
 ;; virtual thread that has entered the GraalPy polyglot Context — e.g. inside
@@ -93,79 +91,84 @@
   ^java.io.Closeable [^File root]
   (when-not (.isDirectory root)
     (throw (ex-info "rg fff index root must be a directory"
-             {:type :ext.foundation.editing/invalid-rg-root
-              :path (.getPath root)})))
+                    {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
   ;; Backstop for EVERY caller: a full fff scan of $HOME or a filesystem root
   ;; never finishes and hangs the tool (~30s wait-for-scan timeout, then a
   ;; useless partial index). Refuse fast; callers skip the root.
   (when (paths/pathological-index-root? root)
     (throw (ex-info "refusing to fff-index the home directory or a filesystem root"
-             {:type :ext.foundation.editing/pathological-root
-              :path (.getPath root)})))
+                    {:type :ext.foundation.editing/pathological-root :path (.getPath root)})))
   (let [k (.getCanonicalPath root)]
-    (let [idx (try
-                (fff/create {:base-path k
-                             :watch? false
-                             :ai-mode? true
-                             :enable-content-indexing? true
-                             :enable-mmap-cache? false})
-                (catch Throwable t
-                  (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                           {:type :ext.foundation.editing/fff-unavailable
-                            :path k}
-                           t))))]
+    (let [idx (try (fff/create {:base-path k
+                                :watch? false
+                                :ai-mode? true
+                                :enable-content-indexing? true
+                                :enable-mmap-cache? false})
+                   (catch Throwable t
+                     (throw (ex-info
+                              (str "rg requires fff for directory search, but fff failed for " k)
+                              {:type :ext.foundation.editing/fff-unavailable :path k}
+                              t))))]
       (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
         (.close ^java.io.Closeable idx)
         (throw (ex-info "rg fff scan did not complete in time"
-                 {:type :ext.foundation.editing/fff-scan-timeout
-                  :path k
-                  :timeout-ms rg-fff-scan-timeout-ms})))
+                        {:type :ext.foundation.editing/fff-scan-timeout
+                         :path k
+                         :timeout-ms rg-fff-scan-timeout-ms})))
       idx)))
 
-(defn- rg-fff-candidate-files [roots needles files]
-  (let [by-canon (into {}
-                   (map (fn [^File f] [(.getCanonicalPath f) f]))
-                   files)
-        queries needles
-        mode :plain
-        rel-paths (fn [base items]
-                    (keep (fn [{:keys [relative-path]}]
-                            (some-> (io/file base relative-path)
-                              .getCanonicalPath))
-                      items))
+(defn- rg-fff-candidate-files
+  [roots needles files]
+  (let [by-canon
+        (into {}
+              (map (fn [^File f]
+                     [(.getCanonicalPath f) f]))
+              files)
+
+        queries
+        needles
+
+        mode
+        :plain
+
+        rel-paths
+        (fn [base items]
+          (keep (fn [{:keys [relative-path]}]
+                  (some-> (io/file base relative-path)
+                          .getCanonicalPath))
+                items))
+
         candidate-keys
         (->> roots
-          (mapcat
-            (fn [^File root]
-              (cond
-                (.isFile root)
-                [(.getCanonicalPath root)]
+             (mapcat
+               (fn [^File root]
+                 (cond (.isFile root) [(.getCanonicalPath root)]
+                       ;; Never fff-scan $HOME or a filesystem root — the walk never
+                       ;; finishes and hangs the tool. Skip this root; other (real
+                       ;; project) roots still search normally.
+                       (paths/pathological-index-root? root) nil
+                       :else (with-open [idx (rg-fff-open root)]
+                               (let [base (.getCanonicalFile root)]
+                                 ;; doall: realize the lazy hits INSIDE with-open, before
+                                 ;; the fresh instance is closed.
+                                 (doall (mapcat
+                                          (fn [query]
+                                            (let [path-items (:items (fff/search idx
+                                                                                 {:query query
+                                                                                  :page-size 1000}))
+                                                  grep-items (:matches (fff/grep
+                                                                         idx
+                                                                         {:query query
+                                                                          :mode mode
+                                                                          :page-limit 1000
+                                                                          :max-matches-per-file 1
+                                                                          :time-budget-ms 1500}))]
 
-                ;; Never fff-scan $HOME or a filesystem root — the walk never
-                ;; finishes and hangs the tool. Skip this root; other (real
-                ;; project) roots still search normally.
-                (paths/pathological-index-root? root)
-                nil
+                                              (concat (rel-paths base path-items)
+                                                      (rel-paths base grep-items))))
+                                          queries)))))))
+             distinct)]
 
-                :else
-                (with-open [idx (rg-fff-open root)]
-                  (let [base (.getCanonicalFile root)]
-                      ;; doall: realize the lazy hits INSIDE with-open, before
-                      ;; the fresh instance is closed.
-                    (doall
-                      (mapcat
-                        (fn [query]
-                          (let [path-items (:items (fff/search idx {:query query
-                                                                    :page-size 1000}))
-                                grep-items (:matches (fff/grep idx {:query query
-                                                                    :mode mode
-                                                                    :page-limit 1000
-                                                                    :max-matches-per-file 1
-                                                                    :time-budget-ms 1500}))]
-                            (concat (rel-paths base path-items)
-                              (rel-paths base grep-items))))
-                        queries)))))))
-          distinct)]
     (vec (keep by-canon candidate-keys))))
 
 (def ^:private default-find-limit 50)
@@ -210,64 +213,92 @@
   ;; matches the canonical allowed roots AND a symlink that points outside every
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
-    (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
-             {:type :ext.foundation.editing/blank-path :path p})))
-  (let [cwd       (workspace/cwd)
-        canon     (fn ^java.nio.file.Path [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
-        ^java.nio.file.Path cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
+    (throw
+      (ex-info
+        "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
+        {:type :ext.foundation.editing/blank-path :path p})))
+  (let [cwd
+        (workspace/cwd)
+
+        canon
+        (fn ^java.nio.file.Path [x]
+          (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+
+        ^java.nio.file.Path cwd-canon
+        (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
+
         ;; relative → under cwd; absolute → as-is. Canonical throughout so
         ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
-        ^java.nio.file.Path canonical (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
-        mappings  (workspace/filesystem-root-mappings)
+        ^java.nio.file.Path canonical
+        (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
+
+        mappings
+        (workspace/filesystem-root-mappings)
+
         ;; The model addresses a context file by its REAL (trunk) path; remap it
         ;; transparently onto the rift clone where edits land. The remapped
         ;; target is ALWAYS under an allowed clone root, so confinement holds.
         ^java.nio.file.Path target
-        (or
-          (when (.startsWith canonical cwd-canon) canonical)
-          (some (fn [{:keys [clone]}]
-                  (let [^java.nio.file.Path cp (canon clone)] (when (.startsWith canonical cp) canonical)))
-            mappings)
-          (some (fn [{:keys [trunk clone]}]
-                  (let [^java.nio.file.Path tp (canon trunk) ^java.nio.file.Path cp (canon clone)]
-                    (when (and (not= tp cp) (.startsWith canonical tp))
-                      (.resolve cp (.relativize tp canonical)))))
-            mappings))]
+        (or (when (.startsWith canonical cwd-canon) canonical)
+            (some (fn [{:keys [clone]}]
+                    (let [^java.nio.file.Path cp (canon clone)]
+                      (when (.startsWith canonical cp) canonical)))
+                  mappings)
+            (some (fn [{:keys [trunk clone]}]
+                    (let [^java.nio.file.Path tp
+                          (canon trunk)
+
+                          ^java.nio.file.Path cp
+                          (canon clone)]
+
+                      (when (and (not= tp cp) (.startsWith canonical tp))
+                        (.resolve cp (.relativize tp canonical)))))
+                  mappings))]
+
     (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
-               {:type :ext.foundation.editing/path-escape :path (str p)})))
+                      {:type :ext.foundation.editing/path-escape :path (str p)})))
     (.toFile target)))
 
-(defn- ensure-existing-file! ^File [^File f]
+(defn- ensure-existing-file!
+  ^File [^File f]
   (when-not (.exists f)
     (throw (ex-info (str "File not found: " (.getPath f))
-             {:type :ext.foundation.editing/file-not-found :path (.getPath f)})))
+                    {:type :ext.foundation.editing/file-not-found :path (.getPath f)})))
   (when (.isDirectory f)
     (throw (ex-info (str "Path is a directory, not a file: " (.getPath f))
-             {:type :ext.foundation.editing/path-is-dir :path (.getPath f)})))
+                    {:type :ext.foundation.editing/path-is-dir :path (.getPath f)})))
   f)
 
-(defn- rel-path [^File f]
+(defn- rel-path
+  [^File f]
   ;; Reverse of safe-path's remap so the address the model SEES round-trips:
   ;; a file under the primary cwd renders RELATIVE; a file under a context
   ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
   ;; clone path. Anything else falls back to the absolute path.
-  (let [canon     (fn ^java.nio.file.Path [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
-        ^java.nio.file.Path cwd-canon (canon (workspace/cwd))
-        ^java.nio.file.Path p         (.toPath (.getCanonicalFile f))]
-    (cond
-      (.startsWith p cwd-canon)
-      (let [rel (paths/unixify (.relativize cwd-canon p))]
-        (if (str/blank? rel) "." rel))
+  (let [canon
+        (fn ^java.nio.file.Path [x]
+          (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
 
-      :else
-      (or (some (fn [{:keys [trunk clone]}]
-                  (let [^java.nio.file.Path cp (canon clone)
-                        ^java.nio.file.Path tp (canon trunk)]
-                    (when (.startsWith p cp)
-                      (paths/unixify (.resolve tp (.relativize cp p))))))
-            (workspace/filesystem-root-mappings))
-        (str p)))))
+        ^java.nio.file.Path cwd-canon
+        (canon (workspace/cwd))
+
+        ^java.nio.file.Path p
+        (.toPath (.getCanonicalFile f))]
+
+    (cond (.startsWith p cwd-canon) (let [rel (paths/unixify (.relativize cwd-canon p))]
+                                      (if (str/blank? rel) "." rel))
+          :else (or (some (fn [{:keys [trunk clone]}]
+                            (let [^java.nio.file.Path cp
+                                  (canon clone)
+
+                                  ^java.nio.file.Path tp
+                                  (canon trunk)]
+
+                              (when (.startsWith p cp)
+                                (paths/unixify (.resolve tp (.relativize cp p))))))
+                          (workspace/filesystem-root-mappings))
+                    (str p)))))
 
 (defn- resolve-search-roots
   "Resolve rg/find `paths` to canonical root Files. The DEFAULT/unscoped
@@ -287,210 +318,203 @@
     (let [existing (filterv #(.exists ^File %) (map safe-path paths))]
       (when (empty? existing)
         (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
-                 {:type :ext.foundation.editing/path-not-found
-                  :paths (vec paths)})))
+                        {:type :ext.foundation.editing/path-not-found :paths (vec paths)})))
       (mapv #(.getCanonicalFile ^File %) existing))))
 
-(defn- ensure-parent-dirs! [^File f]
+(defn- ensure-parent-dirs!
+  [^File f]
   (when-let [parent (.getParentFile f)]
     (.mkdirs parent))
   f)
 
-(defn- now-ms []
-  (System/currentTimeMillis))
+(defn- now-ms [] (System/currentTimeMillis))
 
 (defn- path->target
   [requested kind]
-  (try
-    (let [f (safe-path requested)]
-      {:requested (str requested)
-       :resolved  (rel-path f)
-       :absolute  (.getPath f)
-       :kind      kind})
-    (catch Throwable _
-      {:requested (str requested)
-       :resolved  nil
-       :absolute  nil
-       :kind      kind})))
+  (try (let [f (safe-path requested)]
+         {:requested (str requested) :resolved (rel-path f) :absolute (.getPath f) :kind kind})
+       (catch Throwable _ {:requested (str requested) :resolved nil :absolute nil :kind kind})))
 
 ;; =============================================================================
 ;; Extension protected paths
 ;; =============================================================================
 
-(def ^:private protected-access-rank
-  {:read-write 0
-   :read-only  1
-   :none       2})
+(def ^:private protected-access-rank {:read-write 0 :read-only 1 :none 2})
 
 (defn- extracted-paths
   [path-extractor args]
-  (try
-    (let [paths (path-extractor args)]
-      (vec (remove nil?
-             (if (sequential? paths) paths [paths]))))
-    (catch Throwable _
-      [])))
+  (try (let [paths (path-extractor args)]
+         (vec (remove nil? (if (sequential? paths) paths [paths]))))
+       (catch Throwable _ [])))
 
-(defn- first-arg-paths
-  [args]
-  (when (seq args)
-    [(first args)]))
+(defn- first-arg-paths [args] (when (seq args) [(first args)]))
 
-(defn- first-two-arg-paths
-  [args]
-  (take 2 args))
+(defn- first-two-arg-paths [args] (take 2 args))
 
 (defn- patch-arg-paths
   [args]
-  (let [edits (first args)
-        edits (cond
-                (map? edits) [edits]
-                (sequential? edits) edits
-                :else [])]
+  (let [edits
+        (first args)
+
+        edits
+        (cond (map? edits) [edits]
+              (sequential? edits) edits
+              :else [])]
+
     (keep #(get % "path") edits)))
 
 (defn- write-arg-paths
   [args]
   (let [a (first args)]
-    (cond
-      (map? a)    (when-let [path (get a "path")] [path])
-      (string? a) [a]
-      :else       nil)))
+    (cond (map? a) (when-let [path (get a "path")]
+                     [path])
+          (string? a) [a]
+          :else nil)))
 
 (defn- find-arg-paths
   [args]
-  (let [a (first args)
-        opts (second args)
-        spec (cond
-               (map? a) a
-               (map? opts) opts
-               :else nil)
-        paths (cond
-                (contains? spec "paths") (get spec "paths")
-                (contains? spec "path")  (get spec "path")
-                :else nil)]
-    (cond
-      (nil? paths) ["."]
-      (sequential? paths) paths
-      :else [paths])))
+  (let [a
+        (first args)
+
+        opts
+        (second args)
+
+        spec
+        (cond (map? a) a
+              (map? opts) opts
+              :else nil)
+
+        paths
+        (cond (contains? spec "paths") (get spec "paths")
+              (contains? spec "path") (get spec "path")
+              :else nil)]
+
+    (cond (nil? paths) ["."]
+          (sequential? paths) paths
+          :else [paths])))
 
 (defn- rg-arg-paths
   [args]
   (let [spec (first args)]
     (when (map? spec)
-      (let [paths (cond
-                    (contains? spec "paths") (get spec "paths")
-                    (contains? spec "files") (get spec "files")
-                    :else nil)]
-        (cond
-          (nil? paths) ["."]
-          (sequential? paths) paths
-          :else [paths])))))
+      (let [paths (cond (contains? spec "paths") (get spec "paths")
+                        (contains? spec "files") (get spec "files")
+                        :else nil)]
+        (cond (nil? paths) ["."]
+              (sequential? paths) paths
+              :else [paths])))))
 
 (defn- protected-target
   [path kind]
   (let [target (path->target path kind)]
-    (when (:resolved target)
-      target)))
+    (when (:resolved target) target)))
 
 (defn- protected-glob-matches?
   [glob rel]
-  (let [matcher (.getPathMatcher (java.nio.file.FileSystems/getDefault)
-                  (str "glob:" glob))
-        rel     (str/replace (str rel) (str (char 92)) "/")
-        name    (last (str/split rel #"/+"))]
-    (boolean
-      (some (fn [candidate]
-              (try
-                (.matches matcher (fs/path candidate))
-                (catch Throwable _
-                  false)))
-        (distinct [rel name])))))
+  (let [matcher
+        (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" glob))
 
-(def ^:private glob-meta-chars
-  #{\* \? \[ \] \{ \}})
+        rel
+        (str/replace (str rel) (str (char 92)) "/")
+
+        name
+        (last (str/split rel #"/+"))]
+
+    (boolean (some (fn [candidate]
+                     (try (.matches matcher (fs/path candidate)) (catch Throwable _ false)))
+                   (distinct [rel name])))))
+
+(def ^:private glob-meta-chars #{\* \? \[ \] \{ \}})
 
 (defn- glob-static-prefix
   [glob]
-  (let [glob (str/replace (str glob) (str (char 92)) "/")
-        idx  (first (keep-indexed (fn [idx ch]
-                                    (when (contains? glob-meta-chars ch) idx))
-                      glob))
-        raw-prefix (if idx (subs glob 0 idx) glob)
-        prefix (if (and idx (not (str/ends-with? raw-prefix "/")))
-                 (let [slash-idx (.lastIndexOf ^String raw-prefix "/")]
-                   (if (neg? slash-idx) "" (subs raw-prefix 0 slash-idx)))
-                 raw-prefix)
-        prefix (str/replace prefix #"/+$" "")]
+  (let [glob
+        (str/replace (str glob) (str (char 92)) "/")
+
+        idx
+        (first (keep-indexed (fn [idx ch]
+                               (when (contains? glob-meta-chars ch) idx))
+                             glob))
+
+        raw-prefix
+        (if idx (subs glob 0 idx) glob)
+
+        prefix
+        (if (and idx (not (str/ends-with? raw-prefix "/")))
+          (let [slash-idx (.lastIndexOf ^String raw-prefix "/")]
+            (if (neg? slash-idx) "" (subs raw-prefix 0 slash-idx)))
+          raw-prefix)
+
+        prefix
+        (str/replace prefix #"/+$" "")]
+
     (if (str/blank? prefix) "." prefix)))
 
 (defn- path-prefix?
   [ancestor path]
-  (let [ancestor (str/replace (str ancestor) (str (char 92)) "/")
-        path     (str/replace (str path) (str (char 92)) "/")]
-    (or (= "." ancestor)
-      (= ancestor path)
-      (str/starts-with? path (str ancestor "/")))))
+  (let [ancestor
+        (str/replace (str ancestor) (str (char 92)) "/")
+
+        path
+        (str/replace (str path) (str (char 92)) "/")]
+
+    (or (= "." ancestor) (= ancestor path) (str/starts-with? path (str ancestor "/")))))
 
 (defn- composite-path-target?
   [{:keys [kind absolute]}]
-  (or (= :dir kind)
-    (and (= :path kind)
-      absolute
-      (.isDirectory (io/file absolute)))))
+  (or (= :dir kind) (and (= :path kind) absolute (.isDirectory (io/file absolute)))))
 
 (defn- protected-rule-matches?
   [target rule]
   (or (protected-glob-matches? (:glob rule) (:resolved target))
-    (and (composite-path-target? target)
-      (let [rel    (:resolved target)
-            prefix (glob-static-prefix (:glob rule))]
-        (or (path-prefix? prefix rel)
-          (and (not= :read-write (:access rule))
-            (path-prefix? rel prefix)))))))
+      (and (composite-path-target? target)
+           (let [rel
+                 (:resolved target)
+
+                 prefix
+                 (glob-static-prefix (:glob rule))]
+
+             (or (path-prefix? prefix rel)
+                 (and (not= :read-write (:access rule)) (path-prefix? rel prefix)))))))
 
 (defn- rules-by-extension
   [rules]
   (->> (map-indexed vector rules)
-    (reduce (fn [groups [idx rule]]
-              (let [ext-name (:extension/name rule)]
-                (-> groups
-                  (update-in [ext-name :idx] #(or % idx))
-                  (update-in [ext-name :rules] (fnil conj []) rule))))
-      {})
-    vals
-    (sort-by :idx)
-    (mapv :rules)))
+       (reduce (fn [groups [idx rule]]
+                 (let [ext-name (:extension/name rule)]
+                   (-> groups
+                       (update-in [ext-name :idx] #(or % idx))
+                       (update-in [ext-name :rules] (fnil conj []) rule))))
+               {})
+       vals
+       (sort-by :idx)
+       (mapv :rules)))
 
 (defn- first-matching-rule
   [target rules]
   (some (fn [rule]
-          (when (protected-rule-matches? target rule)
-            rule))
-    rules))
+          (when (protected-rule-matches? target rule) rule))
+        rules))
 
 (defn- more-restrictive-rule
   [best rule]
   (if (or (nil? best)
-        (> (protected-access-rank (:access rule))
-          (protected-access-rank (:access best))))
+          (> (protected-access-rank (:access rule)) (protected-access-rank (:access best))))
     rule
     best))
 
 (defn- resolve-protected-access
   [rules target]
-  (reduce
-    (fn [best extension-rules]
-      (if-let [match (first-matching-rule target extension-rules)]
-        (more-restrictive-rule best match)
-        best))
-    nil
-    (rules-by-extension rules)))
+  (reduce (fn [best extension-rules]
+            (if-let [match (first-matching-rule target extension-rules)]
+              (more-restrictive-rule best match)
+              best))
+          nil
+          (rules-by-extension rules)))
 
 (defn- blocked-access?
   [access-intent access]
-  (or (= :none access)
-    (and (= :write access-intent) (= :read-only access))))
+  (or (= :none access) (and (= :write access-intent) (= :read-only access))))
 
 (defn- current-dir-read-ancestor-match?
   "True when a read op is targeting `.` (cwd) and the matched rule
@@ -512,9 +536,9 @@
    lets the operation start."
   [_op access-intent target rule]
   (and (= :read access-intent)
-    (composite-path-target? target)
-    (= "." (:resolved target))
-    (not (protected-glob-matches? (:glob rule) (:resolved target)))))
+       (composite-path-target? target)
+       (= "." (:resolved target))
+       (not (protected-glob-matches? (:glob rule) (:resolved target)))))
 
 (defn- protected-failure-row
   [{:keys [target intent glob access hint] ext-name :extension/name}]
@@ -529,11 +553,21 @@
 
 (defn- path-protected-failure
   [op kind access-intent blocked]
-  (let [t          (now-ms)
-        first-row  (first blocked)
-        first-tgt  (:target first-row)
-        first-hint (:hint first-row)
-        failures   (mapv protected-failure-row blocked)]
+  (let [t
+        (now-ms)
+
+        first-row
+        (first blocked)
+
+        first-tgt
+        (:target first-row)
+
+        first-hint
+        (:hint first-row)
+
+        failures
+        (mapv protected-failure-row blocked)]
+
     (extension/failure
       {:result nil
        :op op
@@ -543,8 +577,10 @@
                   :duration-ms 0
                   :access-intent access-intent
                   :protected-paths failures}
-       :error {:message (str op " blocked: " (:resolved first-tgt)
-                          " is protected; use the owning extension API instead.")
+       :error {:message (str op
+                             " blocked: "
+                             (:resolved first-tgt)
+                             " is protected; use the owning extension API instead.")
                :type :ext.foundation.editing/path-protected
                :reason :path-protected
                :intent access-intent
@@ -559,38 +595,41 @@
     (extension/failure
       {:result nil
        :op op
-       :metadata {:target (path->target "." kind)
-                  :started-at-ms t
-                  :finished-at-ms t
-                  :duration-ms 0}
+       :metadata {:target (path->target "." kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
        :error {:message "Protected path registry failed; refusing direct file operation."
                :type :ext.foundation.editing/path-protection-error
                :reason :path-protection-error
-               :hint "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
-               :loop-hint "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+               :hint
+               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+               :loop-hint
+               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
                :cause (ex-message err)}})))
 
 (defn- path-protected-before-fn
   [op kind access-intent path-extractor]
   (fn [env f args]
-    (try
-      (let [rules   (extension/active-protected-globs env)
-            targets (keep #(protected-target % kind)
-                      (extracted-paths path-extractor args))
-            blocked (keep (fn [target]
-                            (when-let [rule (resolve-protected-access rules target)]
-                              (when (and (blocked-access? access-intent (:access rule))
-                                      (not (current-dir-read-ancestor-match?
-                                             op access-intent target rule)))
-                                (assoc rule
-                                  :target target
-                                  :intent access-intent))))
-                      targets)]
-        (if (seq blocked)
-          {:result (path-protected-failure op kind access-intent (vec blocked))}
-          {:env env :fn f :args args}))
-      (catch Throwable t
-        {:result (path-protection-error-failure op kind t)}))))
+    (try (let [rules
+               (extension/active-protected-globs env)
+
+               targets
+               (keep #(protected-target % kind) (extracted-paths path-extractor args))
+
+               blocked
+               (keep
+                 (fn [target]
+                   (when-let [rule (resolve-protected-access rules target)]
+                     (when (and (blocked-access? access-intent (:access rule))
+                                (not
+                                  (current-dir-read-ancestor-match? op access-intent target rule)))
+                       (assoc rule
+                         :target target
+                         :intent access-intent))))
+                 targets)]
+
+           (if (seq blocked)
+             {:result (path-protected-failure op kind access-intent (vec blocked))}
+             {:env env :fn f :args args}))
+         (catch Throwable t {:result (path-protection-error-failure op kind t)}))))
 
 (defn- plan-gated-before-fn
   "Path-protection for write-intent ops (patch / write / move / delete)."
@@ -619,50 +658,60 @@
   [{:keys [op path kind result metadata]}]
   (let [t (now-ms)]
     (extension/success
-      {:result   result
-       :op       op
-       :metadata (merge {:target         (path->target path kind)
-                         :started-at-ms  t
-                         :finished-at-ms t
-                         :duration-ms    0}
-                   metadata)})))
+      {:result result
+       :op op
+       :metadata
+       (merge {:target (path->target path kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
+              metadata)})))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
   (fn [err _env _f args]
-    (let [path         (first args)
-          target       (path->target path kind)
-          interrupted? (instance? InterruptedException err)
-          t            (now-ms)
-          error        (when interrupted?
-                         {:message (str (name op)
-                                     " interrupted while running; operation was cancelled.")})]
+    (let [path
+          (first args)
+
+          target
+          (path->target path kind)
+
+          interrupted?
+          (instance? InterruptedException err)
+
+          t
+          (now-ms)
+
+          error
+          (when interrupted?
+            {:message (str (name op) " interrupted while running; operation was cancelled.")})]
+
       {:result (extension/failure
-                 {:result    nil
-                  :op        op
-                  :metadata  (cond-> {:target         target
-                                      :started-at-ms  t
-                                      :finished-at-ms t
-                                      :duration-ms    0}
-                               interrupted?
-                               (assoc :interrupted? true
-                                 :status :interrupted))
-                  :error     error
+                 {:result nil
+                  :op op
+                  :metadata
+                  (cond-> {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
+                    interrupted?
+                    (assoc :interrupted?
+                      true :status
+                      :interrupted))
+                  :error error
                   :throwable (when-not error err)})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
 ;; =============================================================================
 
-(defn- load-ignore-node [^File root]
-  (gitignore/load-matcher root))
+(defn- load-ignore-node [^File root] (gitignore/load-matcher root))
 
-(defn- ignored? [node ^File f ^File root]
+(defn- ignored?
+  [node ^File f ^File root]
   (when node
     ;; Match gitignore patterns against `/`-separated paths — a Windows `\`
     ;; would never match, leaking ignored files.
-    (let [rel  (paths/unixify (.relativize (.toPath root) (.toPath f)))
-          dir? (.isDirectory f)]
+    (let [rel
+          (paths/unixify (.relativize (.toPath root) (.toPath f)))
+
+          dir?
+          (.isDirectory f)]
+
       (gitignore/ignored? node rel dir?))))
 
 ;; =============================================================================
@@ -673,50 +722,35 @@
   [offset n]
   (when-not (and (integer? offset) (pos? offset))
     (throw (ex-info "cat offset must be a positive integer (1-based line number)."
-             {:type :ext.foundation.editing/invalid-cat-args
-              :offset offset})))
+                    {:type :ext.foundation.editing/invalid-cat-args :offset offset})))
   (when-not (and (integer? n) (pos? n))
     (throw (ex-info "cat limit must be a positive integer line count."
-             {:type :ext.foundation.editing/invalid-cat-args
-              :limit n}))))
+                    {:type :ext.foundation.editing/invalid-cat-args :limit n}))))
 
 (defn- validate-cat-range!
   [start end]
-  (when-not (and (integer? start) (integer? end)
-              (pos? start) (pos? end)
-              (<= start end))
+  (when-not (and (integer? start) (integer? end) (pos? start) (pos? end) (<= start end))
     (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
-             {:type :ext.foundation.editing/invalid-cat-args
-              :start start :end end}))))
+                    {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
 
 (defn- normalize-cat-ranges
   [ranges]
-  (let [pairs (cond
-                (and (vector? ranges)
-                  (= 2 (count ranges))
-                  (every? integer? ranges))
-                [ranges]
-
-                (sequential? ranges)
-                (vec ranges)
-
-                :else
-                (throw (ex-info "cat \"ranges\" expects [[start, end], ...]"
-                         {:type :ext.foundation.editing/invalid-cat-args
-                          :ranges ranges})))]
+  (let [pairs (cond (and (vector? ranges) (= 2 (count ranges)) (every? integer? ranges)) [ranges]
+                    (sequential? ranges) (vec ranges)
+                    :else (throw (ex-info "cat \"ranges\" expects [[start, end], ...]"
+                                          {:type :ext.foundation.editing/invalid-cat-args
+                                           :ranges ranges})))]
     (when (empty? pairs)
       (throw (ex-info "cat \"ranges\" expects at least one range"
-               {:type :ext.foundation.editing/invalid-cat-args
-                :ranges ranges})))
+                      {:type :ext.foundation.editing/invalid-cat-args :ranges ranges})))
     (mapv (fn [pair]
             (when-not (and (sequential? pair) (= 2 (count pair)))
               (throw (ex-info "cat \"ranges\" entries must be [start, end] pairs"
-                       {:type :ext.foundation.editing/invalid-cat-args
-                        :range pair})))
+                              {:type :ext.foundation.editing/invalid-cat-args :range pair})))
             (let [[start end] (vec pair)]
               (validate-cat-range! start end)
               [(long start) (long end)]))
-      pairs)))
+          pairs)))
 
 (defn- read-file
   "Read a window of a text file as pure structured data.
@@ -750,53 +784,57 @@
   ([path n] (read-file path 1 n))
   ([path offset n]
    (validate-cat-args! offset n)
-   (let [f        (ensure-existing-file! (safe-path path))
-         byte-cap (long max-cat-window-bytes)
-         skip     (dec (long offset))
-         limit    (long n)
-         mtime    (.lastModified f)
-         size     (.length f)]
+   (let [f
+         (ensure-existing-file! (safe-path path))
+
+         byte-cap
+         (long max-cat-window-bytes)
+
+         skip
+         (dec (long offset))
+
+         limit
+         (long n)
+
+         mtime
+         (.lastModified f)
+
+         size
+         (.length f)]
+
      (with-open [^java.io.BufferedReader rdr (io/reader f)]
        (loop [skipped 0]
-         (when (and (< skipped skip)
-                 (some? (.readLine rdr)))
-           (recur (inc skipped))))
-       (loop [acc        (transient [])
+         (when (and (< skipped skip) (some? (.readLine rdr))) (recur (inc skipped))))
+       (loop [acc (transient [])
               bytes-used 0
               read-count 0
-              stop       nil]
-         (cond
-           stop
-           (let [lines       (persistent! acc)
-                 returned    (count lines)
-                 eof?        (= stop :eof)
-                 next-offset (when-not eof?
-                               (+ (long offset) returned))]
-             {:path        (rel-path f)
-              :lines       lines
-              :anchors      (patch/lines->anchors lines)
-              :next-offset next-offset
-              :eof?        eof?
-              :truncated?  (= stop :bytes)
-              :mtime       mtime
-              :size        size})
+              stop nil]
 
-           (>= read-count limit)
-           (recur acc bytes-used read-count :limit)
+         (cond stop (let [lines (persistent! acc)
+                          returned (count lines)
+                          eof? (= stop :eof)
+                          next-offset (when-not eof? (+ (long offset) returned))]
 
-           :else
-           (let [raw (.readLine rdr)]
-             (if (nil? raw)
-               (recur acc bytes-used read-count :eof)
-               (let [line-bytes (+ 1 (alength (.getBytes raw "UTF-8")))
-                     new-bytes  (+ bytes-used line-bytes)
-                     line-no    (+ (long offset) read-count)]
-                 (if (and (pos? read-count) (> new-bytes byte-cap))
-                   (recur acc bytes-used read-count :bytes)
-                   (recur (conj! acc [line-no raw])
-                     new-bytes
-                     (inc read-count)
-                     nil)))))))))))
+                      {:path (rel-path f)
+                       :lines lines
+                       :anchors (patch/lines->anchors lines)
+                       :next-offset next-offset
+                       :eof? eof?
+                       :truncated? (= stop :bytes)
+                       :mtime mtime
+                       :size size})
+               (>= read-count limit) (recur acc bytes-used read-count :limit)
+               :else
+               (let [raw (.readLine rdr)]
+                 (if (nil? raw)
+                   (recur acc bytes-used read-count :eof)
+                   (let [line-bytes (+ 1 (alength (.getBytes raw "UTF-8")))
+                         new-bytes (+ bytes-used line-bytes)
+                         line-no (+ (long offset) read-count)]
+
+                     (if (and (pos? read-count) (> new-bytes byte-cap))
+                       (recur acc bytes-used read-count :bytes)
+                       (recur (conj! acc [line-no raw]) new-bytes (inc read-count) nil)))))))))))
 
 (defn- anchor-read-error-message
   "Human message for a `patch/resolve-anchor-range` `:error` on the cat READ
@@ -805,24 +843,42 @@
   [{:keys [reason which hash lines from-line to-line stated-line found-lines anchor]}]
   (case reason
     :hashline-malformed
-    (str "cat hash failed: " (name which) "_anchor " (pr-str anchor)
-      " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
-      " Re-read with cat(path) for fresh `lineno:hash` anchors.")
+    (str "cat hash failed: " (name which)
+         "_anchor " (pr-str anchor)
+         " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
+         " Re-read with cat(path) for fresh `lineno:hash` anchors.")
+
     :hashline-not-found
-    (str "cat hash failed: " (name which) "_anchor hash " (pr-str hash)
-      " matches no line (the line changed or the file moved)."
-      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
+    (str "cat hash failed: " (name which)
+         "_anchor hash " (pr-str hash)
+         " matches no line (the line changed or the file moved)."
+         " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
+
     :hashline-misplaced
-    (str "cat hash failed: " (name which) "_anchor " (pr-str hash)
-      " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
-      " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
+    (str "cat hash failed: "
+         (name which)
+         "_anchor "
+         (pr-str hash)
+         " says line "
+         stated-line
+         " but that content is at line(s) "
+         (pr-str found-lines)
+         " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
+
     :hashline-ambiguous
-    (str "cat hash failed: " (name which) "_anchor hash " (pr-str hash)
-      " matches " (count lines) " lines " (pr-str lines)
-      " near that line. Use cat(path, {\"range\": [start, end]}) instead.")
+    (str "cat hash failed: "
+         (name which)
+         "_anchor hash "
+         (pr-str hash)
+         " matches "
+         (count lines)
+         " lines "
+         (pr-str lines)
+         " near that line. Use cat(path, {\"range\": [start, end]}) instead.")
+
     :hashline-range-inverted
-    (str "cat hash failed: to_anchor line " to-line
-      " precedes from_anchor line " from-line ".")
+    (str "cat hash failed: to_anchor line " to-line " precedes from_anchor line " from-line ".")
+
     (str "cat :anchor failed: " (pr-str reason))))
 
 (defn- read-file-by-anchor
@@ -834,17 +890,24 @@
    plus `:range [from-line to-line]`. Throws ex-info on a missing / ambiguous /
    inverted hash; the message points back to a fresh read."
   [path from_anchor to_anchor]
-  (let [f       (ensure-existing-file! (safe-path path))
-        content (slurp f)
-        res     (patch/resolve-anchor-range content (str from_anchor)
-                  (when to_anchor (str to_anchor)))]
+  (let [f
+        (ensure-existing-file! (safe-path path))
+
+        content
+        (slurp f)
+
+        res
+        (patch/resolve-anchor-range content (str from_anchor) (when to_anchor (str to_anchor)))]
+
     (if-let [err (:error res)]
       (throw (ex-info (anchor-read-error-message err)
-               (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
+                      (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
       (let [{:keys [from-line to-line]} res
             n (inc (- (long to-line) (long from-line)))]
+
         (as-> (read-file path from-line n) out
-          (assoc out :range [from-line to-line]
+          (assoc out
+            :range [from-line to-line]
             :anchors (patch/lines->anchors (:lines out))))))))
 
 (defn- read-file-ranges
@@ -852,23 +915,33 @@
    a flat `:lines` view for simple model filtering and per-range windows for
    channel display / diagnostics."
   [path ranges]
-  (let [pairs   (normalize-cat-ranges ranges)
-        windows (mapv (fn [[start end]]
-                        (let [n   (inc (- end start))
-                              out (read-file path start n)]
-                          (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
-                            :range [start end])))
-                  pairs)
-        f       (ensure-existing-file! (safe-path path))]
-    {:path        (rel-path f)
-     :lines       (vec (mapcat :lines windows))
-     :anchors      (patch/lines->anchors (vec (mapcat :lines windows)))
-     :ranges      windows
+  (let [pairs
+        (normalize-cat-ranges ranges)
+
+        windows
+        (mapv (fn [[start end]]
+                (let [n
+                      (inc (- end start))
+
+                      out
+                      (read-file path start n)]
+
+                  (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
+                    :range [start end])))
+              pairs)
+
+        f
+        (ensure-existing-file! (safe-path path))]
+
+    {:path (rel-path f)
+     :lines (vec (mapcat :lines windows))
+     :anchors (patch/lines->anchors (vec (mapcat :lines windows)))
+     :ranges windows
      :next-offset nil
-     :eof?        (every? :eof? windows)
-     :truncated?  (boolean (some :truncated? windows))
-     :mtime       (.lastModified f)
-     :size        (.length f)}))
+     :eof? (every? :eof? windows)
+     :truncated? (boolean (some :truncated? windows))
+     :mtime (.lastModified f)
+     :size (.length f)}))
 
 (defn- tail-file
   "Read the last n lines of a text file. Streams once via a fixed-size
@@ -886,20 +959,32 @@
   [path n]
   (when-not (pos-int? n)
     (throw (ex-info "tail n must be a positive integer"
-             {:type :ext.foundation.editing/invalid-cat-args :limit n})))
-  (let [n        (long n)
-        f        (ensure-existing-file! (safe-path path))
-        byte-cap (long max-cat-window-bytes)
-        buf      (java.util.ArrayDeque.)
-        mtime    (.lastModified f)
-        size     (.length f)]
+                    {:type :ext.foundation.editing/invalid-cat-args :limit n})))
+  (let [n
+        (long n)
+
+        f
+        (ensure-existing-file! (safe-path path))
+
+        byte-cap
+        (long max-cat-window-bytes)
+
+        buf
+        (java.util.ArrayDeque.)
+
+        mtime
+        (.lastModified f)
+
+        size
+        (.length f)]
+
     (with-open [^java.io.BufferedReader rdr (io/reader f)]
       (loop [total 0]
         (let [raw (.readLine rdr)]
           (if (nil? raw)
-            (let [kept     (vec (.toArray buf))
+            (let [kept (vec (.toArray buf))
                   kept-cnt (count kept)
-                  start    (inc (- (long total) kept-cnt))
+                  start (inc (- (long total) kept-cnt))
                   ;; Walk kept from the END backwards, accumulating
                   ;; until the byte cap. Anything dropped off the front
                   ;; bumps `:truncated?`. Per-line text is verbatim —
@@ -908,45 +993,46 @@
                   ;; header note up-file); a single pathological long
                   ;; line is included whole and the byte cap stops
                   ;; further accumulation.
-                  [final-lines bytes-truncated?]
-                  (loop [i          (dec kept-cnt)
-                         bytes-used 0
-                         acc        ()]
-                    (if (neg? i)
-                      [(vec acc) false]
-                      (let [^String s (nth kept i)
-                            lb        (+ 1 (alength (.getBytes s "UTF-8")))
-                            nb        (+ bytes-used lb)]
-                        (if (and (seq acc) (> nb byte-cap))
-                          [(vec acc) true]
-                          (recur (dec i) nb (cons s acc))))))
-                  start-line   (+ (long start) (- kept-cnt (count final-lines)))
-                  numbered     (mapv vector (iterate inc start-line) final-lines)]
-              {:path        (rel-path f)
-               :lines       numbered
-               :anchors      (patch/lines->anchors numbered)
+                  [final-lines bytes-truncated?] (loop [i (dec kept-cnt)
+                                                        bytes-used 0
+                                                        acc ()]
+
+                                                   (if (neg? i)
+                                                     [(vec acc) false]
+                                                     (let [^String s (nth kept i)
+                                                           lb (+ 1 (alength (.getBytes s "UTF-8")))
+                                                           nb (+ bytes-used lb)]
+
+                                                       (if (and (seq acc) (> nb byte-cap))
+                                                         [(vec acc) true]
+                                                         (recur (dec i) nb (cons s acc))))))
+                  start-line (+ (long start) (- kept-cnt (count final-lines)))
+                  numbered (mapv vector (iterate inc start-line) final-lines)]
+
+              {:path (rel-path f)
+               :lines numbered
+               :anchors (patch/lines->anchors numbered)
                :next-offset nil
-               :eof?        true
-               :truncated?  bytes-truncated?
-               :mtime       mtime
-               :size        size})
-            (do
-              (when (>= (.size buf) n) (.removeFirst buf))
-              (.addLast buf raw)
-              (recur (inc total)))))))))
+               :eof? true
+               :truncated? bytes-truncated?
+               :mtime mtime
+               :size size})
+            (do (when (>= (.size buf) n) (.removeFirst buf))
+                (.addLast buf raw)
+                (recur (inc total)))))))))
 
 ;; =============================================================================
 ;; ls
 ;; =============================================================================
 
-(defn- visible-children [^File f {:keys [is_hidden is_respect_gitignore ignore-node root]}]
+(defn- visible-children
+  [^File f {:keys [is_hidden is_respect_gitignore ignore-node root]}]
   (when (.isDirectory f)
     (let [kids (->> (.listFiles f)
-                 (remove (fn [^File c]
-                           (and (not is_hidden) (.isHidden c))))
-                 (remove (fn [^File c]
-                           (and is_respect_gitignore
-                             (ignored? ignore-node c root)))))]
+                    (remove (fn [^File c]
+                              (and (not is_hidden) (.isHidden c))))
+                    (remove (fn [^File c]
+                              (and is_respect_gitignore (ignored? ignore-node c root)))))]
       (sort-by (juxt #(if (.isDirectory ^File %) 0 1) #(.getName ^File %)) kids))))
 
 ;; Flat-listing helper. The earlier nested `:children` shape made the
@@ -980,31 +1066,38 @@
    are post-filters applied per entry (root is never emitted). Stops at
    `max-limit` entries and marks `:truncated? true`."
   [^File root opts* max-depth max-limit is_files_only is_dirs_only]
-  (let [acc        (volatile! (transient []))
-        truncated? (volatile! false)
-        keep?      (fn [^File f]
-                     (cond is_files_only (.isFile f)
-                       is_dirs_only  (.isDirectory f)
-                       :else       true))
-        walk (fn walk [^File f cur-depth]
-               (check-interrupt!)
-               (when-not @truncated?
-                 (when (and (not= f root) (keep? f))
-                   (vswap! acc conj! (flat-entry f))
-                   (when (>= (count @acc) max-limit)
-                     (vreset! truncated? true)))
-                 ;; Descend strictly by depth budget. `:depth 0` means
-                 ;; \"no descent at all\" — root's children aren't visited.
-                 ;; `:depth 1` visits root's immediate children only.
-                 (when (and (.isDirectory f)
-                         (< cur-depth max-depth)
-                         (not @truncated?))
-                   (doseq [^File child (visible-children f opts*)
-                           :while (not @truncated?)]
-                     (walk child (inc cur-depth))))))]
+  (let [acc
+        (volatile! (transient []))
+
+        truncated?
+        (volatile! false)
+
+        keep?
+        (fn [^File f]
+          (cond is_files_only (.isFile f)
+                is_dirs_only (.isDirectory f)
+                :else true))
+
+        walk
+        (fn walk [^File f cur-depth]
+          (check-interrupt!)
+          (when-not @truncated?
+            (when (and (not= f root) (keep? f))
+              (vswap! acc conj! (flat-entry f))
+              (when (>= (count @acc) max-limit) (vreset! truncated? true)))
+            ;; Descend strictly by depth budget. `:depth 0` means
+            ;; \"no descent at all\" — root's children aren't visited.
+            ;; `:depth 1` visits root's immediate children only.
+            (when (and (.isDirectory f) (< cur-depth max-depth) (not @truncated?))
+              (doseq [^File child
+                      (visible-children f opts*)
+
+                      :while (not @truncated?)]
+
+                (walk child (inc cur-depth))))))]
+
     (walk root 0)
-    {:entries (persistent! @acc)
-     :truncated? @truncated?}))
+    {:entries (persistent! @acc) :truncated? @truncated?}))
 
 (defn- entry-parent-dir
   "Workspace-relative parent directory of a flat entry path, or `root-rel`
@@ -1030,14 +1123,22 @@
    subdirs); `root-rel` is the listed root and always leads. Files carry
    the raw `:size` int (nil for the implicit dir rows); display formats it."
   [entries root-rel]
-  (let [order   (volatile! [])
-        seen    (volatile! #{})
-        files   (volatile! {})
-        ensure! (fn [d]
-                  (when-not (contains? @seen d)
-                    (vswap! seen conj d)
-                    (vswap! order conj d)
-                    (vswap! files assoc d (transient []))))]
+  (let [order
+        (volatile! [])
+
+        seen
+        (volatile! #{})
+
+        files
+        (volatile! {})
+
+        ensure!
+        (fn [d]
+          (when-not (contains? @seen d)
+            (vswap! seen conj d)
+            (vswap! order conj d)
+            (vswap! files assoc d (transient []))))]
+
     (ensure! root-rel)
     (doseq [{:keys [path type size]} entries]
       (if (= type :dir)
@@ -1046,7 +1147,9 @@
           (ensure! d)
           (vswap! files update d conj! {"name" (entry-base-name path) "size" size}))))
     ;; This vector is the model-facing `ls` "groups" payload — string keys.
-    (mapv (fn [d] {"dir" d "files" (persistent! (get @files d))}) @order)))
+    (mapv (fn [d]
+            {"dir" d "files" (persistent! (get @files d))})
+          @order)))
 
 (defn- list-files
   ;; Internal helper — always called with a real map (or nil).
@@ -1061,42 +1164,58 @@
                is_hidden false
                is_respect_gitignore true
                is_files_only false
-               is_dirs_only  false}} (or opts {})
-         _ (when (and is_files_only is_dirs_only)
-             (throw (ex-info "ls \"is_files_only\" and \"is_dirs_only\" are mutually exclusive"
-                      {:type :ext.foundation.editing/invalid-ls-opts
-                       :opts opts})))
-         _ (when-not (and (integer? depth) (not (neg? depth)))
-             (throw (ex-info "ls \"depth\" must be a non-negative integer"
-                      {:type :ext.foundation.editing/invalid-ls-opts
-                       :depth depth})))
-         _ (when-not (and (integer? limit) (pos? limit))
-             (throw (ex-info "ls \"limit\" must be a positive integer"
-                      {:type :ext.foundation.editing/invalid-ls-opts
-                       :limit limit})))
-         f (safe-path path)
-         _ (when-not (.exists f)
-             (throw (ex-info (str "Path not found: " (.getPath f))
-                      {:type :ext.foundation.editing/path-not-found})))
-         opts* {:is_hidden is_hidden
-                :is_respect_gitignore is_respect_gitignore
-                :ignore-node (when is_respect_gitignore (load-ignore-node f))
-                :root f}
+               is_dirs_only false}}
+         (or opts {})
+
+         _
+         (when (and is_files_only is_dirs_only)
+           (throw (ex-info "ls \"is_files_only\" and \"is_dirs_only\" are mutually exclusive"
+                           {:type :ext.foundation.editing/invalid-ls-opts :opts opts})))
+
+         _
+         (when-not (and (integer? depth) (not (neg? depth)))
+           (throw (ex-info "ls \"depth\" must be a non-negative integer"
+                           {:type :ext.foundation.editing/invalid-ls-opts :depth depth})))
+
+         _
+         (when-not (and (integer? limit) (pos? limit))
+           (throw (ex-info "ls \"limit\" must be a positive integer"
+                           {:type :ext.foundation.editing/invalid-ls-opts :limit limit})))
+
+         f
+         (safe-path path)
+
+         _
+         (when-not (.exists f)
+           (throw (ex-info (str "Path not found: " (.getPath f))
+                           {:type :ext.foundation.editing/path-not-found})))
+
+         opts*
+         {:is_hidden is_hidden
+          :is_respect_gitignore is_respect_gitignore
+          :ignore-node (when is_respect_gitignore (load-ignore-node f))
+          :root f}
+
          {:keys [entries truncated?]}
          (collect-flat-entries f opts* depth limit is_files_only is_dirs_only)
-         file-count (count (filter #(= :file (:type %)) entries))
-         dir-count  (count (filter #(= :dir  (:type %)) entries))]
+
+         file-count
+         (count (filter #(= :file (:type %)) entries))
+
+         dir-count
+         (count (filter #(= :dir (:type %)) entries))]
+
      ;; This map is the model-facing `ls` result — string keys, no keyword values.
-     {"path"          (rel-path f)
+     {"path" (rel-path f)
       "absolute_path" (.getAbsolutePath f)
-      "root_type"     (if (.isDirectory f) "dir" "file")
-      "groups"        (group-entries-by-dir entries (rel-path f))
-      "entry_count"   (count entries)
-      "file_count"    file-count
-      "dir_count"     dir-count
-      "truncated"     truncated?
-      "depth"         depth
-      "limit"         limit})))
+      "root_type" (if (.isDirectory f) "dir" "file")
+      "groups" (group-entries-by-dir entries (rel-path f))
+      "entry_count" (count entries)
+      "file_count" file-count
+      "dir_count" dir-count
+      "truncated" truncated?
+      "depth" depth
+      "limit" limit})))
 
 ;; =============================================================================
 ;; find
@@ -1113,39 +1232,56 @@
   "Lower-case `s` stripped to `[a-z0-9]` — separators and case removed so scoring
    compares bare identifier characters."
   ^String [s]
-  (-> (or s "") str/lower-case (str/replace #"[^a-z0-9]" "")))
+  (-> (or s "")
+      str/lower-case
+      (str/replace #"[^a-z0-9]" "")))
 
 (defn- find-subseq-window
   "Length of the SMALLEST span in `hay` that contains `needle` as an ordered
    subsequence, or nil when `needle` is not a subsequence of `hay`. A tight span
    (few gaps) means a strong match; a sprawling one means scattered noise."
   [^String needle ^String hay]
-  (let [n (count needle) h (count hay)]
+  (let [n
+        (count needle)
+
+        h
+        (count hay)]
+
     (when (pos? n)
-      (loop [s 0 best nil]
+      (loop [s
+             0
+
+             best
+             nil]
+
         (if (< s h)
           (if (= (.charAt hay s) (.charAt needle 0))
-            (let [end (loop [i (inc s) k 1]
-                        (cond (= k n)                          (dec i)
-                          (>= i h)                         nil
-                          (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
-                          :else                            (recur (inc i) k)))]
-              (recur (inc s) (if (and end (or (nil? best) (< (- end s) best)))
-                               (- end s) best)))
+            (let [end (loop [i (inc s)
+                             k 1]
+
+                        (cond (= k n) (dec i)
+                              (>= i h) nil
+                              (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
+                              :else (recur (inc i) k)))]
+              (recur (inc s) (if (and end (or (nil? best) (< (- end s) best))) (- end s) best)))
             (recur (inc s) best))
-          (some-> best inc))))))
+          (some-> best
+                  inc))))))
 
 (defn- find-token-score
   "Best subsequence-window density of `token` against the file NAME (full weight)
    or the whole PATH (0.6 weight — a directory hit is weaker than a name hit).
    0.0 when the token is absent entirely."
   [^String token ^String path-norm ^String name-norm]
-  (let [wp (find-subseq-window token path-norm)
-        wf (find-subseq-window token name-norm)]
+  (let [wp
+        (find-subseq-window token path-norm)
+
+        wf
+        (find-subseq-window token name-norm)]
+
     (if (nil? wp)
       0.0
-      (max (if wf (/ (double (count token)) wf) 0.0)
-        (* 0.6 (/ (double (count token)) wp))))))
+      (max (if wf (/ (double (count token)) wf) 0.0) (* 0.6 (/ (double (count token)) wp))))))
 
 (defn- find-relevance
   "Order-INSENSITIVE relevance of `query` to `path`, in [0.0, 1.0]. Splits the
@@ -1154,60 +1290,86 @@
    is what separates the handful of genuine hits from fff's page of loose
    subsequence noise."
   [query path]
-  (let [toks  (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
-                (remove str/blank?))
-        pnorm (find-norm path)
-        nnorm (find-norm (last (str/split (str path) #"/")))]
-    (if (empty? toks)
-      0.0
-      (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
+  (let [toks
+        (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
+             (remove str/blank?))
 
-(defn- coerce-find-spec [args]
-  (let [[a b] args
-        spec (cond
-               (and (= 1 (count args)) (string? a)) {"query" a}
-               (and (= 2 (count args)) (string? a) (map? b)) (assoc b "query" a)
-               (and (= 1 (count args)) (map? a)) a
-               :else (throw (ex-info
-                              "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
-                              {:type :ext.foundation.editing/invalid-find-args
-                               :expected '([query] [query opts] [spec-map])
-                               :got args})))
-        allowed-keys #{"query" "paths" "path" "limit" "is_hidden" "is_respect_gitignore"}
-        unknown-keys (seq (remove allowed-keys (keys spec)))]
+        pnorm
+        (find-norm path)
+
+        nnorm
+        (find-norm (last (str/split (str path) #"/")))]
+
+    (if (empty? toks) 0.0 (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
+
+(defn- coerce-find-spec
+  [args]
+  (let
+    [[a b]
+     args
+
+     spec
+     (cond
+       (and (= 1 (count args)) (string? a)) {"query" a}
+       (and (= 2 (count args)) (string? a) (map? b)) (assoc b "query" a)
+       (and (= 1 (count args)) (map? a)) a
+       :else
+       (throw
+         (ex-info
+           "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
+           {:type :ext.foundation.editing/invalid-find-args
+            :expected '([query] [query opts] [spec-map])
+            :got args})))
+
+     allowed-keys
+     #{"query" "paths" "path" "limit" "is_hidden" "is_respect_gitignore"}
+
+     unknown-keys
+     (seq (remove allowed-keys (keys spec)))]
+
     (when unknown-keys
       (throw (ex-info (str "find spec has unknown keys: "
-                        (str/join ", " (map str unknown-keys))
-                        ". Allowed: query, paths, limit, is_hidden, is_respect_gitignore.")
-               {:type :ext.foundation.editing/invalid-find-args
-                :unknown (vec unknown-keys)
-                :allowed (vec (sort allowed-keys))})))
-    (let [query (get spec "query")
-          _ (when-not (and (string? query) (not (str/blank? query)))
-              (throw (ex-info "find \"query\" must be a non-blank string"
-                       {:type :ext.foundation.editing/invalid-find-args
-                        :query query})))
-          _ (when (and (contains? spec "paths") (contains? spec "path"))
-              (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
-                       {:type :ext.foundation.editing/invalid-find-args
-                        :spec spec})))
-          raw-paths (cond
-                      (contains? spec "paths") (get spec "paths")
-                      (contains? spec "path")  (get spec "path")
-                      :else ["."])
-          paths (cond
-                  (string? raw-paths) [raw-paths]
-                  (sequential? raw-paths) (vec raw-paths)
-                  :else raw-paths)
-          _ (when-not (and (vector? paths) (seq paths) (every? string? paths))
-              (throw (ex-info "find \"paths\" must be a non-empty vector of strings"
-                       {:type :ext.foundation.editing/invalid-find-args
-                        :paths raw-paths})))
-          limit (or (get spec "limit") default-find-limit)
-          _ (when-not (and (integer? limit) (pos? limit))
-              (throw (ex-info "find \"limit\" must be a positive integer"
-                       {:type :ext.foundation.editing/invalid-find-args
-                        :limit limit})))]
+                           (str/join ", " (map str unknown-keys))
+                           ". Allowed: query, paths, limit, is_hidden, is_respect_gitignore.")
+                      {:type :ext.foundation.editing/invalid-find-args
+                       :unknown (vec unknown-keys)
+                       :allowed (vec (sort allowed-keys))})))
+    (let [query
+          (get spec "query")
+
+          _
+          (when-not (and (string? query) (not (str/blank? query)))
+            (throw (ex-info "find \"query\" must be a non-blank string"
+                            {:type :ext.foundation.editing/invalid-find-args :query query})))
+
+          _
+          (when (and (contains? spec "paths") (contains? spec "path"))
+            (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
+                            {:type :ext.foundation.editing/invalid-find-args :spec spec})))
+
+          raw-paths
+          (cond (contains? spec "paths") (get spec "paths")
+                (contains? spec "path") (get spec "path")
+                :else ["."])
+
+          paths
+          (cond (string? raw-paths) [raw-paths]
+                (sequential? raw-paths) (vec raw-paths)
+                :else raw-paths)
+
+          _
+          (when-not (and (vector? paths) (seq paths) (every? string? paths))
+            (throw (ex-info "find \"paths\" must be a non-empty vector of strings"
+                            {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
+
+          limit
+          (or (get spec "limit") default-find-limit)
+
+          _
+          (when-not (and (integer? limit) (pos? limit))
+            (throw (ex-info "find \"limit\" must be a positive integer"
+                            {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
+
       {:query query
        :paths paths
        :limit limit
@@ -1222,37 +1384,35 @@
    once for the strict whole-query pass and once per token for the fallback."
   [roots query is_hidden is_respect_gitignore candidate-page]
   (->> roots
-    (mapcat (fn [^File root]
-              (cond
-                (.isFile root)
-                [{:path (rel-path root)
-                  :file-name (.getName root)
-                  :size (.length root)
-                  :binary? false
-                  :source :direct-file
-                  :score 1.0}]
-
-                ;; skip $HOME / filesystem roots (never indexable); other
-                ;; roots still contribute results
-                (paths/pathological-index-root? root)
-                nil
-
-                :else
-                (with-open [idx (rg-fff-open root)]
-                  (let [base (.getCanonicalFile root)]
-                       ;; doall: realize hits INSIDE with-open, before the
-                       ;; fresh instance is closed.
-                    (doall
-                      (->> (:items (fff/search idx {:query query
-                                                    :page-size candidate-page}))
-                        (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?]}]
-                                (let [f     (io/file base relative-path)
-                                      rel   (rel-path f)
+       (mapcat
+         (fn [^File root]
+           (cond (.isFile root) [{:path (rel-path root)
+                                  :file-name (.getName root)
+                                  :size (.length root)
+                                  :binary? false
+                                  :source :direct-file
+                                  :score 1.0}]
+                 ;; skip $HOME / filesystem roots (never indexable); other
+                 ;; roots still contribute results
+                 (paths/pathological-index-root? root) nil
+                 :else
+                 (with-open [idx (rg-fff-open root)]
+                   (let [base (.getCanonicalFile root)]
+                     ;; doall: realize hits INSIDE with-open, before the
+                     ;; fresh instance is closed.
+                     (doall
+                       (->> (:items (fff/search idx {:query query :page-size candidate-page}))
+                            (keep
+                              (fn [{:keys [relative-path file-name git-status size modified
+                                           frecency-score binary?]}]
+                                (let [f (io/file base relative-path)
+                                      rel (rel-path f)
                                       score (find-relevance query rel)]
+
                                   (when (and (>= score find-min-score)
-                                          (or is_hidden (not (.isHidden f)))
-                                          (or (not is_respect_gitignore)
-                                            (not (ignored? (load-ignore-node base) f base))))
+                                             (or is_hidden (not (.isHidden f)))
+                                             (or (not is_respect_gitignore)
+                                                 (not (ignored? (load-ignore-node base) f base))))
                                     {:path rel
                                      :file-name (or file-name (.getName f))
                                      :size size
@@ -1261,8 +1421,8 @@
                                      :git-status git-status
                                      :binary? (boolean binary?)
                                      :score score})))))))))))
-    (distinct)
-    vec))
+       (distinct)
+       vec))
 
 (defn- find-fallback-tokens
   "Distinct alnum query tokens worth an independent per-token search: length
@@ -1271,26 +1431,40 @@
    verbs are kept — they often ARE the name; only true glue words drop). Capped
    at the 5 LONGEST so a rambling query can't fan out into a dozen fff scans."
   [query]
-  (let [glue #{"the" "and" "for" "with" "that" "this" "how" "what" "where"
-               "into" "from" "was" "are" "any" "all" "not" "our" "you" "your"}]
+  (let [glue #{"the" "and" "for" "with" "that" "this" "how" "what" "where" "into" "from" "was" "are"
+               "any" "all" "not" "our" "you" "your"}]
     (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
-      (remove str/blank?)
-      distinct
-      (filter #(and (>= (count %) 3) (not (contains? glue %))))
-      (sort-by (comp - count))
-      (take 5)
-      vec)))
+         (remove str/blank?)
+         distinct
+         (filter #(and (>= (count %) 3) (not (contains? glue %))))
+         (sort-by (comp - count))
+         (take 5)
+         vec)))
 
-(defn- find-search [args]
-  (let [{:keys [query paths limit is_hidden is_respect_gitignore]} (coerce-find-spec args)
-        roots (resolve-search-roots paths)
+(defn- find-search
+  [args]
+  (let [{:keys [query paths limit is_hidden is_respect_gitignore]}
+        (coerce-find-spec args)
+
+        roots
+        (resolve-search-roots paths)
+
         ;; fff ranks genuine hits first but pads the page with loose subsequence
         ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
         ;; filter below do the real cutting (a fresh fff scan is ~11ms).
-        candidate-page (max limit 300)
-        scan (fn [q] (find-scan roots q is_hidden is_respect_gitignore candidate-page))
-        strict (scan query)
-        tokens (find-fallback-tokens query)
+        candidate-page
+        (max limit 300)
+
+        scan
+        (fn [q]
+          (find-scan roots q is_hidden is_respect_gitignore candidate-page))
+
+        strict
+        (scan query)
+
+        tokens
+        (find-fallback-tokens query)
+
         ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
         ;; so EVERY word must land in one path — a multi-word CONCEPT query
         ;; ("native tool call visualization render") is dropped the moment any
@@ -1303,64 +1477,103 @@
         ;; Low-confidence fuzzy results are ranked, not exhaustive — a tight cap
         ;; keeps the card/model focused on the strongest candidates instead of a
         ;; page of loose single-term noise.
-        fuzzy-limit (min limit 20)
+        fuzzy-limit
+        (min limit 20)
+
         [ranked fuzzy?]
         (if (or (seq strict) (< (count tokens) 2))
           [strict false]
-          (let [stem  (fn [it] (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
-                by-path (reduce
-                          (fn [m t]
-                            (reduce (fn [m it]
-                                      (update m (:path it)
-                                        (fn [cur]
-                                          (-> (or cur (assoc it :score 0.0 :terms #{}))
-                                            (update :score max (:score it))
-                                            (update :terms conj t)))))
-                              m (scan t)))
-                          {} tokens)
+          (let [stem
+                (fn [it]
+                  (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+
+                by-path
+                (reduce (fn [m t]
+                          (reduce (fn [m it]
+                                    (update m
+                                            (:path it)
+                                            (fn [cur]
+                                              (-> (or cur
+                                                      (assoc it
+                                                        :score 0.0
+                                                        :terms #{}))
+                                                  (update :score max (:score it))
+                                                  (update :terms conj t)))))
+                                  m
+                                  (scan t)))
+                        {}
+                        tokens)
+
                 ;; A term that IS the filename stem (`render` → `render.clj`) is a
                 ;; bullseye — it must beat a 2-common-word loose match
                 ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
                 ;; score bonus that ranks above raw term coverage.
-                scored (map (fn [it]
-                              (let [s (stem it)
-                                    bull? (contains? (:terms it) s)]
-                                (assoc it :rank-score (+ (double (:score it 0.0))
-                                                        (if bull? 0.6 0.0)))))
-                         (vals by-path))]
+                scored
+                (map (fn [it]
+                       (let [s
+                             (stem it)
+
+                             bull?
+                             (contains? (:terms it) s)]
+
+                         (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
+                     (vals by-path))]
+
             [(->> scored
-               (sort-by (fn [it] [(- (double (:rank-score it)))
-                                  (- (count (:terms it)))          ;; then coverage
-                                  (- (long (or (:frecency-score it) 0)))
-                                  (:path it)]))
-               vec)
-             true]))
-        items (if fuzzy?
-                (vec (take fuzzy-limit (map #(dissoc % :rank-score) ranked)))
-                (->> ranked
-                  ;; strongest match first; frecency then path break ties.
-                  (sort-by (fn [it] [(- (double (:score it 0.0)))
-                                     (- (long (or (:frecency-score it) 0)))
-                                     (:path it)]))
-                  (take limit)
-                  vec))
+                  (sort-by (fn [it]
+                             [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
+                              (- (long (or (:frecency-score it) 0))) (:path it)]))
+                  vec) true]))
+
+        items
+        (if fuzzy?
+          (vec (take fuzzy-limit (map #(dissoc % :rank-score) ranked)))
+          (->> ranked
+               ;; strongest match first; frecency then path break ties.
+               (sort-by (fn [it]
+                          [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
+                           (:path it)]))
+               (take limit)
+               vec))
+
         ;; The query terms that actually landed a file (fuzzy pass only) — so
         ;; the card/model can see WHICH words matched, e.g. "render, native".
-        matched-terms (when fuzzy?
-                        (->> items (mapcat :terms) distinct (sort-by (comp - count)) vec))
+        matched-terms
+        (when fuzzy?
+          (->> items
+               (mapcat :terms)
+               distinct
+               (sort-by (comp - count))
+               vec))
+
         ;; Project each internal (keyword-keyed) item onto the model-facing
         ;; string-keyed row — snake_case keys, keyword values stringified.
-        ->item (fn [it]
-                 (cond-> {"path"  (:path it)
-                          "score" (:score it)}
-                   (contains? it :file-name)      (assoc "file_name" (:file-name it))
-                   (contains? it :size)           (assoc "size" (:size it))
-                   (contains? it :modified)       (assoc "modified" (:modified it))
-                   (contains? it :frecency-score) (assoc "frecency_score" (:frecency-score it))
-                   (contains? it :git-status)     (assoc "git_status" (let [g (:git-status it)]
-                                                                        (if (keyword? g) (name g) g)))
-                   (contains? it :binary?)        (assoc "binary" (boolean (:binary? it)))
-                   (:source it)                   (assoc "source" (name (:source it)))))]
+        ->item
+        (fn [it]
+          (cond-> {"path" (:path it) "score" (:score it)}
+            (contains? it :file-name)
+            (assoc "file_name" (:file-name it))
+
+            (contains? it :size)
+            (assoc "size" (:size it))
+
+            (contains? it :modified)
+            (assoc "modified" (:modified it))
+
+            (contains? it :frecency-score)
+            (assoc "frecency_score" (:frecency-score it))
+
+            (contains? it :git-status)
+            (assoc "git_status"
+              (let [g (:git-status it)]
+                (if (keyword? g) (name g) g)))
+
+            (contains? it :binary?)
+            (assoc "binary" (boolean (:binary? it)))
+
+            (:source it)
+            (assoc "source" (name (:source it)))))]
+
     ;; Model-facing find_files result — string keys, no keyword values.
     (cond-> {"items" (mapv ->item items)
              "item_count" (count items)
@@ -1369,8 +1582,11 @@
              "searched_paths" paths
              "limit" limit
              "truncated_by" (if (>= (count items) limit) "limit" "end_of_results")}
-      fuzzy?              (assoc "fuzzy" true)
-      (seq matched-terms) (assoc "matched_terms" matched-terms))))
+      fuzzy?
+      (assoc "fuzzy" true)
+
+      (seq matched-terms)
+      (assoc "matched_terms" matched-terms))))
 
 (defn- find-tool
   "Find files by NAME/PATH — fuzzy subsequence match over the file TREE (fff;
@@ -1391,32 +1607,41 @@
    \"item_count\", \"query\", \"searched_paths\", \"limit\"} — plus a \"hint\" when
    nothing matched."
   [& args]
-  (let [{:strs [query searched_paths limit item_count truncated_by] :as out} (find-search args)
-        ;; A 0-result find is almost always a MISUSE: the model passed a
-        ;; content/concept phrase to a FILENAME matcher. Steer it — a bare
-        ;; "0 matches" just makes it retry the same wrong query (the exact loop
-        ;; the user hit). Only fires on empty so a normal hit set stays lean.
-        multiword? (> (count (str/split (str/trim (str query)) #"\s+")) 2)
-        out (cond-> out
-              (zero? (long (or item_count 0)))
-              (assoc "hint"
-                (str "No FILENAME/PATH matched \"" query "\". find_files matches file "
-                  "NAMES, not contents. "
-                  (if multiword?
-                    (str "That query looks like CONTENT (a phrase describing code) — "
-                      "search inside files with rg(\"a distinctive term\") instead, "
-                      "or shorten this to a single filename fragment.")
-                    "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
-    (tool-success
-      {:op :find_files
-       :path (first searched_paths)
-       :kind :dir
-       :result out
-       :metadata {:query query
-                  :paths searched_paths
-                  :limit limit
-                  :item-count item_count
-                  :truncated-by truncated_by}})))
+  (let
+    [{:strs [query searched_paths limit item_count truncated_by] :as out}
+     (find-search args)
+
+     ;; A 0-result find is almost always a MISUSE: the model passed a
+     ;; content/concept phrase to a FILENAME matcher. Steer it — a bare
+     ;; "0 matches" just makes it retry the same wrong query (the exact loop
+     ;; the user hit). Only fires on empty so a normal hit set stays lean.
+     multiword?
+     (> (count (str/split (str/trim (str query)) #"\s+")) 2)
+
+     out
+     (cond-> out
+       (zero? (long (or item_count 0)))
+       (assoc "hint"
+         (str
+           "No FILENAME/PATH matched \""
+           query
+           "\". find_files matches file "
+           "NAMES, not contents. "
+           (if multiword?
+             (str "That query looks like CONTENT (a phrase describing code) — "
+                  "search inside files with rg(\"a distinctive term\") instead, "
+                  "or shorten this to a single filename fragment.")
+             "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
+
+    (tool-success {:op :find_files
+                   :path (first searched_paths)
+                   :kind :dir
+                   :result out
+                   :metadata {:query query
+                              :paths searched_paths
+                              :limit limit
+                              :item-count item_count
+                              :truncated-by truncated_by}})))
 
 ;; =============================================================================
 ;; rg
@@ -1438,50 +1663,68 @@
   [spec]
   (when-not (map? spec)
     (throw (ex-info "rg takes one spec map: {\"query\": [...], \"paths\": [...]}."
-             {:type :ext.foundation.editing/invalid-rg-spec
-              :got  (type spec)})))
-  (let [vector-of-strings (fn [k raw]
-                            (let [v (if (string? raw) [raw] raw)]  ;; scalar-tolerant
-                              (when-not (and (vector? v) (seq v) (every? string? v))
-                                (throw (ex-info "rg field must be a string or non-empty vector of strings."
-                                         {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
-                              (when-not (every? #(not (str/blank? %)) v)
-                                (throw (ex-info "rg string values must be non-blank."
-                                         {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
-                              v))
+                    {:type :ext.foundation.editing/invalid-rg-spec :got (type spec)})))
+  (let [vector-of-strings
+        (fn [k raw]
+          (let [v (if (string? raw) [raw] raw)] ;; scalar-tolerant
+            (when-not (and (vector? v) (seq v) (every? string? v))
+              (throw (ex-info "rg field must be a string or non-empty vector of strings."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
+            (when-not (every? #(not (str/blank? %)) v)
+              (throw (ex-info "rg string values must be non-blank."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
+            v))
+
         ;; `query` canonical; `any`/`all` are accepted aliases (all mean OR now).
-        query-key (some #(when (contains? spec %) %) ["query" "any" "all"])
-        _ (when-not query-key
-            (throw (ex-info "rg needs `query`: a term or a list of terms."
-                     {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
+        query-key
+        (some #(when (contains? spec %) %) ["query" "any" "all"])
+
+        _
+        (when-not query-key
+          (throw (ex-info "rg needs `query`: a term or a list of terms."
+                          {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
+
         ;; A query TERM is a substring; a LIST is OR. Models overwhelmingly write
         ;; the OR list as ONE comma-joined string (`\"model, cycle\"`) — which,
         ;; matched literally, hits nothing. So split every term on commas into
         ;; separate OR needles: `\"a, b\"` and `[\"a, b\", c]` both become
         ;; `[a b …]`. (A rare literal-comma search loses out; the model's intent
         ;; is virtually always \"these separate terms\".)
-        needles (let [ns (->> (vector-of-strings query-key (get spec query-key))
-                           (mapcat #(str/split % #"\s*,\s*"))
-                           (map str/trim)
-                           (remove str/blank?)
-                           vec)]
-                  (when (empty? ns)
-                    (throw (ex-info "rg query has no non-blank terms."
-                             {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
-                  ns)
-        paths   (vector-of-strings :paths (get spec "paths" ["."]))
-        include (when (contains? spec "include")
-                  (vector-of-strings :include (get spec "include")))
-        nonneg-int! (fn [label v]
-                      (when (and (some? v) (not (and (integer? v) (not (neg? v)))))
-                        (throw (ex-info (str "rg " label " must be a non-negative integer")
-                                 {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
-        _ (nonneg-int! ":context" (get spec "context"))
-        is_files_only (boolean (get spec "is_files_only"))
+        needles
+        (let [ns (->> (vector-of-strings query-key (get spec query-key))
+                      (mapcat #(str/split % #"\s*,\s*"))
+                      (map str/trim)
+                      (remove str/blank?)
+                      vec)]
+          (when (empty? ns)
+            (throw (ex-info "rg query has no non-blank terms."
+                            {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
+          ns)
+
+        paths
+        (vector-of-strings :paths (get spec "paths" ["."]))
+
+        include
+        (when (contains? spec "include") (vector-of-strings :include (get spec "include")))
+
+        nonneg-int!
+        (fn [label v]
+          (when (and (some? v) (not (and (integer? v) (not (neg? v)))))
+            (throw (ex-info (str "rg " label " must be a non-negative integer")
+                            {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
+
+        _
+        (nonneg-int! ":context" (get spec "context"))
+
+        is_files_only
+        (boolean (get spec "is_files_only"))
+
         ;; `context` is a CONTENT-mode concept — in files-only mode there are no
         ;; per-line hits to surround, so a stray `context` is simply IGNORED (never
         ;; a hard error: the model harmlessly set both, so honor `is_files_only`).
-        context (if is_files_only 0 (or (get spec "context") 0))]
+        context
+        (if is_files_only 0 (or (get spec "context") 0))]
+
     {:needles needles
      :paths paths
      :include (or include [])
@@ -1505,14 +1748,22 @@
    substring — no regex, no per-line AND. \"Both terms\" is a Python filter on the
    hits; a pattern is the rare case you `re` over `:text` yourself."
   [needles]
-  (let [grouped (group-by has-upper? needles)
-        cs (vec (get grouped true))                    ;; has uppercase → case-sensitive
-        ci (mapv str/lower-case (get grouped false))]  ;; no uppercase → case-insensitive
+  (let [grouped
+        (group-by has-upper? needles)
+
+        cs
+        (vec (get grouped true))
+
+        ;; has uppercase → case-sensitive
+        ci
+        (mapv str/lower-case (get grouped false))]
+
+    ;; no uppercase → case-insensitive
     (fn [^String line]
       (or (boolean (some #(str/includes? line %) cs))
-        (and (seq ci)
-          (let [low (str/lower-case line)]
-            (boolean (some #(str/includes? low %) ci))))))))
+          (and (seq ci)
+               (let [low (str/lower-case line)]
+                 (boolean (some #(str/includes? low %) ci))))))))
 
 ;; rg hit/context text is kept FULL in the result value — never per-line
 ;; mutilated. The model sees it by printing what it needs (context is print-only;
@@ -1526,8 +1777,8 @@
    total-bytes budget."
   ^long [hit]
   (long (+ (count (str (:text hit)))
-          (reduce + 0 (map (comp count str second) (:before hit)))
-          (reduce + 0 (map (comp count str second) (:after hit))))))
+           (reduce + 0 (map (comp count str second) (:before hit)))
+           (reduce + 0 (map (comp count str second) (:after hit))))))
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
@@ -1536,44 +1787,70 @@
    sliceable in Python via `r[...]`; only the wire VIEW is bounded downstream."
   [^File f matches? before-ctx after-ctx]
   (try
-    (let [path  (rel-path f)
-          lines (with-open [r (io/reader f)] (vec (line-seq r)))
-          n     (count lines)
-          before-ctx (long before-ctx)
-          after-ctx  (long after-ctx)
-          want-before? (pos? before-ctx)
-          want-after?  (pos? after-ctx)]
-      (loop [i 0
-             out (transient [])]
-        (cond
-          (>= i n) (persistent! out)
-          (matches? (nth lines i))
-          (let [line-no (inc i)
-                ;; FULL text here: the hit's :text feeds `patch/line-anchor`
-                ;; (the patch hash must match the real file line). Display
-                ;; clipping happens AFTER the anchor is computed (see rg-search).
-                text    (nth lines i)
-                hit (cond-> {:path path :line line-no :text text}
+    (let [path
+          (rel-path f)
+
+          lines
+          (with-open [r (io/reader f)]
+            (vec (line-seq r)))
+
+          n
+          (count lines)
+
+          before-ctx
+          (long before-ctx)
+
+          after-ctx
+          (long after-ctx)
+
+          want-before?
+          (pos? before-ctx)
+
+          want-after?
+          (pos? after-ctx)]
+
+      (loop [i
+             0
+
+             out
+             (transient [])]
+
+        (cond (>= i n) (persistent! out)
+              (matches? (nth lines i))
+              (let [line-no
+                    (inc i)
+
+                    ;; FULL text here: the hit's :text feeds `patch/line-anchor`
+                    ;; (the patch hash must match the real file line). Display
+                    ;; clipping happens AFTER the anchor is computed (see rg-search).
+                    text
+                    (nth lines i)
+
+                    hit
+                    (cond-> {:path path :line line-no :text text}
                       want-before?
                       (assoc :before
-                        (mapv (fn [j] [(inc j) (nth lines j)])
-                          (range (max 0 (- i before-ctx)) i)))
+                        (mapv (fn [j]
+                                [(inc j) (nth lines j)])
+                              (range (max 0 (- i before-ctx)) i)))
+
                       want-after?
                       (assoc :after
-                        (mapv (fn [j] [(inc j) (nth lines j)])
-                          (range (inc i) (min n (+ i after-ctx 1))))))]
-            (recur (inc i) (conj! out hit)))
-          :else (recur (inc i) out))))
+                        (mapv (fn [j]
+                                [(inc j) (nth lines j)])
+                              (range (inc i) (min n (+ i after-ctx 1))))))]
+
+                (recur (inc i) (conj! out hit)))
+              :else (recur (inc i) out))))
     (catch Throwable _ [])))
 
 (defn- file-has-any-hit?
   "Short-circuit: true on first matching line. Used by :is_files_only mode
    so we exit each file as fast as possible."
   [^File f matches?]
-  (try
-    (with-open [r (io/reader f)]
-      (boolean (some matches? (line-seq r))))
-    (catch Throwable _ false)))
+  (try (with-open [r (io/reader f)]
+         (boolean (some matches? (line-seq r))))
+       (catch Throwable _ false)))
 
 (defn- rg-search
   "The rg search ENGINE: takes the public rg spec map and does the
@@ -1592,88 +1869,125 @@
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let [{:keys [needles paths include is_hidden is_respect_gitignore
-                limit context is_files_only]} (coerce-rg-spec spec)
-        before-ctx context
-        after-ctx  context
-        glob-matcher (fn [pattern]
-                       (.getPathMatcher (java.nio.file.FileSystems/getDefault)
-                         (str "glob:" pattern)))
-        include-matchers (mapv glob-matcher include)
-        match-globs? (fn [matchers ^File f]
-                       (let [rel (rel-path f)
-                             name (.getName f)
-                             rel-path (fs/path rel)
-                             name-path (fs/path name)]
-                         (boolean
-                           (some (fn [^java.nio.file.PathMatcher m]
-                                   (or (.matches m rel-path)
-                                     (.matches m name-path)))
-                             matchers))))
-        include-file? (fn [^File f]
-                        (or (empty? include-matchers)
-                          (match-globs? include-matchers f)))
-        roots (->> (resolve-search-roots paths)
-                (sort-by (fn [^File f]
-                           [(count (iterator-seq (.iterator (.toPath f))))
-                            (.getPath f)]))
-                (reduce (fn [acc ^File f]
-                          (if (some (fn [^File parent]
-                                      (.startsWith (.toPath f) (.toPath parent)))
-                                acc)
-                            acc
-                            (conj acc f)))
-                  []))
-        matches? (make-line-matcher needles)
-        walk (fn walk [ignore-node root ^File f]
-               (check-interrupt!)
-               (cond
-                 (and (not is_hidden) (.isHidden f)) []
-                 (and is_respect_gitignore (ignored? ignore-node f root)) []
-                 (.isDirectory f) (mapcat #(walk ignore-node root %)
-                                    (or (.listFiles f) (into-array File [])))
-                 (and (.isFile f) (include-file? f)) [f]
-                 :else []))
-        files (->> roots
-                (mapcat (fn [root]
-                          (let [ignore-node (when is_respect_gitignore
-                                              (load-ignore-node root))]
-                            (walk ignore-node root root))))
-                (sort-by rel-path)
-                (rg-fff-candidate-files roots needles))]
-    (cond
-      is_files_only
-      (let [out (atom [])
-            capped? (atom false)]
-        (doseq [^File f files :while (not @capped?)]
-          (when (file-has-any-hit? f matches?)
-            (swap! out conj (rel-path f))
-            (when (>= (count @out) limit) (reset! capped? true))))
-        {:files (vec @out)
-         :truncated-by (if @capped? :limit :end-of-results)})
+  (let [{:keys [needles paths include is_hidden is_respect_gitignore limit context is_files_only]}
+        (coerce-rg-spec spec)
 
-      :else
-      (let [out        (atom [])
-            bytes-used (atom 0)
-            cap-reason (atom nil)]     ;; nil | :limit | :bytes
-        (doseq [^File f files :while (not @cap-reason)]
-          (let [hits (search-file-content f matches? before-ctx after-ctx)]
-            (when (seq hits)
-              ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
-              ;; :text is kept FULL — it's the model's data, sliceable in Python
-              ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
-              ;; Stop on the hit limit OR the total-bytes budget (whichever first).
-              (doseq [hit hits :while (not @cap-reason)]
-                (let [hit* (cond-> hit
-                             (not (str/blank? (:text hit)))
-                             (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
-                  (swap! out conj hit*)
-                  (swap! bytes-used + (hit-bytes hit*))
-                  (cond
-                    (>= (count @out) limit)              (reset! cap-reason :limit)
-                    (>= @bytes-used max-rg-result-bytes) (reset! cap-reason :bytes)))))))
-        {:hits (vec @out)
-         :truncated-by (or @cap-reason :end-of-results)}))))
+        before-ctx
+        context
+
+        after-ctx
+        context
+
+        glob-matcher
+        (fn [pattern]
+          (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern)))
+
+        include-matchers
+        (mapv glob-matcher include)
+
+        match-globs?
+        (fn [matchers ^File f]
+          (let [rel
+                (rel-path f)
+
+                name
+                (.getName f)
+
+                rel-path
+                (fs/path rel)
+
+                name-path
+                (fs/path name)]
+
+            (boolean (some (fn [^java.nio.file.PathMatcher m]
+                             (or (.matches m rel-path) (.matches m name-path)))
+                           matchers))))
+
+        include-file?
+        (fn [^File f]
+          (or (empty? include-matchers) (match-globs? include-matchers f)))
+
+        roots
+        (->> (resolve-search-roots paths)
+             (sort-by (fn [^File f]
+                        [(count (iterator-seq (.iterator (.toPath f)))) (.getPath f)]))
+             (reduce (fn [acc ^File f]
+                       (if (some (fn [^File parent]
+                                   (.startsWith (.toPath f) (.toPath parent)))
+                                 acc)
+                         acc
+                         (conj acc f)))
+                     []))
+
+        matches?
+        (make-line-matcher needles)
+
+        walk
+        (fn walk [ignore-node root ^File f]
+          (check-interrupt!)
+          (cond (and (not is_hidden) (.isHidden f)) []
+                (and is_respect_gitignore (ignored? ignore-node f root)) []
+                (.isDirectory f) (mapcat #(walk ignore-node root %)
+                                         (or (.listFiles f) (into-array File [])))
+                (and (.isFile f) (include-file? f)) [f]
+                :else []))
+
+        files
+        (->> roots
+             (mapcat (fn [root]
+                       (let [ignore-node (when is_respect_gitignore (load-ignore-node root))]
+                         (walk ignore-node root root))))
+             (sort-by rel-path)
+             (rg-fff-candidate-files roots needles))]
+
+    (cond is_files_only (let [out
+                              (atom [])
+
+                              capped?
+                              (atom false)]
+
+                          (doseq [^File f
+                                  files
+
+                                  :while (not @capped?)]
+
+                            (when (file-has-any-hit? f matches?)
+                              (swap! out conj (rel-path f))
+                              (when (>= (count @out) limit) (reset! capped? true))))
+                          {:files (vec @out) :truncated-by (if @capped? :limit :end-of-results)})
+          :else (let [out
+                      (atom [])
+
+                      bytes-used
+                      (atom 0)
+
+                      cap-reason
+                      (atom nil)]
+
+                  ;; nil | :limit | :bytes
+                  (doseq [^File f
+                          files
+
+                          :while (not @cap-reason)]
+
+                    (let [hits (search-file-content f matches? before-ctx after-ctx)]
+                      (when (seq hits)
+                        ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
+                        ;; :text is kept FULL — it's the model's data, sliceable in Python
+                        ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
+                        ;; Stop on the hit limit OR the total-bytes budget (whichever first).
+                        (doseq [hit hits
+                                :while (not @cap-reason)]
+
+                          (let [hit* (cond-> hit
+                                       (not (str/blank? (:text hit)))
+                                       (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
+                            (swap! out conj hit*)
+                            (swap! bytes-used + (hit-bytes hit*))
+                            (cond (>= (count @out) limit) (reset! cap-reason :limit)
+                                  (>= @bytes-used max-rg-result-bytes) (reset! cap-reason
+                                                                         :bytes)))))))
+                  {:hits (vec @out) :truncated-by (or @cap-reason :end-of-results)}))))
 
 ;; =============================================================================
 ;; Thin babashka.fs wrappers
@@ -1707,68 +2021,70 @@
 (def ^:private patch-group-allowed-keys
   (set/union patch-group-required-keys patch-group-optional-keys))
 
-(defn- grouped-patch-edit?
-  [edit]
-  (and (map? edit) (contains? edit "edits")))
+(defn- grouped-patch-edit? [edit] (and (map? edit) (contains? edit "edits")))
 
 (defn- expand-patch-group
   [{:strs [path edits expected_mtime expected_size] :as group}]
-  (let [missing (seq (remove #(contains? group %) patch-group-required-keys))
-        unknown (seq (remove patch-group-allowed-keys (keys group)))]
+  (let [missing
+        (seq (remove #(contains? group %) patch-group-required-keys))
+
+        unknown
+        (seq (remove patch-group-allowed-keys (keys group)))]
+
     (when missing
       (throw (ex-info (str "patch grouped edit missing required keys: "
-                        (str/join ", " (map #(str "'" % "'") missing))
-                        " (a group is {'path': ..., 'edits': [...]}).")
-               {:type :ext.foundation.editing/invalid-patch-edit-group
-                :missing (vec missing)
-                :edit group})))
+                           (str/join ", " (map #(str "'" % "'") missing))
+                           " (a group is {'path': ..., 'edits': [...]}).")
+                      {:type :ext.foundation.editing/invalid-patch-edit-group
+                       :missing (vec missing)
+                       :edit group})))
     (when unknown
       (throw (ex-info (str "patch grouped edit has unknown keys: "
-                        (str/join ", " (map #(str "'" % "'") unknown)) ".")
-               {:type :ext.foundation.editing/invalid-patch-edit-group
-                :unknown (vec unknown)
-                :allowed (vec patch-group-allowed-keys)
-                :edit group})))
+                           (str/join ", " (map #(str "'" % "'") unknown))
+                           ".")
+                      {:type :ext.foundation.editing/invalid-patch-edit-group
+                       :unknown (vec unknown)
+                       :allowed (vec patch-group-allowed-keys)
+                       :edit group})))
     (when-not (sequential? edits)
       (throw (ex-info "patch grouped \"edits\" must be a vector/seq of edit maps"
-               {:type :ext.foundation.editing/invalid-patch-edit-group
-                :edits edits})))
+                      {:type :ext.foundation.editing/invalid-patch-edit-group :edits edits})))
     (when (empty? edits)
       (throw (ex-info "patch grouped \"edits\" must not be empty"
-               {:type :ext.foundation.editing/invalid-patch-edit-group
-                :edit group})))
+                      {:type :ext.foundation.editing/invalid-patch-edit-group :edit group})))
     (mapv (fn [edit]
             (when-not (map? edit)
               (throw (ex-info "patch grouped \"edits\" entries must be maps"
-                       {:type :ext.foundation.editing/invalid-patch-edit
-                        :edit edit})))
+                              {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
             ;; The LLM-facing JSON schema marks :path as required, so callers
             ;; routinely echo an EMPTY :path (""/nil) into each grouped edit
             ;; just to satisfy it. Treat a blank per-edit :path as ABSENT and
             ;; only refuse a genuinely conflicting NON-EMPTY path — the group's
             ;; :path is assoc'd over it below regardless.
-            (when-let [stated (some-> (get edit "path") str str/trim not-empty)]
-              (throw (ex-info "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
-                       {:type :ext.foundation.editing/invalid-patch-edit
-                        :path stated
-                        :edit edit})))
+            (when-let [stated (some-> (get edit "path")
+                                      str
+                                      str/trim
+                                      not-empty)]
+              (throw (ex-info
+                       "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
+                       {:type :ext.foundation.editing/invalid-patch-edit :path stated :edit edit})))
             (cond-> (assoc edit "path" path)
-              (some? expected_mtime) (assoc "expected_mtime" expected_mtime)
-              (some? expected_size) (assoc "expected_size" expected_size)))
-      edits)))
+              (some? expected_mtime)
+              (assoc "expected_mtime" expected_mtime)
+
+              (some? expected_size)
+              (assoc "expected_size" expected_size)))
+          edits)))
 
 (defn- normalize-patch-edits-input
   [edits]
   (let [edits (if (map? edits) [edits] edits)]
     (when-not (sequential? edits)
       (throw (ex-info "patch expects a map, grouped map, or vector of edit maps/groups"
-               {:type :ext.foundation.editing/invalid-patch-edits
-                :got  (type edits)})))
+                      {:type :ext.foundation.editing/invalid-patch-edits :got (type edits)})))
     (mapcat (fn [edit]
-              (if (grouped-patch-edit? edit)
-                (expand-patch-group edit)
-                [edit]))
-      edits)))
+              (if (grouped-patch-edit? edit) (expand-patch-group edit) [edit]))
+            edits)))
 
 (defn- coerce-patch-edits
   "Normalize + validate the user's edit maps. Every edit is anchor-located:
@@ -1776,47 +2092,51 @@
    A missing anchor, or an unknown key, throws."
   [edits]
   (let [edits (normalize-patch-edits-input edits)]
-    (mapv (fn [edit]
-            (when-not (map? edit)
-              (throw (ex-info "patch edit must be a map"
-                       {:type :ext.foundation.editing/invalid-patch-edit
-                        :edit edit})))
-            (let [missing (seq (remove #(contains? edit %) patch-required-keys))
-                  unknown (seq (remove patch-allowed-keys (keys edit)))]
-              (when missing
-                (throw (ex-info (str "patch edit missing required keys: "
-                                  (str/join ", " (map #(str "'" % "'") missing))
-                                  " — every edit needs 'from_anchor' (a lineno:hash"
-                                  " from a fresh cat) plus its replacement content.")
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :missing (vec missing)
-                          :edit edit})))
-              ;; The removed text-matcher API (`search`/`nth`/grouped `edits`
-              ;; carrying `search`) keeps getting re-hallucinated. Name it
-              ;; explicitly so the model corrects to anchors in ONE step
-              ;; instead of staring at a generic ":from_anchor missing".
-              (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
-                (throw (ex-info (str "patch is ANCHOR-ONLY — `"
-                                  (str/join "`/`" legacy)
-                                  "` was removed; there is no text search/replace. "
-                                  "cat the file, then pass `from_anchor` (a lineno:hash from the "
-                                  "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :removed (vec legacy)
-                          :edit edit})))
-              (when-not (contains? edit "from_anchor")
-                (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :edit edit})))
-              (when unknown
-                (throw (ex-info (str "patch edit has unknown keys: "
-                                  (str/join ", " (map #(str "'" % "'") unknown))
-                                  ". Allowed: " (str/join ", " (sort patch-allowed-keys)) ".")
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :unknown (vec unknown)
-                          :allowed (vec patch-allowed-keys)
-                          :edit edit}))))
-            (update edit "path" str))
+    (mapv
+      (fn [edit]
+        (when-not (map? edit)
+          (throw (ex-info "patch edit must be a map"
+                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+        (let [missing (seq (remove #(contains? edit %) patch-required-keys))
+              unknown (seq (remove patch-allowed-keys (keys edit)))]
+
+          (when missing
+            (throw (ex-info (str "patch edit missing required keys: "
+                                 (str/join ", " (map #(str "'" % "'") missing))
+                                 " — every edit needs 'from_anchor' (a lineno:hash"
+                                 " from a fresh cat) plus its replacement content.")
+                            {:type :ext.foundation.editing/invalid-patch-edit
+                             :missing (vec missing)
+                             :edit edit})))
+          ;; The removed text-matcher API (`search`/`nth`/grouped `edits`
+          ;; carrying `search`) keeps getting re-hallucinated. Name it
+          ;; explicitly so the model corrects to anchors in ONE step
+          ;; instead of staring at a generic ":from_anchor missing".
+          (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
+            (throw (ex-info
+                     (str
+                       "patch is ANCHOR-ONLY — `"
+                       (str/join "`/`" legacy)
+                       "` was removed; there is no text search/replace. "
+                       "cat the file, then pass `from_anchor` (a lineno:hash from the "
+                       "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
+                     {:type :ext.foundation.editing/invalid-patch-edit
+                      :removed (vec legacy)
+                      :edit edit})))
+          (when-not (contains? edit "from_anchor")
+            (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
+                            {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+          (when unknown
+            (throw (ex-info (str "patch edit has unknown keys: "
+                                 (str/join ", " (map #(str "'" % "'") unknown))
+                                 ". Allowed: "
+                                 (str/join ", " (sort patch-allowed-keys))
+                                 ".")
+                            {:type :ext.foundation.editing/invalid-patch-edit
+                             :unknown (vec unknown)
+                             :allowed (vec patch-allowed-keys)
+                             :edit edit}))))
+        (update edit "path" str))
       edits)))
 
 ;; -----------------------------------------------------------------------------
@@ -1845,11 +2165,12 @@
 (defn- patch-loop-hint
   [^long n path]
   (when (>= n patch-fail-loop-threshold)
-    (str "Consecutive patch failures on " path ": " n
-      ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
-      " or with the offset shown above), then build ONE cohesive edit plan with"
-      " from_anchor..to_anchor anchors or nth selection. If you are rewriting the"
-      " whole file, switch to write(...).")))
+    (str "Consecutive patch failures on " path
+         ": " n
+         ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
+         " or with the offset shown above), then build ONE cohesive edit plan with"
+         " from_anchor..to_anchor anchors or nth selection. If you are rewriting the"
+         " whole file, switch to write(...).")))
 
 ;; -----------------------------------------------------------------------------
 ;; Staleness check: :expected_mtime / :expected_size
@@ -1860,16 +2181,22 @@
    expectations (or no expectations were given), else a structured
    `:stale` failure carrying the actual vs. expected values."
   [^java.io.File file {:strs [expected_mtime expected_size]}]
-  (let [actual-mtime (.lastModified file)
-        actual-size  (.length file)]
-    (cond
-      (and (some? expected_mtime) (not= (long expected_mtime) actual-mtime))
-      {:reason :stale-mtime :expected_mtime expected_mtime :actual-mtime actual-mtime
-       :actual-size actual-size}
+  (let [actual-mtime
+        (.lastModified file)
 
-      (and (some? expected_size) (not= (long expected_size) actual-size))
-      {:reason :stale-size :expected_size expected_size :actual-size actual-size
-       :actual-mtime actual-mtime})))
+        actual-size
+        (.length file)]
+
+    (cond (and (some? expected_mtime) (not= (long expected_mtime) actual-mtime))
+          {:reason :stale-mtime
+           :expected_mtime expected_mtime
+           :actual-mtime actual-mtime
+           :actual-size actual-size}
+          (and (some? expected_size) (not= (long expected_size) actual-size))
+          {:reason :stale-size
+           :expected_size expected_size
+           :actual-size actual-size
+           :actual-mtime actual-mtime})))
 
 ;; -----------------------------------------------------------------------------
 ;; patch-analysis (rewritten)
@@ -1894,24 +2221,24 @@
    dir) into the same structured failure stream as match-level
    problems. Keeps `patch-analysis` exception-free."
   [path]
-  (try
-    (let [file (safe-path path)]
-      (cond
-        (not (.exists file))   {:error {:reason :file-not-found
-                                        :path (.getPath file)
-                                        :message (str "File not found: " (.getPath file))}}
-        (.isDirectory file)    {:error {:reason :path-is-dir
-                                        :path (.getPath file)
-                                        :message (str "Path is a directory, not a file: "
-                                                   (.getPath file))}}
-        :else                  {:file file :rel (rel-path file)}))
-    (catch clojure.lang.ExceptionInfo e
-      (let [{:keys [type] :as data} (ex-data e)]
-        {:error {:reason (case type
-                           :ext.foundation.editing/path-escape :path-escape
-                           :path-error)
-                 :message (ex-message e)
-                 :data data}}))))
+  (try (let [file (safe-path path)]
+         (cond (not (.exists file)) {:error {:reason :file-not-found
+                                             :path (.getPath file)
+                                             :message (str "File not found: " (.getPath file))}}
+               (.isDirectory file) {:error {:reason :path-is-dir
+                                            :path (.getPath file)
+                                            :message (str "Path is a directory, not a file: "
+                                                          (.getPath file))}}
+               :else {:file file :rel (rel-path file)}))
+       (catch clojure.lang.ExceptionInfo e
+         (let [{:keys [type] :as data} (ex-data e)]
+           {:error {:reason (case type
+                              :ext.foundation.editing/path-escape
+                              :path-escape
+
+                              :path-error)
+                    :message (ex-message e)
+                    :data data}}))))
 
 ;; Hashline locator resolution lives in the reusable `patch` layer
 ;; (`patch/resolve-anchor-edit`, `patch/indices-matching-hash`). The
@@ -1927,71 +2254,142 @@
    in one file are a hard error (split into separate patches). Atomic: any failure
    means `patch-safe` writes nothing."
   [edits]
-  (let [edits (coerce-patch-edits edits)
+  (let [edits
+        (coerce-patch-edits edits)
+
         ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
         {:keys [origs spans checks failures]}
-        (loop [idx 0, remaining edits, origs {}, spans {}, checks [], failures []]
-          (if-let [{:strs [path replace from_anchor to_anchor] :as edit}
-                   (first remaining)]
+        (loop [idx
+               0
+
+               remaining
+               edits
+
+               origs
+               {}
+
+               spans
+               {}
+
+               checks
+               []
+
+               failures
+               []]
+
+          (if-let [{:strs [path replace from_anchor to_anchor] :as edit} (first remaining)]
             (let [resolved (resolve-edit-target path)]
               (if-let [path-error (:error resolved)]
-                (let [check {:edit-index idx :path path :reason (:reason path-error)
+                (let [check {:edit-index idx
+                             :path path
+                             :reason (:reason path-error)
                              :path-error path-error}]
-                  (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-                (let [file        (:file resolved)
-                      rel         (:rel resolved)
-                      seen?       (contains? origs path)
+                  (recur (inc idx)
+                         (next remaining)
+                         origs
+                         spans
+                         (conj checks check)
+                         (conj failures check)))
+                (let [file (:file resolved)
+                      rel (:rel resolved)
+                      seen? (contains? origs path)
                       ;; ALWAYS the original snapshot — never the cumulative result.
-                      current     (or (get origs path) (slurp file))
-                      origs       (assoc origs path current)
-                      replace     (str replace)
-                      stale       (when-not seen? (staleness-check file edit))]
+                      current (or (get origs path) (slurp file))
+                      origs (assoc origs path current)
+                      replace (str replace)
+                      stale (when-not seen? (staleness-check file edit))]
+
                   (if from_anchor
                     ;; ---- hashline locator (content-addressed by line hash) ----
-                    (let [base-check {:edit-index idx :path rel :from_anchor from_anchor :to_anchor (or to_anchor from_anchor)}]
+                    (let [base-check {:edit-index idx
+                                      :path rel
+                                      :from_anchor from_anchor
+                                      :to_anchor (or to_anchor from_anchor)}]
                       (if stale
-                        (let [check (assoc base-check :reason :stale :stale stale)]
-                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-                        (let [res (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
+                        (let [check (assoc base-check
+                                      :reason :stale
+                                      :stale stale)]
+                          (recur (inc idx)
+                                 (next remaining)
+                                 origs
+                                 spans
+                                 (conj checks check)
+                                 (conj failures check)))
+                        (let [res (patch/resolve-anchor-edit-span current
+                                                                  from_anchor
+                                                                  to_anchor
+                                                                  replace)]
                           (if-let [err (:error res)]
-                            (let [check (assoc base-check :reason (:reason err) :hash-error err)]
-                              (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-                            (let [span  {:start (:start res) :end (:end res) :replacement (:replacement res)
-                                         :file file :path rel :edit-index idx}
-                                  check (assoc base-check :pass :hashline :applied-positions [(:applied-line res)])]
-                              (recur (inc idx) (next remaining) origs
-                                (update spans path (fnil conj []) span)
-                                (conj checks check) failures))))))
+                            (let [check (assoc base-check
+                                          :reason (:reason err)
+                                          :hash-error err)]
+                              (recur (inc idx)
+                                     (next remaining)
+                                     origs
+                                     spans
+                                     (conj checks check)
+                                     (conj failures check)))
+                            (let [span {:start (:start res)
+                                        :end (:end res)
+                                        :replacement (:replacement res)
+                                        :file file
+                                        :path rel
+                                        :edit-index idx}
+                                  check (assoc base-check
+                                          :pass :hashline
+                                          :applied-positions [(:applied-line res)])]
+
+                              (recur (inc idx)
+                                     (next remaining)
+                                     origs
+                                     (update spans path (fnil conj []) span)
+                                     (conj checks check)
+                                     failures))))))
                     ;; ANCHOR-ONLY: the `:search`/`:replace` text matcher was
                     ;; removed. An edit with no `:from_anchor` cannot be located —
                     ;; re-read with `cat` and use the `lineno:hash` anchor.
                     (let [check {:edit-index idx :path rel :reason :missing-anchor}]
-                      (recur (inc idx) (next remaining) origs spans
-                        (conj checks check) (conj failures check)))))))
+                      (recur (inc idx)
+                             (next remaining)
+                             origs
+                             spans
+                             (conj checks check)
+                             (conj failures check)))))))
             {:origs origs :spans spans :checks checks :failures failures}))
+
         ;; PHASE 2 — splice each file's spans into its ORIGINAL, bottom-up so
         ;; earlier offsets stay valid. Overlapping spans are a conflict.
-        results (for [[path file-spans] spans]
-                  (let [before (get origs path)
-                        sorted (sort-by :start file-spans)
-                        bad    (first (filter (fn [[a b]] (> (long (:end a)) (long (:start b))))
-                                        (partition 2 1 sorted)))]
-                    (if bad
-                      {:failure {:edit-index (:edit-index (second bad)) :path path
-                                 :reason :overlapping-edits
-                                 :overlap (mapv :edit-index bad)}}
-                      {:plan {:file (:file (first file-spans)) :path (:path (first file-spans))
-                              :before before
-                              :after (reduce (fn [c {:keys [start end replacement]}]
-                                               (str (subs c 0 start) replacement (subs c end)))
-                                       before (reverse sorted))}})))
-        overlap-failures (vec (keep :failure results))
-        plans (vec (keep :plan results))
-        all-failures (into failures overlap-failures)]
-    {:plans plans
-     :checks checks
-     :failures all-failures
-     :valid? (empty? all-failures)}))
+        results
+        (for [[path file-spans] spans]
+          (let [before (get origs path)
+                sorted (sort-by :start file-spans)
+                bad (first (filter (fn [[a b]]
+                                     (> (long (:end a)) (long (:start b))))
+                                   (partition 2 1 sorted)))]
+
+            (if bad
+              {:failure {:edit-index (:edit-index (second bad))
+                         :path path
+                         :reason :overlapping-edits
+                         :overlap (mapv :edit-index bad)}}
+              {:plan {:file (:file (first file-spans))
+                      :path (:path (first file-spans))
+                      :before before
+                      :after (reduce (fn [c {:keys [start end replacement]}]
+                                       (str (subs c 0 start) replacement (subs c end)))
+                                     before
+                                     (reverse sorted))}})))
+
+        overlap-failures
+        (vec (keep :failure results))
+
+        plans
+        (vec (keep :plan results))
+
+        all-failures
+        (into failures overlap-failures)]
+
+    {:plans plans :checks checks :failures all-failures :valid? (empty? all-failures)}))
 
 (defn- explain-failure
   [{:keys [edit-index path reason stale hash-error message path-error]}]
@@ -2001,50 +2399,90 @@
   ;; than dropping it into the generic default branch below, which only knows the
   ;; anchor-resolution `reason`s and would otherwise flatten it to "edit N in P
   ;; failed." (the exact wrong report this guards against).
-  (or message
+  (or
+    message
     (:message path-error)
     (let [head (str "edit " edit-index " in " path)]
       (case reason
-        :hashline-malformed (str head " failed: " (name (:which hash-error)) "_anchor "
-                              (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
-                              " - every :from_anchor needs BOTH the line number AND the hash"
-                              " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
-                              " cat printed.")
-        :hashline-line-out-of-range (str head " failed: " (name (:which hash-error)) "_anchor line "
-                                      (:line hash-error) " is outside the file (it has "
-                                      (:lines hash-error) " lines). Re-read with cat for fresh"
-                                      " `lineno:hash` anchors, then resend the batch.")
-        :hashline-not-found (str head " failed: " (name (:which hash-error)) "_anchor hash "
-                              (pr-str (:hash hash-error)) " matches no line in the current file"
-                              " (that line changed or the file moved — anchors go STALE after"
-                              " any write/patch)."
-                              (if-let [ca (:current-anchor hash-error)]
-                                (str " Line " (:stated-line hash-error) " is NOW `" ca "`"
-                                  (when-let [t (:current-text hash-error)]
-                                    (str " = " (pr-str (cond-> (str t) (> (count (str t)) 80)
-                                                         (-> (subs 0 80) (str " …"))))))
-                                  ". Use that anchor if it's still your target; otherwise re-`cat`"
-                                  " the exact lines for fresh :anchors, then resend the batch.")
-                                (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
-                                  " then resend the batch.")))
-        :hashline-misplaced (str head " failed: " (name (:which hash-error)) "_anchor "
-                              (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
-                              " but that content is at line(s) " (pr-str (:found-lines hash-error))
-                              " — too far to be drift, so this looks like a stale/misattributed"
-                              " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
-                              " editing (this guard is what stops an edit landing on the wrong line).")
-        :overlapping-edits (str head " failed: this edit's target overlaps another edit"
-                             " in the same file — two edits touch the same lines. Merge"
-                             " them into ONE edit, or split into separate patch calls.")
-        :hashline-range-inverted (str head " failed: :to_anchor line " (:to-line hash-error)
-                                   " precedes :from_anchor line " (:from-line hash-error) ".")
-        :stale (str head
-                 " failed: file changed since :expected-" (name (:reason stale))
-                 " check (expected " (or (:expected_mtime stale) (:expected_size stale))
-                 ", actual " (or (:actual-mtime stale) (:actual-size stale))
-                 "). Re-read the file before retrying.")
-        :missing-anchor (str head " failed: no :from_anchor — patch is anchor-only."
-                          " Re-read with cat and use the `lineno:hash` anchor it prints.")
+        :hashline-malformed
+        (str head
+             " failed: " (name (:which hash-error))
+             "_anchor " (pr-str (:anchor hash-error))
+             " is not a `lineno:hash` anchor"
+             " - every :from_anchor needs BOTH the line number AND the hash"
+             " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor" " cat printed.")
+
+        :hashline-line-out-of-range
+        (str head
+             " failed: " (name (:which hash-error))
+             "_anchor line " (:line hash-error)
+             " is outside the file (it has " (:lines hash-error)
+             " lines). Re-read with cat for fresh" " `lineno:hash` anchors, then resend the batch.")
+
+        :hashline-not-found
+        (str head
+             " failed: " (name (:which hash-error))
+             "_anchor hash " (pr-str (:hash hash-error))
+             " matches no line in the current file"
+             " (that line changed or the file moved — anchors go STALE after"
+             " any write/patch)."
+             (if-let [ca (:current-anchor hash-error)]
+               (str " Line " (:stated-line hash-error)
+                    " is NOW `" ca
+                    "`" (when-let [t (:current-text hash-error)]
+                          (str " = "
+                               (pr-str (cond-> (str t)
+                                         (> (count (str t)) 80)
+                                         (-> (subs 0 80)
+                                             (str " …"))))))
+                    ". Use that anchor if it's still your target; otherwise re-`cat`"
+                    " the exact lines for fresh :anchors, then resend the batch.")
+               (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
+                    " then resend the batch.")))
+
+        :hashline-misplaced
+        (str head
+             " failed: "
+             (name (:which hash-error))
+             "_anchor "
+             (pr-str (:hash hash-error))
+             " says line "
+             (:stated-line hash-error)
+             " but that content is at line(s) "
+             (pr-str (:found-lines hash-error))
+             " — too far to be drift, so this looks like a stale/misattributed"
+             " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
+             " editing (this guard is what stops an edit landing on the wrong line).")
+
+        :overlapping-edits
+        (str head
+             " failed: this edit's target overlaps another edit"
+             " in the same file — two edits touch the same lines. Merge"
+             " them into ONE edit, or split into separate patch calls.")
+
+        :hashline-range-inverted
+        (str head
+             " failed: :to_anchor line "
+             (:to-line hash-error)
+             " precedes :from_anchor line "
+             (:from-line hash-error)
+             ".")
+
+        :stale
+        (str head
+             " failed: file changed since :expected-"
+             (name (:reason stale))
+             " check (expected "
+             (or (:expected_mtime stale) (:expected_size stale))
+             ", actual "
+             (or (:actual-mtime stale) (:actual-size stale))
+             "). Re-read the file before retrying.")
+
+        :missing-anchor
+        (str head
+             " failed: no :from_anchor — patch is anchor-only."
+             " Re-read with cat and use the `lineno:hash` anchor it prints.")
+
         (str head " failed.")))))
 
 (defn- patch-failure-message
@@ -2052,14 +2490,21 @@
   ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
   ;; must not assume a partial application and must not re-read to \"repair\" it.
-  (let [atomic "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
+  (let
+    [atomic
+     "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
       ;; Show EVERY failing edit, not just the first — reporting only `first:`
       ;; hid the LATER edit that was the real problem and made the model fixate on
       ;; edit 0 (typically an unrelated require/import at the top of the batch).
-      (str atomic (count failures) " edits failed:\n"
-        (str/join "\n" (map (fn [f] (str "  • " (explain-failure f))) failures))))))
+      (str atomic
+           (count failures)
+           " edits failed:\n"
+           (str/join "\n"
+                     (map (fn [f]
+                            (str "  • " (explain-failure f)))
+                          failures))))))
 
 (defn- non-exact-passes-for-path
   "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out
@@ -2068,10 +2513,10 @@
    entirely (no `:exact` noise in the trailer)."
   [checks rel-path]
   (let [ps (->> checks
-             (filter #(= rel-path (:path %)))
-             (keep :pass)
-             (remove #{:exact :hashline})
-             vec)]
+                (filter #(= rel-path (:path %)))
+                (keep :pass)
+                (remove #{:exact :hashline})
+                vec)]
     (when (seq ps) ps)))
 
 (defn- indent-delta-for-path
@@ -2081,11 +2526,11 @@
   [checks rel-path]
   (some (fn [c]
           (when (and (= rel-path (:path c))
-                  (= :relative-indent (:pass c))
-                  (some? (:indent-delta c))
-                  (not (zero? (long (:indent-delta c)))))
+                     (= :relative-indent (:pass c))
+                     (some? (:indent-delta c))
+                     (not (zero? (long (:indent-delta c)))))
             (long (:indent-delta c))))
-    checks))
+        checks))
 
 (defn patch-safe
   "Apply exact-replace patch edits to the filesystem.
@@ -2120,22 +2565,30 @@
   (let [{:keys [plans failures checks]} (patch-analysis edits)]
     (if (seq failures)
       ;; Failure path: bump per-path loop counter, attach hint, return.
-      (let [paths (->> failures (map :path) distinct)
+      (let [paths (->> failures
+                       (map :path)
+                       distinct)
             counts (into {}
-                     (for [p paths]
-                       (let [f (try (safe-path p) (catch Throwable _ nil))]
-                         (when f [p (bump-patch-fail-count! f)]))))
+                         (for [p paths]
+                           (let [f (try (safe-path p) (catch Throwable _ nil))]
+                             (when f [p (bump-patch-fail-count! f)]))))
             failures-with-count (mapv (fn [f]
                                         (let [n (get counts (:path f))]
-                                          (cond-> f n (assoc :consecutive-failures n))))
-                                  failures)
-            hint (some (fn [[p n]] (patch-loop-hint n p)) counts)]
+                                          (cond-> f
+                                            n
+                                            (assoc :consecutive-failures n))))
+                                      failures)
+            hint (some (fn [[p n]]
+                         (patch-loop-hint n p))
+                       counts)]
+
         {:success? false
          :failures failures-with-count
-         :checks   checks
+         :checks checks
          :loop-hint hint
-         :message  (cond-> (patch-failure-message failures-with-count)
-                     hint (str "\n" hint))})
+         :message (cond-> (patch-failure-message failures-with-count)
+                    hint
+                    (str "\n" hint))})
       ;; Success path: RE-PARSE guard, then commit. Refuse only an edit that turns
       ;; a CLEANLY-parsing file into a BROKEN one — the same safety `struct_patch`/
       ;; `symbol_rename` already give, now on plain `patch` too, so the two verbs
@@ -2149,28 +2602,37 @@
             (vec (keep (fn [{:keys [path before after]}]
                          (when-let [lang (outline/code-language path)]
                            (when (and (not (zipper/syntax-broken? lang (str before)))
-                                   (zipper/syntax-broken? lang (str after)))
+                                      (zipper/syntax-broken? lang (str after)))
                              {:edit-index 0
                               :path path
                               :reason :syntax-error
-                              :message (str "patch refused: this edit would leave " path
-                                         " with a SYNTAX ERROR (unbalanced delimiters / a "
-                                         "broken form) — it parsed cleanly before. NOTHING was "
-                                         "written. Re-cat for fresh anchors and fix the "
-                                         "replacement, or use struct_patch for a structural "
-                                         "edit that can't break syntax.")})))
-                   plans))]
+                              :message (str "patch refused: this edit would leave "
+                                            path
+                                            " with a SYNTAX ERROR (unbalanced delimiters / a "
+                                            "broken form) — it parsed cleanly before. NOTHING was "
+                                            "written. Re-cat for fresh anchors and fix the "
+                                            "replacement, or use struct_patch for a structural "
+                                            "edit that can't break syntax.")})))
+                       plans))]
+
         (if (seq syntax-fails)
-          (let [counts (into {} (for [p (distinct (map :path syntax-fails))]
-                                  (when-let [f (try (safe-path p) (catch Throwable _ nil))]
-                                    [p (bump-patch-fail-count! f)])))
-                fails  (mapv (fn [f] (let [n (get counts (:path f))]
-                                       (cond-> f n (assoc :consecutive-failures n))))
-                         syntax-fails)
-                hint   (some (fn [[p n]] (patch-loop-hint n p)) counts)]
+          (let [counts (into {}
+                             (for [p (distinct (map :path syntax-fails))]
+                               (when-let [f (try (safe-path p) (catch Throwable _ nil))]
+                                 [p (bump-patch-fail-count! f)])))
+                fails (mapv (fn [f]
+                              (let [n (get counts (:path f))]
+                                (cond-> f
+                                  n
+                                  (assoc :consecutive-failures n))))
+                            syntax-fails)
+                hint (some (fn [[p n]]
+                             (patch-loop-hint n p))
+                           counts)]
+
             {:success? false
              :failures fails
-             :checks   (into (vec checks) fails)
+             :checks (into (vec checks) fails)
              :loop-hint hint
              ;; The WHOLE-BATCH candidates (every planned file, applied but
              ;; unwritten) ride the refusal so a language pack's :around
@@ -2182,21 +2644,26 @@
              ;; whole files in a failure message.
              :candidate-plans (mapv #(select-keys % [:path :before :after]) plans)
              :broken-paths (mapv :path fails)
-             :message  (cond-> (patch-failure-message fails) hint (str "\n" hint))})
-          (do
-            (doseq [{:keys [file after]} plans]
-              (spit file after))
-            (doseq [{:keys [file]} plans]
-              (clear-patch-fail-count! file))
-            {:success? true
-             :plans (mapv (fn [{:keys [path before after]}]
-                            (let [passes (non-exact-passes-for-path checks path)
-                                  idelta (indent-delta-for-path checks path)]
-                              (cond-> {:path path :before before :after after}
-                                passes (assoc :passes passes)
-                                idelta (assoc :indent-delta idelta))))
-                      plans)
-             :checks checks}))))))
+             :message (cond-> (patch-failure-message fails)
+                        hint
+                        (str "\n" hint))})
+          (do (doseq [{:keys [file after]} plans]
+                (spit file after))
+              (doseq [{:keys [file]} plans]
+                (clear-patch-fail-count! file))
+              {:success? true
+               :plans (mapv (fn [{:keys [path before after]}]
+                              (let [passes (non-exact-passes-for-path checks path)
+                                    idelta (indent-delta-for-path checks path)]
+
+                                (cond-> {:path path :before before :after after}
+                                  passes
+                                  (assoc :passes passes)
+
+                                  idelta
+                                  (assoc :indent-delta idelta))))
+                            plans)
+               :checks checks}))))))
 
 ;; =============================================================================
 ;; write — whole-file write primitive (create or overwrite)
@@ -2224,36 +2691,40 @@
   ;; "atomic" = the documented multi-file escape flag (read from raw args by
   ;; `mutation-atomic?`); allowed here so it isn't refused as unknown.
   #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "allow_dirty"})
-(def ^:private write-allowed-keys
-  (set/union write-required-keys write-optional-keys))
+(def ^:private write-allowed-keys (set/union write-required-keys write-optional-keys))
 
 (defn- coerce-write-args
   [args]
   (when-not (map? args)
     (throw (ex-info "write expects a single map argument"
-             {:type :ext.foundation.editing/invalid-write-args
-              :got  (type args)})))
-  (let [missing (seq (remove #(contains? args %) write-required-keys))
-        unknown (seq (remove write-allowed-keys (keys args)))]
+                    {:type :ext.foundation.editing/invalid-write-args :got (type args)})))
+  (let [missing
+        (seq (remove #(contains? args %) write-required-keys))
+
+        unknown
+        (seq (remove write-allowed-keys (keys args)))]
+
     (when missing
       (throw (ex-info (str "write missing required keys: "
-                        (str/join ", " (map #(str "'" % "'") missing))
-                        " (write needs 'path' and 'content').")
-               {:type :ext.foundation.editing/invalid-write-args
-                :missing (vec missing)
-                :args args})))
+                           (str/join ", " (map #(str "'" % "'") missing))
+                           " (write needs 'path' and 'content').")
+                      {:type :ext.foundation.editing/invalid-write-args
+                       :missing (vec missing)
+                       :args args})))
     (when unknown
       (throw (ex-info (str "write has unknown keys: "
-                        (str/join ", " (map #(str "'" % "'") unknown))
-                        ". Allowed: " (str/join ", " (sort write-allowed-keys)) ".")
-               {:type :ext.foundation.editing/invalid-write-args
-                :unknown (vec unknown)
-                :allowed (vec write-allowed-keys)
-                :args args})))
+                           (str/join ", " (map #(str "'" % "'") unknown))
+                           ". Allowed: "
+                           (str/join ", " (sort write-allowed-keys))
+                           ".")
+                      {:type :ext.foundation.editing/invalid-write-args
+                       :unknown (vec unknown)
+                       :allowed (vec write-allowed-keys)
+                       :args args})))
     (when-not (string? (get args "content"))
       (throw (ex-info "write \"content\" must be a string"
-               {:type :ext.foundation.editing/invalid-write-args
-                :got (type (get args "content"))}))))
+                      {:type :ext.foundation.editing/invalid-write-args
+                       :got (type (get args "content"))}))))
   (update args "path" str))
 
 (defn write-safe
@@ -2281,136 +2752,154 @@
       :loop-hint <string-or-nil>
       :message  <human-readable>}"
   [args]
-  (let [args (coerce-write-args args)
-        path (get args "path")
-        content (str (get args "content"))
-        is_overwrite (if (contains? args "is_overwrite") (get args "is_overwrite") true)
-        allow_dirty (boolean (get args "allow_dirty"))
-        expected_mtime (get args "expected_mtime")
-        expected_size  (get args "expected_size")
-        resolved (try {:file (safe-path path) :rel (rel-path (safe-path path))}
-                   (catch clojure.lang.ExceptionInfo e
-                     {:error {:reason (case (:type (ex-data e))
-                                        :ext.foundation.editing/path-escape :path-escape
-                                        :path-error)
-                              :message (ex-message e)
-                              :data (ex-data e)}}))]
+  (let [args
+        (coerce-write-args args)
+
+        path
+        (get args "path")
+
+        content
+        (str (get args "content"))
+
+        is_overwrite
+        (if (contains? args "is_overwrite") (get args "is_overwrite") true)
+
+        allow_dirty
+        (boolean (get args "allow_dirty"))
+
+        expected_mtime
+        (get args "expected_mtime")
+
+        expected_size
+        (get args "expected_size")
+
+        resolved
+        (try {:file (safe-path path) :rel (rel-path (safe-path path))}
+             (catch clojure.lang.ExceptionInfo e
+               {:error {:reason (case (:type (ex-data e))
+                                  :ext.foundation.editing/path-escape
+                                  :path-escape
+
+                                  :path-error)
+                        :message (ex-message e)
+                        :data (ex-data e)}}))]
+
     (if-let [perr (:error resolved)]
       (let [check {:edit-index 0 :path path :reason (:reason perr) :path-error perr}
             file-for-counter (try (safe-path path) (catch Throwable _ nil))
             n (when file-for-counter (bump-patch-fail-count! file-for-counter))]
+
         {:success? false
-         :failures [(cond-> check n (assoc :consecutive-failures n))]
-         :checks   [check]
+         :failures [(cond-> check
+                      n
+                      (assoc :consecutive-failures n))]
+         :checks [check]
          :loop-hint (when (and file-for-counter n) (patch-loop-hint n path))
-         :message  (str "write failed: " (:message perr))})
+         :message (str "write failed: " (:message perr))})
       (let [^java.io.File file (:file resolved)
             rel (:rel resolved)
             exists? (.exists file)
             is-dir? (and exists? (.isDirectory file))
-            before  (when (and exists? (not is-dir?)) (slurp file))
+            before (when (and exists? (not is-dir?)) (slurp file))
             actual-mtime (when exists? (.lastModified file))
-            actual-size  (when exists? (.length file))
-            fail (cond
-                   is-dir?
-                   {:reason :path-is-dir
-                    :message (str "write target is a directory: " rel)}
+            actual-size (when exists? (.length file))
+            fail
+            (cond
+              is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
+              (and (not is_overwrite) exists?)
+              {:reason :exists
+               :path rel
+               :message (str "write refused: " rel " already exists and :is_overwrite is false")}
+              ;; A whole-file write over a file with UNCOMMITTED changes is
+              ;; how a truncated reconstruction silently wipes work. Refuse
+              ;; it: surgical edits belong in patch()/struct_patch().
+              (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
+              {:reason :dirty
+               :path rel
+               :message (str "write refused: "
+                             rel
+                             " has UNCOMMITTED changes — a "
+                             "whole-file write would clobber edits already in flight "
+                             "(this is exactly how a truncated reconstruction wipes a "
+                             "file). Make surgical changes with patch(...) or "
+                             "struct_patch(...) instead, or commit/checkout "
+                             rel
+                             " first. Pass allow_dirty=True to overwrite on purpose.")}
+              (and exists? (some? expected_mtime) (not= (long expected_mtime) (long actual-mtime)))
+              {:reason :stale
+               :stale {:reason :stale-mtime
+                       :expected_mtime expected_mtime
+                       :actual-mtime actual-mtime
+                       :actual-size actual-size}
+               :message (str "write refused: " rel " mtime changed since :expected_mtime")}
+              (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
+              {:reason :stale
+               :stale {:reason :stale-size
+                       :expected_size expected_size
+                       :actual-size actual-size
+                       :actual-mtime actual-mtime}
+               :message (str "write refused: " rel " size changed since :expected_size")})]
 
-                   (and (not is_overwrite) exists?)
-                   {:reason :exists
-                    :path rel
-                    :message (str "write refused: " rel
-                               " already exists and :is_overwrite is false")}
-
-                   ;; A whole-file write over a file with UNCOMMITTED changes is
-                   ;; how a truncated reconstruction silently wipes work. Refuse
-                   ;; it: surgical edits belong in patch()/struct_patch().
-                   (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
-                   {:reason :dirty
-                    :path rel
-                    :message (str "write refused: " rel " has UNCOMMITTED changes — a "
-                               "whole-file write would clobber edits already in flight "
-                               "(this is exactly how a truncated reconstruction wipes a "
-                               "file). Make surgical changes with patch(...) or "
-                               "struct_patch(...) instead, or commit/checkout " rel
-                               " first. Pass allow_dirty=True to overwrite on purpose.")}
-
-                   (and exists? (some? expected_mtime)
-                     (not= (long expected_mtime) (long actual-mtime)))
-                   {:reason :stale
-                    :stale  {:reason :stale-mtime
-                             :expected_mtime expected_mtime
-                             :actual-mtime actual-mtime
-                             :actual-size actual-size}
-                    :message (str "write refused: " rel
-                               " mtime changed since :expected_mtime")}
-
-                   (and exists? (some? expected_size)
-                     (not= (long expected_size) (long actual-size)))
-                   {:reason :stale
-                    :stale  {:reason :stale-size
-                             :expected_size expected_size
-                             :actual-size actual-size
-                             :actual-mtime actual-mtime}
-                    :message (str "write refused: " rel
-                               " size changed since :expected_size")})]
         (if fail
           (let [n (bump-patch-fail-count! file)]
             {:success? false
-             :failures [(cond-> (assoc fail :edit-index 0 :path rel) n
+             :failures [(cond-> (assoc fail
+                                  :edit-index 0
+                                  :path rel)
+                          n
                           (assoc :consecutive-failures n))]
-             :checks   [(assoc fail :edit-index 0 :path rel)]
+             :checks [(assoc fail
+                        :edit-index 0
+                        :path rel)]
              :loop-hint (patch-loop-hint n rel)
-             :message  (cond-> (:message fail)
-                         (>= n patch-fail-loop-threshold)
-                         (str "\n" (patch-loop-hint n rel)))})
-          (do
-            (ensure-parent-dirs! file)
-            (spit file content)
-            (clear-patch-fail-count! file)
-            {:success? true
-             :plan {:path rel
-                    :before before
-                    :after content
-                    :op (if exists? :update :add)}
-             :checks [{:edit-index 0 :path rel
-                       :op (if exists? :update :add)
-                       :existed? exists?}]}))))))
+             :message (cond-> (:message fail)
+                        (>= n patch-fail-loop-threshold)
+                        (str "\n" (patch-loop-hint n rel)))})
+          (do (ensure-parent-dirs! file)
+              (spit file content)
+              (clear-patch-fail-count! file)
+              {:success? true
+               :plan {:path rel :before before :after content :op (if exists? :update :add)}
+               :checks
+               [{:edit-index 0 :path rel :op (if exists? :update :add) :existed? exists?}]}))))))
 
-(defn- create-dirs-safe [path]
+(defn- create-dirs-safe
+  [path]
   (let [f (safe-path path)]
     (fs/create-dirs f)
     (rel-path f)))
 
 (defn- copy-safe
-  ([src dest]
-   (copy-safe src dest nil))
+  ([src dest] (copy-safe src dest nil))
   ([src dest opts]
-   (let [src-file  (safe-path src)
-         dest-file (safe-path dest)]
+   (let [src-file
+         (safe-path src)
+
+         dest-file
+         (safe-path dest)]
+
      (ensure-parent-dirs! dest-file)
      (fs/copy src-file dest-file (or opts {}))
      (rel-path dest-file))))
 
 (defn- move-safe
-  ([src dest]
-   (move-safe src dest nil))
+  ([src dest] (move-safe src dest nil))
   ([src dest opts]
-   (let [src-file  (safe-path src)
-         dest-file (safe-path dest)]
+   (let [src-file
+         (safe-path src)
+
+         dest-file
+         (safe-path dest)]
+
      (ensure-parent-dirs! dest-file)
      (fs/move src-file dest-file (or opts {}))
      (rel-path dest-file))))
 
-(defn- delete-safe [path]
-  (fs/delete (safe-path path))
-  true)
+(defn- delete-safe [path] (fs/delete (safe-path path)) true)
 
-(defn- delete-if-exists-safe [path]
-  (fs/delete-if-exists (safe-path path)))
+(defn- delete-if-exists-safe [path] (fs/delete-if-exists (safe-path path)))
 
-(defn- exists-safe? [path]
-  (fs/exists? (safe-path path)))
+(defn- exists-safe? [path] (fs/exists? (safe-path path)))
 
 ;; =============================================================================
 ;; Tool-result facades
@@ -2430,15 +2919,29 @@
   ;; this is the single boundary where the string-keyed MODEL payload is built.
   (letfn [(->win [m]
             (cond-> {"anchors" (patch/lines->anchor-map (:lines m))}
-              (contains? m :path)        (assoc "path" (:path m))
-              (contains? m :next-offset) (assoc "next_offset" (:next-offset m))
-              (contains? m :eof?)        (assoc "eof" (:eof? m))
-              (contains? m :truncated?)  (assoc "truncated" (:truncated? m))
-              (contains? m :mtime)       (assoc "mtime" (:mtime m))
-              (contains? m :size)        (assoc "size" (:size m))
-              (contains? m :range)       (assoc "range" (:range m))))]
+              (contains? m :path)
+              (assoc "path" (:path m))
+
+              (contains? m :next-offset)
+              (assoc "next_offset" (:next-offset m))
+
+              (contains? m :eof?)
+              (assoc "eof" (:eof? m))
+
+              (contains? m :truncated?)
+              (assoc "truncated" (:truncated? m))
+
+              (contains? m :mtime)
+              (assoc "mtime" (:mtime m))
+
+              (contains? m :size)
+              (assoc "size" (:size m))
+
+              (contains? m :range)
+              (assoc "range" (:range m))))]
     (cond-> (->win out)
-      (seq (:ranges out)) (assoc "ranges" (mapv ->win (:ranges out))))))
+      (seq (:ranges out))
+      (assoc "ranges" (mapv ->win (:ranges out))))))
 
 (defn- cat-tool
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
@@ -2456,12 +2959,11 @@
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
-     (tool-success
-       {:op :cat
-        :path path
-        :kind :file
-        :result (cat-result->model out)
-        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}})))
+     (tool-success {:op :cat
+                    :path path
+                    :kind :file
+                    :result (cat-result->model out)
+                    :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}})))
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
@@ -2470,100 +2972,104 @@
      ;;   cat("p", {"tail": 100})            cat("p", {})  -> whole file
      ;; Delegated to the keyword arities below so internal Clojure callers
      ;; (which pass bare keyword args) keep working unchanged.
-     (map? arg)
-     (let [rng    (get arg "range")
-           ranges (get arg "ranges")
-           anc    (get arg "anchor")
-           tail   (get arg "tail")]
-       (cond
-         rng            (cat-tool path :range (first rng) (second rng))
-         ranges         (cat-tool path :ranges ranges)
-         (vector? anc)  (cat-tool path :anchor (first anc) (second anc))
-         (some? anc)    (cat-tool path :anchor anc)
-         (integer? tail) (cat-tool path :tail tail)
-         (some? tail)   (cat-tool path :tail)
-         :else          (cat-tool path)))
+     (map? arg) (let [rng
+                      (get arg "range")
 
-     (= arg :tail)
-     (let [out (tail-file path default-cat-limit)]
-       (tool-success
-         {:op :cat
-          :path path
-          :kind :file
-          :result (cat-result->model out)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
+                      ranges
+                      (get arg "ranges")
 
-     :else
-     (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
-              {:type :ext.foundation.editing/invalid-cat-args
-               :got arg}))))
+                      anc
+                      (get arg "anchor")
+
+                      tail
+                      (get arg "tail")]
+
+                  (cond rng (cat-tool path :range (first rng) (second rng))
+                        ranges (cat-tool path :ranges ranges)
+                        (vector? anc) (cat-tool path :anchor (first anc) (second anc))
+                        (some? anc) (cat-tool path :anchor anc)
+                        (integer? tail) (cat-tool path :tail tail)
+                        (some? tail) (cat-tool path :tail)
+                        :else (cat-tool path)))
+     (= arg :tail) (let [out (tail-file path default-cat-limit)]
+                     (tool-success {:op :cat
+                                    :path path
+                                    :kind :file
+                                    :result (cat-result->model out)
+                                    :metadata {:next-offset (:next-offset out)
+                                               :truncated? (:truncated? out)
+                                               :tail? true}}))
+     :else (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
+                           {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
   ([path arg n]
    (case arg
      :tail
      (let [out (tail-file path n)]
-       (tool-success
-         {:op :cat
-          :path path
-          :kind :file
-          :result (cat-result->model out)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
+       (tool-success {:op :cat
+                      :path path
+                      :kind :file
+                      :result (cat-result->model out)
+                      :metadata
+                      {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
 
      :ranges
      (let [out (read-file-ranges path n)]
-       (tool-success
-         {:op :cat
-          :path path
-          :kind :file
-          :result (cat-result->model out)
-          :metadata {:truncated? (:truncated? out)
-                     :ranges (mapv :range (:ranges out))}}))
+       (tool-success {:op :cat
+                      :path path
+                      :kind :file
+                      :result (cat-result->model out)
+                      :metadata {:truncated? (:truncated? out)
+                                 :ranges (mapv :range (:ranges out))}}))
 
      :anchor
      ;; (cat path :anchor A) — the single line carrying the `lineno:hash`
      ;; anchor A (the symmetric read for patch :from_anchor).
      (let [out (read-file-by-anchor path n nil)]
-       (tool-success
-         {:op :cat
-          :path path
-          :kind :file
-          :result (cat-result->model out)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                     :range (:range out)}}))
+       (tool-success {:op :cat
+                      :path path
+                      :kind :file
+                      :result (cat-result->model out)
+                      :metadata {:next-offset (:next-offset out)
+                                 :truncated? (:truncated? out)
+                                 :range (:range out)}}))
 
-     (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
-              {:type :ext.foundation.editing/invalid-cat-args
-               :got arg}))))
+     (throw
+       (ex-info
+         "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
+         {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
   ([path mode start end]
    (case mode
      ;; (cat path :range start end) — INCLUSIVE start..end (both 1-based).
      :range
-     (do
-       (validate-cat-range! start end)
-       (let [n (inc (- (long end) (long start)))
-             out (read-file path start n)]
-         (tool-success
-           {:op :cat
-            :path path
-            :kind :file
-            :result (cat-result->model out)
-            :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                       :range [start end]}})))
+     (do (validate-cat-range! start end)
+         (let [n
+               (inc (- (long end) (long start)))
+
+               out
+               (read-file path start n)]
+
+           (tool-success {:op :cat
+                          :path path
+                          :kind :file
+                          :result (cat-result->model out)
+                          :metadata {:next-offset (:next-offset out)
+                                     :truncated? (:truncated? out)
+                                     :range [start end]}})))
 
      ;; (cat path :anchor from_anchor to_anchor) — INCLUSIVE window between the
      ;; lines anchored from_anchor..to_anchor, addressed by content.
      :anchor
      (let [out (read-file-by-anchor path start end)]
-       (tool-success
-         {:op :cat
-          :path path
-          :kind :file
-          :result (cat-result->model out)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                     :range (:range out)}}))
+       (tool-success {:op :cat
+                      :path path
+                      :kind :file
+                      :result (cat-result->model out)
+                      :metadata {:next-offset (:next-offset out)
+                                 :truncated? (:truncated? out)
+                                 :range (:range out)}}))
 
      (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"anchor\": [from, to]}"
-              {:type :ext.foundation.editing/invalid-cat-args
-               :got mode})))))
+                     {:type :ext.foundation.editing/invalid-cat-args :got mode})))))
 
 (defn- ls-tool
   "List a directory tree, grouped by directory.
@@ -2582,19 +3088,18 @@
   ([] (ls-tool "."))
   ([path & {:as opts}]
    (let [listing (list-files path opts)]
-     (tool-success
-       {:op :ls
-        :path path
-        :kind :dir
-        :result listing
-        :metadata  {:depth (get listing "depth")
-                    :limit (get listing "limit")
-                    :entry-count (get listing "entry_count")
-                    :file-count  (get listing "file_count")
-                    :dir-count   (get listing "dir_count")
-                    :truncated?  (get listing "truncated")
-                    :is_hidden (get opts "is_hidden")
-                    :is_respect_gitignore (get opts "is_respect_gitignore" true)}}))))
+     (tool-success {:op :ls
+                    :path path
+                    :kind :dir
+                    :result listing
+                    :metadata {:depth (get listing "depth")
+                               :limit (get listing "limit")
+                               :entry-count (get listing "entry_count")
+                               :file-count (get listing "file_count")
+                               :dir-count (get listing "dir_count")
+                               :truncated? (get listing "truncated")
+                               :is_hidden (get opts "is_hidden")
+                               :is_respect_gitignore (get opts "is_respect_gitignore" true)}}))))
 
 (defn- rg-tool
   "Search file CONTENT — smart-case, loose. (For file NAMES use find_files; it's fuzzy.)
@@ -2625,29 +3130,42 @@
   ;; positional string, an odd-length rest seq — routes through one
   ;; clean `:invalid-rg-spec` error instead of Clojure's raw
   ;; "No value supplied for key" destructure exception.
-  (let [[a & more] args
-        ;; A positional query is a string ("x") or a list of strings (["a" "b"]).
-        query-arg? (fn [x] (or (string? x)
-                             (and (sequential? x) (seq x) (every? string? x))))
-        ->query    (fn [x] (if (string? x) [x] (vec x)))
-        spec (cond
-               ;; rg({...}) — a full spec map (string-keyed from the boundary).
-               (and (= 1 (count args)) (map? a)) a
-               ;; rg("x") / rg(["a" "b"]) — bare query.
-               (and (= 1 (count args)) (query-arg? a)) {"query" (->query a)}
-               ;; rg("x", {opts}) — query + an options MAP.
-               (and (= 2 (count args)) (query-arg? a) (map? (first more)))
-               (assoc (first more) "query" (->query a))
+  (let [[a & more]
+        args
 
-               :else
-               (throw (ex-info
-                        "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
-                        {:type :ext.foundation.editing/invalid-rg-arity
-                         :expected '([query] [query opts] [spec-map])
-                         :got args})))
-        {:keys [needles paths include is_files_only context limit]} (coerce-rg-spec spec)
-        out (rg-search spec)
-        mode (if is_files_only :files-only :content)
+        ;; A positional query is a string ("x") or a list of strings (["a" "b"]).
+        query-arg?
+        (fn [x]
+          (or (string? x) (and (sequential? x) (seq x) (every? string? x))))
+
+        ->query
+        (fn [x]
+          (if (string? x) [x] (vec x)))
+
+        spec
+        (cond
+          ;; rg({...}) — a full spec map (string-keyed from the boundary).
+          (and (= 1 (count args)) (map? a)) a
+          ;; rg("x") / rg(["a" "b"]) — bare query.
+          (and (= 1 (count args)) (query-arg? a)) {"query" (->query a)}
+          ;; rg("x", {opts}) — query + an options MAP.
+          (and (= 2 (count args)) (query-arg? a) (map? (first more))) (assoc (first more)
+                                                                        "query" (->query a))
+          :else (throw (ex-info
+                         "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
+                         {:type :ext.foundation.editing/invalid-rg-arity
+                          :expected '([query] [query opts] [spec-map])
+                          :got args})))
+
+        {:keys [needles paths include is_files_only context limit]}
+        (coerce-rg-spec spec)
+
+        out
+        (rg-search spec)
+
+        mode
+        (if is_files_only :files-only :content)
+
         ;; NO `:spec` echo in the model-facing payload: echoing the input
         ;; map back taught models a phantom "spec" INPUT key (`rg({...,
         ;; "spec": {}})`). The spec stays host-side on `:metadata` below
@@ -2658,66 +3176,83 @@
         ;; query the model itself sent, echoed back as data it can re-read.
         ;; `shared` and everything assoc'd onto it below is the model-facing rg
         ;; result — string keys, no keyword values (mode/truncated_by stringified).
-        shared {"mode"         (if is_files_only "files_only" "content")
-                "needles"      needles
-                "truncated_by" (str/replace (name (:truncated-by out)) "-" "_")
-                "paths"        paths
-                "limit"        limit}
-        result (case mode
-                 :content
-                 (let [hits          (vec (:hits out))
-                       ordered-paths (distinct (map :path hits))
-                       by-path       (group-by :path hits)
-                       ctx?          (pos? context)
-                       ;; Grouped by file → each file is an ORDERED
-                       ;; `{match-anchor → value}` map (a LinkedHashMap, so it
-                       ;; serializes in line order). The path is stated ONCE (the
-                       ;; key). WITHOUT a context window the value is the bare
-                       ;; matched text; WITH one it is
-                       ;; `{:text <match> :before {anchor→text} :after {anchor→text}}`
-                       ;; so every match keeps its own before/after context and
-                       ;; ALL lines (match + context) stay patchable by anchor key.
-                       matches       (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
-                                       (doseq [p ordered-paths]
-                                         (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-                                           (doseq [{:keys [line text before after]} (get by-path p)]
-                                             (.put fm (patch/line-anchor line text)
-                                               (if ctx?
-                                                 (cond-> {"text" text}
-                                                   (seq before) (assoc "before" (patch/lines->anchor-map before))
-                                                   (seq after)  (assoc "after"  (patch/lines->anchor-map after)))
-                                                 text)))
-                                           (.put mm p fm)))
-                                       mm)]
-                   (assoc shared
-                     "matches" matches
-                     "hit_count" (count hits)
-                     "file_count" (count ordered-paths)
-                     "first_hit" (when (pos? (count hits))
-                                   (let [{:keys [path line]} (nth hits 0)]
-                                     (str path ":" line)))
-                     "context" (when (pos? context) {"before" context "after" context})))
-                 :files-only
-                 (let [files (vec (:files out))]
-                   (assoc shared
-                     "files" files
-                     "file_count" (count files))))]
-    (tool-success
-      {:op :rg
-       :path (if (= 1 (count paths))
-               (first paths)
-               ".")
-       :kind :dir
-       :result result
-       :metadata (cond-> {:spec spec
-                          :paths paths
-                          :include include
-                          :mode mode
-                          :truncated-by (:truncated-by out)}
-                   (= mode :content)
-                   (assoc :hit-count (get result "hit_count"))
-                   (= mode :files-only)
-                   (assoc :file-count (get result "file_count")))})))
+        shared
+        {"mode" (if is_files_only "files_only" "content")
+         "needles" needles
+         "truncated_by" (str/replace (name (:truncated-by out)) "-" "_")
+         "paths" paths
+         "limit" limit}
+
+        result
+        (case mode
+          :content
+          (let [hits
+                (vec (:hits out))
+
+                ordered-paths
+                (distinct (map :path hits))
+
+                by-path
+                (group-by :path hits)
+
+                ctx?
+                (pos? context)
+
+                ;; Grouped by file → each file is an ORDERED
+                ;; `{match-anchor → value}` map (a LinkedHashMap, so it
+                ;; serializes in line order). The path is stated ONCE (the
+                ;; key). WITHOUT a context window the value is the bare
+                ;; matched text; WITH one it is
+                ;; `{:text <match> :before {anchor→text} :after {anchor→text}}`
+                ;; so every match keeps its own before/after context and
+                ;; ALL lines (match + context) stay patchable by anchor key.
+                matches
+                (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+                  (doseq [p ordered-paths]
+                    (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+                      (doseq [{:keys [line text before after]} (get by-path p)]
+                        (.put fm
+                              (patch/line-anchor line text)
+                              (if ctx?
+                                (cond-> {"text" text}
+                                  (seq before)
+                                  (assoc "before" (patch/lines->anchor-map before))
+
+                                  (seq after)
+                                  (assoc "after" (patch/lines->anchor-map after)))
+                                text)))
+                      (.put mm p fm)))
+                  mm)]
+
+            (assoc shared
+              "matches" matches
+              "hit_count" (count hits)
+              "file_count" (count ordered-paths)
+              "first_hit" (when (pos? (count hits))
+                            (let [{:keys [path line]} (nth hits 0)]
+                              (str path ":" line)))
+              "context" (when (pos? context) {"before" context "after" context})))
+
+          :files-only
+          (let [files (vec (:files out))]
+            (assoc shared
+              "files" files
+              "file_count" (count files))))]
+
+    (tool-success {:op :rg
+                   :path (if (= 1 (count paths)) (first paths) ".")
+                   :kind :dir
+                   :result result
+                   :metadata (cond-> {:spec spec
+                                      :paths paths
+                                      :include include
+                                      :mode mode
+                                      :truncated-by (:truncated-by out)}
+                               (= mode :content)
+                               (assoc :hit-count (get result "hit_count"))
+
+                               (= mode :files-only)
+                               (assoc :file-count (get result "file_count")))})))
 
 (def ^:private patch-diff-context-lines 3)
 (def ^:private patch-diff-max-render-lines 240)
@@ -2731,43 +3266,64 @@
    as a catastrophic deletion. Head+tail keeps the additions and closing
    context visible."
   [lines]
-  (let [lines (vec lines)
-        n     (count lines)]
+  (let [lines
+        (vec lines)
+
+        n
+        (count lines)]
+
     (if (<= n patch-diff-max-render-lines)
       lines
-      (let [tail-n  (quot patch-diff-max-render-lines 4)
-            head-n  (- patch-diff-max-render-lines tail-n)
-            omitted (- n head-n tail-n)]
+      (let [tail-n
+            (quot patch-diff-max-render-lines 4)
+
+            head-n
+            (- patch-diff-max-render-lines tail-n)
+
+            omitted
+            (- n head-n tail-n)]
+
         (vec (concat (subvec lines 0 head-n)
-               [(str "... diff truncated; " omitted " line(s) omitted")]
-               (subvec lines (- n tail-n))))))))
+                     [(str "... diff truncated; " omitted " line(s) omitted")]
+                     (subvec lines (- n tail-n))))))))
 
 (defn- common-prefix-count
   [a b]
   (let [limit (min (count a) (count b))]
     (loop [i 0]
-      (if (and (< i limit) (= (a i) (b i)))
-        (recur (inc i))
-        i))))
+      (if (and (< i limit) (= (a i) (b i))) (recur (inc i)) i))))
 
 (defn- common-suffix-count
   [a b prefix-count]
-  (let [a-count (count a)
-        b-count (count b)
-        limit   (- (min a-count b-count) prefix-count)]
+  (let [a-count
+        (count a)
+
+        b-count
+        (count b)
+
+        limit
+        (- (min a-count b-count) prefix-count)]
+
     (loop [i 0]
-      (if (and (< i limit)
-            (= (a (- a-count i 1)) (b (- b-count i 1))))
-        (recur (inc i))
-        i))))
+      (if (and (< i limit) (= (a (- a-count i 1)) (b (- b-count i 1)))) (recur (inc i)) i))))
 
 (defn- prefixed-diff-lines
   [prefix lines]
-  (let [lines   (vec lines)
-        n       (count lines)
-        shown-n (min n patch-diff-max-render-lines)
-        shown   (subvec lines 0 shown-n)
-        omitted (- n shown-n)]
+  (let [lines
+        (vec lines)
+
+        n
+        (count lines)
+
+        shown-n
+        (min n patch-diff-max-render-lines)
+
+        shown
+        (subvec lines 0 shown-n)
+
+        omitted
+        (- n shown-n)]
+
     (cond-> (mapv #(str prefix %) shown)
       (pos? omitted)
       (conj (str prefix "... (" omitted " line(s) omitted)")))))
@@ -2777,32 +3333,55 @@
    minimal diff: for normal-sized files `java-diff-utils` renders real
    unified hunks."
   [a b]
-  (let [prefix-count (common-prefix-count a b)
-        suffix-count (common-suffix-count a b prefix-count)
-        a-count      (count a)
-        b-count      (count b)
-        a-change-end (- a-count suffix-count)
-        b-change-end (- b-count suffix-count)
-        pre-start    (max 0 (- prefix-count patch-diff-context-lines))
-        post-end     (min a-count (+ a-change-end patch-diff-context-lines))
-        pre-lines    (subvec a pre-start prefix-count)
-        del-lines    (subvec a prefix-count a-change-end)
-        add-lines    (subvec b prefix-count b-change-end)
-        post-lines   (subvec a a-change-end post-end)
-        before-skip  pre-start
-        after-skip   (- a-count post-end)]
-    (vec
-      (concat
-        ["--- before"
-         "+++ after"]
-        (when (pos? before-skip)
-          [(str "... " before-skip " unchanged line(s) before")])
-        (map #(str " " %) pre-lines)
-        (prefixed-diff-lines "-" del-lines)
-        (prefixed-diff-lines "+" add-lines)
-        (map #(str " " %) post-lines)
-        (when (pos? after-skip)
-          [(str "... " after-skip " unchanged line(s) after")])))))
+  (let [prefix-count
+        (common-prefix-count a b)
+
+        suffix-count
+        (common-suffix-count a b prefix-count)
+
+        a-count
+        (count a)
+
+        b-count
+        (count b)
+
+        a-change-end
+        (- a-count suffix-count)
+
+        b-change-end
+        (- b-count suffix-count)
+
+        pre-start
+        (max 0 (- prefix-count patch-diff-context-lines))
+
+        post-end
+        (min a-count (+ a-change-end patch-diff-context-lines))
+
+        pre-lines
+        (subvec a pre-start prefix-count)
+
+        del-lines
+        (subvec a prefix-count a-change-end)
+
+        add-lines
+        (subvec b prefix-count b-change-end)
+
+        post-lines
+        (subvec a a-change-end post-end)
+
+        before-skip
+        pre-start
+
+        after-skip
+        (- a-count post-end)]
+
+    (vec (concat ["--- before" "+++ after"]
+                 (when (pos? before-skip) [(str "... " before-skip " unchanged line(s) before")])
+                 (map #(str " " %) pre-lines)
+                 (prefixed-diff-lines "-" del-lines)
+                 (prefixed-diff-lines "+" add-lines)
+                 (map #(str " " %) post-lines)
+                 (when (pos? after-skip) [(str "... " after-skip " unchanged line(s) after")])))))
 
 (defn- java-unified-diff-lines
   [a b]
@@ -2814,20 +3393,22 @@
    `java-diff-utils` for real hunks. Very large files use a linear bounded
    fallback to keep `patch` result rendering from becoming the slow path."
   [before after]
-  (cond
-    (= before after) nil
-    (nil? before) (str "+++ (new file, "
-                    (count (str/split-lines (or after ""))) " lines)")
-    (nil? after)  (str "--- (deleted, "
-                    (count (str/split-lines (or before ""))) " lines)")
-    :else
-    (let [a (vec (str/split-lines before))
-          b (vec (str/split-lines after))
-          diff-lines (if (and (<= (count a) patch-java-diff-max-lines)
-                           (<= (count b) patch-java-diff-max-lines))
-                       (java-unified-diff-lines a b)
-                       (compact-diff-lines a b))]
-      (str/join "\n" (cap-diff-lines diff-lines)))))
+  (cond (= before after) nil
+        (nil? before) (str "+++ (new file, " (count (str/split-lines (or after ""))) " lines)")
+        (nil? after) (str "--- (deleted, " (count (str/split-lines (or before ""))) " lines)")
+        :else (let [a
+                    (vec (str/split-lines before))
+
+                    b
+                    (vec (str/split-lines after))
+
+                    diff-lines
+                    (if (and (<= (count a) patch-java-diff-max-lines)
+                             (<= (count b) patch-java-diff-max-lines))
+                      (java-unified-diff-lines a b)
+                      (compact-diff-lines a b))]
+
+                (str/join "\n" (cap-diff-lines diff-lines)))))
 
 (defn- patch-result-file-summary
   "Build a per-file summary map that lives on `:result` of `patch` /
@@ -2852,12 +3433,15 @@
   ;; Model-facing per-file summary (patch/write/struct_patch result) — string
   ;; keys, enum values stringified to snake_case.
   (let [diff-text (unified-diff-text before after)]
-    (cond-> {"path"    path
-             "op"      (name (or op :update))
-             "changed" (not= before after)}
-      diff-text     (assoc "diff" diff-text)
-      (seq passes)  (assoc "passes" (mapv #(str/replace (name %) "-" "_") passes))
-      indent-delta  (assoc "indent_delta" indent-delta))))
+    (cond-> {"path" path "op" (name (or op :update)) "changed" (not= before after)}
+      diff-text
+      (assoc "diff" diff-text)
+
+      (seq passes)
+      (assoc "passes" (mapv #(str/replace (name %) "-" "_") passes))
+
+      indent-delta
+      (assoc "indent_delta" indent-delta))))
 
 (defn refresh-file-summary
   "Recompute a per-file summary's \"diff\"/\"changed\" from the ORIGINAL `before`
@@ -2868,8 +3452,11 @@
   [summary before after]
   (let [diff-text (unified-diff-text before after)]
     (cond-> (assoc summary "changed" (not= before after))
-      diff-text        (assoc "diff" diff-text)
-      (nil? diff-text) (dissoc "diff"))))
+      diff-text
+      (assoc "diff" diff-text)
+
+      (nil? diff-text)
+      (dissoc "diff"))))
 
 (defn- patch-tool
   "Edit files by ANCHOR (no text search/replace).
@@ -2888,27 +3475,27 @@
   [edits]
   (let [result (patch-safe edits)]
     (if (:success? result)
-      (let [plans     (:plans result)
+      (let [plans (:plans result)
             summaries (mapv patch-result-file-summary plans)]
-        (tool-success
-          {:op :patch
-           :path (or (:path (first plans)) ".")
-           :kind :file
-           :result summaries
-           :metadata  {:mode          :exact-replace
-                       :file-count    (count summaries)
-                       :changed-count (count (filter #(get % "changed") summaries))
-                       ;; Pre-edit content per file (relativized path == summary
-                       ;; "path") so an :after op-hook that rewrites the file
-                       ;; (paren-repair/format) can re-diff against final bytes.
-                       :file-befores  (mapv #(select-keys % [:path :before]) plans)}}))
+
+        (tool-success {:op :patch
+                       :path (or (:path (first plans)) ".")
+                       :kind :file
+                       :result summaries
+                       :metadata {:mode :exact-replace
+                                  :file-count (count summaries)
+                                  :changed-count (count (filter #(get % "changed") summaries))
+                                  ;; Pre-edit content per file (relativized path == summary
+                                  ;; "path") so an :after op-hook that rewrites the file
+                                  ;; (paren-repair/format) can re-diff against final bytes.
+                                  :file-befores (mapv #(select-keys % [:path :before]) plans)}}))
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
       (let [first-failure (first (:failures result))]
         (extension/failure
-          {:result   nil
-           :op       :patch
+          {:result nil
+           :op :patch
            :metadata (cond-> {:target {:requested (str (or (:path first-failure) "."))
                                        :resolved nil
                                        :absolute nil
@@ -2917,19 +3504,20 @@
                               :started-at-ms (now-ms)
                               :finished-at-ms (now-ms)
                               :duration-ms 0}
-                      ;; Whole-batch candidates on a SYNTAX refusal — metadata
-                      ;; only (the model-facing throw carries `:error` alone),
-                      ;; so a language pack's :around op-hook can whole-source-
-                      ;; repair the broken files and commit the batch itself.
+                       ;; Whole-batch candidates on a SYNTAX refusal — metadata
+                       ;; only (the model-facing throw carries `:error` alone),
+                       ;; so a language pack's :around op-hook can whole-source-
+                       ;; repair the broken files and commit the batch itself.
                        (:candidate-plans result)
-                       (assoc :candidate-plans (:candidate-plans result)
-                         :broken-paths   (:broken-paths result)))
-           :error    {:message  (:message result)
-                      :reason   (:reason first-failure)
-                      :failures (:failures result)
-                      :checks   (:checks result)
-                      :loop-hint (:loop-hint result)
-                      :mode     :exact-replace}})))))
+                       (assoc :candidate-plans
+                         (:candidate-plans result) :broken-paths
+                         (:broken-paths result)))
+           :error {:message (:message result)
+                   :reason (:reason first-failure)
+                   :failures (:failures result)
+                   :checks (:checks result)
+                   :loop-hint (:loop-hint result)
+                   :mode :exact-replace}})))))
 
 (defn- normalize-write-args
   "Accept write args EITHER as a single options map
@@ -2939,19 +3527,17 @@
   [args]
   (cond
     ;; single map → already canonical (also covers Clojure trailing-kwargs)
-    (and (= 1 (count args)) (map? (first args)))
-    (first args)
+    (and (= 1 (count args)) (map? (first args))) (first args)
     ;; positional: path, content, optional trailing opts map
     (and (>= (count args) 2) (string? (first args)) (string? (second args)))
     (merge {"path" (first args) "content" (second args)}
-      (let [extra (nth args 2 nil)] (when (map? extra) extra)))
+           (let [extra (nth args 2 nil)]
+             (when (map? extra) extra)))
     ;; legacy Clojure-style trailing kwargs (even k/v count)
-    (and (pos? (count args)) (even? (count args)))
-    (apply hash-map args)
-    :else
-    (throw (ex-info "write expects (path, content) or a single options map"
-             {:type :ext.foundation.editing/invalid-write-args
-              :got  (mapv type args)}))))
+    (and (pos? (count args)) (even? (count args))) (apply hash-map args)
+    :else (throw (ex-info "write expects (path, content) or a single options map"
+                          {:type :ext.foundation.editing/invalid-write-args
+                           :got (mapv type args)}))))
 
 (defn- write-tool
   "Write a whole file — create or overwrite.
@@ -2972,23 +3558,21 @@
     (if (:success? result)
       (let [plan (:plan result)
             summary (patch-result-file-summary plan)]
-        (tool-success
-          {:op :write
-           :path (:path plan)
-           :kind :file
-           :result [summary]
-           :metadata  {:mode :write
-                       :file-count 1
-                       :changed-count (if (get summary "changed") 1 0)
-                       :op (:op plan)
-                       :file-befores [(select-keys plan [:path :before])]}}))
+
+        (tool-success {:op :write
+                       :path (:path plan)
+                       :kind :file
+                       :result [summary]
+                       :metadata {:mode :write
+                                  :file-count 1
+                                  :changed-count (if (get summary "changed") 1 0)
+                                  :op (:op plan)
+                                  :file-befores [(select-keys plan [:path :before])]}}))
       (let [first-failure (first (:failures result))]
         (extension/failure
-          {:result   nil
-           :op       :write
-           :metadata {:target {:requested (str (or (:path first-failure)
-                                                 (:path args)
-                                                 "."))
+          {:result nil
+           :op :write
+           :metadata {:target {:requested (str (or (:path first-failure) (:path args) "."))
                                :resolved nil
                                :absolute nil
                                :kind :file}
@@ -2996,29 +3580,29 @@
                       :started-at-ms (now-ms)
                       :finished-at-ms (now-ms)
                       :duration-ms 0}
-           :error    {:message  (:message result)
-                      :reason   (:reason first-failure)
-                      :failures (:failures result)
-                      :checks   (:checks result)
-                      :loop-hint (:loop-hint result)
-                      :mode     :write}})))))
+           :error {:message (:message result)
+                   :reason (:reason first-failure)
+                   :failures (:failures result)
+                   :checks (:checks result)
+                   :loop-hint (:loop-hint result)
+                   :mode :write}})))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Returns the canonical foundation map shape so the
    model destructures `(:path r)` / `(:created? r)` directly off the
    bound result."
   [path]
-  (let [before (fs/exists? (safe-path path))
-        out    (create-dirs-safe path)]
-    (tool-success
-      {:op :create-dirs
-       :path path
-       :kind :dir
-       :result {"path" out
-                "created" (not before)
-                "already_existed" before}
-       :metadata {:created? (not before)
-                  :already-existed? before}})))
+  (let [before
+        (fs/exists? (safe-path path))
+
+        out
+        (create-dirs-safe path)]
+
+    (tool-success {:op :create-dirs
+                   :path path
+                   :kind :dir
+                   :result {"path" out "created" (not before) "already_existed" before}
+                   :metadata {:created? (not before) :already-existed? before}})))
 
 (defn- copy-tool
   "Copy a path.
@@ -3029,16 +3613,12 @@
    Gotcha: without is_overwrite an existing dest fails."
   ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
-     (tool-success
-       {:op :copy
-        :path dest
-        :kind :path
-        :result {"src"  src
-                 "dest" dest
-                 "path" out}
-        :metadata {:src (path->target src :path)
-                   :dest (path->target dest :path)
-                   :opts opts}}))))
+     (tool-success {:op :copy
+                    :path dest
+                    :kind :path
+                    :result {"src" src "dest" dest "path" out}
+                    :metadata
+                    {:src (path->target src :path) :dest (path->target dest :path) :opts opts}}))))
 
 (defn- move-tool
   "Move / rename a path.
@@ -3049,16 +3629,12 @@
    Gotcha: without is_overwrite an existing dest fails."
   ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
-     (tool-success
-       {:op :move
-        :path dest
-        :kind :path
-        :result {"src"  src
-                 "dest" dest
-                 "path" out}
-        :metadata {:src (path->target src :path)
-                   :dest (path->target dest :path)
-                   :opts opts}}))))
+     (tool-success {:op :move
+                    :path dest
+                    :kind :path
+                    :result {"src" src "dest" dest "path" out}
+                    :metadata
+                    {:src (path->target src :path) :dest (path->target dest :path) :opts opts}}))))
 
 (defn- delete-tool
   "Delete a path.
@@ -3068,12 +3644,11 @@
    Gotcha: errors if path is missing — use delete_if_exists to no-op instead."
   [path]
   (delete-safe path)
-  (tool-success
-    {:op :delete
-     :path path
-     :kind :path
-     :result {"path" path "deleted" true}
-     :metadata {:deleted? true}}))
+  (tool-success {:op :delete
+                 :path path
+                 :kind :path
+                 :result {"path" path "deleted" true}
+                 :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
   "Delete a path if it exists (no-op otherwise).
@@ -3083,12 +3658,11 @@
    Gotcha: \"deleted\" is False when nothing was there — never raises on a missing path."
   [path]
   (let [deleted? (delete-if-exists-safe path)]
-    (tool-success
-      {:op :delete-if-exists
-       :path path
-       :kind :path
-       :result {"path" path "deleted" deleted?}
-       :metadata {:deleted? deleted?}})))
+    (tool-success {:op :delete-if-exists
+                   :path path
+                   :kind :path
+                   :result {"path" path "deleted" deleted?}
+                   :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
   "Check whether a path exists.
@@ -3098,13 +3672,11 @@
    Gotcha: returns a dict, not a bare bool — read r[\"exists\"]."
   [path]
   (let [exists? (exists-safe? path)]
-    (tool-success
-      {:op :file-exists
-       :path path
-       :kind :path
-       :result {"path"   (str path)
-                "exists" exists?}
-       :metadata {:exists? exists?}})))
+    (tool-success {:op :file-exists
+                   :path path
+                   :kind :path
+                   :result {"path" (str path) "exists" exists?}
+                   :metadata {:exists? exists?}})))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -3139,29 +3711,40 @@
   [& args]
   ;; Accept outline("x") (positional) AND outline({"path":"x"}) — the native
   ;; tool-call path synthesizes the dict form.
-  (let [a    (first args)
-        path (cond (string? a) a
-               (map? a)    (get a "path")
-               :else       a)]
-  ;; Resolve through safe-path (workspace-cwd confinement) like every other file
-  ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
-  ;; path (that resolves against the JVM user.dir, not the workspace root, so a
-  ;; nested `src/foo.clj` 404s while cat finds it).
-    (let [f        (ensure-existing-file! (safe-path path))
-          abs      (.getPath f)
-          language (outline/detect-language abs)
-          skeleton (when language (outline/file-skeleton abs (slurp f)))]
-      (tool-success
-        {:op :outline
-         :path path
-         :kind :file
-         :result (cond
-                   skeleton {"skeleton" skeleton "language" language "path" path}
-                   language {"language" language
-                             "path" path
-                             "note" "No structural outline for this language yet — use cat(path)."}
-                   :else    {"path" path
-                             "note" "Unknown language — use cat(path)."})}))))
+  (let [a
+        (first args)
+
+        path
+        (cond (string? a) a
+              (map? a) (get a "path")
+              :else a)]
+
+    ;; Resolve through safe-path (workspace-cwd confinement) like every other file
+    ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
+    ;; path (that resolves against the JVM user.dir, not the workspace root, so a
+    ;; nested `src/foo.clj` 404s while cat finds it).
+    (let [f
+          (ensure-existing-file! (safe-path path))
+
+          abs
+          (.getPath f)
+
+          language
+          (outline/detect-language abs)
+
+          skeleton
+          (when language (outline/file-skeleton abs (slurp f)))]
+
+      (tool-success {:op :outline
+                     :path path
+                     :kind :file
+                     :result
+                     (cond skeleton {"skeleton" skeleton "language" language "path" path}
+                           language {"language" language
+                                     "path" path
+                                     "note"
+                                     "No structural outline for this language yet — use cat(path)."}
+                           :else {"path" path "note" "Unknown language — use cat(path)."})}))))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -3184,14 +3767,13 @@
   [anchors]
   (let [nums (mapv (fn [k]
                      (parse-long (first (str/split (str k) #":"))))
-               (keys anchors))]
+                   (keys anchors))]
     (when (and (seq nums) (every? some? nums))
       (reduce (fn [acc ^long x]
                 (let [[a ^long b] (peek acc)]
-                  (if (and b (= x (inc b)))
-                    (conj (pop acc) [a x])
-                    (conj acc [x x]))))
-        [] (sort nums)))))
+                  (if (and b (= x (inc b))) (conj (pop acc) [a x]) (conj acc [x x]))))
+              []
+              (sort nums)))))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
@@ -3205,23 +3787,39 @@
    contiguous run shows just `L<a>-<b>` — the count is implied; multi-run
    shows the overall extent + run count + line total."
   [r]
-  (let [line-no (fn [k] (first (str/split (str k) #":")))
-        rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (get r "anchors"))
-        n       (count rows)
-        spans   (anchor-line-spans (get r "anchors"))
-        span-str (fn [[a b]] (if (= a b) (str "L" a) (str "L" a "-" b)))
-        loc     (cond
-                  (nil? spans)        nil
-                  (= 1 (count spans)) (span-str (first spans))
-                  :else               (str "L" (ffirst spans) "-" (second (peek spans))
-                                        " (" (count spans) " ranges)"))
-        counted (str n " line" (when (not= 1 n) "s"))]
-    {:summary (str "`" (get r "path") "` · "
-                (cond
-                  (nil? loc)              counted
-                  (= 1 (count spans))     loc
-                  :else                   (str loc " · " counted)))
-     :body    (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))}))
+  (let [line-no
+        (fn [k]
+          (first (str/split (str k) #":")))
+
+        rows
+        (mapv (fn [[k v]]
+                (str (format "%5s" (line-no k)) "  " v))
+              (get r "anchors"))
+
+        n
+        (count rows)
+
+        spans
+        (anchor-line-spans (get r "anchors"))
+
+        span-str
+        (fn [[a b]]
+          (if (= a b) (str "L" a) (str "L" a "-" b)))
+
+        loc
+        (cond (nil? spans) nil
+              (= 1 (count spans)) (span-str (first spans))
+              :else
+              (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
+
+        counted
+        (str n " line" (when (not= 1 n) "s"))]
+
+    {:summary (str "`" (get r "path")
+                   "` · " (cond (nil? loc) counted
+                                (= 1 (count spans)) loc
+                                :else (str loc " · " counted)))
+     :body (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))}))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -3260,11 +3858,11 @@
    the after-context, each as a line-numbered gutter row (sorted by line number)."
   [k v]
   (if (map? v)
-    (let [ctx-rows (fn [m] (map (fn [[ck cv]] (rg-row ck cv))
-                             (sort-by (comp rg-anchor-lineno-long key) m)))]
-      (concat (ctx-rows (get v "before"))
-        [(rg-row k (get v "text"))]
-        (ctx-rows (get v "after"))))
+    (let [ctx-rows (fn [m]
+                     (map (fn [[ck cv]]
+                            (rg-row ck cv))
+                          (sort-by (comp rg-anchor-lineno-long key) m)))]
+      (concat (ctx-rows (get v "before")) [(rg-row k (get v "text"))] (ctx-rows (get v "after"))))
     [(rg-row k v)]))
 
 (defn- render-rg-result
@@ -3280,32 +3878,48 @@
    Paths/anchors are keywords; a content VALUE is the bare matched line OR a
    `{:text :before :after}` context map (see `rg-hit-rows`)."
   [r]
-  (let [fc    (or (get r "file_count") 0)
-        files-word (str fc " file" (when (not= 1 fc) "s"))
+  (let [fc
+        (or (get r "file_count") 0)
+
+        files-word
+        (str fc " file" (when (not= 1 fc) "s"))
+
         ;; NAME what was searched on the headline — a bare "N hits in M files"
         ;; is useless without the term(s). Each OR needle is backtick-quoted
         ;; (the same chip style paths use); multiple terms join with " OR ".
-        needles (seq (get r "needles"))
-        query-chip (when needles
-                     (str/join " OR " (map #(str "`" % "`") needles)))
-        with-query (fn [tail] (if query-chip (str query-chip " · " tail) tail))]
+        needles
+        (seq (get r "needles"))
+
+        query-chip
+        (when needles (str/join " OR " (map #(str "`" % "`") needles)))
+
+        with-query
+        (fn [tail]
+          (if query-chip (str query-chip " · " tail) tail))]
+
     (cond
       ;; files-only — the matching FILES are the result; there are no per-line hits.
       (contains? r "files")
       {:summary (with-query files-word)
-       :body    (when-let [files (seq (get r "files"))]
-                  (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
+       :body (when-let [files (seq (get r "files"))]
+               (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
       ;; content (default) — per-line hits grouped by file.
-      :else
-      (let [hc    (or (get r "hit_count") 0)
-            files (for [[path hits] (get r "matches")]
-                    (str "`" (kw->str path) "`\n\n```\n"
-                      (str/join "\n"
-                        (mapcat (fn [[k v]] (rg-hit-rows k v))
-                          (sort-by (comp rg-anchor-lineno-long key) hits)))
-                      "\n```"))]
-        {:summary (with-query (str hc " hit" (when (not= 1 hc) "s") " in " files-word))
-         :body    (when (seq files) (str "\n" (str/join "\n\n" files)))}))))
+      :else (let [hc
+                  (or (get r "hit_count") 0)
+
+                  files
+                  (for [[path hits] (get r "matches")]
+                    (str "`"
+                         (kw->str path)
+                         "`\n\n```\n"
+                         (str/join "\n"
+                                   (mapcat (fn [[k v]]
+                                             (rg-hit-rows k v))
+                                           (sort-by (comp rg-anchor-lineno-long key) hits)))
+                         "\n```"))]
+
+              {:summary (with-query (str hc " hit" (when (not= 1 hc) "s") " in " files-word))
+               :body (when (seq files) (str "\n" (str/join "\n\n" files)))}))))
 
 (defn- render-patch-result
   "patch → `{:summary :body}`: the summary NAMES each file with its op
@@ -3316,30 +3930,45 @@
    MULTI-file it prefixes each diff with `op `path`` to disambiguate. `r` is a
    vector of per-file summaries `[{:path :op :changed :diff}]`."
   [r]
-  (let [summaries (if (sequential? r) r [r])
-        changed   (filterv #(get % "changed") summaries)
-        n         (count summaries)
-        file-label (fn [{:strs [path op changed]}]
-                     (str (if changed (str (or op "update") " ") "(no change) ")
-                       "`" path "`"))
-        labels    (mapv file-label summaries)]
+  (let [summaries
+        (if (sequential? r) r [r])
+
+        changed
+        (filterv #(get % "changed") summaries)
+
+        n
+        (count summaries)
+
+        file-label
+        (fn [{:strs [path op changed]}]
+          (str (if changed (str (or op "update") " ") "(no change) ") "`" path "`"))
+
+        labels
+        (mapv file-label summaries)]
+
     {:summary (if (<= n 3)
                 (str/join " · " labels)
                 (str (str/join " · " (take 2 labels))
-                  " · +" (- n 2) " more ("
-                  (count changed) "/" n " changed)"))
-     :body    (some->> (str/join "\n\n"
-                         (for [{:strs [path op changed diff]} summaries]
-                           (let [diff-block (when (and changed (seq (str diff)))
-                                              (str "```diff\n" (str diff) "\n```"))]
-                             (if (= n 1)
-                               ;; single file: summary already names it — show just the diff
-                               (or diff-block "")
-                               (str (if changed (str (or op "update") " ") "(no change) ") "`" path "`"
-                                 (when diff-block (str "\n" diff-block)))))))
-                not-empty
-                       ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
-                (str "\n"))}))
+                     " · +"
+                     (- n 2)
+                     " more ("
+                     (count changed)
+                     "/"
+                     n
+                     " changed)"))
+     :body (some->> (str/join "\n\n"
+                              (for [{:strs [path op changed diff]} summaries]
+                                (let [diff-block (when (and changed (seq (str diff)))
+                                                   (str "```diff\n" (str diff) "\n```"))]
+                                  (if (= n 1)
+                                    ;; single file: summary already names it — show just the diff
+                                    (or diff-block "")
+                                    (str (if changed (str (or op "update") " ") "(no change) ")
+                                         "`" path
+                                         "`" (when diff-block (str "\n" diff-block)))))))
+                    not-empty
+                    ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
+                    (str "\n"))}))
 
 (defn- render-find-result
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
@@ -3351,39 +3980,65 @@
    and web (no `<details>`) paint a plain headline instead of a pointless
    one-line disclosure."
   [r]
-  (let [n     (or (get r "item_count") (count (get r "paths")) 0)
-        q     (some-> (get r "query") str not-empty)
-        hint  (some-> (get r "hint") kw->str not-empty)
-        paths (get r "paths")
+  (let [n
+        (or (get r "item_count") (count (get r "paths")) 0)
+
+        q
+        (some-> (get r "query")
+                str
+                not-empty)
+
+        hint
+        (some-> (get r "hint")
+                kw->str
+                not-empty)
+
+        paths
+        (get r "paths")
+
         ;; When the strict whole-query pass found nothing, find_files fell back
         ;; to per-TERM matching (see `find-search`). Name the terms that landed
         ;; so a fuzzy result reads honestly — `3 matches for "…" · terms: render,
         ;; native` — instead of implying an exact whole-query hit.
-        terms (when (get r "fuzzy")
-                (seq (keep #(some-> % kw->str not-empty) (get r "matched_terms"))))
-        head  (str n " match" (when (not= 1 n) "es")
-                (when q (str " for \"" q "\""))
-                (when terms (str " · terms: " (str/join ", " terms))))]
+        terms
+        (when (get r "fuzzy")
+          (seq (keep #(some-> %
+                              kw->str
+                              not-empty)
+                     (get r "matched_terms"))))
+
+        head
+        (str n
+             " match"
+             (when (not= 1 n) "es")
+             (when q (str " for \"" q "\""))
+             (when terms (str " · terms: " (str/join ", " terms))))]
+
     (if (= 1 n)
-      {:summary (str head (when-let [p (first paths)] (str " · `" (kw->str p) "`")))}
+      {:summary (str head
+                     (when-let [p (first paths)]
+                       (str " · `" (kw->str p) "`")))}
       {:summary head
-       :body    (cond
-                  (seq paths)
-                  (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
-                  ;; 0 results: show the steer (filename-vs-content) instead of a
-                  ;; blank card — the same hint the model reads, so the user sees
-                  ;; WHY it found nothing.
-                  hint (str "\n" hint))})))
+       :body (cond (seq paths)
+                   (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
+                   ;; 0 results: show the steer (filename-vs-content) instead of a
+                   ;; blank card — the same hint the model reads, so the user sees
+                   ;; WHY it found nothing.
+                   hint (str "\n" hint))})))
 
 (defn- render-outline-result
   "outline → `{:summary :body}`: a path headline (like cat) + the skeleton
    string (already anchored/nested). `r` is `{:skeleton str :language str :path str}`
    or a no-structure shape."
   [r]
-  (let [loc (some-> (get r "path") str not-empty (#(str "`" % "`")))]
-    (if-let [sk (some-> (get r "skeleton") kw->str not-empty)]
-      {:summary (or loc "outline")
-       :body    (str "\n```\n" sk "\n```")}
+  (let [loc (some-> (get r "path")
+                    str
+                    not-empty
+                    (#(str "`" % "`")))]
+    (if-let [sk (some-> (get r "skeleton")
+                        kw->str
+                        not-empty)]
+      {:summary (or loc "outline") :body (str "\n```\n" sk "\n```")}
       {:summary (str (or loc "outline") " · no structural outline")})))
 
 (defn- render-occurrences-result
@@ -3394,56 +4049,99 @@
    wire-shaped: `{:name :files [{:path :occurrences [{:anchor :is_definition :kind
    :visibility :signature :end_anchor}]}] :count :definition_count}`."
   [r]
-  (let [files (get r "files")
-        total (or (get r "count") 0)
-        defs  (or (get r "definition_count") 0)
-        fc    (count files)
-        nm    (some-> (get r "name") kw->str)]
+  (let [files
+        (get r "files")
+
+        total
+        (or (get r "count") 0)
+
+        defs
+        (or (get r "definition_count") 0)
+
+        fc
+        (count files)
+
+        nm
+        (some-> (get r "name")
+                kw->str)]
+
     {:summary (str total
-                (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
-                " in " fc " file" (when (not= 1 fc) "s")
-                (when nm (str " of `" nm "`")))
+                   (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
+                   " in "
+                   fc
+                   " file"
+                   (when (not= 1 fc) "s")
+                   (when nm (str " of `" nm "`")))
      :body (when (seq files)
-             (str "\n" (str/join "\n\n"
-                         (for [f files]
-                           (let [occ (get f "occurrences")
-                                 ds  (filter #(get % "is_definition") occ)
-                                 us  (remove #(get % "is_definition") occ)]
-                             (str "`" (kw->str (get f "path")) "`\n```\n"
-                               (str/join "\n"
-                                 (concat
-                                   (for [d ds]
-                                     (str "  def "
-                                       (some-> (get d "kind") kw->str)
-                                       (when-let [v (get d "visibility")] (str " " (kw->str v)))
-                                       (when-let [s (get d "signature")] (str "  " (kw->str s)))
-                                       "  @" (kw->str (get d "anchor")) ".." (kw->str (get d "end_anchor"))))
-                                   (when (seq us)
-                                     [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (get % "anchor")) us)))])))
-                               "\n```"))))))}))
+             (str "\n"
+                  (str/join "\n\n"
+                            (for [f files]
+                              (let [occ (get f "occurrences")
+                                    ds (filter #(get % "is_definition") occ)
+                                    us (remove #(get % "is_definition") occ)]
+
+                                (str "`"
+                                     (kw->str (get f "path"))
+                                     "`\n```\n"
+                                     (str/join "\n"
+                                               (concat (for [d ds]
+                                                         (str "  def "
+                                                              (some-> (get d "kind")
+                                                                      kw->str)
+                                                              (when-let [v (get d "visibility")]
+                                                                (str " " (kw->str v)))
+                                                              (when-let [s (get d "signature")]
+                                                                (str "  " (kw->str s)))
+                                                              "  @" (kw->str (get d "anchor"))
+                                                              ".." (kw->str (get d "end_anchor"))))
+                                                       (when (seq us)
+                                                         [(str "  used: "
+                                                               (str/join ", "
+                                                                         (map #(rg-anchor-lineno
+                                                                                 (get % "anchor"))
+                                                                              us)))])))
+                                     "\n```"))))))}))
 
 (defn- render-symbol-rename-result
   "symbol_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
    the changed paths. `r` is `{:files [{:path :changed}] :file_count :failed}`."
   [r]
-  (let [files  (get r "files")
-        fc     (or (get r "file_count") (count files))
-        failed (get r "failed")]
-    {:summary (str "renamed in " fc " file" (when (not= 1 fc) "s")
-                (when (seq failed) (str " · " (count failed) " failed")))
-     :body    (when (seq files)
-                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (get % "path"))) files)) "\n```"))}))
+  (let [files
+        (get r "files")
+
+        fc
+        (or (get r "file_count") (count files))
+
+        failed
+        (get r "failed")]
+
+    {:summary (str "renamed in "
+                   fc
+                   " file"
+                   (when (not= 1 fc) "s")
+                   (when (seq failed) (str " · " (count failed) " failed")))
+     :body
+     (when (seq files)
+       (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (get % "path"))) files)) "\n```"))}))
 
 (defn- render-ls-result
   "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
    get a trailing `/`). `r` is `{:path :entries [{:type :name}] :entry_count}`."
   [r]
-  (let [n     (or (get r "entry_count") (count (get r "entries")) 0)
-        path  (some-> (get r "path") kw->str)
-        row   (fn [e] (str "  " (get e "name") (when (= "dir" (get e "type")) "/")))]
+  (let [n
+        (or (get r "entry_count") (count (get r "entries")) 0)
+
+        path
+        (some-> (get r "path")
+                kw->str)
+
+        row
+        (fn [e]
+          (str "  " (get e "name") (when (= "dir" (get e "type")) "/")))]
+
     {:summary (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`")))
-     :body    (when (seq (get r "entries"))
-                (str "\n```\n" (str/join "\n" (map row (get r "entries"))) "\n```"))}))
+     :body (when (seq (get r "entries"))
+             (str "\n```\n" (str/join "\n" (map row (get r "entries"))) "\n```"))}))
 
 (defn- render-move-result
   "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
@@ -3455,7 +4153,8 @@
    `{:path :deleted}`."
   [r]
   {:summary (str (if (false? (get r "deleted")) "nothing to delete at `" "deleted `")
-              (kw->str (get r "path")) "`")})
+                 (kw->str (get r "path"))
+                 "`")})
 
 (defn- render-copy-result
   "copy → `{:summary}` only: `copied `src` → `dest``. `r` is `{:src :dest :path}`."
@@ -3467,19 +4166,30 @@
    `{:path :created :already_existed}`."
   [r]
   {:summary (str (if (get r "created") "created dir `" "dir already exists `")
-              (kw->str (get r "path")) "`")})
+                 (kw->str (get r "path"))
+                 "`")})
 
 (defn- render-sexpr-result
   "sexpr → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
    text as a code block. `r` is the zip shape `{:path :kind :line :end_line :text
    :children :can}`."
   [r]
-  (let [kind (some-> (get r "kind") kw->str)
-        line (get r "line")
-        eol  (get r "end_line")
-        txt  (some-> (get r "text") kw->str)]
+  (let [kind
+        (some-> (get r "kind")
+                kw->str)
+
+        line
+        (get r "line")
+
+        eol
+        (get r "end_line")
+
+        txt
+        (some-> (get r "text")
+                kw->str)]
+
     {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
-     :body    (when (seq txt) (str "\n```\n" txt "\n```"))}))
+     :body (when (seq txt) (str "\n```\n" txt "\n```"))}))
 
 ;; -----------------------------------------------------------------------------
 ;; Conditional advertising — the tree-sitter structural editors are only useful
@@ -3507,172 +4217,215 @@
    `env` is ignored — the answer comes from the cached env snapshot, not per-call
    runtime state."
   [_env]
-  (try
-    (let [langs (get-in (environment/snapshot) [:languages :languages])]
-      (if (seq langs)
-        (boolean (some (fn [l] (contains? structural-scan-languages
-                                 (some-> (:language l) str str/lower-case)))
-                   langs))
-        true))                    ;; nothing recognized → fail OPEN
-    (catch Throwable _ true)))    ;; any failure → fail OPEN
+  (try (let [langs (get-in (environment/snapshot) [:languages :languages])]
+         (if (seq langs)
+           (boolean (some (fn [l]
+                            (contains? structural-scan-languages
+                                       (some-> (:language l)
+                                               str
+                                               str/lower-case)))
+                          langs))
+           true)) ;; nothing recognized → fail OPEN
+       (catch Throwable _ true)))    ;; any failure → fail OPEN
 
 (def outline-symbol
   (vis/symbol #'outline-tool
-    {:symbol 'outline
-     :native-tool? true
-     :active-fn structural-supported?
-     :description
-     (str "Structural skeleton of a CODE file via tree-sitter: every definition "
-       "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
-       "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
-       "jump straight to the range you need (then `cat` that range), and to patch a "
-       "whole def straight from its anchors.")
-     :render render-outline-result
-     :color-role :tool-color/read
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to a source file."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :outline :file nil)}))
+              {:symbol 'outline
+               :native-tool? true
+               :active-fn structural-supported?
+               :description
+               (str "Structural skeleton of a CODE file via tree-sitter: every definition "
+                    "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
+                    "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
+                    "jump straight to the range you need (then `cat` that range), and to patch a "
+                    "whole def straight from its anchors.")
+               :render render-outline-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to a source file."}}
+                        :required ["path"]}
+               :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
+               :tag :observation
+               :on-error-fn (tool-failure-on-error :outline :file nil)}))
 
 (def cat-symbol
-  (vis/symbol #'cat-tool
+  (vis/symbol
+    #'cat-tool
     {:symbol 'cat
      :native-tool? true
-               ;; cat(path, {opts}) — path positional, the rest a Python options dict.
+     ;; cat(path, {opts}) — path positional, the rest a Python options dict.
      :call {:pos ["path"] :rest :opt}
-     :description
-     (str "Read a file and get back its content as anchored lines "
-       "(`lineno:hash` keys you can patch against). Optional slice: `range` "
-       "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
-       "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
-       "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
-       "tiny slices you then re-read.")
+     :description (str
+                    "Read a file and get back its content as anchored lines "
+                    "(`lineno:hash` keys you can patch against). Optional slice: `range` "
+                    "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
+                    "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
+                    "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
+                    "tiny slices you then re-read.")
      :render render-cat-result
      :color-role :tool-color/read
-     :schema {:type "object"
-              :properties {"path"   {:type "string" :description "File path (relative to a filesystem root or absolute under one)."}
-                           "range"  {:type "array" :items {:type "integer"}
-                                     :description "Optional [start,end] line range (1-based, inclusive)."}
-                           "ranges" {:type "array" :items {:type "array" :items {:type "integer"}}
-                                     :description "Optional several [[s,e],…] windows in one call."}
-                           "anchor" {:description "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
-                           "tail"   {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
-              :required ["path"]}
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string"
+               :description "File path (relative to a filesystem root or absolute under one)."}
+       "range" {:type "array"
+                :items {:type "integer"}
+                :description "Optional [start,end] line range (1-based, inclusive)."}
+       "ranges" {:type "array"
+                 :items {:type "array" :items {:type "integer"}}
+                 :description "Optional several [[s,e],…] windows in one call."}
+       "anchor"
+       {:description
+        "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
+       "tail" {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
+      :required ["path"]}
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
 (def ls-symbol
-  (vis/symbol #'ls-tool
+  (vis/symbol
+    #'ls-tool
     {:symbol 'ls
      :native-tool? true
-               ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
-               ;; opts are present force a leading path (default "."). Escape hatch:
-               ;; returns RAW arg values (the engine renders them).
+     ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
+     ;; opts are present force a leading path (default "."). Escape hatch:
+     ;; returns RAW arg values (the engine renders them).
      :call (fn [input]
-             (let [path (get input "path") opts (dissoc input "path")]
-               (if (seq opts)
-                 {:args [(or path ".") opts]}
-                 {:args (if path [path] [])})))
-     :description
-     (str "List the entries of a directory `path` (default: the workspace root), grouped "
-       "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
-       "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
+             (let [path
+                   (get input "path")
+
+                   opts
+                   (dissoc input "path")]
+
+               (if (seq opts) {:args [(or path ".") opts]} {:args (if path [path] [])})))
+     :description (str
+                    "List the entries of a directory `path` (default: the workspace root), grouped "
+                    "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
+                    "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
      :render render-ls-result
      :color-role :tool-color/read
-     :schema {:type "object"
-              :properties {"path"                 {:type "string" :description "Directory to list (default workspace root)."}
-                           "depth"                {:type "integer" :description "Recursion depth (default shallow)."}
-                           "limit"                {:type "integer" :description "Max entries before truncation (default 3000)."}
-                           "is_files_only"        {:type "boolean" :description "List only files."}
-                           "is_dirs_only"         {:type "boolean" :description "List only directories."}
-                           "is_hidden"            {:type "boolean" :description "Include dotfiles."}
-                           "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
-              :required []}
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string" :description "Directory to list (default workspace root)."}
+       "depth" {:type "integer" :description "Recursion depth (default shallow)."}
+       "limit" {:type "integer" :description "Max entries before truncation (default 3000)."}
+       "is_files_only" {:type "boolean" :description "List only files."}
+       "is_dirs_only" {:type "boolean" :description "List only directories."}
+       "is_hidden" {:type "boolean" :description "Include dotfiles."}
+       "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
+      :required []}
      :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def find-symbol
-  (vis/symbol #'find-tool
+  (vis/symbol
+    #'find-tool
     {:symbol 'find_files
      :native-tool? true
      :description
      (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
-       "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
-       "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
-       "the likely ones. Scope with `paths`.")
+          "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
+          "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
+          "the likely ones. Scope with `paths`.")
      :render render-find-result
      :color-role :tool-color/search
-     :schema {:type "object"
-              :properties {"query" {:type "string" :description "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
-                           "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
-              :required ["query"]}
+     :schema
+     {:type "object"
+      :properties
+      {"query" {:type "string"
+                :description
+                "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
+       "paths"
+       {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
+      :required ["query"]}
      :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
 
 (def rg-symbol
-  (vis/symbol #'rg-tool
+  (vis/symbol
+    #'rg-tool
     {:symbol 'rg
      :native-tool? true
      :description
      (str "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
-       "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
-       "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
-       "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
-       "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
-       "returns just the files that contain a match. No regex / no AND — filter the "
-       "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
-       "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
+          "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
+          "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
+          "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
+          "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
+          "returns just the files that contain a match. No regex / no AND — filter the "
+          "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
+          "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
      :render render-rg-result
      :color-role :tool-color/search
-     :schema {:type "object"
-              :properties {"query"    {:type "array" :items {:type "string"} :description "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
-                           "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths (default the whole tree)."}
-                           "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
-                           "context"  {:type "integer" :description "Lines of context around each match."}
-                           "is_files_only" {:type "boolean" :description "Return just the distinct files that contain a match, no per-line hits."}}
-              :required ["query"]}
+     :schema
+     {:type "object"
+      :properties
+      {"query"
+       {:type "array"
+        :items {:type "string"}
+        :description
+        "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
+       "paths" {:type "array"
+                :items {:type "string"}
+                :description "Restrict to these paths (default the whole tree)."}
+       "include" {:type "array"
+                  :items {:type "string"}
+                  :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
+       "context" {:type "integer" :description "Lines of context around each match."}
+       "is_files_only" {:type "boolean"
+                        :description
+                        "Return just the distinct files that contain a match, no per-line hits."}}
+      :required ["query"]}
      :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :rg :dir nil)}))
 
 (def patch-symbol
-  (vis/symbol #'patch-tool
+  (vis/symbol
+    #'patch-tool
     {:symbol 'patch
      :native-tool? true
-               ;; patch(edits) OR patch({path, edits}) — carry a single-file top-level
-               ;; `path` through so the {path, edits} form isn't dropped. One positional
-               ;; arg either way. Escape hatch: returns the RAW value (engine renders).
+     ;; patch(edits) OR patch({path, edits}) — carry a single-file top-level
+     ;; `path` through so the {path, edits} form isn't dropped. One positional
+     ;; arg either way. Escape hatch: returns the RAW value (engine renders).
      :call (fn [input]
              (if-let [p (get input "path")]
                {:args [{"path" p "edits" (get input "edits")}]}
                {:args [(get input "edits")]}))
-     :description
-     (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
-       "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
-       "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-       "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
-       "SINGLE FILE: set top-level `path` and give each edit just "
-       "{from_anchor, replace[, to_anchor]} (they inherit the path). "
-       "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
+     :description (str
+                    "Apply anchored edits. Each edit anchors to a `from_anchor` "
+                    "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
+                    "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
+                    "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
+                    "SINGLE FILE: set top-level `path` and give each edit just "
+                    "{from_anchor, replace[, to_anchor]} (they inherit the path). "
+                    "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
      :render render-patch-result
      :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties {"path"  {:type "string"
-                                    :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
-                           "edits" {:type "array"
-                                    :description "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
-                                    :items {:type "object"
-                                            :properties {"path"        {:type "string" :description "File path (omit when top-level `path` is set)."}
-                                                         "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
-                                                         "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
-                                                         "replace"     {:type "string" :description "Replacement text."}}
-                                            :required ["from_anchor" "replace"]}}}
-              :required ["edits"]}
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string"
+               :description
+               "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
+       "edits"
+       {:type "array"
+        :description
+        "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
+        :items {:type "object"
+                :properties
+                {"path" {:type "string"
+                         :description "File path (omit when top-level `path` is set)."}
+                 "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
+                 "to_anchor" {:type "string" :description "Optional end anchor for a span."}
+                 "replace" {:type "string" :description "Replacement text."}}
+                :required ["from_anchor" "replace"]}}}
+      :required ["edits"]}
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
@@ -3681,43 +4434,51 @@
   ;; write reuses the patch channel renderer because its `:result`
   ;; shape is the same single-file summary (just always 1-file long).
   (vis/symbol #'write-tool
-    {:symbol 'write
-     :native-tool? true
-     :description
-     (str "Write a whole file — create or overwrite (per-file shape is patch's: "
-       "[{`path`, `op`: add|update, `changed`, `diff`}]). Overwrites the ENTIRE "
-       "file, so use patch/struct_patch for surgical edits. REFUSED on a file with "
-       "uncommitted changes unless `allow_dirty`. For NEW files and clean overwrites.")
-     :render render-patch-result
-     :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties {"path"    {:type "string" :description "File path to create or overwrite."}
-                           "content" {:type "string" :description "Full file content."}
-                           "is_overwrite" {:type "boolean" :description "Overwrite an existing file (default true); false = fail if it exists."}
-                           "allow_dirty"  {:type "boolean" :description "Allow writing a file with uncommitted git changes."}
-                           "expected_mtime" {:type "integer" :description "Staleness guard: only write if the file's mtime matches this."}}
-              :required ["path" "content"]}
-     :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :write :file nil)}))
+              {:symbol 'write
+               :native-tool? true
+               :description
+               (str "Write a whole file — create or overwrite (per-file shape is patch's: "
+                    "[{`path`, `op`: add|update, `changed`, `diff`}]). Overwrites the ENTIRE "
+                    "file, so use patch/struct_patch for surgical edits. REFUSED on a file with "
+                    "uncommitted changes unless `allow_dirty`. For NEW files and clean overwrites.")
+               :render render-patch-result
+               :color-role :tool-color/edit
+               :schema
+               {:type "object"
+                :properties
+                {"path" {:type "string" :description "File path to create or overwrite."}
+                 "content" {:type "string" :description "Full file content."}
+                 "is_overwrite"
+                 {:type "boolean"
+                  :description
+                  "Overwrite an existing file (default true); false = fail if it exists."}
+                 "allow_dirty" {:type "boolean"
+                                :description "Allow writing a file with uncommitted git changes."}
+                 "expected_mtime" {:type "integer"
+                                   :description
+                                   "Staleness guard: only write if the file's mtime matches this."}}
+                :required ["path" "content"]}
+               :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
+               :tag :mutation
+               :on-error-fn (tool-failure-on-error :write :file nil)}))
 
 (def ^:private struct-op->kw
   "Bounded snake_case op string (as the model writes it) → the internal kebab
    keyword the `structural`/`zipper` edit fns dispatch on. A fixed allowlist so
    no keyword is ever MINTED from model-supplied data (strings-only boundary)."
-  {"replace"        :replace
-   "delete"         :delete
-   "insert_before"  :insert-before
-   "insert_after"   :insert-after
-   "append"         :append
-   "add_doc"        :add-doc
-   "replace_doc"    :replace-doc
-   "replace_node"   :replace-node
-   "rename"         :rename
-   "move_before"    :move-before
-   "move_after"     :move-after
-   "append_child"   :append-child
-   "prepend_child"  :prepend-child})
+  {"replace" :replace
+   "delete" :delete
+   "insert_before" :insert-before
+   "insert_after" :insert-after
+   "append" :append
+   "add_doc" :add-doc
+   "replace_doc" :replace-doc
+   "replace_node" :replace-node
+   "rename" :rename
+   "move_before" :move-before
+   "move_after" :move-after
+   "append_child" :append-child
+   "prepend_child" :prepend-child})
 
 (defn- struct-patch-tool
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
@@ -3748,104 +4509,142 @@
    Locate targets with outline(path) / sexpr(path) / occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
-  (let [path        (get args "path")
-        raw-op      (or (struct-op->kw (or (get args "op") "replace"))
-                      (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
-                               {:type :ext.foundation.editing/struct-unknown-op
-                                :op (get args "op")})))
+  (let [path
+        (get args "path")
+
+        raw-op
+        (or (struct-op->kw (or (get args "op") "replace"))
+            (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
+                            {:type :ext.foundation.editing/struct-unknown-op :op (get args "op")})))
+
         ;; LENIENCY — do the obvious thing instead of erroring:
         ;;  • `delete` (by name OR path) = replace the located node with "" (there was
         ;;    no name-based delete op, so a model wanting to drop a dead def was stuck).
         ;;  • `replace_node` given a `target` but no `match` is really a name-based
         ;;    `replace` (the two are easy to confuse) — redirect instead of failing
         ;;    with "replaceNode requires both match and code".
-        delete?     (= raw-op :delete)
-        op          (cond
-                      delete? :replace
-                      (and (= raw-op :replace-node)
-                        (str/blank? (str (get args "match")))
-                        (not (str/blank? (str (get args "target"))))) :replace
-                      :else raw-op)
-        code        (if delete? "" (get args "code"))
+        delete?
+        (= raw-op :delete)
+
+        op
+        (cond delete? :replace
+              (and (= raw-op :replace-node)
+                   (str/blank? (str (get args "match")))
+                   (not (str/blank? (str (get args "target")))))
+              :replace
+              :else raw-op)
+
+        code
+        (if delete? "" (get args "code"))
+
         new-content
         (if (contains? args "at")
           ;; PATH-based (the zipper): locate by named-child index path + moves.
-          (let [lang   (or (zipper/detect-language path)
-                         (throw (ex-info (str "Unknown language for " path " — use patch(...).")
-                                  {:type :ext.foundation.editing/struct-unknown-language :path path})))
-                source (slurp (safe-path path))
-                nav    (zipper/navigate lang source (get args "at") (get args "nav"))
-                at     (if (:ok? nav)
-                         (:path nav)
-                         (throw (ex-info (get-in nav [:error :message] "navigation failed")
+          (let [lang
+                (or (zipper/detect-language path)
+                    (throw (ex-info (str "Unknown language for " path " — use patch(...).")
+                                    {:type :ext.foundation.editing/struct-unknown-language
+                                     :path path})))
+
+                source
+                (slurp (safe-path path))
+
+                nav
+                (zipper/navigate lang source (get args "at") (get args "nav"))
+
+                at
+                (if (:ok? nav)
+                  (:path nav)
+                  (throw (ex-info (get-in nav [:error :message] "navigation failed")
                                   {:type :ext.foundation.editing/struct-nav-error
                                    :reason (get-in nav [:error :reason])})))
-                r      (zipper/edit lang source at op code)]
+
+                r
+                (zipper/edit lang source at op code)]
+
             (if (:ok? r)
               (:new-source r)
               (throw (ex-info (get-in r [:error :message] "structural edit failed")
-                       {:type :ext.foundation.editing/struct-zip-error
-                        :reason (get-in r [:error :reason]) :at at}))))
+                              {:type :ext.foundation.editing/struct-zip-error
+                               :reason (get-in r [:error :reason])
+                               :at at}))))
           ;; NAME/MATCH-based (the original StructuralApi surface).
-          (structural/edit-source path (slurp (safe-path path))
-            {:op op
-             :target (get args "target")
-             :kind (get args "kind")
-             :code code
-             :match (get args "match")
-             :anchor (get args "anchor")}))
+          (structural/edit-source path
+                                  (slurp (safe-path path))
+                                  {:op op
+                                   :target (get args "target")
+                                   :kind (get args "kind")
+                                   :code code
+                                   :match (get args "match")
+                                   :anchor (get args "anchor")}))
+
         ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
         ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
-        result      (write-safe {"path" path "content" new-content "allow_dirty" true})]
+        result
+        (write-safe {"path" path "content" new-content "allow_dirty" true})]
+
     (if (:success? result)
-      (let [plan (:plan result)
-            summary (patch-result-file-summary plan)]
-        (tool-success
-          {:op :struct_patch
-           :path (:path plan)
-           :kind :file
-           :result [summary]
-           :metadata {:mode :struct_patch
-                      :file-count 1
-                      :changed-count (if (get summary "changed") 1 0)
-                      :op (:op plan)
-                      :file-befores [(select-keys plan [:path :before])]}}))
+      (let [plan
+            (:plan result)
+
+            summary
+            (patch-result-file-summary plan)]
+
+        (tool-success {:op :struct_patch
+                       :path (:path plan)
+                       :kind :file
+                       :result [summary]
+                       :metadata {:mode :struct_patch
+                                  :file-count 1
+                                  :changed-count (if (get summary "changed") 1 0)
+                                  :op (:op plan)
+                                  :file-befores [(select-keys plan [:path :before])]}}))
       (extension/failure
         {:result nil
          :op :struct_patch
          :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
                     :mode :struct_patch}
-         :error {:message (:message result)
-                 :failures (:failures result)
-                 :mode :struct_patch}}))))
+         :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
 
 (def struct-patch-symbol
-  (vis/symbol #'struct-patch-tool
+  (vis/symbol
+    #'struct-patch-tool
     {:symbol 'struct_patch
      :native-tool? true
      :active-fn structural-supported?
-     :description
-     (str "Structural edit via tree-sitter (every language): locate a node by NAME "
-       "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
-       "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
-       "for code. ops by name: replace | insert_before | insert_after | append | "
-       "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
-       "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
-       "replace | insert_before | insert_after | append_child | prepend_child. "
-       "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
+     :description (str
+                    "Structural edit via tree-sitter (every language): locate a node by NAME "
+                    "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
+                    "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
+                    "for code. ops by name: replace | insert_before | insert_after | append | "
+                    "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
+                    "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
+                    "replace | insert_before | insert_after | append_child | prepend_child. "
+                    "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
      :render render-patch-result
      :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties {"path"   {:type "string" :description "File to edit."}
-                           "op"     {:type "string" :description "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
-                           "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
-                           "code"   {:type "string" :description "Replacement/insertion source (or the new name for rename)."}
-                           "kind"   {:type "string" :description "function/class/method/… — disambiguates same-named defs."}
-                           "match"  {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
-                           "anchor" {:type "string" :description "For move_before/move_after: the def to relocate next to."}
-                           "at"     {:type "array" :items {:type "integer"} :description "Named-child index path from sexpr(path) (path-based ops)."}
-                           "nav"    {:type "array" :description "Relative zipper moves applied after `at` (strings or maps)."}}
-              :required ["path"]}
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string" :description "File to edit."}
+       "op"
+       {:type "string"
+        :description
+        "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
+       "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
+       "code" {:type "string"
+               :description "Replacement/insertion source (or the new name for rename)."}
+       "kind" {:type "string"
+               :description "function/class/method/… — disambiguates same-named defs."}
+       "match" {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
+       "anchor" {:type "string"
+                 :description "For move_before/move_after: the def to relocate next to."}
+       "at" {:type "array"
+             :items {:type "integer"}
+             :description "Named-child index path from sexpr(path) (path-based ops)."}
+       "nav" {:type "array"
+              :description "Relative zipper moves applied after `at` (strings or maps)."}}
+      :required ["path"]}
      :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
@@ -3860,8 +4659,7 @@
 ;; Move resolution now lives in editing.zipper/navigate (tree-aware: validates
 ;; boundaries, supports leftmost/rightmost/root + single-letter directions).
 
-(defn- zip-clip [s n]
-  (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
+(defn- zip-clip [s n] (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
 
 (defn- zip-shape
   ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
@@ -3875,8 +4673,9 @@
    "has_error" (:has-error? r)
    "text" (zip-clip (:text r) 2000)
    "sexp" (zip-clip (:sexp r) 1200)
-   "children" (mapv (fn [c] {"idx" (:idx c) "kind" (:kind c) "head" (zip-clip (:head c) 120)})
-                (:children r))})
+   "children" (mapv (fn [c]
+                      {"idx" (:idx c) "kind" (:kind c) "head" (zip-clip (:head c) 120)})
+                    (:children r))})
 
 (defn- sexpr-tool
   "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
@@ -3898,51 +4697,70 @@
    siblings-1-index), so you navigate without probing. EDIT the node under the
    cursor with struct_patch({\"path\": P, \"op\": ..., \"at\": path})."
   [path & [opts]]
-  (let [lang   (zipper/detect-language path)
-        source (slurp (safe-path path))
-        nav    (zipper/navigate lang source (get opts "at") (get opts "nav"))]
+  (let [lang
+        (zipper/detect-language path)
+
+        source
+        (slurp (safe-path path))
+
+        nav
+        (zipper/navigate lang source (get opts "at") (get opts "nav"))]
+
     (if (:error nav)
-      (extension/failure
-        {:result nil :op :sexpr
-         :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
-         :error {:message (get-in nav [:error :message])
-                 :reason (get-in nav [:error :reason]) :mode :sexpr}})
-      (let [at (:path nav)
-            r  (zipper/inspect lang source at)]
+      (extension/failure {:result nil
+                          :op :sexpr
+                          :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+                          :error {:message (get-in nav [:error :message])
+                                  :reason (get-in nav [:error :reason])
+                                  :mode :sexpr}})
+      (let [at
+            (:path nav)
+
+            r
+            (zipper/inspect lang source at)]
+
         (if (:error r)
-          (extension/failure
-            {:result nil :op :sexpr
-             :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
-             :error {:message (get-in r [:error :message])
-                     :reason (get-in r [:error :reason]) :mode :sexpr}})
-          (tool-success {:op :sexpr :path path :kind :file
+          (extension/failure {:result nil
+                              :op :sexpr
+                              :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+                              :error {:message (get-in r [:error :message])
+                                      :reason (get-in r [:error :reason])
+                                      :mode :sexpr}})
+          (tool-success {:op :sexpr
+                         :path path
+                         :kind :file
                          :result (assoc (zip-shape r)
                                    "can" (zipper/moves-available lang source at))}))))))
 
 (def sexpr-symbol
   (vis/symbol #'sexpr-tool
-    {:symbol 'sexpr
-     :native-tool? true
+              {:symbol 'sexpr
+               :native-tool? true
                ;; sexpr(path, {opts}) — path positional, the rest a Python options dict.
-     :call {:pos ["path"] :rest :opt}
-     :active-fn structural-supported?
-     :description
-     (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
-       "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
-       "`end_line`,`text`,`sexp`,`children`,`can`} — `can` shows which moves remain. "
-       "nav moves: down|d|b up|u|t left|l right|r first last next|n prev|p {child:i} "
-       "{find:\"text\"} {find_kind:\"if_statement\"}. Get a PATH here, then edit it "
-       "with struct_patch({path, op, at}).")
-     :render render-sexpr-result
-     :color-role :tool-color/read
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Source file to navigate."}
-                           "at"   {:type "array" :items {:type "integer"} :description "Absolute named-child index path to jump to."}
-                           "nav"  {:type "array" :description "Relative cursor moves (strings or {find/child/find_kind} maps)."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
+               :call {:pos ["path"] :rest :opt}
+               :active-fn structural-supported?
+               :description
+               (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
+                    "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
+                    "`end_line`,`text`,`sexp`,`children`,`can`} — `can` shows which moves remain. "
+                    "nav moves: down|d|b up|u|t left|l right|r first last next|n prev|p {child:i} "
+                    "{find:\"text\"} {find_kind:\"if_statement\"}. Get a PATH here, then edit it "
+                    "with struct_patch({path, op, at}).")
+               :render render-sexpr-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties
+                        {"path" {:type "string" :description "Source file to navigate."}
+                         "at" {:type "array"
+                               :items {:type "integer"}
+                               :description "Absolute named-child index path to jump to."}
+                         "nav" {:type "array"
+                                :description
+                                "Relative cursor moves (strings or {find/child/find_kind} maps)."}}
+                        :required ["path"]}
+               :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
+               :tag :observation
+               :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
 
 ;; sexpr_edit was FOLDED INTO struct_patch — which now takes a zipper `at`/`nav`
 ;; path as an alternative to a `target` name. ONE structural editor (locate by
@@ -3957,10 +4775,14 @@
   [o]
   ;; Model-facing occurrence row — string keys, no keyword values.
   (cond-> {"anchor" (:anchor o)}
-    (:is-definition o) (assoc "is_definition" true
-                         "kind" (:kind o) "visibility" (:visibility o)
-                         "signature" (:signature o) "doc" (:doc o)
-                         "end_anchor" (:end-anchor o))))
+    (:is-definition o)
+    (assoc "is_definition"
+      true "kind"
+      (:kind o) "visibility"
+      (:visibility o) "signature"
+      (:signature o) "doc"
+      (:doc o) "end_anchor"
+      (:end-anchor o))))
 
 (defn- occurrences-tool
   "Every OCCURRENCE of an identifier across the project (or within `paths`), via
@@ -3980,62 +4802,96 @@
    definition across the project is marked, so `definition_count` > 1 means the
    name is ambiguous — each carries its own path + signature to disambiguate."
   [& args]
-  (let [[a & more] args
-        spec (cond
-               (and (= 1 (count args)) (string? a)) {"name" a}
-               (and (= 1 (count args)) (map? a)) a
-               (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
-               :else (throw (ex-info "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
-                              {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
-        name (get spec "name")
-        _ (when-not (and (string? name) (not (str/blank? name)))
-            (throw (ex-info "occurrences needs a non-blank `name`."
-                     {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
-        paths (let [p (or (get spec "paths") ["."])] (if (string? p) [p] (vec p)))
+  (let [[a & more]
+        args
+
+        spec
+        (cond (and (= 1 (count args)) (string? a)) {"name" a}
+              (and (= 1 (count args)) (map? a)) a
+              (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
+              :else (throw
+                      (ex-info
+                        "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
+                        {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
+
+        name
+        (get spec "name")
+
+        _
+        (when-not (and (string? name) (not (str/blank? name)))
+          (throw (ex-info "occurrences needs a non-blank `name`."
+                          {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
+
+        paths
+        (let [p (or (get spec "paths") ["."])]
+          (if (string? p) [p] (vec p)))
+
         ;; rg prefilters the files that mention the name (smart-case would over-
         ;; match casing, but a definition keeps the name's case, so a case-
         ;; sensitive identifier still lands among these files); each is parsed.
-        files (vec (or (:files (rg-search {"query" [name] "is_files_only" true "paths" paths})) []))
+        files
+        (vec (or (:files (rg-search {"query" [name] "is_files_only" true "paths" paths})) []))
+
         ;; `per`/`failed` entries are the model-facing result payload — string keys.
         {:keys [per failed]}
         (reduce (fn [acc path]
                   (try
                     (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
                       (cond-> acc
-                        (seq occ) (update :per conj {"path" path "occurrences" (mapv occurrence->wire occ)})))
+                        (seq occ)
+                        (update :per conj {"path" path "occurrences" (mapv occurrence->wire occ)})))
                     (catch Exception e
-                      (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
-          {:per [] :failed []} files)
-        total (reduce + 0 (map #(count (get % "occurrences")) per))
-        defs  (reduce + 0 (map (fn [f] (count (filter #(get % "is_definition") (get f "occurrences")))) per))]
-    (tool-success
-      {:op :occurrences
-       :kind :dir
-       :result {"name" name "files" per "count" total "definition_count" defs
-                "scanned" (count files) "failed" failed}
-       :metadata {:name name :paths paths :count total :definition_count defs}})))
+                      (update acc
+                              :failed
+                              conj
+                              {"path" path "error" (or (ex-message e) (str (class e)))}))))
+                {:per [] :failed []}
+                files)
+
+        total
+        (reduce + 0 (map #(count (get % "occurrences")) per))
+
+        defs
+        (reduce +
+                0
+                (map (fn [f]
+                       (count (filter #(get % "is_definition") (get f "occurrences"))))
+                     per))]
+
+    (tool-success {:op :occurrences
+                   :kind :dir
+                   :result {"name" name
+                            "files" per
+                            "count" total
+                            "definition_count" defs
+                            "scanned" (count files)
+                            "failed" failed}
+                   :metadata {:name name :paths paths :count total :definition_count defs}})))
 
 (def occurrences-symbol
   (vis/symbol #'occurrences-tool
-    {:symbol 'occurrences
-     :native-tool? true
-     :active-fn structural-supported?
-     :description
-     (str "Trace one identifier across the project via tree-sitter: every OCCURRENCE, "
-       "with the DEFINITION(s) MARKED (`is_definition`, kind, visibility, signature, "
-       "doc, and span `anchor`..`end_anchor`). Uses carry just location + a patch "
-       "anchor. ONE call = both 'where defined' (filter is_definition) and 'where "
-       "used'. Real identifier boundaries (not strings/comments/substrings); "
-       "syntactic, so >1 definition means an ambiguous name (each has its path + "
-       "signature). Scope with `paths`. Not truncated — filter in Python.")
-     :render render-occurrences-result
-     :color-role :tool-color/search
-     :schema {:type "object"
-              :properties {"name"  {:type "string" :description "Identifier to trace."}
-                           "paths" {:type "array" :items {:type "string"} :description "Restrict to these paths (default whole project)."}}
-              :required ["name"]}
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :occurrences :dir nil)}))
+              {:symbol 'occurrences
+               :native-tool? true
+               :active-fn structural-supported?
+               :description
+               (str "Trace one identifier across the project via tree-sitter: every OCCURRENCE, "
+                    "with the DEFINITION(s) MARKED (`is_definition`, kind, visibility, signature, "
+                    "doc, and span `anchor`..`end_anchor`). Uses carry just location + a patch "
+                    "anchor. ONE call = both 'where defined' (filter is_definition) and 'where "
+                    "used'. Real identifier boundaries (not strings/comments/substrings); "
+                    "syntactic, so >1 definition means an ambiguous name (each has its path + "
+                    "signature). Scope with `paths`. Not truncated — filter in Python.")
+               :render render-occurrences-result
+               :color-role :tool-color/search
+               :schema {:type "object"
+                        :properties {"name" {:type "string" :description "Identifier to trace."}
+                                     "paths" {:type "array"
+                                              :items {:type "string"}
+                                              :description
+                                              "Restrict to these paths (default whole project)."}}
+                        :required ["name"]}
+               :tag :observation
+               :on-error-fn (tool-failure-on-error :occurrences :dir nil)}))
 
 (defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
@@ -4048,69 +4904,96 @@
    \"error\"}]}.
      await symbol_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
   [& args]
-  (let [spec (cond
-               (and (= 2 (count args)) (string? (first args)) (string? (second args)))
-               {"name" (first args) "new_name" (second args)}
-               (and (= 1 (count args)) (map? (first args))) (first args)
-               :else (throw (ex-info "symbol_rename takes symbol_rename(name, new_name)."
-                              {:type :ext.foundation.editing/invalid-symbol-rename-args :got args})))
-        name (get spec "name")
-        new_name (get spec "new_name")
-        _ (when-not (and (string? name) (not (str/blank? name)) (string? new_name) (not (str/blank? new_name)))
-            (throw (ex-info "symbol_rename needs non-blank `name` and `new_name`."
-                     {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
-        files (vec (or (:files (rg-search {"query" [name] "is_files_only" true})) []))
-        out (reduce
-              (fn [acc path]
-                (try
-                  (let [src  (slurp (safe-path path))
-                        hits (structural/references path src name)]
-                    (if (seq hits)
-                      (let [renamed (structural/edit-source path src
-                                      {:op :rename :target name :kind nil :code new_name :match nil})]
-                        (write-safe {"path" path "content" renamed "allow_dirty" true})
-                        (update acc :changed conj path))
-                      acc))
-                  (catch Exception e
-                    (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
-              {:changed [] :failed []}
-              files)]
-    (tool-success
-      {:op :symbol_rename
-       :kind :dir
-       ;; Model-facing result — string keys, no keyword values.
-       :result {"files" (mapv (fn [p] {"path" p "changed" true}) (:changed out))
-                "file_count" (count (:changed out))
-                "failed" (:failed out)}})))
+  (let [spec
+        (cond (and (= 2 (count args)) (string? (first args)) (string? (second args)))
+              {"name" (first args) "new_name" (second args)}
+              (and (= 1 (count args)) (map? (first args))) (first args)
+              :else (throw (ex-info "symbol_rename takes symbol_rename(name, new_name)."
+                                    {:type :ext.foundation.editing/invalid-symbol-rename-args
+                                     :got args})))
+
+        name
+        (get spec "name")
+
+        new_name
+        (get spec "new_name")
+
+        _
+        (when-not (and (string? name)
+                       (not (str/blank? name))
+                       (string? new_name)
+                       (not (str/blank? new_name)))
+          (throw (ex-info "symbol_rename needs non-blank `name` and `new_name`."
+                          {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
+
+        files
+        (vec (or (:files (rg-search {"query" [name] "is_files_only" true})) []))
+
+        out
+        (reduce (fn [acc path]
+                  (try (let [src
+                             (slurp (safe-path path))
+
+                             hits
+                             (structural/references path src name)]
+
+                         (if (seq hits)
+                           (let [renamed
+                                 (structural/edit-source
+                                   path
+                                   src
+                                   {:op :rename :target name :kind nil :code new_name :match nil})]
+                             (write-safe {"path" path "content" renamed "allow_dirty" true})
+                             (update acc :changed conj path))
+                           acc))
+                       (catch Exception e
+                         (update acc
+                                 :failed
+                                 conj
+                                 {"path" path "error" (or (ex-message e) (str (class e)))}))))
+                {:changed [] :failed []}
+                files)]
+
+    (tool-success {:op :symbol_rename
+                   :kind :dir
+                   ;; Model-facing result — string keys, no keyword values.
+                   :result {"files" (mapv (fn [p]
+                                            {"path" p "changed" true})
+                                          (:changed out))
+                            "file_count" (count (:changed out))
+                            "failed" (:failed out)}})))
 
 (def symbol-rename-symbol
   (vis/symbol #'symbol-rename-tool
-    {:symbol 'symbol_rename
-     :native-tool? true
-     :active-fn structural-supported?
-     :description
-     (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
-       "tree-sitter — at real identifier boundaries (never a string/comment/larger "
-       "token), re-parsed per file so a syntax-breaking rename is refused. For a "
-       "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
-       "qualified usages; then move the defining file). Run `occurrences(name)` first "
-       "to preview the blast radius.")
-     :render render-symbol-rename-result
-     :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties {"name"     {:type "string" :description "Current identifier / namespace."}
-                           "new_name" {:type "string" :description "New identifier / namespace."}}
-              :required ["name" "new_name"]}
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :symbol_rename :dir nil)}))
+              {:symbol 'symbol_rename
+               :native-tool? true
+               :active-fn structural-supported?
+               :description
+               (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
+                    "tree-sitter — at real identifier boundaries (never a string/comment/larger "
+                    "token), re-parsed per file so a syntax-breaking rename is refused. For a "
+                    "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
+                    "qualified usages; then move the defining file). Run `occurrences(name)` first "
+                    "to preview the blast radius.")
+               :render render-symbol-rename-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties
+                        {"name" {:type "string" :description "Current identifier / namespace."}
+                         "new_name" {:type "string" :description "New identifier / namespace."}}
+                        :required ["name" "new_name"]}
+               :tag :mutation
+               :on-error-fn (tool-failure-on-error :symbol_rename :dir nil)}))
 
 (def create-dirs-symbol
-  (vis/symbol #'create-dirs-tool
+  (vis/symbol
+    #'create-dirs-tool
     {:symbol 'create-dirs
      :native-tool? true
      :call {:pos ["path"]}
      :name "create_dirs"
-     :description "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
+     :description
+     "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
      :render render-create-dirs-result
      :color-role :tool-color/edit
      :schema {:type "object"
@@ -4121,33 +5004,39 @@
      :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
 
 (def copy-symbol
-  (vis/symbol #'copy-tool
+  (vis/symbol
+    #'copy-tool
     {:symbol 'copy
      :native-tool? true
-               ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
+     ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
      :call {:pos ["src" "dest"] :rest :opt}
-     :description "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
+     :description
+     "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
      :render render-copy-result
      :color-role :tool-color/move
      :schema {:type "object"
-              :properties {"src"  {:type "string" :description "Source path."}
+              :properties {"src" {:type "string" :description "Source path."}
                            "dest" {:type "string" :description "Destination path."}
-                           "is_overwrite" {:type "boolean" :description "Overwrite an existing dest (default false)."}}
+                           "is_overwrite" {:type "boolean"
+                                           :description
+                                           "Overwrite an existing dest (default false)."}}
               :required ["src" "dest"]}
      :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
 (def move-symbol
-  (vis/symbol #'move-tool
+  (vis/symbol
+    #'move-tool
     {:symbol 'move
      :native-tool? true
      :call {:pos ["src" "dest"]}
-     :description "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
+     :description
+     "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
      :render render-move-result
      :color-role :tool-color/move
      :schema {:type "object"
-              :properties {"src"  {:type "string" :description "Source path."}
+              :properties {"src" {:type "string" :description "Source path."}
                            "dest" {:type "string" :description "Destination path."}}
               :required ["src" "dest"]}
      :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
@@ -4156,26 +5045,28 @@
 
 (def delete-symbol
   (vis/symbol #'delete-tool
-    {:symbol 'delete
-     :native-tool? true
-     :call {:pos ["path"]}
-     :description "Delete a file or directory at `path` (confined to filesystem roots)."
-     :render render-delete-result
-     :color-role :tool-color/delete
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to delete."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :delete :path nil)}))
+              {:symbol 'delete
+               :native-tool? true
+               :call {:pos ["path"]}
+               :description "Delete a file or directory at `path` (confined to filesystem roots)."
+               :render render-delete-result
+               :color-role :tool-color/delete
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to delete."}}
+                        :required ["path"]}
+               :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
+               :tag :mutation
+               :on-error-fn (tool-failure-on-error :delete :path nil)}))
 
 (def delete-if-exists-symbol
-  (vis/symbol #'delete-if-exists-tool
+  (vis/symbol
+    #'delete-if-exists-tool
     {:symbol 'delete-if-exists
      :native-tool? true
      :call {:pos ["path"]}
      :name "delete_if_exists"
-     :description "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
+     :description
+     "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
      :render render-delete-result
      :color-role :tool-color/delete
      :schema {:type "object"
@@ -4187,52 +5078,51 @@
 
 (def file-exists-symbol
   (vis/symbol #'exists-tool
-    {:symbol 'file-exists
-     :native-tool? true
-     :name "file_exists"
-     :call {:pos ["path"]}
-     :description "Check whether a file or directory `path` exists (confined to the filesystem roots)."
-     :render render-exists-result
-     :color-role :tool-color/read
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to check."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :file-exists :path :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
+              {:symbol 'file-exists
+               :native-tool? true
+               :name "file_exists"
+               :call {:pos ["path"]}
+               :description
+               "Check whether a file or directory `path` exists (confined to the filesystem roots)."
+               :render render-exists-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to check."}}
+                        :required ["path"]}
+               :before-fn (path-protected-before-fn :file-exists :path :read first-arg-paths)
+               :tag :observation
+               :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
 
 (defn available-editing-symbols
   []
-  [outline-symbol
-   cat-symbol
-   ls-symbol
-   find-symbol
-   rg-symbol
-   patch-symbol
-   write-symbol
-   struct-patch-symbol
-   sexpr-symbol
-   occurrences-symbol
-   symbol-rename-symbol
-   create-dirs-symbol
-   copy-symbol
-   move-symbol
-   delete-symbol
-   delete-if-exists-symbol
-   file-exists-symbol])
+  [outline-symbol cat-symbol ls-symbol find-symbol rg-symbol patch-symbol write-symbol
+   struct-patch-symbol sexpr-symbol occurrences-symbol symbol-rename-symbol create-dirs-symbol
+   copy-symbol move-symbol delete-symbol delete-if-exists-symbol file-exists-symbol])
 
 (defn- project-languages-line
   "One compact `Project languages: PRIMARY x · also y, z` line from the cached
    scan, or nil when nothing was detected. Orients the model on what the repo IS."
   []
-  (try
-    (let [langs   (get-in (environment/snapshot) [:languages :languages])
-          primary (some-> (first langs) :language str not-empty)
-          others  (->> (rest langs) (keep (comp not-empty str :language)) (take 5))]
-      (when primary
-        (str "Project languages: PRIMARY " primary
-          (when (seq others) (str " · also " (str/join ", " others))) ".")))
-    (catch Throwable _ nil)))
+  (try (let [langs
+             (get-in (environment/snapshot) [:languages :languages])
+
+             primary
+             (some-> (first langs)
+                     :language
+                     str
+                     not-empty)
+
+             others
+             (->> (rest langs)
+                  (keep (comp not-empty str :language))
+                  (take 5))]
+
+         (when primary
+           (str "Project languages: PRIMARY "
+                primary
+                (when (seq others) (str " · also " (str/join ", " others)))
+                ".")))
+       (catch Throwable _ nil)))
 
 (defn available-editing-prompt
   "The editing extension's model-facing prompt. When the project contains NO
@@ -4241,13 +5131,20 @@
    their tool names + strategy are OMITTED here too — the prompt stays consistent
    with what's actually callable, and the model is steered to anchor-based `patch`."
   []
-  (let [struct? (structural-supported? nil)
-        lang-line (project-languages-line)]
-    (str/join "\n"
+  (let [struct?
+        (structural-supported? nil)
+
+        lang-line
+        (project-languages-line)]
+
+    (str/join
+      "\n"
       (concat
-        (keep identity
+        (keep
+          identity
           [lang-line
-           (str "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
+           (str
+             "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
              (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
              ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only.")
            ""])
@@ -4274,22 +5171,24 @@
            "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
         [""
          "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
-         ""
-         "ESSENTIALS (full shapes + mechanics: doc(name)):"
+         "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
          "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
          "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
          "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
          "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
         (when struct?
           ["  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."])
-        [""
-         "INVARIANTS"
-         "  - Paths stay inside the workspace root."]))))
+        ["" "INVARIANTS" "  - Paths stay inside the workspace root."]))))
 
 (def editing-symbols
-  "Default editing symbol set for docs/tests."
-  (available-editing-symbols))
+  "Default editing symbol set for docs/tests. A `delay` so the language/env
+   scan it triggers runs on first deref (tests, docs) and NEVER at namespace
+   load — a load-time call reaches `git/run-git`'s `future`, which starts the
+   agent thread-pool and native-image refuses that started thread in the image
+   heap. Deref with `@editing-symbols`."
+  (delay (available-editing-symbols)))
 
 (def editing-prompt
-  "Default editing prompt for docs/tests."
-  (available-editing-prompt))
+  "Default editing prompt for docs/tests. A `delay` for the same reason as
+   `editing-symbols` above — deref with `@editing-prompt`."
+  (delay (available-editing-prompt)))

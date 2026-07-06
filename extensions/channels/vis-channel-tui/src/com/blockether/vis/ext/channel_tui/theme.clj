@@ -16,26 +16,20 @@
   (let [[r g b] (theme/color theme-map token)]
     (TextColor$RGB. r g b)))
 
-(defn- rgb
-  [token]
-  (rgb* default-theme token))
+(defn- rgb [token] (rgb* default-theme token))
 
-(defn- width
-  [token]
-  (get default-widths token))
+(defn- width [token] (get default-widths token))
 
-(defn- spacing
-  [token]
-  (get default-spacing token))
+(defn- spacing [token] (get default-spacing token))
 
 ;;; ── Shared theme tokens adapted to Lanterna ────────────────────────────────
 
 ;; Terminal
-(def terminal-bg    (rgb :terminal-bg))
-(def text-fg        (rgb :text-fg))
+(def terminal-bg (rgb :terminal-bg))
+(def text-fg (rgb :text-fg))
 
 ;; Header
-(def header-fg       (rgb :header-fg))
+(def header-fg (rgb :header-fg))
 (def header-hover-fg (rgb :header-hover-fg))
 (def close-button-hover-fg (rgb :close-button-hover-fg))
 (def header-active-tab-fg (rgb :header-active-tab-fg))
@@ -44,122 +38,122 @@
 (def header-tab-number-fg (rgb :header-tab-number-fg))
 
 ;; Boxes (messages + input)
-(def box-bg         (rgb :box-bg))
-(def box-fg         (rgb :box-fg))
-(def border-fg      (rgb :border-fg))
+(def box-bg (rgb :box-bg))
+(def box-fg (rgb :box-fg))
+(def border-fg (rgb :border-fg))
 
 ;; Dialog
-(def dialog-bg       (rgb :dialog-bg))
-(def dialog-fg       (rgb :dialog-fg))
+(def dialog-bg (rgb :dialog-bg))
+(def dialog-fg (rgb :dialog-fg))
 (def dialog-title-fg (rgb :dialog-title-fg))
 (def dialog-title-bg (rgb :dialog-title-bg))
-(def dialog-border   (rgb :dialog-border))
-(def dialog-shadow   (rgb :dialog-shadow))
-(def dialog-hint     (rgb :dialog-hint))
+(def dialog-border (rgb :dialog-border))
+(def dialog-shadow (rgb :dialog-shadow))
+(def dialog-hint (rgb :dialog-hint))
 (def dialog-hint-key (rgb :dialog-hint-key))
-(def input-field-bg  (rgb :input-field-bg))
-(def button-bg       (rgb :button-bg))
-(def button-fg       (rgb :button-fg))
+(def input-field-bg (rgb :input-field-bg))
+(def button-bg (rgb :button-bg))
+(def button-fg (rgb :button-fg))
 
 ;; Chat messages - user
-(def user-bubble-bg    (rgb :user-bubble-bg))
-(def user-bubble-fg    (rgb :user-bubble-fg))
-(def user-role-fg      (rgb :user-role-fg))
+(def user-bubble-bg (rgb :user-bubble-bg))
+(def user-bubble-fg (rgb :user-bubble-fg))
+(def user-role-fg (rgb :user-role-fg))
 (def turn-separator-bg (rgb :turn-separator-bg))
 (def turn-separator-fg (rgb :turn-separator-fg))
 
 ;; Chat messages - assistant
-(def ai-bubble-bg      (rgb :ai-bubble-bg))
-(def ai-bubble-fg      (rgb :ai-bubble-fg))
-(def ai-role-fg        (rgb :ai-role-fg))
+(def ai-bubble-bg (rgb :ai-bubble-bg))
+(def ai-bubble-fg (rgb :ai-bubble-fg))
+(def ai-role-fg (rgb :ai-role-fg))
 
 ;; Status indicators
-(def status-ok      (rgb :status-ok))
-(def status-bad     (rgb :status-bad))
-(def warning-bg     (rgb :warning-bg))
-(def warning-fg     (rgb :warning-fg))
+(def status-ok (rgb :status-ok))
+(def status-bad (rgb :status-bad))
+(def warning-bg (rgb :warning-bg))
+(def warning-fg (rgb :warning-fg))
 (def warning-border (rgb :warning-border))
-(def cancelled-bg   (rgb :cancelled-bg))
-(def cancelled-fg   (rgb :cancelled-fg))
+(def cancelled-bg (rgb :cancelled-bg))
+(def cancelled-fg (rgb :cancelled-fg))
 
 ;; Code block styling
-(def code-block-bg     (rgb :code-block-bg))
-(def code-ok-bg        (rgb :code-ok-bg))
-(def code-err-bg       (rgb :code-err-bg))
+(def code-block-bg (rgb :code-block-bg))
+(def code-ok-bg (rgb :code-ok-bg))
+(def code-err-bg (rgb :code-err-bg))
 ;; Distinct RESULT-zone band — warmer than the cool code-bg / thinking gray, so a
 ;; tool op-card / eval output reads as its own zone (restores the lost stdout band).
-(def result-bg         (rgb :result-bg))
+(def result-bg (rgb :result-bg))
 ;; Filename / path chips inside a RESULT body (rg per-file headers, patch/move
 ;; targets): a distinct band so paths read as headers, not blended result ink.
-(def result-path-bg    (rgb :result-path-bg))
-(def result-path-fg    (rgb :result-path-fg))
-(def code-block-fg     (rgb :code-block-fg))
-(def code-success-fg   (rgb :code-success-fg))
-(def code-error-fg     (rgb :code-error-fg))
-(def code-duration-fg  (rgb :code-duration-fg))
-(def code-result-fg    (rgb :code-result-fg))
+(def result-path-bg (rgb :result-path-bg))
+(def result-path-fg (rgb :result-path-fg))
+(def code-block-fg (rgb :code-block-fg))
+(def code-success-fg (rgb :code-success-fg))
+(def code-error-fg (rgb :code-error-fg))
+(def code-duration-fg (rgb :code-duration-fg))
+(def code-result-fg (rgb :code-result-fg))
 (def code-error-result-fg (rgb :code-error-result-fg))
 (def code-syntax-special-fg (rgb :code-syntax-special-fg))
 (def code-syntax-keyword-fg (rgb :code-syntax-keyword-fg))
-(def code-syntax-string-fg  (rgb :code-syntax-string-fg))
-(def code-syntax-number-fg  (rgb :code-syntax-number-fg))
+(def code-syntax-string-fg (rgb :code-syntax-string-fg))
+(def code-syntax-number-fg (rgb :code-syntax-number-fg))
 (def code-syntax-comment-fg (rgb :code-syntax-comment-fg))
-(def code-border-fg    (rgb :code-border-fg))
-(def tool-color-read    (rgb :tool-color-read))
-(def tool-color-search  (rgb :tool-color-search))
+(def code-border-fg (rgb :code-border-fg))
+(def tool-color-read (rgb :tool-color-read))
+(def tool-color-search (rgb :tool-color-search))
 (def tool-color-preview (rgb :tool-color-preview))
-(def tool-color-edit    (rgb :tool-color-edit))
-(def tool-color-create  (rgb :tool-color-create))
-(def tool-color-delete  (rgb :tool-color-delete))
-(def tool-color-move    (rgb :tool-color-move))
-(def tool-color-shell   (rgb :tool-color-shell))
-(def tool-color-meta    (rgb :tool-color-meta))
-(def tool-color-test    (rgb :tool-color-test))
-(def iteration-header-fg    (rgb :iteration-header-fg))
-(def iteration-header-bg    (rgb :iteration-header-bg))
-(def answer-sep-fg     (rgb :answer-sep-fg))
-(def answer-sep-bg     (rgb :answer-sep-bg))
-(def answer-bg         (rgb :answer-bg))
-(def answer-fg         (rgb :answer-fg))
+(def tool-color-edit (rgb :tool-color-edit))
+(def tool-color-create (rgb :tool-color-create))
+(def tool-color-delete (rgb :tool-color-delete))
+(def tool-color-move (rgb :tool-color-move))
+(def tool-color-shell (rgb :tool-color-shell))
+(def tool-color-meta (rgb :tool-color-meta))
+(def tool-color-test (rgb :tool-color-test))
+(def iteration-header-fg (rgb :iteration-header-fg))
+(def iteration-header-bg (rgb :iteration-header-bg))
+(def answer-sep-fg (rgb :answer-sep-fg))
+(def answer-sep-bg (rgb :answer-sep-bg))
+(def answer-bg (rgb :answer-bg))
+(def answer-fg (rgb :answer-fg))
 
 ;; Markdown
-(def md-h1-fg          (rgb :md-h1-fg))
-(def md-h2-fg          (rgb :md-h2-fg))
-(def md-h3-fg          (rgb :md-h3-fg))
-(def confidence-fg     (rgb :confidence-fg))
-(def md-summary-bg     (rgb :md-summary-bg))
-(def md-summary-fg     (rgb :md-summary-fg))
-(def th-md-summary-bg  (rgb :th-md-summary-bg))
-(def th-md-summary-fg  (rgb :th-md-summary-fg))
+(def md-h1-fg (rgb :md-h1-fg))
+(def md-h2-fg (rgb :md-h2-fg))
+(def md-h3-fg (rgb :md-h3-fg))
+(def confidence-fg (rgb :confidence-fg))
+(def md-summary-bg (rgb :md-summary-bg))
+(def md-summary-fg (rgb :md-summary-fg))
+(def th-md-summary-bg (rgb :th-md-summary-bg))
+(def th-md-summary-fg (rgb :th-md-summary-fg))
 
 ;; Link chrome
-(def link-chrome-fg       (rgb :link-chrome-fg))
+(def link-chrome-fg (rgb :link-chrome-fg))
 (def link-chrome-arrow-fg (rgb :link-chrome-arrow-fg))
-(def link-chrome-url-fg   (rgb :link-chrome-url-fg))
+(def link-chrome-url-fg (rgb :link-chrome-url-fg))
 (def link-chrome-hover-bg (rgb :link-chrome-hover-bg))
 (def link-chrome-hover-fg (rgb :link-chrome-hover-fg))
 (def link-chrome-blocked-fg (rgb :link-chrome-blocked-fg))
 
 ;; Footer
-(def footer-fg          (rgb :footer-fg))
-(def footer-fg-muted    (rgb :footer-fg-muted))
-(def footer-fg-strong   (rgb :footer-fg-strong))
-(def footer-spinner-fg  (rgb :footer-spinner-fg))
-(def footer-warning-fg  (rgb :footer-warning-fg))
-(def footer-error-fg    (rgb :footer-error-fg))
+(def footer-fg (rgb :footer-fg))
+(def footer-fg-muted (rgb :footer-fg-muted))
+(def footer-fg-strong (rgb :footer-fg-strong))
+(def footer-spinner-fg (rgb :footer-spinner-fg))
+(def footer-warning-fg (rgb :footer-warning-fg))
+(def footer-error-fg (rgb :footer-error-fg))
 
 ;; Widths
-(def dialog-width-ratio  (width :dialog-width-ratio))
-(def dialog-min-width    (width :dialog-min-width))
-(def dialog-max-width    (width :dialog-max-width))
+(def dialog-width-ratio (width :dialog-width-ratio))
+(def dialog-min-width (width :dialog-min-width))
+(def dialog-max-width (width :dialog-max-width))
 (def dialog-height-ratio (width :dialog-height-ratio))
-(def dialog-min-height   (width :dialog-min-height))
-(def dialog-max-height   (width :dialog-max-height))
-(def dialog-chrome-w     (width :dialog-chrome-w))
-(def dialog-chrome-h     (width :dialog-chrome-h))
+(def dialog-min-height (width :dialog-min-height))
+(def dialog-max-height (width :dialog-max-height))
+(def dialog-chrome-w (width :dialog-chrome-w))
+(def dialog-chrome-h (width :dialog-chrome-h))
 (def settings-option-indent (width :settings-option-indent))
-(def input-min-width     (width :input-min-width))
-(def chat-min-width      (width :chat-min-width))
+(def input-min-width (width :input-min-width))
+(def chat-min-width (width :chat-min-width))
 
 ;; Spacing
 (def pad-x (spacing :pad-x))
@@ -270,18 +264,25 @@
    :input-min-width #'input-min-width
    :chat-min-width #'chat-min-width})
 
-(def ^:private spacing-vars
-  {:pad-x #'pad-x})
+(def ^:private spacing-vars {:pad-x #'pad-x})
 
 (defn apply-theme!
   "Apply registered theme id to the TUI adapter vars. Future paints use the
    updated Lanterna colors/widths/spacing without requiring channels to ship
    their own theme declaration."
   [theme-id]
-  (let [theme-id (or theme-id theme/default-theme-id)
-        theme-map (theme/theme theme-id)
-        widths (:widths theme-map)
-        spacing (:spacing theme-map)]
+  (let [theme-id
+        (or theme-id theme/default-theme-id)
+
+        theme-map
+        (theme/theme theme-id)
+
+        widths
+        (:widths theme-map)
+
+        spacing
+        (:spacing theme-map)]
+
     (reset! active-theme-id (:name theme-map))
     (alter-var-root #'default-theme (constantly theme-map))
     (alter-var-root #'default-palette (constantly (:palette theme-map)))

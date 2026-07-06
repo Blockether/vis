@@ -113,21 +113,18 @@ summary() {
 # Gate implementations
 # =============================================================================
 
-# --- Format: cljfmt check (no auto-fix; failing tells the dev to run fix). ---
+# --- Format: codestyle (zprint) check via the :format alias. Config lives in
+#     `.zprint.edn`; failing tells the dev to run the fix command. ---
 _format() {
-  if ! command -v cljfmt > /dev/null; then
-    echo "cljfmt not found - install with: brew install cljfmt"
-    return 1
-  fi
   local format_paths=(src extensions build.clj)
   [ -d test ] && format_paths+=(test)
-  cljfmt check "${format_paths[@]}" || {
+  clojure -M:format check "${format_paths[@]}" || {
     echo ""
-    echo "FAILED: cljfmt found formatting issues."
-    echo "Fix with:  cljfmt fix ${format_paths[*]}"
+    echo "FAILED: codestyle found formatting issues."
+    echo "Fix with:  clojure -M:format fix ${format_paths[*]}"
     return 1
   }
-  echo "cljfmt: clean"
+  echo "codestyle: clean"
 }
 
 # --- Lint: clj-kondo across every package src tree. ---
@@ -380,7 +377,7 @@ _secret_scan() {
 
 verify_quick() {
   printf "\n${BOLD}Quick verification (format + lint)${NC}\n\n"
-  step "format" "Format check (cljfmt)"      _format || return 1
+  step "format" "Format check (codestyle)"    _format || return 1
   step "lint"   "Lint (clj-kondo)"           _lint   || return 1
   summary
 }
@@ -393,7 +390,7 @@ verify_graal_only() {
 
 verify_full() {
   printf "\n${BOLD}Full verification${NC}\n\n"
-  step "format"   "Format check (cljfmt)"                       _format        || return 1
+  step "format"   "Format check (codestyle)"                     _format        || return 1
   step "lint"     "Lint (clj-kondo)"                            _lint          || return 1
   step "graal"    "GraalVM safety (reflection / boxed math)"    _graal_safety  || return 1
   step "test"     "Tests (clojure -M:test)"                     _test          || return 1

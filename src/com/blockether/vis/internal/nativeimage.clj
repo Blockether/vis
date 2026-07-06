@@ -25,11 +25,9 @@
    Wired via `--features=com.blockether.vis.internal.nativeimage` in main's
    `resources/META-INF/native-image/com.blockether/vis/native-image.properties`,
    alongside graal-build-time's feature. Build-time only — never loaded at runtime."
-  (:gen-class
-   :implements [org.graalvm.nativeimage.hosted.Feature])
-  (:require
-   [clojure.edn :as edn]
-   [clojure.java.io :as io]))
+  (:gen-class :implements [org.graalvm.nativeimage.hosted.Feature])
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]))
 
 (def ^:private preload-resource "META-INF/vis-native-image/preload.edn")
 
@@ -47,27 +45,30 @@
 ;; does work; the rest are no-ops.
 
 (defn -getURL [_] "https://github.com/blockether/vis")
-(defn -getDescription [_]
-  "vis: require app + extension namespaces with *warn-on-reflection* bound")
+(defn -getDescription [_] "vis: require app + extension namespaces with *warn-on-reflection* bound")
 (defn -isInConfiguration [_ _] true)
 (defn -getRequiredFeatures [_] [])
 
-(defn -beforeAnalysis [_ _]
+(defn -beforeAnalysis
+  [_ _]
   ;; Require every offending namespace WITH the compiler vars bound, so its
   ;; class is initialized through Clojure's loader (which pushes the binding) and
   ;; its top-level (set! *warn-on-reflection* …) succeeds — before the analysis
   ;; can raw-init it on a binding-less worker thread.
-  (binding [*warn-on-reflection* false
-            *unchecked-math*     false]
+  (binding [*warn-on-reflection*
+            false
+
+            *unchecked-math*
+            false]
+
     (let [nses (preload-namespaces)]
       (println "[vis/native-image] pre-initializing" (count nses) "namespaces via require…")
       (doseq [ns-str nses]
-        (try
-          (require (symbol ns-str))
-          (catch Throwable t
-            ;; a require that can't resolve is harmless here; native-image will
-            ;; surface a real reachability problem on its own if one exists.
-            (println "[vis/native-image]   skipped" ns-str "-" (.getMessage t)))))
+        (try (require (symbol ns-str))
+             (catch Throwable t
+               ;; a require that can't resolve is harmless here; native-image will
+               ;; surface a real reachability problem on its own if one exists.
+               (println "[vis/native-image]   skipped" ns-str "-" (.getMessage t)))))
       (println "[vis/native-image] namespace pre-initialization done"))))
 
 ;; remaining lifecycle hooks: no-ops (must exist so gen-class doesn't stub-throw)

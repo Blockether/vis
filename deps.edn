@@ -52,7 +52,15 @@
   metosin/reitit-ring                             {:mvn/version "0.10.1"}}
 
  :aliases
- {:vis   {:jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
+ {:lint   {:deps {io.github.enajski/codestyle
+                  {:git/url "https://github.com/enajski/codestyle.git"
+                   :git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"}}
+           :main-opts ["-m" "codestyle.lint"]}
+  :format {:deps {io.github.enajski/codestyle
+                  {:git/url "https://github.com/enajski/codestyle.git"
+                   :git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"}}
+           :main-opts ["-m" "codestyle.advanced-format"]}
+  :vis   {:jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
                       "--enable-native-access=ALL-UNNAMED"
                       "--enable-preview"
                       "--sun-misc-unsafe-memory-access=allow"

@@ -25,10 +25,9 @@
 
    The contribution fns return CANONICAL IR (channel-agnostic). Channels
    translate IR to their surface."
-  (:require
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.channel-tui.keymap :as keymap]
-   [com.blockether.vis.ext.channel-tui.state :as state]))
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.ext.channel-tui.state :as state]))
 
 ;; -----------------------------------------------------------------------------
 ;; Model / provider display
@@ -57,33 +56,49 @@
         ;; model when the session has no explicit pick.
         ;; cached read — the footer renders per frame; no per-paint DB hit.
         ;; pref is {:provider :model} (provider + model both come from it).
-        pref     (or (:session-model-pref _db)
-                   (when-let [sid (get-in _db [:session :id])]
-                     (vis/gateway-session-model-cached sid)))
-        info     (chosen-model-info)
-        model    (or (:model pref) (:name info))
-        provider (or (:provider pref) (some-> (:provider info) name))
+        pref
+        (or (:session-model-pref _db)
+            (when-let [sid (get-in _db [:session :id])]
+              (vis/gateway-session-model-cached sid)))
+
+        info
+        (chosen-model-info)
+
+        model
+        (or (:model pref) (:name info))
+
+        provider
+        (or (:provider pref)
+            (some-> (:provider info)
+                    name))
+
         ;; DISPLAY-only model id: path-style names (google/gemma-4-12b-qat)
         ;; flatten their slashes so the chip never reads as three segments.
         ;; `model` (the raw id) still feeds routing-status / cycle lookups.
-        display  (let [m (vis/display-model-name model)]
-                   (cond
-                     (and provider m) (str provider "/" m)
-                     m                m
-                     :else            nil))
+        display
+        (let [m (vis/display-model-name model)]
+          (cond (and provider m) (str provider "/" m)
+                m m
+                :else nil))
+
         ;; When the DISPLAYED provider's circuit breaker is open (provider
         ;; overloaded — repeated 5xx/529/stream failures), svar fails turns over
         ;; to the next available provider. Surface it so the footer doesn't claim
         ;; `opus` while turns actually run on `zai`.
-        overload (when provider
-                   (try (vis/model-routing-status provider model) (catch Throwable _ nil)))
+        overload
+        (when provider (try (vis/model-routing-status provider model) (catch Throwable _ nil)))
+
         ;; Live `n/N` for the (cycle …) hint: where the CURRENT model sits in
         ;; the C-x m cycle list. Reads the same entries the handler steps, so
         ;; the count matches what cycling actually walks. Blank when the model
         ;; isn't a cycle entry (e.g. an ad-hoc override), leaving `(cycle C-x m)`.
-        cyclepos (when (and provider model)
-                   (try (state/model-cycle-position provider model) (catch Throwable _ nil)))
-        pos      (if cyclepos (str (first cyclepos) "/" (second cyclepos) " ") "")]
+        cyclepos
+        (when (and provider model)
+          (try (state/model-cycle-position provider model) (catch Throwable _ nil)))
+
+        pos
+        (if cyclepos (str (first cyclepos) "/" (second cyclepos) " ") "")]
+
     (when (or info pref)
       (when display
         (cond-> [{;; ONE clickable chip carrying BOTH hints: `(C-x o)` opens the
@@ -94,23 +109,34 @@
                   ;; segment renders one `:fg-role`, so the cycle hint shares the
                   ;; button's strong color. This is the DEFAULT, channel-level model
                   ;; decoration every provider reuses — no per-provider footer needed.
-                  :ir       [:ir {} [:p {} [:span {} (str display
-                                                       " (" (keymap/label-for :pick-model) ")"
-                                                       " (cycle " pos (keymap/label-for :cycle-model) ")")]]]
-                  :region   :left
+                  :ir [:ir {}
+                       [:p {}
+                        [:span {}
+                         (str display
+                              " ("
+                              (keymap/label-for :pick-model)
+                              ")"
+                              " (cycle "
+                              pos
+                              (keymap/label-for :cycle-model)
+                              ")")]]]
+                  :region :left
                   :priority 2
-                  :row      0
-                  :fg-role  :success
-                  :kind     :footer-model
-                  :bold?    true}]
+                  :row 0
+                  :fg-role :success
+                  :kind :footer-model
+                  :bold? true}]
           overload
-          (conj {:ir         [:ir {} [:p {} [:span {}
-                                             (str "⚠ " (:overloaded-model overload) " overloaded → "
-                                               (or (:serving-model overload) "no provider available"))]]]
-                 :region     :left
-                 :priority   3
-                 :row        0
-                 :fg-role    :warn
+          (conj {:ir [:ir {}
+                      [:p {}
+                       [:span {}
+                        (str "⚠ " (:overloaded-model overload)
+                             " overloaded → " (or (:serving-model overload)
+                                                  "no provider available"))]]]
+                 :region :left
+                 :priority 3
+                 :row 0
+                 :fg-role :warn
                  :join-left? true}))))))
 
 ;; -----------------------------------------------------------------------------
@@ -118,6 +144,4 @@
 ;; -----------------------------------------------------------------------------
 
 (def channel-contributions
-  {:tui.slot/footer-segment
-   [{:id :tui.builtin.model/footer
-     :fn #'model-footer-render}]})
+  {:tui.slot/footer-segment [{:id :tui.builtin.model/footer :fn #'model-footer-render}]})

@@ -25,7 +25,7 @@
   [s]
   (when (string? s)
     (when-let [[_ t i f] (re-matches scope-form-re s)]
-      {:turn (parse-long t), :iter (parse-long i), :form (when f (parse-long f))})))
+      {:turn (parse-long t) :iter (parse-long i) :form (when f (parse-long f))})))
 (defn malformed-scope?
   "True if `s` is a string but does not parse as `::cs/scope-form`."
   [s]
@@ -35,16 +35,20 @@
    Compares parsed segments; malformed scopes sort before all valid ones to
    make their presence obvious in render."
   [a b]
-  (let [pa (parse-scope-form a)
-        pb (parse-scope-form b)]
+  (let [pa
+        (parse-scope-form a)
+
+        pb
+        (parse-scope-form b)]
+
     (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
-      (nil? pa) -1
-      (nil? pb) 1
-      :else (let [c1 (compare (:turn pa) (:turn pb))]
-              (if (zero? c1)
-                (let [c2 (compare (:iter pa) (:iter pb))]
-                  (if (zero? c2) (compare (:form pa) (:form pb)) c2))
-                c1)))))
+          (nil? pa) -1
+          (nil? pb) 1
+          :else (let [c1 (compare (:turn pa) (:turn pb))]
+                  (if (zero? c1)
+                    (let [c2 (compare (:iter pa) (:iter pb))]
+                      (if (zero? c2) (compare (:form pa) (:form pb)) c2))
+                    c1)))))
 (defn- model-error
   "Collapse a host failure envelope to what the MODEL can act on — ONE
    message, its type/reason, one actionable hint. The raw envelope
@@ -56,33 +60,66 @@
   [error]
   (if-not (map? error)
     error
-    (let [data    (if (map? (:data error)) (:data error) {})
-          inner   (if (map? (:error data)) (:error data) {})
-          pick3   (fn [k] (or (k inner) (k data) (k error)))
-          message (or (:message error) (:message inner))
-          etype   (or (:type inner) (:type data) (:type error))
-          reason  (pick3 :reason)
+    (let [data
+          (if (map? (:data error)) (:data error) {})
+
+          inner
+          (if (map? (:error data)) (:error data) {})
+
+          pick3
+          (fn [k]
+            (or (k inner) (k data) (k error)))
+
+          message
+          (or (:message error) (:message inner))
+
+          etype
+          (or (:type inner) (:type data) (:type error))
+
+          reason
+          (pick3 :reason)
+
           ;; ONE hint survives: `:loop-hint` is the model-facing
           ;; recovery advice (the error normalizer lifts it into the
           ;; trailer); `:hint` is the human/channel field. Extensions
           ;; legitimately set both — the prompt needs at most one.
-          hint    (or (pick3 :loop-hint) (pick3 :hint))
+          hint
+          (or (pick3 :loop-hint) (pick3 :hint))
+
           ;; validation-tool forensics the lift contract declares
           ;; model-actionable (`:failures`, `:checks`, `:mode`)
-          failures (pick3 :failures)
-          checks   (pick3 :checks)
-          mode     (pick3 :mode)]
+          failures
+          (pick3 :failures)
+
+          checks
+          (pick3 :checks)
+
+          mode
+          (pick3 :mode)]
+
       (cond-> {}
-        message (assoc :message message)
-        etype   (assoc :type etype)
-        reason  (assoc :reason reason)
+        message
+        (assoc :message message)
+
+        etype
+        (assoc :type etype)
+
+        reason
+        (assoc :reason reason)
+
         ;; the hint earns its tokens only when the message doesn't
         ;; already carry it verbatim
         (and hint (not (str/includes? (str message) (str hint))))
         (assoc :hint hint)
-        (seq failures) (assoc :failures failures)
-        (seq checks)   (assoc :checks checks)
-        mode           (assoc :mode mode)))))
+
+        (seq failures)
+        (assoc :failures failures)
+
+        (seq checks)
+        (assoc :checks checks)
+
+        mode
+        (assoc :mode mode)))))
 
 (defn- model-tool-result
   "Strip host bookkeeping from a tool-result envelope riding as a form
@@ -120,10 +157,18 @@
    of an error/result doesn't already say — the `:src` stays, the dead
    field goes."
   [r]
-  (let [empty-payload? (fn [v] (or (nil? v) (and (coll? v) (empty? v))))
-        r* (cond-> (dissoc r :channel :tag)
-             (:error r)            (update :error model-error)
-             (contains? r :result) (update :result model-tool-result))]
+  (let [empty-payload?
+        (fn [v]
+          (or (nil? v) (and (coll? v) (empty? v))))
+
+        r*
+        (cond-> (dissoc r :channel :tag)
+          (:error r)
+          (update :error model-error)
+
+          (contains? r :result)
+          (update :result model-tool-result))]
+
     (cond-> r*
       (and (contains? r* :result) (empty-payload? (:result r*)))
       (dissoc :result)
@@ -141,8 +186,8 @@
   (let [cursor (get ctx "session_scope")]
     (assoc ctx
       "session_scope" (-> cursor
-                        (update "iter" inc)
-                        (assoc "next_form" 1)))))
+                          (update "iter" inc)
+                          (assoc "next_form" 1)))))
 ;; --- GC TTL constants ----------------------------------------------------
 (defn gc-pass
   "Passthrough. Tasks/facts/archive are gone — there is nothing to GC.
@@ -167,10 +212,10 @@
   [ctx turn-pos]
   (let [next-turn (long (or turn-pos 1))]
     (-> ctx
-      (assoc "session_turn" next-turn)
-      (assoc "session_scope" {"turn" next-turn, "iter" 1, "next_form" 1})
-      (assoc "engine_blockers" [])
-      gc-pass)))
+        (assoc "session_turn" next-turn)
+        (assoc "session_scope" {"turn" next-turn "iter" 1 "next_form" 1})
+        (assoc "engine_blockers" [])
+        gc-pass)))
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
 ;; =============================================================================
@@ -187,15 +232,15 @@
    there is no keyword->string projection anywhere between."
   ([] (empty-ctx "test-session"))
   ([session-id]
-   {"session_id" session-id,
-    "session_turn" 1,
-    "session_scope" {"turn" 1, "iter" 1, "next_form" 1},
+   {"session_id" session-id
+    "session_turn" 1
+    "session_scope" {"turn" 1 "iter" 1 "next_form" 1}
     ;; Empty scaffold only. Prompt render replaces this through
     ;; foundation-core with a real workspace identity:
     ;;   {"root" ... "sandbox" ... "vcs_kind" ...}
     ;; `"vcs_kind" "none"` is reserved for an actual root with no supported VCS.
-    "session_workspace" {},
-    "session_symbols" {},
+    "session_workspace" {}
+    "session_symbols" {}
     "engine_warnings" []}))
 (defn strip-ephemeral
   "Remove every `\"engine_*\"` key from a ctx. Call before Nippy-snapshotting
@@ -203,7 +248,10 @@
    requests) does not leak into the durable record."
   [ctx]
   (when ctx
-    (into {} (remove (fn [[k _]] (and (string? k) (str/starts-with? k "engine_"))) ctx))))
+    (into {}
+          (remove (fn [[k _]]
+                    (and (string? k) (str/starts-with? k "engine_")))
+            ctx))))
 ;; =============================================================================
 ;; Iter-scope parsing + comparator
 ;; =============================================================================
@@ -211,13 +259,16 @@
   "One-line, length-capped form source — the auto-summary listing AND
    the renderer's src line on pre-turn `<results>` pins share it."
   [src]
-  (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
+  (let [s (-> (or src "")
+              str
+              str/trim
+              (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
 (defn finalize-turn
   "Finalize a turn: the loop ships `:answer` to the channel and the engine
    returns ctx unchanged so the turn can settle."
   [ctx _form-scope _args]
-  {:ctx ctx, :warnings []})
+  {:ctx ctx :warnings []})
 (defn utilization
   "Pure: the `\"session_utilization\"` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
@@ -235,15 +286,21 @@
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
-  (let [req (long (or request-tokens 0))
-        win (long (or window-tokens 0))]
+  (let [req
+        (long (or request-tokens 0))
+
+        win
+        (long (or window-tokens 0))]
+
     (when (pos? req)
       (cond-> {"last_request_tokens" req
-               "turn_total_tokens"   (long (or turn-tokens 0))
+               "turn_total_tokens" (long (or turn-tokens 0))
                "auto_compress_above" (long (or fold-cap 0))}
-        (pos? win) (assoc "model_input_limit" win
-                     "saturation" (long (Math/round (* 100.0 (/ (double req) (double win)))))
-                     "headroom_tokens" (max 0 (- win req)))))))
+        (pos? win)
+        (assoc "model_input_limit"
+          win "saturation"
+          (long (Math/round (* 100.0 (/ (double req) (double win))))) "headroom_tokens"
+          (max 0 (- win req)))))))
 
 (def model-facing-keys
   "EXACT set of `session_*` keys the model is meant to see. This is the
@@ -251,8 +308,8 @@
    bookkeeping cannot leak into the rendered `<context>` or bound `context`
    dict. `\"session_utilization\"` is derived (from `\"engine_utilization\"`),
    so it is folded in by `session-view` rather than listed here."
-  ["session_id" "session_turn" "session_scope" "session_workspace"
-   "session_env" "session_routing" "session_resources" "session_symbols"])
+  ["session_id" "session_turn" "session_scope" "session_workspace" "session_env" "session_routing"
+   "session_resources" "session_symbols"])
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
@@ -288,7 +345,8 @@
    raw source) avoids false positives — a `\"patch(x)\"` inside a string can't
    match. Used by `classify-form-tag`."
   [src]
-  (some-> (re-find py-head-name-re (str src)) second))
+  (some-> (re-find py-head-name-re (str src))
+          second))
 (def ^:private core-mutation-heads
   "Engine-owned call NAMES (Python, snake_case) that classify a form as
    `:mutation`. Empty now: the task/fact mutator surface and
@@ -327,7 +385,7 @@
   ([src head-tag-resolver]
    (let [nm (form-head-name src)]
      (or (when (and nm head-tag-resolver) (try (head-tag-resolver nm) (catch Throwable _ nil)))
-       (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
+         (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
 ;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
@@ -342,18 +400,20 @@
   ([v] (realize-value v 8))
   ([v depth]
    (cond (or (nil? v) (zero? depth)) v
-     (instance? clojure.lang.IDeref v) (try (realize-value (deref v) (dec depth))
-                                         (catch Throwable _ v))
-     ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
-     ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
-     ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
-     ;; the file's line order on the wire.
-     (map? v) (reduce-kv (fn [m k val] (assoc m k (realize-value val (dec depth))))
-                (empty v) v)
-     (vector? v) (mapv #(realize-value % (dec depth)) v)
-     (set? v) (into #{} (map #(realize-value % (dec depth))) v)
-     (sequential? v) (doall (map #(realize-value % (dec depth)) v))
-     :else v)))
+         (instance? clojure.lang.IDeref v) (try (realize-value (deref v) (dec depth))
+                                                (catch Throwable _ v))
+         ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
+         ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
+         ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
+         ;; the file's line order on the wire.
+         (map? v) (reduce-kv (fn [m k val]
+                               (assoc m k (realize-value val (dec depth))))
+                             (empty v)
+                             v)
+         (vector? v) (mapv #(realize-value % (dec depth)) v)
+         (set? v) (into #{} (map #(realize-value % (dec depth))) v)
+         (sequential? v) (doall (map #(realize-value % (dec depth)) v))
+         :else v)))
 (defn block->envelope
   "Project one loop-side block `{:code :result :error :stdout}` plus its
    1-based position and the engine cursor into the form envelope shape
@@ -375,50 +435,78 @@
    unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
-   (let [src (or (:code block) (:src block) "")
+   (let [src
+         (or (:code block) (:src block) "")
+
          ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
          ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
-         scope (str "t" (:turn cursor) "/i" (:iter cursor))
-         raw-result (:result block)
+         scope
+         (str "t" (:turn cursor) "/i" (:iter cursor))
+
+         raw-result
+         (:result block)
+
          ;; `realize-value` derefs any `IDeref` it encounters, so every
          ;; block's result — Var, atom, lazy seq, plain data — lands as
          ;; fully realised data in the envelope, ready for prompt
          ;; rendering and introspection.
-         result (realize-value raw-result)
+         result
+         (realize-value raw-result)
+
          duration-ms
          (when-let [envelope (:envelope block)]
            (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
              (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
-     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
-       (some? duration-ms) (assoc :duration-ms duration-ms)
-       (contains? block :result) (assoc :result result)
+
+     (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
+       (some? duration-ms)
+       (assoc :duration-ms duration-ms)
+
+       (contains? block :result)
+       (assoc :result result)
+
        ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
        ;; form's captured stdout onto the envelope so iteration-results-message
        ;; can surface it — without this, every print() reads back to the model as
        ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
-       (some? (:stdout block)) (assoc :stdout (:stdout block))
-       (some? (:error block)) (assoc :error (:error block))
+       (some? (:stdout block))
+       (assoc :stdout (:stdout block))
+
+       (some? (:error block))
+       (assoc :error (:error block))
+
        ;; Tool-call identity: which native tool-call (svar tool_use id) this form
        ;; answers, plus its name. `iteration-results-message` groups forms by this
        ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
        ;; the maki model where one of the calls may be `python_execution`.
-       (some? (:svar/tool-call-id block)) (assoc :svar/tool-call-id (:svar/tool-call-id block))
-       (some? (:vis/tool-name block)) (assoc :vis/tool-name (:vis/tool-name block))
+       (some? (:svar/tool-call-id block))
+       (assoc :svar/tool-call-id (:svar/tool-call-id block))
+
+       (some? (:vis/tool-name block))
+       (assoc :vis/tool-name (:vis/tool-name block))
+
        ;; Per-tool BADGE color (read/search/edit/…) so the channel paints the
        ;; native tool's result card in its role color — survives DB round-trip.
-       (some? (:tool-color-role block)) (assoc :tool-color-role (:tool-color-role block))
+       (some? (:tool-color-role block))
+       (assoc :tool-color-role (:tool-color-role block))
+
        ;; The pre-rendered display STRING (native-tool card / pretty result) so a
        ;; DB-restored trace shows the SAME card the live stream did — channels read
        ;; this instead of pr-str'ing the raw `:result` map.
-       (some? (:result-render block)) (assoc :result-render (:result-render block))
+       (some? (:result-render block))
+       (assoc :result-render (:result-render block))
+
        ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
        ;; the card the same way the live stream did — not a first-line body slice.
-       (some? (:result-summary block)) (assoc :result-summary (:result-summary block))
+       (some? (:result-summary block))
+       (assoc :result-summary (:result-summary block))
+
        ;; MULTI-card: the pre-rendered per-result mini-forms a print-many block shows.
        ;; nippy keeps the nested keywords, so a DB-restored trace paints the SAME
        ;; separate colored cards the live stream did. DISPLAY-ONLY — never read into
        ;; model context (that stays `:stdout`).
-       (seq (:cards block)) (assoc :cards (:cards block))))))
+       (seq (:cards block))
+       (assoc :cards (:cards block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form
@@ -432,5 +520,5 @@
   ([blocks cursor] (blocks->forms blocks cursor nil))
   ([blocks {:keys [turn iter]} head-tag-resolver]
    (vec (map-indexed (fn [idx block]
-                       (block->envelope block (inc idx) {:turn turn, :iter iter} head-tag-resolver))
-          (or blocks [])))))
+                       (block->envelope block (inc idx) {:turn turn :iter iter} head-tag-resolver))
+                     (or blocks [])))))

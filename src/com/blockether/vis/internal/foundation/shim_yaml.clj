@@ -12,9 +12,8 @@
    This is the reference example of the sandbox-shim mechanism: a host / JVM
    capability surfaced to sandbox Python as a real importable module, with the
    engine staying completely generic about which shims exist."
-  (:require
-   [com.blockether.vis.core :as vis]
-   [yamlstar.core :as yamlstar]))
+  (:require [com.blockether.vis.core :as vis]
+            [yamlstar.core :as yamlstar]))
 
 (def ^:private yaml-compat-shim-src
   "Pure-Python preamble that publishes a PyYAML-compatible `yaml` module backed
@@ -183,8 +182,7 @@ del __vis_install_yaml_compat__
    `yaml.YAMLError` rather than a raw host `PolyglotException` (GraalPy does not
    route host exceptions through Python's `except Exception`)."
   [f]
-  (try [true (f)]
-    (catch Throwable t [false (str (or (.getMessage t) t))])))
+  (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
 (defn- yaml-bridge-bindings
   "Host callables (pure-Clojure YAMLStar) the YAML-compat shim delegates to.
@@ -195,24 +193,30 @@ del __vis_install_yaml_compat__
    which is the common case; malformed YAML surfaces as an exception the shim
    maps to `yaml.YAMLError`."
   []
-  {"__vis_yaml_load__"     (fn [s] (yaml-envelope #(yamlstar/load s)))
-   "__vis_yaml_load_all__" (fn [s] (yaml-envelope #(vec (yamlstar/load-all s))))
-   "__vis_yaml_dump__"     (fn [v] (yaml-envelope #(yamlstar/dump v)))
-   "__vis_yaml_dump_all__" (fn [v] (yaml-envelope #(yamlstar/dump-all (vec v))))})
+  {"__vis_yaml_load__" (fn [s]
+                         (yaml-envelope #(yamlstar/load s)))
+   "__vis_yaml_load_all__" (fn [s]
+                             (yaml-envelope #(vec (yamlstar/load-all s))))
+   "__vis_yaml_dump__" (fn [v]
+                         (yaml-envelope #(yamlstar/dump v)))
+   "__vis_yaml_dump_all__" (fn [v]
+                             (yaml-envelope #(yamlstar/dump-all (vec v))))})
 
 (def vis-extension
   (vis/extension
-    {:ext/name         "foundation-shim-yaml"
-     :ext/description  "Sandbox shim: a PyYAML-compatible `yaml` module (import yaml / yaml.safe_load) backed by the pure-Clojure YAMLStar 1.2 loader. No pip, no native wheel."
-     :ext/version      "0.1.0"
-     :ext/author       "Blockether"
-     :ext/owner        "vis"
-     :ext/license      "Apache-2.0"
-     :ext/kind         "foundation"
+    {:ext/name "foundation-shim-yaml"
+     :ext/description
+     "Sandbox shim: a PyYAML-compatible `yaml` module (import yaml / yaml.safe_load) backed by the pure-Clojure YAMLStar 1.2 loader. No pip, no native wheel."
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name        "yaml"
-       :shim/description "PyYAML-compatible `yaml` module backed by YAMLStar (pure-Clojure YAML 1.2)."
-       :shim/bindings    yaml-bridge-bindings
-       :shim/preamble    yaml-compat-shim-src}]}))
+     [{:shim/name "yaml"
+       :shim/description
+       "PyYAML-compatible `yaml` module backed by YAMLStar (pure-Clojure YAML 1.2)."
+       :shim/bindings yaml-bridge-bindings
+       :shim/preamble yaml-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

@@ -25,8 +25,7 @@
       :status      :ok|:error|:running|:cancelled|:timeout
       :duration-ms long
       :error       error-map-or-nil}"
-  (:require
-   [clojure.string :as str]))
+  (:require [clojure.string :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; Status enum — standardised across engine / progress / restore.
@@ -36,17 +35,11 @@
   "The canonical iteration / op status enum."
   #{:ok :error :running :cancelled :timeout})
 
-(defn status?
-  [x]
-  (contains? statuses x))
+(defn status? [x] (contains? statuses x))
 
 (def status-glyph
   "Glyph for each status, matching the REVAMP target UX header."
-  {:ok        "✓"
-   :error     "✗"
-   :running   "↻"
-   :cancelled "⊘"
-   :timeout   "⏱"})
+  {:ok "✓" :error "✗" :running "↻" :cancelled "⊘" :timeout "⏱"})
 
 ;; ---------------------------------------------------------------------------
 ;; Block-level scope: strip the per-form `/fK` (or `/bK`) tail so the BLOCK
@@ -58,17 +51,19 @@
    Tolerates already-block scopes and nil."
   [scope]
   (some-> scope
-    str
-    (str/replace #"/[fbc][^/]*\s*$" "")
-    str/trim
-    not-empty))
+          str
+          (str/replace #"/[fbc][^/]*\s*$" "")
+          str/trim
+          not-empty))
 
 (defn entry-scope
   "Derive the block-level scope for an iteration entry from the first form
    that carries one. Returns nil when no form scope is available (the
    renderer falls back to a synthesised `tN/iM` from positions)."
   [{:keys [forms]}]
-  (some (fn [f] (block-scope (:scope f))) forms))
+  (some (fn [f]
+          (block-scope (:scope f)))
+        forms))
 
 ;; ---------------------------------------------------------------------------
 ;; Op status: per-op success?/error → enum.
@@ -76,10 +71,9 @@
 
 (defn op-status
   [{:keys [success? error]}]
-  (cond
-    (some? error) :error
-    (false? success?) :error
-    :else :ok))
+  (cond (some? error) :error
+        (false? success?) :error
+        :else :ok))
 
 ;; ---------------------------------------------------------------------------
 ;; Stdout — the SINGLE display surface for a code block. Whatever the program
@@ -97,17 +91,22 @@
   "The block's source. Uses the entry's `:code` when present, else joins
    the forms' `:code` slices in order."
   [{:keys [forms code]}]
-  (or (some-> code str not-empty)
-    (let [srcs (keep (fn [f] (some-> (:code f) str str/trim not-empty)) forms)]
-      (when (seq srcs) (str/join "\n" srcs)))))
+  (or (some-> code
+              str
+              not-empty)
+      (let [srcs (keep (fn [f]
+                         (some-> (:code f)
+                                 str
+                                 str/trim
+                                 not-empty))
+                       forms)]
+        (when (seq srcs) (str/join "\n" srcs)))))
 
 (defn entry-duration-ms
   "Block duration: the explicit `:duration-ms` when present, else the sum
    of the forms' durations."
   ^long [{:keys [forms duration-ms]}]
-  (if (some? duration-ms)
-    (long duration-ms)
-    (long (reduce + 0 (keep :duration-ms forms)))))
+  (if (some? duration-ms) (long duration-ms) (long (reduce + 0 (keep :duration-ms forms)))))
 
 (defn entry-error
   "First error across the iteration: iter-level `:error` wins, else the first
@@ -121,13 +120,13 @@
    (cancellation / timeout propagate from the engine); otherwise derives from
    errors and running forms."
   [{:keys [status forms] :as entry}]
-  (cond
-    (status? status) status
-    (some? (entry-error entry)) :error
-    (some (fn [{:keys [started-at-ms success?]}]
-            (and (some? started-at-ms) (nil? success?)))
-      forms) :running
-    :else :ok))
+  (cond (status? status) status
+        (some? (entry-error entry)) :error
+        (some (fn [{:keys [started-at-ms success?]}]
+                (and (some? started-at-ms) (nil? success?)))
+              forms)
+        :running
+        :else :ok))
 
 ;; ---------------------------------------------------------------------------
 ;; Canonicalisation — fill the block-level fields on an entry that already
@@ -143,15 +142,21 @@
    and resume paths given the same forms, which is exactly what the parity
    invariant test asserts."
   [entry]
-  (let [forms  (vec (or (:forms entry) []))
-        entry  (assoc entry :forms forms)
-        scope  (or (block-scope (:scope entry)) (entry-scope entry))]
+  (let [forms
+        (vec (or (:forms entry) []))
+
+        entry
+        (assoc entry :forms forms)
+
+        scope
+        (or (block-scope (:scope entry)) (entry-scope entry))]
+
     (assoc entry
-      :scope       scope
-      :code        (entry-code entry)
-      :status      (entry-status entry)
+      :scope scope
+      :code (entry-code entry)
+      :status (entry-status entry)
       :duration-ms (entry-duration-ms entry)
-      :error       (entry-error entry))))
+      :error (entry-error entry))))
 
 (def canonical-keys
   "The keys that define the SHARED iteration-entry. The parity invariant
@@ -169,7 +174,9 @@
    path-specific bookkeeping. This is the value the parity invariant test
    asserts equal across the live and resume paths."
   [entry]
-  (-> entry canonicalize (select-keys canonical-keys)))
+  (-> entry
+      canonicalize
+      (select-keys canonical-keys)))
 
 (def parity-keys
   "The DISPLAY-relevant subset of the canonical entry the parity invariant
@@ -191,6 +198,6 @@
    fails the gate."
   [entry]
   (-> entry
-    canonicalize
-    (select-keys parity-keys)))
+      canonicalize
+      (select-keys parity-keys)))
 

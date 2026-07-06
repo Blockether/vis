@@ -47,10 +47,9 @@
    scanning lives in `com.blockether.vis.internal.manifest`; the
    extension layer that wraps it (and re-exports `discover-extensions!`)
    lives in `com.blockether.vis.internal.extension`."
-  (:require
-   [clojure.spec.alpha :as s]
-   [clojure.string :as str]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Quiet boot
@@ -71,8 +70,7 @@
 ;; TUI uses `/dev/tty` directly, the CLI prints its own results) can
 ;; re-add it explicitly. Boot-time registration logs are noise; if a
 ;; user wants them they pass `--debug` and the CLI re-adds the handler.
-(try (tel/remove-handler! :default/console)
-  (catch Throwable _ nil))
+(try (tel/remove-handler! :default/console) (catch Throwable _ nil))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
@@ -123,73 +121,70 @@
 ;; extension namespaces registering global command-registry entries directly.
 (s/def :channel/subcommands
   (s/or :static (s/coll-of map? :kind vector?)
-    :dynamic ifn?))
+        :dynamic ifn?))
 
 (s/def ::channel
   (s/keys :req [:channel/id :channel/cmd :channel/doc :channel/main-fn]
-    :opt [:channel/usage :channel/owns-tty? :channel/subcommands
-          :channel/messages-renderer-fn]))
+          :opt [:channel/usage :channel/owns-tty? :channel/subcommands
+                :channel/messages-renderer-fn]))
 
 (defn channel
   "Build and validate a channel descriptor map."
   [spec]
   (when-not (s/valid? ::channel spec)
-    (throw (ex-info (str "Invalid channel '" (:channel/id spec) "':\n"
-                      (with-out-str (s/explain ::channel spec)))
-             {:type    :channel/invalid-spec
-              :id      (:channel/id spec)
-              :explain (s/explain-data ::channel spec)})))
+    (throw (ex-info (str "Invalid channel '" (:channel/id spec)
+                         "':\n" (with-out-str (s/explain ::channel spec)))
+                    {:type :channel/invalid-spec
+                     :id (:channel/id spec)
+                     :explain (s/explain-data ::channel spec)})))
   spec)
 
 ;; =============================================================================
 ;; Provider descriptor - spec
 ;; =============================================================================
 
-(s/def :provider/id    keyword?)
+(s/def :provider/id keyword?)
 (s/def :provider/label non-blank-string?)
 
 ;; All four runtime fns are optional individually so a minimal provider
 ;; (e.g. one that reads a static API key from env) doesn't need to
 ;; ship a no-op stub for every slot. Whoever calls them handles the
 ;; absent case (`(when-let [f (:provider/status-fn p)] (f))`).
-(s/def :provider/status-fn    ifn?)  ;; () -> {:authenticated? bool ...}
-(s/def :provider/logout-fn    ifn?)  ;; () -> nil  (clear creds)
-(s/def :provider/detect-fn    ifn?)  ;; () -> token-or-nil  (non-interactive)
-(s/def :provider/auth-fn      ifn?)  ;; (printer-fn) -> nil (interactive)
+(s/def :provider/status-fn ifn?)  ;; () -> {:authenticated? bool ...}
+(s/def :provider/logout-fn ifn?)  ;; () -> nil  (clear creds)
+(s/def :provider/detect-fn ifn?)  ;; () -> token-or-nil  (non-interactive)
+(s/def :provider/auth-fn ifn?)  ;; (printer-fn) -> nil (interactive)
 (s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
 (s/def :provider/refresh-token-fn ifn?)  ;; () -> token-string/map  (FORCE refresh ignoring local expiry; runtime 401 recovery)
-(s/def :provider/limits-fn    ifn?)  ;; () -> normalized limits envelope/map
+(s/def :provider/limits-fn ifn?)  ;; () -> normalized limits envelope/map
 (s/def :provider/enrich-models-fn ifn?) ;; (svar-provider router-opts) -> models-vec (resolve :context/:tool-call? at router-build, e.g. LM Studio native endpoint)
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :hidden?
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
 
 (s/def ::provider
-  (s/and
-    #(not (contains? % :provider/prompt-fn))
-    (s/keys :req [:provider/id :provider/label]
-      :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn
-            :provider/auth-fn :provider/get-token-fn :provider/refresh-token-fn
-            :provider/limits-fn
-            :provider/enrich-models-fn
-            :provider/preset :provider/on-selected-fn])))
+  (s/and #(not (contains? % :provider/prompt-fn))
+         (s/keys :req [:provider/id :provider/label]
+                 :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
+                       :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
+                       :provider/enrich-models-fn :provider/preset :provider/on-selected-fn])))
 
 (defn provider
   "Build and validate a provider descriptor."
   [spec]
   (when-not (s/valid? ::provider spec)
-    (throw (ex-info (str "Invalid provider '" (:provider/id spec) "':\n"
-                      (with-out-str (s/explain ::provider spec)))
-             {:type    :provider/invalid-spec
-              :id      (:provider/id spec)
-              :explain (s/explain-data ::provider spec)})))
+    (throw (ex-info (str "Invalid provider '" (:provider/id spec)
+                         "':\n" (with-out-str (s/explain ::provider spec)))
+                    {:type :provider/invalid-spec
+                     :id (:provider/id spec)
+                     :explain (s/explain-data ::provider spec)})))
   spec)
 
 ;; =============================================================================
 ;; Command descriptor - spec
 ;; =============================================================================
 
-(s/def :cmd/name  non-blank-string?)
-(s/def :cmd/doc   non-blank-string?)
+(s/def :cmd/name non-blank-string?)
+(s/def :cmd/doc non-blank-string?)
 (s/def :cmd/usage non-blank-string?)
 (s/def :cmd/run-fn ifn?)
 (s/def :cmd/owns-tty? boolean?)
@@ -215,14 +210,14 @@
 
 (s/def ::arg
   (s/keys :req-un [:cmd.arg/name :cmd.arg/kind]
-    :opt-un [:cmd.arg/type :cmd.arg/required :cmd.arg/doc]))
+          :opt-un [:cmd.arg/type :cmd.arg/required :cmd.arg/doc]))
 
 (s/def :cmd/args (s/coll-of ::arg :kind vector?))
 
 ;; subcommands: vector OR 0-arg ifn returning vector
 (s/def :cmd/subcommands
   (s/or :static (s/coll-of map? :kind vector?)
-    :dynamic ifn?))
+        :dynamic ifn?))
 
 ;; Optional vector of single-line example invocations shown in the
 ;; EXAMPLES help section.
@@ -233,13 +228,14 @@
 ;; value may also be a 0-arg fn returning a sequence of entries -- used
 ;; when the body requires runtime discovery (e.g. installed
 ;; extensions) that should not run at registration time.
-(s/def :cmd/extra-sections (s/or :static sequential? :dynamic ifn?))
+(s/def :cmd/extra-sections
+  (s/or :static sequential?
+        :dynamic ifn?))
 
 (s/def ::command
   (s/keys :req [:cmd/name :cmd/doc]
-    :opt [:cmd/usage :cmd/args :cmd/run-fn :cmd/subcommands
-          :cmd/owns-tty? :cmd/examples :cmd/parent :cmd/internal?
-          :cmd/extra-sections]))
+          :opt [:cmd/usage :cmd/args :cmd/run-fn :cmd/subcommands :cmd/owns-tty? :cmd/examples
+                :cmd/parent :cmd/internal? :cmd/extra-sections]))
 
 (defn command
   "Build and validate a command map. Children are NOT validated
@@ -248,11 +244,11 @@
    from forcing their fn at build time."
   [spec]
   (when-not (s/valid? ::command spec)
-    (throw (ex-info (str "Invalid command '" (:cmd/name spec) "':\n"
-                      (with-out-str (s/explain ::command spec)))
-             {:type    :commandline/invalid-spec
-              :name    (:cmd/name spec)
-              :explain (s/explain-data ::command spec)})))
+    (throw (ex-info (str "Invalid command '" (:cmd/name spec)
+                         "':\n" (with-out-str (s/explain ::command spec)))
+                    {:type :commandline/invalid-spec
+                     :name (:cmd/name spec)
+                     :explain (s/explain-data ::command spec)})))
   spec)
 
 (defn resolve-subcommands
@@ -260,13 +256,12 @@
    when needed. Returns `[]` when the command has no children."
   [cmd]
   (let [s (:cmd/subcommands cmd)]
-    (cond
-      (nil? s)        []
-      (vector? s)     s
-      (sequential? s) (vec s)
-      (ifn? s)        (vec (s))
-      :else           (throw (ex-info ":cmd/subcommands must be a vector or 0-arg fn"
-                               {:got (type s) :command (:cmd/name cmd)})))))
+    (cond (nil? s) []
+          (vector? s) s
+          (sequential? s) (vec s)
+          (ifn? s) (vec (s))
+          :else (throw (ex-info ":cmd/subcommands must be a vector or 0-arg fn"
+                                {:got (type s) :command (:cmd/name cmd)})))))
 
 ;; =============================================================================
 ;; Channel registry
@@ -284,15 +279,13 @@
   [spec]
   (let [ch (channel spec)]
     (swap! channel-registry assoc (:channel/id ch) ch)
-    (tel/log! {:level :info :id ::register-channel
-               :data  {:channel (:channel/id ch) :cmd (:channel/cmd ch)}
-               :msg   (str "Channel '" (:channel/id ch)
-                        "' registered (cmd: " (:channel/cmd ch) ")")})
+    (tel/log! {:level :info
+               :id ::register-channel
+               :data {:channel (:channel/id ch) :cmd (:channel/cmd ch)}
+               :msg (str "Channel '" (:channel/id ch) "' registered (cmd: " (:channel/cmd ch) ")")})
     ch))
 
-(defn deregister-channel! [id]
-  (swap! channel-registry dissoc id)
-  nil)
+(defn deregister-channel! [id] (swap! channel-registry dissoc id) nil)
 
 (defn registered-channels
   "All globally registered channels as a vector."
@@ -309,8 +302,9 @@
    when no channel claims that command."
   [cmd]
   (when (string? cmd)
-    (some (fn [c] (when (= (:channel/cmd c) cmd) c))
-      (vals @channel-registry))))
+    (some (fn [c]
+            (when (= (:channel/cmd c) cmd) c))
+          (vals @channel-registry))))
 
 ;; =============================================================================
 ;; Provider registry
@@ -327,22 +321,20 @@
   [spec]
   (let [p (provider spec)]
     (swap! provider-registry assoc (:provider/id p) p)
-    (tel/log! {:level :info :id ::register-provider
-               :data  {:provider (:provider/id p)
-                       :label    (:provider/label p)}
-               :msg   (str "Provider '" (:provider/id p)
-                        "' (" (:provider/label p) ") registered")})
+    (tel/log! {:level :info
+               :id ::register-provider
+               :data {:provider (:provider/id p) :label (:provider/label p)}
+               :msg (str "Provider '" (:provider/id p) "' (" (:provider/label p) ") registered")})
     p))
 
-(defn deregister-provider! [id]
-  (swap! provider-registry dissoc id) nil)
+(defn deregister-provider! [id] (swap! provider-registry dissoc id) nil)
 
-(defn registered-providers []
-  (vec (vals @provider-registry)))
+(defn registered-providers [] (vec (vals @provider-registry)))
 
 (defn provider-by-id
   "Lookup a provider by `:provider/id`. Returns nil when absent."
-  [id] (get @provider-registry id))
+  [id]
+  (get @provider-registry id))
 
 ;; =============================================================================
 ;; Command registry
@@ -354,8 +346,7 @@
   ;; [parent vector + command name].
   (atom []))
 
-(defn- registry-key [c]
-  [(or (:cmd/parent c) []) (:cmd/name c)])
+(defn- registry-key [c] [(or (:cmd/parent c) []) (:cmd/name c)])
 
 (defn register-cmd!
   "Register a command in the global registry. Idempotent on
@@ -363,25 +354,31 @@
    entry, useful for REPL-driven development. Returns the validated
    command map."
   [spec]
-  (let [c   (command spec)
-        k   (registry-key c)
-        cur @command-registry]
-    (reset! command-registry
-      (let [stripped (vec (remove #(= k (registry-key %)) cur))]
-        (conj stripped c)))
-    (tel/log! {:level :info :id ::register-cmd
-               :data  {:name (:cmd/name c)
-                       :parent (:cmd/parent c)}
-               :msg   (str "Command '" (str/join " " (conj (or (:cmd/parent c) []) (:cmd/name c)))
-                        "' registered")})
+  (let [c
+        (command spec)
+
+        k
+        (registry-key c)
+
+        cur
+        @command-registry]
+
+    (reset! command-registry (let [stripped (vec (remove #(= k (registry-key %)) cur))]
+                               (conj stripped c)))
+    (tel/log! {:level :info
+               :id ::register-cmd
+               :data {:name (:cmd/name c) :parent (:cmd/parent c)}
+               :msg (str "Command '"
+                         (str/join " " (conj (or (:cmd/parent c) []) (:cmd/name c)))
+                         "' registered")})
     c))
 
 (defn deregister-cmd!
   "Remove a registered command. `parent` defaults to `[]` (top-level)."
   ([nm] (deregister-cmd! [] nm))
   ([parent nm]
-   (swap! command-registry
-     (fn [cur] (vec (remove #(= [parent nm] (registry-key %)) cur))))
+   (swap! command-registry (fn [cur]
+                             (vec (remove #(= [parent nm] (registry-key %)) cur))))
    nil))
 
 (defn registered-commands
@@ -400,8 +397,7 @@
         :cmd/subcommands #(registered-under [\"ext\"])}"
   [parent-path]
   (let [k (vec parent-path)]
-    (vec (filter #(= k (or (:cmd/parent %) []))
-           @command-registry))))
+    (vec (filter #(= k (or (:cmd/parent %) [])) @command-registry))))
 
 ;; =============================================================================
 ;; CLI mounting - the `vis channels` parent
@@ -420,20 +416,22 @@
    host-owned compatibility, but extension namespaces should not call
    `register-cmd!` directly."
   [c]
-  {:cmd/name        (:channel/cmd c)
-   :cmd/doc         (:channel/doc c)
-   :cmd/usage       (or (:channel/usage c)
-                      (str "vis channels " (:channel/cmd c)))
-   :cmd/owns-tty?   (boolean (:channel/owns-tty? c))
-   :cmd/subcommands #(let [s (:channel/subcommands c)
-                           direct (cond
-                                    (nil? s) []
-                                    (ifn? s) (vec (s))
-                                    (sequential? s) (vec s)
-                                    :else [])]
+  {:cmd/name (:channel/cmd c)
+   :cmd/doc (:channel/doc c)
+   :cmd/usage (or (:channel/usage c) (str "vis channels " (:channel/cmd c)))
+   :cmd/owns-tty? (boolean (:channel/owns-tty? c))
+   :cmd/subcommands #(let [s
+                           (:channel/subcommands c)
+
+                           direct
+                           (cond (nil? s) []
+                                 (ifn? s) (vec (s))
+                                 (sequential? s) (vec s)
+                                 :else [])]
+
                        (into direct (registered-under ["channels" (:channel/cmd c)])))
-   :cmd/run-fn      (fn [_parsed residual]
-                      ((:channel/main-fn c) (vec residual)))})
+   :cmd/run-fn (fn [_parsed residual]
+                 ((:channel/main-fn c) (vec residual)))})
 
 (defn channel-subcommands
   "Compose subcommands for the `vis channels` parent from TWO sources:
@@ -447,15 +445,18 @@
    stray extension can't shadow a real channel name. Both sorted
    together so help output is alphabetic."
   []
-  (let [from-channels (mapv channel->command (registered-channels))
-        regd          (registered-under ["channels"])
-        names         (set (map :cmd/name from-channels))]
-    (vec (sort-by :cmd/name
-           (concat from-channels
-             (remove #(names (:cmd/name %)) regd))))))
+  (let [from-channels
+        (mapv channel->command (registered-channels))
 
-(register-cmd!
-  {:cmd/name        "channels"
-   :cmd/doc         "Run a registered channel (TUI, Telegram, ...)."
-   :cmd/usage       "vis channels <name> [args...]"
-   :cmd/subcommands #'channel-subcommands})
+        regd
+        (registered-under ["channels"])
+
+        names
+        (set (map :cmd/name from-channels))]
+
+    (vec (sort-by :cmd/name (concat from-channels (remove #(names (:cmd/name %)) regd))))))
+
+(register-cmd! {:cmd/name "channels"
+                :cmd/doc "Run a registered channel (TUI, Telegram, ...)."
+                :cmd/usage "vis channels <name> [args...]"
+                :cmd/subcommands #'channel-subcommands})

@@ -47,33 +47,27 @@
      \"text\"                       — wrapped in [:ir [:p [:span text]]]
      sequential / vector of mixed — element-by-element coercion
      anything else                — surfaced as [:code {:lang \"edn\"} pr-str]"
-  (:require
-   [clojure.string :as str]
-   [clojure+.walk :as cwalk]
-   [com.blockether.ruff :as ruff]
-   [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.toggles     :as toggles])
-  (:import
-   [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
-   [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
-   [org.commonmark.node BlockQuote BulletList Code Emphasis FencedCodeBlock
-    HardLineBreak Heading HtmlBlock HtmlInline Image IndentedCodeBlock Link
-    Node OrderedList Paragraph SoftLineBreak StrongEmphasis Text ThematicBreak]
-   [org.commonmark.parser Parser]))
+  (:require [clojure.string :as str]
+            [clojure+.walk :as cwalk]
+            [com.blockether.ruff :as ruff]
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.toggles :as toggles])
+  (:import [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
+           [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
+           [org.commonmark.node BlockQuote BulletList Code Emphasis FencedCodeBlock HardLineBreak
+            Heading HtmlBlock HtmlInline Image IndentedCodeBlock Link Node OrderedList Paragraph
+            SoftLineBreak StrongEmphasis Text ThematicBreak]
+           [org.commonmark.parser Parser]))
 
 ;; =============================================================================
 ;; Tag taxonomy
 ;; =============================================================================
 
-(def ^:private block-tags
-  #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
+(def ^:private block-tags #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
 
-(def ^:private inline-tags
-  #{:span :br :strong :em :c :a :img :kbd :mark :sup :sub})
+(def ^:private inline-tags #{:span :br :strong :em :c :a :img :kbd :mark :sup :sub})
 
-(def ^:private void-inline-tags
-  "Inline tags whose canonical form has no children."
-  #{:br :img})
+(def ^:private void-inline-tags "Inline tags whose canonical form has no children." #{:br :img})
 
 (def ^:private raw-text-tags
   "Tags whose canonical body is a single raw string (whitespace preserved)."
@@ -100,17 +94,14 @@
    normalizes it to `[:h {:level 3} ...]` so the level never leaks as
    visible heading text."
   [v]
-  (cond
-    (not (vector? v))                v
-    (empty? v)                       v
-    (map? (second v))                v
-    (and (= :h (first v))
-      (integer? (second v)))         (into [:h {:level (max 1 (min 6 (long (second v))))}]
-                                       (nnext v))
-    :else                            (into [(first v) {}] (rest v))))
+  (cond (not (vector? v)) v
+        (empty? v) v
+        (map? (second v)) v
+        (and (= :h (first v)) (integer? (second v)))
+        (into [:h {:level (max 1 (min 6 (long (second v))))}] (nnext v))
+        :else (into [(first v) {}] (rest v))))
 
-(defn- has-attrs? [v]
-  (and (vector? v) (>= (count v) 2) (map? (second v))))
+(defn- has-attrs? [v] (and (vector? v) (>= (count v) 2) (map? (second v))))
 
 ;; ─── canonical? predicates ──────────────────────────────────────────────
 ;; Pure structural checks; defined here so canon-* and `->ast` can call
@@ -120,56 +111,66 @@
   "True when `x` is already a canonical inline node."
   [x]
   (and (vector? x)
-    (>= (count x) 2)
-    (map? (nth x 1))
-    (let [tag (nth x 0)]
-      (case tag
-        :br   (= 2 (count x))
-        :img  (= 2 (count x))
-        :span (and (= 3 (count x))
-                (string? (nth x 2))
-                (not (str/includes? (nth x 2) "\n")))
-        (:c :code :kbd)
-        (and (= 3 (count x)) (string? (nth x 2)))
-        (:strong :em :a :mark :sup :sub)
-        (every? inline-canonical? (drop 2 x))
-        false))))
+       (>= (count x) 2)
+       (map? (nth x 1))
+       (let [tag (nth x 0)]
+         (case tag
+           :br
+           (= 2 (count x))
+
+           :img
+           (= 2 (count x))
+
+           :span
+           (and (= 3 (count x)) (string? (nth x 2)) (not (str/includes? (nth x 2) "\n")))
+
+           (:c :code :kbd)
+           (and (= 3 (count x)) (string? (nth x 2)))
+
+           (:strong :em :a :mark :sup :sub)
+           (every? inline-canonical? (drop 2 x))
+
+           false))))
 
 (defn- block-canonical?
   "True when `x` is a canonical block node."
   [x]
   (and (vector? x)
-    (>= (count x) 2)
-    (map? (nth x 1))
-    (let [tag (nth x 0)
-          children (drop 2 x)]
-      (case tag
-        (:p :h :th :td)
-        (every? inline-canonical? children)
+       (>= (count x) 2)
+       (map? (nth x 1))
+       (let [tag
+             (nth x 0)
 
-        :code
-        (and (= 3 (count x)) (string? (nth x 2)))
+             children
+             (drop 2 x)]
 
-        (:ul :ol)
-        (every? #(and (vector? %) (= :li (first %)) (block-canonical? %)) children)
+         (case tag
+           (:p :h :th :td)
+           (every? inline-canonical? children)
 
-        :li
-        (or (every? block-canonical? children)
-          (and (= 1 (count children))
-            (vector? (first children))
-            (= :p (first (first children)))
-            (block-canonical? (first children))))
+           :code
+           (and (= 3 (count x)) (string? (nth x 2)))
 
-        :quote
-        (every? block-canonical? children)
+           (:ul :ol)
+           (every? #(and (vector? %) (= :li (first %)) (block-canonical? %)) children)
 
-        :table
-        (every? #(and (vector? %) (= :tr (first %)) (block-canonical? %)) children)
+           :li
+           (or (every? block-canonical? children)
+               (and (= 1 (count children))
+                    (vector? (first children))
+                    (= :p (first (first children)))
+                    (block-canonical? (first children))))
 
-        :tr
-        (every? #(and (vector? %) (#{:th :td} (first %)) (block-canonical? %)) children)
+           :quote
+           (every? block-canonical? children)
 
-        false))))
+           :table
+           (every? #(and (vector? %) (= :tr (first %)) (block-canonical? %)) children)
+
+           :tr
+           (every? #(and (vector? %) (#{:th :td} (first %)) (block-canonical? %)) children)
+
+           false))))
 
 (defn canonical?
   "Cheap structural check: `x` is already a canonical `[:ir & blocks]`
@@ -178,18 +179,17 @@
    hit cleanly across repeated render passes."
   [x]
   (and (vector? x)
-    (= :ir (first x))
-    (>= (count x) 2)
-    (map? (nth x 1))
-    (every? block-canonical? (drop 2 x))))
+       (= :ir (first x))
+       (>= (count x) 2)
+       (map? (nth x 1))
+       (every? block-canonical? (drop 2 x))))
 
 ;; ─── Canonicalization (canon-*) ─────────────────────────────────────────
 ;; Mutual recursion across blocks/inlines (canon-block <-> canon-block-rebuild
 ;; <-> canon-li-children <-> canon-block; canon-inline-children <-> canon-
 ;; inline-node). Per AGENTS.md `declare` is allowed for genuine mutual
 ;; recursion that no reordering can resolve.
-(declare ^:private canon-block ^:private canon-block-rebuild
-  ^:private canon-inline-children)
+(declare ^:private canon-block ^:private canon-block-rebuild ^:private canon-inline-children)
 
 (defn- text-flatten
   "Concatenate every string anywhere in `x` (depth-first). Used to
@@ -197,12 +197,11 @@
    regardless of whether the input is `[:c \"raw\"]` (LLM-flavored)
    or `[:c [:span \"raw\"]]` (re-canonicalization input)."
   ^String [x]
-  (cond
-    (string? x)     x
-    (vector? x)     (apply str (map text-flatten (drop 2 x)))
-    (sequential? x) (apply str (map text-flatten x))
-    (nil? x)        ""
-    :else           ""))
+  (cond (string? x) x
+        (vector? x) (apply str (map text-flatten (drop 2 x)))
+        (sequential? x) (apply str (map text-flatten x))
+        (nil? x) ""
+        :else ""))
 
 (defn- loose-text-flatten
   "Text-flatten non-canonical or retired tag trees. Unlike `text-flatten`,
@@ -210,15 +209,13 @@
    retired `[:details [:summary \"x\"] ...]` input stays visible while the
    unsupported structure is removed."
   ^String [x]
-  (cond
-    (string? x)     x
-    (vector? x)     (let [children (if (and (keyword? (first x)) (map? (second x)))
-                                     (drop 2 x)
-                                     (rest x))]
+  (cond (string? x) x
+        (vector? x) (let [children
+                          (if (and (keyword? (first x)) (map? (second x))) (drop 2 x) (rest x))]
                       (apply str (map loose-text-flatten children)))
-    (sequential? x) (apply str (map loose-text-flatten x))
-    (nil? x)        ""
-    :else           ""))
+        (sequential? x) (apply str (map loose-text-flatten x))
+        (nil? x) ""
+        :else ""))
 
 (defn- string->span
   "Lift a raw text string into a [:span ...] node, collapsing soft breaks
@@ -226,7 +223,10 @@
   [^String s preserve-ws?]
   (let [text (if preserve-ws? s (collapse-soft-breaks s))]
     (when-not (= "" text)
-      [:span (cond-> {} preserve-ws? (assoc :preserve-ws? true)) text])))
+      [:span
+       (cond-> {}
+         preserve-ws?
+         (assoc :preserve-ws? true)) text])))
 
 (defn- canon-inline-node
   "Canonicalize one inline vector. `preserve-ws?` propagates from
@@ -234,42 +234,52 @@
    on already-canonical input."
   [node preserve-ws?]
   ;; Fast path: if this single inline node is already canonical at
-   ;; this level, return it unchanged so parent vectors can stay
-   ;; `identical?` too.
+  ;; this level, return it unchanged so parent vectors can stay
+  ;; `identical?` too.
   (if (inline-canonical? node)
     node
-    (let [orig     node
-          node     (ensure-attrs node)
-          tag      (first node)
-          attrs    (second node)
-          children (drop 2 node)]
-      (cond
-        (contains? void-inline-tags tag)
-        (if (and (= 2 (count orig)) (map? (nth orig 1 nil))) orig [tag attrs])
+    (let [orig
+          node
 
-        (contains? raw-text-tags tag)
-        [tag attrs (text-flatten children)]
+          node
+          (ensure-attrs node)
 
-        (= :span tag)
-        (let [pw?  (or (:preserve-ws? attrs) preserve-ws?)
-              text (text-flatten children)
-              text (if pw? text (collapse-soft-breaks text))]
-          (if (= "" text)
-            nil
-            [:span attrs text]))
+          tag
+          (first node)
 
-        (contains? inline-tags tag)
-        (let [child-nodes (canon-inline-children children preserve-ws?)]
-          (into [tag attrs] child-nodes))
+          attrs
+          (second node)
 
-        :else
-        ;; Unknown/retired tags are not preserved in canonical IR. This is
-        ;; deliberate for removed answer affordances such as :details/:summary:
-        ;; keep any human-visible text, but never keep unsupported structure.
-        (let [text (loose-text-flatten children)
-              text (if preserve-ws? text (collapse-soft-breaks text))]
-          (when-not (= "" text)
-            [:span {} text]))))))
+          children
+          (drop 2 node)]
+
+      (cond (contains? void-inline-tags tag)
+            (if (and (= 2 (count orig)) (map? (nth orig 1 nil))) orig [tag attrs])
+            (contains? raw-text-tags tag) [tag attrs (text-flatten children)]
+            (= :span tag) (let [pw?
+                                (or (:preserve-ws? attrs) preserve-ws?)
+
+                                text
+                                (text-flatten children)
+
+                                text
+                                (if pw? text (collapse-soft-breaks text))]
+
+                            (if (= "" text) nil [:span attrs text]))
+            (contains? inline-tags tag) (let [child-nodes (canon-inline-children children
+                                                                                 preserve-ws?)]
+                                          (into [tag attrs] child-nodes))
+            :else
+            ;; Unknown/retired tags are not preserved in canonical IR. This is
+            ;; deliberate for removed answer affordances such as :details/:summary:
+            ;; keep any human-visible text, but never keep unsupported structure.
+            (let [text
+                  (loose-text-flatten children)
+
+                  text
+                  (if preserve-ws? text (collapse-soft-breaks text))]
+
+              (when-not (= "" text) [:span {} text]))))))
 
 (defn- map-keep-identity
   "Like `mapv` but returns the input vector unchanged when `f` is
@@ -280,13 +290,22 @@
    does nothing in net should leave the data structure `identical?`
    so downstream `System/identityHashCode` caches stay hot."
   [f xs]
-  (let [xs       (vec xs)
-        n        (count xs)
-        ys       (object-array n)
-        changed? (volatile! false)]
+  (let [xs
+        (vec xs)
+
+        n
+        (count xs)
+
+        ys
+        (object-array n)
+
+        changed?
+        (volatile! false)]
+
     (dotimes [i n]
-      (let [x  (nth xs i)
+      (let [x (nth xs i)
             x' (f x)]
+
         (when-not (identical? x' x) (vreset! changed? true))
         (aset ys i x')))
     (if @changed? (vec ys) xs)))
@@ -297,56 +316,46 @@
    on already-canonical input."
   [children preserve-ws?]
   ;; Two-step: lift any bare strings/nils into spans (always allocates
-   ;; for non-vector children), then identity-preserve over inline
-   ;; vectors so unchanged sub-trees stay `identical?`.
-  (let [lifted (vec
-                 (keep
-                   (fn [c]
-                     (cond
-                       (string? c) (string->span c preserve-ws?)
-                       (vector? c) c
-                       (nil? c)    nil
-                       :else       (string->span (str c) preserve-ws?)))
-                   children))]
-    (map-keep-identity
-      (fn [c]
-        (if (vector? c)
-          (canon-inline-node c preserve-ws?)
-          c))
-      lifted)))
+  ;; for non-vector children), then identity-preserve over inline
+  ;; vectors so unchanged sub-trees stay `identical?`.
+  (let [lifted (vec (keep (fn [c]
+                            (cond (string? c) (string->span c preserve-ws?)
+                                  (vector? c) c
+                                  (nil? c) nil
+                                  :else (string->span (str c) preserve-ws?)))
+                          children))]
+    (map-keep-identity (fn [c]
+                         (if (vector? c) (canon-inline-node c preserve-ws?) c))
+                       lifted)))
 
 (defn- canon-li-children
   "All-blocks OR all-inlines (wrapped in a single :p). Mixed input is
    bucketed in source order, with consecutive inline runs each
    wrapped in their own :p."
   [children]
-  (let [classified (mapv (fn [c] (cond
-                                   (and (vector? c) (block? c))  :block
-                                   (and (vector? c) (inline? c)) :inline
-                                   (string? c)                   :inline
-                                   :else                         :inline))
-                     children)]
-    (cond
-      (every? #(= :block %) classified)
-      (map-keep-identity canon-block children)
+  (let [classified (mapv (fn [c]
+                           (cond (and (vector? c) (block? c)) :block
+                                 (and (vector? c) (inline? c)) :inline
+                                 (string? c) :inline
+                                 :else :inline))
+                         children)]
+    (cond (every? #(= :block %) classified) (map-keep-identity canon-block children)
+          (every? #(= :inline %) classified)
+          (let [inline-children (canon-inline-children children false)]
+            (if (seq inline-children) [(into [:p {}] inline-children)] []))
+          :else (loop [out []
+                       buf []
+                       cs (seq children)]
 
-      (every? #(= :inline %) classified)
-      (let [inline-children (canon-inline-children children false)]
-        (if (seq inline-children)
-          [(into [:p {}] inline-children)]
-          []))
-
-      :else
-      (loop [out [] buf [] cs (seq children)]
-        (let [flush (fn [out buf]
-                      (let [inl (canon-inline-children buf false)]
-                        (if (seq inl) (conj out (into [:p {}] inl)) out)))]
-          (if (nil? cs)
-            (flush out buf)
-            (let [c (first cs)]
-              (if (and (vector? c) (block? c))
-                (recur (conj (flush out buf) (canon-block c)) [] (next cs))
-                (recur out (conj buf c) (next cs))))))))))
+                  (let [flush (fn [out buf]
+                                (let [inl (canon-inline-children buf false)]
+                                  (if (seq inl) (conj out (into [:p {}] inl)) out)))]
+                    (if (nil? cs)
+                      (flush out buf)
+                      (let [c (first cs)]
+                        (if (and (vector? c) (block? c))
+                          (recur (conj (flush out buf) (canon-block c)) [] (next cs))
+                          (recur out (conj buf c) (next cs))))))))))
 
 (defn- canon-block-children
   "Sequence of children of a block parent that itself accepts inline
@@ -362,80 +371,98 @@
    the common case where every child is already a canonical block
    (the only path that actually allocates)."
   [children]
-  (let [children (vec children)
+  (let [children
+        (vec children)
+
         ;; fast path: every child already a canonical block → just
         ;; identity-preserve over canon-block.
-        all-blocks? (every? #(and (vector? %) (block? %)) children)]
+        all-blocks?
+        (every? #(and (vector? %) (block? %)) children)]
+
     (if all-blocks?
       (map-keep-identity canon-block children)
       ;; slow path: buffer loose inlines into :p.
-      (loop [out [] buf [] cs (seq children)]
+      (loop [out
+             []
+
+             buf
+             []
+
+             cs
+             (seq children)]
+
         (let [flush (fn [out buf]
                       (let [inl (canon-inline-children buf false)]
                         (if (seq inl) (conj out (into [:p {}] inl)) out)))]
           (if (nil? cs)
             (flush out buf)
             (let [c (first cs)]
-              (cond
-                (and (vector? c) (block? c))
-                (recur (conj (flush out buf) (canon-block c)) [] (next cs))
-
-                :else
-                (recur out (conj buf c) (next cs))))))))))
+              (cond (and (vector? c) (block? c))
+                    (recur (conj (flush out buf) (canon-block c)) [] (next cs))
+                    :else (recur out (conj buf c) (next cs))))))))))
 
 (defn- canon-block
   "Canonicalize one block vector. Identity-preserving on already-
    canonical input."
   [node]
-  (if (block-canonical? node)
-    node
-    (canon-block-rebuild node)))
+  (if (block-canonical? node) node (canon-block-rebuild node)))
 
 (defn- canon-block-rebuild
   "Internal: rebuild a block via tag dispatch. Skipped via identity
    when `block-canonical?` is true at the call site."
   [node]
-  (let [node     (ensure-attrs node)
-        tag      (first node)
-        attrs    (second node)
-        children (drop 2 node)]
+  (let [node
+        (ensure-attrs node)
+
+        tag
+        (first node)
+
+        attrs
+        (second node)
+
+        children
+        (drop 2 node)]
+
     (case tag
-      :code  ; raw source; body = single string, ws preserved verbatim
+      :code ; raw source; body = single string, ws preserved verbatim
       [:code attrs (text-flatten children)]
 
       :li
       (into [:li attrs] (canon-li-children children))
 
       (:ul :ol)
-      (let [children (vec children)
-            children' (map-keep-identity
-                        (fn [c]
-                          (let [c (ensure-attrs c)]
-                            (if (and (vector? c) (= :li (first c)))
-                              (canon-block c)
-                              (canon-block [:li {} c]))))
-                        children)]
+      (let [children
+            (vec children)
+
+            children'
+            (map-keep-identity (fn [c]
+                                 (let [c (ensure-attrs c)]
+                                   (if (and (vector? c) (= :li (first c)))
+                                     (canon-block c)
+                                     (canon-block [:li {} c]))))
+                               children)]
+
         (if (and (= attrs (nth node 1 nil)) (identical? children' children))
           node
           (into [tag attrs] children')))
 
       :table
       (into [:table attrs]
-        (mapv (fn [c]
-                (let [c (ensure-attrs c)]
-                  (if (and (vector? c) (= :tr (first c)))
-                    (canon-block c)
-                    (canon-block [:tr {} c]))))
-          children))
+            (mapv (fn [c]
+                    (let [c (ensure-attrs c)]
+                      (if (and (vector? c) (= :tr (first c)))
+                        (canon-block c)
+                        (canon-block [:tr {} c]))))
+                  children))
 
       :tr
       (into [:tr attrs]
-        (mapv (fn [c]
-                (let [c (ensure-attrs c)]
-                  (if (and (vector? c) (#{:th :td} (first c)))
-                    (canon-block c)
-                    (canon-block [:td {} c]))))
-          children))
+            (mapv (fn [c]
+                    (let [c (ensure-attrs c)]
+                      (if (and (vector? c) (#{:th :td} (first c)))
+                        (canon-block c)
+                        (canon-block [:td {} c]))))
+                  children))
 
       (:th :td)
       (into [tag attrs] (canon-block-children children))
@@ -471,71 +498,65 @@
    See namespace docstring for the full canonical-form invariants."
   [v]
   (if (canonical? v)
-    v   ;; identical preserved — cache-friendliness fast path
-    (let [max-seq-items 100
-          truncation-marker "… many more"]
-      (letfn [(bounded-seq [xs]
-                (let [items (doall (take (inc max-seq-items) xs))
-                      more? (> (count items) max-seq-items)]
-                  (cond-> (mapv sanitize (take max-seq-items items))
-                    more? (conj truncation-marker))))
-              (expand-child [child]
-                (if (and (sequential? child) (not (vector? child)) (not (string? child)))
-                  (bounded-seq child)
-                  [(sanitize child)]))
-              (sanitize-vector [x]
-                (let [x (vec x)]
-                  (if (and (seq x) (keyword? (first x)))
-                    (let [tag      (first x)
-                          attrs?   (map? (second x))
-                          prefix   (if attrs? [tag (sanitize (second x))] [tag])
-                          children (if attrs? (nnext x) (next x))]
-                      (into prefix (mapcat expand-child children)))
-                    (cwalk/walk sanitize identity x))))
-              (sanitize [x]
-                (cond
-                  (nil? x)                         nil
-                  (string? x)                      x
-                  (vector? x)                      (sanitize-vector x)
-                  (map? x)                         (cwalk/walk sanitize identity x)
-                  (set? x)                         (cwalk/walk sanitize identity x)
-                  (and (sequential? x)
-                    (not (string? x)))             (bounded-seq x)
-                  :else                            x))]
+    v ;; identical preserved — cache-friendliness fast path
+    (let [max-seq-items
+          100
+
+          truncation-marker
+          "… many more"]
+
+      (letfn
+        [(bounded-seq [xs]
+           (let [items
+                 (doall (take (inc max-seq-items) xs))
+
+                 more?
+                 (> (count items) max-seq-items)]
+
+             (cond-> (mapv sanitize (take max-seq-items items))
+               more?
+               (conj truncation-marker))))
+         (expand-child [child]
+           (if (and (sequential? child) (not (vector? child)) (not (string? child)))
+             (bounded-seq child)
+             [(sanitize child)]))
+         (sanitize-vector [x]
+           (let [x (vec x)]
+             (if (and (seq x) (keyword? (first x)))
+               (let [tag (first x)
+                     attrs? (map? (second x))
+                     prefix (if attrs? [tag (sanitize (second x))] [tag])
+                     children (if attrs? (nnext x) (next x))]
+
+                 (into prefix (mapcat expand-child children)))
+               (cwalk/walk sanitize identity x))))
+         (sanitize [x]
+           (cond (nil? x) nil
+                 (string? x) x
+                 (vector? x) (sanitize-vector x)
+                 (map? x) (cwalk/walk sanitize identity x)
+                 (set? x) (cwalk/walk sanitize identity x)
+                 (and (sequential? x) (not (string? x))) (bounded-seq x)
+                 :else x))]
         (let [v (sanitize v)]
           (if (canonical? v)
             v
-            (let [raw-children
-                  (cond
-                    (and (vector? v) (= :ir (first v)))
-                    (let [v (ensure-attrs v)] (drop 2 v))
+            (let [raw-children (cond (and (vector? v) (= :ir (first v))) (let [v (ensure-attrs v)]
+                                                                           (drop 2 v))
+                                     (string? v) [v]
+                                     (and (vector? v) (keyword? (first v))) [v]
+                                     (sequential? v) (seq v)
+                                     :else [[:code {:lang "edn"} (pr-str v)]])
+                  coerced (mapv (fn [x]
+                                  (cond (string? x) x
+                                        (and (vector? x) (keyword? (first x))) x
+                                        (nil? x) nil
+                                        :else [:code {:lang "edn"} (pr-str x)]))
+                                raw-children)]
 
-                    (string? v)
-                    [v]
-
-                    (and (vector? v) (keyword? (first v)))
-                    [v]
-
-                    (sequential? v)
-                    (seq v)
-
-                    :else
-                    [[:code {:lang "edn"} (pr-str v)]])
-
-                  coerced
-                  (mapv (fn [x]
-                          (cond
-                            (string? x)                              x
-                            (and (vector? x) (keyword? (first x)))   x
-                            (nil? x)                                  nil
-                            :else                                     [:code {:lang "edn"} (pr-str x)]))
-                    raw-children)]
               (into [:ir {}] (canon-blocks-strict (filter some? coerced))))))))))
 
-(defn ir?
-  "True when x is a canonical [:ir ...] AST."
-  [x]
-  (and (vector? x) (= :ir (first x))))
+(defn ir? "True when x is a canonical [:ir ...] AST." [x] (and (vector? x) (= :ir (first x))))
 
 ;; =============================================================================
 ;; markdown->ir — commonmark-java markdown parser → canonical IR
@@ -550,18 +571,20 @@
 
 (def ^:private ^Parser md-parser
   (-> (Parser/builder)
-    (.extensions [(TablesExtension/create)
-                  (StrikethroughExtension/create)])
-    (.build)))
+      (.extensions [(TablesExtension/create) (StrikethroughExtension/create)])
+      (.build)))
 
 (defn- cm-children-seq
   "Iterate `Node.getNext` linked list as a Clojure seq."
   [^Node node]
   (when node
-    (loop [^Node n (.getFirstChild node) acc (transient [])]
-      (if (nil? n)
-        (persistent! acc)
-        (recur (.getNext n) (conj! acc n))))))
+    (loop [^Node n
+           (.getFirstChild node)
+
+           acc
+           (transient [])]
+
+      (if (nil? n) (persistent! acc) (recur (.getNext n) (conj! acc n))))))
 
 ;; Mutual: block parser walks block-children which may contain inlines;
 ;; inline parser walks inline-children which may contain nested inlines.
@@ -578,97 +601,75 @@
    :hard})`. Default `:space` keeps every existing caller unchanged."
   :space)
 
-(defn- cm->inline-node [^Node n]
-  (cond
-    (instance? Text n)             [:span {} (.getLiteral ^Text n)]
-    (instance? Code n)             [:c {} (.getLiteral ^Code n)]
-    (instance? StrongEmphasis n)   (into [:strong {}] (cm->inlines n))
-    (instance? Emphasis n)         (into [:em {}] (cm->inlines n))
-    (instance? Strikethrough n)    (into [:em {}] (cm->inlines n))   ; closest IR analogue
-    (instance? Link n)             (into [:a {:href (.getDestination ^Link n)}] (cm->inlines n))
-    (instance? Image n)            [:img {:src (.getDestination ^Image n)
-                                          :alt (.getTitle ^Image n)}]
-    (instance? SoftLineBreak n)    (if (= :hard *soft-break*)
-                                     [:br {}]                        ; user input → preserve newline
-                                     [:span {} " "])                  ; prose → single space
-    (instance? HardLineBreak n)    [:br {}]
-    (instance? HtmlInline n)       [:span {} (.getLiteral ^HtmlInline n)]
-    :else                          [:span {} ""]))
+(defn- cm->inline-node
+  [^Node n]
+  (cond (instance? Text n) [:span {} (.getLiteral ^Text n)]
+        (instance? Code n) [:c {} (.getLiteral ^Code n)]
+        (instance? StrongEmphasis n) (into [:strong {}] (cm->inlines n))
+        (instance? Emphasis n) (into [:em {}] (cm->inlines n))
+        (instance? Strikethrough n) (into [:em {}] (cm->inlines n)) ; closest IR analogue
+        (instance? Link n) (into [:a {:href (.getDestination ^Link n)}] (cm->inlines n))
+        (instance? Image n) [:img {:src (.getDestination ^Image n) :alt (.getTitle ^Image n)}]
+        (instance? SoftLineBreak n) (if (= :hard *soft-break*)
+                                      [:br {}]                      ; user input → preserve newline
+                                      [:span {} " "]) ; prose → single space
+        (instance? HardLineBreak n) [:br {}]
+        (instance? HtmlInline n) [:span {} (.getLiteral ^HtmlInline n)]
+        :else [:span {} ""]))
 
-(defn- cm->inlines [^Node parent]
-  (mapv cm->inline-node (cm-children-seq parent)))
+(defn- cm->inlines [^Node parent] (mapv cm->inline-node (cm-children-seq parent)))
 
-(defn- cm-list-item->li [^Node li]
+(defn- cm-list-item->li
+  [^Node li]
   (let [block-children (cm-children-seq li)]
     (into [:li {}]
-      (mapcat (fn [^Node b]
-                (cond
-                  (instance? Paragraph b)   [(into [:p {}] (cm->inlines b))]
-                  :else                     (cm->blocks b)))
-        block-children))))
+          (mapcat (fn [^Node b]
+                    (cond (instance? Paragraph b) [(into [:p {}] (cm->inlines b))]
+                          :else (cm->blocks b)))
+                  block-children))))
 
-(defn- cm->table-cell [^Node cell]
-  (into (if (and (instance? TableCell cell) (.isHeader ^TableCell cell))
-          [:th {}] [:td {}])
-    (cm->inlines cell)))
+(defn- cm->table-cell
+  [^Node cell]
+  (into (if (and (instance? TableCell cell) (.isHeader ^TableCell cell)) [:th {}] [:td {}])
+        (cm->inlines cell)))
 
-(defn- cm->table-row [^Node row]
-  (into [:tr {}] (mapv cm->table-cell (cm-children-seq row))))
+(defn- cm->table-row [^Node row] (into [:tr {}] (mapv cm->table-cell (cm-children-seq row))))
 
-(defn- cm->table [^Node tbl]
+(defn- cm->table
+  [^Node tbl]
   (into [:table {}]
-    (mapcat (fn [^Node section] (mapv cm->table-row (cm-children-seq section)))
-      (cm-children-seq tbl))))
+        (mapcat (fn [^Node section]
+                  (mapv cm->table-row (cm-children-seq section)))
+                (cm-children-seq tbl))))
 
 (defn- cm->blocks
   "Convert one commonmark Node into a vector of canonical IR block(s)."
   [^Node n]
-  (cond
-    (instance? Heading n)
-    [(into [:h {:level (.getLevel ^Heading n)}] (cm->inlines n))]
-
-    (instance? Paragraph n)
-    [(into [:p {}] (cm->inlines n))]
-
-    (instance? FencedCodeBlock n)
-    [[:code {:lang (let [info (.getInfo ^FencedCodeBlock n)] (when (seq info) info))}
-      (.getLiteral ^FencedCodeBlock n)]]
-
-    (instance? IndentedCodeBlock n)
-    [[:code {} (.getLiteral ^IndentedCodeBlock n)]]
-
-    (instance? BulletList n)
-    [(into [:ul {}] (mapv cm-list-item->li (cm-children-seq n)))]
-
-    (instance? OrderedList n)
-    [(into [:ol {:start (.getMarkerStartNumber ^OrderedList n)}]
-       (mapv cm-list-item->li (cm-children-seq n)))]
-
-    (instance? BlockQuote n)
-    [(into [:quote {}] (mapcat cm->blocks (cm-children-seq n)))]
-
-    (instance? ThematicBreak n)
-    [[:hr {}]]
-
-    (instance? TableBlock n)
-    [(cm->table n)]
-
-    (instance? HtmlBlock n)
-    ;; Raw HTML is not answer IR structure. Keep it visible as text;
-    ;; notably, <details>/<summary> does not become a collapsible widget.
-    (let [literal (.getLiteral ^HtmlBlock n)]
-      [[:p {} [:span {} literal]]])
-
-    :else
-    (mapcat cm->blocks (cm-children-seq n))))
+  (cond (instance? Heading n) [(into [:h {:level (.getLevel ^Heading n)}] (cm->inlines n))]
+        (instance? Paragraph n) [(into [:p {}] (cm->inlines n))]
+        (instance? FencedCodeBlock n) [[:code
+                                        {:lang (let [info (.getInfo ^FencedCodeBlock n)]
+                                                 (when (seq info) info))}
+                                        (.getLiteral ^FencedCodeBlock n)]]
+        (instance? IndentedCodeBlock n) [[:code {} (.getLiteral ^IndentedCodeBlock n)]]
+        (instance? BulletList n) [(into [:ul {}] (mapv cm-list-item->li (cm-children-seq n)))]
+        (instance? OrderedList n) [(into [:ol {:start (.getMarkerStartNumber ^OrderedList n)}]
+                                         (mapv cm-list-item->li (cm-children-seq n)))]
+        (instance? BlockQuote n) [(into [:quote {}] (mapcat cm->blocks (cm-children-seq n)))]
+        (instance? ThematicBreak n) [[:hr {}]]
+        (instance? TableBlock n) [(cm->table n)]
+        (instance? HtmlBlock n)
+        ;; Raw HTML is not answer IR structure. Keep it visible as text;
+        ;; notably, <details>/<summary> does not become a collapsible widget.
+        (let [literal (.getLiteral ^HtmlBlock n)]
+          [[:p {} [:span {} literal]]])
+        :else (mapcat cm->blocks (cm-children-seq n))))
 
 (defn- table-delimiter-line?
   "True for a GFM table delimiter row, e.g. `|---|---|` / `:--|--:`."
   [line]
   (let [t (str/trim line)]
-    (and (re-matches #"[-|: ]+" t)
-      (str/includes? t "-")
-      (str/includes? t "|"))))
+    (and (re-matches #"[-|: ]+" t) (str/includes? t "-") (str/includes? t "|"))))
 
 (defn- ensure-table-blank-lines
   "GFM only recognizes a pipe-table when a blank line precedes it. Models
@@ -679,20 +680,20 @@
   [text]
   (let [lines (str/split-lines text)]
     (->> (range (count lines))
-      (reduce
-        (fn [out i]
-          (let [line (nth lines i)
-                hdr  (peek out)
-                pre  (when (> i 1) (nth lines (- i 2)))]
-            (if (and (table-delimiter-line? line)
-                  (string? hdr)
-                  (str/includes? hdr "|")
-                  (string? pre)
-                  (not (str/blank? pre)))
-              (conj (pop out) "" hdr line)
-              (conj out line))))
-        [])
-      (str/join "\n"))))
+         (reduce (fn [out i]
+                   (let [line (nth lines i)
+                         hdr (peek out)
+                         pre (when (> i 1) (nth lines (- i 2)))]
+
+                     (if (and (table-delimiter-line? line)
+                              (string? hdr)
+                              (str/includes? hdr "|")
+                              (string? pre)
+                              (not (str/blank? pre)))
+                       (conj (pop out) "" hdr line)
+                       (conj out line))))
+                 [])
+         (str/join "\n"))))
 
 (defn diff-line-kind
   "Classify ONE unified-diff line for channel-neutral colouring: `:meta` (file
@@ -702,12 +703,11 @@
    IDENTICALLY in both, from one source of truth (no per-channel copy to drift)."
   [^String line]
   (let [s (str line)]
-    (cond
-      (or (.startsWith s "+++") (.startsWith s "---")) :meta
-      (.startsWith s "@@")                             :hunk
-      (and (pos? (count s)) (= \+ (.charAt s 0)))      :add
-      (and (pos? (count s)) (= \- (.charAt s 0)))      :del
-      :else                                            :ctx)))
+    (cond (or (.startsWith s "+++") (.startsWith s "---")) :meta
+          (.startsWith s "@@") :hunk
+          (and (pos? (count s)) (= \+ (.charAt s 0))) :add
+          (and (pos? (count s)) (= \- (.charAt s 0))) :del
+          :else :ctx)))
 
 (defn markdown->ir
   "Parse a Markdown string into canonical answer-IR.
@@ -733,23 +733,18 @@
    exact line structure the user typed. Default keeps prose semantics."
   ([text] (markdown->ir text nil))
   ([text {:keys [soft-break]}]
-   (cond
-     (canonical? text)
-     text   ; identity-preserving fast path
+   (cond (canonical? text) text ; identity-preserving fast path
+         (or (nil? text) (= "" text)) [:ir {}]
+         (string? text) (binding [*soft-break* (or soft-break *soft-break*)]
+                          (let [prepared
+                                (if (= :hard *soft-break*) text (ensure-table-blank-lines text))
+                                doc (.parse md-parser ^String prepared)
+                                blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
 
-     (or (nil? text) (= "" text))
-     [:ir {}]
-
-     (string? text)
-     (binding [*soft-break* (or soft-break *soft-break*)]
-       (let [prepared (if (= :hard *soft-break*) text (ensure-table-blank-lines text))
-             doc    (.parse md-parser ^String prepared)
-             blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
-         (->ast (into [:ir {}] blocks))))
-
-     :else
-     ;; non-string, non-canonical — best-effort coerce via ->ast
-     (->ast text))))
+                            (->ast (into [:ir {}] blocks))))
+         :else
+         ;; non-string, non-canonical — best-effort coerce via ->ast
+         (->ast text))))
 
 (def reasoning-preview-line-limit
   "Canonical reasoning PREVIEW height shared by every channel. Up to this many
@@ -780,10 +775,10 @@
    channel so the TUI bubble and the web thinking card normalize identically."
   [text]
   (-> (str text)
-    (str/replace #"[ \t\r\f\013]+\r?\n" "\n")
-    (str/replace #"(?:\r?\n){2,}" "\n")
-    (str/replace #"([.!?\u2026][\"')\]]?)\r?\n(?=\S)" "$1\n\n")
-    str/trim))
+      (str/replace #"[ \t\r\f\013]+\r?\n" "\n")
+      (str/replace #"(?:\r?\n){2,}" "\n")
+      (str/replace #"([.!?\u2026][\"')\]]?)\r?\n(?=\S)" "$1\n\n")
+      str/trim))
 
 (defn reasoning->ir
   "Reasoning / thinking text -> canonical answer-IR. The SINGLE shared entry
@@ -801,8 +796,8 @@
 ;; Walker helpers (canonical inputs)
 ;; =============================================================================
 
-(defn- node-tag [node]      (when (vector? node) (first node)))
-(defn- node-attrs [node]    (if (has-attrs? node) (second node) {}))
+(defn- node-tag [node] (when (vector? node) (first node)))
+(defn- node-attrs [node] (if (has-attrs? node) (second node) {}))
 (defn- node-children [node] (if (has-attrs? node) (drop 2 node) (rest node)))
 
 (defn- raw-body
@@ -811,31 +806,33 @@
   ^String [node]
   (or (some #(when (string? %) %) (node-children node)) ""))
 
-(defn- escape-html [^String s]
+(defn- escape-html
+  [^String s]
   (-> s
-    (str/replace "&" "&amp;")
-    (str/replace "<" "&lt;")
-    (str/replace ">" "&gt;")
-    (str/replace "\"" "&quot;")))
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")))
 
-(defn- escape-html-attr [^String s]
+(defn- escape-html-attr
+  [^String s]
   (-> s
-    (str/replace "&" "&amp;")
-    (str/replace "\"" "&quot;")
-    (str/replace "<" "&lt;")
-    (str/replace ">" "&gt;")))
+      (str/replace "&" "&amp;")
+      (str/replace "\"" "&quot;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
 
 (defn- escape-md
   "Escape markdown-significant characters in plain text segments. Does
    not run inside `:code`/`:c` (those preserve verbatim)."
   [^String s]
   (-> s
-    (str/replace "\\" "\\\\")
-    (str/replace "*" "\\*")
-    (str/replace "_" "\\_")
-    (str/replace "`" "\\`")
-    (str/replace "[" "\\[")
-    (str/replace "]" "\\]")))
+      (str/replace "\\" "\\\\")
+      (str/replace "*" "\\*")
+      (str/replace "_" "\\_")
+      (str/replace "`" "\\`")
+      (str/replace "[" "\\[")
+      (str/replace "]" "\\]")))
 
 ;; =============================================================================
 ;; HTML walker — Telegram-flavored
@@ -850,98 +847,193 @@
 ;; html one, whose <b>/<code> tags would be escaped into literal markup.
 (declare ^:private render-plain-children)
 
-(defn- render-html-children [nodes opts]
-  (apply str (map #(render-html % opts) nodes)))
+(defn- render-html-children [nodes opts] (apply str (map #(render-html % opts) nodes)))
 
-(defn- render-html-list [tag children {:keys [start] :as opts}]
+(defn- render-html-list
+  [tag children {:keys [start] :as opts}]
   (let [n (atom (or start 1))]
     (apply str
       (map (fn [li]
              (let [marker (if (= tag :ul)
                             "• "
-                            (let [m (str @n ". ")] (swap! n inc) m))
+                            (let [m (str @n ". ")]
+                              (swap! n inc)
+                              m))
                    ;; Loose CommonMark lists wrap each item's content in a
                    ;; <p>, whose trailing "\n\n" would stack on the list's
                    ;; own per-item "\n" and triple-space the bullets. Strip
                    ;; the item's trailing newlines (same as render-plain-list).
-                   inner  (str/replace (render-html-children (node-children li) opts)
-                            #"\n+$" "")]
-               (str marker inner "\n")))
-        children))))
+                   inner (str/replace (render-html-children (node-children li) opts) #"\n+$" "")]
 
-(defn- render-html-table [node opts]
-  (let [rows (node-children node)
+               (str marker inner "\n")))
+           children))))
+
+(defn- render-html-table
+  [node opts]
+  (let [rows
+        (node-children node)
+
         ;; Plain text, not html: the grid is wrapped in <pre> and the body
         ;; is escape-html'd, so any <b>/<code> from html cells would surface
         ;; as literal &lt;b&gt; markup (and throw off column widths).
-        cell-text (fn [cell] (-> cell node-children (render-plain-children opts) str/trim))
-        all-rows  (mapv (fn [tr] (mapv cell-text (node-children tr))) rows)
-        widths    (when (seq all-rows)
-                    (let [cols (apply max 0 (map count all-rows))]
-                      (vec (for [i (range cols)]
-                             (apply max 1 (map #(count (or (nth % i nil) "")) all-rows))))))
-        pad       (fn [s w] (str s (apply str (repeat (max 0 (- w (count s))) " "))))
-        fmt-row   (fn [row] (str/join "  " (map-indexed (fn [i c] (pad (or c "") (nth widths i 0))) row)))
-        sep       (when widths
-                    (str/join "  " (map #(apply str (repeat % "─")) widths)))
-        first-row-is-header? (and (seq rows) (= :th (some-> rows first node-children first node-tag)))
-        body      (if first-row-is-header?
-                    (str (fmt-row (first all-rows)) "\n" sep "\n"
-                      (str/join "\n" (map fmt-row (rest all-rows))))
-                    (str/join "\n" (map fmt-row all-rows)))]
+        cell-text
+        (fn [cell]
+          (-> cell
+              node-children
+              (render-plain-children opts)
+              str/trim))
+
+        all-rows
+        (mapv (fn [tr]
+                (mapv cell-text (node-children tr)))
+              rows)
+
+        widths
+        (when (seq all-rows)
+          (let [cols (apply max 0 (map count all-rows))]
+            (vec (for [i (range cols)]
+                   (apply max 1 (map #(count (or (nth % i nil) "")) all-rows))))))
+
+        pad
+        (fn [s w]
+          (str s (apply str (repeat (max 0 (- w (count s))) " "))))
+
+        fmt-row
+        (fn [row]
+          (str/join "  "
+                    (map-indexed (fn [i c]
+                                   (pad (or c "") (nth widths i 0)))
+                                 row)))
+
+        sep
+        (when widths (str/join "  " (map #(apply str (repeat % "─")) widths)))
+
+        first-row-is-header?
+        (and (seq rows)
+             (= :th
+                (some-> rows
+                        first
+                        node-children
+                        first
+                        node-tag)))
+
+        body
+        (if first-row-is-header?
+          (str (fmt-row (first all-rows))
+               "\n" sep
+               "\n" (str/join "\n" (map fmt-row (rest all-rows))))
+          (str/join "\n" (map fmt-row all-rows)))]
+
     (str "<pre>" (escape-html body) "</pre>")))
 
-(defn- render-html [node opts]
-  (cond
-    (string? node) (escape-html node)        ; should not occur in canonical tree
-    (not (vector? node)) (escape-html (str node))
-    :else
-    (let [tag      (node-tag node)
-          attrs    (node-attrs node)
-          children (node-children node)]
-      (case tag
-        :ir       (render-html-children children opts)
+(defn- render-html
+  [node opts]
+  (cond (string? node) (escape-html node) ; should not occur in canonical tree
+        (not (vector? node)) (escape-html (str node))
+        :else
+        (let [tag
+              (node-tag node)
 
-        :p        (str (render-html-children children opts) "\n\n")
-        :h        (str "<b>" (render-html-children children opts) "</b>\n\n")
+              attrs
+              (node-attrs node)
 
-        :code     (let [{:keys [lang]} attrs
-                        src (raw-body node)]
-                    (if (seq lang)
-                      (str "<pre><code class=\"language-" (escape-html-attr lang) "\">"
-                        (escape-html src) "</code></pre>\n\n")
-                      (str "<pre>" (escape-html src) "</pre>\n\n")))
+              children
+              (node-children node)]
 
-        :ul       (str (render-html-list :ul children opts) "\n")
-        :ol       (str (render-html-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
-        :li       (render-html-children children opts)
+          (case tag
+            :ir
+            (render-html-children children opts)
 
-        :quote    (let [body (render-html-children children opts)]
-                    (if (= :thinking (:context opts))
-                      (str "<blockquote expandable>" body "</blockquote>\n\n")
-                      (str "<blockquote>" body "</blockquote>\n\n")))
+            :p
+            (str (render-html-children children opts) "\n\n")
 
-        :table    (str (render-html-table node opts) "\n\n")
-        :tr       (render-html-children children opts)
-        :th       (render-html-children children opts)
-        :td       (render-html-children children opts)
+            :h
+            (str "<b>" (render-html-children children opts) "</b>\n\n")
 
-        ;; --- inline ---
-        :span     (escape-html (raw-body node))
-        :br       "\n"
-        :strong   (str "<b>" (render-html-children children opts) "</b>")
-        :em       (str "<i>" (render-html-children children opts) "</i>")
-        :c        (str "<code>" (escape-html (raw-body node)) "</code>")
-        :a        (str "<a href=\"" (escape-html-attr (or (:href attrs) "")) "\">"
-                    (render-html-children children opts) "</a>")
-        :img      (str "<i>🖼 " (escape-html (or (:alt attrs) "image")) "</i>")
-        :kbd      (str "<code>" (escape-html (raw-body node)) "</code>")
-        :mark     (str "<b>" (render-html-children children opts) "</b>")
-        :sup      (render-html-children children opts)   ; Telegram has no <sup>
-        :sub      (render-html-children children opts)   ; Telegram has no <sub>
+            :code
+            (let [{:keys [lang]}
+                  attrs
 
-        ;; unknown tag — pass through children
-        (render-html-children children opts)))))
+                  src
+                  (raw-body node)]
+
+              (if (seq lang)
+                (str "<pre><code class=\"language-"
+                     (escape-html-attr lang)
+                     "\">"
+                     (escape-html src)
+                     "</code></pre>\n\n")
+                (str "<pre>" (escape-html src) "</pre>\n\n")))
+
+            :ul
+            (str (render-html-list :ul children opts) "\n")
+
+            :ol
+            (str (render-html-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
+
+            :li
+            (render-html-children children opts)
+
+            :quote
+            (let [body (render-html-children children opts)]
+              (if (= :thinking (:context opts))
+                (str "<blockquote expandable>" body "</blockquote>\n\n")
+                (str "<blockquote>" body "</blockquote>\n\n")))
+
+            :table
+            (str (render-html-table node opts) "\n\n")
+
+            :tr
+            (render-html-children children opts)
+
+            :th
+            (render-html-children children opts)
+
+            :td
+            (render-html-children children opts)
+
+            ;; --- inline ---
+            :span
+            (escape-html (raw-body node))
+
+            :br
+            "\n"
+
+            :strong
+            (str "<b>" (render-html-children children opts) "</b>")
+
+            :em
+            (str "<i>" (render-html-children children opts) "</i>")
+
+            :c
+            (str "<code>" (escape-html (raw-body node)) "</code>")
+
+            :a
+            (str "<a href=\""
+                 (escape-html-attr (or (:href attrs) ""))
+                 "\">"
+                 (render-html-children children opts)
+                 "</a>")
+
+            :img
+            (str "<i>🖼 " (escape-html (or (:alt attrs) "image")) "</i>")
+
+            :kbd
+            (str "<code>" (escape-html (raw-body node)) "</code>")
+
+            :mark
+            (str "<b>" (render-html-children children opts) "</b>")
+
+            :sup
+            (render-html-children children opts)
+
+            ; Telegram has no <sup>
+            :sub
+            (render-html-children children opts)
+
+            ; Telegram has no <sub>
+            ;; unknown tag — pass through children
+            (render-html-children children opts)))))
 
 ;; =============================================================================
 ;; Markdown walker
@@ -950,85 +1042,180 @@
 ;; render-md <-> render-md-children mutual; same pattern as html.
 (declare ^:private render-md)
 
-(defn- render-md-children [nodes opts]
-  (apply str (map #(render-md % opts) nodes)))
+(defn- render-md-children [nodes opts] (apply str (map #(render-md % opts) nodes)))
 
-(defn- render-md-list [tag children {:keys [start] :as opts}]
-  (let [n (atom (or start 1))
-        ordered? (= tag :ol)]
+(defn- render-md-list
+  [tag children {:keys [start] :as opts}]
+  (let [n
+        (atom (or start 1))
+
+        ordered?
+        (= tag :ol)]
+
     (apply str
       (map (fn [li]
-             (let [marker (if ordered?
-                            (let [m (str @n ". ")] (swap! n inc) m)
-                            "- ")
-                   inner  (render-md-children (node-children li) opts)
-                   inner  (str/replace inner #"\n+$" "")]
-               (str marker inner "\n")))
-        children))))
+             (let [marker
+                   (if ordered?
+                     (let [m (str @n ". ")]
+                       (swap! n inc)
+                       m)
+                     "- ")
 
-(defn- render-md-table [node opts]
-  (let [rows (node-children node)
-        cell-md (fn [cell] (-> cell node-children (render-md-children opts)
-                             (str/replace "|" "\\|") str/trim))
-        all-rows (mapv (fn [tr] (mapv cell-md (node-children tr))) rows)]
+                   inner
+                   (render-md-children (node-children li) opts)
+
+                   inner
+                   (str/replace inner #"\n+$" "")]
+
+               (str marker inner "\n")))
+           children))))
+
+(defn- render-md-table
+  [node opts]
+  (let [rows
+        (node-children node)
+
+        cell-md
+        (fn [cell]
+          (-> cell
+              node-children
+              (render-md-children opts)
+              (str/replace "|" "\\|")
+              str/trim))
+
+        all-rows
+        (mapv (fn [tr]
+                (mapv cell-md (node-children tr)))
+              rows)]
+
     (if (empty? all-rows)
       ""
-      (let [first-row-is-header? (= :th (some-> rows first node-children first node-tag))
-            header (if first-row-is-header? (first all-rows) (mapv (constantly "") (first all-rows)))
-            body   (if first-row-is-header? (rest all-rows) all-rows)
-            cols   (count header)
-            sep    (str/join " | " (repeat cols "---"))
-            row-md (fn [row] (str "| " (str/join " | " row) " |"))]
-        (str (row-md header) "\n| " sep " |\n"
-          (str/join "\n" (map row-md body)) "\n\n")))))
+      (let [first-row-is-header?
+            (= :th
+               (some-> rows
+                       first
+                       node-children
+                       first
+                       node-tag))
 
-(defn- render-md [node opts]
-  (cond
-    (string? node) (escape-md node)
-    (not (vector? node)) (escape-md (str node))
-    :else
-    (let [tag      (node-tag node)
-          attrs    (node-attrs node)
-          children (node-children node)]
-      (case tag
-        :ir       (render-md-children children opts)
+            header
+            (if first-row-is-header? (first all-rows) (mapv (constantly "") (first all-rows)))
 
-        :p        (str (render-md-children children opts) "\n\n")
-        :h        (let [level (max 1 (min 6 (or (:level attrs) 1)))]
-                    (str (apply str (repeat level "#")) " "
-                      (render-md-children children opts) "\n\n"))
+            body
+            (if first-row-is-header? (rest all-rows) all-rows)
 
-        :code     (let [{:keys [lang]} attrs
-                        src (raw-body node)]
-                    (str "```" (or lang "") "\n" src "\n```\n\n"))
+            cols
+            (count header)
 
-        :ul       (str (render-md-list :ul children opts) "\n")
-        :ol       (str (render-md-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
-        :li       (render-md-children children opts)
+            sep
+            (str/join " | " (repeat cols "---"))
 
-        :quote    (let [body (str/trim (render-md-children children opts))
-                        prefixed (str/join "\n" (map #(str "> " %) (str/split-lines body)))]
-                    (str prefixed "\n\n"))
+            row-md
+            (fn [row]
+              (str "| " (str/join " | " row) " |"))]
 
-        :table    (render-md-table node opts)
-        :tr       (render-md-children children opts)
-        :th       (render-md-children children opts)
-        :td       (render-md-children children opts)
+        (str (row-md header) "\n| " sep " |\n" (str/join "\n" (map row-md body)) "\n\n")))))
 
-        ;; --- inline ---
-        :span     (escape-md (raw-body node))
-        :br       "  \n"      ; GFM hard-break = two trailing spaces + newline
-        :strong   (str "**" (render-md-children children opts) "**")
-        :em       (str "*"  (render-md-children children opts) "*")
-        :c        (str "`"  (raw-body node) "`")
-        :a        (str "[" (render-md-children children opts) "](" (or (:href attrs) "") ")")
-        :img      (str "![" (or (:alt attrs) "") "](" (or (:src attrs) "") ")")
-        :kbd      (str "<kbd>" (escape-md (raw-body node)) "</kbd>")
-        :mark     (str "==" (render-md-children children opts) "==")
-        :sup      (str "<sup>" (render-md-children children opts) "</sup>")
-        :sub      (str "<sub>" (render-md-children children opts) "</sub>")
+(defn- render-md
+  [node opts]
+  (cond (string? node) (escape-md node)
+        (not (vector? node)) (escape-md (str node))
+        :else
+        (let [tag
+              (node-tag node)
 
-        (render-md-children children opts)))))
+              attrs
+              (node-attrs node)
+
+              children
+              (node-children node)]
+
+          (case tag
+            :ir
+            (render-md-children children opts)
+
+            :p
+            (str (render-md-children children opts) "\n\n")
+
+            :h
+            (let [level (max 1 (min 6 (or (:level attrs) 1)))]
+              (str (apply str (repeat level "#")) " " (render-md-children children opts) "\n\n"))
+
+            :code
+            (let [{:keys [lang]}
+                  attrs
+
+                  src
+                  (raw-body node)]
+
+              (str "```" (or lang "") "\n" src "\n```\n\n"))
+
+            :ul
+            (str (render-md-list :ul children opts) "\n")
+
+            :ol
+            (str (render-md-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
+
+            :li
+            (render-md-children children opts)
+
+            :quote
+            (let [body
+                  (str/trim (render-md-children children opts))
+
+                  prefixed
+                  (str/join "\n" (map #(str "> " %) (str/split-lines body)))]
+
+              (str prefixed "\n\n"))
+
+            :table
+            (render-md-table node opts)
+
+            :tr
+            (render-md-children children opts)
+
+            :th
+            (render-md-children children opts)
+
+            :td
+            (render-md-children children opts)
+
+            ;; --- inline ---
+            :span
+            (escape-md (raw-body node))
+
+            :br
+            "  \n"
+
+            ; GFM hard-break = two trailing spaces + newline
+            :strong
+            (str "**" (render-md-children children opts) "**")
+
+            :em
+            (str "*" (render-md-children children opts) "*")
+
+            :c
+            (str "`" (raw-body node) "`")
+
+            :a
+            (str "[" (render-md-children children opts) "](" (or (:href attrs) "") ")")
+
+            :img
+            (str "![" (or (:alt attrs) "") "](" (or (:src attrs) "") ")")
+
+            :kbd
+            (str "<kbd>" (escape-md (raw-body node)) "</kbd>")
+
+            :mark
+            (str "==" (render-md-children children opts) "==")
+
+            :sup
+            (str "<sup>" (render-md-children children opts) "</sup>")
+
+            :sub
+            (str "<sub>" (render-md-children children opts) "</sub>")
+
+            (render-md-children children opts)))))
 
 ;; =============================================================================
 ;; Plain walker
@@ -1037,79 +1224,165 @@
 ;; render-plain <-> render-plain-children mutual; same pattern as html.
 (declare ^:private render-plain)
 
-(defn- render-plain-children [nodes opts]
-  (apply str (map #(render-plain % opts) nodes)))
+(defn- render-plain-children [nodes opts] (apply str (map #(render-plain % opts) nodes)))
 
-(defn- render-plain-list [tag children {:keys [start] :as opts}]
-  (let [n (atom (or start 1))
-        ordered? (= tag :ol)]
+(defn- render-plain-list
+  [tag children {:keys [start] :as opts}]
+  (let [n
+        (atom (or start 1))
+
+        ordered?
+        (= tag :ol)]
+
     (apply str
       (map (fn [li]
-             (let [marker (if ordered?
-                            (let [m (str @n ". ")] (swap! n inc) m)
-                            "• ")
-                   inner  (str/replace (render-plain-children (node-children li) opts)
-                            #"\n+$" "")]
-               (str marker inner "\n")))
-        children))))
+             (let [marker
+                   (if ordered?
+                     (let [m (str @n ". ")]
+                       (swap! n inc)
+                       m)
+                     "• ")
 
-(defn- render-plain-table [node opts]
-  (let [rows (node-children node)
-        cell-text (fn [cell] (-> cell node-children (render-plain-children opts) str/trim))
-        all-rows  (mapv (fn [tr] (mapv cell-text (node-children tr))) rows)
-        widths    (when (seq all-rows)
-                    (let [cols (apply max 0 (map count all-rows))]
-                      (vec (for [i (range cols)]
-                             (apply max 1 (map #(count (or (nth % i nil) "")) all-rows))))))
-        pad       (fn [s w] (str s (apply str (repeat (max 0 (- w (count s))) " "))))
-        fmt-row   (fn [row] (str/join "  " (map-indexed (fn [i c] (pad (or c "") (nth widths i 0))) row)))]
+                   inner
+                   (str/replace (render-plain-children (node-children li) opts) #"\n+$" "")]
+
+               (str marker inner "\n")))
+           children))))
+
+(defn- render-plain-table
+  [node opts]
+  (let [rows
+        (node-children node)
+
+        cell-text
+        (fn [cell]
+          (-> cell
+              node-children
+              (render-plain-children opts)
+              str/trim))
+
+        all-rows
+        (mapv (fn [tr]
+                (mapv cell-text (node-children tr)))
+              rows)
+
+        widths
+        (when (seq all-rows)
+          (let [cols (apply max 0 (map count all-rows))]
+            (vec (for [i (range cols)]
+                   (apply max 1 (map #(count (or (nth % i nil) "")) all-rows))))))
+
+        pad
+        (fn [s w]
+          (str s (apply str (repeat (max 0 (- w (count s))) " "))))
+
+        fmt-row
+        (fn [row]
+          (str/join "  "
+                    (map-indexed (fn [i c]
+                                   (pad (or c "") (nth widths i 0)))
+                                 row)))]
+
     (str (str/join "\n" (map fmt-row all-rows)) "\n\n")))
 
-(defn- render-plain [node opts]
-  (cond
-    (string? node) node
-    (not (vector? node)) (str node)
-    :else
-    (let [tag      (node-tag node)
-          attrs    (node-attrs node)
-          children (node-children node)]
-      (case tag
-        :ir       (render-plain-children children opts)
+(defn- render-plain
+  [node opts]
+  (cond (string? node) node
+        (not (vector? node)) (str node)
+        :else
+        (let [tag
+              (node-tag node)
 
-        :p        (str (render-plain-children children opts) "\n\n")
-        :h        (str (render-plain-children children opts) "\n\n")
+              attrs
+              (node-attrs node)
 
-        :code     (str (raw-body node) "\n\n")
+              children
+              (node-children node)]
 
-        :ul       (str (render-plain-list :ul children opts) "\n")
-        :ol       (str (render-plain-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
-        :li       (render-plain-children children opts)
+          (case tag
+            :ir
+            (render-plain-children children opts)
 
-        :quote    (let [body (str/trim (render-plain-children children opts))
-                        prefixed (str/join "\n" (map #(str "│ " %) (str/split-lines body)))]
-                    (str prefixed "\n\n"))
+            :p
+            (str (render-plain-children children opts) "\n\n")
 
-        :table    (render-plain-table node opts)
-        :tr       (render-plain-children children opts)
-        :th       (render-plain-children children opts)
-        :td       (render-plain-children children opts)
+            :h
+            (str (render-plain-children children opts) "\n\n")
 
-        ;; --- inline ---
-        :span     (raw-body node)
-        :br       "\n"
-        :strong   (render-plain-children children opts)
-        :em       (render-plain-children children opts)
-        :c        (raw-body node)
-        :a        (let [text (render-plain-children children opts)
-                        href (or (:href attrs) "")]
-                    (if (= text href) text (str text " (" href ")")))
-        :img      (str "🖼 " (or (:alt attrs) (:src attrs) "image"))
-        :kbd      (raw-body node)
-        :mark     (render-plain-children children opts)
-        :sup      (render-plain-children children opts)
-        :sub      (render-plain-children children opts)
+            :code
+            (str (raw-body node) "\n\n")
 
-        (render-plain-children children opts)))))
+            :ul
+            (str (render-plain-list :ul children opts) "\n")
+
+            :ol
+            (str (render-plain-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
+
+            :li
+            (render-plain-children children opts)
+
+            :quote
+            (let [body
+                  (str/trim (render-plain-children children opts))
+
+                  prefixed
+                  (str/join "\n" (map #(str "│ " %) (str/split-lines body)))]
+
+              (str prefixed "\n\n"))
+
+            :table
+            (render-plain-table node opts)
+
+            :tr
+            (render-plain-children children opts)
+
+            :th
+            (render-plain-children children opts)
+
+            :td
+            (render-plain-children children opts)
+
+            ;; --- inline ---
+            :span
+            (raw-body node)
+
+            :br
+            "\n"
+
+            :strong
+            (render-plain-children children opts)
+
+            :em
+            (render-plain-children children opts)
+
+            :c
+            (raw-body node)
+
+            :a
+            (let [text
+                  (render-plain-children children opts)
+
+                  href
+                  (or (:href attrs) "")]
+
+              (if (= text href) text (str text " (" href ")")))
+
+            :img
+            (str "🖼 " (or (:alt attrs) (:src attrs) "image"))
+
+            :kbd
+            (raw-body node)
+
+            :mark
+            (render-plain-children children opts)
+
+            :sup
+            (render-plain-children children opts)
+
+            :sub
+            (render-plain-children children opts)
+
+            (render-plain-children children opts)))))
 
 ;; =============================================================================
 ;; Public render entry
@@ -1125,20 +1398,14 @@
    Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
    Anything outside the two canonical shapes is an upstream bug."
   [answer]
-  (cond
-    (nil? answer)
-    [:ir {}]
-
-    (and (map? answer) (string? (:answer answer)))
-    (markdown->ir (:answer answer))
-
-    (and (map? answer) (string? (:answer/text answer)))
-    (markdown->ir (:answer/text answer))
-
-    :else
-    (throw (ex-info "answer->ir requires {:answer markdown} or a needs-input map"
-             {:type :vis/invalid-answer
-              :got-type (some-> answer class .getName)}))))
+  (cond (nil? answer) [:ir {}]
+        (and (map? answer) (string? (:answer answer))) (markdown->ir (:answer answer))
+        (and (map? answer) (string? (:answer/text answer))) (markdown->ir (:answer/text answer))
+        :else (throw (ex-info "answer->ir requires {:answer markdown} or a needs-input map"
+                              {:type :vis/invalid-answer
+                               :got-type (some-> answer
+                                                 class
+                                                 .getName)}))))
 
 (defn render
   "Render any answer input into a flavor.
@@ -1147,21 +1414,35 @@
    Flavor: :html | :markdown | :plain
    Opts:   {:context    #{:answer :thinking :status :error}
             :max-length int  - hard cap; truncate at paragraph boundary}"
-  ([input flavor]      (render input flavor nil))
+  ([input flavor] (render input flavor nil))
   ([input flavor opts]
-   (let [ast    (->ast input)
-         walker (case flavor
-                  :html     render-html
-                  :markdown render-md
-                  :plain    render-plain
-                  (throw (ex-info (str "Unknown render flavor: " flavor)
+   (let [ast
+         (->ast input)
+
+         walker
+         (case flavor
+           :html
+           render-html
+
+           :markdown
+           render-md
+
+           :plain
+           render-plain
+
+           (throw (ex-info (str "Unknown render flavor: " flavor)
                            {:flavor flavor :valid #{:html :markdown :plain}})))
-         output  (str/trim (walker ast opts))
-         max-len (:max-length opts)]
+
+         output
+         (str/trim (walker ast opts))
+
+         max-len
+         (:max-length opts)]
+
      (if (and max-len (> (count output) max-len))
        (let [cut (or (str/last-index-of output "\n\n" (long (- max-len 2)))
-                   (str/last-index-of output "\n" (long (- max-len 2)))
-                   (max 0 (- max-len 2)))]
+                     (str/last-index-of output "\n" (long (- max-len 2)))
+                     (max 0 (- max-len 2)))]
          (str (subs output 0 cut) "…"))
        output))))
 
@@ -1173,17 +1454,18 @@
   "Walk the AST and return a vector of strings, one per [:code ...] block,
    in source order. Used by `vis --code`."
   [input]
-  (let [ast (->ast input)
-        out (volatile! [])]
+  (let [ast
+        (->ast input)
+
+        out
+        (volatile! [])]
+
     (letfn [(walk [n]
-              (cond
-                (and (vector? n) (= :code (first n)))
-                (vswap! out conj (raw-body n))
-                (vector? n)
-                (doseq [c (node-children n)] (walk c))
-                :else nil))]
-      (walk ast)
-      @out)))
+              (cond (and (vector? n) (= :code (first n))) (vswap! out conj (raw-body n))
+                    (vector? n) (doseq [c (node-children n)]
+                                  (walk c))
+                    :else nil))]
+      (walk ast) @out)))
 
 (defn search-text
   "Universal plain-text projection for full-text search / clipboard /
@@ -1200,80 +1482,102 @@
    Idempotent on canonical input via the `markdown->ir` shortcut."
   ^String [v]
   (when (some? v)
-    (let [ir (cond
-               (canonical? v) v
-               (string? v)    (markdown->ir v)
-               :else          (->ast v))
-          out (volatile! [])]
+    (let [ir
+          (cond (canonical? v) v
+                (string? v) (markdown->ir v)
+                :else (->ast v))
+
+          out
+          (volatile! [])]
+
       (letfn [(walk [n]
-                (cond
-                  (string? n)         (vswap! out conj n)
-                  (not (vector? n))   nil
-                  (= :br (first n))   (vswap! out conj " ")
-                  (= :img (first n))  nil
-                  :else               (doseq [c (drop 2 n)] (walk c))))]
+                (cond (string? n) (vswap! out conj n)
+                      (not (vector? n)) nil
+                      (= :br (first n)) (vswap! out conj " ")
+                      (= :img (first n)) nil
+                      :else (doseq [c (drop 2 n)]
+                              (walk c))))]
         (walk ir))
       ;; collapse any whitespace runs introduced by joining spans /
       ;; block boundaries; FT search wants stable, single-spaced text.
       (-> (str/join " " @out)
-        (str/replace #"\s+" " ")
-        (str/trim)))))
+          (str/replace #"\s+" " ")
+          (str/trim)))))
 
 (defn extract-text
   "Walk the AST and return concatenated plain-text content of all [:p]
    blocks (inline content stripped). Used by voice TTS."
   [input]
-  (let [ast (->ast input)
-        out (volatile! [])]
+  (let [ast
+        (->ast input)
+
+        out
+        (volatile! [])]
+
     (letfn [(walk [n]
-              (cond
-                (and (vector? n) (= :p (first n)))
-                (vswap! out conj (str/trim (render-plain-children (node-children n) {})))
-                (vector? n)
-                (doseq [c (node-children n)] (walk c))
-                :else nil))]
-      (walk ast)
-      (str/join "\n\n" (remove str/blank? @out)))))
+              (cond (and (vector? n) (= :p (first n)))
+                    (vswap! out conj (str/trim (render-plain-children (node-children n) {})))
+                    (vector? n) (doseq [c (node-children n)]
+                                  (walk c))
+                    :else nil))]
+      (walk ast) (str/join "\n\n" (remove str/blank? @out)))))
 
 ;; =============================================================================
 ;; Session exporter — DB → Markdown document
 ;; =============================================================================
 
-(def ^:private DEFAULT_EXPORT_OPTS
-  {:include-system? false
-   :include-meta?   true
-   :flavor          :markdown})
+(def ^:private DEFAULT_EXPORT_OPTS {:include-system? false :include-meta? true :flavor :markdown})
 
-(defn- render-export-header [session turn-count]
-  (let [title    (or (:title session) "Session")
-        soul-id  (or (:id session) (:soul-id session))]
-    (str "# " title "\n\n"
-      (when soul-id (str "_id: `" soul-id "` · " turn-count " turn"
-                      (if (= 1 turn-count) "" "s") "_\n\n")))))
+(defn- render-export-header
+  [session turn-count]
+  (let [title
+        (or (:title session) "Session")
 
-(defn- render-export-turn [opts turn]
-  (let [user-text (or (:user-request turn) (:user turn) (:prompt turn) "")
+        soul-id
+        (or (:id session) (:soul-id session))]
+
+    (str "# " title
+         "\n\n"
+         (when soul-id
+           (str "_id: `" soul-id "` · " turn-count " turn" (if (= 1 turn-count) "" "s") "_\n\n")))))
+
+(defn- render-export-turn
+  [opts turn]
+  (let [user-text
+        (or (:user-request turn) (:user turn) (:prompt turn) "")
+
         ;; Persistence stores the model's raw Markdown answer under
         ;; `:answer-markdown`. Source of truth; no fallback paths.
-        md        (or (:answer-markdown turn) "")
-        rendered  (case (:flavor opts)
-                    :markdown md
-                    (render (markdown->ir md) (:flavor opts)))]
+        md
+        (or (:answer-markdown turn) "")
+
+        rendered
+        (case (:flavor opts)
+          :markdown
+          md
+
+          (render (markdown->ir md) (:flavor opts)))]
+
     (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
 
 (defn session->markdown
   "Project a full session as a Markdown document on top of the IR
    pipeline."
-  ([db-info session-ref]
-   (session->markdown db-info session-ref nil))
+  ([db-info session-ref] (session->markdown db-info session-ref nil))
   ([db-info session-ref opts]
    (when (and db-info session-ref)
-     (let [opts         (merge DEFAULT_EXPORT_OPTS opts)
-           session (persistance/db-get-session db-info session-ref)
-           turns        (vec (or (persistance/db-list-session-turns db-info session-ref) []))]
+     (let [opts
+           (merge DEFAULT_EXPORT_OPTS opts)
+
+           session
+           (persistance/db-get-session db-info session-ref)
+
+           turns
+           (vec (or (persistance/db-list-session-turns db-info session-ref) []))]
+
        (when session
          (str (render-export-header session (count turns))
-           (str/join "\n" (map (partial render-export-turn opts) turns))))))))
+              (str/join "\n" (map (partial render-export-turn opts) turns))))))))
 
 ;; ============================================================================
 ;; Block source rendering.
@@ -1304,9 +1608,9 @@
 ;; past the cap, so the cache is cached-but-leak-free. ruff's own cdylib + FFM
 ;; buffers are already leak-free (clj-ruff frees every returned string).
 (def ^:private prettify-cache
-  (java.util.Collections/synchronizedMap
-    (proxy [java.util.LinkedHashMap] [256 0.75 true]
-      (removeEldestEntry [_entry] (> (.size ^java.util.LinkedHashMap this) 512)))))
+  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [256 0.75 true]
+                                           (removeEldestEntry [_entry]
+                                             (> (.size ^java.util.LinkedHashMap this) 512)))))
 
 (defn prettify-python
   "Beautify Python `src` via ruff (long calls/collections wrapped multiline,
@@ -1338,9 +1642,7 @@
    Pure helper. Never throws. Blank / nil input returns `[]`."
   [form-source]
   (let [src (str/trimr (str (or form-source "")))]
-    (if (str/blank? src)
-      []
-      [{:kind :code :source src}])))
+    (if (str/blank? src) [] [{:kind :code :source src}])))
 
 (defn block-structurally-silent?
   "True when the block source carries NO `:code` segment — it is purely
@@ -1352,5 +1654,5 @@
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
-      (let [segs (parse-block-display src)]
-        (not-any? #(= :code (:kind %)) segs)))))
+         (let [segs (parse-block-display src)]
+           (not-any? #(= :code (:kind %)) segs)))))

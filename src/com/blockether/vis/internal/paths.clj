@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
-   layer — core, extensions, tests — can normalize without a require cycle.")
+   layer — core, extensions, tests — can normalize without a require cycle."
+  (:require [clojure.string :as str]))
 
 (defn unixify
   "Normalize a path string to `/` separators on every OS. Java's `File`/`Path`
@@ -22,11 +23,33 @@
    hangs). Callers degrade to a no-index path instead of walking the tree.
    `dir` is a java.io.File; comparison is canonical. Never throws."
   [^java.io.File dir]
-  (try
-    (let [canon (.getCanonicalFile dir)
-          home  (some-> (System/getProperty "user.home")
-                  not-empty java.io.File. .getCanonicalFile)]
-      (boolean
-        (or (nil? (.getParentFile canon))   ; filesystem root
-          (and home (= canon home)))))      ; the home directory itself
-    (catch Throwable _ false)))
+  (try (let [canon
+             (.getCanonicalFile dir)
+
+             home
+             (some-> (System/getProperty "user.home")
+                     not-empty
+                     java.io.File.
+                     .getCanonicalFile)]
+
+         (boolean (or (nil? (.getParentFile ^java.io.File canon)) ; filesystem root
+                      (and home (= canon home))))) ; the home directory itself
+       (catch Throwable _ false)))
+
+(defn abbreviate-home
+  "Shorten an absolute path for DISPLAY by replacing the user's home dir with
+   `~`, matching the footer/navigator/dialogs. Only rewrites when `path` is at
+   or under home (so `/etc/x` is left alone); returns `path` unchanged
+   otherwise. Nil-safe."
+  ^String [path]
+  (let [path
+        (some-> path
+                str)
+
+        home
+        (System/getProperty "user.home")]
+
+    (cond (nil? path) path
+          (and (seq home) (= path home)) "~"
+          (and (seq home) (str/starts-with? path (str home "/"))) (str "~" (subs path (count home)))
+          :else path)))

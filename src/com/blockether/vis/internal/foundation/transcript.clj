@@ -52,12 +52,10 @@
    The Markdown renderer renders thinking, iteration-level errors,
    vars, per-block forensic previews, and final answer text. Large
    fields are bounded so reports stay safe to open."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.vis.core :as vis])
-  (:import
-   [java.util Locale]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.core :as vis])
+  (:import [java.util Locale]))
 
 ;; =============================================================================
 ;; Data layer.
@@ -66,10 +64,11 @@
 (def ^:private encrypted-reasoning-placeholder
   "[provider returned encrypted reasoning; plaintext reasoning is unavailable]")
 
-(defn- visible-thinking [thinking]
-  (let [s (some-> thinking str)]
-    (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
-      s)))
+(defn- visible-thinking
+  [thinking]
+  (let [s (some-> thinking
+                  str)]
+    (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s)) s)))
 
 (defn- iteration-rollup
   "Sum the per-iteration token + cost columns across a vec of
@@ -79,19 +78,18 @@
   [iterations]
   (reduce (fn [a it]
             (-> a
-              ;; Phase B canonical iteration keys. `:input-tokens` is
-              ;; TOTAL (Anthropic-additive raw values summed at the
-              ;; canonical-normalizer boundary); details obey the
-              ;; invariant on a per-row basis.
-              (update-in [:tokens :input]         + (long   (or (:input-tokens it) 0)))
-              (update-in [:tokens :output]        + (long   (or (:output-tokens it) 0)))
-              (update-in [:tokens :reasoning]     + (long   (or (:output-reasoning-tokens it) 0)))
-              (update-in [:tokens :cached]        + (long   (or (:input-cache-read-tokens it) 0)))
-              (update-in [:tokens :cache-created] + (long   (or (:input-cache-write-tokens it) 0)))
-              (update    :cost-usd                + (double (or (:cost-usd it) 0.0)))))
-    {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
-     :cost-usd 0.0}
-    iterations))
+                ;; Phase B canonical iteration keys. `:input-tokens` is
+                ;; TOTAL (Anthropic-additive raw values summed at the
+                ;; canonical-normalizer boundary); details obey the
+                ;; invariant on a per-row basis.
+                (update-in [:tokens :input] + (long (or (:input-tokens it) 0)))
+                (update-in [:tokens :output] + (long (or (:output-tokens it) 0)))
+                (update-in [:tokens :reasoning] + (long (or (:output-reasoning-tokens it) 0)))
+                (update-in [:tokens :cached] + (long (or (:input-cache-read-tokens it) 0)))
+                (update-in [:tokens :cache-created] + (long (or (:input-cache-write-tokens it) 0)))
+                (update :cost-usd + (double (or (:cost-usd it) 0.0)))))
+          {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0} :cost-usd 0.0}
+          iterations))
 
 (defn- form-envelope->block
   "Project one per-form envelope from `:forms` into the transcript's
@@ -99,12 +97,18 @@
    so the block surfaces all of them, plus a 0-based `:position` derived
    from the form's index in the iter's `:forms` vec."
   [position envelope]
-  (cond-> {:position position
-           :code (or (:src envelope) "")}
-    (:scope envelope)              (assoc :scope (:scope envelope))
-    (:tag envelope)                (assoc :tag (:tag envelope))
-    (contains? envelope :result)   (assoc :result (:result envelope))
-    (contains? envelope :error)    (assoc :error (:error envelope))))
+  (cond-> {:position position :code (or (:src envelope) "")}
+    (:scope envelope)
+    (assoc :scope (:scope envelope))
+
+    (:tag envelope)
+    (assoc :tag (:tag envelope))
+
+    (contains? envelope :result)
+    (assoc :result (:result envelope))
+
+    (contains? envelope :error)
+    (assoc :error (:error envelope))))
 
 (defn- enrich-iteration
   "Attach `:blocks` to one iteration row.
@@ -118,54 +122,75 @@
    Degrades silently to `[]` so the renderer never throws on a
    partial DB."
   [_db-info iter]
-  (let [forms  (or (:forms iter) [])
-        blocks (vec (map-indexed form-envelope->block forms))]
+  (let [forms
+        (or (:forms iter) [])
+
+        blocks
+        (vec (map-indexed form-envelope->block forms))]
+
     (-> iter
-      (update :thinking visible-thinking)
-      (assoc :blocks blocks)
-      (assoc :failure-count (count (filter :error blocks))))))
+        (update :thinking visible-thinking)
+        (assoc :blocks blocks)
+        (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
   "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
-  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn))
-                    (catch Throwable _ []))
-        iters     (mapv (partial enrich-iteration db-info) raw-iters)
-        totals    (iteration-rollup iters)
-        provider  (some #(some-> % :provider name) iters)
-        model     (some :model iters)]
-    (cond-> {:id              (:id turn)
-             :position        (:position turn)
-             :user-request    (or (:user-request turn) "")
-             :status          (:status turn)
-             :prior-outcome   (:prior-outcome turn)
+  (let [raw-iters
+        (try (vis/db-list-session-turn-iterations db-info (:id turn)) (catch Throwable _ []))
+
+        iters
+        (mapv (partial enrich-iteration db-info) raw-iters)
+
+        totals
+        (iteration-rollup iters)
+
+        provider
+        (some #(some-> %
+                       :provider
+                       name)
+              iters)
+
+        model
+        (some :model iters)]
+
+    (cond-> {:id (:id turn)
+             :position (:position turn)
+             :user-request (or (:user-request turn) "")
+             :status (:status turn)
+             :prior-outcome (:prior-outcome turn)
              :iteration-count (count iters)
-             :failure-count   (reduce + 0 (map :failure-count iters))
-             :iterations      iters
-             :tokens          (:tokens totals)
-             :cost-usd        (:cost-usd totals)}
-      provider                 (assoc :provider provider)
-      model                    (assoc :model model)
-      (:answer-markdown turn)  (assoc :answer (:answer-markdown turn)))))
+             :failure-count (reduce + 0 (map :failure-count iters))
+             :iterations iters
+             :tokens (:tokens totals)
+             :cost-usd (:cost-usd totals)}
+      provider
+      (assoc :provider provider)
+
+      model
+      (assoc :model model)
+
+      (:answer-markdown turn)
+      (assoc :answer (:answer-markdown turn)))))
 
 (defn- session-totals
   "Sum tokens + cost + iteration counts across every turn."
   [turns]
   (reduce (fn [a t]
             (-> a
-              (update :iterations + (long (or (:iteration-count t) 0)))
-              (update-in [:tokens :input]     + (long   (or (:input     (:tokens t)) 0)))
-              (update-in [:tokens :output]    + (long   (or (:output    (:tokens t)) 0)))
-              (update-in [:tokens :reasoning]     + (long   (or (:reasoning     (:tokens t)) 0)))
-              (update-in [:tokens :cached]        + (long   (or (:cached        (:tokens t)) 0)))
-              (update-in [:tokens :cache-created] + (long   (or (:cache-created (:tokens t)) 0)))
-              (update :cost-usd                   + (double (or (:cost-usd      t) 0.0)))))
-    {:turns      (count turns)
-     :iterations 0
-     :tokens     {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
-     :cost-usd   0.0}
-    turns))
+                (update :iterations + (long (or (:iteration-count t) 0)))
+                (update-in [:tokens :input] + (long (or (:input (:tokens t)) 0)))
+                (update-in [:tokens :output] + (long (or (:output (:tokens t)) 0)))
+                (update-in [:tokens :reasoning] + (long (or (:reasoning (:tokens t)) 0)))
+                (update-in [:tokens :cached] + (long (or (:cached (:tokens t)) 0)))
+                (update-in [:tokens :cache-created] + (long (or (:cache-created (:tokens t)) 0)))
+                (update :cost-usd + (double (or (:cost-usd t) 0.0)))))
+          {:turns (count turns)
+           :iterations 0
+           :tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
+           :cost-usd 0.0}
+          turns))
 
 (def ^:private transcript-known-channels
   ;; Channels scanned when resolving a session by short PREFIX (full UUIDs and
@@ -189,242 +214,235 @@
    session."
   [db-info session-ref]
   (letfn [(existing-id [id]
-            (when (and id (try (vis/db-get-session db-info id)
-                            (catch Throwable _ nil)))
-              id))]
-    (cond
-      (nil? session-ref) nil
-      (uuid? session-ref) (existing-id session-ref)
-      :else
-      (let [s (str session-ref)]
-        (or (existing-id (try (vis/db-resolve-session-id db-info s)
-                           (catch Throwable _ nil)))
-          (let [matches (->> transcript-known-channels
-                          (mapcat #(or (vis/db-list-sessions db-info %) []))
-                          (filter (fn [session]
-                                    (str/starts-with? (str (:id session)) s)))
-                          vec)]
-            (when (= 1 (count matches))
-              (:id (first matches)))))))))
+            (when (and id (try (vis/db-get-session db-info id) (catch Throwable _ nil))) id))]
+    (cond (nil? session-ref) nil
+          (uuid? session-ref) (existing-id session-ref)
+          :else (let [s (str session-ref)]
+                  (or (existing-id (try (vis/db-resolve-session-id db-info s)
+                                        (catch Throwable _ nil)))
+                      (let [matches (->> transcript-known-channels
+                                         (mapcat #(or (vis/db-list-sessions db-info %) []))
+                                         (filter (fn [session]
+                                                   (str/starts-with? (str (:id session)) s)))
+                                         vec)]
+                        (when (= 1 (count matches)) (:id (first matches)))))))))
 
 (defn- preview-string
   [s n]
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "..."))))
 
-(defn- preview-value
-  [v n]
-  (preview-string (pr-str v) n))
+(defn- preview-value [v n] (preview-string (pr-str v) n))
 
-(defn- runtime-ref?
-  [v]
-  (and (map? v) (= :expr (:vis/ref v))))
+(defn- runtime-ref? [v] (and (map? v) (= :expr (:vis/ref v))))
 
 (defn- op-slug
   [op]
-  (let [s (cond
-            (keyword? op) (if (namespace op)
-                            (str (namespace op) "." (name op))
-                            (name op))
-            (symbol? op)  (if (namespace op)
-                            (str (namespace op) "." (name op))
-                            (name op))
-            :else        (str op))]
+  (let [s (cond (keyword? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
+                (symbol? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
+                :else (str op))]
     (-> s
-      (str/replace #"/" ".")
-      (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
+        (str/replace #"/" ".")
+        (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
 
-(defn- form-index
-  [block]
-  (or (:position block) (:idx block) (:id block) 0))
+(defn- form-index [block] (or (:position block) (:idx block) (:id block) 0))
 
 (defn- block-ref
   [turn iteration block]
   (or (get-in block [:envelope :ref])
-    (:scope block)
-    ;; Canonical model/CTX scope. Avoid `turn/<uuid-prefix>` refs: they
-    ;; look like impossible turn numbers (`turn/75797678/...`).
-    (str "t" (:position turn)
-      "/i" (:position iteration)
-      "/f" (inc (long (form-index block))))))
+      (:scope block)
+      ;; Canonical model/CTX scope. Avoid `turn/<uuid-prefix>` refs: they
+      ;; look like impossible turn numbers (`turn/75797678/...`).
+      (str "t" (:position turn) "/i" (:position iteration) "/f" (inc (long (form-index block))))))
 
 (defn- envelope-duration-ms
   [envelope]
   (when (and (map? envelope)
-          (nat-int? (:started-at-ms envelope))
-          (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope))
-             (long (:started-at-ms envelope))))))
+             (nat-int? (:started-at-ms envelope))
+             (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
 (defn- block-duration-ms
   [block]
-  (or (envelope-duration-ms (:envelope block))
-    (:duration-ms block)
-    0))
+  (or (envelope-duration-ms (:envelope block)) (:duration-ms block) 0))
 
 (defn- tool-result-envelope?
   [value]
-  (and (map? value)
-    (contains? value :success?)
-    (contains? value :info)))
+  (and (map? value) (contains? value :success?) (contains? value :info)))
 
 (defn- result-summary
   "Bounded, data-first result preview for timeline/call rows. The full
    values remain available where they were persisted (`:blocks` and
    `:calls :result`); this summary makes the timeline useful without
    forcing callers to inspect provider/tool-specific payloads."
-
   [result]
-  (cond
-    (runtime-ref? result)
-    {:type :runtime-ref :preview "<runtime value; see matching var/call row>"}
+  (cond (runtime-ref? result) {:type :runtime-ref
+                               :preview "<runtime value; see matching var/call row>"}
+        (map? result)
+        (cond-> {:type :map :keys (vec (take 16 (keys result))) :preview (preview-value result 400)}
+          (contains? result :exit)
+          (assoc :exit (:exit result))
 
-    (map? result)
-    (cond-> {:type :map
-             :keys (vec (take 16 (keys result)))
-             :preview (preview-value result 400)}
-      (contains? result :exit)            (assoc :exit (:exit result))
-      (contains? result :timed-out?)      (assoc :timed-out? (:timed-out? result))
-      (contains? result :command)         (assoc :command (:command result))
-      (contains? result :duration-ms)     (assoc :duration-ms (:duration-ms result)))
+          (contains? result :timed-out?)
+          (assoc :timed-out? (:timed-out? result))
 
-    :else
-    {:type (cond
-             (nil? result) :nil
-             (string? result) :string
-             (keyword? result) :keyword
-             (number? result) :number
-             (coll? result) :collection
-             :else :value)
-     :preview (preview-value result 400)}))
+          (contains? result :command)
+          (assoc :command (:command result))
+
+          (contains? result :duration-ms)
+          (assoc :duration-ms (:duration-ms result)))
+        :else {:type (cond (nil? result) :nil
+                           (string? result) :string
+                           (keyword? result) :keyword
+                           (number? result) :number
+                           (coll? result) :collection
+                           :else :value)
+               :preview (preview-value result 400)}))
 
 (defn- event-status
   [error success? timeout?]
-  (cond
-    timeout? :timeout
-    error :error
-    (false? success?) :error
-    :else :done))
+  (cond timeout? :timeout
+        error :error
+        (false? success?) :error
+        :else :done))
 
 (defn- tool-call-row
   [turn iteration block var-row envelope]
-  (let [tool-meta       (or (:metadata envelope) (:info envelope))
-        result          (if (contains? envelope :result) (:result envelope) (:result envelope))
-        success?        (if (contains? envelope :success?) (:success? envelope) (:success? envelope))
-        error           (if (contains? envelope :error) (:error envelope) (:error envelope))
-        op              (or (:symbol envelope) (:op tool-meta) :tool)
-        parent-ref      (when block (block-ref turn iteration block))
-        ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
-        status          (event-status error success?
-                          (or (:timed-out? result) (:timeout? tool-meta)))
-        tool            (:tool tool-meta)]
-    (cond-> {:kind           :tool-call
-             :ref            ref
-             :parent-ref     parent-ref
-             :turn-id        (:id turn)
-             :iteration-id   (:id iteration)
-             :iteration      (:position iteration)
-             :op             op
-             :tool           (or (:symbol tool) (:call tool) tool)
-             :status         status
-             :success?       success?
-             :duration-ms    (or (:duration-ms tool-meta)
-                               (:duration-ms result)
-                               0)
-             :code           (:code block)
-             :result         result
+  (let [tool-meta
+        (or (:metadata envelope) (:info envelope))
+
+        result
+        (if (contains? envelope :result) (:result envelope) (:result envelope))
+
+        success?
+        (if (contains? envelope :success?) (:success? envelope) (:success? envelope))
+
+        error
+        (if (contains? envelope :error) (:error envelope) (:error envelope))
+
+        op
+        (or (:symbol envelope) (:op tool-meta) :tool)
+
+        parent-ref
+        (when block (block-ref turn iteration block))
+
+        ref
+        (when parent-ref (str parent-ref "/tool/" (op-slug op)))
+
+        status
+        (event-status error success? (or (:timed-out? result) (:timeout? tool-meta)))
+
+        tool
+        (:tool tool-meta)]
+
+    (cond-> {:kind :tool-call
+             :ref ref
+             :parent-ref parent-ref
+             :turn-id (:id turn)
+             :iteration-id (:id iteration)
+             :iteration (:position iteration)
+             :op op
+             :tool (or (:symbol tool) (:call tool) tool)
+             :status status
+             :success? success?
+             :duration-ms (or (:duration-ms tool-meta) (:duration-ms result) 0)
+             :code (:code block)
+             :result result
              :result-summary (result-summary result)
-             :info           tool-meta}
-      var-row              (assoc :var (:name var-row))
-      (:command tool-meta) (assoc :command (:command tool-meta))
-      (:command result)    (assoc :command (:command result))
-      (:target tool-meta)  (assoc :target  (:target tool-meta))
-      error                (assoc :error error))))
+             :info tool-meta}
+      var-row
+      (assoc :var (:name var-row))
+
+      (:command tool-meta)
+      (assoc :command (:command tool-meta))
+
+      (:command result)
+      (assoc :command (:command result))
+
+      (:target tool-meta)
+      (assoc :target (:target tool-meta))
+
+      error
+      (assoc :error error))))
 
 (defn- block-by-code
   [iteration]
   (reduce (fn [acc block]
-            (if (contains? acc (:code block))
-              acc
-              (assoc acc (:code block) block)))
-    {}
-    (:blocks iteration)))
+            (if (contains? acc (:code block)) acc (assoc acc (:code block) block)))
+          {}
+          (:blocks iteration)))
 
 (defn- iteration-tool-calls
   [turn iteration]
-  (let [_blocks-by-code (block-by-code iteration)
-        direct-calls    (keep (fn [block]
-                                (when (tool-result-envelope? (:result block))
-                                  (tool-call-row turn iteration block nil (:result block))))
-                          (:blocks iteration))
+  (let [_blocks-by-code
+        (block-by-code iteration)
+
+        direct-calls
+        (keep (fn [block]
+                (when (tool-result-envelope? (:result block))
+                  (tool-call-row turn iteration block nil (:result block))))
+              (:blocks iteration))
+
         {:keys [order rows]}
         (reduce (fn [{:keys [order rows] :as acc} call]
-                  (let [dedupe-key (or (:ref call)
-                                     [(:parent-ref call) (:op call) (:code call)])]
+                  (let [dedupe-key (or (:ref call) [(:parent-ref call) (:op call) (:code call)])]
                     (if (contains? rows dedupe-key)
                       (assoc acc :rows (update rows dedupe-key merge call))
-                      {:order (conj order dedupe-key)
-                       :rows  (assoc rows dedupe-key call)})))
-          {:order [] :rows {}}
-          direct-calls)]
+                      {:order (conj order dedupe-key) :rows (assoc rows dedupe-key call)})))
+                {:order [] :rows {}}
+                direct-calls)]
+
     (mapv rows order)))
 
 (defn- transcript-calls
   [turns]
-  (vec
-    (mapcat (fn [turn]
-              (mapcat #(iteration-tool-calls turn %) (:iterations turn)))
-      turns)))
+  (vec (mapcat (fn [turn]
+                 (mapcat #(iteration-tool-calls turn %) (:iterations turn)))
+               turns)))
 
 (defn- dialog-events
   [turns]
-  (vec
-    (mapcat (fn [turn]
-              (cond-> [{:role :user
-                        :turn-id (:id turn)
-                        :content (:user-request turn)}]
-                (:answer turn) (conj {:role :assistant
-                                      :turn-id (:id turn)
-                                      :content (:answer turn)})))
-      turns)))
+  (vec (mapcat (fn [turn]
+                 (cond-> [{:role :user :turn-id (:id turn) :content (:user-request turn)}]
+                   (:answer turn)
+                   (conj {:role :assistant :turn-id (:id turn) :content (:answer turn)})))
+               turns)))
 
 (defn- code-event
   [turn iteration block]
   (let [error (:error block)]
-    (cond-> {:kind           :code
-             :ref            (block-ref turn iteration block)
-             :turn-id        (:id turn)
-             :iteration-id   (:id iteration)
-             :iteration      (:position iteration)
-             :form-position  (inc (long (form-index block)))
+    (cond-> {:kind :code
+             :ref (block-ref turn iteration block)
+             :turn-id (:id turn)
+             :iteration-id (:id iteration)
+             :iteration (:position iteration)
+             :form-position (inc (long (form-index block)))
              :role (:role block)
-             :status         (event-status error true (:timeout? block))
-             :duration-ms    (block-duration-ms block)
-             :code           (:code block)}
-      (contains? block :result) (assoc :result-summary (result-summary (:result block)))
-      error                     (assoc :error error))))
+             :status (event-status error true (:timeout? block))
+             :duration-ms (block-duration-ms block)
+             :code (:code block)}
+      (contains? block :result)
+      (assoc :result-summary (result-summary (:result block)))
+
+      error
+      (assoc :error error))))
 
 (defn- transcript-timeline
   [turns calls]
   (let [calls-by-parent (group-by :parent-ref calls)]
-    (vec
-      (mapcat (fn [turn]
-                (concat
-                  [{:kind :user-message
-                    :turn-id (:id turn)
-                    :content (:user-request turn)}]
-                  (mapcat (fn [iteration]
-                            (mapcat (fn [block]
-                                      (let [ref (block-ref turn iteration block)]
-                                        (cons (code-event turn iteration block)
-                                          (get calls-by-parent ref))))
-                              (:blocks iteration)))
-                    (:iterations turn))
-                  (when (:answer turn)
-                    [{:kind :assistant-message
-                      :turn-id (:id turn)
-                      :content (:answer turn)}])))
-        turns))))
+    (vec (mapcat (fn [turn]
+                   (concat
+                     [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
+                     (mapcat (fn [iteration]
+                               (mapcat (fn [block]
+                                         (let [ref (block-ref turn iteration block)]
+                                           (cons (code-event turn iteration block)
+                                                 (get calls-by-parent ref))))
+                                       (:blocks iteration)))
+                             (:iterations turn))
+                     (when (:answer turn)
+                       [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
+                 turns))))
 
 (defn transcript
   "Full session transcript as one Clojure data map. See ns
@@ -439,24 +457,24 @@
    variant uses the live env automatically."
   [db-info session-id]
   (when-let [resolved-id (resolve-session-ref db-info session-id)]
-    (when-let [session (try (vis/db-get-session db-info resolved-id)
-                         (catch Throwable _ nil))]
-      (let [turn-rows (try (vis/db-list-session-turns db-info resolved-id)
-                        (catch Throwable _ []))
-            turns     (mapv (partial build-turn db-info) turn-rows)
-            totals    (session-totals turns)
-            calls     (transcript-calls turns)]
-        {:session     (cond-> {:id         resolved-id
-                               :title      (:title session)
-                               :channel    (:channel session)
-                               :model      (:model session)
-                               :created-at (:created-at session)}
-                        (:provider session) (assoc :provider (:provider session)))
-         :totals           totals
-         :dialog           (dialog-events turns)
-         :calls            calls
-         :timeline         (transcript-timeline turns calls)
-         :turns            turns}))))
+    (when-let [session (try (vis/db-get-session db-info resolved-id) (catch Throwable _ nil))]
+      (let [turn-rows (try (vis/db-list-session-turns db-info resolved-id) (catch Throwable _ []))
+            turns (mapv (partial build-turn db-info) turn-rows)
+            totals (session-totals turns)
+            calls (transcript-calls turns)]
+
+        {:session (cond-> {:id resolved-id
+                           :title (:title session)
+                           :channel (:channel session)
+                           :model (:model session)
+                           :created-at (:created-at session)}
+                    (:provider session)
+                    (assoc :provider (:provider session)))
+         :totals totals
+         :dialog (dialog-events turns)
+         :calls calls
+         :timeline (transcript-timeline turns calls)
+         :turns turns}))))
 
 ;; =============================================================================
 ;; Markdown renderer. Pure transformation over `transcript`'s data
@@ -465,7 +483,10 @@
 
 (defn- one-line
   [s]
-  (-> (or s "") str (str/replace #"\s+" " ") str/trim))
+  (-> (or s "")
+      str
+      (str/replace #"\s+" " ")
+      str/trim))
 
 (defn- format-cost-usd
   "Locale-stable USD formatter - always a dot separator (`$0.0042`),
@@ -477,26 +498,29 @@
 
 (defn- format-tokens
   [{:keys [input output reasoning cached cache-created]}]
-  (let [base (str (long (or input 0)) "/" (long (or output 0)))
-        suff (cond-> []
-               (and reasoning (pos? (long reasoning)))
-               (conj (str "r=" reasoning))
-               (and cached (pos? (long cached)))
-               (conj (str "c=" cached))
-               (and cache-created (pos? (long cache-created)))
-               (conj (str "w=" cache-created)))]
-    (if (seq suff)
-      (str base " (" (str/join ", " suff) ")")
-      base)))
+  (let [base
+        (str (long (or input 0)) "/" (long (or output 0)))
+
+        suff
+        (cond-> []
+          (and reasoning (pos? (long reasoning)))
+          (conj (str "r=" reasoning))
+
+          (and cached (pos? (long cached)))
+          (conj (str "c=" cached))
+
+          (and cache-created (pos? (long cache-created)))
+          (conj (str "w=" cache-created)))]
+
+    (if (seq suff) (str base " (" (str/join ", " suff) ")") base)))
 
 (defn- render-fenced
   [lang body]
   (let [s (str body)]
-    (if (str/blank? s)
-      ""
-      (str "```" (or lang "") "\n" s "\n```\n"))))
+    (if (str/blank? s) "" (str "```" (or lang "") "\n" s "\n```\n"))))
 
-(defn- display-result [result]
+(defn- display-result
+  [result]
   (if (and (map? result) (= :expr (:vis/ref result)))
     "<runtime value; re-evaluate expression to restore>"
     (pr-str result)))
@@ -507,12 +531,17 @@
     (let [body (apply str
                  (keep (fn [{:keys [kind source value]}]
                          (case kind
-                           :code (when-not (str/blank? (str source))
-                                   (render-fenced "python" source))
-                           :title (str "_session title:_ `" (or value "") "`\n")
-                           :answer-ref nil
+                           :code
+                           (when-not (str/blank? (str source)) (render-fenced "python" source))
+
+                           :title
+                           (str "_session title:_ `" (or value "") "`\n")
+
+                           :answer-ref
+                           nil
+
                            nil))
-                   render-segments))]
+                       render-segments))]
       (when-not (str/blank? body) body))
     (render-fenced "python" code)))
 
@@ -527,23 +556,43 @@
    rendered without truncation. Forensic reports are useless when the
    first place you look has been clipped."
   [idx answer? {:keys [code comment render-segments result error] :as block}]
-  (let [marker      (if error "✗" "✓")
-        flags       (cond-> []
-                      answer?            (conj "answer")
-                      (:timeout? block)  (conj "timeout")
-                      (:repaired? block) (conj "repaired")
-                      error              (conj "error"))
-        suffix      (if (seq flags) (str " [" (str/join ", " flags) "]") "")
-        has-result? (and (not error) (contains? block :result))]
-    (str "##### Block " idx " - " marker " "
-      (long (block-duration-ms block)) "ms" suffix "\n"
-      (when (not (str/blank? comment)) (str comment "\n"))
-      (render-block-code-segments code render-segments)
-      (when has-result?
-        (str "\nResult: `" (display-result result) "`\n"))
-      (when error
-        (str "\n_error:_\n" (render-fenced "text" error)))
-      "\n")))
+  (let [marker
+        (if error "✗" "✓")
+
+        flags
+        (cond-> []
+          answer?
+          (conj "answer")
+
+          (:timeout? block)
+          (conj "timeout")
+
+          (:repaired? block)
+          (conj "repaired")
+
+          error
+          (conj "error"))
+
+        suffix
+        (if (seq flags) (str " [" (str/join ", " flags) "]") "")
+
+        has-result?
+        (and (not error) (contains? block :result))]
+
+    (str "##### Block "
+         idx
+         " - "
+         marker
+         " "
+         (long (block-duration-ms block))
+         "ms"
+         suffix
+         "\n"
+         (when (not (str/blank? comment)) (str comment "\n"))
+         (render-block-code-segments code render-segments)
+         (when has-result? (str "\nResult: `" (display-result result) "`\n"))
+         (when error (str "\n_error:_\n" (render-fenced "text" error)))
+         "\n")))
 
 (defn- render-thinking
   "Render the LLM's reasoning trace as a fenced text block. The
@@ -551,10 +600,7 @@
    reader has a forensic record of what the model thought before it
    acted."
   [thinking]
-  (when (not (str/blank? thinking))
-    (str "_thinking:_\n"
-      (render-fenced "text" thinking)
-      "\n")))
+  (when (not (str/blank? thinking)) (str "_thinking:_\n" (render-fenced "text" thinking) "\n")))
 
 (defn- render-iter-error
   "Render an iteration-level error - the provider call failed before
@@ -562,34 +608,59 @@
    nil/blank -> nothing emitted."
   [error]
   (when (and error (not (str/blank? (str error))))
-    (str "_iteration error:_\n"
-      (render-fenced "text" (str error))
-      "\n")))
+    (str "_iteration error:_\n" (render-fenced "text" (str error)) "\n")))
 
-(defn- render-iteration-section [iter]
-  (let [pos     (:position iter)
-        status  (or (some-> (:status iter) name) "-")
-        dur     (or (:duration-ms iter) 0)
-        in      (or (:input-tokens iter) 0)
-        out     (or (:output-tokens iter) 0)
-        cost    (or (:cost-usd iter) 0.0)
-        blocks  (:blocks iter)
+(defn- render-iteration-section
+  [iter]
+  (let [pos
+        (:position iter)
+
+        status
+        (or (some-> (:status iter)
+                    name)
+            "-")
+
+        dur
+        (or (:duration-ms iter) 0)
+
+        in
+        (or (:input-tokens iter) 0)
+
+        out
+        (or (:output-tokens iter) 0)
+
+        cost
+        (or (:cost-usd iter) 0.0)
+
+        blocks
+        (:blocks iter)
+
         ;; Index of the block that called `done(...)`. nil for
         ;; non-terminal iterations - the marker only fires on the
         ;; right block.
-        ans-idx (:answer-position iter)]
-    (str "\n#### Iteration " pos " - " status
-      " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
-      (render-thinking (:thinking iter))
-      (render-iter-error (:error iter))
-      (cond
-        (empty? blocks)
-        "_No code blocks (LLM returned an empty response)._\n"
+        ans-idx
+        (:answer-position iter)]
 
-        :else
-        (apply str (map-indexed (fn [idx block]
-                                  (render-block-section idx (= idx ans-idx) block))
-                     blocks))))))
+    (str "\n#### Iteration "
+         pos
+         " - "
+         status
+         " ("
+         in
+         "/"
+         out
+         " tokens, "
+         (format-cost-usd cost)
+         ", "
+         (long dur)
+         "ms)\n\n"
+         (render-thinking (:thinking iter))
+         (render-iter-error (:error iter))
+         (cond (empty? blocks) "_No code blocks (LLM returned an empty response)._\n"
+               :else (apply str
+                       (map-indexed (fn [idx block]
+                                      (render-block-section idx (= idx ans-idx) block))
+                                    blocks))))))
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
@@ -597,71 +668,108 @@
    raw Markdown via `done(...)`; the transcript echoes the
    source verbatim. nil/blank -> nothing emitted."
   [answer]
-  (when (not (str/blank? (str answer)))
-    (str "\n#### Final answer\n\n" answer "\n")))
+  (when (not (str/blank? (str answer))) (str "\n#### Final answer\n\n" answer "\n")))
 
 (defn- render-turn-block
-  [{:keys [position user-request status prior-outcome provider model
-           iteration-count failure-count
+  [{:keys [position user-request status prior-outcome provider model iteration-count failure-count
            iterations tokens cost-usd answer]}]
   ;; Render `position` (int), never `:id` (uuid). UUID stays in
   ;; introspection responses for programmatic callers,
   ;; never in user/LLM-facing surfaces.
-  (str
-    "### Turn " (or position "?") "\n"
-    "- **User request:** " (one-line user-request) "\n"
-    "- **Status:** " (or (some-> status name) "-")
-    (when prior-outcome (str " (" (name prior-outcome) ")")) "\n"
-    "- **Provider/model:** "
-    (or (cond
-          (and provider model) (str provider "/" model)
-          model                model
-          provider             provider)
-      "-") "\n"
-    "- **Iterations:** " iteration-count "\n"
-    "- **Failures:** " failure-count "\n"
-    "- **Tokens (in/out):** " (format-tokens tokens) "\n"
-    "- **Cost:** " (format-cost-usd cost-usd) "\n"
-    (apply str (map render-iteration-section iterations))
-    (render-final-answer answer)
-    "\n"))
+  (str "### Turn "
+       (or position "?")
+       "\n"
+       "- **User request:** "
+       (one-line user-request)
+       "\n"
+       "- **Status:** "
+       (or (some-> status
+                   name)
+           "-")
+       (when prior-outcome (str " (" (name prior-outcome) ")"))
+       "\n"
+       "- **Provider/model:** "
+       (or (cond (and provider model) (str provider "/" model)
+                 model model
+                 provider provider)
+           "-")
+       "\n"
+       "- **Iterations:** "
+       iteration-count
+       "\n"
+       "- **Failures:** "
+       failure-count
+       "\n"
+       "- **Tokens (in/out):** "
+       (format-tokens tokens)
+       "\n"
+       "- **Cost:** "
+       (format-cost-usd cost-usd)
+       "\n"
+       (apply str (map render-iteration-section iterations))
+       (render-final-answer answer)
+       "\n"))
 
-(defn- render-header [{:keys [session totals]}]
-  (str
-    "# Diagnostic report" (when-let [t (:title session)] (str " - " t)) "\n"
-    "\n"
-    "- **Title:** "    (or (:title    session) "-") "\n"
-    "- **Channel:** "  (or (some-> (:channel session) name) "-") "\n"
-    "- **Model:** "    (or (:model    session) "-") "\n"
-    "- **Created:** "  (or (:created-at session) "-") "\n"
-    "- **Total turns:** "      (:turns totals) "\n"
-    "- **Total iterations:** " (:iterations totals) "\n"
-    "- **Total cost (USD):** " (format-cost-usd (:cost-usd totals)) "\n"
-    "- **Total tokens (in/out):** " (format-tokens (:tokens totals)) "\n"
-    "\n"))
+(defn- render-header
+  [{:keys [session totals]}]
+  (str "# Diagnostic report"
+       (when-let [t (:title session)]
+         (str " - " t))
+       "\n"
+       "\n"
+       "- **Title:** "
+       (or (:title session) "-")
+       "\n"
+       "- **Channel:** "
+       (or (some-> (:channel session)
+                   name)
+           "-")
+       "\n"
+       "- **Model:** "
+       (or (:model session) "-")
+       "\n"
+       "- **Created:** "
+       (or (:created-at session) "-")
+       "\n"
+       "- **Total turns:** "
+       (:turns totals)
+       "\n"
+       "- **Total iterations:** "
+       (:iterations totals)
+       "\n"
+       "- **Total cost (USD):** "
+       (format-cost-usd (:cost-usd totals))
+       "\n"
+       "- **Total tokens (in/out):** " (format-tokens (:tokens totals))
+       "\n" "\n"))
 
 (defn- render-dialog-message
   [{:keys [role content]}]
-  (str "### " (case role
-                :user "User"
-                :assistant "Assistant"
-                (name role))
-    "\n\n"
-    (render-fenced "markdown" content)
-    "\n"))
+  (str "### "
+       (case role
+         :user
+         "User"
+
+         :assistant
+         "Assistant"
+
+         (name role))
+       "\n\n"
+       (render-fenced "markdown" content)
+       "\n"))
 
 (defn- render-dialog-md
   [{:keys [session dialog]}]
-  (str "# Dialog" (when-let [t (:title session)] (str " - " t)) "\n\n"
-    (if (seq dialog)
-      (apply str (map render-dialog-message dialog))
-      "_No dialog messages._\n")))
+  (str "# Dialog" (when-let [t (:title session)]
+                    (str " - " t))
+       "\n\n"
+       (if (seq dialog) (apply str (map render-dialog-message dialog)) "_No dialog messages._\n")))
 
 (defn- render-full-md
   [data]
   (str (render-header data)
-    "## Turn-by-turn breakdown\n\n"
-    (apply str (map render-turn-block (:turns data)))))
+       "## Turn-by-turn breakdown\n\n"
+       (apply str (map render-turn-block (:turns data)))))
 
 (defn transcript->md
   "Render transcript data as Markdown. Pure transformation over
@@ -670,12 +778,15 @@
    Modes:
    - `:full`               - bounded diagnostic report (default).
    - `:dialog`             - user/assistant dialog only."
-  ([data]
-   (transcript->md data {:mode :full}))
+  ([data] (transcript->md data {:mode :full}))
   ([data {:keys [mode] :or {mode :full}}]
    (case mode
-     :dialog         (render-dialog-md data)
-     :full           (render-full-md data)
+     :dialog
+     (render-dialog-md data)
+
+     :full
+     (render-full-md data)
+
      (render-full-md data))))
 
 (defn transcript-md
@@ -683,8 +794,7 @@
    `transcript`'s data. Returns a string; returns
    `\"Session not found: <id>\\n\"` (no throw) on a missing id so
    shell pipelines stay clean."
-  ([db-info session-id]
-   (transcript-md db-info session-id {:mode :full}))
+  ([db-info session-id] (transcript-md db-info session-id {:mode :full}))
   ([db-info session-id opts]
    (if-let [data (transcript db-info session-id)]
      (transcript->md data opts)
@@ -702,27 +812,39 @@
 (defn- html-escape
   [s]
   (-> (str s)
-    (str/replace "&" "&amp;")
-    (str/replace "<" "&lt;")
-    (str/replace ">" "&gt;")))
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
 
 (defn- render-inline
   "Escape HTML then apply the constrained inline Markdown the transcript
    emits: `code`, **bold**, _italic_. Code spans are pulled out first so
    their contents aren't re-interpreted as bold/italic or double-escaped."
   [s]
-  (let [codes (atom [])
-        with-holes (str/replace (str s) #"`([^`]*)`"
+  (let [codes
+        (atom [])
+
+        with-holes
+        (str/replace (str s)
+                     #"`([^`]*)`"
                      (fn [[_ inner]]
                        (let [idx (count @codes)]
                          (swap! codes conj inner)
                          (str "\u0000" idx "\u0000"))))
-        escaped (html-escape with-holes)
-        bolded  (str/replace escaped #"\*\*([^*]+)\*\*" "<strong>$1</strong>")
-        italic  (str/replace bolded #"(?<!\w)_([^_]+)_(?!\w)" "<em>$1</em>")]
-    (str/replace italic #"\u0000(\d+)\u0000"
-      (fn [[_ idx]]
-        (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
+
+        escaped
+        (html-escape with-holes)
+
+        bolded
+        (str/replace escaped #"\*\*([^*]+)\*\*" "<strong>$1</strong>")
+
+        italic
+        (str/replace bolded #"(?<!\w)_([^_]+)_(?!\w)" "<em>$1</em>")]
+
+    (str/replace italic
+                 #"\u0000(\d+)\u0000"
+                 (fn [[_ idx]]
+                   (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
 (defn- md->html
   "Line-based converter for the CONSTRAINED Markdown the transcript renderer
@@ -731,56 +853,64 @@
    Not a general Markdown parser - it only has to handle what we produce."
   [md]
   (let [lines (str/split-lines (str md))]
-    (letfn [(flush-para [buf]
-              (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
-            (flush-list [buf]
-              (when (seq buf)
-                [(str "<ul>"
-                   (apply str (map #(str "<li>" (render-inline %) "</li>") buf))
-                   "</ul>")]))
-            (flush [state buf lang]
-              (case state
-                :para (flush-para buf)
-                :list (flush-list buf)
-                :code [(str "<pre><code"
-                         (when lang (str " class=\"language-" (html-escape lang) "\""))
-                         ">" (html-escape (str/join "\n" buf)) "</code></pre>")]
-                nil))]
-      (loop [ls lines, out [], state :none, buf [], lang nil]
+    (letfn
+      [(flush-para [buf] (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
+       (flush-list [buf]
+         (when (seq buf)
+           [(str "<ul>" (apply str (map #(str "<li>" (render-inline %) "</li>") buf)) "</ul>")]))
+       (flush [state buf lang]
+         (case state
+           :para
+           (flush-para buf)
+
+           :list
+           (flush-list buf)
+
+           :code
+           [(str "<pre><code"
+                 (when lang (str " class=\"language-" (html-escape lang) "\""))
+                 ">"
+                 (html-escape (str/join "\n" buf))
+                 "</code></pre>")]
+
+           nil))]
+      (loop [ls lines
+             out []
+             state :none
+             buf []
+             lang nil]
+
         (if (empty? ls)
           (str/join "\n" (into out (flush state buf lang)))
-          (let [line (first ls), rst (rest ls)]
-            (cond
-              (= state :code)
-              (if (str/starts-with? line "```")
-                (recur rst (into out (flush :code buf lang)) :none [] nil)
-                (recur rst out :code (conj buf line) lang))
+          (let [line (first ls)
+                rst (rest ls)]
 
+            (cond
+              (= state :code) (if (str/starts-with? line "```")
+                                (recur rst (into out (flush :code buf lang)) :none [] nil)
+                                (recur rst out :code (conj buf line) lang))
               (str/starts-with? line "```")
               (let [l (str/trim (subs line 3))]
-                (recur rst (into out (flush state buf lang)) :code []
-                  (when-not (str/blank? l) l)))
-
+                (recur rst (into out (flush state buf lang)) :code [] (when-not (str/blank? l) l)))
               (re-matches #"#{1,6}\s+.*" line)
               (let [[_ hashes text] (re-matches #"(#{1,6})\s+(.*)" line)
                     n (count hashes)]
-                (recur rst (conj (into out (flush state buf lang))
-                             (str "<h" n ">" (render-inline text) "</h" n ">"))
-                  :none [] nil))
 
+                (recur rst
+                       (conj (into out (flush state buf lang))
+                             (str "<h" n ">" (render-inline text) "</h" n ">"))
+                       :none
+                       []
+                       nil))
               (re-matches #"-\s+.*" line)
               (let [text (str/replace-first line #"-\s+" "")]
                 (if (= state :list)
                   (recur rst out :list (conj buf text) nil)
                   (recur rst (into out (flush state buf lang)) :list [text] nil)))
-
-              (str/blank? line)
-              (recur rst (into out (flush state buf lang)) :none [] nil)
-
-              :else
-              (if (= state :list)
-                (recur rst (into out (flush :list buf lang)) :para [line] nil)
-                (recur rst out :para (conj buf line) nil)))))))))
+              (str/blank? line) (recur rst (into out (flush state buf lang)) :none [] nil)
+              :else (if (= state :list)
+                      (recur rst (into out (flush :list buf lang)) :para [line] nil)
+                      (recur rst out :para (conj buf line) nil)))))))))
 
 (def ^:private transcript-html-styles
   "Standalone stylesheet layered AFTER `web-css-root` so it consumes the
@@ -796,12 +926,9 @@
     "h4{font-size:1.02rem;margin:1.3rem 0 .5rem;color:var(--secondary);}"
     "h5{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--dim);"
     "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;}"
-    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}"
-    "a{color:var(--primary);}"
-    "p{margin:.6em 0;}"
-    "ul{margin:.4em 0;padding-left:1.4em;}"
-    "li{margin:.2em 0;}"
-    "strong{color:var(--fg);font-weight:650;}"
+    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}" "a{color:var(--primary);}"
+    "p{margin:.6em 0;}" "ul{margin:.4em 0;padding-left:1.4em;}"
+    "li{margin:.2em 0;}" "strong{color:var(--fg);font-weight:650;}"
     "em{color:var(--dim);font-style:normal;}"
     "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;"
     "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
@@ -831,7 +958,8 @@
    blocks with zero network fetch — the SAME highlighter the web /ui loads.
    nil when that resource isn't on the classpath (export still renders, just
    without highlighting)."
-  (delay (some-> (io/resource "vis-channel-web/public/prism.min.js") slurp)))
+  (delay (some-> (io/resource "vis-channel-web/public/prism.min.js")
+                 slurp)))
 
 (defn transcript->html
   "Render transcript data as a STANDALONE HTML document, styled with the
@@ -844,25 +972,38 @@
    - `:theme-id` - theme id for the embedded CSS (default `:vis-light`)."
   ([data] (transcript->html data {:mode :full}))
   ([data {:keys [mode theme-id] :or {mode :full theme-id :vis-light} :as opts}]
-   (let [title (or (some-> data :session :title) "vis transcript")
-         body  (md->html (transcript->md data (assoc opts :mode mode)))]
+   (let [title
+         (or (some-> data
+                     :session
+                     :title)
+             "vis transcript")
+
+         body
+         (md->html (transcript->md data (assoc opts :mode mode)))]
+
      (str "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
-       "<meta charset=\"utf-8\">\n"
-       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-       "<title>" (html-escape title) "</title>\n"
-       "<style>\n"
-       (vis/web-css-root theme-id) "\n"
-       transcript-html-styles "\n"
-       prism-token-css "\n"
-       "</style>\n</head>\n<body>\n<main class=\"transcript\">\n"
-       body
-       "\n</main>\n"
-       ;; Inline the vendored Prism highlighter so the standalone file
-       ;; syntax-highlights `<code class=\"language-*\">` on open — same
-       ;; highlighter + token theme as the web /ui, no network fetch.
-       (when-let [js @prism-js]
-         (str "<script>" js "</script>\n"
-           "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
-       "</body>\n</html>\n"))))
+          "<meta charset=\"utf-8\">\n"
+          "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+          "<title>"
+          (html-escape title)
+          "</title>\n"
+          "<style>\n"
+          (vis/web-css-root theme-id)
+          "\n"
+          transcript-html-styles
+          "\n"
+          prism-token-css
+          "\n"
+          "</style>\n</head>\n<body>\n<main class=\"transcript\">\n"
+          body
+          "\n</main>\n"
+          ;; Inline the vendored Prism highlighter so the standalone file
+          ;; syntax-highlights `<code class=\"language-*\">` on open — same
+          ;; highlighter + token theme as the web /ui, no network fetch.
+          (when-let [js @prism-js]
+            (str "<script>" js
+                 "</script>\n"
+                 "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
+          "</body>\n</html>\n"))))
 
 

@@ -26,16 +26,15 @@
    facade actually dispatches a backend call, the heavy ns loads, and
    every fn is found exactly as before. The split only changes WHEN the
    heavy ns is loaded, never WHAT it does."
-  (:require
-   [com.blockether.vis.core :as vis]))
+  (:require [com.blockether.vis.core :as vis]))
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/name      "persistance-sqlite"
-     :ext/description "SQLite + Flyway persistence backend."
-     :ext/version   "0.3.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/persistance [{:persistance/id :sqlite
-                        :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]}))
+(vis/register-extension! (vis/extension {:ext/name "persistance-sqlite"
+                                         :ext/description "SQLite + Flyway persistence backend."
+                                         :ext/version "0.3.0"
+                                         :ext/author "Blockether"
+                                         :ext/owner "vis"
+                                         :ext/license "Apache-2.0"
+                                         :ext/persistance
+                                         [{:persistance/id :sqlite
+                                           :persistance/ns
+                                           'com.blockether.vis.ext.persistance-sqlite.core}]}))

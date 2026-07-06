@@ -15,11 +15,10 @@
    known source roots. Precedence is source ORDER, first-name-wins
    (vis project-local > other harnesses' project > user > plugin; Vis and
    Claude before pi/agents/opencode)."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.vis.internal.paths :as paths]
-   [com.blockether.vis.internal.workspace :as workspace]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; =============================================================================
 ;; Frontmatter parsing — minimal, no YAML dependency
@@ -33,7 +32,10 @@
   [content]
   (let [content (str content)]
     (if-let [[_ fm body] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z" content)]
-      {:meta (loop [lines (str/split-lines fm), k nil, acc {}]
+      {:meta (loop [lines (str/split-lines fm)
+                    k nil
+                    acc {}]
+
                (if (empty? lines)
                  acc
                  (let [line (first lines)]
@@ -46,7 +48,12 @@
        :body (str/triml body)}
       {:meta {} :body (str/triml content)})))
 
-(defn- non-blank [s] (let [s (some-> s str str/trim)] (when-not (str/blank? s) s)))
+(defn- non-blank
+  [s]
+  (let [s (some-> s
+                  str
+                  str/trim)]
+    (when-not (str/blank? s) s)))
 
 ;; =============================================================================
 ;; Pure entry builders (string in, entry out — testable without the fs)
@@ -57,43 +64,49 @@
    filename stem) backs a missing frontmatter `name`. Returns nil when there
    is no usable name. `tool`/`path` are provenance, carried through verbatim."
   [content {:keys [name-default tool path]}]
-  (let [{:keys [meta body]} (parse-frontmatter content)
-        nm (or (non-blank (:name meta)) (non-blank name-default))]
+  (let [{:keys [meta body]}
+        (parse-frontmatter content)
+
+        nm
+        (or (non-blank (:name meta)) (non-blank name-default))]
+
     (when nm
-      {:name        nm
+      {:name nm
        :description (or (non-blank (:description meta)) "")
-       :model       (non-blank (:model meta))
-       :tools       (non-blank (:tools meta))
-       :body        (str body)
-       :tool        tool
-       :path        path})))
+       :model (non-blank (:model meta))
+       :tools (non-blank (:tools meta))
+       :body (str body)
+       :tool tool
+       :path path})))
 
 (defn parse-skill-meta
   "Build a skill entry (sans `:resources`) from a SKILL.md `content`.
    `name-default` is the skill directory name. `dir`/`tool`/`path` are
    provenance. Returns nil when there is no usable name."
   [content {:keys [name-default tool dir path]}]
-  (let [{:keys [meta body]} (parse-frontmatter content)
-        nm (or (non-blank (:name meta)) (non-blank name-default))]
+  (let [{:keys [meta body]}
+        (parse-frontmatter content)
+
+        nm
+        (or (non-blank (:name meta)) (non-blank name-default))]
+
     (when nm
-      {:name        nm
+      {:name nm
        :description (or (non-blank (:description meta)) "")
-       :body        (str body)
-       :dir         dir
-       :tool        tool
-       :path        path
-       :resources   []})))
+       :body (str body)
+       :dir dir
+       :tool tool
+       :path path
+       :resources []})))
 
 (defn dedup-by-name
   "First occurrence of each `:name` wins (precedence = input order)."
   [entries]
   (->> entries
-    (reduce (fn [[seen out] e]
-              (if (contains? seen (:name e))
-                [seen out]
-                [(conj seen (:name e)) (conj out e)]))
-      [#{} []])
-    second))
+       (reduce (fn [[seen out] e]
+                 (if (contains? seen (:name e)) [seen out] [(conj seen (:name e)) (conj out e)]))
+               [#{} []])
+       second))
 
 ;; =============================================================================
 ;; Source roots (filesystem)
@@ -111,15 +124,14 @@
    they must follow the session's workspace."
   ^java.io.File []
   (try (.getCanonicalFile (workspace/cwd))
-    (catch Throwable _ (io/file (System/getProperty "user.dir")))))
+       (catch Throwable _ (io/file (System/getProperty "user.dir")))))
 
 (defn- git-boundary
   "Nearest ancestor of `start` (inclusive) containing `.git`, or nil
    when not inside a repository."
   ^java.io.File [^java.io.File start]
   (loop [d start]
-    (when d
-      (if (.exists (io/file d ".git")) d (recur (.getParentFile d))))))
+    (when d (if (.exists (io/file d ".git")) d (recur (.getParentFile d))))))
 
 (defn- walk-dirs
   "`<d>/<parts…>` for `d` = workspace root, then each ancestor, up to
@@ -127,15 +139,22 @@
    nearest first, so nearer definitions win the name dedup. pi-style
    `.agents/skills` ancestor discovery."
   [parts]
-  (let [start (project-root)
-        stop  (git-boundary start)]
-    (loop [d start, acc []]
+  (let [start
+        (project-root)
+
+        stop
+        (git-boundary start)]
+
+    (loop [d
+           start
+
+           acc
+           []]
+
       (if (nil? d)
         acc
         (let [acc (conj acc (apply dir d parts))]
-          (if (and stop (= d stop))
-            acc
-            (recur (.getParentFile d) acc)))))))
+          (if (and stop (= d stop)) acc (recur (.getParentFile d) acc)))))))
 
 (defn- plugin-leaf-dirs
   "Every `<cache>/<plugin>/<version>/<leaf>` directory that exists under the
@@ -143,9 +162,13 @@
   [leaf]
   (let [cache (dir home ".claude" "plugins" "cache")]
     (when (existing-dir? cache)
-      (for [plugin  (.listFiles ^java.io.File cache)  :when (existing-dir? plugin)
-            version (.listFiles ^java.io.File plugin)  :when (existing-dir? version)
-            :let [d (io/file version leaf)] :when (existing-dir? d)]
+      (for [plugin (.listFiles ^java.io.File cache)
+            :when (existing-dir? plugin)
+            version (.listFiles ^java.io.File plugin)
+            :when (existing-dir? version)
+            :let [d (io/file version leaf)]
+            :when (existing-dir? d)]
+
         d))))
 
 ;; ── cross-HARNESS source registry (extensible) ───────────────────────────────
@@ -153,28 +176,25 @@
 ;; `[tool ^File dir]` pairs. Precedence = ORDER (project → user → plugins; Claude
 ;; before opencode). Supporting another harness is one more row — no code change.
 (def agent-sources
-  [[:vis      :rel     ".vis" "agents"]         ; vis project-local (highest precedence)
-   [:claude   :rel     ".claude" "agents"]      ; project
-   [:claude   :home    ".claude" "agents"]      ; user
-   [:claude   :plugins "agents"]                ; installed plugin caches
-   [:pi       :rel     ".pi" "agents"]          ; pi project
-   [:pi       :home    ".pi" "agent" "agents"]  ; pi user
-   [:agents   :rel-walk ".agents" "agents"]     ; agents-standard project (+ ancestors up to git root)
-   [:agents   :home    ".agents" "agents"]      ; agents-standard user
-   [:opencode :rel     ".opencode" "agent"]     ; opencode project (singular `agent`)
-   [:opencode :home    ".config" "opencode" "agent"]])
+  [[:vis :rel ".vis" "agents"]            ; vis project-local (highest precedence)
+   [:claude :rel ".claude" "agents"]      ; project
+   [:claude :home ".claude" "agents"]     ; user
+   [:claude :plugins "agents"]            ; installed plugin caches
+   [:pi :rel ".pi" "agents"]              ; pi project
+   [:pi :home ".pi" "agent" "agents"]     ; pi user
+   [:agents :rel-walk ".agents" "agents"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :home ".agents" "agents"]     ; agents-standard user
+   [:opencode :rel ".opencode" "agent"]   ; opencode project (singular `agent`)
+   [:opencode :home ".config" "opencode" "agent"]])
 
 (def skill-sources
-  [[:vis      :rel     ".vis" "skills"]         ; vis project-local (highest precedence)
-   [:claude   :rel     ".claude" "skills"]
-   [:claude   :home    ".claude" "skills"]
-   [:claude   :plugins "skills"]
-   [:pi       :rel     ".pi" "skills"]          ; pi project
-   [:pi       :home    ".pi" "agent" "skills"]  ; pi user (~/.pi/agent/skills)
-   [:agents   :rel-walk ".agents" "skills"]     ; agents-standard project (+ ancestors up to git root)
-   [:agents   :home    ".agents" "skills"]      ; agents-standard user (~/.agents/skills)
-   [:opencode :rel     ".opencode" "skill"]
-   [:opencode :home    ".config" "opencode" "skill"]])
+  [[:vis :rel ".vis" "skills"]            ; vis project-local (highest precedence)
+   [:claude :rel ".claude" "skills"] [:claude :home ".claude" "skills"] [:claude :plugins "skills"]
+   [:pi :rel ".pi" "skills"]              ; pi project
+   [:pi :home ".pi" "agent" "skills"]     ; pi user (~/.pi/agent/skills)
+   [:agents :rel-walk ".agents" "skills"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :home ".agents" "skills"]     ; agents-standard user (~/.agents/skills)
+   [:opencode :rel ".opencode" "skill"] [:opencode :home ".config" "opencode" "skill"]])
 
 (def known-tools
   "Every harness tag a source row can carry — the closed set discovery emits."
@@ -187,14 +207,23 @@
    up to the git repo root, nearest first."
   [[tool kind & parts]]
   (->> (case kind
-         :rel     (let [^java.io.File f (apply dir parts)]
-                    [(if (.isAbsolute f) f (io/file (project-root) (str f)))])
-         :rel-walk (walk-dirs parts)
-         :home    [(apply dir home parts)]
-         :plugins (plugin-leaf-dirs (first parts))
+         :rel
+         (let [^java.io.File f (apply dir parts)]
+           [(if (.isAbsolute f) f (io/file (project-root) (str f)))])
+
+         :rel-walk
+         (walk-dirs parts)
+
+         :home
+         [(apply dir home parts)]
+
+         :plugins
+         (plugin-leaf-dirs (first parts))
+
          [])
-    (filter existing-dir?)
-    (map (fn [d] [tool d]))))
+       (filter existing-dir?)
+       (map (fn [d]
+              [tool d]))))
 
 (defn agent-dirs
   "Ordered `[tool ^File dir]` pairs for agents (existing dirs only)."
@@ -210,21 +239,19 @@
   "Direct `*.md` children of `d`, name-sorted."
   [^java.io.File d]
   (->> (.listFiles d)
-    (filter #(and (.isFile ^java.io.File %)
-               (str/ends-with? (.getName ^java.io.File %) ".md")))
-    (sort-by #(.getName ^java.io.File %))))
+       (filter #(and (.isFile ^java.io.File %) (str/ends-with? (.getName ^java.io.File %) ".md")))
+       (sort-by #(.getName ^java.io.File %))))
 
 (defn- skill-md-files
   "`<d>/<skill>/SKILL.md` for each immediate subdir of `d`, path-sorted."
   [^java.io.File d]
   (->> (.listFiles d)
-    (filter existing-dir?)
-    (map #(io/file % "SKILL.md"))
-    (filter #(.isFile ^java.io.File %))
-    (sort-by #(.getPath ^java.io.File %))))
+       (filter existing-dir?)
+       (map #(io/file % "SKILL.md"))
+       (filter #(.isFile ^java.io.File %))
+       (sort-by #(.getPath ^java.io.File %))))
 
-(defn- name-stem [^String filename]
-  (str/replace filename #"\.md\z" ""))
+(defn- name-stem [^String filename] (str/replace filename #"\.md\z" ""))
 
 (defn- skill-resources
   "Relative paths of every file in a skill dir EXCEPT SKILL.md — the bundled
@@ -232,11 +259,11 @@
   [^java.io.File skill-dir]
   (let [root (.toPath skill-dir)]
     (->> (file-seq skill-dir)
-      (filter #(.isFile ^java.io.File %))
-      (remove #(= "SKILL.md" (.getName ^java.io.File %)))
-      (map #(paths/unixify (.relativize root (.toPath ^java.io.File %))))
-      (sort)
-      (vec))))
+         (filter #(.isFile ^java.io.File %))
+         (remove #(= "SKILL.md" (.getName ^java.io.File %)))
+         (map #(paths/unixify (.relativize root (.toPath ^java.io.File %))))
+         (sort)
+         (vec))))
 
 ;; =============================================================================
 ;; Discovery (filesystem → deduped entries)
@@ -245,33 +272,46 @@
 (defn discover-agents
   "Parse every agent file across `agent-dirs`, first-name-wins, tagged by tool."
   []
-  (dedup-by-name
-    (for [[tool ^java.io.File d] (agent-dirs)
-          ^java.io.File f (md-files d)
-          :let [e (try (parse-agent (slurp f)
-                         {:name-default (name-stem (.getName f))
-                          :tool tool
-                          :path (.getPath f)})
-                    (catch Throwable _ nil))]
-          :when e]
-      e)))
+  (dedup-by-name (for [[tool ^java.io.File d]
+                       (agent-dirs)
+
+                       ^java.io.File f
+                       (md-files d)
+
+                       :let [e
+                             (try (parse-agent (slurp f)
+                                               {:name-default (name-stem (.getName f))
+                                                :tool tool
+                                                :path (.getPath f)})
+                                  (catch Throwable _ nil))]
+                       :when e]
+
+                   e)))
 
 (defn discover-skills
   "Parse every SKILL.md across `skill-dirs`, first-name-wins, with each
    skill's bundled resource paths attached."
   []
   (dedup-by-name
-    (for [[tool ^java.io.File d] (skill-dirs)
-          ^java.io.File f (skill-md-files d)
-          :let [sdir (.getParentFile f)
-                e (try (some-> (parse-skill-meta (slurp f)
-                                 {:name-default (.getName sdir)
-                                  :tool tool
-                                  :dir (.getPath sdir)
-                                  :path (.getPath f)})
-                         (assoc :resources (skill-resources sdir)))
-                    (catch Throwable _ nil))]
+    (for [[tool ^java.io.File d]
+          (skill-dirs)
+
+          ^java.io.File f
+          (skill-md-files d)
+
+          :let [sdir
+                (.getParentFile f)
+
+                e
+                (try (some-> (parse-skill-meta (slurp f)
+                                               {:name-default (.getName sdir)
+                                                :tool tool
+                                                :dir (.getPath sdir)
+                                                :path (.getPath f)})
+                             (assoc :resources (skill-resources sdir)))
+                     (catch Throwable _ nil))]
           :when e]
+
       e)))
 
 ;; =============================================================================
@@ -282,26 +322,37 @@
 
 (defonce ^:private cache (atom nil))
 
-(defn- file-mark [^java.io.File f]
-  [(.getPath f) (.lastModified f) (.length f)])
+(defn- file-mark [^java.io.File f] [(.getPath f) (.lastModified f) (.length f)])
 
-(defn- source-marker []
-  {:root   (.getPath (project-root))
-   :agents (vec (for [[tool ^java.io.File d] (agent-dirs)
-                      ^java.io.File f (md-files d)]
+(defn- source-marker
+  []
+  {:root (.getPath (project-root))
+   :agents (vec (for [[tool ^java.io.File d]
+                      (agent-dirs)
+
+                      ^java.io.File f
+                      (md-files d)]
+
                   [tool (file-mark f)]))
-   :skills (vec (for [[tool ^java.io.File d] (skill-dirs)
-                      ^java.io.File f (skill-md-files d)]
+   :skills (vec (for [[tool ^java.io.File d]
+                      (skill-dirs)
+
+                      ^java.io.File f
+                      (skill-md-files d)]
+
                   [tool (file-mark f)]))})
 
-(defn- ensure! []
-  (let [m (source-marker)
-        c @cache]
+(defn- ensure!
+  []
+  (let [m
+        (source-marker)
+
+        c
+        @cache]
+
     (if (and c (= m (:marker c)))
       c
-      (reset! cache {:marker m
-                     :agents (vec (discover-agents))
-                     :skills (vec (discover-skills))}))))
+      (reset! cache {:marker m :agents (vec (discover-agents)) :skills (vec (discover-skills))}))))
 
 (defn reload!
   "Rescan the source dirs and refresh the cache. Returns `{:agents :skills}`."

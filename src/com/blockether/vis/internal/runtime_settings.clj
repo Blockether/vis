@@ -10,13 +10,9 @@
   "Default timeout in milliseconds for code evaluation in the Python sandbox."
   120000)
 
-(def MIN_EVAL_TIMEOUT_MS
-  "Floor for :eval-timeout-ms."
-  3000)
+(def MIN_EVAL_TIMEOUT_MS "Floor for :eval-timeout-ms." 3000)
 
-(def MAX_EVAL_TIMEOUT_MS
-  "Hard ceiling for :eval-timeout-ms."
-  (* 30 60 1000))
+(def MAX_EVAL_TIMEOUT_MS "Hard ceiling for :eval-timeout-ms." (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."
@@ -64,14 +60,16 @@
     (not (contains? opts :idle-timeout-ms))
     (assoc :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)
 
-    (and (some? ASK_CODE_SEMANTIC_TIMEOUT_MS)
-      (not (contains? opts :semantic-timeout-ms)))
+    (and (some? ASK_CODE_SEMANTIC_TIMEOUT_MS) (not (contains? opts :semantic-timeout-ms)))
     (assoc :semantic-timeout-ms ASK_CODE_SEMANTIC_TIMEOUT_MS)))
 
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   [candidate]
-  (-> candidate long (max MIN_EVAL_TIMEOUT_MS) (min MAX_EVAL_TIMEOUT_MS)))
+  (-> candidate
+      long
+      (max MIN_EVAL_TIMEOUT_MS)
+      (min MAX_EVAL_TIMEOUT_MS)))
 
 (def ^:private shell-timeout-eval-grace-ms
   "Extra room around shell_run's own timeout so the shell tool can kill, drain,
@@ -84,7 +82,9 @@
    the outer eval watchdog (default 120s) from preempting a longer requested
    shell timeout."
   [code]
-  (let [nums (for [[_ n] (re-seq #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)" (str code))]
+  (let [nums (for [[_ n] (re-seq
+                           #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)"
+                           (str code))]
                (long (Math/round (Double/parseDouble n))))]
     (when (seq nums) (apply max nums))))
 
@@ -92,10 +92,7 @@
   [base-timeout-ms code]
   (let [base (clamp-eval-timeout-ms base-timeout-ms)]
     (if-let [shell-secs (explicit-shell-timeout-secs code)]
-      (clamp-eval-timeout-ms
-        (max base (+ (* 1000 shell-secs) shell-timeout-eval-grace-ms)))
+      (clamp-eval-timeout-ms (max base (+ (* 1000 shell-secs) shell-timeout-eval-grace-ms)))
       base)))
 
-(def ^:dynamic *rlm-context*
-  "Dynamic context for RLM debug logging."
-  nil)
+(def ^:dynamic *rlm-context* "Dynamic context for RLM debug logging." nil)
