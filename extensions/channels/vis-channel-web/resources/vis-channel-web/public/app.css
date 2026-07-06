@@ -675,6 +675,10 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 .mic.recording{background:var(--err);color:var(--bg);animation:pulse 1.2s infinite}
 .mic.mic-error{color:var(--err)}
 .mic.model-loading{color:var(--secondary);cursor:progress;animation:pulse 1.5s infinite}
+.attach{flex:none;width:34px;height:34px;border-radius:var(--r-circle);display:flex;align-items:center;
+justify-content:center;color:var(--dim);cursor:pointer;transition:color .15s,background .15s}
+.attach:hover{background:var(--panel2);color:var(--secondary)}
+.attach-input{display:none}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:26rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);

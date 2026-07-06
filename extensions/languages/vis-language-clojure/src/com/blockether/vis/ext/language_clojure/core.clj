@@ -422,7 +422,12 @@
            (catch Throwable _ s))
       s)))
 
-(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
+;; Only true Clojure SOURCE dialects — the same set the canonical
+;; `clojure -M:format` (codestyle) formats. Deliberately NOT `.edn`: zprint
+;; sorts map keys + reflows, which would churn hand-ordered config files
+;; (deps.edn, `.zprint.edn`) that codestyle never touches, making the
+;; format-on-write hook fight the canonical formatter.
+(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx"])
 
 (defn- clj-source-file?
   "True when `path` names a Clojure source file (by extension)."
@@ -433,7 +438,7 @@
 (defn- expand-clj-source-files
   "Expand `paths` (resolved against workspace `root` when relative) into concrete
    Clojure source files. A DIRECTORY is walked RECURSIVELY, collecting every
-   `.clj`/`.cljs`/`.cljc`/`.cljx`/`.edn` file under it; a plain file is kept
+   `.clj`/`.cljs`/`.cljc`/`.cljx` file under it; a plain file is kept
    as-is; a non-existent path is dropped. Returns a de-duplicated, sorted vector
    of absolute path strings."
   [^java.io.File root paths]
@@ -477,7 +482,7 @@
      - a raw code string / {\"code\": ...}   -> return the formatted text
      - {\"path\": \"src/foo.clj\"}              -> format that file IN PLACE
      - {\"paths\": [\"src\" \"test\" ...]}        -> format those paths IN PLACE; a
-         DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx/.edn under it)
+         DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx under it)
      - nothing / {}                         -> format the workspace's src + test
          (or the root) RECURSIVELY
    Paths are resolved against the workspace root when relative."

@@ -27,6 +27,8 @@
             [ring.core.protocols :as ring-protocols]
             [ring.middleware.cookies :as ring-cookies]
             [ring.middleware.params :as ring-params]
+            [ring.middleware.multipart-params :as ring-multipart]
+            [ring.middleware.multipart-params.byte-array :as multipart-ba]
             [taoensso.telemere :as tel])
   (:import [java.io OutputStream]
            [java.nio.charset StandardCharsets]
@@ -553,6 +555,25 @@
           (form-handler request)
           (handler (ring-params/assoc-query-params request "UTF-8")))))))
 
+(defn- wrap-scoped-multipart
+  "Multipart parsing, prefix-scoped exactly like `wrap-scoped-params`: only
+   uris under a contribution that declared `:multipart?` get their
+   `multipart/form-data` body parsed, with each part stored as an in-memory
+   byte array (`:multipart-params` → `{\"field\" {:filename :content-type
+   :bytes} | \"text\"}`) — right for the small, capped image uploads the web
+   composer posts, and no temp-file cleanup. Non-multipart requests pass
+   straight through, so JSON/urlencoded routes are never touched."
+  [handler contribs]
+  (let [mp-handler (ring-multipart/wrap-multipart-params handler
+                                                         {:store (multipart-ba/byte-array-store)})]
+    (fn [request]
+      (let [uri (str (:uri request))
+            multipart? (some (fn [{:keys [prefix multipart?]}]
+                               (and multipart? prefix (str/starts-with? uri prefix)))
+                             contribs)]
+
+        (if multipart? (mp-handler request) (handler request))))))
+
 (defn- app
   [^String token contribs]
   (->
@@ -579,6 +600,7 @@
                                  (error-response 405 :method-not-allowed "method not allowed"))})))
     (wrap-auth token contribs)
     (wrap-scoped-params contribs)
+    (wrap-scoped-multipart contribs)
     (ring-cookies/wrap-cookies)
     (wrap-errors)))
 
