@@ -55,7 +55,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis])
-  (:import [java.util Locale]))
+  (:import [java.util Locale]
+           [java.time ZoneId]
+           [java.time.format DateTimeFormatter]))
 
 ;; =============================================================================
 ;; Data layer.
@@ -67,7 +69,7 @@
 (defn- visible-thinking
   [thinking]
   (let [s (some-> thinking
-                  str)]
+            str)]
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s)) s)))
 
 (defn- iteration-rollup
@@ -82,14 +84,14 @@
                 ;; TOTAL (Anthropic-additive raw values summed at the
                 ;; canonical-normalizer boundary); details obey the
                 ;; invariant on a per-row basis.
-                (update-in [:tokens :input] + (long (or (:input-tokens it) 0)))
-                (update-in [:tokens :output] + (long (or (:output-tokens it) 0)))
-                (update-in [:tokens :reasoning] + (long (or (:output-reasoning-tokens it) 0)))
-                (update-in [:tokens :cached] + (long (or (:input-cache-read-tokens it) 0)))
-                (update-in [:tokens :cache-created] + (long (or (:input-cache-write-tokens it) 0)))
-                (update :cost-usd + (double (or (:cost-usd it) 0.0)))))
-          {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0} :cost-usd 0.0}
-          iterations))
+              (update-in [:tokens :input] + (long (or (:input-tokens it) 0)))
+              (update-in [:tokens :output] + (long (or (:output-tokens it) 0)))
+              (update-in [:tokens :reasoning] + (long (or (:output-reasoning-tokens it) 0)))
+              (update-in [:tokens :cached] + (long (or (:input-cache-read-tokens it) 0)))
+              (update-in [:tokens :cache-created] + (long (or (:input-cache-write-tokens it) 0)))
+              (update :cost-usd + (double (or (:cost-usd it) 0.0)))))
+    {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0} :cost-usd 0.0}
+    iterations))
 
 (defn- form-envelope->block
   "Project one per-form envelope from `:forms` into the transcript's
@@ -129,9 +131,9 @@
         (vec (map-indexed form-envelope->block forms))]
 
     (-> iter
-        (update :thinking visible-thinking)
-        (assoc :blocks blocks)
-        (assoc :failure-count (count (filter :error blocks))))))
+      (update :thinking visible-thinking)
+      (assoc :blocks blocks)
+      (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
   "Pure projection: one session_turn_soul row + its iterations -> the
@@ -148,15 +150,17 @@
 
         provider
         (some #(some-> %
-                       :provider
-                       name)
-              iters)
+                 :provider
+                 name)
+          iters)
 
         model
         (some :model iters)]
 
     (cond-> {:id (:id turn)
              :position (:position turn)
+             :created-at (:created-at turn)
+             :duration-ms (:duration-ms turn)
              :user-request (or (:user-request turn) "")
              :status (:status turn)
              :prior-outcome (:prior-outcome turn)
@@ -179,18 +183,18 @@
   [turns]
   (reduce (fn [a t]
             (-> a
-                (update :iterations + (long (or (:iteration-count t) 0)))
-                (update-in [:tokens :input] + (long (or (:input (:tokens t)) 0)))
-                (update-in [:tokens :output] + (long (or (:output (:tokens t)) 0)))
-                (update-in [:tokens :reasoning] + (long (or (:reasoning (:tokens t)) 0)))
-                (update-in [:tokens :cached] + (long (or (:cached (:tokens t)) 0)))
-                (update-in [:tokens :cache-created] + (long (or (:cache-created (:tokens t)) 0)))
-                (update :cost-usd + (double (or (:cost-usd t) 0.0)))))
-          {:turns (count turns)
-           :iterations 0
-           :tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
-           :cost-usd 0.0}
-          turns))
+              (update :iterations + (long (or (:iteration-count t) 0)))
+              (update-in [:tokens :input] + (long (or (:input (:tokens t)) 0)))
+              (update-in [:tokens :output] + (long (or (:output (:tokens t)) 0)))
+              (update-in [:tokens :reasoning] + (long (or (:reasoning (:tokens t)) 0)))
+              (update-in [:tokens :cached] + (long (or (:cached (:tokens t)) 0)))
+              (update-in [:tokens :cache-created] + (long (or (:cache-created (:tokens t)) 0)))
+              (update :cost-usd + (double (or (:cost-usd t) 0.0)))))
+    {:turns (count turns)
+     :iterations 0
+     :tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
+     :cost-usd 0.0}
+    turns))
 
 (def ^:private transcript-known-channels
   ;; Channels scanned when resolving a session by short PREFIX (full UUIDs and
@@ -216,16 +220,16 @@
   (letfn [(existing-id [id]
             (when (and id (try (vis/db-get-session db-info id) (catch Throwable _ nil))) id))]
     (cond (nil? session-ref) nil
-          (uuid? session-ref) (existing-id session-ref)
-          :else (let [s (str session-ref)]
-                  (or (existing-id (try (vis/db-resolve-session-id db-info s)
-                                        (catch Throwable _ nil)))
-                      (let [matches (->> transcript-known-channels
-                                         (mapcat #(or (vis/db-list-sessions db-info %) []))
-                                         (filter (fn [session]
-                                                   (str/starts-with? (str (:id session)) s)))
-                                         vec)]
-                        (when (= 1 (count matches)) (:id (first matches)))))))))
+      (uuid? session-ref) (existing-id session-ref)
+      :else (let [s (str session-ref)]
+              (or (existing-id (try (vis/db-resolve-session-id db-info s)
+                                 (catch Throwable _ nil)))
+                (let [matches (->> transcript-known-channels
+                                (mapcat #(or (vis/db-list-sessions db-info %) []))
+                                (filter (fn [session]
+                                          (str/starts-with? (str (:id session)) s)))
+                                vec)]
+                  (when (= 1 (count matches)) (:id (first matches)))))))))
 
 (defn- preview-string
   [s n]
@@ -239,27 +243,27 @@
 (defn- op-slug
   [op]
   (let [s (cond (keyword? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
-                (symbol? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
-                :else (str op))]
+            (symbol? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
+            :else (str op))]
     (-> s
-        (str/replace #"/" ".")
-        (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
+      (str/replace #"/" ".")
+      (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
 
 (defn- form-index [block] (or (:position block) (:idx block) (:id block) 0))
 
 (defn- block-ref
   [turn iteration block]
   (or (get-in block [:envelope :ref])
-      (:scope block)
+    (:scope block)
       ;; Canonical model/CTX scope. Avoid `turn/<uuid-prefix>` refs: they
       ;; look like impossible turn numbers (`turn/75797678/...`).
-      (str "t" (:position turn) "/i" (:position iteration) "/f" (inc (long (form-index block))))))
+    (str "t" (:position turn) "/i" (:position iteration) "/f" (inc (long (form-index block))))))
 
 (defn- envelope-duration-ms
   [envelope]
   (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
     (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
 (defn- block-duration-ms
@@ -278,33 +282,33 @@
   [result]
   (cond (runtime-ref? result) {:type :runtime-ref
                                :preview "<runtime value; see matching var/call row>"}
-        (map? result)
-        (cond-> {:type :map :keys (vec (take 16 (keys result))) :preview (preview-value result 400)}
-          (contains? result :exit)
-          (assoc :exit (:exit result))
+    (map? result)
+    (cond-> {:type :map :keys (vec (take 16 (keys result))) :preview (preview-value result 400)}
+      (contains? result :exit)
+      (assoc :exit (:exit result))
 
-          (contains? result :timed-out?)
-          (assoc :timed-out? (:timed-out? result))
+      (contains? result :timed-out?)
+      (assoc :timed-out? (:timed-out? result))
 
-          (contains? result :command)
-          (assoc :command (:command result))
+      (contains? result :command)
+      (assoc :command (:command result))
 
-          (contains? result :duration-ms)
-          (assoc :duration-ms (:duration-ms result)))
-        :else {:type (cond (nil? result) :nil
-                           (string? result) :string
-                           (keyword? result) :keyword
-                           (number? result) :number
-                           (coll? result) :collection
-                           :else :value)
-               :preview (preview-value result 400)}))
+      (contains? result :duration-ms)
+      (assoc :duration-ms (:duration-ms result)))
+    :else {:type (cond (nil? result) :nil
+                   (string? result) :string
+                   (keyword? result) :keyword
+                   (number? result) :number
+                   (coll? result) :collection
+                   :else :value)
+           :preview (preview-value result 400)}))
 
 (defn- event-status
   [error success? timeout?]
   (cond timeout? :timeout
-        error :error
-        (false? success?) :error
-        :else :done))
+    error :error
+    (false? success?) :error
+    :else :done))
 
 (defn- tool-call-row
   [turn iteration block var-row envelope]
@@ -369,8 +373,8 @@
   [iteration]
   (reduce (fn [acc block]
             (if (contains? acc (:code block)) acc (assoc acc (:code block) block)))
-          {}
-          (:blocks iteration)))
+    {}
+    (:blocks iteration)))
 
 (defn- iteration-tool-calls
   [turn iteration]
@@ -381,7 +385,7 @@
         (keep (fn [block]
                 (when (tool-result-envelope? (:result block))
                   (tool-call-row turn iteration block nil (:result block))))
-              (:blocks iteration))
+          (:blocks iteration))
 
         {:keys [order rows]}
         (reduce (fn [{:keys [order rows] :as acc} call]
@@ -389,8 +393,8 @@
                     (if (contains? rows dedupe-key)
                       (assoc acc :rows (update rows dedupe-key merge call))
                       {:order (conj order dedupe-key) :rows (assoc rows dedupe-key call)})))
-                {:order [] :rows {}}
-                direct-calls)]
+          {:order [] :rows {}}
+          direct-calls)]
 
     (mapv rows order)))
 
@@ -398,7 +402,7 @@
   [turns]
   (vec (mapcat (fn [turn]
                  (mapcat #(iteration-tool-calls turn %) (:iterations turn)))
-               turns)))
+         turns)))
 
 (defn- dialog-events
   [turns]
@@ -406,7 +410,7 @@
                  (cond-> [{:role :user :turn-id (:id turn) :content (:user-request turn)}]
                    (:answer turn)
                    (conj {:role :assistant :turn-id (:id turn) :content (:answer turn)})))
-               turns)))
+         turns)))
 
 (defn- code-event
   [turn iteration block]
@@ -437,12 +441,12 @@
                                (mapcat (fn [block]
                                          (let [ref (block-ref turn iteration block)]
                                            (cons (code-event turn iteration block)
-                                                 (get calls-by-parent ref))))
-                                       (:blocks iteration)))
-                             (:iterations turn))
+                                             (get calls-by-parent ref))))
+                                 (:blocks iteration)))
+                       (:iterations turn))
                      (when (:answer turn)
                        [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
-                 turns))))
+           turns))))
 
 (defn transcript
   "Full session transcript as one Clojure data map. See ns
@@ -484,9 +488,9 @@
 (defn- one-line
   [s]
   (-> (or s "")
-      str
-      (str/replace #"\s+" " ")
-      str/trim))
+    str
+    (str/replace #"\s+" " ")
+    str/trim))
 
 (defn- format-cost-usd
   "Locale-stable USD formatter - always a dot separator (`$0.0042`),
@@ -513,6 +517,95 @@
           (conj (str "w=" cache-created)))]
 
     (if (seq suff) (str base " (" (str/join ", " suff) ")") base)))
+
+(defn- fmt-inst
+  "Format a #inst / java.util.Date into a readable local date-time."
+  [d]
+  (when d
+    (let [inst (.toInstant ^java.util.Date d)
+          zone (ZoneId/systemDefault)
+          fmt (.withLocale (DateTimeFormatter/ofPattern "MMM d, yyyy \u00b7 HH:mm z")
+                Locale/US)]
+      (.format (.atZone inst zone) fmt))))
+
+(defn- fmt-duration-ms
+  "Coarse human duration: `2h 57m`, `4m 12s`, `9s`."
+  [ms]
+  (when (and ms (pos? (long ms)))
+    (let [s (quot (long ms) 1000)
+          h (quot s 3600)
+          m (quot (rem s 3600) 60)
+          sec (rem s 60)]
+      (cond
+        (pos? h) (str h "h " m "m")
+        (pos? m) (str m "m " sec "s")
+        :else (str sec "s")))))
+
+(defn- fmt-avg
+  "Ratio to one decimal, locale-stable (`3.5`); `0` when the denominator is 0."
+  [num den]
+  (if (and den (pos? (long den)))
+    (str (/ (Math/round (* 10.0 (/ (double num) (double den)))) 10.0))
+    "0"))
+
+(defn- most-common
+  "The most frequent non-nil value in `xs`, or nil."
+  [xs]
+  (when-let [freqs (seq (frequencies (remove nil? xs)))]
+    (key (apply max-key val freqs))))
+
+(defn- session-finished-inst
+  "Best estimate of when the session settled: the latest turn start plus its
+   duration. nil when no turn carries a timestamp."
+  [turns]
+  (let [ends (keep (fn [t]
+                     (when-let [c (:created-at t)]
+                       (+ (.getTime ^java.util.Date c) (long (or (:duration-ms t) 0)))))
+               turns)]
+    (when (seq ends)
+      (java.util.Date. (long (apply max ends))))))
+
+(defn- session-summary
+  "Grouped [[group-label [[key value mono?] ...]] ...] rows shared by the
+   Markdown summary and the HTML summary card. Pure over the `transcript`
+   data map - one canonical summary shape for every surface."
+  [{:keys [session totals calls turns]}]
+  (let [n-turns (max 0 (long (or (:turns totals) 0)))
+        n-iters (long (or (:iterations totals) 0))
+        ;; Executed code blocks are the agent's tool-invocation units; the
+        ;; richer `:calls` rows (nested tool envelopes) are used when present.
+        n-blocks (reduce + 0 (map (comp count :blocks) (mapcat :iterations turns)))
+        n-calls (max (count calls) n-blocks)
+        providers (->> turns (map :provider) (remove nil?) distinct vec)
+        models (->> turns (map :model) (remove nil?) distinct vec)
+        started (:created-at session)
+        finished (session-finished-inst turns)]
+    [["Session"
+      [["Name" (or (:title session) "Untitled session") false]
+       ["ID" (str (:id session)) true]
+       ["Channel" (or (some-> (:channel session) name) "\u2014") false]]]
+     ["Timing"
+      [["Started" (or (fmt-inst started) "\u2014") false]
+       ["Finished" (or (fmt-inst finished) "\u2014") false]
+       ["Duration" (or (when (and started finished)
+                         (fmt-duration-ms (- (.getTime ^java.util.Date finished)
+                                            (.getTime ^java.util.Date started))))
+                     "\u2014") false]]]
+     ["Activity"
+      [["Turns" (str n-turns) false]
+       ["Iterations" (str n-iters) false]
+       ["Avg iterations / turn" (fmt-avg n-iters n-turns) false]
+       ["Tool calls" (str n-calls) false]
+       ["Avg tool calls / turn" (fmt-avg n-calls n-turns) false]
+       ["Avg tool calls / iteration" (fmt-avg n-calls n-iters) false]]]
+     ["Providers & models"
+      [["Top provider" (or (most-common (map :provider turns)) "\u2014") true]
+       ["Top model" (or (most-common (map :model turns)) "\u2014") true]
+       ["Providers used" (if (seq providers) (str/join ", " providers) "\u2014") true]
+       ["Models used" (if (seq models) (str/join ", " models) "\u2014") true]]]
+     ["Cost & tokens"
+      [["Total cost" (format-cost-usd (:cost-usd totals)) false]
+       ["Tokens (in / out)" (format-tokens (:tokens totals)) true]]]]))
 
 (defn- render-fenced
   [lang body]
@@ -541,7 +634,7 @@
                            nil
 
                            nil))
-                       render-segments))]
+                   render-segments))]
       (when-not (str/blank? body) body))
     (render-fenced "python" code)))
 
@@ -580,19 +673,19 @@
         (and (not error) (contains? block :result))]
 
     (str "##### Block "
-         idx
-         " - "
-         marker
-         " "
-         (long (block-duration-ms block))
-         "ms"
-         suffix
-         "\n"
-         (when (not (str/blank? comment)) (str comment "\n"))
-         (render-block-code-segments code render-segments)
-         (when has-result? (str "\nResult: `" (display-result result) "`\n"))
-         (when error (str "\n_error:_\n" (render-fenced "text" error)))
-         "\n")))
+      idx
+      " - "
+      marker
+      " "
+      (long (block-duration-ms block))
+      "ms"
+      suffix
+      "\n"
+      (when (not (str/blank? comment)) (str comment "\n"))
+      (render-block-code-segments code render-segments)
+      (when has-result? (str "\nResult: `" (display-result result) "`\n"))
+      (when error (str "\n_error:_\n" (render-fenced "text" error)))
+      "\n")))
 
 (defn- render-thinking
   "Render the LLM's reasoning trace as a fenced text block. The
@@ -617,8 +710,8 @@
 
         status
         (or (some-> (:status iter)
-                    name)
-            "-")
+              name)
+          "-")
 
         dur
         (or (:duration-ms iter) 0)
@@ -642,25 +735,25 @@
         (:answer-position iter)]
 
     (str "\n#### Iteration "
-         pos
-         " - "
-         status
-         " ("
-         in
-         "/"
-         out
-         " tokens, "
-         (format-cost-usd cost)
-         ", "
-         (long dur)
-         "ms)\n\n"
-         (render-thinking (:thinking iter))
-         (render-iter-error (:error iter))
-         (cond (empty? blocks) "_No code blocks (LLM returned an empty response)._\n"
-               :else (apply str
-                       (map-indexed (fn [idx block]
-                                      (render-block-section idx (= idx ans-idx) block))
-                                    blocks))))))
+      pos
+      " - "
+      status
+      " ("
+      in
+      "/"
+      out
+      " tokens, "
+      (format-cost-usd cost)
+      ", "
+      (long dur)
+      "ms)\n\n"
+      (render-thinking (:thinking iter))
+      (render-iter-error (:error iter))
+      (cond (empty? blocks) "_No code blocks (LLM returned an empty response)._\n"
+        :else (apply str
+                (map-indexed (fn [idx block]
+                               (render-block-section idx (= idx ans-idx) block))
+                  blocks))))))
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
@@ -677,99 +770,88 @@
   ;; introspection responses for programmatic callers,
   ;; never in user/LLM-facing surfaces.
   (str "### Turn "
-       (or position "?")
-       "\n"
-       "- **User request:** "
-       (one-line user-request)
-       "\n"
-       "- **Status:** "
-       (or (some-> status
-                   name)
-           "-")
-       (when prior-outcome (str " (" (name prior-outcome) ")"))
-       "\n"
-       "- **Provider/model:** "
-       (or (cond (and provider model) (str provider "/" model)
-                 model model
-                 provider provider)
-           "-")
-       "\n"
-       "- **Iterations:** "
-       iteration-count
-       "\n"
-       "- **Failures:** "
-       failure-count
-       "\n"
-       "- **Tokens (in/out):** "
-       (format-tokens tokens)
-       "\n"
-       "- **Cost:** "
-       (format-cost-usd cost-usd)
-       "\n"
-       (apply str (map render-iteration-section iterations))
-       (render-final-answer answer)
-       "\n"))
+    (or position "?")
+    "\n"
+    "- **User request:** "
+    (one-line user-request)
+    "\n"
+    "- **Status:** "
+    (or (some-> status
+          name)
+      "-")
+    (when prior-outcome (str " (" (name prior-outcome) ")"))
+    "\n"
+    "- **Provider/model:** "
+    (or (cond (and provider model) (str provider "/" model)
+          model model
+          provider provider)
+      "-")
+    "\n"
+    "- **Iterations:** "
+    iteration-count
+    "\n"
+    "- **Failures:** "
+    failure-count
+    "\n"
+    "- **Tokens (in/out):** "
+    (format-tokens tokens)
+    "\n"
+    "- **Cost:** "
+    (format-cost-usd cost-usd)
+    "\n"
+    (apply str (map render-iteration-section iterations))
+    (render-final-answer answer)
+    "\n"))
 
-(defn- render-header
-  [{:keys [session totals]}]
-  (str "# Diagnostic report"
-       (when-let [t (:title session)]
-         (str " - " t))
-       "\n"
-       "\n"
-       "- **Title:** "
-       (or (:title session) "-")
-       "\n"
-       "- **Channel:** "
-       (or (some-> (:channel session)
-                   name)
-           "-")
-       "\n"
-       "- **Model:** "
-       (or (:model session) "-")
-       "\n"
-       "- **Created:** "
-       (or (:created-at session) "-")
-       "\n"
-       "- **Total turns:** "
-       (:turns totals)
-       "\n"
-       "- **Total iterations:** "
-       (:iterations totals)
-       "\n"
-       "- **Total cost (USD):** "
-       (format-cost-usd (:cost-usd totals))
-       "\n"
-       "- **Total tokens (in/out):** " (format-tokens (:tokens totals))
-       "\n" "\n"))
+(defn- render-summary-md
+  "Markdown session summary - the SAME grouped `session-summary` rows the HTML
+   card renders, as a title heading plus per-group bullet lists. One canonical
+   summary shape, rendered to two surfaces. The `ID` row is dropped here: the
+   Markdown surface renders positions, never UUIDs (see the no-leak rule)."
+  [data]
+  (let [title (or (some-> data :session :title) "vis transcript")]
+    (str "# " title "\n\n"
+      (apply str
+        (for [[label rows] (session-summary data)]
+          (str "## " label "\n\n"
+            (apply str
+              (for [[k v _] rows
+                    :when (not= k "ID")]
+                (str "- **" k ":** " v "\n")))
+            "\n"))))))
 
 (defn- render-dialog-message
   [{:keys [role content]}]
   (str "### "
-       (case role
-         :user
-         "User"
+    (case role
+      :user
+      "User"
 
-         :assistant
-         "Assistant"
+      :assistant
+      "Assistant"
 
-         (name role))
-       "\n\n"
-       (render-fenced "markdown" content)
-       "\n"))
+      (name role))
+    "\n\n"
+    (render-fenced "markdown" content)
+    "\n"))
 
 (defn- render-dialog-md
   [{:keys [session dialog]}]
   (str "# Dialog" (when-let [t (:title session)]
                     (str " - " t))
-       "\n\n"
-       (if (seq dialog) (apply str (map render-dialog-message dialog)) "_No dialog messages._\n")))
+    "\n\n"
+    (if (seq dialog) (apply str (map render-dialog-message dialog)) "_No dialog messages._\n")))
+
+(defn- render-turns-md
+  "Turn-by-turn forensic body (no summary header)."
+  [data]
+  (str "## Turn-by-turn breakdown\n\n"
+    (apply str (map render-turn-block (:turns data)))))
 
 (defn- render-full-md
   [data]
-  (str (render-header data)
-       "## Turn-by-turn breakdown\n\n"
-       (apply str (map render-turn-block (:turns data)))))
+  (str (render-summary-md data)
+    (render-turns-md data)))
 
 (defn transcript->md
   "Render transcript data as Markdown. Pure transformation over
@@ -800,6 +882,16 @@
      (transcript->md data opts)
      (str "Session not found: " session-id "\n"))))
 
+(defn session-summary-md
+  "Canonical Markdown session-summary block (title heading + grouped
+   facts) for a session - the SAME summary the HTML card renders. DB
+   lookup + render; returns \"\" (no throw) on a missing id so shell
+   pipelines and headers degrade cleanly."
+  [db-info session-id]
+  (if-let [data (transcript db-info session-id)]
+    (render-summary-md data)
+    ""))
+
 ;; =============================================================================
 ;; HTML renderer. Renders the Markdown transcript to a STANDALONE HTML
 ;; document styled with the vis-light theme's shared web CSS variables
@@ -812,9 +904,9 @@
 (defn- html-escape
   [s]
   (-> (str s)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")))
+    (str/replace "&" "&amp;")
+    (str/replace "<" "&lt;")
+    (str/replace ">" "&gt;")))
 
 (defn- render-inline
   "Escape HTML then apply the constrained inline Markdown the transcript
@@ -826,11 +918,11 @@
 
         with-holes
         (str/replace (str s)
-                     #"`([^`]*)`"
-                     (fn [[_ inner]]
-                       (let [idx (count @codes)]
-                         (swap! codes conj inner)
-                         (str "\u0000" idx "\u0000"))))
+          #"`([^`]*)`"
+          (fn [[_ inner]]
+            (let [idx (count @codes)]
+              (swap! codes conj inner)
+              (str "\u0000" idx "\u0000"))))
 
         escaped
         (html-escape with-holes)
@@ -842,9 +934,9 @@
         (str/replace bolded #"(?<!\w)_([^_]+)_(?!\w)" "<em>$1</em>")]
 
     (str/replace italic
-                 #"\u0000(\d+)\u0000"
-                 (fn [[_ idx]]
-                   (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
+      #"\u0000(\d+)\u0000"
+      (fn [[_ idx]]
+        (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
 (defn- md->html
   "Line-based converter for the CONSTRAINED Markdown the transcript renderer
@@ -868,10 +960,10 @@
 
            :code
            [(str "<pre><code"
-                 (when lang (str " class=\"language-" (html-escape lang) "\""))
-                 ">"
-                 (html-escape (str/join "\n" buf))
-                 "</code></pre>")]
+              (when lang (str " class=\"language-" (html-escape lang) "\""))
+              ">"
+              (html-escape (str/join "\n" buf))
+              "</code></pre>")]
 
            nil))]
       (loop [ls lines
@@ -897,11 +989,11 @@
                     n (count hashes)]
 
                 (recur rst
-                       (conj (into out (flush state buf lang))
-                             (str "<h" n ">" (render-inline text) "</h" n ">"))
-                       :none
-                       []
-                       nil))
+                  (conj (into out (flush state buf lang))
+                    (str "<h" n ">" (render-inline text) "</h" n ">"))
+                  :none
+                  []
+                  nil))
               (re-matches #"-\s+.*" line)
               (let [text (str/replace-first line #"-\s+" "")]
                 (if (= state :list)
@@ -920,6 +1012,7 @@
     "body{margin:0;background:var(--bg);color:var(--fg);"
     "font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
     ".transcript{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 6rem;}"
+    "@media (max-width:640px){.transcript{padding:1.25rem .9rem 3.5rem;}}"
     "h1{font-size:1.9rem;margin:.2em 0 .6em;}"
     "h2{font-size:1.4rem;margin:2.2rem 0 .9rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);}"
     "h3{font-size:1.18rem;margin:1.8rem 0 .6rem;color:var(--primary);}"
@@ -934,7 +1027,26 @@
     "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
     "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
     "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
-    "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"))
+    "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
+    ;; Summary card - borderless, quiet hairlines between rows only.
+    ".tx-summary{width:100%;border-collapse:collapse;margin:.4rem 0 2rem;"
+    "font-size:.92rem;}"
+    ".tx-summary td{padding:.4rem .2rem;vertical-align:top;border:0;"
+    "border-top:1px solid var(--line);}"
+    ".tx-summary tr:first-child td{border-top:0;}"
+    ".tx-summary .tx-group td{border-top:0;padding:1.1rem .2rem .2rem;"
+    "color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+    "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;}"
+    ".tx-summary tr:first-child .tx-group td,.tx-summary .tx-group:first-child td{padding-top:.2rem;}"
+    ".tx-summary .tx-k{color:var(--dim);white-space:nowrap;padding-right:1.2rem;width:1%;}"
+    ".tx-summary .tx-v{color:var(--fg);word-break:break-word;}"
+    ".tx-summary .tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+    "font-size:.88em;}"
+    "@media (max-width:640px){.tx-summary,.tx-summary td{display:block;width:auto;}"
+    ".tx-summary tr{display:block;}"
+    ".tx-summary .tx-k{border-top:0;padding:.55rem 0 0;white-space:normal;}"
+    ".tx-summary .tx-v{padding:.05rem 0 .1rem;}"
+    ".tx-summary .tx-group td{padding-top:1rem;}}"))
 
 (def ^:private prism-token-css
   "The vis-light Prism token theme, mirrored from vis-channel-web/public/app.css
@@ -959,7 +1071,24 @@
    nil when that resource isn't on the classpath (export still renders, just
    without highlighting)."
   (delay (some-> (io/resource "vis-channel-web/public/prism.min.js")
-                 slurp)))
+           slurp)))
+
+(defn- render-summary-html
+  "Standalone HTML summary card: a title `<h1>` plus a borderless, grouped
+   two-column table of session facts + activity/cost rollups."
+  [data]
+  (let [title (or (some-> data :session :title) "vis transcript")]
+    (str "<h1>" (render-inline title) "</h1>\n"
+      "<table class=\"tx-summary\"><tbody>\n"
+      (apply str
+        (for [[label rows] (session-summary data)]
+          (str "<tr class=\"tx-group\"><td colspan=\"2\">" (html-escape label) "</td></tr>\n"
+            (apply str
+              (for [[k v mono?] rows]
+                (str "<tr><td class=\"tx-k\">" (html-escape k)
+                  "</td><td class=\"tx-v" (when mono? " tx-mono") "\">"
+                  (render-inline v) "</td></tr>\n"))))))
+      "</tbody></table>\n")))
 
 (defn transcript->html
   "Render transcript data as a STANDALONE HTML document, styled with the
@@ -971,39 +1100,45 @@
    - `:mode`     - `:full` (default) or `:dialog`, forwarded to `transcript->md`.
    - `:theme-id` - theme id for the embedded CSS (default `:vis-light`)."
   ([data] (transcript->html data {:mode :full}))
-  ([data {:keys [mode theme-id] :or {mode :full theme-id :vis-light} :as opts}]
+  ([data {:keys [mode theme-id] :or {mode :full theme-id :vis-light}}]
    (let [title
          (or (some-> data
-                     :session
-                     :title)
-             "vis transcript")
+               :session
+               :title)
+           "vis transcript")
+
+         dialog?
+         (= mode :dialog)
 
          body
-         (md->html (transcript->md data (assoc opts :mode mode)))]
+         (if dialog?
+           (md->html (transcript->md data {:mode :dialog}))
+           (str (render-summary-html data)
+             (md->html (render-turns-md data))))]
 
      (str "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
-          "<meta charset=\"utf-8\">\n"
-          "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-          "<title>"
-          (html-escape title)
-          "</title>\n"
-          "<style>\n"
-          (vis/web-css-root theme-id)
-          "\n"
-          transcript-html-styles
-          "\n"
-          prism-token-css
-          "\n"
-          "</style>\n</head>\n<body>\n<main class=\"transcript\">\n"
-          body
-          "\n</main>\n"
+       "<meta charset=\"utf-8\">\n"
+       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+       "<title>"
+       (html-escape title)
+       "</title>\n"
+       "<style>\n"
+       (vis/web-css-root theme-id)
+       "\n"
+       transcript-html-styles
+       "\n"
+       prism-token-css
+       "\n"
+       "</style>\n</head>\n<body>\n<main class=\"transcript\">\n"
+       body
+       "\n</main>\n"
           ;; Inline the vendored Prism highlighter so the standalone file
           ;; syntax-highlights `<code class=\"language-*\">` on open — same
           ;; highlighter + token theme as the web /ui, no network fetch.
-          (when-let [js @prism-js]
-            (str "<script>" js
-                 "</script>\n"
-                 "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
-          "</body>\n</html>\n"))))
+       (when-let [js @prism-js]
+         (str "<script>" js
+           "</script>\n"
+           "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
+       "</body>\n</html>\n"))))
 
 
