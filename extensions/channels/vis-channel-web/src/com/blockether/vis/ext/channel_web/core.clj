@@ -4335,9 +4335,8 @@
   (str "body.export{margin:0}"
        ".export .thread{max-width:860px;margin:0 auto;padding:1rem 1.25rem 4rem}"
        ".export .column{width:100%}"
-       ".export-summary{max-width:860px;margin:1.75rem auto .5rem;padding:1rem 1.25rem;"
-       "border:1px solid var(--line);border-radius:14px;background:var(--code-bg)}"
-       ".export-title{margin:0 0 .6rem;font-size:1.5rem;color:var(--fg)}"
+       ".export-summary{width:100%;margin:1.75rem 0 .5rem;padding:1rem 1.25rem;"
+       "border:1px solid var(--line);background:var(--code-bg)}"
        ;; Borderless, grouped two-column summary table (canonical session-summary).
        ".export-summary-table{width:100%;border-collapse:collapse;font-size:.9rem;margin:.1rem 0 0}"
        ".export-summary-table td{padding:.4rem .2rem;vertical-align:top;border:0;border-top:1px solid var(--line)}"
@@ -4357,8 +4356,8 @@
    `transcript/session-summary` rows (Session / Timing / Activity / Providers &
    models / Cost & tokens) rendered as a borderless two-column table, the SAME
    shape the Markdown + standalone-HTML surfaces emit. One source of truth."
-  [_sid title data]
-  [:section.export-summary [:h1.export-title title]
+  [_sid _title data]
+  [:section.export-summary
    [:table.export-summary-table
     [:tbody
      (for [[label rows] (transcript/session-summary data)]
