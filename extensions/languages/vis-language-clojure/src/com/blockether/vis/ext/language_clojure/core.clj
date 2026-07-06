@@ -39,22 +39,22 @@
       workspace root (e.g. polylith sub-project pinned via channels)."
   [env]
   (let [root (some-> (:workspace/root env)
-                     io/file)]
+               io/file)]
     (when (and root (.isDirectory root))
       (or
         ;; (1) pre-populated env hint
         (boolean (some #(= "clojure" (:language %))
-                       (some-> env
-                               :env/languages
-                               :languages)))
+                   (some-> env
+                     :env/languages
+                     :languages)))
         ;; (2) project-file probe
         (some (fn [n]
                 (.exists (io/file root n)))
-              ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn"])
+          ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn"])
         ;; (3) bounded fallback scan
         (try (let [scan (languages/scan root {:max-files 2000 :deadline-ms 250})]
                (boolean (some #(= "clojure" (:language %)) (:languages scan))))
-             (catch Throwable _ false))))))
+          (catch Throwable _ false))))))
 
 (defn- activation-fn [env] (boolean (workspace-has-clojure? env)))
 
@@ -65,21 +65,34 @@
 (defn- env-root
   ^String [env]
   (or (:workspace/root env)
-      (throw (ex-info "clj/* tool fired without :workspace/root in env"
-                      {:type :clj/no-workspace}))))
+    (throw (ex-info "clj/* tool fired without :workspace/root in env"
+             {:type :clj/no-workspace}))))
+
+(defn- expand-home
+  "Expand a leading `~` / `~/…` to the user's home dir (`user.home`), so a REPL
+   `dir` written the way a human types it resolves to a real absolute path
+   instead of a bogus `~` segment under the workspace root. `~user` (another
+   user's home) is NOT resolved — it passes through untouched."
+  ^String [^String d]
+  (let [home (System/getProperty "user.home")]
+    (cond (= "~" d) (or home d)
+      (str/starts-with? d "~/") (if home (str home (subs d 1)) d)
+      :else d)))
 
 (defn- resolve-repl-dir
-  "Resolve a `:start`/`:status` target dir against the workspace `root`. A blank
-   dir means the workspace root; a relative dir is taken under root; an absolute
-   dir is used as-is. Returns a canonical path string."
+  "Resolve a `:start`/`:status`/`:stop` target dir against the workspace `root`.
+   A blank dir means the workspace root; a leading `~`/`~/…` expands to the
+   user's home dir; a relative dir is taken under root; an absolute dir is used
+   as-is. Returns a canonical path string — the SAME value for a given target no
+   matter how it was spelled, so start, stop, and eval-by-id all agree on one id."
   ^String [root dir]
   (let [d
-        (str dir)
+        (expand-home (str dir))
 
         f
         (cond (= "" d) (io/file root)
-              (.isAbsolute (io/file d)) (io/file d)
-              :else (io/file root d))]
+          (.isAbsolute (io/file d)) (io/file d)
+          :else (io/file root d))]
 
     (.getCanonicalPath f)))
 
@@ -89,8 +102,8 @@
    alias suffix, resource detail that crosses the strings-only boundary)."
   [a]
   (cond (nil? a) nil
-        (sequential? a) (mapv name a)
-        :else [(name a)]))
+    (sequential? a) (mapv name a)
+    :else [(name a)]))
 
 (defn- repl-resource-id
   "Stable session-resource id for the REPL rooted at `dir` — the SAME id
@@ -125,8 +138,8 @@
         {:id id
          :kind :nrepl
          :label (str "nREPL "
-                     (.getName (io/file dir))
-                     (when (seq aliases) (apply str (map #(str " :" %) aliases))))
+                  (.getName (io/file dir))
+                  (when (seq aliases) (apply str (map #(str " :" %) aliases))))
          :status (or (get result "status") :up)
          ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
          ;; stringifies its own keys + the kind/status/owner/language enums), so it
@@ -150,11 +163,11 @@
       ;; Surface the registration in the TUI (header toast) so a spawned REPL is
       ;; visible the moment it lands, not just as a silent ● bump in the footer.
       (vis/notify! (str "● nREPL up — "
-                        (.getName (io/file dir))
-                        (when-let [p (get result "port")]
-                          (str " :" p)))
-                   :level :success
-                   :ttl-ms 4000))))
+                     (.getName (io/file dir))
+                     (when-let [p (get result "port")]
+                       (str " :" p)))
+        :level :success
+        :ttl-ms 4000))))
 
 (defn clj-repl-fn
   "Manage THIS session's workspace nREPL(s). Positional op (default \"status\") +
@@ -209,15 +222,15 @@
        ("start" "restart")
        (do (when-not (.isDirectory (io/file dir))
              (throw (ex-info (str "clj_repl \"" op "\" target dir does not exist: " dir)
-                             {:type :clj/bad-args :dir dir})))
-           (let [result (if (= op "restart")
-                          (do (repl-manager/stop! sid dir)
-                              (repl-manager/start! sid dir {:aliases aliases}))
-                          (repl-manager/start! sid dir {:aliases aliases}))]
+                      {:type :clj/bad-args :dir dir})))
+         (let [result (if (= op "restart")
+                        (do (repl-manager/stop! sid dir)
+                          (repl-manager/start! sid dir {:aliases aliases}))
+                        (repl-manager/start! sid dir {:aliases aliases}))]
              ;; Mirror the live REPL into the session resource registry → ctx +
              ;; footer + stoppable by id.
-             (register-repl-resource! sid dir aliases result)
-             (extension/success {:result result})))
+           (register-repl-resource! sid dir aliases result)
+           (extension/success {:result result})))
 
        (throw
          (ex-info
@@ -271,12 +284,12 @@
 
          (if (.isFile f)
            (->> (:aliases (edn/read-string (slurp f)))
-                keys
-                (map name)
-                sort
-                vec)
+             keys
+             (map name)
+             sort
+             vec)
            []))
-       (catch Throwable _ [])))
+    (catch Throwable _ [])))
 
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:
@@ -286,12 +299,12 @@
      clj_eval({\"code\": \"...\", \"id\": \"<repl-id>\"})   ; target a registered REPL"
   [arg]
   (cond (string? arg) {"code" arg}
-        (map? arg) arg
-        :else (throw (ex-info "clj_eval expects a code string or opts map"
-                              {:type :clj/bad-args
-                               :got arg
-                               :examples ["clj_eval(\"(+ 1 1)\")"
-                                          "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
+    (map? arg) arg
+    :else (throw (ex-info "clj_eval expects a code string or opts map"
+                   {:type :clj/bad-args
+                    :got arg
+                    :examples ["clj_eval(\"(+ 1 1)\")"
+                               "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
 (defn clj-eval-fn
   "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
@@ -330,9 +343,9 @@
 
          rid
          (some-> (or (get m "id") (get m "repl_id"))
-                 str
-                 str/trim
-                 not-empty)
+           str
+           str/trim
+           not-empty)
 
          root
          (env-root env)
@@ -366,17 +379,17 @@
                {:type :clj/no-port :workspace-root root})))
          (extension/success
            {:result (try (run tport)
-                         (catch clojure.lang.ExceptionInfo e
-                           (if (and (= :clj/nrepl-connect-failed (:type (ex-data e))) (:dir target))
+                      (catch clojure.lang.ExceptionInfo e
+                        (if (and (= :clj/nrepl-connect-failed (:type (ex-data e))) (:dir target))
                              ;; Managed target's process is alive but not serving nREPL:
                              ;; restart it and retry the eval once.
-                             (let [fresh (repl-manager/restart-for-dir! sid (:dir target))]
-                               (when-not (:port fresh) (throw e))
+                          (let [fresh (repl-manager/restart-for-dir! sid (:dir target))]
+                            (when-not (:port fresh) (throw e))
                                ;; Drop the stale resource mirror so ctx re-adds it with the
                                ;; fresh port on the next render.
-                               (vis/unregister-resource! sid (repl-resource-id (:dir target)))
-                               (run (:port fresh)))
-                             (throw e))))}))))))
+                            (vis/unregister-resource! sid (repl-resource-id (:dir target)))
+                            (run (:port fresh)))
+                          (throw e))))}))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
@@ -400,7 +413,7 @@
                  fp (.toPath (.getCanonicalFile (io/file s)))]
 
              (if (.startsWith fp rp) (str (.relativize rp fp)) s))
-           (catch Throwable _ s))
+        (catch Throwable _ s))
       s)))
 
 (defn- clj-format-one-file!
@@ -479,8 +492,8 @@
 
         code
         (cond (string? arg) arg
-              (and (map? arg) (contains? arg "code")) (str (get arg "code"))
-              :else nil)
+          (and (map? arg) (contains? arg "code")) (str (get arg "code"))
+          :else nil)
 
         under
         (fn [p]
@@ -489,19 +502,19 @@
 
         base
         (cond code (lint/lint-code code)
-              path (lint/lint-paths [(under path)])
-              (seq paths) (lint/lint-paths (mapv under paths))
-              :else (let [defaults (->> ["src" "test"]
-                                        (map #(io/file root %))
-                                        (filter #(.exists ^java.io.File %))
-                                        (mapv str))]
-                      (lint/lint-paths (if (seq defaults) defaults [(str root)]))))]
+          path (lint/lint-paths [(under path)])
+          (seq paths) (lint/lint-paths (mapv under paths))
+          :else (let [defaults (->> ["src" "test"]
+                                 (map #(io/file root %))
+                                 (filter #(.exists ^java.io.File %))
+                                 (mapv str))]
+                  (lint/lint-paths (if (seq defaults) defaults [(str root)]))))]
 
     (extension/success
       {:result (assoc (update base
-                              "findings"
-                              (fn [fs]
-                                (mapv #(update % "file" (partial relativize-path root)) fs)))
+                        "findings"
+                        (fn [fs]
+                          (mapv #(update % "file" (partial relativize-path root)) fs)))
                  "language" "clojure")})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
@@ -520,9 +533,9 @@
   (let [a (first args)]
     (cond (map? a) (when-let [p (get a "path")]
                      [p])
-          (sequential? a) (keep #(when (map? %) (get % "path")) a)
-          (string? a) [a]
-          :else nil)))
+      (sequential? a) (keep #(when (map? %) (get % "path")) a)
+      (string? a) [a]
+      :else nil)))
 
 (defn- resolve-under-root
   ^java.io.File [env path]
@@ -574,33 +587,33 @@
         ;; and built its own result) -- just tidy the files, result unchanged.
         (do (doseq [p (edit-arg-paths args)]
               (repair-clj-file! env p))
-            result)
+          result)
         ;; Repair each touched file, then RE-DIFF the model-facing summaries
         ;; against the final disk bytes and flag any structural repair.
         (let [reports (into {}
-                            (keep (fn [{:keys [path before]}]
-                                    (when-let [r (repair-clj-file! env path)]
-                                      [path (assoc r :before before)]))
-                                  befores))]
+                        (keep (fn [{:keys [path before]}]
+                                (when-let [r (repair-clj-file! env path)]
+                                  [path (assoc r :before before)]))
+                          befores))]
           (update result
-                  :result
-                  (fn [summaries]
-                    (mapv (fn [s]
-                            (if-let [{:keys [before structural?]} (get reports (get s "path"))]
-                              (let [f (resolve-under-root env (get s "path"))
-                                    after (when (.isFile f) (slurp f))
-                                    s' (if after (editing/refresh-file-summary s before after) s)]
+            :result
+            (fn [summaries]
+              (mapv (fn [s]
+                      (if-let [{:keys [before structural?]} (get reports (get s "path"))]
+                        (let [f (resolve-under-root env (get s "path"))
+                              after (when (.isFile f) (slurp f))
+                              s' (if after (editing/refresh-file-summary s before after) s)]
 
-                                (cond-> s'
-                                  structural?
-                                  (assoc "repaired"
-                                    true "note"
-                                    (str "parinfer paren-repair CHANGED STRUCTURE "
-                                         "(moved/added/removed delimiters); the diff "
-                                         "shows the FINAL on-disk result -- verify the "
-                                         "nesting is what you intended."))))
-                              s))
-                          summaries))))))))
+                          (cond-> s'
+                            structural?
+                            (assoc "repaired"
+                              true "note"
+                              (str "parinfer paren-repair CHANGED STRUCTURE "
+                                "(moved/added/removed delimiters); the diff "
+                                "shows the FINAL on-disk result -- verify the "
+                                "nesting is what you intended."))))
+                        s))
+                summaries))))))))
 
 (defn clj-struct-patch-no-fail-around
   "MIDDLEWARE (:around) on struct_patch so a Clojure structural edit does NOT
@@ -611,22 +624,22 @@
    calls pass straight through to `next`."
   [_env _op-kw args next]
   (try (next args)
-       (catch clojure.lang.ExceptionInfo e
-         (let [m
-               (first args)
+    (catch clojure.lang.ExceptionInfo e
+      (let [m
+            (first args)
 
-               path
-               (and (map? m) (get m "path"))
+            path
+            (and (map? m) (get m "path"))
 
-               code
-               (and (map? m) (get m "code"))
+            code
+            (and (map? m) (get m "code"))
 
-               fixed
-               (when (and (clj-source-file? path) (string? code)) (repair/fix-delimiters code))]
+            fixed
+            (when (and (clj-source-file? path) (string? code)) (repair/fix-delimiters code))]
 
-           (if (and fixed (not= fixed code))
-             (try (next (assoc-in (vec args) [0 "code"] fixed)) (catch Throwable _ (throw e))) ; repaired retry failed → original
-             (throw e))))))
+        (if (and fixed (not= fixed code))
+          (try (next (assoc-in (vec args) [0 "code"] fixed)) (catch Throwable _ (throw e))) ; repaired retry failed → original
+          (throw e))))))
 
 (defn clj-patch-no-fail-around
   "MIDDLEWARE (:around) on patch — the anchored-edit mirror of
@@ -649,9 +662,9 @@
   [env _op-kw args next]
   (let [result (next args)]
     (if (and (map? result)
-             (false? (:success? result))
-             (= :syntax-error (get-in result [:error :reason]))
-             (seq (get-in result [:metadata :candidate-plans])))
+          (false? (:success? result))
+          (= :syntax-error (get-in result [:error :reason]))
+          (seq (get-in result [:metadata :candidate-plans])))
       (let [plans (get-in result [:metadata :candidate-plans])
             broken (set (get-in result [:metadata :broken-paths]))
             repaired-plans (reduce (fn [acc {:keys [path after] :as plan}]
@@ -659,17 +672,17 @@
                                        (conj acc plan)
                                        (let [fixed (when (clj-source-file? path)
                                                      (try (repair/fix-delimiters (str after))
-                                                          (catch Throwable _ nil)))]
+                                                       (catch Throwable _ nil)))]
                                          ;; unchanged output means the brokenness was not a
                                          ;; delimiter problem — nothing we can fix here.
                                          (if (and (string? fixed) (not= fixed (str after)))
                                            (conj acc
-                                                 (assoc plan
-                                                   :after fixed
-                                                   :repaired? true))
+                                             (assoc plan
+                                               :after fixed
+                                               :repaired? true))
                                            (reduced nil)))))
-                                   []
-                                   plans)]
+                             []
+                             plans)]
 
         (if (nil? repaired-plans)
           result
@@ -692,7 +705,7 @@
                                  (assoc "repaired"
                                    true "note"
                                    "unbalanced delimiters auto-repaired (parinfer) before write")))
-                             repaired-plans)
+                         repaired-plans)
                :metadata {:mode :exact-replace
                           :file-count (count repaired-plans)
                           :changed-count (count repaired-plans)
