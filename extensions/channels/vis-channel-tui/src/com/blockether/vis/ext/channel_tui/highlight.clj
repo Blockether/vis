@@ -9,12 +9,14 @@
    and GENERAL: Clojure, Python, JavaScript, JSON, … every fence we render is
    colored off each grammar's canonical highlight rules.
 
-   The heavy lifting — parse, tree walk, per-byte capture labeling, ANSI run
-   coalescing — lives in the pack's JVM-native `Highlighter` (Java, on the hot
-   path), NOT in Clojure. This namespace is a thin edge: it maps a fence `:lang`
-   to a grammar, hands the pack our capture→SGR theme, and caches the result. The
-   SGR codes we pick are the ones `render/ansi-code->fg` already maps to theme fg
-   slots (string/number/keyword/special/comment), so no painter change is needed
+   The heavy lifting — parse, a real tree-sitter query interpreter (field-scoped
+   captures, alternations, `#match?`/`#eq?` predicates), per-byte capture
+   labeling, ANSI run coalescing — lives in the pack's JVM-native `Highlighter`
+   (Java, on the hot path), NOT in Clojure. This namespace is a thin edge: it
+   maps a fence `:lang` to a grammar, hands the pack our capture→SGR theme, and
+   caches the result. The SGR codes we pick are the ones `render/ansi-code->fg`
+   already maps to theme fg slots (string/number/keyword/special/comment plus
+   function→warning-fg and type→success-fg), so no painter change is needed
    and the escapes stay zero-width (column alignment on verbatim fences is
    untouched).
 
@@ -45,19 +47,24 @@
 
 (def ^:private capture->sgr
   "Highlight capture → SGR foreground code. Codes are the ones
-   `render/ansi-code->fg` already maps to theme slots: 31 string, 34 number,
-   35 special, 36 keyword, 90 comment. Unlisted captures (variable, operator,
-   function, punctuation, …) stay the default fg — coloring every identifier
-   would be noise (and, without a query engine, unreliable)."
-  {"string" "31"
-   "number" "34"
-   "constant" "36"
-   "constant.builtin" "35"
-   "keyword" "35"
-   "comment" "90"
+   `render/ansi-code->fg` already maps to theme slots: 31 string, 32 type
+   (success-fg), 33 function (warning-fg), 34 number, 35 special/constant,
+   36 keyword, 90 comment. A dotted capture (`function.builtin`,
+   `type.builtin`, `string.special`, …) falls back to its top-level category
+   in the Java highlighter, so only the categories need listing. Identifiers
+   (`variable`), operators and punctuation stay the default fg — coloring
+   every token would be noise."
+  {"keyword" "36"
+   "string" "31"
    "escape" "35"
-   "type" "36"
-   "constructor" "36"})
+   "number" "34"
+   "constant" "35"
+   "constant.builtin" "35"
+   "comment" "90"
+   "function" "33"
+   "type" "32"
+   "constructor" "32"
+   "property" "35"})
 
 (def ^:private theme-map
   "`capture->sgr` as a `java.util.Map` for the Java highlighter (built once)."
