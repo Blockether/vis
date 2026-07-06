@@ -1796,19 +1796,54 @@
       true (assoc :output-reasoning-tokens  (long   (or (:output_reasoning_tokens row) 0)))
       true (assoc :cost-usd                 (double (or (:cost_usd row) 0.0))))))
 
-(defn- iterations-for-state-id
-  "Iteration views for one concrete `session_turn_state.id`, position-ordered."
-  [db-info state-id-s]
-  (mapv (fn [row]
-          (let [trace   (routing-events-for-iteration db-info (:id row))
-                routing (row-routing-summary row trace)]
-            (attach-routing (row->iteration row) routing)))
-    (query! db-info
-      {:select   [:*] :from :session_turn_iteration
-       :where    [:= :session_turn_state_id state-id-s]
-       :order-by [[:position :asc]]})))
+;; The session_turn_iteration columns, and the subset the DEFAULT (render/
+;; restore) read pulls. The three excluded columns are large FORENSIC blobs
+;; that only the on-demand transcript / introspection surfaces read — chiefly
+;; `llm_user_prompt`, which stores the WHOLE per-turn prompt (full history), so
+;; it grows quadratically and dwarfs the DB (measured: 713MB of one 843MB DB).
+;; `SELECT *`-ing it on restore loaded hundreds of MB of prompt strings the TUI
+;; never renders. Restore selects everything else; forensic callers opt back in
+;; with `with-forensics?`.
+(def ^:private iteration-all-columns
+  [:id :session_turn_state_id :position :status
+   :llm_system_prompt :llm_user_prompt
+   :llm_selected_provider :llm_selected_model :llm_actual_provider :llm_actual_model
+   :llm_fallback :llm_full_duration_ms :llm_thinking :llm_assistant_prose
+   :llm_returned_empty_code :llm_raw_response :llm_raw_response_preview
+   :llm_raw_response_length :llm_raw_response_sha256 :llm_executable_code_blocks
+   :llm_assistant_message :input_tokens :input_regular_tokens :input_cache_write_tokens
+   :input_cache_read_tokens :output_tokens :output_reasoning_tokens :cost_usd
+   :code :tool_calls :eval_duration_ms :created_at :finished_at])
+(def ^:private iteration-forensic-columns
+  "Large forensic blobs excluded from the default restore SELECT."
+  #{:llm_user_prompt :llm_system_prompt :llm_raw_response})
+(def ^:private iteration-restore-columns
+  (vec (remove iteration-forensic-columns iteration-all-columns)))
 
-(defn db-list-session-turn-iterations [db-info session-turn-id]
+(defn- iterations-for-state-id
+  "Iteration views for one concrete `session_turn_state.id`, position-ordered.
+   `with-forensics?` (default false) selects the big forensic blobs too — pass
+   it only from the on-demand transcript / introspection surfaces; the TUI
+   restore + resume never render them and must stay slim."
+  ([db-info state-id-s] (iterations-for-state-id db-info state-id-s false))
+  ([db-info state-id-s with-forensics?]
+   (mapv (fn [row]
+           (let [trace   (routing-events-for-iteration db-info (:id row))
+                 routing (row-routing-summary row trace)]
+             (attach-routing (row->iteration row) routing)))
+     (query! db-info
+       {:select   (if with-forensics? [:*] iteration-restore-columns)
+        :from :session_turn_iteration
+        :where    [:= :session_turn_state_id state-id-s]
+        :order-by [[:position :asc]]}))))
+
+(defn db-list-session-turn-iterations
+  ;; `with-forensics?` (default false) also loads the big forensic blobs
+  ;; (llm_user_prompt/system_prompt/raw_response) — pass it only from the
+  ;; on-demand transcript / introspection surfaces that render them. Default
+  ;; slim keeps a session RESTORE from pulling hundreds of MB of prompt text.
+  ([db-info session-turn-id] (db-list-session-turn-iterations db-info session-turn-id false))
+  ([db-info session-turn-id with-forensics?]
   ;; `session-turn-id` arrives as EITHER a `session_turn_soul` id (the
   ;; canonical turn id `row->turn`/`db-turn-history` expose, the one history
   ;; views carry) OR a concrete `session_turn_state` id (the engine's
@@ -1820,11 +1855,11 @@
   (if (and (ds db-info) session-turn-id)
     (let [id-s     (->ref session-turn-id)
           state    (latest-session-turn-state db-info id-s)
-          via-soul (when state (iterations-for-state-id db-info (:id state)))]
+          via-soul (when state (iterations-for-state-id db-info (:id state) with-forensics?))]
       (if (seq via-soul)
         via-soul
-        (iterations-for-state-id db-info id-s)))
-    []))
+        (iterations-for-state-id db-info id-s with-forensics?)))
+    [])))
 
 ;; -----------------------------------------------------------------------------
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,

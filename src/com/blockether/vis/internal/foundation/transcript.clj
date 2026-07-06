@@ -134,7 +134,7 @@
   "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
-  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn))
+  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn) true) ;; forensic: load the big blobs
                     (catch Throwable _ []))
         iters     (mapv (partial enrich-iteration db-info) raw-iters)
         totals    (iteration-rollup iters)
