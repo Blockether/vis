@@ -1709,18 +1709,33 @@
     (stdout! "")
     (shutdown-agents)))
 
-(defn- html-escape
-  [s]
-  (str/escape (str s) {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;"}))
+(def ^:private transcript-html-fn
+  ;; Deferred resolve: `foundation.transcript` requires `vis.core`, which
+  ;; requires THIS namespace - a direct require would cycle. Resolve at
+  ;; call time (same pattern as `vis.core`'s channel-event vars).
+  (delay (requiring-resolve
+           'com.blockether.vis.internal.foundation.transcript/transcript-html)))
 
-(defn- export-html-document
-  [title markdown]
-  (str "<!doctype html>\n"
-    "<html><head><meta charset=\"utf-8\"><title>"
-    (html-escape (or title "Vis session"))
-    "</title></head><body>\n"
-    (render/render (render/markdown->ir markdown) :html)
-    "\n</body></html>\n"))
+(defn- cinema-export-fn
+  "Resolve the headless session-cinema exporter from the channel-tui extension,
+   or nil when that jar is not on the classpath. Deferred so `--md`/`--html`
+   never pay the Lanterna load cost."
+  []
+  (requiring-resolve 'com.blockether.vis.ext.channel-tui.cinema/export!))
+
+(defn- resolve-out-path
+  "Resolve a user-supplied output path against the invocation directory.
+   `bin/vis` runs the dev JVM from the repo root (so `clojure -M:vis` finds
+   deps.edn) but passes the real invocation cwd as `-Duser.dir`. Java resolves
+   relative `File` paths against the OS cwd, so a bare `out.html` would silently
+   land in the repo root while the printed path (from `user.dir`) said
+   otherwise. Anchor relatives to `user.dir` (same convention as
+   `vis ext scaffold`); absolute paths pass through untouched."
+  [path]
+  (let [f (io/file path)]
+    (.getPath (if (.isAbsolute f)
+                f
+                (io/file (System/getProperty "user.dir") path)))))
 
 (defn- cli-export-session!
   [parsed _residual]
@@ -1728,19 +1743,42 @@
   (let [d         (lp/db-info)
         session   (session-or-exit! d (get parsed "session-id"))
         md?       (boolean (get parsed "md"))
-        html-path (some-> (get parsed "html") str/trim not-empty)]
-    (when (and md? html-path)
-      (stdout! "Choose either --md or --html PATH, not both.")
+        html-path (some-> (get parsed "html") str/trim not-empty resolve-out-path)
+        cast-path (some-> (get parsed "cast") str/trim not-empty resolve-out-path)
+        mp4-path  (some-> (get parsed "mp4") str/trim not-empty resolve-out-path)
+        chosen    (filterv some? [(when md? :md) (when html-path :html)
+                                  (when cast-path :cast) (when mp4-path :mp4)])]
+    (when (> (count chosen) 1)
+      (stdout! "Choose exactly one of --md, --html PATH, --cast PATH, or --mp4 PATH.")
       (shutdown-agents)
       (System/exit 2))
-    (let [markdown (render/session->markdown d (:id session))]
-      (if html-path
-        (let [target (io/file html-path)]
-          (when-let [parent (.getParentFile target)]
-            (.mkdirs parent))
-          (spit target (export-html-document (:title session) markdown))
-          (stdout! (str "Exported HTML: " (.getPath target))))
-        (write-stdout! markdown)))
+    (cond
+      html-path
+      (let [target (io/file html-path)]
+        (when-let [parent (.getParentFile target)]
+          (.mkdirs parent))
+        (spit target (@transcript-html-fn d (:id session)))
+        (stdout! (str "Exported HTML: " (.getPath target))))
+
+      (or cast-path mp4-path)
+      (let [fmt  (if mp4-path :mp4 :cast)
+            path (or mp4-path cast-path)
+            export! (cinema-export-fn)]
+        (when-let [parent (.getParentFile (io/file path))]
+          (.mkdirs parent))
+        (if export!
+          (let [res (export! (:id session) {:format fmt :out path})]
+            (stdout! (format "Exported %s: %s  (%d frames, ~%ds)"
+                       (str/upper-case (name fmt))
+                       (:path res) (:frames res)
+                       (long (/ (:video-ms res) 1000)))))
+          (do
+            (stdout! "Cinema export (--cast/--mp4) needs the channel-tui extension, which is not installed.")
+            (shutdown-agents)
+            (System/exit 2))))
+
+      :else
+      (write-stdout! (render/session->markdown d (:id session))))
     (shutdown-agents)))
 
 (defn- cli-delete-session!
@@ -2489,16 +2527,22 @@
           :cmd/run-fn cli-delete-session!}
          {:cmd/name   "export"
           :cmd/parent ["sessions"]
-          :cmd/doc    "Export a session as Markdown on stdout or HTML to a file."
-          :cmd/usage  "vis sessions export <SESSION-ID> [--md | --html PATH]"
+          :cmd/doc    "Export a session: Markdown on stdout, HTML to a file, or a headless screencast (.cast / .mp4) of the TUI transcript."
+          :cmd/usage  "vis sessions export <SESSION-ID> [--md | --html PATH | --cast PATH | --mp4 PATH]"
           :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
                         :doc  "Session id (full UUID or unambiguous prefix)."}
                        {:name "md" :kind :flag :type :boolean
                         :doc  "Print Markdown to stdout (default)."}
                        {:name "html" :kind :flag :type :string
-                        :doc  "Write HTML export to PATH."}]
+                        :doc  "Write styled HTML export to PATH."}
+                       {:name "cast" :kind :flag :type :string
+                        :doc  "Write an asciinema .cast screencast of the (uncollapsed) TUI transcript to PATH."}
+                       {:name "mp4" :kind :flag :type :string
+                        :doc  "Write a pure-JVM H.264 .mp4 screencast of the (uncollapsed) TUI transcript to PATH."}]
           :cmd/examples ["vis sessions export 3a7b2c1d --md"
-                         "vis sessions export 3a7b2c1d --html out.html"]
+                         "vis sessions export 3a7b2c1d --html out.html"
+                         "vis sessions export 3a7b2c1d --cast session.cast"
+                         "vis sessions export 3a7b2c1d --mp4 session.mp4"]
           :cmd/run-fn cli-export-session!}
          {:cmd/name   "search"
           :cmd/parent ["sessions"]
@@ -3015,7 +3059,16 @@
                                        #(commandline/dispatch! root full-args))]
                 (case status
                   :error (System/exit 2)
-                  nil))))))
+                  ;; Success path: force a deterministic process exit.
+                  ;; `discover-all!` spins up the GraalPy sandbox + extension
+                  ;; executors, some of which leave NON-daemon threads alive; a
+                  ;; bare `nil` return let `-main` finish while those threads
+                  ;; kept the JVM (and the native isolate) running, so a
+                  ;; one-shot command like `vis sessions export` printed its
+                  ;; output and then HUNG the terminal forever. Draining agents
+                  ;; and calling `System/exit 0` guarantees termination.
+                  (do (shutdown-agents)
+                    (System/exit 0))))))))
       (catch Throwable t
         (cond
           (= :vis/no-provider (:type (ex-data t))) (exit-no-provider!)

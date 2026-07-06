@@ -77,3 +77,35 @@
                   (get-in @seen [:opts :multipart])))
         (finally
           (.delete f))))))
+
+(defdescribe telegram-document-upload-test
+  (it "posts sendDocument as multipart with chat id, named file, and caption"
+    (let [seen (atom nil)
+          f    (java.io.File/createTempFile "vis-telegram-api-test" ".html")]
+      (try
+        (with-redefs [http/post (fn [url opts]
+                                  (reset! seen {:url url :opts opts})
+                                  {:body "{\"ok\":true,\"result\":true}"})]
+          (expect (= {:ok true :result true}
+                    (tg/send-document! "TOKEN" 42 f "transcript.html" "Styled"))))
+        (expect (= "https://api.telegram.org/botTOKEN/sendDocument" (:url @seen)))
+        (expect (= [{:name "chat_id" :content "42"}
+                    {:name "document" :content f :file-name "transcript.html"}
+                    {:name "caption" :content "Styled"}]
+                  (get-in @seen [:opts :multipart])))
+        (finally
+          (.delete f)))))
+
+  (it "omits the caption field when no caption is given"
+    (let [seen (atom nil)
+          f    (java.io.File/createTempFile "vis-telegram-api-test" ".html")]
+      (try
+        (with-redefs [http/post (fn [url opts]
+                                  (reset! seen {:url url :opts opts})
+                                  {:body "{\"ok\":true,\"result\":true}"})]
+          (tg/send-document! "TOKEN" 42 f "transcript.html"))
+        (expect (= [{:name "chat_id" :content "42"}
+                    {:name "document" :content f :file-name "transcript.html"}]
+                  (get-in @seen [:opts :multipart])))
+        (finally
+          (.delete f))))))

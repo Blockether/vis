@@ -21,6 +21,14 @@
 (defonce ^:private poll-thread (atom nil))
 (defonce ^:private restart-requested? (atom false))
 
+(def ^:private transcript-html-fn
+  ;; Deferred resolve: `foundation.transcript` pulls in `vis.core`, which
+  ;; transitively requires this channel — resolve the styled-HTML renderer
+  ;; at call time to dodge the load cycle (same pattern as the CLI/web/slash
+  ;; export paths).
+  (delay (requiring-resolve
+           'com.blockether.vis.internal.foundation.transcript/transcript-html)))
+
 (defonce ^:private chat-state
   ;; {chat-id {:settings {:reasoning-level :balanced
   ;;                      :openai-codex-verbosity :low}
@@ -1049,7 +1057,7 @@
           "Voice messages - transcribe with the Parakeet ASR model, then send as text\n"))
       "/cancel - cancel current request\n"
       "/restart - restart the bot in a fresh Java process\n"
-      "/export - export this session as Markdown")))
+      "/export - export this session (Markdown in chat + styled HTML file)")))
 
 (defn- codex-model-active?
   "True when the active model belongs to the OpenAI Codex provider.
@@ -1190,7 +1198,27 @@
 
 (defn- command-export [chat-id]
   (let [{:keys [id]} (gateway-session-for-telegram-chat! chat-id)
-        markdown (vis/session->markdown (vis/db-info) id)]
+        db       (vis/db-info)
+        markdown (vis/session->markdown db id)]
+    ;; Deliver the styled (vis-light) HTML transcript as a downloadable
+    ;; attachment alongside the in-chat Markdown. Best-effort: a failure
+    ;; here never blocks the Markdown reply.
+    (when (and id (seq markdown))
+      (try
+        (let [token (not-empty (System/getenv "TELEGRAM_BOT_TOKEN"))
+              html  (@transcript-html-fn db id)]
+          (when (and token html)
+            (let [id8 (subs (str id) 0 8)
+                  tmp (java.io.File/createTempFile
+                        (str "vis-transcript-" id8 "-") ".html")]
+              (try
+                (spit tmp html)
+                (tg/send-document! token chat-id tmp
+                  (str "vis-transcript-" id8 ".html")
+                  "Styled HTML transcript (vis-light)")
+                (finally (.delete tmp))))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::export-html-failed :error (str t)}))))
     (vis/markdown->ir
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
@@ -1818,7 +1846,7 @@
     :slash/availability-fn telegram-only-channel?
     :slash/run-fn (fn [_ctx] (ok-ir (command-restart)))}
    {:slash/name "export"
-    :slash/doc  "Export session as Markdown"
+    :slash/doc  "Export session (Markdown + styled HTML attachment)"
     :slash/availability-fn telegram-only-channel?
     :slash/run-fn (fn [ctx] (ok-ir (command-export (ctx-chat-id ctx))))}
    {:slash/name "clear"

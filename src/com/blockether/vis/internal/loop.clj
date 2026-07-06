@@ -4907,6 +4907,22 @@
     :else
     "_slash handled_"))
 
+(defn- slash-result->wire
+  "STRINGS-ONLY view of a slash result for the form envelope `:result`. That
+   envelope is stored and later crosses the Clojure->Python boundary via `->py`,
+   which is strings-only (no silent keyword->string — a keyword there throws).
+   The keyword `:slash/*` map + IR body/data stay Clojure-side (answer-markdown
+   and the live/restored answer bubble render from those); the model only needs
+   the outcome, so keys are strings and enum values are stringified here AT THE
+   SOURCE."
+  [{:keys [result error reason]}]
+  (if result
+    (cond-> {"slash/status" (name (or (:slash/status result) :ok))}
+      (:slash/title result) (assoc "slash/title" (str (:slash/title result))))
+    (cond-> {"slash/status" "error"
+             "slash/title"  (str (or error "slash error"))}
+      reason (assoc "slash/reason" (name reason)))))
+
 (defn- apply-slash-mutations!
   "Compatibility hook for slash results that used to mutate context state.
    No slash-driven context mutations are currently supported."
@@ -4944,10 +4960,8 @@
           envelope  {:scope  scope
                      :tag    :user-slash
                      :src    user-request
-                     :result (or (:result slash-result)
-                               {:slash/status :error
-                                :slash/title  (or (:error slash-result) "slash error")
-                                :slash/reason (:reason slash-result)})}
+                     ;; STRINGS-ONLY: this crosses the Python boundary via ->py.
+                     :result (slash-result->wire slash-result)}
           answer-md (slash-result->answer-markdown slash-result)
           ;; Snapshot the CTX as it stands AFTER the slash mutations
           ;; so resume picks up the spec/task/fact writes. Mirrors

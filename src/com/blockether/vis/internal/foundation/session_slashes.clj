@@ -9,8 +9,16 @@
 
    `/rename` routes through `titling/set-title-with-broadcast!` — the single
    title mutation point."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.titling :as titling]))
+
+(def ^:private transcript-html-fn
+  ;; Deferred resolve: `foundation.transcript` pulls in `vis.core`, which
+  ;; transitively requires this ns — resolve the renderer at call time to
+  ;; dodge the load cycle (same pattern as the CLI export path).
+  (delay (requiring-resolve
+           'com.blockether.vis.internal.foundation.transcript/transcript-html)))
 
 (defn- err [msg & {:as extras}]
   (merge {:slash/status :error, :slash/title msg} extras))
@@ -33,6 +41,28 @@
          :slash/title  (str "Renamed session to '" title "'"),
          :slash/data   {:session-id sid, :title title}}))))
 
+(defn- handle-export
+  "`/export-html [path]` — write this session's transcript to a STANDALONE,
+   vis-light-styled HTML file (same renderer as `vis sessions export
+   --html` and the web download). Defaults to `vis-transcript-<id8>.html`
+   in the working directory."
+  [ctx]
+  (let [sid  (or (:session/id ctx) (:session-id ctx))
+        db   (or (:db-info ctx) (:db ctx))
+        path (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (cond
+      (nil? sid) (err "Send a message first, then /export-html (session not ready yet)")
+      (nil? db)  (err "No database available to export from.")
+      :else
+      (let [fname  (or path (str "vis-transcript-" (subs (str sid) 0 8) ".html"))
+            target (io/file fname)]
+        (when-let [parent (.getParentFile target)]
+          (.mkdirs parent))
+        (spit target (@transcript-html-fn db sid))
+        {:slash/status :ok,
+         :slash/title  (str "Exported HTML transcript to " (.getPath target)),
+         :slash/data   {:session-id sid, :path (.getPath target)}}))))
+
 (def specs
   "Declarative session slash specs, hooked onto foundation-core's manifest
    via `:ext/slash-commands` (concatenated with the workspace slashes)."
@@ -41,4 +71,10 @@
     :slash/usage      "/rename <new title>",
     :slash/prompt-arg "New session title",
     :slash/requires   #{:session},
-    :slash/run-fn     handle-rename}])
+    :slash/run-fn     handle-rename}
+   {:slash/name       "export-html",
+    :slash/doc        "Export this session's transcript as styled HTML.",
+    :slash/usage      "/export-html [path]",
+    :slash/prompt-arg "Output .html path (optional)",
+    :slash/requires   #{:session},
+    :slash/run-fn     handle-export}])
