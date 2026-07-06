@@ -1051,33 +1051,6 @@
         (expect (= 0   (:output-reasoning-tokens iter)))
         (expect (= 0.0 (:cost-usd iter))))))
 
-  (it "persists raw LLM response diagnostics and executable code-block metadata"
-    (let [s   (h/store)
-          cid (h/store-session! s {:channel :tui})
-          qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          raw "```clojure\n(+ 1 1)\n```"]
-      (h/store-iteration! s {:session-turn-id qid
-                             :code "(+ 1 1)" :result 2
-                             :duration-ms 5
-                             :llm-raw-response raw
-                             :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
-      ;; forensic round-trip: raw response is a slim-excluded blob, so load
-      ;; with-forensics? (the restore read skips it by default).
-      (let [iter (first (vis/db-list-session-turn-iterations s qid true))]
-        (expect (= raw (:llm-raw-response iter)))
-        (expect (= raw (:llm-raw-response-preview iter)))
-        (expect (= (count raw) (:llm-raw-response-length iter)))
-        (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
-                  (:llm-raw-response-sha256 iter)))
-        ;; :llm-executable-code was removed during the per-block-eval cut;
-        ;; :llm-executable-blocks is the single source of truth. JSON columns
-        ;; round-trip with STRING keys (`<-json` never keywordizes).
-        (expect (nil? (:llm-executable-code iter)))
-        ;; forensic JSON blobs are now parsed lazily on restore (a delay);
-        ;; `force` resolves it (no-op on the plain values live turns build).
-        (expect (= [{"lang" "clojure" "source" "(+ 1 1)"}]
-                  (force (:llm-executable-blocks iter)))))))
-
   (it "rejects negative token counts via the schema CHECK"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})

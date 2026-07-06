@@ -34,7 +34,6 @@
                      :result :result-summary :info}]
       :timeline    [{:kind :ref :turn-id :iteration-id :content :code
                      :status :duration-ms :result-summary}]
-      :llm-diagnostics [{:turn-id :iteration-id :raw-response}]
       :turns
        [{:id :user-request :status :prior-outcome :provider :model
          :iteration-count :failure-count
@@ -44,10 +43,6 @@
             :provider :model :thinking :error
             :tokens :cost-usd
             :answer-position :returned-empty-blocks?
-            :llm-system-prompt :llm-user-prompt
-            :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
-            :llm-raw-response-sha256
-            :llm-executable-blocks
             :vars
             [{:name :code :value :version}]
             :blocks
@@ -55,9 +50,8 @@
               :duration-ms :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
-   vars, per-block forensic previews, final answer text, plus compact
-   raw-response diagnostics. Prompt bodies render only in prompt/debug
-   modes. Large fields are bounded so reports stay safe to open."
+   vars, per-block forensic previews, and final answer text. Large
+   fields are bounded so reports stay safe to open."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis])
@@ -134,7 +128,7 @@
   "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
-  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn) true) ;; forensic: load the big blobs
+  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn))
                     (catch Throwable _ []))
         iters     (mapv (partial enrich-iteration db-info) raw-iters)
         totals    (iteration-rollup iters)
@@ -431,43 +425,6 @@
                       :content (:answer turn)}])))
         turns))))
 
-(defn- raw-response-map
-  [iteration]
-  (let [blocks (vec (force (:llm-executable-blocks iteration)))]
-    (cond-> {}
-      (some? (:llm-raw-response-preview iteration))
-      (assoc :preview (:llm-raw-response-preview iteration))
-      (some? (:llm-raw-response-length iteration))
-      (assoc :length (:llm-raw-response-length iteration))
-      (some? (:llm-raw-response-sha256 iteration))
-      (assoc :sha256 (:llm-raw-response-sha256 iteration))
-      (seq blocks)
-      (assoc :executable-blocks blocks
-        :form-count (count blocks)
-        ;; `:llm-executable-blocks` is a `<-json` DB column -> STRING-keyed
-        ;; ({"lang" ..., "source" ...}); read the lang by string key.
-        :block-langs (mapv #(get % "lang") blocks)))))
-
-(defn- llm-diagnostic-row
-  [turn iteration]
-  (let [raw-response (raw-response-map iteration)]
-    (when (seq raw-response)
-      (cond-> {:turn-id      (:id turn)
-               :user-request (:user-request turn)
-               :iteration-id (:id iteration)
-               :iteration    (:position iteration)
-               :status       (:status iteration)
-               :raw-response raw-response}
-        (:provider iteration) (assoc :provider (:provider iteration))
-        (:model iteration)    (assoc :model (:model iteration))))))
-
-(defn- transcript-llm-diagnostics
-  [turns]
-  (vec
-    (mapcat (fn [turn]
-              (keep #(llm-diagnostic-row turn %) (:iterations turn)))
-      turns)))
-
 (defn transcript
   "Full session transcript as one Clojure data map. See ns
    docstring for the canonical shape. Returns nil when the
@@ -498,7 +455,6 @@
          :dialog           (dialog-events turns)
          :calls            calls
          :timeline         (transcript-timeline turns calls)
-         :llm-diagnostics  (transcript-llm-diagnostics turns)
          :turns            turns}))))
 
 ;; =============================================================================
@@ -538,20 +494,6 @@
     (if (str/blank? s)
       ""
       (str "```" (or lang "") "\n" s "\n```\n"))))
-
-(defn- render-collapsible
-  "GitHub-flavored Markdown `<details>` block. Default-collapsed so
-   the file stays scannable; users (and viewers like mdBook / VS Code
-   / GitHub) expand on demand. The summary line shows what's inside +
-   its size so the reader knows whether to click. Empty `body` yields
-   the empty string so the block disappears entirely."
-  [summary body]
-  (let [s (str body)]
-    (if (str/blank? s)
-      ""
-      (str "<details><summary>" summary "</summary>\n\n"
-        s
-        "</details>\n\n"))))
 
 (defn- display-result [result]
   (if (and (map? result) (= :expr (:vis/ref result)))
@@ -623,234 +565,7 @@
       (render-fenced "text" (str error))
       "\n")))
 
-(defn- render-system-prompt
-  "Collapsible `<details>` block carrying the full assembled system
-   prompt for this iteration. `prev-system-prompt` is the system
-   prompt of the previous iteration in the same turn (nil on the
-   first iteration); when both match we render a tiny
-   \"unchanged from iteration N-1\" stub so a 16-iteration turn
-   doesn't carry 16 identical 8KB system-prompt copies inline."
-  [system-prompt prev-system-prompt prev-pos]
-  (when (not (str/blank? system-prompt))
-    (let [size  (count system-prompt)
-          same? (and prev-system-prompt (= system-prompt prev-system-prompt))]
-      (if same?
-        (render-collapsible
-          (str "System prompt (" size " chars, unchanged from iteration " prev-pos ")")
-          "_(identical to the previous iteration's system prompt)_\n")
-        (render-collapsible
-          (str "System prompt (" size " chars)")
-          (render-fenced "text" system-prompt))))))
-
-(defn- prompt-message-purpose
-  [role content]
-  (let [role (str role)
-        content (str content)]
-    (cond
-      (= "system" role) "stable system prompt"
-      (and (= "user" role)
-        (str/includes? content ";; ctx =")) "per-iteration trailer"
-      (and (= "user" role)
-        (str/includes? content ";; -- CURRENT-USER-MESSAGE --")) "current user message"
-      (= "assistant" role) "assistant optional replay"
-      :else nil)))
-
-(defn- render-prompt-message
-  ;; `:llm-user-prompt` messages are a `<-json` DB column -> STRING-keyed
-  ;; ({"role" ..., "content" ...}); read by string key.
-  [idx message]
-  (let [role    (or (get message "role") "?")
-        content (get message "content")
-        purpose (prompt-message-purpose role content)]
-    (str "[" idx "] role=" role
-      (when purpose (str " - " purpose))
-      " (" (count (str content)) " chars):\n"
-      (render-fenced "text" content)
-      "\n")))
-
-(defn- render-raw-provider-messages
-  [messages]
-  (str "RAW provider messages sent to LLM (exact persisted vector):\n"
-    (render-fenced "clojure" (pr-str (vec messages)))
-    "\n"))
-
-(defn- render-llm-messages
-  "Collapsible `<details>` block carrying the full LLM message
-   envelope for this iteration: the exact persisted vector passed to
-   the provider, followed by an indexed readability view. Empty / nil
-   envelope -> no output."
-  [messages]
-  (when (seq messages)
-    (let [body (str (render-raw-provider-messages messages)
-                 "Indexed view:\n\n"
-                 (apply str (map-indexed render-prompt-message messages)))]
-      (render-collapsible
-        (str "LLM messages (" (count messages) " messages, "
-          (reduce + 0 (map #(count (str (get % "content"))) messages)) " chars total)")
-        body))))
-
-(defn- raw-diagnostic-rows
-  "Flatten transcript turns/iterations into compact raw-response
-   diagnostic rows. Rows exist only when the iteration has persisted
-   raw-response or executable-block forensic data. This is presentation
-   support for `session-report-md`; `session-state` builds its public convenience
-   view from the same underlying transcript fields."
-  [turns]
-  (vec
-    (mapcat (fn [turn]
-              (keep (fn [iter]
-                      (let [blocks (force (:llm-executable-blocks iter))]
-                       (when (or (some? (:llm-raw-response-preview iter))
-                              (some? (:llm-raw-response-length iter))
-                              (some? (:llm-raw-response-sha256 iter))
-                              (seq blocks))
-                        (let [executable-blocks (vec blocks)]
-                          {:turn-id           (:id turn)
-                           :turn-position     (:position turn)
-                           :iteration         (:position iter)
-                           :status            (:status iter)
-                           :raw-preview       (:llm-raw-response-preview iter)
-                           :raw-length        (:llm-raw-response-length iter)
-                           :raw-sha256        (:llm-raw-response-sha256 iter)
-                           :executable-blocks executable-blocks
-                           :form-count       (count executable-blocks)
-                           ;; STRING-keyed `<-json` blocks — lang by string key.
-                           :block-langs       (mapv #(get % "lang") executable-blocks)}))))
-                (:iterations turn)))
-      turns)))
-
-(defn- render-raw-diagnostic-row
-  [{:keys [turn-position iteration status raw-length raw-sha256 block-count block-langs]}]
-  (str "| " (or turn-position "?") " | " iteration " | " (or (some-> status name) "-")
-    " | " (or raw-length "-")
-    " | `" (or raw-sha256 "-") "`"
-    " | " (or block-count "-")
-    " | " (if (seq block-langs) (str/join ", " block-langs) "-")
-    " |\n"))
-
-(defn- render-raw-diagnostic-details
-  [{:keys [turn-position iteration raw-preview raw-length executable-blocks]}]
-  (render-collapsible
-    (str "Raw LLM response preview for turn " (or turn-position "?")
-      " / iteration " iteration
-      (when raw-length (str " (" raw-length " chars total)")))
-    (str
-      (render-fenced "text" raw-preview)
-      (when (seq executable-blocks)
-        (str "\n\nExecutable Markdown code blocks selected by svar:\n\n"
-          (render-fenced "clojure" (pr-str executable-blocks)))))))
-
-(defn- render-raw-diagnostics
-  "Compact raw LLM response diagnostics for the whole report. The
-   table is always small; bounded previews live in collapsed details
-   blocks so `session-report-md` answers the first diagnostic question without
-   forcing users into logs or SQLite."
-  [turns]
-  (let [rows (raw-diagnostic-rows turns)]
-    (when (seq rows)
-      (str "## Raw LLM response diagnostics\n\n"
-        "| Turn | Iter | Status | Raw chars | SHA-256 | Blocks | Langs |\n"
-        "|---|---:|---|---:|---|---:|---|\n"
-        (apply str (map render-raw-diagnostic-row rows))
-        "\n"
-        (apply str (keep render-raw-diagnostic-details rows))))))
-
-(defn prompt-snapshots
-  "Flatten persisted provider prompt state from transcript data.
-
-   This is the DB-backed forensic surface for prompt investigation:
-   each row corresponds to one iteration and carries the assembled
-   system prompt plus the exact provider message envelope persisted on
-   the iteration row. The last user message in `:messages` is the
-   per-iteration trailer/bindings snapshot the model saw."
-  [data]
-  (vec
-    (mapcat (fn [turn]
-              (map (fn [iter]
-                     {:turn-id       (:id turn)
-                      :iteration-id  (:id iter)
-                      :iteration     (:position iter)
-                      :status        (:status iter)
-                      :provider      (:provider iter)
-                      :model         (:model iter)
-                      :system-prompt (:llm-system-prompt iter)
-                      :messages      (vec (force (:llm-user-prompt iter)))})
-                (:iterations turn)))
-      (:turns data))))
-
-(defn- prompt-report-heading
-  [data report-title]
-  ;; Header NEVER prints the session UUID. Title is the user-facing
-  ;; identifier; UUID stays programmatic-only
-  ;; (introspection callers read `:id` directly from the data map).
-  (let [{:keys [channel provider model created-at]} (:session data)
-        session-title (get-in data [:session :title])]
-    (str "# " report-title (when session-title (str " - " session-title)) "\n\n"
-      "- **Channel:** " (or (some-> channel name) "-") "\n"
-      "- **Provider/model:** " (or (some-> provider name) "-") "/" (or model "-") "\n"
-      "- **Created:** " (or created-at "-") "\n\n")))
-
-(defn- render-prompt-row-table
-  [rows]
-  (str "| Turn | Iter | Status | Provider/model | System chars | Messages | Message chars |\n"
-    "|---|---:|---|---|---:|---:|---:|\n"
-    (apply str
-      (map (fn [{:keys [turn-id iteration status provider model system-prompt messages]}]
-             (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "-")
-               " | " (or (some-> provider name) "-") "/" (or model "-")
-               " | " (count (str system-prompt))
-               " | " (count messages)
-               " | " (reduce + 0 (map #(count (str (get % "content"))) messages))
-               " |\n"))
-        rows))
-    "\n"))
-
-(defn- render-system-prompt-snapshot-row
-  [prev-system-prompt {:keys [turn-id iteration system-prompt]}]
-  (let [same? (and prev-system-prompt (= prev-system-prompt system-prompt))]
-    (if same?
-      (render-collapsible
-        (str "System prompt turn " turn-id " / iteration " iteration
-          " (" (count (str system-prompt)) " chars, unchanged)")
-        "_(identical to the previous prompt snapshot)_\n")
-      (render-collapsible
-        (str "System prompt turn " turn-id " / iteration " iteration
-          " (" (count (str system-prompt)) " chars)")
-        (render-fenced "text" system-prompt)))))
-
-(defn- render-system-prompts-report
-  [data]
-  (let [rows (prompt-snapshots data)]
-    (str (prompt-report-heading data "System prompt snapshots")
-      (render-prompt-row-table rows)
-      (first
-        (reduce (fn [[acc prev] row]
-                  [(str acc (render-system-prompt-snapshot-row prev row))
-                   (:system-prompt row)])
-          ["" nil]
-          rows)))))
-
-(defn- render-provider-prompt-snapshot-row
-  [{:keys [turn-id iteration system-prompt messages]}]
-  (render-collapsible
-    (str "Provider prompt turn " turn-id " / iteration " iteration
-      " (system " (count (str system-prompt)) " chars, "
-      (count messages) " messages)")
-    (str "_system prompt snapshot:_\n"
-      (render-fenced "text" system-prompt)
-      "\n_full provider message envelope:_\n\n"
-      (render-raw-provider-messages messages)
-      "Indexed view:\n\n"
-      (apply str (map-indexed render-prompt-message messages)))))
-
-(defn- render-provider-prompts-report
-  [data]
-  (let [rows (prompt-snapshots data)]
-    (str (prompt-report-heading data "Provider prompt snapshots")
-      (render-prompt-row-table rows)
-      (apply str (map render-provider-prompt-snapshot-row rows)))))
-
-(defn- render-iteration-section [include-prompts? iter prev-iter]
+(defn- render-iteration-section [iter]
   (let [pos     (:position iter)
         status  (or (some-> (:status iter) name) "-")
         dur     (or (:duration-ms iter) 0)
@@ -866,12 +581,6 @@
       " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
       (render-thinking (:thinking iter))
       (render-iter-error (:error iter))
-      (when include-prompts?
-        (str
-          (render-system-prompt (:llm-system-prompt iter)
-            (:llm-system-prompt prev-iter)
-            (:position prev-iter))
-          (render-llm-messages (force (:llm-user-prompt iter)))))
       (cond
         (empty? blocks)
         "_No code blocks (LLM returned an empty response)._\n"
@@ -891,8 +600,7 @@
     (str "\n#### Final answer\n\n" answer "\n")))
 
 (defn- render-turn-block
-  [include-prompts?
-   {:keys [position user-request status prior-outcome provider model
+  [{:keys [position user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
   ;; Render `position` (int), never `:id` (uuid). UUID stays in
@@ -913,12 +621,7 @@
     "- **Failures:** " failure-count "\n"
     "- **Tokens (in/out):** " (format-tokens tokens) "\n"
     "- **Cost:** " (format-cost-usd cost-usd) "\n"
-    ;; Pair each iteration with the previous one in the same turn so
-    ;; prompt-debug mode can dedupe an unchanged system prompt instead
-    ;; of emitting the same block 16 times.
-    (apply str (map (partial render-iteration-section include-prompts?)
-                 iterations
-                 (cons nil iterations)))
+    (apply str (map render-iteration-section iterations))
     (render-final-answer answer)
     "\n"))
 
@@ -954,13 +657,10 @@
       "_No dialog messages._\n")))
 
 (defn- render-full-md
-  ([data]
-   (render-full-md data {:include-prompts? true}))
-  ([data {:keys [include-prompts?] :or {include-prompts? false}}]
-   (str (render-header data)
-     (render-raw-diagnostics (:turns data))
-     "## Turn-by-turn breakdown\n\n"
-     (apply str (map (partial render-turn-block include-prompts?) (:turns data))))))
+  [data]
+  (str (render-header data)
+    "## Turn-by-turn breakdown\n\n"
+    (apply str (map render-turn-block (:turns data)))))
 
 (defn transcript->md
   "Render transcript data as Markdown. Pure transformation over
@@ -968,19 +668,13 @@
 
    Modes:
    - `:full`               - bounded diagnostic report (default).
-   - `:debug`              - diagnostic report plus prompt bodies (still bounded).
-   - `:dialog`             - user/assistant dialog only.
-   - `:system-prompts`     - persisted system prompt snapshots only.
-   - `:prompts`            - exact persisted provider prompt envelopes."
+   - `:dialog`             - user/assistant dialog only."
   ([data]
    (transcript->md data {:mode :full}))
   ([data {:keys [mode] :or {mode :full}}]
    (case mode
      :dialog         (render-dialog-md data)
-     :system-prompts (render-system-prompts-report data)
-     :prompts        (render-provider-prompts-report data)
      :full           (render-full-md data)
-     :debug          (render-full-md data {:include-prompts? true})
      (render-full-md data))))
 
 (defn transcript-md
