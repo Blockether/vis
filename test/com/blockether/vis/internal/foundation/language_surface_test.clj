@@ -43,7 +43,7 @@
                                              {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "restart" :opts {"dir" "ext" "aliases" ["dev"]}}
                    (:result
-                     (language-surface/start-repl env "restart" {"dir" "ext" "aliases" ["dev"]}))))
+                    (language-surface/start-repl env "restart" {"dir" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
@@ -65,7 +65,7 @@
                                              {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "restart" :opts {"id" "main" "dir" "ext"}}
                    (:result
-                     (language-surface/start-repl env "clojure" "main" "restart" {"dir" "ext"}))))
+                    (language-surface/start-repl env "clojure" "main" "restart" {"dir" "ext"}))))
         (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
                    (:result (language-surface/start-repl env
                                                          "clojure"
@@ -131,7 +131,7 @@
   (let [render #'language-surface/render-test-result]
     (it "passes render has NO success glyph, a pass/total headline with the run time, and no body"
         (let [{:keys [summary body]} (render
-                                       {"ns" "foo-test" "pass" 69 "total" 69 "fail" 0 "ms" 123})]
+                                      {"ns" "foo-test" "pass" 69 "total" 69 "fail" 0 "ms" 123})]
           (expect (= "foo-test — 69/69 passed (123ms)" summary))
           (expect (nil? body))))
     (it "marks a failing run ✗ and surfaces the output"
@@ -150,3 +150,29 @@
           (let [{:keys [summary body]} (render r)]
             (expect (str/starts-with? summary "✗"))
             (expect (seq body)))))))
+
+(defdescribe
+  format-schema-advertises-recursion-test
+  (it "format_code schema + doc advertise directory recursion and the omit-all default"
+      (let [paths-desc (get-in language-surface/format-symbol
+                               [:ext.symbol/schema :properties "paths" :description])
+            path-desc (get-in language-surface/format-symbol
+                              [:ext.symbol/schema :properties "path" :description])
+            doc (:ext.symbol/doc language-surface/format-symbol)]
+        ;; a directory in :paths is walked recursively for source files
+        (expect (re-find #"(?i)recursiv" paths-desc))
+        (expect (re-find #"(?i)director" paths-desc))
+        ;; omitting everything formats the workspace default source paths
+        (expect (re-find #"(?i)OMIT all" paths-desc))
+        ;; a bare :path pointing at a directory also recurses
+        (expect (re-find #"(?i)recursiv" path-desc))
+        ;; the facade docstring documents both behaviours too
+        (expect (re-find #"(?i)recursiv" doc))
+        (expect (re-find #"(?i)default source paths" doc))))
+  (it "lint_code + run_tests schemas already advertise dirs/files"
+      (let [lint-paths (get-in language-surface/lint-symbol
+                               [:ext.symbol/schema :properties "paths" :description])
+            test-paths (get-in language-surface/test-symbol
+                               [:ext.symbol/schema :properties "paths" :description])]
+        (expect (str/includes? lint-paths "files/dirs"))
+        (expect (re-find #"(?i)dirs/files" test-paths)))))
