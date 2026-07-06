@@ -325,8 +325,6 @@ CREATE TABLE session_turn_iteration (
   status                          TEXT NOT NULL
                                   CHECK (status IN ('running', 'done', 'error', 'interrupted')),
 
-  llm_system_prompt               TEXT,
-  llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
   llm_selected_provider           TEXT,
   llm_selected_model              TEXT,
   llm_actual_provider             TEXT,
@@ -344,18 +342,6 @@ CREATE TABLE session_turn_iteration (
   llm_assistant_prose             TEXT,
   llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_code IN (0, 1)),
-
-  -- Raw-response diagnostics for provider / extraction forensics.
-  -- Full raw text is persisted so investigations can query the DB
-  -- instead of grepping process logs. Preview / length / hash keep
-  -- cheap list views and diagnostics available too.
-  llm_raw_response                TEXT,
-  llm_raw_response_preview        TEXT,
-  llm_raw_response_length         INTEGER CHECK (
-                                    llm_raw_response_length IS NULL OR llm_raw_response_length >= 0
-                                  ),
-  llm_raw_response_sha256         TEXT,
-  llm_executable_code_blocks      TEXT,    -- JSON vec of executable Markdown code blocks selected by svar: [{:lang :source} ...]
 
   -- svar canonical assistant message persisted so preserved-thinking
   -- replay survives a vis restart. JSON-encoded

@@ -79,7 +79,7 @@
   "Fetch the iteration rows for `session-turn-id`; returns [] on any failure."
   [db-info session-turn-id]
   (try
-    (vis/db-list-session-turn-iterations db-info session-turn-id true) ;; forensic: load the big blobs
+    (vis/db-list-session-turn-iterations db-info session-turn-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -636,54 +636,12 @@
               [id (meta-turn-retries env id)])))
     turns))
 
-(defn- raw-response-map
-  [iteration]
-  (let [blocks (when-let [b (seq (force (:llm-executable-blocks iteration)))]
-                 (vec b))]
-    (cond-> {}
-      (some? (:llm-raw-response-preview iteration))
-      (assoc :preview (:llm-raw-response-preview iteration))
-      (some? (:llm-raw-response-length iteration))
-      (assoc :length (:llm-raw-response-length iteration))
-      (some? (:llm-raw-response-sha256 iteration))
-      (assoc :sha256 (:llm-raw-response-sha256 iteration))
-      blocks
-      (assoc :executable-blocks blocks
-        :form-count (count blocks)
-        ;; `:llm-executable-blocks` is a `<-json` DB column -> STRING-keyed
-        ;; ({"lang" ..., "source" ...}); read the lang by string key.
-        :block-langs (mapv #(get % "lang") blocks)))))
-
-(defn- llm-diagnostic-row
-  [turn iteration]
-  (let [raw-response (raw-response-map iteration)]
-    (when (seq raw-response)
-      (cond-> {:turn-id      (:id turn)
-               :user-request (:user-request turn)
-               :iteration-id (:id iteration)
-               :iteration    (:position iteration)
-               :status       (:status iteration)
-               :raw-response raw-response}
-        (:provider iteration) (assoc :provider (:provider iteration))
-        (:model iteration)    (assoc :model (:model iteration))))))
-
-(defn- llm-diagnostics
-  "Flatten the full transcript into the raw LLM diagnostics view exposed
-   by `session-state`. This is a convenience index over the canonical
-   transcript payload, not another storage read."
-  [transcript-data]
-  (vec
-    (mapcat (fn [turn]
-              (keep #(llm-diagnostic-row turn %) (:iterations turn)))
-      (:turns transcript-data))))
-
 (defn- foundation-inspect-data
   "Canonical session-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
-   diagnosis, fork/retry metadata, raw LLM diagnostics, and the full
-   transcript payload. Default target is the current session;
-   pass a session id or unambiguous prefix to inspect another
-   session."
+   diagnosis, fork/retry metadata, and the full transcript payload.
+   Default target is the current session; pass a session id or
+   unambiguous prefix to inspect another session."
   [env session-id]
   (let [target-id            (or session-id (:session-id env))
         transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
@@ -703,7 +661,6 @@
      :diagnosis           diagnosis
      :session-forks  forks
      :turn-retries        turn-retries
-     :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
      :transcript          transcript-data}))
 
 ;; ---------------------------------------------------------------------------

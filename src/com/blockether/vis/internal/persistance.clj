@@ -325,12 +325,7 @@
 (defdelegate db-list-session-turns [db-info session-ref])
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
-;; Variadic (not defdelegate) so the optional 3rd arg `with-forensics?` forwards
-;; to the backend: default (2-arg) is a SLIM read that skips the big forensic
-;; blobs; forensic surfaces pass `true`.
-(defn db-list-session-turn-iterations [db-info session-turn-ref & more]
-  (apply (deref (resolve-impl db-info 'db-list-session-turn-iterations))
-    db-info session-turn-ref more))
+(defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
 ;; --- Full-text search ---
 (def search-query-dsl-doc

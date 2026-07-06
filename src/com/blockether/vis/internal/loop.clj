@@ -3231,8 +3231,6 @@
              :llm-actual-provider provider
              :llm-actual-model model-name
              :llm-routing-trace (:routed/trace ask-result)
-             :llm-raw-response (:raw ask-result)
-             :llm-executable-blocks (:blocks ask-result)
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
             {:thinking thinking
@@ -3246,8 +3244,6 @@
              :llm-actual-provider provider
              :llm-actual-model model-name
              :llm-routing-trace (:routed/trace ask-result)
-             :llm-raw-response (:raw ask-result)
-             :llm-executable-blocks (:blocks ask-result)
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}))
           ;; Normal path (tool-call iteration)
@@ -3265,8 +3261,6 @@
          :llm-actual-provider (actual-llm-provider resolved-model ask-result)
          :llm-actual-model (actual-llm-model resolved-model ask-result)
          :llm-routing-trace (:routed/trace ask-result)
-         :llm-raw-response (:raw ask-result)
-         :llm-executable-blocks (:blocks ask-result)
          :llm-returned-empty-code? (empty? blocks)
          :assistant-message (:assistant-message ask-result)}))))
 
@@ -4627,11 +4621,8 @@
                                                   :thinking thinking
                                                   :assistant-prose assistant-prose
                                                   :answer (when final-result (answer-markdown (:answer final-result)))
-                                                  :llm-messages (:llm-messages iteration-result)
                                                   :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                   :llm-model (:llm-model iteration-result)
-                                                  :llm-raw-response (:llm-raw-response iteration-result)
-                                                  :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                   :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
                                                   :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
@@ -4791,7 +4782,6 @@
                                                 ;; wire both read it, so scopes stay consistent.
                                                 :forms-vec forms-vec
                                                 :ctx-diff iter-ctx-diff
-                                                :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
                                                 :llm-model    (:llm-model iteration-result)
                                                   ;; svar's canonical replay handle for this
