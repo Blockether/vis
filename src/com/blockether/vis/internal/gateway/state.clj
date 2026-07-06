@@ -693,7 +693,7 @@
   turn record and a `turn.failed` event."
   [sid tid request
    {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace
-           engine-opts]}]
+           engine-opts attachments]}]
   (let [caller-on-chunk
         (get-in engine-opts [:hooks :on-chunk])
 
@@ -726,7 +726,10 @@
               (assoc :turn/features turn-features)
 
               (seq workspace)
-              (merge workspace))
+              (merge workspace)
+
+              (seq attachments)
+              (assoc :user/attachments attachments))
 
             result
             (lp/send! sid (or messages request) opts)
@@ -806,7 +809,7 @@
 (defn- launch-turn-worker!
   [sid tid request
    {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace
-           engine-opts]}]
+           engine-opts attachments]}]
   (append-event! sid
                  "turn.started"
                  (cond-> {:turn_id tid :request request}
@@ -825,7 +828,8 @@
                                                         :extra-body extra-body
                                                         :turn-features turn-features
                                                         :workspace workspace
-                                                        :engine-opts engine-opts}))))
+                                                        :engine-opts engine-opts
+                                                        :attachments attachments}))))
 
 (defn- first-queued-turn
   [entry]
@@ -861,7 +865,7 @@
           entry
           (if-let [[tid
                     {:keys [request messages model reasoning-default cancel-token extra-body
-                            turn-features workspace engine-opts]}]
+                            turn-features workspace engine-opts attachments]}]
                    (first-queued-turn entry)]
             (let [token (or cancel-token (cancellation/cancellation-token))
                   started-at (System/currentTimeMillis)]
@@ -876,7 +880,8 @@
                         :extra-body extra-body
                         :turn-features turn-features
                         :workspace workspace
-                        :engine-opts engine-opts})
+                        :engine-opts engine-opts
+                        :attachments attachments})
               (-> entry
                   (assoc :current-turn tid
                          :last-active started-at)
@@ -885,7 +890,7 @@
                              {:status "running" :cancel-token token :started_at started-at})))
             entry))))
     (when-let [{:keys [tid request messages model reasoning-default cancel-token extra-body
-                       turn-features workspace engine-opts]}
+                       turn-features workspace engine-opts attachments]}
                @decision]
       (launch-turn-worker! sid
                            tid
@@ -898,7 +903,8 @@
                             :extra-body extra-body
                             :turn-features turn-features
                             :workspace workspace
-                            :engine-opts engine-opts})
+                            :engine-opts engine-opts
+                            :attachments attachments})
       (get-turn sid tid))))
 
 (defn submit-turn!
@@ -909,114 +915,121 @@
    turn still runs per session; busy submissions become visible queued records."
   [sid
    {:keys [request messages idempotency-key model reasoning-default cancel-token extra-body
-           turn-features workspace engine-opts]}]
-  (cond (or (not (string? request)) (str/blank? request))
-        {:error :invalid-request :message "request must be a non-blank string"}
-        (nil? (lp/by-id sid)) {:error :session-not-found}
-        :else
-        (let [tid
-              (str (java.util.UUID/randomUUID))
+           turn-features workspace engine-opts attachments]}]
+  (cond
+    (or (not (string? request)) (str/blank? request))
+    {:error :invalid-request :message "request must be a non-blank string"}
+    (nil? (lp/by-id sid)) {:error :session-not-found}
+    :else
+    (let [tid
+          (str (java.util.UUID/randomUUID))
 
-              ;; session pref is {:provider :model}; the engine routes by model name
-              model
-              (or model (:model (session-model sid)))
+          ;; session pref is {:provider :model}; the engine routes by model name
+          model
+          (or model (:model (session-model sid)))
 
-              decision
-              (volatile! nil)]
+          decision
+          (volatile! nil)]
 
-          (swap! registry update
-            sid
-            (fn [entry]
-              (let [entry (or entry {:next-seq 0})]
-                (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
-                      (do (vreset! decision
-                                   [:idempotent (get-in entry [:idempotency idempotency-key])])
-                          entry)
-                      (:current-turn entry)
-                      (do (vreset! decision [:queued tid])
-                          (let [queued-at (System/currentTimeMillis)]
-                            (-> entry
-                                (assoc :last-active queued-at)
-                                (assoc-in [:turns tid]
-                                          (cond-> {:turn_id tid
-                                                   :session_id (str sid)
-                                                   :status "queued"
-                                                   :request request
-                                                   :queued_at queued-at}
-                                            messages
-                                            (assoc :messages messages)
+      (swap! registry update
+        sid
+        (fn [entry]
+          (let [entry (or entry {:next-seq 0})]
+            (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
+                  (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
+                      entry)
+                  (:current-turn entry) (do
+                                          (vreset! decision [:queued tid])
+                                          (let [queued-at (System/currentTimeMillis)]
+                                            (-> entry
+                                                (assoc :last-active queued-at)
+                                                (assoc-in [:turns tid]
+                                                          (cond-> {:turn_id tid
+                                                                   :session_id (str sid)
+                                                                   :status "queued"
+                                                                   :request request
+                                                                   :queued_at queued-at}
+                                                            messages
+                                                            (assoc :messages messages)
 
-                                            cancel-token
-                                            (assoc :cancel-token cancel-token)
+                                                            cancel-token
+                                                            (assoc :cancel-token cancel-token)
 
-                                            extra-body
-                                            (assoc :extra-body extra-body)
+                                                            extra-body
+                                                            (assoc :extra-body extra-body)
 
-                                            turn-features
-                                            (assoc :turn-features turn-features)
+                                                            turn-features
+                                                            (assoc :turn-features turn-features)
 
-                                            (seq workspace)
-                                            (assoc :workspace workspace)
+                                                            (seq workspace)
+                                                            (assoc :workspace workspace)
 
-                                            engine-opts
-                                            (assoc :engine-opts engine-opts)
+                                                            engine-opts
+                                                            (assoc :engine-opts engine-opts)
 
-                                            model
-                                            (assoc :model model)
+                                                            model
+                                                            (assoc :model model)
 
-                                            reasoning-default
-                                            (assoc :reasoning-default reasoning-default)))
-                                (update :turn-order (fnil conj []) tid)
-                                (cond->
-                                  idempotency-key
-                                  (assoc-in [:idempotency idempotency-key] tid)))))
-                      :else (do (vreset! decision [:accepted tid])
-                                (let [token (or cancel-token (cancellation/cancellation-token))
-                                      started-at (System/currentTimeMillis)]
+                                                            reasoning-default
+                                                            (assoc :reasoning-default
+                                                              reasoning-default)
 
-                                  (-> entry
-                                      (assoc :current-turn tid
-                                             :last-active started-at)
-                                      (assoc-in [:turns tid]
-                                                (cond-> {:turn_id tid
-                                                         :session_id (str sid)
-                                                         :status "running"
-                                                         :request request
-                                                         :cancel-token token
-                                                         :started_at started-at}
-                                                  model
-                                                  (assoc :model model)
+                                                            (seq attachments)
+                                                            (assoc :attachments attachments)))
+                                                (update :turn-order (fnil conj []) tid)
+                                                (cond->
+                                                  idempotency-key
+                                                  (assoc-in [:idempotency idempotency-key] tid)))))
+                  :else (do (vreset! decision [:accepted tid])
+                            (let [token (or cancel-token (cancellation/cancellation-token))
+                                  started-at (System/currentTimeMillis)]
 
-                                                  reasoning-default
-                                                  (assoc :reasoning-default reasoning-default)))
-                                      (update :turn-order (fnil conj []) tid)
-                                      (cond->
-                                        idempotency-key
-                                        (assoc-in [:idempotency idempotency-key] tid)))))))))
-          (let [[kind v] @decision]
-            (case kind
-              :idempotent
-              {:turn (get-turn sid v) :idempotent? true}
+                              (-> entry
+                                  (assoc :current-turn tid
+                                         :last-active started-at)
+                                  (assoc-in [:turns tid]
+                                            (cond-> {:turn_id tid
+                                                     :session_id (str sid)
+                                                     :status "running"
+                                                     :request request
+                                                     :cancel-token token
+                                                     :started_at started-at}
+                                              model
+                                              (assoc :model model)
 
-              :queued
-              (do (append-event! sid "turn.queued" {:turn_id tid :request request})
-                  {:turn (get-turn sid tid)})
+                                              reasoning-default
+                                              (assoc :reasoning-default reasoning-default)
 
-              :accepted
-              (let [turn (get-turn sid tid)]
-                (launch-turn-worker! sid
-                                     tid
-                                     request
-                                     {:messages messages
-                                      :model model
-                                      :reasoning-default reasoning-default
-                                      :cancel-token (:cancel-token (get-in @registry
-                                                                           [sid :turns tid]))
-                                      :extra-body extra-body
-                                      :turn-features turn-features
-                                      :workspace workspace
-                                      :engine-opts engine-opts})
-                {:turn turn}))))))
+                                              (seq attachments)
+                                              (assoc :attachments attachments)))
+                                  (update :turn-order (fnil conj []) tid)
+                                  (cond->
+                                    idempotency-key
+                                    (assoc-in [:idempotency idempotency-key] tid)))))))))
+      (let [[kind v] @decision]
+        (case kind
+          :idempotent
+          {:turn (get-turn sid v) :idempotent? true}
+
+          :queued
+          (do (append-event! sid "turn.queued" {:turn_id tid :request request})
+              {:turn (get-turn sid tid)})
+
+          :accepted
+          (let [turn (get-turn sid tid)]
+            (launch-turn-worker! sid
+                                 tid
+                                 request
+                                 {:messages messages
+                                  :model model
+                                  :reasoning-default reasoning-default
+                                  :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
+                                  :extra-body extra-body
+                                  :turn-features turn-features
+                                  :workspace workspace
+                                  :engine-opts engine-opts
+                                  :attachments attachments})
+            {:turn turn}))))))
 
 (defn- terminal-event->result
   "Build the engine-shaped blocking result shared by `submit-turn-sync!` and

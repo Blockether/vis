@@ -325,6 +325,7 @@
 (defdelegate db-list-session-turns [db-info session-ref])
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
+(defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
 ;; --- Full-text search ---

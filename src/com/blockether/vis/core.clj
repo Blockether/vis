@@ -469,7 +469,8 @@
              [db-list-session-turns-by-status persistance/db-list-session-turns-by-status]
              [db-list-session-turns persistance/db-list-session-turns]
              [db-retry-session-turn! persistance/db-retry-session-turn!]
-             [db-list-session-turn-states persistance/db-list-session-turn-states])
+             [db-list-session-turn-states persistance/db-list-session-turn-states]
+             [db-list-turn-attachments persistance/db-list-turn-attachments])
 
 ;; Iteration lifecycle
 (import-vars [db-store-iteration! persistance/db-store-iteration!]
