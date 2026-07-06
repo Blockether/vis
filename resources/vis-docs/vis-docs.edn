@@ -11,6 +11,7 @@
          {:file "distributions.md"      :title "Custom distributions" :section "Runtime"     :order 40}
          {:file "configuration.md"      :title "Configuration"        :section "Using Vis"   :order 50}
          {:file "context-and-prompts.md" :title "Context files & prompts" :section "Using Vis" :order 55}
+         {:file "exporting-sessions.md" :title "Exporting sessions" :section "Using Vis" :order 58}
          {:file "skills.md"             :title "Skills"                :section "Using Vis"   :order 60}
          {:file "python-extensions.md"  :title "Python extensions"    :section "Extensions"  :order 70}
          {:file "extending.md"          :title "Clojure extensions"   :section "Extensions"  :order 80}]}
