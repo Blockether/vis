@@ -673,3 +673,29 @@ CREATE INDEX idx_log_iteration
   ON log(session_turn_iteration_id, created_at)
   WHERE session_turn_iteration_id IS NOT NULL;
 
+-- =============================================================================
+-- Turn attachments - durable image bytes for a user request, branch-local.
+--
+-- EVERY image the user attaches to a turn persists here as raw BLOB bytes,
+-- keyed to the turn soul: INLINE uploads (web/API base64 payloads, no durable
+-- disk path) AND terminal-drop images (a path pasted into the message). Storing
+-- the bytes - not just the on-disk path - means resume + history re-render
+-- survive a restart even after the source file is moved or deleted.
+-- Kept OFF the ctx / event-log path (bytes are big) - same ethos as the
+-- gateway's bounded-pr "big values stay off the log".
+-- =============================================================================
+CREATE TABLE session_turn_attachment (
+  id                     TEXT PRIMARY KEY NOT NULL,
+  session_turn_soul_id   TEXT NOT NULL
+                         REFERENCES session_turn_soul(id) ON DELETE CASCADE,
+  position               INTEGER NOT NULL CHECK (position >= 0),
+  kind                   TEXT NOT NULL DEFAULT 'image',
+  media_type             TEXT NOT NULL,
+  filename               TEXT,
+  size_bytes             INTEGER NOT NULL CHECK (size_bytes >= 0),
+  bytes                  BLOB NOT NULL,
+  created_at             INTEGER NOT NULL
+);
+
+CREATE INDEX idx_turn_attachment_soul
+  ON session_turn_attachment(session_turn_soul_id, position);
