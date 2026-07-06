@@ -79,7 +79,7 @@
   "Fetch the iteration rows for `session-turn-id`; returns [] on any failure."
   [db-info session-turn-id]
   (try
-    (vis/db-list-session-turn-iterations db-info session-turn-id)
+    (vis/db-list-session-turn-iterations db-info session-turn-id true) ;; forensic: load the big blobs
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
