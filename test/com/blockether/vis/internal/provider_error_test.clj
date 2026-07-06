@@ -74,25 +74,25 @@
                                  :data {:status 400
                                         :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
-(defdescribe transport-throwable-test
-             ;; `transport-throwable?` is the RETRY gate's classifier: a Throwable is
-             ;; retry-safe iff it's a CONNECTION/transport failure (no response byte
-             ;; received), regardless of whether a stream had started. It shares the
-             ;; exact patterns `transport-error?` applies to the human message, so the
-             ;; "just retry" advice and the actual retry can never disagree again (the
-             ;; disagreement that made a failed turn NOT retry while telling the user
-             ;; it would).
-             (it "retries a socket that closed before any response byte"
-                 (expect (perr/transport-throwable? (ex-info "HTTP/1.1 header parser received no bytes" {}))))
-             (it "walks the cause chain for a wrapped transport failure"
-                 (expect (perr/transport-throwable?
-                           (ex-info "provider call failed" {}
-                                    (ex-info "header parser received no bytes" {})))))
-             (it "retries a connection reset / DNS failure"
-                 (expect (perr/transport-throwable? (ex-info "java.net.SocketException: Connection reset" {})))
-                 (expect (perr/transport-throwable? (ex-info "java.net.UnknownHostException: api.host" {}))))
-             (it "does NOT retry a real rejection — 429/400 carry an HTTP status"
-                 (expect (not (perr/transport-throwable? (ex-info "rate limited" {:status 429}))))
-                 (expect (not (perr/transport-throwable? (ex-info "bad request" {:status 400})))))
-             (it "is nil-safe"
-                 (expect (not (perr/transport-throwable? nil)))))
+(defdescribe
+  transport-throwable-test
+  ;; `transport-throwable?` is the RETRY gate's classifier: a Throwable is
+  ;; retry-safe iff it's a CONNECTION/transport failure (no response byte
+  ;; received), regardless of whether a stream had started. It shares the
+  ;; exact patterns `transport-error?` applies to the human message, so the
+  ;; "just retry" advice and the actual retry can never disagree again (the
+  ;; disagreement that made a failed turn NOT retry while telling the user
+  ;; it would).
+  (it "retries a socket that closed before any response byte"
+      (expect (perr/transport-throwable? (ex-info "HTTP/1.1 header parser received no bytes" {}))))
+  (it "walks the cause chain for a wrapped transport failure"
+      (expect (perr/transport-throwable? (ex-info "provider call failed"
+                                                  {}
+                                                  (ex-info "header parser received no bytes" {})))))
+  (it "retries a connection reset / DNS failure"
+      (expect (perr/transport-throwable? (ex-info "java.net.SocketException: Connection reset" {})))
+      (expect (perr/transport-throwable? (ex-info "java.net.UnknownHostException: api.host" {}))))
+  (it "does NOT retry a real rejection — 429/400 carry an HTTP status"
+      (expect (not (perr/transport-throwable? (ex-info "rate limited" {:status 429}))))
+      (expect (not (perr/transport-throwable? (ex-info "bad request" {:status 400})))))
+  (it "is nil-safe" (expect (not (perr/transport-throwable? nil)))))

@@ -72,11 +72,10 @@
   "Fit an image of `{:w :h}` px into `max-cols` × `max-rows` cells,
    aspect-preserving. Returns `{:cols :rows}` (>= 1)."
   [{:keys [w h]} max-cols max-rows]
-  (let
-    [r (TerminalImage/cellSize (int (or w 1))
-                               (int (or h 1))
-                               (int max-cols)
-                               (when max-rows (Integer/valueOf (int max-rows))))]
+  (let [r (TerminalImage/cellSize (int (or w 1))
+                                  (int (or h 1))
+                                  (int max-cols)
+                                  (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
 ;; =============================================================================
@@ -140,9 +139,8 @@
    Returns `{:path :mime :filename :size :size-label :width :height}` or nil.
    `workspace-root` anchors relative candidates. Never throws."
   [text {:keys [workspace-root]}]
-  (try (when-let
-         [{:keys [path media-type filename size size-label]}
-          (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
+  (try (when-let [{:keys [path media-type filename size size-label]}
+                  (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
          (let [{:keys [w h]} (or (probe-dimensions path media-type) {})]
            {:path path
             :mime media-type
