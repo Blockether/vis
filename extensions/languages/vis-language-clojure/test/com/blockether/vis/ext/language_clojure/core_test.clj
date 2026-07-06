@@ -156,6 +156,53 @@
                         (finally (cleanup dir))))))
 
 (defdescribe
+  recursive-format-test
+  (it "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
+      (let [dir (tmp-dir)]
+        (try (let [sub (io/file dir "sub")]
+               (.mkdirs sub)
+               (spit (io/file dir "a.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
+               (spit (io/file sub "b.cljc") "(defn g [y]\n(+ y 1))\n") ; nested -> changes
+               (spit (io/file sub "c.clj") "(defn h [z] (dec z))\n")   ; tidy -> no change
+               (spit (io/file dir "notes.txt") "not clojure\n") ; must be ignored
+               (let [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
+                     files (get-in r [:result "files"])]
+
+                 (expect (:success? r))
+                 ;; only the 3 Clojure sources, walked recursively; the .txt is skipped
+                 (expect (= 3 (count files)))
+                 (expect (= ["a.clj" "sub/b.cljc" "sub/c.clj"] (sort (mapv #(get % "path") files))))
+                 (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
+                 (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
+                 (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))
+                 (expect (= "not clojure\n" (slurp (io/file dir "notes.txt"))))))
+             (finally (cleanup dir))))))
+
+(defdescribe default-project-format-test
+             (it
+               "with no arg / {} formats the workspace's src + test RECURSIVELY, ignoring the rest"
+               (let [dir (tmp-dir)]
+                 (try (let [src (io/file dir "src")
+                            tst (io/file dir "test")]
+
+                        (.mkdirs src)
+                        (.mkdirs tst)
+                        (spit (io/file src "a.clj") "(defn f [x]\n(* x 2))\n")
+                        (spit (io/file tst "a_test.clj") "(defn t [] 1)\n")
+                        (spit (io/file dir "ignored.clj") "(def top 1)\n") ; not under src/test
+                        (let [empty-map (core/clj-format-fn {:workspace/root (str dir)} {})
+                              nil-arg (core/clj-format-fn {:workspace/root (str dir)} nil)
+                              paths-of #(sort (mapv (fn [x]
+                                                      (get x "path"))
+                                                    (get-in % [:result "files"])))]
+
+                          (expect (:success? empty-map))
+                          (expect (= ["src/a.clj" "test/a_test.clj"] (paths-of empty-map)))
+                          ;; nil arg behaves the same as {}
+                          (expect (= ["src/a.clj" "test/a_test.clj"] (paths-of nil-arg)))))
+                      (finally (cleanup dir))))))
+
+(defdescribe
   cljfmt-config-test
   (it "honors a project-local .cljfmt.edn (walked up from the file) over cljfmt defaults"
       ;; The churn bug: the hook must READ the nearest .cljfmt.edn, not reformat

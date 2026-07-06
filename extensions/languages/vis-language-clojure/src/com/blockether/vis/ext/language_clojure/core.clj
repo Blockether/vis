@@ -417,6 +417,39 @@
            (catch Throwable _ s))
       s)))
 
+(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
+
+(defn- clj-source-file?
+  "True when `path` names a Clojure source file (by extension)."
+  [path]
+  (let [p (str/lower-case (str path))]
+    (boolean (some #(str/ends-with? p %) clj-source-exts))))
+
+(defn- expand-clj-source-files
+  "Expand `paths` (resolved against workspace `root` when relative) into concrete
+   Clojure source files. A DIRECTORY is walked RECURSIVELY, collecting every
+   `.clj`/`.cljs`/`.cljc`/`.cljx`/`.edn` file under it; a plain file is kept
+   as-is; a non-existent path is dropped. Returns a de-duplicated, sorted vector
+   of absolute path strings."
+  [^java.io.File root paths]
+  (->> paths
+       (mapcat (fn [p]
+                 (let [g
+                       (io/file (str p))
+
+                       f
+                       (if (.isAbsolute g) g (io/file root (str p)))]
+
+                   (cond (.isDirectory f) (->> (file-seq f)
+                                               (filter #(.isFile ^java.io.File %))
+                                               (filter #(clj-source-file? (str %))))
+                         (.isFile f) [f]
+                         :else nil))))
+       (map str)
+       (distinct)
+       (sort)
+       (vec)))
+
 (defn- clj-format-one-file!
   "Format a single file at `path` IN PLACE (paren-repair + cljfmt), writing
    back ONLY when the content changes. Returns a per-file result map with the
@@ -435,32 +468,65 @@
      "wrote" (not= out code)}))
 
 (defn clj-format-fn
+  "Format Clojure source via the language facade (`format_code`). Accepts:
+     - a raw code string / {\"code\": ...}   -> return the formatted text
+     - {\"path\": \"src/foo.clj\"}              -> format that file IN PLACE
+     - {\"paths\": [\"src\" \"test\" ...]}        -> format those paths IN PLACE; a
+         DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx/.edn under it)
+     - nothing / {}                         -> format the workspace's src + test
+         (or the root) RECURSIVELY
+   Paths are resolved against the workspace root when relative."
   ([arg] (clj-format-fn nil arg))
   ([env arg]
-   (let [paths (when (map? arg) (get arg "paths"))]
-     (if (seq paths)
-       (let [files (mapv #(clj-format-one-file! env %) paths)]
+   (let [root
+         (io/file (or (:workspace/root env) "."))
+
+         paths
+         (when (map? arg) (get arg "paths"))
+
+         path
+         (when (map? arg) (get arg "path"))
+
+         has-code?
+         (and (map? arg) (contains? arg "code"))
+
+         default?
+         (or (nil? arg) (and (map? arg) (not (seq paths)) (not path) (not has-code?)))
+
+         batch
+         (cond (seq paths) (expand-clj-source-files root paths)
+               default? (expand-clj-source-files root
+                                                 (let [ds (->> ["src" "test"]
+                                                               (map #(io/file root %))
+                                                               (filter #(.exists ^java.io.File %))
+                                                               (mapv str))]
+                                                   (if (seq ds) ds [(str root)]))))]
+
+     (if batch
+       (let [files (mapv #(clj-format-one-file! env %) batch)]
          (extension/success {:result {"op" "clj-format"
                                       "files" files
                                       "changed" (count (filter #(get % "changed") files))}}))
        (let
-         [path (and (map? arg) (get arg "path"))
-          code
+         [code
           (cond
             (string? arg) arg
-            (and (map? arg) (contains? arg "code")) (str (get arg "code"))
+            has-code? (str (get arg "code"))
             path (slurp (str path))
             :else
             (throw
               (ex-info
-                "format expects a code string, {\"code\": ...}, {\"path\": ...}, or {\"paths\": [...]}"
+                "format expects a code string, {\"code\": ...}, {\"path\": ...}, {\"paths\": [...]}, or {} for the whole project"
                 {:type :clj/bad-args
                  :got arg
                  :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
                             "format(\"clojure\", {\"code\": \"...\"})"
                             "format(\"clojure\", {\"path\": \"src/foo.clj\"})"
-                            "format(\"clojure\", {\"paths\": [\"src/a.clj\" \"src/b.clj\"]})"]})))
-          out (clj-repair+format code (or path (:workspace/root env)))]
+                            "format(\"clojure\", {\"paths\": [\"src\" \"test\"]})"
+                            "format(\"clojure\", {})"]})))
+
+          out
+          (clj-repair+format code (or path (:workspace/root env)))]
 
          (when (and path (not= out code)) (spit (str path) out))
          (extension/success
@@ -519,12 +585,6 @@
                  "language" "clojure")})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
-(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
-
-(defn- clj-source-file?
-  [path]
-  (let [p (str/lower-case (str path))]
-    (boolean (some #(str/ends-with? p %) clj-source-exts))))
 
 (defn- edit-arg-paths
   "Edited file path(s) from a struct_patch/write call (a map with \"path\") or a
