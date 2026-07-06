@@ -283,7 +283,8 @@
                                         :idempotency-key (:idempotency_key body)
                                         :model (:model body)
                                         :reasoning-default (some-> (:reasoning_default body)
-                                                                   keyword)})]
+                                                                   keyword)
+                                        :attachments (:attachments body)})]
         (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
               (error-response 409
