@@ -5,13 +5,12 @@
    side-channel (an off-surface `ask!` that names a session on its first
    real turn). A LEAF — depends only on persistance + svar + runtime-settings,
    never back on the loop."
-  (:require
-   [clojure.string :as str]
-   [com.blockether.svar.core :as svar]
-   [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.runtime-settings :as rt]
-   [com.blockether.vis.internal.strutil :refer [truncate]]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.strutil :refer [truncate]]
+            [taoensso.telemere :as tel]))
 
 (defonce ^:private title-listeners
   ;; {session-id-uuid #{listener-fn ...}}
@@ -33,8 +32,10 @@
   "Deregister a previously added listener. Idempotent."
   [session-id listener-fn]
   (let [cid (persistance/->uuid session-id)]
-    (swap! title-listeners update cid
-      (fn [existing] (disj (or existing #{}) listener-fn))))
+    (swap! title-listeners update
+      cid
+      (fn [existing]
+        (disj (or existing #{}) listener-fn))))
   nil)
 
 (defonce ^:private global-title-listeners
@@ -69,18 +70,18 @@
   (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::title-listener-failed
-                     :data {:session-id cid
-                            :error (ex-message t)}
-                     :msg (str "Title listener threw: " (ex-message t))}))))
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::title-listener-failed
+                        :data {:session-id cid :error (ex-message t)}
+                        :msg (str "Title listener threw: " (ex-message t))}))))
     (doseq [f @global-title-listeners]
       (try (f cid title)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::global-title-listener-failed
-                     :data {:session-id cid
-                            :error (ex-message t)}
-                     :msg (str "Global title listener threw: " (ex-message t))}))))))
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::global-title-listener-failed
+                        :data {:session-id cid :error (ex-message t)}
+                        :msg (str "Global title listener threw: " (ex-message t))}))))))
 
 ;; ── Title-PENDING listeners ────────────────────────────────────────────────
 ;; A separate channel from the title VALUE listeners above: this one fires
@@ -105,8 +106,10 @@
   "Deregister a previously added pending listener. Idempotent."
   [session-id listener-fn]
   (let [cid (persistance/->uuid session-id)]
-    (swap! title-pending-listeners update cid
-      (fn [existing] (disj (or existing #{}) listener-fn))))
+    (swap! title-pending-listeners update
+      cid
+      (fn [existing]
+        (disj (or existing #{}) listener-fn))))
   nil)
 
 (defn- broadcast-title-pending!
@@ -116,11 +119,11 @@
   (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-pending-listeners cid)]
       (try (f (boolean pending?))
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::title-pending-listener-failed
-                     :data {:session-id cid
-                            :error (ex-message t)}
-                     :msg (str "Title-pending listener threw: " (ex-message t))}))))))
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::title-pending-listener-failed
+                        :data {:session-id cid :error (ex-message t)}
+                        :msg (str "Title-pending listener threw: " (ex-message t))}))))))
 
 (defn set-title-with-broadcast!
   "Single mutation point for session titles.
@@ -155,19 +158,19 @@
    fallback that was already written up front stays put."
   45000)
 
-(def ^:private auto-title-placeholder-labels
-  #{"untitled" "untitled session"})
+(def ^:private auto-title-placeholder-labels #{"untitled" "untitled session"})
 
 (defn- auto-title-placeholder?
   [s]
-  (contains? auto-title-placeholder-labels
-    (str/lower-case (str/trim (str s)))))
+  (contains? auto-title-placeholder-labels (str/lower-case (str/trim (str s)))))
 
 (defn- usable-existing-title
   [s]
-  (let [t (some-> s str str/trim not-empty)]
-    (when-not (auto-title-placeholder? t)
-      t)))
+  (let [t (some-> s
+                  str
+                  str/trim
+                  not-empty)]
+    (when-not (auto-title-placeholder? t) t)))
 
 (defn- strip-code-fence
   "Drop a surrounding Markdown code fence so a model that answers with
@@ -177,29 +180,34 @@
   (let [t (str/trim (or s ""))]
     (if (str/starts-with? t "```")
       (-> t
-        (str/replace #"(?s)\A```[^\n]*\n?" "")
-        (str/replace #"\n?```\s*\z" "")
-        str/trim)
+          (str/replace #"(?s)\A```[^\n]*\n?" "")
+          (str/replace #"\n?```\s*\z" "")
+          str/trim)
       t)))
 
 (defn- sanitize-auto-title
   [s]
-  (let [line (->> (-> (or s "") str strip-code-fence str/split-lines)
-               (map str/trim)
-               (remove str/blank?)
-               ;; skip any stray fence markers left mid-string
-               (remove #(re-matches #"`{3,}.*" %))
-               first
-               (#(or % ""))
-               (#(-> %
+  (let [line
+        (->> (-> (or s "")
+                 str
+                 strip-code-fence
+                 str/split-lines)
+             (map str/trim)
+             (remove str/blank?)
+             ;; skip any stray fence markers left mid-string
+             (remove #(re-matches #"`{3,}.*" %))
+             first
+             (#(or % ""))
+             (#(-> %
                    (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
                    (str/replace #"^[\s\"'`*_#>\-–—]+" "")
                    (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
                    str/trim)))
-        clipped (truncate line AUTO_TITLE_MAX_CHARS)]
-    (when-not (or (str/blank? clipped)
-                (auto-title-placeholder? clipped))
-      clipped)))
+
+        clipped
+        (truncate line AUTO_TITLE_MAX_CHARS)]
+
+    (when-not (or (str/blank? clipped) (auto-title-placeholder? clipped)) clipped)))
 
 (def ^:private uuid-text-pattern
   #"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
@@ -210,9 +218,9 @@
    unavailable/unsupported."
   [user-request]
   (let [words (->> (str/replace (str user-request) uuid-text-pattern " ")
-                (re-seq #"[\p{L}\p{N}][\p{L}\p{N}'-]*")
-                (take 7)
-                (str/join " "))]
+                   (re-seq #"[\p{L}\p{N}][\p{L}\p{N}'-]*")
+                   (take 7)
+                   (str/join " "))]
     (sanitize-auto-title words)))
 
 (def ^:private auto-title-spec
@@ -222,20 +230,25 @@
    the fence info-string as the title — SAP reads the JSON title field
    regardless of surrounding markdown."
   (svar/spec
-    (svar/field svar/NAME :title
-      svar/TYPE svar/TYPE_STRING
-      svar/CARDINALITY svar/CARDINALITY_ONE
-      svar/DESCRIPTION "Short session title: 3-7 words, a stable noun phrase, no surrounding quotes or markdown.")))
+    (svar/field
+      svar/NAME
+      :title
+      svar/TYPE
+      svar/TYPE_STRING
+      svar/CARDINALITY
+      svar/CARDINALITY_ONE
+      svar/DESCRIPTION
+      "Short session title: 3-7 words, a stable noun phrase, no surrounding quotes or markdown.")))
 
 (defn- auto-title-prompt
   [previous-title user-request]
   [{:role "system"
     :content (str "You generate short chat/session titles. 3-7 words, a stable noun phrase. "
-               "Use the user's latest request and the previous title. If the previous title "
-               "still fits, keep it unchanged; otherwise update it to reflect the new focus.")}
+                  "Use the user's latest request and the previous title. If the previous title "
+                  "still fits, keep it unchanged; otherwise update it to reflect the new focus.")}
    {:role "user"
     :content (str "Previous title: " (or (not-empty previous-title) "<none>")
-               "\nLatest user request:\n" user-request)}])
+                  "\nLatest user request:\n" user-request)}])
 
 (def ^:private AUTO_TITLE_PROVIDER_ORDER
   "Preferred provider order for the auto-title side-channel. These are all
@@ -248,12 +261,8 @@
    listed here is appended afterwards so the chain still covers the whole
    fleet. First provider that returns a usable title wins; on failure
    (model unavailable / endpoint rejects) we fall through to the next."
-  [:zai-coding-plan
-   :openai-codex
-   :anthropic-coding-plan
-   :github-copilot-individual
-   :github-copilot-business
-   :github-copilot-enterprise])
+  [:zai-coding-plan :openai-codex :anthropic-coding-plan :github-copilot-individual
+   :github-copilot-business :github-copilot-enterprise])
 
 (defn- model-auto-title!
   "Generate a session title off the model's visible surface. A single `ask!`
@@ -266,40 +275,42 @@
    are visible, not a silent `:debug`) when the chain fails or the deadline
    trips; the caller then keeps the deterministic fallback."
   [{:keys [router]} previous-title user-request]
-  (let [fut     (future
-                  (try
-                    {:ok (svar/ask! router
-                           (rt/with-default-ask-code-idle-timeout
-                             {:messages            (auto-title-prompt previous-title user-request)
-                              :spec                auto-title-spec
-                              :reasoning           :off
-                              :routing             {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
-                                                    :optimize         [:cost :speed]}
-                              :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
-                              :idle-timeout-ms     AUTO_TITLE_IDLE_MS
-                              :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
-                    (catch Throwable t {:error t})))
-        outcome (deref fut AUTO_TITLE_HARD_DEADLINE_MS ::deadline)]
-    (cond
-      (= ::deadline outcome)
-      (do (future-cancel fut)
-        (tel/log! {:level :warn
-                   :id ::auto-title-deadline
-                   :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
-                          :providers   (vec AUTO_TITLE_PROVIDER_ORDER)}}
-          "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
-        nil)
+  (let [fut
+        (future (try {:ok (svar/ask! router
+                                     (rt/with-default-ask-code-idle-timeout
+                                       {:messages (auto-title-prompt previous-title user-request)
+                                        :spec auto-title-spec
+                                        :reasoning :off
+                                        :routing {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
+                                                  :optimize [:cost :speed]}
+                                        :ttft-timeout-ms AUTO_TITLE_TTFT_MS
+                                        :idle-timeout-ms AUTO_TITLE_IDLE_MS
+                                        :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
+                     (catch Throwable t {:error t})))
 
-      (:error outcome)
-      (do (tel/log! {:level :warn
-                     :id ::auto-title-call-failed
-                     :data {:error     (ex-message (:error outcome))
-                            :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
-            "Auto-title provider chain failed; keeping deterministic fallback")
-        nil)
+        outcome
+        (deref fut AUTO_TITLE_HARD_DEADLINE_MS ::deadline)]
 
-      :else
-      (sanitize-auto-title (some-> outcome :ok :result :title)))))
+    (cond (= ::deadline outcome)
+          (do (future-cancel fut)
+              (tel/log!
+                {:level :warn
+                 :id ::auto-title-deadline
+                 :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
+                        :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
+                "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
+              nil)
+          (:error outcome) (do (tel/log!
+                                 {:level :warn
+                                  :id ::auto-title-call-failed
+                                  :data {:error (ex-message (:error outcome))
+                                         :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
+                                 "Auto-title provider chain failed; keeping deterministic fallback")
+                               nil)
+          :else (sanitize-auto-title (some-> outcome
+                                             :ok
+                                             :result
+                                             :title)))))
 
 (defonce ^:private provisional-title-sessions
   ;; #{session-id-uuid ...} — sessions whose CURRENT persisted title is a
@@ -326,8 +337,9 @@
    PROVISIONAL deterministic fallback (eligible for one more LLM upgrade). A
    real LLM title is frozen and re-titling is skipped."
   [session-id session-title-atom]
-  (or (not (usable-existing-title (some-> session-title-atom deref)))
-    (provisional-title? session-id)))
+  (or (not (usable-existing-title (some-> session-title-atom
+                                          deref)))
+      (provisional-title? session-id)))
 
 (def ^:private leading-slash-command-pattern
   "A composer slash-command word (e.g. `/new-session`, `/new`, `/fork-session`)
@@ -364,27 +376,26 @@
    or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (let [user-request (strip-leading-slash-command user-request)]
-    (when (and db-info session-id (:router env)
-            (title-needs-generation? session-id session-title-atom))
+    (when
+      (and db-info session-id (:router env) (title-needs-generation? session-id session-title-atom))
       (future
-      ;; Announce "generating title" so a channel (TUI) can spinner the
-      ;; tab; always clear it in the finally.
+        ;; Announce "generating title" so a channel (TUI) can spinner the
+        ;; tab; always clear it in the finally.
         (broadcast-title-pending! session-id true)
         (try
-        ;; 1. Fallback-first: never leave the tab untitled while the LLM runs.
-          (when-not (usable-existing-title (some-> session-title-atom deref))
+          ;; 1. Fallback-first: never leave the tab untitled while the LLM runs.
+          (when-not (usable-existing-title (some-> session-title-atom
+                                                   deref))
             (when-let [fallback (fallback-auto-title user-request)]
               (set-title-with-broadcast! db-info session-id session-title-atom fallback)
               (mark-provisional-title! session-id true)))
-        ;; 2. LLM upgrade: overwrite + freeze on success; keep fallback on fail.
+          ;; 2. LLM upgrade: overwrite + freeze on success; keep fallback on fail.
           (when-let [title (model-auto-title! env nil user-request)]
             (set-title-with-broadcast! db-info session-id session-title-atom title)
             (mark-provisional-title! session-id false))
           (catch Throwable t
             (tel/log! {:level :warn
                        :id ::auto-title-update-failed
-                       :data {:session-id session-id
-                              :error (ex-message t)}}
-              "Auto-title update failed; keeping existing title"))
-          (finally
-            (broadcast-title-pending! session-id false)))))))
+                       :data {:session-id session-id :error (ex-message t)}}
+                      "Auto-title update failed; keeping existing title"))
+          (finally (broadcast-title-pending! session-id false)))))))

@@ -19,12 +19,12 @@
 
    Empty/zero roots ⇒ DENY everything (fail closed)."
   (:require [clojure.string :as str])
-  (:import
-   [org.graalvm.polyglot.io FileSystem]
-   [java.nio.file Path Paths Files LinkOption]))
+  (:import [org.graalvm.polyglot.io FileSystem]
+           [java.nio.file Path Paths Files LinkOption]))
 
 (def ^:private ^"[Ljava.nio.file.LinkOption;" no-link-opts (make-array LinkOption 0))
-(def ^:private ^"[Ljava.nio.file.LinkOption;" nofollow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+(def ^:private ^"[Ljava.nio.file.LinkOption;" nofollow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
 (defn- real-path
   "Canonicalize `p` to an absolute, symlink-resolved, `..`-free Path WITHOUT
@@ -33,14 +33,19 @@
    normalize. This is the path used for the under-root check."
   ^Path [^Path p]
   (let [abs (.normalize (.toAbsolutePath p))]
-    (loop [^Path anc abs, tail ()]
+    (loop [^Path anc abs
+           tail ()]
+
       (cond
         ;; nearest existing ancestor (NOFOLLOW so a dangling symlink still counts
         ;; as 'exists' and gets resolved by toRealPath below)
-        (Files/exists anc nofollow)
-        (let [real-anc (try (.toRealPath anc no-link-opts) (catch Throwable _ anc))]
-          (.normalize ^Path (reduce (fn [^Path acc ^String seg] (.resolve acc seg)) real-anc tail)))
-
+        (Files/exists anc nofollow) (let [real-anc (try (.toRealPath anc no-link-opts)
+                                                        (catch Throwable _ anc))]
+                                      (.normalize ^Path
+                                                  (reduce (fn [^Path acc ^String seg]
+                                                            (.resolve acc seg))
+                                                          real-anc
+                                                          tail)))
         (nil? (.getParent anc)) abs
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
@@ -56,27 +61,37 @@
    retargeted) keeps the cached path — acceptable for the perf win."
   [roots-fn cache]
   (->> (roots-fn)
-    (keep (fn [r]
-            (let [s (str r)]
-              (when-not (str/blank? s)
-                (or (get @cache s)
-                  (when-let [rp (try (.toRealPath (Paths/get s (make-array String 0)) no-link-opts)
-                                  (catch Throwable _ nil))]
-                    (swap! cache assoc s rp)
-                    rp))))))
-    vec))
+       (keep (fn [r]
+               (let [s (str r)]
+                 (when-not (str/blank? s)
+                   (or (get @cache s)
+                       (when-let [rp (try (.toRealPath (Paths/get s (make-array String 0))
+                                                       no-link-opts)
+                                          (catch Throwable _ nil))]
+                         (swap! cache assoc s rp)
+                         rp))))))
+       vec))
 
 (defn- confine!
   "Throw a clear SecurityException unless `p` resolves under a current root.
    Returns `p` (a Path) on success. `cache` memoizes root canonicalization."
   ^Path [roots-fn cache p]
-  (let [^Path pp (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
-        real     (real-path pp)
-        roots    (current-real-roots roots-fn cache)]
-    (when-not (some (fn [^Path root] (.startsWith real root)) roots)
+  (let [^Path pp
+        (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+
+        real
+        (real-path pp)
+
+        roots
+        (current-real-roots roots-fn cache)]
+
+    (when-not (some (fn [^Path root]
+                      (.startsWith real root))
+                    roots)
       (throw (SecurityException.
-               (str "vis sandbox: '" pp "' is outside the filesystem roots — read/write "
-                 "files via the file tools (cat/rg/patch), or add the dir with `/fs add`."))))
+               (str "vis sandbox: '" pp
+                    "' is outside the filesystem roots — read/write "
+                    "files via the file tools (cat/rg/patch), or add the dir with `/fs add`."))))
     pp))
 
 (defn confined-filesystem
@@ -89,9 +104,16 @@
    `root-cache` lives for the FS's lifetime and memoizes the per-root `toRealPath`
    so confinement doesn't re-stat every root on every path operation."
   ^FileSystem [roots-fn]
-  (let [^FileSystem d (FileSystem/newDefaultFileSystem)
-        root-cache (atom {})
-        c (fn [p] (confine! roots-fn root-cache p))
+  (let [^FileSystem d
+        (FileSystem/newDefaultFileSystem)
+
+        root-cache
+        (atom {})
+
+        c
+        (fn [p]
+          (confine! roots-fn root-cache p))
+
         confined
         (proxy [FileSystem] []
           ;; path math — no file access, no confinement
@@ -128,8 +150,9 @@
           (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c p)))
           (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c p)))
           (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c p))))]
+
     ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
     ;; importing the stdlib still works while user paths stay confined.
     (-> ^FileSystem confined
-      (FileSystem/allowInternalResourceAccess)
-      (FileSystem/allowLanguageHomeAccess))))
+        (FileSystem/allowInternalResourceAccess)
+        (FileSystem/allowLanguageHomeAccess))))

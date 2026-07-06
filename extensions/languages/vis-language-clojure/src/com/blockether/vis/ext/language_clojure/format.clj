@@ -14,10 +14,9 @@
    anything that throws), `format-string` returns the original source
    unchanged. We never silently corrupt a file because the formatter
    choked."
-  (:require
-   [cljfmt.config :as config]
-   [cljfmt.core :as cljfmt]
-   [clojure.java.io :as io]))
+  (:require [cljfmt.config :as config]
+            [cljfmt.core :as cljfmt]
+            [clojure.java.io :as io]))
 
 (defn format-string
   "Return `source` with cljfmt indentation/whitespace normalization, or
@@ -27,11 +26,8 @@
   ([^String source opts]
    (if-not (and (string? source) (seq source))
      source
-     (try
-       (if (seq opts)
-         (cljfmt/reformat-string source opts)
-         (cljfmt/reformat-string source))
-       (catch Throwable _ source)))))
+     (try (if (seq opts) (cljfmt/reformat-string source opts) (cljfmt/reformat-string source))
+          (catch Throwable _ source)))))
 
 (def ^:private config-cache
   "config-file canonical path -> {:mtime <long> :opts <map>}. Keeps the edit
@@ -46,15 +42,15 @@
    callers then fall back to plain defaults. Cached per config-file + mtime."
   [path]
   (when (seq (str path))
-    (try
-      (when-let [cf (config/find-config-file (str path))]
-        (let [f     (io/file cf)
-              stamp (.lastModified f)
-              k     (.getCanonicalPath f)
-              hit   (get @config-cache k)]
-          (if (and hit (= (:mtime hit) stamp))
-            (:opts hit)
-            (let [opts (config/read-config f)]
-              (swap! config-cache assoc k {:mtime stamp :opts opts})
-              opts))))
-      (catch Throwable _ nil))))
+    (try (when-let [cf (config/find-config-file (str path))]
+           (let [f (io/file cf)
+                 stamp (.lastModified f)
+                 k (.getCanonicalPath f)
+                 hit (get @config-cache k)]
+
+             (if (and hit (= (:mtime hit) stamp))
+               (:opts hit)
+               (let [opts (config/read-config f)]
+                 (swap! config-cache assoc k {:mtime stamp :opts opts})
+                 opts))))
+         (catch Throwable _ nil))))

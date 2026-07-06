@@ -37,15 +37,18 @@
    defined once and stays in sync."
   (:require [clojure.string :as str]))
 
-(def ^{:const true
-       :doc "Label for the chord that opens the searchable Command Palette. It is
+(def
+  ^{:const true
+    :doc
+    "Label for the chord that opens the searchable Command Palette. It is
    C-x p — the Emacs C-x prefix followed by a PLAIN `p` (`prefix-palette-key`).
    This is the RELIABLE, no-config trigger: both bytes reach the app on macOS
    AND Linux, nothing OS-grabs them, and it touches no editing key. C-x C-p
    still ALSO opens it (old muscle memory), and M-x (Alt/Option+x) is the
    canonical Emacs alias (needs \"Use Option as Meta\" on macOS), but C-x p is
    the displayed binding."}
-  palette-chord "C-x p")
+  palette-chord
+  "C-x p")
 
 (defn chord
   "Human label for a Ctrl + `key` chord in Emacs notation, e.g. `(chord \\f)` →
@@ -80,21 +83,18 @@
    Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
    form is the one we advertise because it works for EVERY letter.
    Order is the which-key / help display order."
-  [{:action :cycle-model            :key \m :label "model"}
-   {:action :pick-model             :key \o :label "model picker"}
-   {:action :cycle-reasoning        :key \r :label "reasoning"}
-   {:action :cycle-verbosity        :key \l :label "length"}
-   {:action :search-open            :key \f :label "search"}
-   {:action :pick-file              :key \a :label "attach file"}
+  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \o :label "model picker"}
+   {:action :cycle-reasoning :key \r :label "reasoning"}
+   {:action :cycle-verbosity :key \l :label "length"} {:action :search-open :key \f :label "search"}
+   {:action :pick-file :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-dirs              :key \d :label "filesystem"}
-   {:action :open-resources         :key \s :label "backgrounds"}
-   {:action :toggle-help            :key \h :label "help"}
-   {:action :new-session            :key \n :label "new session"}
-   {:action :show-sessions          :key \b :label "switch session"}
-   {:action :close-tab              :key \k :label "close tab"}
-   {:action :recenter               :key \j :label "jump to bottom"}
-   {:action :toggle-detail-labels   :key \t :label "label folds"}])
+   {:action :open-dirs :key \d :label "filesystem"}
+   {:action :open-resources :key \s :label "backgrounds"}
+   {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
+   {:action :show-sessions :key \b :label "switch session"}
+   {:action :close-tab :key \k :label "close tab"}
+   {:action :recenter :key \j :label "jump to bottom"}
+   {:action :toggle-detail-labels :key \t :label "label folds"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -104,13 +104,11 @@
 (def ^:private action-by-char
   "Lowercase DIRECT-chord char → action (empty now)."
   (into {} (map (juxt :key :action)) bindings))
-(def ^:private binding-by-action
-  (into {} (map (juxt :action identity)) bindings))
+(def ^:private binding-by-action (into {} (map (juxt :action identity)) bindings))
 (def ^:private prefix-action-by-char
   "Lowercase SECOND-key char → action, for the C-x prefix."
   (into {} (map (juxt :key :action)) prefix-commands))
-(def ^:private prefix-binding-by-action
-  (into {} (map (juxt :action identity)) prefix-commands))
+(def ^:private prefix-binding-by-action (into {} (map (juxt :action identity)) prefix-commands))
 
 (defn action-for
   "The action bound to a DIRECT Ctrl + `ch` chord, or nil — always nil now (verbs
@@ -136,9 +134,11 @@
    working — the displayed hint is just the reliable one.) palette-only → nil."
   [action]
   (or (when (= action :toggle-all-details) "C-x TAB")
-    (some-> (binding-by-action action) :key chord)
-    (when-let [b (prefix-binding-by-action action)]
-      (str "C-x " (str/lower-case (str (:key b)))))))
+      (some-> (binding-by-action action)
+              :key
+              chord)
+      (when-let [b (prefix-binding-by-action action)]
+        (str "C-x " (str/lower-case (str (:key b)))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
@@ -152,26 +152,27 @@
 ;; the pickers reference one place instead of hardcoding magic chars.
 ;; Help (toggle overlay) is NOT a structural const — it's a normal C-x prefix
 ;; command (C-x h) like every other vis verb, so it lives in `prefix-commands`.
-(def ^:const quit-key
-  "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
+(def ^:const quit-key "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
 (def ^:const abort-key
   "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a
-   dialog / clear the draft. Mirrors Escape." \g)
+   dialog / clear the draft. Mirrors Escape."
+  \g)
 (def ^:const recenter-key
-  "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
+  "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint."
+  \l)
 (def ^:const prefix-palette-key
   "C-x p — after the C-x prefix, this key opens the Command Palette. A PLAIN `p`
    is the primary, reliable, no-config, Emacs-idiomatic palette trigger; a Ctrl'd
-   second key (C-x C-p) is ALSO accepted for old muscle memory." \p)
+   second key (C-x C-p) is ALSO accepted for old muscle memory."
+  \p)
 (def ^:const palette-meta-key
   "M-x palette alias: Alt/Option + this key also opens the palette (the canonical
    Emacs command launcher; needs \"Use Option as Meta\" on macOS).
-   `x` = `execute-extended-command`." \x)
+   `x` = `execute-extended-command`."
+  \x)
 ;; List pickers (providers / models) reorder the SELECTED row with the Emacs
 ;; prev/next-line keys. This is a MODAL context (no text being edited), so
 ;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
 ;; with the editor, which never runs at the same time as a picker.
-(def ^:const picker-reorder-up
-  "C-p — move the selected picker row up." \p)
-(def ^:const picker-reorder-down
-  "C-n — move the selected picker row down." \n)
+(def ^:const picker-reorder-up "C-p — move the selected picker row up." \p)
+(def ^:const picker-reorder-down "C-n — move the selected picker row down." \n)

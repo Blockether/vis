@@ -29,19 +29,18 @@
    that used to live in the extension. Project-guidance discovery is
    core functionality (drives the system prompt + slim ctx digest); the
    extension layer no longer owns it."
-  (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel]))
 
-(defn- repo-cwd ^java.io.File []
+(defn- repo-cwd
+  ^java.io.File []
   ;; Treat the active workspace root as the repo root. The channel
   ;; rebinds `*workspace-root*` per turn; calling outside that binding
   ;; falls back to the process cwd (REPL / test / one-off CLI paths).
   (workspace/cwd))
 
-(defn- global-config-dir ^java.io.File []
-  (java.io.File. (System/getProperty "user.home") ".vis"))
+(defn- global-config-dir ^java.io.File [] (java.io.File. (System/getProperty "user.home") ".vis"))
 
 (defn- read-bytes-safely
   "Read the entire file `f` into a byte array. Returns
@@ -49,38 +48,41 @@
    I/O failure. No size cap — the whole file rides in the system
    prompt; provider prompt caching keeps the cost amortized."
   [^java.io.File f]
-  (try
-    (let [total (.length f)
-          n     (long total)
-          buf   (byte-array n)]
-      (with-open [in (java.io.FileInputStream. f)]
-        (loop [off 0]
-          (when (< off n)
-            (let [r (.read in buf off (- n off))]
-              (when (pos? r) (recur (+ off r)))))))
-      {:bytes buf :total-bytes total})
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::read-failed
-                 :data  {:path  (.getAbsolutePath f)
-                         :error (ex-message t)}})
-      {:error (ex-message t)})))
+  (try (let [total
+             (.length f)
 
-(defn- ->utf8-string ^String [^bytes b ^long len]
+             n
+             (long total)
+
+             buf
+             (byte-array n)]
+
+         (with-open [in (java.io.FileInputStream. f)]
+           (loop [off 0]
+             (when (< off n)
+               (let [r (.read in buf off (- n off))]
+                 (when (pos? r) (recur (+ off r)))))))
+         {:bytes buf :total-bytes total})
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::read-failed
+                    :data {:path (.getAbsolutePath f) :error (ex-message t)}})
+         {:error (ex-message t)})))
+
+(defn- ->utf8-string
+  ^String [^bytes b ^long len]
   (String. b 0 (int len) java.nio.charset.StandardCharsets/UTF_8))
 
 (defn- read-instructions-file
   [source ^java.io.File f]
   (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely f)]
     (if err
-      {:found? false
-       :source source
-       :path   (.getAbsolutePath f)
-       :error  err}
+      {:found? false :source source :path (.getAbsolutePath f) :error err}
       (let [content (->utf8-string bytes total-bytes)]
-        {:found?  true
-         :source  source
-         :path    (.getAbsolutePath f)
-         :bytes   total-bytes
+        {:found? true
+         :source source
+         :path (.getAbsolutePath f)
+         :bytes total-bytes
          :content content}))))
 
 ;; =============================================================================
@@ -93,29 +95,25 @@
    the stacked multi-file scan is `scan-roots` / `scan`. Exposed for
    testing against fixture roots."
   [^java.io.File root]
-  (let [agents-file (java.io.File. root "AGENTS.md")
-        claude-file (java.io.File. root "CLAUDE.md")]
-    (cond
-      (.isFile agents-file)
-      (let [r (read-instructions-file :repo agents-file)]
-        (if (:found? r)
-          {:result r :warnings []}
-          {:result   {:found? false}
-           :warnings [{:source :agents-md
-                       :reason (:error r)
-                       :path   (:path r)}]}))
+  (let [agents-file
+        (java.io.File. root "AGENTS.md")
 
-      (.isFile claude-file)
-      (let [r (read-instructions-file :repo:claude-md-fallback claude-file)]
-        (if (:found? r)
-          {:result r :warnings []}
-          {:result   {:found? false}
-           :warnings [{:source :claude-md-fallback
-                       :reason (:error r)
-                       :path   (:path r)}]}))
+        claude-file
+        (java.io.File. root "CLAUDE.md")]
 
-      :else
-      {:result {:found? false} :warnings []})))
+    (cond (.isFile agents-file) (let [r (read-instructions-file :repo agents-file)]
+                                  (if (:found? r)
+                                    {:result r :warnings []}
+                                    {:result {:found? false}
+                                     :warnings
+                                     [{:source :agents-md :reason (:error r) :path (:path r)}]}))
+          (.isFile claude-file)
+          (let [r (read-instructions-file :repo:claude-md-fallback claude-file)]
+            (if (:found? r)
+              {:result r :warnings []}
+              {:result {:found? false}
+               :warnings [{:source :claude-md-fallback :reason (:error r) :path (:path r)}]}))
+          :else {:result {:found? false} :warnings []})))
 
 ;; =============================================================================
 ;; Stacked scan (global → ancestors → workspace root)
@@ -126,24 +124,28 @@
    is the per-directory fallback. Returns `{:source :agents-md|:claude-md
    :file f}` or nil."
   [^java.io.File dir]
-  (let [a (java.io.File. dir "AGENTS.md")
-        c (java.io.File. dir "CLAUDE.md")]
-    (cond
-      (.isFile a) {:source :agents-md :file a}
-      (.isFile c) {:source :claude-md :file c}
-      :else       nil)))
+  (let [a
+        (java.io.File. dir "AGENTS.md")
+
+        c
+        (java.io.File. dir "CLAUDE.md")]
+
+    (cond (.isFile a) {:source :agents-md :file a}
+          (.isFile c) {:source :claude-md :file c}
+          :else nil)))
 
 (defn- ancestor-chain
   "Canonical directory chain from the filesystem root DOWN TO `root`
    inclusive — outermost first, so render order = precedence order
    (nearer files land later and positionally override)."
   [^java.io.File root]
-  (loop [d (try (.getCanonicalFile root)
-             (catch Throwable _ (.getAbsoluteFile root)))
-         acc ()]
-    (if d
-      (recur (.getParentFile d) (cons d acc))
-      (vec acc))))
+  (loop [^java.io.File d
+         (try (.getCanonicalFile root) (catch Throwable _ (.getAbsoluteFile root)))
+
+         acc
+         ()]
+
+    (if d (recur (.getParentFile d) (cons d acc)) (vec acc))))
 
 (defn- read-guidance-entry
   "Read one candidate into a stacked-file entry, or a warning on I/O
@@ -151,25 +153,35 @@
   [scope {:keys [source ^java.io.File file]}]
   (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely file)]
     (if err
-      {:warning {:source source
-                 :scope  scope
-                 :reason err
-                 :path   (.getAbsolutePath file)}}
-      {:entry {:scope   scope
-               :source  source
-               :path    (.getAbsolutePath file)
-               :bytes   total-bytes
+      {:warning {:source source :scope scope :reason err :path (.getAbsolutePath file)}}
+      {:entry {:scope scope
+               :source source
+               :path (.getAbsolutePath file)
+               :bytes total-bytes
                :content (->utf8-string bytes total-bytes)}})))
 
 (defn origin-label
   "Human label for a stacked-file entry: file name + scope qualifier."
   [{:keys [scope source]}]
-  (str (case source :agents-md "AGENTS.md" :claude-md "CLAUDE.md" (str source))
-    (case scope
-      :global   " (user-global)"
-      :ancestor " (ancestor directory)"
-      :project  " (workspace root)"
-      "")))
+  (str (case source
+         :agents-md
+         "AGENTS.md"
+
+         :claude-md
+         "CLAUDE.md"
+
+         (str source))
+       (case scope
+         :global
+         " (user-global)"
+
+         :ancestor
+         " (ancestor directory)"
+
+         :project
+         " (workspace root)"
+
+         "")))
 
 (defn- combined-content
   "Render the stacked entries into ONE guidance string with per-file
@@ -179,9 +191,9 @@
   (if (= 1 (count entries))
     (:content (first entries))
     (str/join "\n\n"
-      (map (fn [e]
-             (str "# ── " (origin-label e) ": " (:path e) " ──\n" (:content e)))
-        entries))))
+              (map (fn [e]
+                     (str "# ── " (origin-label e) ": " (:path e) " ──\n" (:content e)))
+                   entries))))
 
 (defn- legacy-source
   "Back-compat top-level `:source` derived from the INNERMOST entry:
@@ -191,8 +203,12 @@
   [{:keys [scope source]}]
   (if (= :project scope)
     (case source
-      :agents-md :repo
-      :claude-md :repo:claude-md-fallback
+      :agents-md
+      :repo
+
+      :claude-md
+      :repo:claude-md-fallback
+
       source)
     scope))
 
@@ -212,36 +228,62 @@
                :source <legacy kw> :path \"…\" :bytes <total> :content \"…\"}
      absent:  {:found? false}"
   [^java.io.File global-dir ^java.io.File workspace-root]
-  (let [chain    (ancestor-chain workspace-root)
-        n        (count chain)
-        dirs     (concat
-                   (when global-dir [[:global global-dir]])
-                   (map-indexed (fn [i d] [(if (= i (dec n)) :project :ancestor) d])
-                     chain))
+  (let [chain
+        (ancestor-chain workspace-root)
+
+        n
+        (count chain)
+
+        dirs
+        (concat (when global-dir [[:global global-dir]])
+                (map-indexed (fn [i d]
+                               [(if (= i (dec n)) :project :ancestor) d])
+                             chain))
+
         ;; The global dir may coincide with an ancestor (e.g. workspace under
         ;; ~/.vis) — drop the duplicate ancestor read, global already has it.
-        reads    (loop [ds dirs, seen #{}, acc []]
-                   (if (empty? ds)
-                     acc
-                     (let [[scope ^java.io.File d] (first ds)
-                           cand (guidance-candidate d)
-                           path (some-> cand ^java.io.File (:file) .getAbsolutePath)]
-                       (if (and cand (not (contains? seen path)))
-                         (recur (rest ds) (conj seen path)
-                           (conj acc (read-guidance-entry scope cand)))
-                         (recur (rest ds) seen acc)))))
-        entries  (vec (keep :entry reads))
-        warnings (vec (keep :warning reads))]
-    {:result
-     (if (seq entries)
-       (let [innermost (peek entries)]
-         {:found?  true
-          :files   entries
-          :source  (legacy-source innermost)
-          :path    (:path innermost)
-          :bytes   (reduce + 0 (map :bytes entries))
-          :content (combined-content entries)})
-       {:found? false})
+        reads
+        (loop [ds
+               dirs
+
+               seen
+               #{}
+
+               acc
+               []]
+
+          (if (empty? ds)
+            acc
+            (let [[scope ^java.io.File d]
+                  (first ds)
+
+                  cand
+                  (guidance-candidate d)
+
+                  path
+                  (some-> cand
+                          ^java.io.File (:file)
+                          .getAbsolutePath)]
+
+              (if (and cand (not (contains? seen path)))
+                (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
+                (recur (rest ds) seen acc)))))
+
+        entries
+        (vec (keep :entry reads))
+
+        warnings
+        (vec (keep :warning reads))]
+
+    {:result (if (seq entries)
+               (let [innermost (peek entries)]
+                 {:found? true
+                  :files entries
+                  :source (legacy-source innermost)
+                  :path (:path innermost)
+                  :bytes (reduce + 0 (map :bytes entries))
+                  :content (combined-content entries)})
+               {:found? false})
      :warnings warnings}))
 
 (defn scan
@@ -254,35 +296,35 @@
 ;; Marker cache — stat-only revalidation on the hot path
 ;; =============================================================================
 
-(defonce ^:private state
-  (atom {:cwd nil :marker nil :result nil :warnings nil}))
+(defonce ^:private state (atom {:cwd nil :marker nil :result nil :warnings nil}))
 
-(defn- canonical-cwd ^String []
-  (try (.getCanonicalPath ^java.io.File (repo-cwd))
-    (catch Throwable _
-      (.getPath (workspace/cwd)))))
+(defn- canonical-cwd
+  ^String []
+  (try (.getCanonicalPath ^java.io.File (repo-cwd)) (catch Throwable _ (.getPath (workspace/cwd)))))
 
 (defn- file-marker
   [^java.io.File f]
-  {:path          (.getAbsolutePath f)
-   :file?         (.isFile f)
+  {:path (.getAbsolutePath f)
+   :file? (.isFile f)
    :last-modified (when (.isFile f) (.lastModified f))
-   :length        (when (.isFile f) (.length f))})
+   :length (when (.isFile f) (.length f))})
 
 (defn- dir-marker
   [^java.io.File d]
-  [(file-marker (java.io.File. d "AGENTS.md"))
-   (file-marker (java.io.File. d "CLAUDE.md"))])
+  [(file-marker (java.io.File. d "AGENTS.md")) (file-marker (java.io.File. d "CLAUDE.md"))])
 
 (defn- guidance-marker
   []
-  {:global (dir-marker (global-config-dir))
-   :chain  (mapv dir-marker (ancestor-chain (repo-cwd)))})
+  {:global (dir-marker (global-config-dir)) :chain (mapv dir-marker (ancestor-chain (repo-cwd)))})
 
 (defn- rescan!
   [cwd marker]
-  (let [{:keys [result warnings]} (scan)
-        v {:cwd cwd :marker marker :result result :warnings warnings}]
+  (let [{:keys [result warnings]}
+        (scan)
+
+        v
+        {:cwd cwd :marker marker :result result :warnings warnings}]
+
     (reset! state v)
     v))
 
@@ -291,17 +333,18 @@
    AGENTS.md/CLAUDE.md marker changes. Common path is stat-only —
    content is re-read only when a marker changes."
   []
-  (let [cwd     (canonical-cwd)
-        marker  (guidance-marker)
-        cached  @state]
-    (if (and (= cwd (:cwd cached)) (= marker (:marker cached)))
-      cached
-      (rescan! cwd marker))))
+  (let [cwd
+        (canonical-cwd)
 
-(defn reload!
-  "Revalidate project guidance and return the current scan result."
-  []
-  (current))
+        marker
+        (guidance-marker)
+
+        cached
+        @state]
+
+    (if (and (= cwd (:cwd cached)) (= marker (:marker cached))) cached (rescan! cwd marker))))
+
+(defn reload! "Revalidate project guidance and return the current scan result." [] (current))
 
 (defn instructions
   "Return the structured map behind `(vis/main-agent-instructions)`.

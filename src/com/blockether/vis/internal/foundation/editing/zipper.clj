@@ -26,7 +26,8 @@
 
 (defn- utf8 ^bytes [^String s] (.getBytes s StandardCharsets/UTF_8))
 
-(defn- byte-slice ^String [^bytes bs ^long start ^long end]
+(defn- byte-slice
+  ^String [^bytes bs ^long start ^long end]
   (String. (Arrays/copyOfRange bs (int start) (int end)) StandardCharsets/UTF_8))
 
 (defn- byte-splice
@@ -45,10 +46,7 @@
    independent of the parser once parsed, so the parser is closed immediately."
   ^Tree [^String lang ^String source]
   (let [p (Parser/create)]
-    (try
-      (.setLanguage p lang)
-      (.orElse (.parse p source) nil)
-      (finally (.close p)))))
+    (try (.setLanguage p lang) (.orElse (.parse p source) nil) (finally (.close p)))))
 
 (defn syntax-broken?
   "True when `source` parses to a tree whose root carries an ERROR node (nil when
@@ -57,10 +55,9 @@
    syntax-breaking edit, the same guard `struct_patch`/`symbol_rename` already run."
   [^String lang ^String source]
   (when-let [^Tree t (parse-tree lang source)]
-    (try
-      (let [^Node r (.rootNode t)]
-        (try (.hasError r) (finally (.close r))))
-      (finally (.close t)))))
+    (try (let [^Node r (.rootNode t)]
+           (try (.hasError r) (finally (.close r))))
+         (finally (.close t)))))
 (defn error-nodes
   "Every ERROR / MISSING node tree-sitter finds in `source` (parsed as `lang`),
    as [{:line :col :end-line :end-col :kind :missing? :text} …] in document
@@ -71,25 +68,28 @@
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
     (let [src-bytes (utf8 source)
-          acc       (transient [])]
-      (try
-        (let [^Node root (.rootNode tree)]
-          (try
-            (letfn [(walk [^Node n]
-                      (when (or (.isError n) (.isMissing n))
-                        (let [^Point sp (.startPosition n)
-                              ^Point ep (.endPosition n)]
-                          (conj! acc {:line      (inc (.row sp)) :col (.column sp)
-                                      :end-line  (inc (.row ep)) :end-col (.column ep)
-                                      :kind      (.kind n)
-                                      :missing?  (.isMissing n)
-                                      :text      (byte-slice src-bytes (.startByte n) (.endByte n))})))
-                      (dotimes [i (.childCount n)]
-                        (when-let [^Node c (.orElse (.child n (int i)) nil)]
-                          (try (walk c) (finally (.close c))))))]
-              (walk root))
-            (finally (.close root))))
-        (finally (.close tree)))
+          acc (transient [])]
+
+      (try (let [^Node root (.rootNode tree)]
+             (try (letfn [(walk [^Node n]
+                            (when (or (.isError n) (.isMissing n))
+                              (let [^Point sp (.startPosition n)
+                                    ^Point ep (.endPosition n)]
+
+                                (conj! acc
+                                       {:line (inc (.row sp))
+                                        :col (.column sp)
+                                        :end-line (inc (.row ep))
+                                        :end-col (.column ep)
+                                        :kind (.kind n)
+                                        :missing? (.isMissing n)
+                                        :text (byte-slice src-bytes (.startByte n) (.endByte n))})))
+                            (dotimes [i (.childCount n)]
+                              (when-let [^Node c (.orElse (.child n (int i)) nil)]
+                                (try (walk c) (finally (.close c))))))]
+                    (walk root))
+                  (finally (.close root))))
+           (finally (.close tree)))
       (persistent! acc))
     []))
 
@@ -105,54 +105,94 @@
    and, when tree-sitter knows it, WHICH delimiter it expected — so a rejected
    edit stops the model from blind paren-counting."
   [lang ^String source]
-  (let [errs    (error-nodes lang source)
-        missing (filter :missing? errs)
-        broken  (remove :missing? errs)]
+  (let [errs
+        (error-nodes lang source)
+
+        missing
+        (filter :missing? errs)
+
+        broken
+        (remove :missing? errs)]
+
     (when (seq errs)
-      (let [n (count errs)
-            u (first broken)
-            m (first missing)]
-        (str n " tree-sitter parse-error node" (when (> n 1) "s")
-          (when (> n 1)
-            (str " (a parse CASCADE from usually ONE fault, not " n " separate mistakes)"))
-          (when u
-            (str "; first unexpected token at line " (:line u) " col " (:col u)
-              " → `" (one-line (:text u) 40) "`"))
-          (when m
-            (str "; parser expected a `" (:kind m) "` at line " (:line m)
-              " col " (:col m) " (a delimiter/token is missing or mismatched there)"))
-          (when (> n 1)
-            (str ". Count >1 usually means a bracket-TYPE mismatch (a `[`/`{`"
-              " closed with `)`, or vice-versa) or a mis-nest — NOT a trailing-paren"
-              " miscount, so stop counting parens and check delimiter TYPES"))
-          ".")))))
+      (let [n
+            (count errs)
+
+            u
+            (first broken)
+
+            m
+            (first missing)]
+
+        (str n
+             " tree-sitter parse-error node"
+             (when (> n 1) "s")
+             (when (> n 1)
+               (str " (a parse CASCADE from usually ONE fault, not " n " separate mistakes)"))
+             (when u
+               (str "; first unexpected token at line "
+                    (:line u)
+                    " col "
+                    (:col u)
+                    " → `"
+                    (one-line (:text u) 40)
+                    "`"))
+             (when m
+               (str "; parser expected a `"
+                    (:kind m)
+                    "` at line "
+                    (:line m)
+                    " col "
+                    (:col m)
+                    " (a delimiter/token is missing or mismatched there)"))
+             (when (> n 1)
+               (str ". Count >1 usually means a bracket-TYPE mismatch (a `[`/`{`"
+                    " closed with `)`, or vice-versa) or a mis-nest — NOT a trailing-paren"
+                    " miscount, so stop counting parens and check delimiter TYPES"))
+             ".")))))
 
 (defn- node-data
   "Plain-data view of `n` (+ its immediate named children when `children?`).
    `n`'s text is sliced from `src-bytes` by the node's UTF-8 byte range."
   [^bytes src-bytes ^Node n children?]
-  (let [sb (.startByte n) eb (.endByte n)
-        ^Point sp (.startPosition n) ^Point ep (.endPosition n)]
+  (let [sb
+        (.startByte n)
+
+        eb
+        (.endByte n)
+
+        ^Point sp
+        (.startPosition n)
+
+        ^Point ep
+        (.endPosition n)]
+
     (cond-> {:kind (.kind n)
              :named? (.isNamed n)
-             :start-line (inc (.row sp)) :start-col (.column sp)
-             :end-line (inc (.row ep)) :end-col (.column ep)
-             :start-byte sb :end-byte eb
+             :start-line (inc (.row sp))
+             :start-col (.column sp)
+             :end-line (inc (.row ep))
+             :end-col (.column ep)
+             :start-byte sb
+             :end-byte eb
              :text (byte-slice src-bytes sb eb)
              :sexp (.toSexp n)
              :named-child-count (.namedChildCount n)
              :has-error? (.hasError n)}
       children?
       (assoc :children
-        (vec (for [i (range (.namedChildCount n))
-                   :let [c (.orElse (.namedChild n (int i)) nil)]
+        (vec (for [i
+                   (range (.namedChildCount n))
+
+                   :let [c
+                         (.orElse (.namedChild n (int i)) nil)]
                    :when c]
-               (try
-                 {:idx i
-                  :kind (.kind c)
-                  :head (first (str/split-lines
-                                 (byte-slice src-bytes (.startByte c) (.endByte c))))}
-                 (finally (.close c)))))))))
+
+               (try {:idx i
+                     :kind (.kind c)
+                     :head (first (str/split-lines
+                                    (byte-slice src-bytes (.startByte c) (.endByte c))))}
+                    (finally (.close c)))))))))
 
 (defn- descend-call
   "Recursively walk `node` down `at` (named-child indices), then call
@@ -161,30 +201,33 @@
   [^Node node src-bytes at f]
   (if (empty? at)
     (f node src-bytes)
-    (let [i (int (first at))
-          child (.orElse (.namedChild node i) nil)]
+    (let [i
+          (int (first at))
+
+          child
+          (.orElse (.namedChild node i) nil)]
+
       (if child
-        (try (descend-call child src-bytes (rest at) f)
-          (finally (.close child)))
-        {:error {:reason :bad-path
-                 :message (str "no named child at index " i)}}))))
+        (try (descend-call child src-bytes (rest at) f) (finally (.close child)))
+        {:error {:reason :bad-path :message (str "no named child at index " i)}}))))
 
 (defn- with-target
   "Parse `source` as `lang`, descend to `at`, and call `(f target src-bytes)`.
    Opens/closes every native handle; returns `(f …)` data or `{:error …}`."
   [lang source at f]
   (if-not lang
-    {:error {:reason :unknown-language
-             :message "unknown language for this file — use patch(...)"}}
-    (let [src-bytes (utf8 source)
-          ^Tree tree (parse-tree lang source)]
+    {:error {:reason :unknown-language :message "unknown language for this file — use patch(...)"}}
+    (let [src-bytes
+          (utf8 source)
+
+          ^Tree tree
+          (parse-tree lang source)]
+
       (if-not tree
         {:error {:reason :parse-failed :message (str "could not parse as " lang)}}
-        (try
-          (let [^Node root (.rootNode tree)]
-            (try (descend-call root src-bytes (vec at) f)
-              (finally (.close root))))
-          (finally (.close tree)))))))
+        (try (let [^Node root (.rootNode tree)]
+               (try (descend-call root src-bytes (vec at) f) (finally (.close root))))
+             (finally (.close tree)))))))
 
 (defn inspect
   "Structural view of the node at `at` (vector of named-child indices) in
@@ -192,9 +235,13 @@
    pick-list of immediate named children with indices. `at = []` is the file
    root. Pure data."
   [lang source at]
-  (let [r (with-target lang source at
-            (fn [^Node node src-bytes]
-              (assoc (node-data src-bytes node true) :ok? true :path (vec at))))]
+  (let [r (with-target lang
+                       source
+                       at
+                       (fn [^Node node src-bytes]
+                         (assoc (node-data src-bytes node true)
+                           :ok? true
+                           :path (vec at))))]
     r))
 
 (defn edit
@@ -212,27 +259,47 @@
           (edit lang source (conj (vec at) (dec (long n))) :insert-after code)
           (edit lang source (conj (vec at) 0) :insert-before code))
         {:error {:reason :no-children
-                 :message (str (name op) ": node at " (vec at) " has no named "
-                            "children — navigate down and insert, or use replace")}}))
-    (with-target lang source at
+                 :message (str (name op)
+                               ": node at " (vec at)
+                               " has no named "
+                               "children — navigate down and insert, or use replace")}}))
+    (with-target
+      lang
+      source
+      at
       (fn [^Node node src-bytes]
-        (let [sb (.startByte node) eb (.endByte node)
-              ins (utf8 (str code))
-              new-bytes (case op
-                          :replace        (byte-splice src-bytes sb eb ins)
-                          :insert-before  (byte-splice src-bytes sb sb ins)
-                          :insert-after   (byte-splice src-bytes eb eb ins)
-                          nil)]
+        (let [sb
+              (.startByte node)
+
+              eb
+              (.endByte node)
+
+              ins
+              (utf8 (str code))
+
+              new-bytes
+              (case op
+                :replace
+                (byte-splice src-bytes sb eb ins)
+
+                :insert-before
+                (byte-splice src-bytes sb sb ins)
+
+                :insert-after
+                (byte-splice src-bytes eb eb ins)
+
+                nil)]
+
           (if-not new-bytes
             {:error {:reason :bad-op :message (str "unknown op " op)}}
             (let [new-source (String. new-bytes StandardCharsets/UTF_8)]
-              (if (and (syntax-broken? lang new-source)
-                    (not (syntax-broken? lang source)))
+              (if (and (syntax-broken? lang new-source) (not (syntax-broken? lang source)))
                 {:error {:reason :syntax-broken
-                         :message (str "refused: " (name op) " at " (vec at)
-                                    " would introduce a syntax error"
-                                    (when-let [d (describe-syntax-errors lang new-source)]
-                                      (str " — " d)))}}
+                         :message (str "refused: " (name op)
+                                       " at " (vec at)
+                                       " would introduce a syntax error"
+                                       (when-let [d (describe-syntax-errors lang new-source)]
+                                         (str " — " d)))}}
                 {:ok? true :new-source new-source}))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
@@ -240,30 +307,53 @@
   "Direction-first move names + single-letter shortcuts. `t`op = up toward the
    root, `b`ottom = down toward the leaves; `l`eft/`r`ight = previous/next
    SIBLING; `next`/`prev` (n/p) = DEPTH-FIRST traversal (clojure.zip semantics)."
-  {"up" :up, "u" :up, "t" :up, "top" :up
-   "down" :down, "d" :down, "b" :down, "bottom" :down
-   "left" :left, "l" :left
-   "right" :right, "r" :right
-   "leftmost" :leftmost, "first" :leftmost, "<" :leftmost
-   "rightmost" :rightmost, "last" :rightmost, ">" :rightmost
-   "root" :root, "home" :root
-   "next" :dfs-next, "n" :dfs-next
-   "prev" :dfs-prev, "previous" :dfs-prev, "p" :dfs-prev})
+  {"up" :up
+   "u" :up
+   "t" :up
+   "top" :up
+   "down" :down
+   "d" :down
+   "b" :down
+   "bottom" :down
+   "left" :left
+   "l" :left
+   "right" :right
+   "r" :right
+   "leftmost" :leftmost
+   "first" :leftmost
+   "<" :leftmost
+   "rightmost" :rightmost
+   "last" :rightmost
+   ">" :rightmost
+   "root" :root
+   "home" :root
+   "next" :dfs-next
+   "n" :dfs-next
+   "prev" :dfs-prev
+   "previous" :dfs-prev
+   "p" :dfs-prev})
 
-(defn- norm-move [m]
+(defn- norm-move
+  [m]
   ;; Move specs arrive from Python: a scalar move string ("up", "d") or a dict
   ;; with string keys ({"child": 2}, {"find": "text"}). No keywords cross the
   ;; boundary, so read string keys directly — no keyword fallback.
-  (cond
-    (map? m)  (let [c (get m "child") f (get m "find")
-                    fk (or (get m "find_kind") (get m "kind"))]
-                (cond
-                  (some? c)  [:child (int c)]
-                  (some? f)  [:find (str f)]
-                  (some? fk) [:find-kind (str fk)]
-                  :else      nil))
-    (some? m) (when-let [k (move-aliases (str/lower-case (str m)))] [k])
-    :else     nil))
+  (cond (map? m) (let [c
+                       (get m "child")
+
+                       f
+                       (get m "find")
+
+                       fk
+                       (or (get m "find_kind") (get m "kind"))]
+
+                   (cond (some? c) [:child (int c)]
+                         (some? f) [:find (str f)]
+                         (some? fk) [:find-kind (str fk)]
+                         :else nil))
+        (some? m) (when-let [k (move-aliases (str/lower-case (str m)))]
+                    [k])
+        :else nil))
 
 (defn- named-count
   "Named-child count of the node at `path`, or nil for a bad path."
@@ -279,10 +369,11 @@
     (conj (vec path) 0)
     (loop [p (vec path)]
       (when (seq p)
-        (let [i (long (peek p)) parent (pop p) pc (named-count lang source parent)]
-          (if (and pc (< (inc i) (long pc)))
-            (conj parent (inc i))
-            (recur parent)))))))
+        (let [i (long (peek p))
+              parent (pop p)
+              pc (named-count lang source parent)]
+
+          (if (and pc (< (inc i) (long pc))) (conj parent (inc i)) (recur parent)))))))
 
 (defn- dfs-prev
   "Depth-first PREV node before `path`: the previous sibling's deepest-last
@@ -290,7 +381,9 @@
   [lang source path]
   (let [path (vec path)]
     (when (seq path)
-      (let [i (long (peek path)) parent (pop path)]
+      (let [i (long (peek path))
+            parent (pop path)]
+
         (if (zero? i)
           parent
           (loop [p (conj parent (dec i))]
@@ -302,10 +395,9 @@
    first node whose data satisfies `pred`, or nil."
   [lang source start pred]
   (loop [p (dfs-next lang source start)]
-    (cond
-      (nil? p)                       nil
-      (pred (inspect lang source p)) p
-      :else                          (recur (dfs-next lang source p)))))
+    (cond (nil? p) nil
+          (pred (inspect lang source p)) p
+          :else (recur (dfs-next lang source p)))))
 
 (defn- find-text
   "Locate the TIGHTEST node whose text contains `needle`: the first pre-order
@@ -313,15 +405,15 @@
    whole needle. So {find: \"(* base 2)\"} lands ON `(* base 2)`, not on the
    outermost form that merely encloses it. nil when nothing matches."
   [lang source start needle]
-  (when-let [hit (dfs-find lang source start
-                   #(str/includes? (str (:text %)) needle))]
+  (when-let [hit (dfs-find lang source start #(str/includes? (str (:text %)) needle))]
     (loop [p hit]
       (let [n (or (named-count lang source p) 0)
             child (some (fn [i]
                           (let [cp (conj p i)]
                             (when (str/includes? (str (:text (inspect lang source cp))) needle)
                               cp)))
-                    (range n))]
+                        (range n))]
+
         (if child (recur child) p)))))
 
 (defn navigate
@@ -334,48 +426,97 @@
      search (rewrite-clj) : {find: \"text\"}   {find_kind: \"if_statement\"}
    Boundary / not-found moves FAIL CLOSED instead of silently going nowhere."
   [lang source at moves]
-  (loop [path (vec (or at [])) ms (keep norm-move (or moves []))]
+  (loop [path
+         (vec (or at []))
+
+         ms
+         (keep norm-move (or moves []))]
+
     (if (empty? ms)
       {:ok? true :path path}
-      (let [[op arg] (first ms)
-            step (case op
-                   :root      []
-                   :up        (if (seq path) (pop path) :err-root)
-                   :leftmost  (if (seq path) (conj (pop path) 0) :err-root)
-                   :left      (if (seq path)
-                                (let [i (peek path)]
-                                  (if (pos? i) (conj (pop path) (dec i)) :err-edge))
-                                :err-root)
-                   :down      (let [n (named-count lang source path)]
-                                (if (and n (pos? n)) (conj path 0) :err-leaf))
-                   :child     (let [n (named-count lang source path)]
-                                (if (and n (< (long arg) (long n))) (conj path arg) :err-child))
-                   :right     (if (seq path)
-                                (let [pc (named-count lang source (pop path)) i (peek path)]
-                                  (if (and pc (< (inc i) pc)) (conj (pop path) (inc i)) :err-edge))
-                                :err-root)
-                   :rightmost (if (seq path)
-                                (let [pc (named-count lang source (pop path))]
-                                  (if (and pc (pos? pc)) (conj (pop path) (dec pc)) :err-edge))
-                                :err-root)
-                   :dfs-next  (or (dfs-next lang source path) :err-end)
-                   :dfs-prev  (or (dfs-prev lang source path) :err-end)
-                   :find      (or (find-text lang source path (str arg)) :err-find)
-                   :find-kind (or (dfs-find lang source path
-                                    #(= (str arg) (:kind %))) :err-find))]
+      (let [[op arg]
+            (first ms)
+
+            step
+            (case op
+              :root
+              []
+
+              :up
+              (if (seq path) (pop path) :err-root)
+
+              :leftmost
+              (if (seq path) (conj (pop path) 0) :err-root)
+
+              :left
+              (if (seq path)
+                (let [i (peek path)]
+                  (if (pos? i) (conj (pop path) (dec i)) :err-edge))
+                :err-root)
+
+              :down
+              (let [n (named-count lang source path)]
+                (if (and n (pos? n)) (conj path 0) :err-leaf))
+
+              :child
+              (let [n (named-count lang source path)]
+                (if (and n (< (long arg) (long n))) (conj path arg) :err-child))
+
+              :right
+              (if (seq path)
+                (let [pc
+                      (named-count lang source (pop path))
+
+                      i
+                      (peek path)]
+
+                  (if (and pc (< (inc i) pc)) (conj (pop path) (inc i)) :err-edge))
+                :err-root)
+
+              :rightmost
+              (if (seq path)
+                (let [pc (named-count lang source (pop path))]
+                  (if (and pc (pos? pc)) (conj (pop path) (dec pc)) :err-edge))
+                :err-root)
+
+              :dfs-next
+              (or (dfs-next lang source path) :err-end)
+
+              :dfs-prev
+              (or (dfs-prev lang source path) :err-end)
+
+              :find
+              (or (find-text lang source path (str arg)) :err-find)
+
+              :find-kind
+              (or (dfs-find lang source path #(= (str arg) (:kind %))) :err-find))]
+
         ;; `step` is INTERNAL: `case op` yields either a path vector or an
         ;; `:err-*` sentinel keyword minted right here (never model/Python data),
         ;; so this keyword? check stays — it is not a boundary read.
         (if (keyword? step)
-          {:error {:reason :bad-move :at path
-                   :message (str "nav " (name op) " from " path ": "
-                              (case step
-                                :err-root  "already at the root"
-                                :err-edge  "no sibling in that direction"
-                                :err-leaf  "node has no named children"
-                                :err-child (str "no child " arg)
-                                :err-end   "no further node (end of tree)"
-                                :err-find  (str "no node found matching " (pr-str arg))))}}
+          {:error {:reason :bad-move
+                   :at path
+                   :message (str "nav " (name op)
+                                 " from " path
+                                 ": " (case step
+                                        :err-root
+                                        "already at the root"
+
+                                        :err-edge
+                                        "no sibling in that direction"
+
+                                        :err-leaf
+                                        "node has no named children"
+
+                                        :err-child
+                                        (str "no child " arg)
+
+                                        :err-end
+                                        "no further node (end of tree)"
+
+                                        :err-find
+                                        (str "no node found matching " (pr-str arg))))}}
           (recur step (rest ms)))))))
 
 (defn moves-available
@@ -386,15 +527,23 @@
   [lang source path]
   ;; This map is embedded verbatim into the model-facing sexpr `"can"` result,
   ;; so it crosses the strings-only boundary — build it with string keys.
-  (let [path (vec (or path []))
-        own  (named-count lang source path)
-        i    (when (seq path) (peek path))
-        pc   (when (seq path) (named-count lang source (pop path)))]
-    {"down"     (boolean (and own (pos? (long own))))
-     "up"       (boolean (seq path))
-     "left"     (boolean (and i (pos? (long i))))
-     "right"    (boolean (and pc i (< (inc (long i)) (long pc))))
-     "next"     (boolean (dfs-next lang source path))
-     "prev"     (boolean (seq path))
-     "index"    (when i (long i))
+  (let [path
+        (vec (or path []))
+
+        own
+        (named-count lang source path)
+
+        i
+        (when (seq path) (peek path))
+
+        pc
+        (when (seq path) (named-count lang source (pop path)))]
+
+    {"down" (boolean (and own (pos? (long own))))
+     "up" (boolean (seq path))
+     "left" (boolean (and i (pos? (long i))))
+     "right" (boolean (and pc i (< (inc (long i)) (long pc))))
+     "next" (boolean (dfs-next lang source path))
+     "prev" (boolean (seq path))
+     "index" (when i (long i))
      "siblings" (when pc (long pc))}))

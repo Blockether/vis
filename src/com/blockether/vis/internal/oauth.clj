@@ -47,8 +47,7 @@
   ([saved-at-ms] (fresh-within? saved-at-ms default-reuse-window-ms))
   ([saved-at-ms window-ms]
    (boolean (and (number? saved-at-ms)
-              (< (- (System/currentTimeMillis) (long saved-at-ms))
-                (long window-ms))))))
+                 (< (- (System/currentTimeMillis) (long saved-at-ms)) (long window-ms))))))
 
 (defn single-flight!
   "Serialize `refresh!` on `lock`. Once the lock is held, call `reuse`
@@ -59,8 +58,7 @@
 
    Low-level core — prefer `make-file-refresher` / `refresher`."
   [lock reuse refresh!]
-  (locking lock
-    (or (reuse) (refresh!))))
+  (locking lock (or (reuse) (refresh!))))
 
 (defn refresher
   "Build a 0-arg single-flight refresh fn that OWNS a fresh lock. `reuse`
@@ -68,7 +66,8 @@
    plain rotating file — e.g. an in-memory cache (GitHub Copilot)."
   [reuse refresh!]
   (let [lock (new-lock)]
-    (fn [] (single-flight! lock reuse refresh!))))
+    (fn []
+      (single-flight! lock reuse refresh!))))
 
 (defn make-file-refresher
   "Build a 0-arg single-flight refresh fn for a FILE-backed credential
@@ -89,16 +88,16 @@
      :reuse-window-ms (optional) override the default window
 
    Returns the provider-token map produced by `:->token`."
-  [{:keys [load saved-at refresh-token exchange! persist! ->token no-token!
-           reuse-window-ms]}]
+  [{:keys [load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms]}]
   (let [window (or reuse-window-ms default-reuse-window-ms)]
-    (refresher
-      (fn []
-        (let [creds (load)]
-          (when (and creds (fresh-within? (saved-at creds) window))
-            (->token creds))))
-      (fn []
-        (let [creds (load)
-              rt    (refresh-token creds)]
-          (when (str/blank? rt) (no-token!))
-          (-> (exchange! rt) persist! ->token))))))
+    (refresher (fn []
+                 (let [creds (load)]
+                   (when (and creds (fresh-within? (saved-at creds) window)) (->token creds))))
+               (fn []
+                 (let [creds (load)
+                       rt (refresh-token creds)]
+
+                   (when (str/blank? rt) (no-token!))
+                   (-> (exchange! rt)
+                       persist!
+                       ->token))))))

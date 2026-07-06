@@ -19,9 +19,11 @@
             [lazytest.core :refer [defdescribe it expect]])
   (:import [java.io PushbackReader StringReader]))
 
-(defn- all-paths [lang src]
-  (letfn [(walk [p] (let [i (z/inspect lang src p)]
-                      (cons p (mapcat #(walk (conj p %)) (range (:named-child-count i))))))]
+(defn- all-paths
+  [lang src]
+  (letfn [(walk [p]
+            (let [i (z/inspect lang src p)]
+              (cons p (mapcat #(walk (conj p %)) (range (:named-child-count i))))))]
     (walk [])))
 
 ;; ── A. byte ranges ↔ line/col ranges (ASCII, so byte col == char col) ───────
@@ -33,29 +35,32 @@
     (if (= sl el)
       (subs (lines (dec sl)) sc ec)
       (str/join "\n"
-        (concat [(subs (lines (dec sl)) sc)]
-          (subvec lines sl (dec el))
-          [(subs (lines (dec el)) 0 ec)])))))
+                (concat [(subs (lines (dec sl)) sc)]
+                        (subvec lines sl (dec el))
+                        [(subs (lines (dec el)) 0 ec)])))))
 
 (def ^:private ascii-bank
   [["clj" "(ns demo)\n\n(defn add [a b]\n  (+ a b))\n\n(def x 10)\n"]
-   ["py" "class C:\n    def total(self, xs):\n        acc = 0\n        for x in xs:\n            acc += x\n        return acc\n"]
+   ["py"
+    "class C:\n    def total(self, xs):\n        acc = 0\n        for x in xs:\n            acc += x\n        return acc\n"]
    ["js" "function add(a, b) {\n  const s = a + b;\n  return s;\n}\n\nconst y = 3;\n"]
    ["go" "package m\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n"]
    ["java" "class M {\n  int add(int a, int b) {\n    return a + b;\n  }\n}\n"]
    ["rs" "fn add(a: i32, b: i32) -> i32 {\n    let s = a + b;\n    s\n}\n"]])
 
 (defdescribe byte-vs-linecol-test
-  (doseq [[ext src] ascii-bank]
-    (it (str ext " byte-sliced node text == its own line/col-sliced text (every node)")
-      (let [lang (z/detect-language (str "f." ext))]
-        (expect (true?
-                  (every? (fn [p]
-                            (let [n (z/inspect lang src p)]
-                              (= (:text n)
-                                (slice-linecol src (:start-line n) (:start-col n)
-                                  (:end-line n) (:end-col n)))))
-                    (all-paths lang src))))))))
+             (doseq [[ext src] ascii-bank]
+               (it (str ext " byte-sliced node text == its own line/col-sliced text (every node)")
+                   (let [lang (z/detect-language (str "f." ext))]
+                     (expect (true? (every? (fn [p]
+                                              (let [n (z/inspect lang src p)]
+                                                (= (:text n)
+                                                   (slice-linecol src
+                                                                  (:start-line n)
+                                                                  (:start-col n)
+                                                                  (:end-line n)
+                                                                  (:end-col n)))))
+                                            (all-paths lang src))))))))
 
 ;; ── B. struct_patch (Rust StructuralApi) ↔ sexpr_edit (FFM zipper) converge ──
 (defn- ws-norm [s] (str/trim (str/replace s #"\s+" " ")))
@@ -65,33 +70,38 @@
    ["py" "def add(a, b):\n    return a + b\n" "def add(a, b):\n    return a * b"]
    ["js" "function add(a, b) { return a + b; }\n" "function add(a, b) { return a * b; }"]
    ["rs" "fn add(a: i32, b: i32) -> i32 { a + b }\n" "fn add(a: i32, b: i32) -> i32 { a * b }"]
-   ["go" "package m\nfunc add(a int, b int) int { return a + b }\n" "func add(a int, b int) int { return a * b }"]
+   ["go" "package m\nfunc add(a int, b int) int { return a + b }\n"
+    "func add(a int, b int) int { return a * b }"]
    ["rb" "def add(a, b)\n  a + b\nend\n" "def add(a, b)\n  a * b\nend"]])
 
-(defn- node-idx-of [lang src needle]
+(defn- node-idx-of
+  [lang src needle]
   (let [root (z/inspect lang src [])]
     (some (fn [{:keys [idx]}]
             (when (str/includes? (:text (z/inspect lang src [idx])) needle) idx))
-      (:children root))))
+          (:children root))))
 
 (defdescribe struct-patch-vs-zipper-test
-  (doseq [[ext src code] converge-bank]
-    (it (str ext " name-based struct_patch and path-based sexpr_edit converge")
-      (let [path (str "f." ext)
-            lang (z/detect-language path)
-            ;; Rust StructuralApi, by NAME
-            via-struct (structural/edit-source path src {:op :replace :target "add" :code code})
-            ;; FFM jtreesitter zipper, by PATH to the same node
-            i          (node-idx-of lang src "add")
-            via-zipper (:new-source (z/edit lang src [i] :replace code))]
-        (expect (some? i))
-        (expect (string? via-struct))
-        (expect (string? via-zipper))
-        ;; two independent tree-sitter bindings → same structural result
-        (expect (= (ws-norm via-struct) (ws-norm via-zipper)))))))
+             (doseq [[ext src code] converge-bank]
+               (it (str ext " name-based struct_patch and path-based sexpr_edit converge")
+                   (let [path (str "f." ext)
+                         lang (z/detect-language path)
+                         ;; Rust StructuralApi, by NAME
+                         via-struct
+                         (structural/edit-source path src {:op :replace :target "add" :code code})
+                         ;; FFM jtreesitter zipper, by PATH to the same node
+                         i (node-idx-of lang src "add")
+                         via-zipper (:new-source (z/edit lang src [i] :replace code))]
+
+                     (expect (some? i))
+                     (expect (string? via-struct))
+                     (expect (string? via-zipper))
+                     ;; two independent tree-sitter bindings → same structural result
+                     (expect (= (ws-norm via-struct) (ws-norm via-zipper)))))))
 
 ;; ── C. tree-sitter Clojure node boundaries ↔ the real Clojure reader ────────
-(defn- read-forms [src]
+(defn- read-forms
+  [src]
   (let [r (PushbackReader. (StringReader. src))]
     (loop [acc []]
       (let [f (read {:eof ::eof :read-cond :preserve} r)]
@@ -103,14 +113,15 @@
    "(def data {:a 1 :b [2 3] :c \"str with )(\"})\n(defn g [] (data :a))\n"])
 
 (defdescribe treesitter-vs-clojure-reader-test
-  (doseq [src clj-srcs]
-    (it "every top-level form node read-backs to the reader's form (boundaries match)"
-      (let [reader-forms (read-forms src)
-            node-forms   (->> (:children (z/inspect "clojure" src []))
-                           (map #(z/inspect "clojure" src [(:idx %)]))
-                           (map :text)
-                           (map read-string))]
-        ;; same count of top-level forms ...
-        (expect (= (count reader-forms) (count node-forms)))
-        ;; ... and each tree-sitter node delimits EXACTLY that form
-        (expect (= reader-forms node-forms))))))
+             (doseq [src clj-srcs]
+               (it "every top-level form node read-backs to the reader's form (boundaries match)"
+                   (let [reader-forms (read-forms src)
+                         node-forms (->> (:children (z/inspect "clojure" src []))
+                                         (map #(z/inspect "clojure" src [(:idx %)]))
+                                         (map :text)
+                                         (map read-string))]
+
+                     ;; same count of top-level forms ...
+                     (expect (= (count reader-forms) (count node-forms)))
+                     ;; ... and each tree-sitter node delimits EXACTLY that form
+                     (expect (= reader-forms node-forms))))))

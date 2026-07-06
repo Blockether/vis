@@ -33,42 +33,40 @@
    This is the public client ID used by all Copilot integrations."
   "Iv1.b507a08c87ecfe98")
 
-(def ^:private DEVICE_CODE_URL  "https://github.com/login/device/code")
+(def ^:private DEVICE_CODE_URL "https://github.com/login/device/code")
 (def ^:private ACCESS_TOKEN_URL "https://github.com/login/oauth/access_token")
 (def ^:private COPILOT_TOKEN_URL "https://api.github.com/copilot_internal/v2/token")
 (def ^:private COPILOT_API_FALLBACK_URL "https://api.individual.githubcopilot.com")
 
 (def ^:private COPILOT_ACCOUNT_BASE_URLS
   {:individual "https://api.individual.githubcopilot.com"
-   :business   "https://api.business.githubcopilot.com"
+   :business "https://api.business.githubcopilot.com"
    :enterprise "https://api.enterprise.githubcopilot.com"})
 
 (def ^:private COPILOT_ACCOUNT_TYPES #{:individual :business :enterprise})
 
 (def ^:private COPILOT_PROVIDER_IDS
   {:individual :github-copilot-individual
-   :business   :github-copilot-business
+   :business :github-copilot-business
    :enterprise :github-copilot-enterprise})
 
 (def ^:private COPILOT_PROVIDER_LABELS
   {:individual "GitHub Copilot (Individual)"
-   :business   "GitHub Copilot (Business)"
+   :business "GitHub Copilot (Business)"
    :enterprise "GitHub Copilot (Enterprise)"})
 
 (def ^:private COPILOT_STATIC_LIMITS {:rpm 500 :tpm 2000000})
 
-(defn- account-provider-id [account-type]
-  (get COPILOT_PROVIDER_IDS account-type))
+(defn- account-provider-id [account-type] (get COPILOT_PROVIDER_IDS account-type))
 
-(defn- account-provider-label [account-type]
-  (get COPILOT_PROVIDER_LABELS account-type))
+(defn- account-provider-label [account-type] (get COPILOT_PROVIDER_LABELS account-type))
 
 (def ^:private COPILOT_HEADERS
   "Required headers for Copilot API calls."
-  {"Editor-Version"       "vscode/1.100.0"
+  {"Editor-Version" "vscode/1.100.0"
    "Editor-Plugin-Version" "copilot-chat/0.26.7"
    "Copilot-Integration-Id" "vscode-chat"
-   "User-Agent"           "GitHubCopilotChat/0.26.7"})
+   "User-Agent" "GitHubCopilotChat/0.26.7"})
 
 (def ^:private AUTH_FILE
   "Persisted OAuth token file."
@@ -82,47 +80,53 @@
 ;; HTTP helpers
 ;; =============================================================================
 
-(defn- json-body
-  [body]
-  (json/read-json (or body "") :key-fn keyword))
+(defn- json-body [body] (json/read-json (or body "") :key-fn keyword))
 
 (defn- post-form
   "POST application/x-www-form-urlencoded through babashka.http-client;
    return parsed JSON map on HTTP 2xx, nil otherwise."
   [url params & [extra-headers]]
-  (let [body   (str/join "&"
-                 (map (fn [[k v]] (str (java.net.URLEncoder/encode (str k) "UTF-8")
-                                    "="
-                                    (java.net.URLEncoder/encode (str v) "UTF-8")))
-                   params))
-        resp   (http/post url
-                 {:headers (merge COPILOT_HEADERS
-                             {"Accept" "application/json"
-                              "Content-Type" "application/x-www-form-urlencoded"}
-                             (or extra-headers {}))
-                  :body    body
-                  :timeout 30000
-                  :throw   false})
-        status (:status resp)]
-    (when (<= 200 status 299)
-      (json-body (:body resp)))))
+  (let [body
+        (str/join "&"
+                  (map (fn [[k v]]
+                         (str (java.net.URLEncoder/encode (str k) "UTF-8")
+                              "="
+                              (java.net.URLEncoder/encode (str v) "UTF-8")))
+                       params))
+
+        resp
+        (http/post url
+                   {:headers (merge COPILOT_HEADERS
+                                    {"Accept" "application/json"
+                                     "Content-Type" "application/x-www-form-urlencoded"}
+                                    (or extra-headers {}))
+                    :body body
+                    :timeout 30000
+                    :throw false})
+
+        status
+        (:status resp)]
+
+    (when (<= 200 status 299) (json-body (:body resp)))))
 
 (defn- get-json
   "GET with Bearer auth through babashka.http-client, return parsed JSON map."
   [url bearer-token]
-  (let [resp   (http/get url
-                 {:headers (merge COPILOT_HEADERS
-                             {"Accept" "application/json"
-                              "Authorization" (str "Bearer " bearer-token)})
-                  :timeout 30000
-                  :throw   false})
-        status (:status resp)]
+  (let [resp
+        (http/get url
+                  {:headers (merge COPILOT_HEADERS
+                                   {"Accept" "application/json"
+                                    "Authorization" (str "Bearer " bearer-token)})
+                   :timeout 30000
+                   :throw false})
+
+        status
+        (:status resp)]
+
     (if (<= 200 status 299)
       (json-body (:body resp))
       (throw (ex-info (str "GitHub API returned " status)
-               {:status status
-                :body   (:body resp)
-                :url    url})))))
+                      {:status status :body (:body resp) :url url})))))
 
 ;; =============================================================================
 ;; Token persistence
@@ -133,10 +137,7 @@
    Returns map or nil."
   []
   (let [f (io/file AUTH_FILE)]
-    (when (.exists f)
-      (try
-        (json/read-json (slurp f) :key-fn keyword)
-        (catch Exception _ nil)))))
+    (when (.exists f) (try (json/read-json (slurp f) :key-fn keyword) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
   "Persist auth state to ~/.vis/github-copilot-auth.json."
@@ -145,28 +146,31 @@
     (when-not (.exists dir) (.mkdirs dir))
     (spit AUTH_FILE (json/write-json-str auth-state))))
 
-(defn- normalize-account-type [value]
-  (let [raw (cond
-              (keyword? value) (name value)
-              (string? value)  value
-              :else nil)]
-    (when-let [s (some-> raw str/lower-case str/trim not-empty)]
+(defn- normalize-account-type
+  [value]
+  (let [raw (cond (keyword? value) (name value)
+                  (string? value) value
+                  :else nil)]
+    (when-let [s (some-> raw
+                         str/lower-case
+                         str/trim
+                         not-empty)]
       (let [account-type (keyword s)]
-        (when (contains? COPILOT_ACCOUNT_TYPES account-type)
-          account-type)))))
+        (when (contains? COPILOT_ACCOUNT_TYPES account-type) account-type)))))
 
-(defn- env-account-type []
+(defn- env-account-type
+  []
   (or (normalize-account-type (System/getenv "VIS_GITHUB_COPILOT_ACCOUNT_TYPE"))
-    (normalize-account-type (System/getenv "GITHUB_COPILOT_ACCOUNT_TYPE"))))
+      (normalize-account-type (System/getenv "GITHUB_COPILOT_ACCOUNT_TYPE"))))
 
-(defn- auth-account-type []
-  (normalize-account-type (:account-type (load-auth-file))))
+(defn- auth-account-type [] (normalize-account-type (:account-type (load-auth-file))))
 
-(defn- configured-account-type [opts]
+(defn- configured-account-type
+  [opts]
   (or (normalize-account-type (:account-type opts))
-    (env-account-type)
-    (auth-account-type)
-    :individual))
+      (env-account-type)
+      (auth-account-type)
+      :individual))
 
 (defn- delete-auth-file!
   "Remove persisted auth state."
@@ -182,26 +186,28 @@
   "Check env vars in Copilot CLI priority order."
   []
   (or (System/getenv "COPILOT_GITHUB_TOKEN")
-    (System/getenv "GH_TOKEN")
-    (System/getenv "GITHUB_TOKEN")))
+      (System/getenv "GH_TOKEN")
+      (System/getenv "GITHUB_TOKEN")))
 
 (defn- keychain-token
   "Try to read OAuth token from macOS Keychain (copilot-cli service).
    Returns token string or nil. Silent on non-macOS or missing entry."
   []
   (when (= "Mac OS X" (System/getProperty "os.name"))
-    (try
-      (let [proc (-> (ProcessBuilder. ["security" "find-generic-password"
-                                       "-s" "copilot-cli"
-                                       "-a" "github.com"
-                                       "-w"])
+    (try (let [proc
+               (-> (ProcessBuilder. ["security" "find-generic-password" "-s" "copilot-cli" "-a"
+                                     "github.com" "-w"])
                    (.redirectErrorStream true)
                    (.start))
-            out  (str/trim (slurp (.getInputStream proc)))
-            ok   (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)]
-        (when (and ok (zero? (.exitValue proc)) (not (str/blank? out)))
-          out))
-      (catch Exception _ nil))))
+
+               out
+               (str/trim (slurp (.getInputStream proc)))
+
+               ok
+               (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)]
+
+           (when (and ok (zero? (.exitValue proc)) (not (str/blank? out))) out))
+         (catch Exception _ nil))))
 
 (defn detect-oauth-token
   "Detect an existing OAuth token from all known sources.
@@ -231,19 +237,21 @@
    The caller must display user-code and verification-uri to the user."
   ([] (start-device-flow! nil))
   ([{:keys [enterprise-domain]}]
-   (let [url (if enterprise-domain
-               (str "https://" enterprise-domain "/login/device/code")
-               DEVICE_CODE_URL)
-         resp (post-form url {"client_id" CLIENT_ID
-                              "scope"     "read:user"})]
+   (let [url
+         (if enterprise-domain
+           (str "https://" enterprise-domain "/login/device/code")
+           DEVICE_CODE_URL)
+
+         resp
+         (post-form url {"client_id" CLIENT_ID "scope" "read:user"})]
+
      (when-not resp
-       (throw (ex-info "Failed to start device flow - no response from GitHub"
-                {:url url})))
-     {:user-code        (:user_code resp)
+       (throw (ex-info "Failed to start device flow - no response from GitHub" {:url url})))
+     {:user-code (:user_code resp)
       :verification-uri (:verification_uri resp)
-      :device-code      (:device_code resp)
-      :interval         (or (:interval resp) 5)
-      :expires-in       (or (:expires_in resp) 900)})))
+      :device-code (:device_code resp)
+      :interval (or (:interval resp) 5)
+      :expires-in (or (:expires_in resp) 900)})))
 
 (defn poll-for-token!
   "Poll GitHub for the OAuth access token after user has authorized.
@@ -256,78 +264,78 @@
   ([device-code interval] (poll-for-token! device-code interval 900 nil))
   ([device-code interval expires-in] (poll-for-token! device-code interval expires-in nil))
   ([device-code interval expires-in {:keys [enterprise-domain] :as opts}]
-   (let [account-type (configured-account-type opts)
-         url       (if enterprise-domain
-                     (str "https://" enterprise-domain "/login/oauth/access_token")
-                     ACCESS_TOKEN_URL)
-         deadline  (+ (System/currentTimeMillis) (* (long (or expires-in 900)) 1000))
-         interval-ms (long (* (max 5 (long (or interval 5))) 1000))]
+   (let [account-type
+         (configured-account-type opts)
+
+         url
+         (if enterprise-domain
+           (str "https://" enterprise-domain "/login/oauth/access_token")
+           ACCESS_TOKEN_URL)
+
+         deadline
+         (+ (System/currentTimeMillis) (* (long (or expires-in 900)) 1000))
+
+         interval-ms
+         (long (* (max 5 (long (or interval 5))) 1000))]
+
      (loop []
+
        (when (> (System/currentTimeMillis) deadline)
          (throw (ex-info "Device flow expired - user did not authorize in time" {})))
        (Thread/sleep interval-ms)
-       (let [resp (post-form url {"client_id"  CLIENT_ID
-                                  "device_code" device-code
-                                  "grant_type" "urn:ietf:params:oauth:grant-type:device_code"})]
-         (cond
-           (:access_token resp)
-           (let [oauth-token (:access_token resp)]
-             (save-auth-file! {:oauth-token      oauth-token
-                               :refresh-token    (:refresh_token resp)
-                               :account-type     (name account-type)
-                               :created-at       (System/currentTimeMillis)})
-             {:oauth-token oauth-token})
-
-           (= "authorization_pending" (:error resp))
-           (recur)
-
-           (= "slow_down" (:error resp))
-           (do (Thread/sleep 5000) (recur))
-
-           :else
-           (throw (ex-info (str "Device flow failed: " (or (:error_description resp)
-                                                         (:error resp)
-                                                         "unknown error"))
-                    {:response resp}))))))))
+       (let [resp (post-form url
+                             {"client_id" CLIENT_ID
+                              "device_code" device-code
+                              "grant_type" "urn:ietf:params:oauth:grant-type:device_code"})]
+         (cond (:access_token resp) (let [oauth-token (:access_token resp)]
+                                      (save-auth-file! {:oauth-token oauth-token
+                                                        :refresh-token (:refresh_token resp)
+                                                        :account-type (name account-type)
+                                                        :created-at (System/currentTimeMillis)})
+                                      {:oauth-token oauth-token})
+               (= "authorization_pending" (:error resp)) (recur)
+               (= "slow_down" (:error resp)) (do (Thread/sleep 5000) (recur))
+               :else (throw (ex-info (str
+                                       "Device flow failed: "
+                                       (or (:error_description resp) (:error resp) "unknown error"))
+                                     {:response resp}))))))))
 
 ;; =============================================================================
 ;; Copilot API Token Exchange + Refresh
 ;; =============================================================================
 
 (def ^:private COPILOT_POLICY_MODELS
-  ["claude-haiku-4.5" "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6"
-   "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7" "claude-opus-4.8"
-   "gpt-5" "gpt-5-mini" "gpt-5.1" "gpt-5.1-codex" "gpt-5.1-codex-max"
-   "gpt-5.1-codex-mini" "gpt-5.2" "gpt-5.2-codex" "gpt-5.3-codex"
-   "gpt-5.4" "gpt-5.4-mini"
-   "gpt-4.1" "gpt-4o" "gemini-2.5-pro" "gemini-3-flash-preview"
-   "gemini-3-pro-preview" "gemini-3.1-pro-preview" "grok-code-fast-1"])
+  ["claude-haiku-4.5" "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6" "claude-opus-4.5"
+   "claude-opus-4.6" "claude-opus-4.7" "claude-opus-4.8" "gpt-5" "gpt-5-mini" "gpt-5.1"
+   "gpt-5.1-codex" "gpt-5.1-codex-max" "gpt-5.1-codex-mini" "gpt-5.2" "gpt-5.2-codex"
+   "gpt-5.3-codex" "gpt-5.4" "gpt-5.4-mini" "gpt-4.1" "gpt-4o" "gemini-2.5-pro"
+   "gemini-3-flash-preview" "gemini-3-pro-preview" "gemini-3.1-pro-preview" "grok-code-fast-1"])
 
-(defn- valid-copilot-host? [host]
+(defn- valid-copilot-host?
+  [host]
   (and (string? host)
-    (re-matches #"(?i)[a-z0-9][a-z0-9.-]*\.githubcopilot\.com" host)
-    (not (str/includes? host "/"))
-    (not (str/includes? host "@"))))
+       (re-matches #"(?i)[a-z0-9][a-z0-9.-]*\.githubcopilot\.com" host)
+       (not (str/includes? host "/"))
+       (not (str/includes? host "@"))))
 
-(defn- host-url [host]
-  (when (valid-copilot-host? host)
-    (str "https://" host)))
+(defn- host-url [host] (when (valid-copilot-host? host) (str "https://" host)))
 
-(defn- response-field [m k]
-  (or (get m k) (get m (name k))))
+(defn- response-field [m k] (or (get m k) (get m (name k))))
 
-(defn- endpoint-api-url [response]
-  (or (get-in response [:endpoints :api])
-    (get-in response ["endpoints" "api"])))
+(defn- endpoint-api-url
+  [response]
+  (or (get-in response [:endpoints :api]) (get-in response ["endpoints" "api"])))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
-(defn- proxy-endpoint [response]
+(defn- proxy-endpoint
+  [response]
   (or (response-field response :proxy-ep)
-    (response-field response :proxy_ep)
-    (response-field response :proxyEndpoint)))
+      (response-field response :proxy_ep)
+      (response-field response :proxyEndpoint)))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
-(defn- copilot-base-url-from-token [token]
+(defn- copilot-base-url-from-token
+  [token]
   (when-let [[_ proxy-host] (re-find #"(?:^|;)proxy-ep=([^;]+)" (or token ""))]
     (host-url proxy-host)))
 
@@ -340,17 +348,15 @@
    reports `endpoints.api = api.business.githubcopilot.com`, and
    `api.enterprise.githubcopilot.com` does not exist (→ 404). Used for the
    model-policy endpoint (root) and as the base for `copilot-llm-base-url`."
-  ([token response enterprise-domain]
-   (copilot-api-base-url token response enterprise-domain nil))
+  ([token response enterprise-domain] (copilot-api-base-url token response enterprise-domain nil))
   ([_token response enterprise-domain opts]
    (let [account-type (configured-account-type opts)]
      ;; Token `proxy-ep` is NES/inline-completion traffic. Chat models use
      ;; account API host; `/messages` and proxy chat return 404/model-missing.
      (or (endpoint-api-url response)
-       (when-not (str/blank? enterprise-domain)
-         (str "https://copilot-api." enterprise-domain))
-       (get COPILOT_ACCOUNT_BASE_URLS account-type)
-       COPILOT_API_FALLBACK_URL))))
+         (when-not (str/blank? enterprise-domain) (str "https://copilot-api." enterprise-domain))
+         (get COPILOT_ACCOUNT_BASE_URLS account-type)
+         COPILOT_API_FALLBACK_URL))))
 
 (defn- ensure-api-version
   "Copilot serves Claude at `/v1/messages` and GPT at `/v1/responses`, so the
@@ -361,9 +367,7 @@
   [base-url]
   (when base-url
     (let [trimmed (str/replace base-url #"/+$" "")]
-      (if (str/ends-with? trimmed "/v1")
-        trimmed
-        (str trimmed "/v1")))))
+      (if (str/ends-with? trimmed "/v1") trimmed (str trimmed "/v1")))))
 
 (defn- copilot-llm-base-url
   "Account API host WITH the `/v1` API-version segment — the base svar uses to
@@ -371,24 +375,24 @@
   [token response enterprise-domain opts]
   (ensure-api-version (copilot-api-base-url token response enterprise-domain opts)))
 
-(defn- enable-copilot-model! [token api-url model-id]
-  (try
-    (let [resp (http/post (str api-url "/models/" model-id "/policy")
-                 {:headers (merge COPILOT_HEADERS
-                             {"Content-Type" "application/json"
-                              "Authorization" (str "Bearer " token)
-                              (str "openai-" "inten" "t") "chat-policy"
-                              "x-interaction-type" "chat-policy"})
-                  :body    "{\"state\":\"enabled\"}"
-                  :timeout 30000
-                  :throw   false})]
-      (<= 200 (:status resp) 299))
-    (catch Throwable _ false)))
+(defn- enable-copilot-model!
+  [token api-url model-id]
+  (try (let [resp (http/post (str api-url "/models/" model-id "/policy")
+                             {:headers (merge COPILOT_HEADERS
+                                              {"Content-Type" "application/json"
+                                               "Authorization" (str "Bearer " token)
+                                               (str "openai-" "inten" "t") "chat-policy"
+                                               "x-interaction-type" "chat-policy"})
+                              :body "{\"state\":\"enabled\"}"
+                              :timeout 30000
+                              :throw false})]
+         (<= 200 (:status resp) 299))
+       (catch Throwable _ false)))
 
-(defn- enable-known-copilot-models! [token api-url]
+(defn- enable-known-copilot-models!
+  [token api-url]
   (let [results (doall (pmap #(enable-copilot-model! token api-url %) COPILOT_POLICY_MODELS))]
-    {:attempted (count COPILOT_POLICY_MODELS)
-     :enabled   (count (filter true? results))}))
+    {:attempted (count COPILOT_POLICY_MODELS) :enabled (count (filter true? results))}))
 
 ;; Cached Copilot API token. Shape: {:token str :expires-at-ms long :oauth-token str}
 (defonce ^:private token-cache (atom nil))
@@ -398,21 +402,27 @@
    Returns {:token str :expires-at-ms long :api-url str}. `:api-url` is the LLM
    base WITH `/v1` (`{host}/v1`), derived from the token's `endpoints.api`."
   [oauth-token & [{:keys [enterprise-domain] :as opts}]]
-  (let [account-type (configured-account-type opts)
-        url (if enterprise-domain
-              (str "https://api." enterprise-domain "/copilot_internal/v2/token")
-              COPILOT_TOKEN_URL)
-        resp (get-json url oauth-token)]
+  (let [account-type
+        (configured-account-type opts)
+
+        url
+        (if enterprise-domain
+          (str "https://api." enterprise-domain "/copilot_internal/v2/token")
+          COPILOT_TOKEN_URL)
+
+        resp
+        (get-json url oauth-token)]
+
     (when-not (:token resp)
       (throw (ex-info "Copilot token exchange failed - no token in response"
-               {:response resp :url url})))
+                      {:response resp :url url})))
     (let [token (:token resp)]
-      {:token        token
+      {:token token
        :expires-at-ms (* (long (:expires_at resp)) 1000)
-       :api-url      (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
+       :api-url (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
        :account-type account-type
-       :sku          (or (response-field resp :sku) (response-field resp :access_type_sku))
-       :oauth-token  oauth-token})))
+       :sku (or (response-field resp :sku) (response-field resp :access_type_sku))
+       :oauth-token oauth-token})))
 
 (defn get-copilot-token!
   "Get a valid Copilot API token, refreshing if needed.
@@ -423,38 +433,55 @@
      :enterprise-domain - for GHE (e.g. \"github.mycompany.com\")"
   ([] (get-copilot-token! nil))
   ([opts]
-   (let [account-type (configured-account-type opts)
-         cached @token-cache
-         now    (System/currentTimeMillis)]
+   (let [account-type
+         (configured-account-type opts)
+
+         cached
+         @token-cache
+
+         now
+         (System/currentTimeMillis)]
+
      (if (and cached
-           (:token cached)
-           (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
-           (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
-        ;; Cached token is still valid. Reuse the LLM base captured at exchange
-        ;; (the token's authoritative `endpoints.api` + `/v1`). Only re-derive
-        ;; when an older cache lacks it — and even then via `copilot-llm-base-url`
-        ;; so the `/v1` segment is never dropped (bare host → `…/messages` 404)
-        ;; and stale `proxy-ep` traffic is not re-introduced.
+              (:token cached)
+              (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
+              (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+       ;; Cached token is still valid. Reuse the LLM base captured at exchange
+       ;; (the token's authoritative `endpoints.api` + `/v1`). Only re-derive
+       ;; when an older cache lacks it — and even then via `copilot-llm-base-url`
+       ;; so the `/v1` segment is never dropped (bare host → `…/messages` 404)
+       ;; and stale `proxy-ep` traffic is not re-introduced.
        {:token (:token cached)
         :api-url (or (ensure-api-version (:api-url cached))
-                   (copilot-llm-base-url (:token cached) {} nil {:account-type account-type}))
+                     (copilot-llm-base-url (:token cached) {} nil {:account-type account-type}))
         :account-type account-type
         :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
-       (let [oauth-token (or (:oauth-token cached)
-                           (:oauth-token (detect-oauth-token))
-                           (throw (ex-info (str "No GitHub Copilot OAuth token found. Run `vis providers auth "
-                                             (name (account-provider-id account-type))
-                                             "` to authenticate.")
-                                    {:type :vis/copilot-not-authenticated})))
-             fresh (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
-         (reset! token-cache (assoc fresh :oauth-token oauth-token :account-type account-type))
-         (tel/log! {:level :info :id ::copilot-token-refreshed
+       (let [oauth-token
+             (or (:oauth-token cached)
+                 (:oauth-token (detect-oauth-token))
+                 (throw (ex-info (str
+                                   "No GitHub Copilot OAuth token found. Run `vis providers auth "
+                                   (name (account-provider-id account-type))
+                                   "` to authenticate.")
+                                 {:type :vis/copilot-not-authenticated})))
+
+             fresh
+             (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
+
+         (reset! token-cache (assoc fresh
+                               :oauth-token oauth-token
+                               :account-type account-type))
+         (tel/log! {:level :info
+                    :id ::copilot-token-refreshed
                     :data {:expires-in-ms (- (:expires-at-ms fresh) now)
                            :api-url (:api-url fresh)
                            :account-type account-type}
                     :msg "Copilot API token refreshed"})
-         {:token (:token fresh) :api-url (:api-url fresh) :account-type account-type :llm-headers COPILOT_HEADERS})))))
+         {:token (:token fresh)
+          :api-url (:api-url fresh)
+          :account-type account-type
+          :llm-headers COPILOT_HEADERS})))))
 
 ;; =============================================================================
 ;; CLI helpers
@@ -471,21 +498,32 @@
     :account-type keyword :copilot-token-valid? bool :expires-in-ms long}"
   ([] (status nil))
   ([opts]
-   (let [detected     (detect-oauth-token)
-         account-type (configured-account-type opts)
-         cached       @token-cache
-         now          (System/currentTimeMillis)]
-     (cond-> {:authenticated? (some? detected)
-              :account-type account-type}
+   (let [detected
+         (detect-oauth-token)
+
+         account-type
+         (configured-account-type opts)
+
+         cached
+         @token-cache
+
+         now
+         (System/currentTimeMillis)]
+
+     (cond-> {:authenticated? (some? detected) :account-type account-type}
        detected
-       (assoc :source (:source detected)
-         :oauth-token-preview (let [t (:oauth-token detected)]
-                                (str (subs t 0 (min 8 (count t))) "...")))
-       (and cached (:token cached)
-         (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
-       (assoc :copilot-token-valid? (> (:expires-at-ms cached) now)
-         :expires-in-ms (- (:expires-at-ms cached) now)
-         :api-url (:api-url cached))))))
+       (assoc :source
+         (:source detected) :oauth-token-preview
+         (let [t (:oauth-token detected)]
+           (str (subs t 0 (min 8 (count t))) "...")))
+
+       (and cached
+            (:token cached)
+            (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+       (assoc :copilot-token-valid?
+         (> (:expires-at-ms cached) now) :expires-in-ms
+         (- (:expires-at-ms cached) now) :api-url
+         (:api-url cached))))))
 
 (defn logout!
   "Clear all cached and persisted tokens."
@@ -498,101 +536,127 @@
 ;; Dynamic quota / limits
 ;; =============================================================================
 
-(defn- parse-epoch-ms [value]
-  (cond
-    (number? value)
-    (long (if (> (double value) 100000000000.0)
-            value
-            (* 1000.0 (double value))))
+(defn- parse-epoch-ms
+  [value]
+  (cond (number? value) (long
+                          (if (> (double value) 100000000000.0) value (* 1000.0 (double value))))
+        (string? value) (try (.toEpochMilli (java.time.Instant/parse value))
+                             (catch Throwable _
+                               (try (.toEpochMilli (.toInstant (.atStartOfDay
+                                                                 (java.time.LocalDate/parse value)
+                                                                 java.time.ZoneOffset/UTC)))
+                                    (catch Throwable _ nil))))
+        :else nil))
 
-    (string? value)
-    (try
-      (.toEpochMilli (java.time.Instant/parse value))
-      (catch Throwable _
-        (try
-          (.toEpochMilli (.toInstant (.atStartOfDay (java.time.LocalDate/parse value) java.time.ZoneOffset/UTC)))
-          (catch Throwable _ nil))))
+(defn- quota-row
+  [reset-ms [quota-key quota]]
+  (let [id
+        (keyword (name quota-key))
 
-    :else nil))
+        label
+        (-> (name quota-key)
+            (str/replace #"[_-]" " ")
+            str/capitalize)
 
-(defn- quota-row [reset-ms [quota-key quota]]
-  (let [id        (keyword (name quota-key))
-        label     (-> (name quota-key) (str/replace #"[_-]" " ") str/capitalize)
-        remaining (response-field quota :remaining)
-        limit     (or (response-field quota :entitlement)
-                    (response-field quota :limit))
-        pct       (response-field quota :percent_remaining)]
-    (cond-> {:id         id
-             :label      label
-             :scope      :account
-             :kind       :requests
-             :precision  :exact
-             :source     :provider-api
+        remaining
+        (response-field quota :remaining)
+
+        limit
+        (or (response-field quota :entitlement) (response-field quota :limit))
+
+        pct
+        (response-field quota :percent_remaining)]
+
+    (cond-> {:id id
+             :label label
+             :scope :account
+             :kind :requests
+             :precision :exact
+             :source :provider-api
              :unlimited? false}
-      (number? remaining) (assoc :remaining (double remaining))
-      (number? limit)     (assoc :limit (double limit))
+      (number? remaining)
+      (assoc :remaining (double remaining))
+
+      (number? limit)
+      (assoc :limit (double limit))
+
       (and (number? remaining) (number? limit))
       (assoc :used (double (- (double limit) (double remaining))))
-      (number? pct)       (assoc :note (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)])))
-      reset-ms            (assoc :window {:kind :calendar
-                                          :unit :month
-                                          :resets-at-ms reset-ms}))))
 
-(defn- quota-map-rows [reset-ms quotas]
-  (if (map? quotas)
-    (mapv #(quota-row reset-ms %) quotas)
-    []))
+      (number? pct)
+      (assoc :note
+        (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)])))
 
-(defn- limited-quota-rows [reset-ms usage]
-  (let [remaining (response-field usage :limited_user_quotas)
-        monthly   (response-field usage :monthly_quotas)]
+      reset-ms
+      (assoc :window {:kind :calendar :unit :month :resets-at-ms reset-ms}))))
+
+(defn- quota-map-rows [reset-ms quotas] (if (map? quotas) (mapv #(quota-row reset-ms %) quotas) []))
+
+(defn- limited-quota-rows
+  [reset-ms usage]
+  (let [remaining
+        (response-field usage :limited_user_quotas)
+
+        monthly
+        (response-field usage :monthly_quotas)]
+
     (if (and (map? remaining) (map? monthly))
       (mapv (fn [[k rem]]
               (quota-row reset-ms [k {:remaining rem :entitlement (get monthly k)}]))
-        remaining)
+            remaining)
       [])))
 
-(defn- fetch-user-usage! [oauth-token]
-  (let [resp   (http/get "https://api.github.com/copilot_internal/user"
-                 {:headers (merge COPILOT_HEADERS
-                             {"Accept" "application/json"
-                              "Authorization" (str "Bearer " oauth-token)
-                              "X-GitHub-Api-Version" "2025-04-01"})
-                  :timeout 30000
-                  :throw   false})
-        status (:status resp)
-        body   (:body resp)]
+(defn- fetch-user-usage!
+  [oauth-token]
+  (let [resp
+        (http/get "https://api.github.com/copilot_internal/user"
+                  {:headers (merge COPILOT_HEADERS
+                                   {"Accept" "application/json"
+                                    "Authorization" (str "Bearer " oauth-token)
+                                    "X-GitHub-Api-Version" "2025-04-01"})
+                   :timeout 30000
+                   :throw false})
+
+        status
+        (:status resp)
+
+        body
+        (:body resp)]
+
     (if (<= 200 status 299)
       (json-body body)
       (throw (ex-info (str "GitHub Copilot usage request failed: HTTP " status)
-               {:type :provider/github-copilot-usage-error
-                :status status
-                :body body})))))
+                      {:type :provider/github-copilot-usage-error :status status :body body})))))
 
 (defn- dynamic-limits!
   []
   (if-let [{:keys [oauth-token]} (detect-oauth-token)]
-    (let [usage    (fetch-user-usage! oauth-token)
+    (let [usage (fetch-user-usage! oauth-token)
           reset-ms (or (parse-epoch-ms (response-field usage :quota_reset_date))
-                     (parse-epoch-ms (response-field usage :limited_user_reset_date)))
-          rows     (let [snapshots (response-field usage :quota_snapshots)]
-                     (if (seq snapshots)
-                       (quota-map-rows reset-ms snapshots)
-                       (limited-quota-rows reset-ms usage)))]
+                       (parse-epoch-ms (response-field usage :limited_user_reset_date)))
+          rows (let [snapshots (response-field usage :quota_snapshots)]
+                 (if (seq snapshots)
+                   (quota-map-rows reset-ms snapshots)
+                   (limited-quota-rows reset-ms usage)))]
+
       {:status :ok
        :dynamic {:limits rows
-                 :note (str "Copilot plan: " (or (response-field usage :copilot_plan)
-                                               (response-field usage :access_type_sku)
-                                               "unknown"))}})
+                 :note (str "Copilot plan: "
+                            (or (response-field usage :copilot_plan)
+                                (response-field usage :access_type_sku)
+                                "unknown"))}})
     {:status :unauthenticated
-     :dynamic {:limits []
-               :note "Authenticate GitHub Copilot to fetch dynamic quota data."}}))
+     :dynamic {:limits [] :note "Authenticate GitHub Copilot to fetch dynamic quota data."}}))
 
-(defn- make-status-fn [account-type]
-  (fn [] (status {:account-type account-type})))
+(defn- make-status-fn
+  [account-type]
+  (fn []
+    (status {:account-type account-type})))
 
-(defn- make-get-token-fn [account-type]
-  (fn [] (get-copilot-token! {:account-type account-type})))
+(defn- make-get-token-fn
+  [account-type]
+  (fn []
+    (get-copilot-token! {:account-type account-type})))
 
 (defn- make-force-refresh-fn
   "Build the runtime 401-recovery hook for `account-type`.
@@ -614,22 +678,30 @@
     ;; waited for the lock — if the cache is valid again, return it
     ;; (get-copilot-token! reads the cache without exchanging).
     (fn []
-      (let [cached @token-cache
-            now    (System/currentTimeMillis)]
-        (when (and cached (:token cached)
-                (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
-                (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+      (let [cached
+            @token-cache
+
+            now
+            (System/currentTimeMillis)]
+
+        (when (and cached
+                   (:token cached)
+                   (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
+                   (= account-type
+                      (or (normalize-account-type (:account-type cached)) :individual)))
           (get-copilot-token! {:account-type account-type}))))
     ;; REFRESH: drop the cache and force one fresh exchange.
     (fn []
       (reset! token-cache nil)
       (let [fresh (get-copilot-token! {:account-type account-type})]
-        (tel/log! {:level :info :id ::copilot-token-force-refreshed
-                   :data  {:account-type account-type}
-                   :msg   "Copilot API token force-refreshed (401 recovery)"})
+        (tel/log! {:level :info
+                   :id ::copilot-token-force-refreshed
+                   :data {:account-type account-type}
+                   :msg "Copilot API token force-refreshed (401 recovery)"})
         fresh))))
 
-(defn- make-limits-fn [account-type]
+(defn- make-limits-fn
+  [account-type]
   (fn []
     (assoc (dynamic-limits!)
       :provider-id (account-provider-id account-type)
@@ -655,15 +727,25 @@
    Opts may include `:account-type` = :individual, :business, or :enterprise."
   ([printer-fn] (interactive-auth! printer-fn nil))
   ([printer-fn opts]
-   (let [print! (or printer-fn (constantly nil))
-         account-type (configured-account-type opts)
-         opts (assoc opts :account-type account-type)]
+   (let [print!
+         (or printer-fn (constantly nil))
+
+         account-type
+         (configured-account-type opts)
+
+         opts
+         (assoc opts :account-type account-type)]
+
      (if (detect-oauth-token)
        (do (print! "  Already authenticated with GitHub Copilot.")
-         (print! (str "  Account type: " (name account-type)))
-         (print! (str "  Run `vis providers status " (name (account-provider-id account-type)) "` for details."))
-         (print! (str "  Run `vis providers logout " (name (account-provider-id account-type)) "` first to re-authenticate."))
-         :already-authenticated)
+           (print! (str "  Account type: " (name account-type)))
+           (print! (str "  Run `vis providers status "
+                        (name (account-provider-id account-type))
+                        "` for details."))
+           (print! (str "  Run `vis providers logout "
+                        (name (account-provider-id account-type))
+                        "` first to re-authenticate."))
+           :already-authenticated)
        (let [{:keys [user-code verification-uri device-code interval expires-in]}
              (start-device-flow! opts)]
          (print! "")
@@ -674,15 +756,17 @@
          (print! "  Waiting for authorization...")
          (poll-for-token! device-code interval expires-in opts)
          (let [{:keys [token api-url]} (get-copilot-token! opts)
-                ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
-                ;; not under `/v1` — strip the LLM-base version segment.
+               ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
+               ;; not under `/v1` — strip the LLM-base version segment.
                policy-root (str/replace (or api-url "") #"/v1/?$" "")
                {:keys [attempted enabled]} (enable-known-copilot-models! token policy-root)]
+
            (print! (str "  Enabled " enabled "/" attempted " known Copilot model policies.")))
          (print! "  ✓ Authenticated! GitHub Copilot is ready.")
          :ok)))))
 
-(defn- make-auth-fn [account-type]
+(defn- make-auth-fn
+  [account-type]
   (fn [printer-fn]
     (interactive-auth! printer-fn {:account-type account-type})))
 
@@ -710,33 +794,42 @@
    svar's per-model api-style overlay; `:responses-path` is provider-scoped
    but harmless to the Anthropic path (which appends `/messages` itself)."
   [account-type]
-  (let [pid     (account-provider-id account-type)
-        label   (account-provider-label account-type)
-        base    (get COPILOT_ACCOUNT_BASE_URLS account-type)
-        shared  {:provider/status-fn        (make-status-fn account-type)
-                 :provider/logout-fn        #'logout!
-                 :provider/detect-fn        #'detect-oauth-token
-                 :provider/auth-fn          (make-auth-fn account-type)
-                 :provider/get-token-fn     (make-get-token-fn account-type)
-                 :provider/refresh-token-fn (make-force-refresh-fn account-type)
-                 :provider/limits-fn        (make-limits-fn account-type)}]
+  (let [pid
+        (account-provider-id account-type)
+
+        label
+        (account-provider-label account-type)
+
+        base
+        (get COPILOT_ACCOUNT_BASE_URLS account-type)
+
+        shared
+        {:provider/status-fn (make-status-fn account-type)
+         :provider/logout-fn #'logout!
+         :provider/detect-fn #'detect-oauth-token
+         :provider/auth-fn (make-auth-fn account-type)
+         :provider/get-token-fn (make-get-token-fn account-type)
+         :provider/refresh-token-fn (make-force-refresh-fn account-type)
+         :provider/limits-fn (make-limits-fn account-type)}]
+
     [(merge shared
-       {:provider/id    pid
-        :provider/label label
-        :provider/preset {;; base-url is OAuth-host-derived per account; the
-                          ;; model list comes from svar (single source), keyed
-                          ;; by the tier provider id `pid`.
-                          :base-url       (str base "/v1")
-                          :api-style      :anthropic
-                          :responses-path "/responses"
-                          :default-models (svar/provider-default-models pid)}})]))
+            {:provider/id pid
+             :provider/label label
+             :provider/preset {;; base-url is OAuth-host-derived per account; the
+                               ;; model list comes from svar (single source), keyed
+                               ;; by the tier provider id `pid`.
+                               :base-url (str base "/v1")
+                               :api-style :anthropic
+                               :responses-path "/responses"
+                               :default-models (svar/provider-default-models pid)}})]))
 
 (vis/register-extension!
   (vis/extension
-    {:ext/name        "provider-github-copilot"
-     :ext/description "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
-     :ext/version     "0.4.1"
-     :ext/author      "Blockether"
-     :ext/owner       "vis"
-     :ext/license     "Apache-2.0"
-     :ext/providers   (into [] (mapcat provider-entries) [:individual :business :enterprise])}))
+    {:ext/name "provider-github-copilot"
+     :ext/description
+     "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
+     :ext/version "0.4.1"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/providers (into [] (mapcat provider-entries) [:individual :business :enterprise])}))

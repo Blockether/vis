@@ -53,17 +53,17 @@
   "Initialize the per-session turn-state atom. Holds every cursor +
    DB-id field the iteration loop and ctx-loop helpers consume."
   []
-  (atom {:turn-position   nil
-         :iteration       nil
-         :form-idx        nil
-         :iteration-id    nil
+  (atom {:turn-position nil
+         :iteration nil
+         :form-idx nil
+         :iteration-id nil
          :session-turn-id nil
-         :user-request    nil
+         :user-request nil
          ;; This iteration's final answer ({:value :position}, reset each
          ;; iteration) and the sticky best answer across the turn — folded in
          ;; here instead of two separate atoms.
-         :answer          nil
-         :best-answer     nil}))
+         :answer nil
+         :best-answer nil}))
 
 (defn swap-turn-state!
   "swap! the turn-state map. Returns the new state. No-op if no atom on env."
@@ -80,15 +80,16 @@
 (defn read-turn-state
   "Deref the turn-state map or {} when atom is missing."
   [env]
-  (or (some-> (:turn-state-atom env) deref) {}))
+  (or (some-> (:turn-state-atom env)
+              deref)
+      {}))
 
 (defn- normalize-iteration
   "Iteration field accepts a number, a {:position N} map, or nil. Returns N."
   [v]
-  (cond
-    (map? v)     (or (:position v) 1)
-    (number? v)  v
-    :else        1))
+  (cond (map? v) (or (:position v) 1)
+        (number? v) v
+        :else 1))
 
 (defn synthesize-scope
   "Build the current form scope `tN/iM/fK` from `:turn-state-atom`.
@@ -97,9 +98,7 @@
    atom (e.g. early hooks)."
   [env]
   (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
-    (str "t" (or turn-position 1)
-      "/i" (normalize-iteration iteration)
-      "/f" (inc (or form-idx 0)))))
+    (str "t" (or turn-position 1) "/i" (normalize-iteration iteration) "/f" (inc (or form-idx 0)))))
 
 (defn cursor-snapshot
   "Build a `\"session_scope\"` map from `:turn-state-atom`. Mirrors the
@@ -107,8 +106,8 @@
    crosses the Python boundary) used by `classify-scope` and the renderer."
   [env]
   (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
-    {"turn"      (or turn-position 1)
-     "iter"      (normalize-iteration iteration)
+    {"turn" (or turn-position 1)
+     "iter" (normalize-iteration iteration)
      "next_form" (inc (or form-idx 0))}))
 
 ;; =============================================================================
@@ -126,23 +125,30 @@
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer user-request turn-summary]}]
-  (let [cursor (cursor-snapshot env)
-        scope  (synthesize-scope env)]
+  (let [cursor
+        (cursor-snapshot env)
+
+        scope
+        (synthesize-scope env)]
+
     (when ctx-atom
-      (swap! ctx-atom
-        (fn [c]
-          (let [c+cur (assoc c "session_scope" cursor)
-                {ctx' :ctx} (eng/finalize-turn c+cur scope
-                              {:answer answer
-                               :user-request user-request
-                               :turn-summary turn-summary})]
-            (dissoc ctx' "session_scope"))))
-      (tel/log! {:level :info :id ::finalize-turn
+      (swap! ctx-atom (fn [c]
+                        (let [c+cur
+                              (assoc c "session_scope" cursor)
+
+                              {ctx' :ctx}
+                              (eng/finalize-turn c+cur
+                                                 scope
+                                                 {:answer answer
+                                                  :user-request user-request
+                                                  :turn-summary turn-summary})]
+
+                          (dissoc ctx' "session_scope"))))
+      (tel/log! {:level :info
+                 :id ::finalize-turn
                  :data {:answer-present? (boolean (not (clojure.string/blank? (str answer))))}}
-        "finalize-turn completed"))
-    {:answer answer
-     :blocked? false
-     :warnings []}))
+                "finalize-turn completed"))
+    {:answer answer :blocked? false :warnings []}))
 
 (defn stamp-cursor
   "Return a ctx map with both `\"session_turn\"` and `\"session_scope\"` synced
@@ -153,8 +159,8 @@
   [env ctx]
   (let [cursor (cursor-snapshot env)]
     (-> ctx
-      (assoc "session_turn"  (get cursor "turn"))
-      (assoc "session_scope" cursor))))
+        (assoc "session_turn" (get cursor "turn"))
+        (assoc "session_scope" cursor))))
 
 (defn current-ctx
   "Deref the CTX atom with both `:session/turn` and `:session/scope`
@@ -181,29 +187,39 @@
    Recomputed each call so transient extension/env/resource/routing state stays
    fresh without pushing it back into `ctx-atom`."
   [env ctx]
-  (let [active-exts (try (prompt/active-extensions env) (catch Throwable _ nil))
-        ext-ctx     (try (extension/ctx-contributions env active-exts)
-                      (catch Throwable t
-                        (tel/log! {:level :warn :id ::ctx-contributions-failed
-                                   :data  {:error (ex-message t)}})
-                        {}))
-        env-block   (try (env-digest/deep-merge
-                           (env-digest/base-digest env)
-                           (get ext-ctx "session_env"))
-                      (catch Throwable t
-                        (tel/log! {:level :warn :id ::env-digest-failed
-                                   :data  {:error (ex-message t)}})
-                        nil))
+  (let [active-exts
+        (try (prompt/active-extensions env) (catch Throwable _ nil))
+
+        ext-ctx
+        (try (extension/ctx-contributions env active-exts)
+             (catch Throwable t
+               (tel/log!
+                 {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
+               {}))
+
+        env-block
+        (try (env-digest/deep-merge (env-digest/base-digest env) (get ext-ctx "session_env"))
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
+               nil))
+
         ;; Session-scoped live resources — same registry the footer reads, so
         ;; `session["resources"]` and the footer can never disagree.
-        rsrc        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
+        rsrc
+        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
+
     (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
-      (seq env-block)      (assoc "session_env" env-block)
-      (seq rsrc)           (assoc "session_resources" rsrc)
+      (seq env-block)
+      (assoc "session_env" env-block)
+
+      (seq rsrc)
+      (assoc "session_resources" rsrc)
+
       ;; current model + available models, so the agent can route a sub_loop
       ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE
       ;; is built string-keyed at the loop because it crosses the boundary.
-      (seq (:routing env)) (assoc "session_routing" (:routing env)))))
+      (seq (:routing env))
+      (assoc "session_routing" (:routing env)))))
 
 (defn session-snapshot
   "Read-only data mirror of the Python `session` dict bound in the sandbox.

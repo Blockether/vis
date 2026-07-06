@@ -25,11 +25,10 @@
    registered extension slash claimed (`slash/dispatch` returned
    `:reason :unknown`), so real slash commands always win — same
    precedence pi uses."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Frontmatter — minimal `---` fenced `key: value`, no YAML dependency
@@ -43,56 +42,61 @@
   (let [content (str content)]
     (if-let [[_ fm body] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z" content)]
       {:meta (into {}
-               (keep (fn [line]
-                       (when-let [[_ k v] (re-matches #"\s*([A-Za-z][\w-]*)\s*:\s*(.*)" line)]
-                         [(keyword (str/lower-case k)) (str/trim v)])))
-               (str/split-lines fm))
+                   (keep (fn [line]
+                           (when-let [[_ k v] (re-matches #"\s*([A-Za-z][\w-]*)\s*:\s*(.*)" line)]
+                             [(keyword (str/lower-case k)) (str/trim v)])))
+                   (str/split-lines fm))
        :body (str/triml body)}
       {:meta {} :body (str/triml content)})))
 
-(defn- non-blank [s] (let [s (some-> s str str/trim)] (when-not (str/blank? s) s)))
+(defn- non-blank
+  [s]
+  (let [s (some-> s
+                  str
+                  str/trim)]
+    (when-not (str/blank? s) s)))
 
 ;; =============================================================================
 ;; File template discovery
 ;; =============================================================================
 
-(defn- name-stem [^String filename]
-  (str/replace filename #"\.md\z" ""))
+(defn- name-stem [^String filename] (str/replace filename #"\.md\z" ""))
 
 (defn- md-files
   [^java.io.File d]
   (when (.isDirectory d)
     (->> (.listFiles d)
-      (filter #(and (.isFile ^java.io.File %)
-                 (str/ends-with? (.getName ^java.io.File %) ".md")))
-      (sort-by #(.getName ^java.io.File %)))))
+         (filter #(and (.isFile ^java.io.File %) (str/ends-with? (.getName ^java.io.File %) ".md")))
+         (sort-by #(.getName ^java.io.File %)))))
 
 (defn- parse-template-file
   [scope ^java.io.File f]
-  (try
-    (let [{:keys [meta body]} (parse-frontmatter (slurp f))
-          nm (or (non-blank (:name meta)) (non-blank (name-stem (.getName f))))]
-      (when (and nm (not (str/blank? body)))
-        {:name        nm
-         :description (or (non-blank (:description meta)) "")
-         :body        body
-         :scope       scope
-         :path        (.getAbsolutePath f)}))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::template-parse-failed
-                 :data  {:path (.getAbsolutePath f) :error (ex-message t)}})
-      nil)))
+  (try (let [{:keys [meta body]}
+             (parse-frontmatter (slurp f))
+
+             nm
+             (or (non-blank (:name meta)) (non-blank (name-stem (.getName f))))]
+
+         (when (and nm (not (str/blank? body)))
+           {:name nm
+            :description (or (non-blank (:description meta)) "")
+            :body body
+            :scope scope
+            :path (.getAbsolutePath f)}))
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::template-parse-failed
+                    :data {:path (.getAbsolutePath f) :error (ex-message t)}})
+         nil)))
 
 (defn dedup-by-name
   "First occurrence of each `:name` wins (precedence = input order)."
   [entries]
   (->> entries
-    (reduce (fn [[seen out] e]
-              (if (contains? seen (:name e))
-                [seen out]
-                [(conj seen (:name e)) (conj out e)]))
-      [#{} []])
-    second))
+       (reduce (fn [[seen out] e]
+                 (if (contains? seen (:name e)) [seen out] [(conj seen (:name e)) (conj out e)]))
+               [#{} []])
+       second))
 
 (defn discover-in
   "Parse every `*.md` template under `project-dir` then `global-dir`
@@ -100,15 +104,15 @@
    against fixture roots. Either dir may be nil/missing."
   [^java.io.File project-dir ^java.io.File global-dir]
   (dedup-by-name
-    (vec (concat
-           (keep #(parse-template-file :project %) (when project-dir (md-files project-dir)))
-           (keep #(parse-template-file :global %) (when global-dir (md-files global-dir)))))))
+    (vec (concat (keep #(parse-template-file :project %) (when project-dir (md-files project-dir)))
+                 (keep #(parse-template-file :global %) (when global-dir (md-files global-dir)))))))
 
-(defn- project-prompts-dir ^java.io.File []
-  (try (io/file (workspace/cwd) ".vis" "prompts")
-    (catch Throwable _ nil)))
+(defn- project-prompts-dir
+  ^java.io.File []
+  (try (io/file (workspace/cwd) ".vis" "prompts") (catch Throwable _ nil)))
 
-(defn- global-prompts-dir ^java.io.File []
+(defn- global-prompts-dir
+  ^java.io.File []
   (io/file (System/getProperty "user.home") ".vis" "prompts"))
 
 ;; ── marker cache: stat-only revalidation, content re-read on change ─────────
@@ -119,23 +123,27 @@
   [^java.io.File d]
   (when d
     [(.getAbsolutePath d)
-     (mapv (fn [^java.io.File f] [(.getName f) (.lastModified f) (.length f)])
-       (or (md-files d) []))]))
+     (mapv (fn [^java.io.File f]
+             [(.getName f) (.lastModified f) (.length f)])
+           (or (md-files d) []))]))
 
-(defn- template-marker []
-  [(dir-marker (project-prompts-dir)) (dir-marker (global-prompts-dir))])
+(defn- template-marker [] [(dir-marker (project-prompts-dir)) (dir-marker (global-prompts-dir))])
 
 (defn file-templates
   "Discovered file templates, marker-cached: re-parsed only when the
    prompts dirs (or any file in them) change."
   []
-  (let [m (template-marker)
-        c @cache]
+  (let [m
+        (template-marker)
+
+        c
+        @cache]
+
     (if (and c (= m (:marker c)))
       (:templates c)
       (:templates (reset! cache {:marker m
                                  :templates (discover-in (project-prompts-dir)
-                                              (global-prompts-dir))})))))
+                                                         (global-prompts-dir))})))))
 
 (defn reload!
   "Drop the file-template cache and rescan. Returns the template vec."
@@ -159,14 +167,16 @@
   (swap! providers assoc id f)
   id)
 
-(defn- provider-templates []
+(defn- provider-templates
+  []
   (vec (mapcat (fn [[id f]]
                  (try (f)
-                   (catch Throwable t
-                     (tel/log! {:level :warn :id ::provider-failed
-                                :data  {:provider id :error (ex-message t)}})
-                     nil)))
-         @providers)))
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::provider-failed
+                                   :data {:provider id :error (ex-message t)}})
+                        nil)))
+               @providers)))
 
 (defn templates
   "All available templates: file templates first (they win name
@@ -202,14 +212,15 @@
   [env text]
   (when-let [{:keys [name args]} (parse-invocation text)]
     (when-let [t (first (filter #(= name (:name %)) (templates)))]
-      (let [body (try
-                   (if-let [f (:expand-fn t)]
-                     (f env args)
-                     (expand-body (:body t) args))
-                   (catch Throwable ex
-                     (tel/log! {:level :warn :id ::expand-failed
-                                :data  {:template name :error (ex-message ex)}})
-                     nil))]
+      (let [body (try (if-let [f (:expand-fn t)]
+                        (f env args)
+                        (expand-body (:body t) args))
+                      (catch Throwable ex
+                        (tel/log! {:level :warn
+                                   :id ::expand-failed
+                                   :data {:template name :error (ex-message ex)}})
+                        nil))]
         (when (and (string? body) (not (str/blank? body)))
           (cond-> {:name name :text body}
-            (:path t) (assoc :path (:path t))))))))
+            (:path t)
+            (assoc :path (:path t))))))))

@@ -17,11 +17,9 @@
    No external pretty-printer: data renders through `clojure.pprint`
    (built-in) and source code is shown verbatim. The namespace is free of
    state - safe to require from any layer."
-  (:require
-   [clojure.pprint :as pprint]
-   [clojure.string :as str])
-  (:import
-   [java.util Locale]))
+  (:require [clojure.pprint :as pprint]
+            [clojure.string :as str])
+  (:import [java.util Locale]))
 
 (def ^:private turn-key-re #"turn_(\d+)")
 
@@ -37,14 +35,11 @@
    so `(str k)` is total here — no keyword branch."
   [k]
   (let [s (str k)]
-    (cond
-      (str/blank? s) s
-
-      :else
-      (if-let [[_ n] (re-matches turn-key-re s)]
-        (str "Turn " n)
-        (let [s (str/replace s #"[-_]+" " ")]
-          (str (str/upper-case (subs s 0 1)) (subs s 1)))))))
+    (cond (str/blank? s) s
+          :else (if-let [[_ n] (re-matches turn-key-re s)]
+                  (str "Turn " n)
+                  (let [s (str/replace s #"[-_]+" " ")]
+                    (str (str/upper-case (subs s 0 1)) (subs s 1)))))))
 
 (defn format-date
   "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
@@ -52,7 +47,7 @@
   (when d
     (.format (doto (java.text.SimpleDateFormat. "dd-MM-yyyy HH:mm")
                (.setTimeZone (java.util.TimeZone/getDefault)))
-      d)))
+             d)))
 
 (defn safe-zprint-str
   "Pretty-print a runtime DATA value to a string via `clojure.pprint`.
@@ -91,13 +86,13 @@
   [ms]
   (when (and ms (pos? ms))
     (let [ms (long ms)]
-      (cond
-        (< ms 1000)  (str ms "ms")
-        (< ms 60000) (String/format Locale/US "%.1fs"
-                       (into-array Object [(double (/ ms 1000.0))]))
-        :else        (let [m (quot ms 60000)
-                           s (quot (mod ms 60000) 1000)]
-                       (str m "m " s "s"))))))
+      (cond (< ms 1000) (str ms "ms")
+            (< ms 60000)
+            (String/format Locale/US "%.1fs" (into-array Object [(double (/ ms 1000.0))]))
+            :else (let [m (quot ms 60000)
+                        s (quot (mod ms 60000) 1000)]
+
+                    (str m "m " s "s"))))))
 
 ;; =============================================================================
 ;; Turn-summary helpers (CLI / TUI / Telegram all share these)
@@ -141,19 +136,32 @@
             (some (fn [k]
                     (let [v (get tokens k)]
                       (when (number? v) v)))
-              ks))]
-    (let [cached-input (or (first-number [:cached-input :input-cached :cached]) 0)
-          cache-created (or (first-number [:cache-created :cache-created-input :cache-creation :cache-write]) 0)
-          in-n  (when (number? input) input)
-          out-n (when (number? output) output)]
+                  ks))]
+    (let [cached-input
+          (or (first-number [:cached-input :input-cached :cached]) 0)
+
+          cache-created
+          (or (first-number [:cache-created :cache-created-input :cache-creation :cache-write]) 0)
+
+          in-n
+          (when (number? input) input)
+
+          out-n
+          (when (number? output) output)]
+
       (when (or in-n out-n (pos? cached-input) (pos? cache-created))
-        (let [head (str "tok " (or in-n 0) "→" (or out-n 0))
-              parts (cond-> []
-                      (pos? cached-input) (conj (str "cached " cached-input))
-                      (pos? cache-created) (conj (str "cache-write " cache-created)))]
-          (if (seq parts)
-            (str head " (" (str/join ", " parts) ")")
-            head))))))
+        (let [head
+              (str "tok " (or in-n 0) "→" (or out-n 0))
+
+              parts
+              (cond-> []
+                (pos? cached-input)
+                (conj (str "cached " cached-input))
+
+                (pos? cache-created)
+                (conj (str "cache-write " cache-created)))]
+
+          (if (seq parts) (str head " (" (str/join ", " parts) ")") head))))))
 
 (defn format-cost
   "Render a dollar cost as '~$0.006954' (six decimal places, US
@@ -176,11 +184,9 @@
           (detail [label k]
             (when-let [v (positive-cost-number k)]
               (str label " " (format-cost-number v))))]
-    (let [n (cond
-              (number? cost) cost
-              (and (map? cost)
-                (number? (:total-cost cost))) (:total-cost cost)
-              :else nil)]
+    (let [n (cond (number? cost) cost
+                  (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+                  :else nil)]
       (when (and n (pos? n))
         (if (map? cost)
           (let [details (cond-> []
@@ -195,10 +201,9 @@
 
                           (positive-cost-number :output-cost)
                           (conj (detail "out" :output-cost)))
-                total   (format-cost-number n)]
-            (if (> (count details) 1)
-              (str total " (" (str/join ", " details) ")")
-              total))
+                total (format-cost-number n)]
+
+            (if (> (count details) 1) (str total " (" (str/join ", " details) ")") total))
           (format-cost-number n))))))
 
 (defn format-iterations
@@ -208,9 +213,10 @@
   ([n] (format-iterations n nil))
   ([n {:keys [silent-count]}]
    (when (number? n)
-     (str n (if (= 1 n) " iter" " iters")
-       (when (and (number? silent-count) (pos? silent-count))
-         (str " (" silent-count " silent)"))))))
+     (str n
+          (if (= 1 n) " iter" " iters")
+          (when (and (number? silent-count) (pos? silent-count))
+            (str " (" silent-count " silent)"))))))
 
 (defn- normalize-provider
   "Coerce a provider id to a short string. Accepts keyword (`:openai`),
@@ -219,13 +225,10 @@
    blank or non-string values - the caller treats nil as 'no provider
    prefix' and renders the bare model."
   [p]
-  (cond
-    (keyword? p)        (name p)
-    (and (string? p)
-      (str/starts-with? p ":")) (subs p 1)
-    (and (string? p)
-      (not (str/blank? p)))     p
-    :else nil))
+  (cond (keyword? p) (name p)
+        (and (string? p) (str/starts-with? p ":")) (subs p 1)
+        (and (string? p) (not (str/blank? p))) p
+        :else nil))
 
 (defn display-model-name
   "DISPLAY-ONLY normalization of a model id: path-style ids
@@ -235,8 +238,7 @@
    The wire/config id keeps its slashes — never feed this back to a
    router or provider. nil-safe; non-strings and blanks return nil."
   [m]
-  (when (and (string? m) (not (str/blank? m)))
-    (str/replace m "/" "-")))
+  (when (and (string? m) (not (str/blank? m))) (str/replace m "/" "-")))
 
 (defn- extract-model
   "Pull the model identity off a result map and render it as
@@ -248,13 +250,17 @@
    \"gpt-4o\"}`); channels sometimes lift `:model` / `:provider` to
    top-level on the result map. Returns nil when no model is known."
   [result]
-  (let [model    (display-model-name
-                   (or (when-let [m (:model result)]       (when (string? m) m))
-                     (when-let [m (:model (:cost result))] (when (string? m) m))))
-        provider (or (normalize-provider (:provider result))
-                   (normalize-provider (:provider (:cost result))))]
-    (when model
-      (if provider (str provider "/" model) model))))
+  (let [model
+        (display-model-name (or (when-let [m (:model result)]
+                                  (when (string? m) m))
+                                (when-let [m (:model (:cost result))]
+                                  (when (string? m) m))))
+
+        provider
+        (or (normalize-provider (:provider result))
+            (normalize-provider (:provider (:cost result))))]
+
+    (when model (if provider (str provider "/" model) model))))
 
 ;; ── Humanized turn-summary line (shared verbatim: CLI / TUI / Telegram) ──────
 ;;
@@ -268,19 +274,22 @@
   "`provider/model` when both are known, bare model / bare provider when only one
    is, nil when neither. Keywords render without the leading colon."
   [{:keys [provider model]}]
-  (let [p (normalize-provider provider)
-        m (display-model-name model)]
+  (let [p
+        (normalize-provider provider)
+
+        m
+        (display-model-name model)]
+
     (cond (and p m) (str p "/" m)
-      m         m
-      p         p
-      :else     nil)))
+          m m
+          p p
+          :else nil)))
 
 (defn- meta-model-label
   "Label for the model that actually ANSWERED: prefer the routing `:llm-actual`,
    then the `:provider`/`:model`/`:cost` pair `extract-model` already knows."
   [result]
-  (or (model-pair-label (:llm-actual result))
-    (extract-model result)))
+  (or (model-pair-label (:llm-actual result)) (extract-model result)))
 
 (defn- humanize-count
   "Compact human count: 35 → \"35\", 11461 → \"11.5k\", 4096 → \"4.1k\",
@@ -288,15 +297,26 @@
    Integer math so the decimal mark never flips on a non-US JVM locale."
   [n]
   (when (number? n)
-    (let [n (long n)
-          tenths (fn [scale] (Math/round (/ (double n) (/ (double scale) 10.0))))
-          render (fn [t unit]
-                   (let [whole (quot t 10) frac (mod t 10)]
-                     (str whole (when (pos? frac) (str "." frac)) unit)))]
-      (cond
-        (< n 1000)    (str n)
-        (< n 1000000) (render (tenths 1000) "k")
-        :else         (render (tenths 1000000) "M")))))
+    (let [n
+          (long n)
+
+          tenths
+          (fn [scale]
+            (Math/round (/ (double n) (/ (double scale) 10.0))))
+
+          render
+          (fn [t unit]
+            (let [whole
+                  (quot t 10)
+
+                  frac
+                  (mod t 10)]
+
+              (str whole (when (pos? frac) (str "." frac)) unit)))]
+
+      (cond (< n 1000) (str n)
+            (< n 1000000) (render (tenths 1000) "k")
+            :else (render (tenths 1000000) "M")))))
 
 (defn meta-tokens
   "Humanized token slot — \"11.5k→35\", with \" (cached 4.1k)\" only when the
@@ -304,25 +324,40 @@
    AND no output) so a failed / empty provider call never renders a bare
    \"0→0\"."
   [tokens]
-  (letfn [(num [ks] (some (fn [k] (let [v (get tokens k)] (when (number? v) v))) ks))]
-    (let [in     (num [:input])
-          out    (num [:output])
-          cached (num [:cached-input :input-cached :cached])]
+  (letfn [(num [ks]
+            (some (fn [k]
+                    (let [v (get tokens k)]
+                      (when (number? v) v)))
+                  ks))]
+    (let [in
+          (num [:input])
+
+          out
+          (num [:output])
+
+          cached
+          (num [:cached-input :input-cached :cached])]
+
       (when (or (and in (pos? in)) (and out (pos? out)))
-        (str (humanize-count (or in 0)) "→" (humanize-count (or out 0))
-          (when (and cached (pos? cached)) (str " (cached " (humanize-count cached) ")")))))))
+        (str (humanize-count (or in 0))
+             "→"
+             (humanize-count (or out 0))
+             (when (and cached (pos? cached)) (str " (cached " (humanize-count cached) ")")))))))
 
 (defn meta-cost
   "Humanized dollar cost — \"~$0.0070\" / \"~$1.23\". nil for zero / missing.
    Extra decimals for sub-cent turns so they don't round down to \"$0\"."
   [cost]
   (let [n (cond (number? cost) cost
-            (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
-            :else nil)]
+                (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+                :else nil)]
     (when (and n (pos? n))
-      (str "~$" (String/format Locale/US
-                  (cond (>= n 1) "%.2f" (>= n 0.0001) "%.4f" :else "%.6f")
-                  (into-array Object [(double n)]))))))
+      (str "~$"
+           (String/format Locale/US
+                          (cond (>= n 1) "%.2f"
+                                (>= n 0.0001) "%.4f"
+                                :else "%.6f")
+                          (into-array Object [(double n)]))))))
 
 (def meta-separator
   "Calm separator for the shared turn-summary line — a middot ringed by spaces.
@@ -338,22 +373,32 @@
    can float it on its own faint row while CLI/Telegram fold it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
   (when llm-fallback?
-    (let [from    (or (model-pair-label llm-selected) "previous model")
-          ev      (first (filter #(contains? #{:llm.routing/provider-fallback
-                                               :llm.routing/format-fallback}
-                                    (:event/type %))
-                           llm-routing-trace))
-          retries (count (filter #(= :llm.routing/provider-retry (:event/type %))
-                           llm-routing-trace))
-          status  (:status ev)
-          why     (cond (some? status)         (str status)
-                    (some? (:reason ev))    (name (:reason ev))
-                    (seq (str (:error ev))) (str (:error ev))
-                    :else                   nil)
-          tail    (->> [why (when (pos? retries) (str "retried " retries "×"))]
-                    (remove (fn [s] (or (nil? s) (str/blank? (str s))))))]
-      (str "↳ from " from
-        (when (seq tail) (str " — " (str/join ", " tail)))))))
+    (let [from
+          (or (model-pair-label llm-selected) "previous model")
+
+          ev
+          (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/format-fallback}
+                                     (:event/type %))
+                         llm-routing-trace))
+
+          retries
+          (count (filter #(= :llm.routing/provider-retry (:event/type %)) llm-routing-trace))
+
+          status
+          (:status ev)
+
+          why
+          (cond (some? status) (str status)
+                (some? (:reason ev)) (name (:reason ev))
+                (seq (str (:error ev))) (str (:error ev))
+                :else nil)
+
+          tail
+          (->> [why (when (pos? retries) (str "retried " retries "×"))]
+               (remove (fn [s]
+                         (or (nil? s) (str/blank? (str s))))))]
+
+      (str "↳ from " from (when (seq tail) (str " — " (str/join ", " tail)))))))
 
 (defn meta-summary-line
   "The canonical, humanized turn-summary MAIN line, shared verbatim by the CLI
@@ -371,13 +416,17 @@
    it; prefix/suffix are extra slots spliced in around the standard ones."
   ([result] (meta-summary-line result nil))
   ([{:keys [tokens cost duration-ms] :as result} {:keys [model prefix suffix]}]
-   (let [model* (cond (false? model)  nil
-                  (string? model) model
-                  :else           (meta-model-label result))
-         parts  (->> (concat (vec prefix)
-                       [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
-                       (vec suffix))
-                  (remove nil?))]
+   (let [model*
+         (cond (false? model) nil
+               (string? model) model
+               :else (meta-model-label result))
+
+         parts
+         (->> (concat (vec prefix)
+                      [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
+                      (vec suffix))
+              (remove nil?))]
+
      (when (seq parts) (str/join meta-separator parts)))))
 
 (defn format-meta-line
@@ -388,12 +437,16 @@
    numbers, just two rows. Returns \"\" when there's nothing to show."
   ([result] (format-meta-line result nil))
   ([result opts]
-   (let [main (meta-summary-line result opts)
-         note (meta-fallback-note result)]
+   (let [main
+         (meta-summary-line result opts)
+
+         note
+         (meta-fallback-note result)]
+
      (cond (and main note) (str main meta-separator note)
-       main            main
-       note            note
-       :else           ""))))
+           main main
+           note note
+           :else ""))))
 
 ;; =============================================================================
 ;; Bounded value rendering
@@ -413,21 +466,15 @@
    bypasses the default."
   1500)
 
-(defn- strip-sandbox-ns [s]
-  (str/replace (str s) #"\bsandbox/|\buser/" ""))
+(defn- strip-sandbox-ns [s] (str/replace (str s) #"\bsandbox/|\buser/" ""))
 
 (defn- pprintable-data?
   [v]
-  (or (map? v)
-    (vector? v)
-    (set? v)
-    (instance? clojure.lang.IPersistentList v)))
+  (or (map? v) (vector? v) (set? v) (instance? clojure.lang.IPersistentList v)))
 
 (defn- value-pr-str
   [v bounded-print?]
-  (if (and (pprintable-data? v) (not bounded-print?))
-    (safe-zprint-str v)
-    (pr-str v)))
+  (if (and (pprintable-data? v) (not bounded-print?)) (safe-zprint-str v) (pr-str v)))
 
 (defn bounded-value-str
   "Bounded Clojure data rendering for plain working-memory previews
@@ -436,18 +483,23 @@
    tighter or looser bounds pass `:max-chars`. Do not use for tool results;
    tools must render through their symbol-specific renderers."
   ([v] (bounded-value-str v {}))
-  ([v {:keys [max-chars print-length print-level] :as opts
-       :or {max-chars MAX_RESULT_DISPLAY_CHARS
-            print-length 64
-            print-level 6}}]
-   (try
-     (binding [*print-length* print-length
-               *print-level*  print-level]
-       (let [bounded-print? (or (contains? opts :print-length)
-                              (contains? opts :print-level))
-             s (strip-sandbox-ns (value-pr-str v bounded-print?))]
-         (if (> (count s) max-chars)
-           (str (subs s 0 max-chars) " ...<+" (- (count s) max-chars) " chars>")
-           s)))
-     (catch Throwable t
-       (str "<unprintable: " (.getMessage t) ">")))))
+  ([v
+    {:keys [max-chars print-length print-level]
+     :as opts
+     :or {max-chars MAX_RESULT_DISPLAY_CHARS print-length 64 print-level 6}}]
+   (try (binding [*print-length*
+                  print-length
+
+                  *print-level*
+                  print-level]
+
+          (let [bounded-print?
+                (or (contains? opts :print-length) (contains? opts :print-level))
+
+                s
+                (strip-sandbox-ns (value-pr-str v bounded-print?))]
+
+            (if (> (count s) max-chars)
+              (str (subs s 0 max-chars) " ...<+" (- (count s) max-chars) " chars>")
+              s)))
+        (catch Throwable t (str "<unprintable: " (.getMessage t) ">")))))

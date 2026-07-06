@@ -41,52 +41,80 @@
 ;; commonmark markdown -> HTML
 ;; ---------------------------------------------------------------------------
 
-(def ^:private extensions
-  [(TablesExtension/create) (StrikethroughExtension/create)])
+(def ^:private extensions [(TablesExtension/create) (StrikethroughExtension/create)])
 
 (def ^:private ^Parser md-parser
-  (-> (Parser/builder) (.extensions extensions) (.build)))
+  (-> (Parser/builder)
+      (.extensions extensions)
+      (.build)))
 
 (def ^:private ^HtmlRenderer md-renderer
-  (-> (HtmlRenderer/builder) (.extensions extensions) (.build)))
+  (-> (HtmlRenderer/builder)
+      (.extensions extensions)
+      (.build)))
 
-(defn md->html ^String [^String md]
-  (.render md-renderer (.parse md-parser md)))
+(defn md->html ^String [^String md] (.render md-renderer (.parse md-parser md)))
 
-(defn- first-h1 [^String md]
+(defn- first-h1
+  [^String md]
   (some->> (str/split-lines md)
-    (some (fn [l] (when (str/starts-with? l "# ") (str/trim (subs l 2)))))))
+           (some (fn [l]
+                   (when (str/starts-with? l "# ") (str/trim (subs l 2)))))))
 
-(defn- strip-tags ^String [^String s]
-  (-> s (str/replace #"<[^>]+>" "") (str/replace "&amp;" "&")
-    (str/replace "&lt;" "<") (str/replace "&gt;" ">") str/trim))
+(defn- strip-tags
+  ^String [^String s]
+  (-> s
+      (str/replace #"<[^>]+>" "")
+      (str/replace "&amp;" "&")
+      (str/replace "&lt;" "<")
+      (str/replace "&gt;" ">")
+      str/trim))
 
-(defn- slugify [^String s]
-  (-> (strip-tags s) str/lower-case
-    (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-+|-+$" "")))
+(defn- slugify
+  [^String s]
+  (-> (strip-tags s)
+      str/lower-case
+      (str/replace #"[^a-z0-9]+" "-")
+      (str/replace #"^-+|-+$" "")))
 
 (defn- anchors+toc
   "Inject id= on h2/h3 and return [html-with-ids toc] where toc is
    [{:level 2|3 :id :text} …] — the right-rail 'on this page' index."
   [^String html]
-  (let [toc (atom [])
-        html' (str/replace html #"<h([23])>(.*?)</h[23]>"
-                (fn [[_ lvl inner]]
-                  (let [id (slugify inner)]
-                    (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
-                    (str "<h" lvl " id=\"" id "\">"
-                      "<a class=\"anchor\" href=\"#" id "\">" inner "</a></h" lvl ">"))))]
+  (let [toc
+        (atom [])
+
+        html'
+        (str/replace html
+                     #"<h([23])>(.*?)</h[23]>"
+                     (fn [[_ lvl inner]]
+                       (let [id (slugify inner)]
+                         (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
+                         (str "<h"
+                              lvl
+                              " id=\""
+                              id
+                              "\">"
+                              "<a class=\"anchor\" href=\"#"
+                              id
+                              "\">"
+                              inner
+                              "</a></h"
+                              lvl
+                              ">"))))]
+
     [html' @toc]))
 
 ;; ---------------------------------------------------------------------------
 ;; classpath discovery
 ;; ---------------------------------------------------------------------------
 
-(defn- classloader ^ClassLoader []
-  (or (.getContextClassLoader (Thread/currentThread))
-    (clojure.lang.RT/baseLoader)))
+(defn- classloader
+  ^ClassLoader []
+  (or (.getContextClassLoader (Thread/currentThread)) (clojure.lang.RT/baseLoader)))
 
-(defn- sibling-url ^URL [^URL manifest-url ^String file]
+(defn- sibling-url
+  ^URL [^URL manifest-url ^String file]
   (URL. (str/replace (.toString manifest-url) #"vis-docs\.edn$" file)))
 
 (defn collect
@@ -94,34 +122,50 @@
    {:site {…} :pages [{:slug :title :section :order :md :html :toc} …]}, sorted
    by (section, order, title); slug \"index\" is always first."
   []
-  (let [^Enumeration urls (.getResources (classloader) manifest-resource)
-        manifests (loop [acc []]
-                    (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))
-        site (atom {:title "Vis" :tagline "" :repo nil})
-        pages (vec
-                (mapcat
-                  (fn [^URL mu]
+  (let [^Enumeration urls
+        (.getResources (classloader) manifest-resource)
+
+        manifests
+        (loop [acc []]
+          (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))
+
+        site
+        (atom {:title "Vis" :tagline "" :repo nil})
+
+        pages
+        (vec
+          (mapcat (fn [^URL mu]
                     (let [m (edn/read-string (slurp mu))]
-                      (when-let [s (:site m)] (swap! site merge s))
-                      (keep
-                        (fn [{:keys [file title section order]}]
-                          (when-let [md (try (slurp (sibling-url mu file)) (catch Exception _ nil))]
-                            (let [[html toc] (anchors+toc (md->html md))]
-                              {:slug (str/replace file #"\.md$" "")
-                               :title (or title (first-h1 md) file)
-                               :section section :order (or order 100)
-                               :md md :html html :toc toc})))
-                        (:pages m))))
+                      (when-let [s (:site m)]
+                        (swap! site merge s))
+                      (keep (fn [{:keys [file title section order]}]
+                              (when-let [md (try (slurp (sibling-url mu file))
+                                                 (catch Exception _ nil))]
+                                (let [[html toc] (anchors+toc (md->html md))]
+                                  {:slug (str/replace file #"\.md$" "")
+                                   :title (or title (first-h1 md) file)
+                                   :section section
+                                   :order (or order 100)
+                                   :md md
+                                   :html html
+                                   :toc toc})))
+                            (:pages m))))
                   manifests))
+
         ;; Sections appear in the order of their lowest page `:order`, not
         ;; alphabetically — so manifest `:order` controls sidebar section
         ;; placement. Within a section, pages sort by `:order` then title.
-        sec-order (into {} (map (fn [[sec ps]]
-                                  [sec (reduce min (map #(or (:order %) 100) ps))]))
-                    (group-by :section pages))
-        ordered (sort-by (juxt #(if (= "index" (:slug %)) 0 1)
-                           #(get sec-order (:section %) 100) :order :title)
-                  pages)]
+        sec-order
+        (into {}
+              (map (fn [[sec ps]]
+                     [sec (reduce min (map #(or (:order %) 100) ps))]))
+              (group-by :section pages))
+
+        ordered
+        (sort-by
+          (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
+          pages)]
+
     {:site @site :pages (vec ordered)}))
 
 ;; ---------------------------------------------------------------------------
@@ -129,8 +173,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private font-tokens
-  {"hanken-grotesk.woff2" "FONTPATH_hanken"
-   "jetbrains-mono.woff2" "FONTPATH_jbm"})
+  {"hanken-grotesk.woff2" "FONTPATH_hanken" "jetbrains-mono.woff2" "FONTPATH_jbm"})
 
 (defn- asset
   "Rooted URL to a docs asset, correct from any page depth.
@@ -138,13 +181,19 @@
    :static → \"assets/<rel>\"         (GitHub Pages: index at site root)"
   [mode rel]
   (case mode
-    :static (str "assets/" rel)
-    :live   (str "/docs/assets/" rel)))
+    :static
+    (str "assets/" rel)
 
-(defn- theme-css [mode]
+    :live
+    (str "/docs/assets/" rel)))
+
+(defn- theme-css
+  [mode]
   "The theme stylesheet with font URLs rooted for `mode`. Tokens in the CSS
    base are replaced with rooted asset paths so fonts load from any page depth."
-  (let [base "
+  (let
+    [base
+     "
 :root{
   --bg:#fff; --bg-soft:#f8f8f8; --panel:#f8f8f8; --header:rgba(255,255,255,.82);
   --fg:#1e1e1e; --fg-soft:#1e1e1e; --dim:#505050; --faint:#787878;
@@ -345,16 +394,28 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 "]
     (reduce (fn [css [rel tok]]
               (str/replace css tok (asset mode (str "fonts/" rel))))
-      base font-tokens)))
+            base
+            font-tokens)))
 
-(defn- esc ^String [s]
-  (-> (str s) (str/replace "&" "&amp;") (str/replace "<" "&lt;") (str/replace ">" "&gt;")))
+(defn- esc
+  ^String [s]
+  (-> (str s)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
 
 ;; :static → relative ("slug.html"), so the bundle works from any host/subpath
 ;; on GitHub Pages. :live → ABSOLUTE ("/docs/slug"), so nav resolves the same
 ;; from the index (/docs) AND from a deep page (/docs/<slug>); a relative href
 ;; would resolve to /docs/docs/<slug> on deep pages → 404 "no such doc".
-(defn- href [mode slug] (case mode :static (str slug ".html") :live (str "/docs/" slug)))
+(defn- href
+  [mode slug]
+  (case mode
+    :static
+    (str slug ".html")
+
+    :live
+    (str "/docs/" slug)))
 
 (defn- rewrite-md-links
   "Cross-page links in rendered page BODIES. Authors write plain relative
@@ -364,30 +425,48 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
    `*.md` href through the same mode-aware `href` the sidebar nav uses;
    absolute URLs (scheme or leading `/`) pass through untouched."
   ^String [^String html mode]
-  (str/replace html #"href=\"([^\"#:/][^\":]*?)\.md(#[^\"]*)?\""
-    (fn [[_ slug frag]]
-      (str "href=\"" (href mode slug) (or frag "") "\""))))
+  (str/replace html
+               #"href=\"([^\"#:/][^\":]*?)\.md(#[^\"]*)?\""
+               (fn [[_ slug frag]]
+                 (str "href=\"" (href mode slug) (or frag "") "\""))))
 
-(defn- nav-html [{:keys [pages]} active-slug mode]
-  (let [by-sec (group-by :section pages)
-        sections (cons nil (distinct (remove nil? (map :section pages))))]
+(defn- nav-html
+  [{:keys [pages]} active-slug mode]
+  (let [by-sec
+        (group-by :section pages)
+
+        sections
+        (cons nil (distinct (remove nil? (map :section pages))))]
+
     (str "<nav class=\"nav\">"
-      (apply str
-        (for [sec sections :let [ps (get by-sec sec)] :when (seq ps)]
-          (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
-            (apply str
-              (for [{:keys [slug title]} ps]
-                (str "<a href=\"" (href mode slug) "\""
-                  (when (= slug active-slug) " class=\"active\"") ">" (esc title) "</a>"))))))
-      "</nav>")))
+         (apply str
+           (for [sec
+                 sections
 
-(defn- toc-html [toc]
+                 :let [ps
+                       (get by-sec sec)]
+                 :when (seq ps)]
+
+             (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
+                  (apply str
+                    (for [{:keys [slug title]} ps]
+                      (str "<a href=\""
+                           (href mode slug)
+                           "\""
+                           (when (= slug active-slug) " class=\"active\"")
+                           ">"
+                           (esc title)
+                           "</a>"))))))
+         "</nav>")))
+
+(defn- toc-html
+  [toc]
   (when (seq toc)
     (str "<aside class=\"toc\"><div class=\"lbl\">On this page</div>"
-      (apply str
-        (for [{:keys [level id text]} toc]
-          (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
-      "</aside>")))
+         (apply str
+           (for [{:keys [level id text]} toc]
+             (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
+         "</aside>")))
 
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
@@ -396,19 +475,37 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
     (str
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
-      "<title>" (esc title) " · " (esc (:title site)) "</title>"
-      "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
-      "<link rel=\"preload\" href=\"" (asset mode "fonts/hanken-grotesk.woff2") "\" as=\"font\" type=\"font/woff2\" crossorigin>"
-      "<style>" (theme-css mode) "</style></head><body>"
+      "<title>"
+      (esc title)
+      " · "
+      (esc (:title site))
+      "</title>"
+      "<meta name=\"description\" content=\""
+      (esc (:tagline site))
+      "\">"
+      "<link rel=\"preload\" href=\""
+      (asset mode "fonts/hanken-grotesk.woff2")
+      "\" as=\"font\" type=\"font/woff2\" crossorigin>"
+      "<style>"
+      (theme-css mode)
+      "</style></head><body>"
       ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
       "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
       ;; header
       "<header class=\"top\">"
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
-      "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\" aria-label=\"" (esc (:title site)) "\"></a>"
+      "<a class=\"brand\" href=\""
+      (href mode "index")
+      "\" title=\""
+      (esc (:title site))
+      "\" aria-label=\""
+      (esc (:title site))
+      "\"></a>"
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
-        (str "<a class=\"gh\" href=\"" (esc r) "\" title=\"GitHub\" aria-label=\"GitHub\" target=\"_blank\" rel=\"noopener\">"
+        (str
+          "<a class=\"gh\" href=\"" (esc r)
+          "\" title=\"GitHub\" aria-label=\"GitHub\" target=\"_blank\" rel=\"noopener\">"
           "<svg width=\"20\" height=\"20\" viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\">"
           "<path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/>"
           "</svg></a>"))
@@ -416,13 +513,23 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       ;; body grid
       "<label for=\"navtoggle\" class=\"scrim\"></label>"
       "<div class=\"shell\"><aside class=\"side\">"
-      "<div class=\"tagline\">" (esc (:tagline site)) "</div>"
-      (nav-html site-data slug mode) "</aside>"
+      "<div class=\"tagline\">"
+      (esc (:tagline site))
+      "</div>"
+      (nav-html site-data slug mode)
+      "</aside>"
       "<main class=\"main\"><article class=\"content\">"
       (when home?
-        (str "<section class=\"hero\">"
-          "<img class=\"hero-logo\" src=\"" (asset mode "logo.png") "\" alt=\"" (esc (:title site)) " logo\">"
-          "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
+        (str
+          "<section class=\"hero\">"
+          "<img class=\"hero-logo\" src=\""
+          (asset mode "logo.png")
+          "\" alt=\""
+          (esc (:title site))
+          " logo\">"
+          "<h1 class=\"hero-title\">"
+          (esc (or (:headline site) (:title site)))
+          "</h1>"
           "<div class=\"hero-cta\">"
           "<div class=\"hero-install\" role=\"tablist\" aria-label=\"Install command\">"
           "<div class=\"hero-install-head\">"
@@ -433,25 +540,25 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "</div>"
           "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
           "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\"><span class=\"token function\">iwr</span> <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1</span> -OutFile <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1<span class=\"token punctuation\">;</span> <span class=\"token punctuation\">&amp;</span> <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1</code>"
-          "</div>"
-          "</div></section>"))
+          "</div>" "</div></section>"))
       (rewrite-md-links html mode)
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
-      "<img class=\"bk-mark\" src=\"" (asset mode "blockether.png") "\" alt=\"Blockether\"></a>"
+      "<img class=\"bk-mark\" src=\""
+      (asset mode "blockether.png")
+      "\" alt=\"Blockether\"></a>"
       "<span class=\"spacer\"></span>"
-      (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
-      "</article></main>"
-      (or (toc-html toc) "<div></div>")
+      (when-let [r (:repo site)]
+        (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>"))
       "</div>"
-      "<script>"
+      "</article></main>" (or (toc-html toc) "<div></div>")
+      "</div>" "<script>"
       "(function(){"
       ;; copy (with execCommand fallback for non-secure http://LAN contexts)
       "function flash(btn){var t=btn.getAttribute('data-label')||btn.textContent;"
       "btn.setAttribute('data-label',t);btn.textContent='\\u2713 Copied';btn.classList.add('copied');"
       "setTimeout(function(){btn.textContent=btn.getAttribute('data-label');btn.classList.remove('copied')},1300)}"
-      "function copyText(text,btn){"
-      "if(navigator.clipboard&&navigator.clipboard.writeText){"
+      "function copyText(text,btn){" "if(navigator.clipboard&&navigator.clipboard.writeText){"
       "navigator.clipboard.writeText(text).then(function(){flash(btn)},function(){fallback(text,btn)})}"
       "else{fallback(text,btn)}}"
       "function fallback(text,btn){"
@@ -475,27 +582,27 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "install.querySelectorAll('.install-tab').forEach(function(t){"
       "var on=t.getAttribute('data-tab')===which;t.setAttribute('aria-selected',on?'true':'false')});"
       "install.querySelectorAll('.install-cmd').forEach(function(p){"
-      "p.hidden=p.getAttribute('data-tabpanel')!==which})})"
-      "})();"
-      "</script>"
-      "</body></html>")))
+      "p.hidden=p.getAttribute('data-tabpanel')!==which})})" "})();"
+      "</script>" "</body></html>")))
 
 ;; ---------------------------------------------------------------------------
 ;; static site
 ;; ---------------------------------------------------------------------------
 
 (def ^:private asset-files
-  {"vis-docs/assets/logo.png"                     "assets/logo.png"
-   "vis-docs/assets/blockether.png"               "assets/blockether.png"
-   "vis-docs/assets/fonts/hanken-grotesk.woff2"   "assets/fonts/hanken-grotesk.woff2"
-   "vis-docs/assets/fonts/jetbrains-mono.woff2"   "assets/fonts/jetbrains-mono.woff2"})
+  {"vis-docs/assets/logo.png" "assets/logo.png"
+   "vis-docs/assets/blockether.png" "assets/blockether.png"
+   "vis-docs/assets/fonts/hanken-grotesk.woff2" "assets/fonts/hanken-grotesk.woff2"
+   "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"})
 
-(defn- copy-assets! [out-dir]
+(defn- copy-assets!
+  [out-dir]
   (doseq [[res out] asset-files]
     (when-let [u (io/resource res)]
       (let [f (io/file out-dir out)]
         (io/make-parents f)
-        (with-open [in (io/input-stream u)] (io/copy in f))))))
+        (with-open [in (io/input-stream u)]
+          (io/copy in f))))))
 
 (defn build-site!
   "Render the discovered docs to a static themed HTML bundle under `out-dir`."
@@ -524,7 +631,8 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
    frozen `site-cache` snapshot if you ever want it."
   true)
 
-(defn- gzip-bytes ^bytes [^String s]
+(defn- gzip-bytes
+  ^bytes [^String s]
   (let [baos (ByteArrayOutputStream.)]
     (with-open [gz (GZIPOutputStream. baos)]
       (.write gz (.getBytes s StandardCharsets/UTF_8)))
@@ -539,15 +647,19 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
    (let [gz? (and accept-encoding (str/includes? (str/lower-case accept-encoding) "gzip"))]
      {:status 200
       :headers (cond-> {"content-type" "text/html; charset=utf-8"}
-                 gz? (assoc "content-encoding" "gzip" "vary" "Accept-Encoding"))
+                 gz?
+                 (assoc "content-encoding"
+                   "gzip" "vary"
+                   "Accept-Encoding"))
       :body (if gz? (gzip-bytes body) body)})))
 
-(defn- asset-response [^String rel]
+(defn- asset-response
+  [^String rel]
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
     (let [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
-               (str/ends-with? rel ".png")   "image/png"
-               (str/ends-with? rel ".svg")   "image/svg+xml"
-               :else                          "application/octet-stream")]
+                   (str/ends-with? rel ".png") "image/png"
+                   (str/ends-with? rel ".svg") "image/svg+xml"
+                   :else "application/octet-stream")]
       {:status 200
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}
        :body (io/input-stream u)})))
@@ -556,24 +668,28 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
   [{:keys [uri headers] :or {uri ""}}]
-  (let [{:keys [pages] :as site-data} (if *live-reload?* (collect) @site-cache)
-        path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))
-        accept-encoding (get headers "accept-encoding")]
-    (cond
-      (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
-      (or (= path "") (= path "index"))
-      (ok-html (page-html site-data
-                 (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live)
-        accept-encoding)
-      :else
-      (or
-        (when-let [page (first (filter #(= path (:slug %)) pages))]
-          (ok-html (page-html site-data page :live) accept-encoding))
-        ;; Tolerate literal `<slug>.md` deep links (old bookmarks, raw
-        ;; markdown cross-links) — permanent-redirect to the slug route.
-        (when (str/ends-with? path ".md")
-          (let [slug (str/replace path #"\.md$" "")]
-            (when (some #(= slug (:slug %)) pages)
-              {:status 301
-               :headers {"location" (str "/docs/" slug)}
-               :body ""})))))))
+  (let [{:keys [pages] :as site-data}
+        (if *live-reload?* (collect) @site-cache)
+
+        path
+        (-> uri
+            (str/replace #"^/docs/?" "")
+            (str/replace #"/$" ""))
+
+        accept-encoding
+        (get headers "accept-encoding")]
+
+    (cond (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
+          (or (= path "") (= path "index"))
+          (ok-html (page-html site-data
+                              (or (first (filter #(= "index" (:slug %)) pages)) (first pages))
+                              :live)
+                   accept-encoding)
+          :else (or (when-let [page (first (filter #(= path (:slug %)) pages))]
+                      (ok-html (page-html site-data page :live) accept-encoding))
+                    ;; Tolerate literal `<slug>.md` deep links (old bookmarks, raw
+                    ;; markdown cross-links) — permanent-redirect to the slug route.
+                    (when (str/ends-with? path ".md")
+                      (let [slug (str/replace path #"\.md$" "")]
+                        (when (some #(= slug (:slug %)) pages)
+                          {:status 301 :headers {"location" (str "/docs/" slug)} :body ""})))))))

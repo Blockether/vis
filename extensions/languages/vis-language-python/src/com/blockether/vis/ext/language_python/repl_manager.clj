@@ -105,7 +105,10 @@ _main()
 ;; dir -> {:process ^Process :writer :reader :cmd :pid :started-at}
 (defonce ^:private processes (atom {}))
 
-(defn- alive? [info] (boolean (some-> ^Process (:process info) .isAlive)))
+(defn- alive?
+  [info]
+  (boolean (some-> ^Process (:process info)
+                   .isAlive)))
 
 (defn start!
   "Spawn (or replace) the managed Python REPL for `dir`. Returns a STRING-keyed
@@ -113,17 +116,25 @@ _main()
   [dir _opts]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
-  (let [cmd (vec (concat (interp/resolve-command dir) ["-u" "-c" server-script]))
-        pb  (doto (ProcessBuilder. ^java.util.List cmd)
-              (.directory (io/file dir))
-              (.redirectErrorStream false))
-        p   (.start pb)
-        info {:process p
-              :writer  (io/writer (.getOutputStream p))
-              :reader  (io/reader (.getInputStream p))
-              :cmd     cmd
-              :pid     (.pid p)
-              :started-at (System/currentTimeMillis)}]
+  (let [cmd
+        (vec (concat (interp/resolve-command dir) ["-u" "-c" server-script]))
+
+        pb
+        (doto (ProcessBuilder. ^java.util.List cmd)
+          (.directory (io/file dir))
+          (.redirectErrorStream false))
+
+        p
+        (.start pb)
+
+        info
+        {:process p
+         :writer (io/writer (.getOutputStream p))
+         :reader (io/reader (.getInputStream p))
+         :cmd cmd
+         :pid (.pid p)
+         :started-at (System/currentTimeMillis)}]
+
     (swap! processes assoc dir info)
     {"status" "up" "pid" (.pid p) "cmd" cmd "dir" dir}))
 
@@ -132,20 +143,22 @@ _main()
   (let [info (get @processes dir)]
     (when-not (alive? info)
       (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
-               {:type :py/no-repl :dir dir})))
+                      {:type :py/no-repl :dir dir})))
     (locking info
       (let [^BufferedWriter w (:writer info)
             ^BufferedReader r (:reader info)]
+
         (.write w (str (json/write-json-str req) "\n"))
         (.flush w)
-        (let [fut  (future (.readLine r))
+        (let [fut (future (.readLine r))
               line (deref fut timeout-ms ::timeout)]
+
           (if (= line ::timeout)
             (do (future-cancel fut)
-              (throw (ex-info "Python eval timed out" {:type :py/timeout :dir dir})))
+                (throw (ex-info "Python eval timed out" {:type :py/timeout :dir dir})))
             (if (nil? line)
               (throw (ex-info "Python REPL closed the connection (process died)"
-                       {:type :py/closed :dir dir}))
+                              {:type :py/closed :dir dir}))
               (json/read-json line))))))))
 
 (defn eval!
@@ -157,11 +170,12 @@ _main()
   [dir code timeout-ms]
   (request! dir {"code" (str code)} (or timeout-ms 30000)))
 
-(defn stop! [dir]
+(defn stop!
+  [dir]
   (when-let [info (get @processes dir)]
     (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
     (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
-      (catch Throwable _ nil)))
+         (catch Throwable _ nil)))
   (swap! processes dissoc dir)
   {"status" "stopped" "dir" dir})
 
@@ -171,5 +185,6 @@ _main()
   (let [info (get @processes dir)]
     {"dir" dir
      "status" (if (alive? info) "up" "down")
-     "pid" (some-> ^Process (:process info) .pid)
+     "pid" (some-> ^Process (:process info)
+                   .pid)
      "cmd" (:cmd info)}))

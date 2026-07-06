@@ -12,11 +12,9 @@
    Frontends still call `db-error->user-message` here, but the actual
    translation is offered by backend adapters. Same for store-staleness
    checks used by the process-wide shared connection."
-  (:require
-   [com.blockether.vis.internal.manifest :as manifest])
-  (:import
-   (java.time Instant)
-   (java.util Date UUID)))
+  (:require [com.blockether.vis.internal.manifest :as manifest])
+  (:import (java.time Instant)
+           (java.util Date UUID)))
 
 ;; =============================================================================
 ;; Storage base helpers
@@ -26,19 +24,19 @@
 
 (defn now-ms ^long [] (System/currentTimeMillis))
 
-(defn ->id [v]
-  (cond
-    (nil? v) nil
-    (uuid? v) (str v)
-    (string? v) v
-    :else (str v)))
+(defn ->id
+  [v]
+  (cond (nil? v) nil
+        (uuid? v) (str v)
+        (string? v) v
+        :else (str v)))
 
-(defn ->uuid ^UUID [v]
-  (cond
-    (nil? v) nil
-    (uuid? v) v
-    (string? v) (try (UUID/fromString v) (catch IllegalArgumentException _ nil))
-    :else nil))
+(defn ->uuid
+  ^UUID [v]
+  (cond (nil? v) nil
+        (uuid? v) v
+        (string? v) (try (UUID/fromString v) (catch IllegalArgumentException _ nil))
+        :else nil))
 
 (defn ->ref
   "Normalize an entity reference to a string ID for SQL.
@@ -47,34 +45,29 @@
    The ONLY way to extract a SQL-ready string from an entity
    reference -- pass the plain UUID or string directly."
   [v]
-  (cond
-    (nil? v)    nil
-    (uuid? v)   (str v)
-    (string? v) v
-    :else       (str v)))
+  (cond (nil? v) nil
+        (uuid? v) (str v)
+        (string? v) v
+        :else (str v)))
 
 (defn ->kw
   "Keyword/string -> TEXT, stripping the leading colon. Nil -> nil."
   [v]
-  (cond
-    (nil? v) nil
-    (keyword? v) (subs (str v) 1)
-    :else (str v)))
+  (cond (nil? v) nil
+        (keyword? v) (subs (str v) 1)
+        :else (str v)))
 
-(defn ->kw-back [v]
-  (when (and v (not= "" v))
-    (keyword v)))
+(defn ->kw-back [v] (when (and v (not= "" v)) (keyword v)))
 
-(defn ->epoch-ms [v]
-  (cond
-    (nil? v) nil
-    (instance? Date v) (.getTime ^Date v)
-    (instance? Instant v) (.toEpochMilli ^Instant v)
-    (number? v) (long v)
-    :else nil))
+(defn ->epoch-ms
+  [v]
+  (cond (nil? v) nil
+        (instance? Date v) (.getTime ^Date v)
+        (instance? Instant v) (.toEpochMilli ^Instant v)
+        (number? v) (long v)
+        :else nil))
 
-(defn ->date ^Date [v]
-  (when v (Date. (long v))))
+(defn ->date ^Date [v] (when v (Date. (long v))))
 
 ;; =============================================================================
 ;; Backend registry
@@ -96,21 +89,14 @@
 
    Idempotent on `id`. Returns `id`."
   [id ns-sym]
-  (when-not (keyword? id)
-    (throw (ex-info "Backend id must be a keyword" {:id id})))
-  (when-not (symbol? ns-sym)
-    (throw (ex-info "Backend ns-sym must be a symbol" {:ns-sym ns-sym})))
+  (when-not (keyword? id) (throw (ex-info "Backend id must be a keyword" {:id id})))
+  (when-not (symbol? ns-sym) (throw (ex-info "Backend ns-sym must be a symbol" {:ns-sym ns-sym})))
   (swap! backends assoc id {:ns ns-sym})
   id)
 
-(defn deregister-backend! [id]
-  (swap! backends dissoc id)
-  nil)
+(defn deregister-backend! [id] (swap! backends dissoc id) nil)
 
-(defn registered-backends
-  "Map of registered backends keyed by id."
-  []
-  @backends)
+(defn registered-backends "Map of registered backends keyed by id." [] @backends)
 
 ;; ----------------------------------------------------------------------------
 ;; Auto-discovery
@@ -130,16 +116,14 @@
    single registered backend; otherwise throws."
   [db-spec-or-store]
   (or (when (map? db-spec-or-store) (:backend db-spec-or-store))
-    (when (= 1 (count @backends)) (first (keys @backends)))
-    (throw
-      (ex-info
-        (str "No persistence backend selected. "
-          (if (empty? @backends)
-            "No backends registered. Did you forget to require "
-            "Multiple backends registered, pass {:backend ...} in db-spec. ")
-          (when (empty? @backends)
-            "`com.blockether.vis.ext.persistance-sqlite.core`?"))
-        {:registered (vec (keys @backends))}))))
+      (when (= 1 (count @backends)) (first (keys @backends)))
+      (throw (ex-info (str "No persistence backend selected. "
+                           (if (empty? @backends)
+                             "No backends registered. Did you forget to require "
+                             "Multiple backends registered, pass {:backend ...} in db-spec. ")
+                           (when (empty? @backends)
+                             "`com.blockether.vis.ext.persistance-sqlite.core`?"))
+                      {:registered (vec (keys @backends))}))))
 
 (defn- require-backend-ns!
   "Ensure the backend's heavyweight namespace has been loaded. Backends
@@ -156,14 +140,12 @@
    \"Backend :sqlite ... does not implement 'db-open!'\" and as an
    unbound `taoensso.nippy/freeze` mid-turn."
   [bid ns-sym]
-  (try
-    (locking clojure.lang.RT/REQUIRE_LOCK
-      (require ns-sym))
-    (catch Throwable t
-      (throw (ex-info (str "Backend " bid " (" ns-sym ") failed to load: "
-                        (or (ex-message t) (str t)))
-               {:backend bid :ns ns-sym}
-               t)))))
+  (try (locking clojure.lang.RT/REQUIRE_LOCK (require ns-sym))
+       (catch Throwable t
+         (throw (ex-info
+                  (str "Backend " bid " (" ns-sym ") failed to load: " (or (ex-message t) (str t)))
+                  {:backend bid :ns ns-sym}
+                  t)))))
 
 (defn- resolve-impl
   "Resolve the var implementing `fn-name` on the chosen backend.
@@ -171,16 +153,26 @@
    tiny registrar + heavy implementation pair. Throws a useful error
    when the backend is missing the fn."
   [db-spec-or-store fn-name]
-  (let [bid     (pick-backend-id db-spec-or-store)
-        ns-sym  (get-in @backends [bid :ns])
-        _       (when-not ns-sym
-                  (throw (ex-info (str "Backend " bid " not registered")
-                           {:backend bid :registered (vec (keys @backends))})))
-        _       (require-backend-ns! bid ns-sym)
-        v       (ns-resolve ns-sym fn-name)]
+  (let [bid
+        (pick-backend-id db-spec-or-store)
+
+        ns-sym
+        (get-in @backends [bid :ns])
+
+        _
+        (when-not ns-sym
+          (throw (ex-info (str "Backend " bid " not registered")
+                          {:backend bid :registered (vec (keys @backends))})))
+
+        _
+        (require-backend-ns! bid ns-sym)
+
+        v
+        (ns-resolve ns-sym fn-name)]
+
     (when-not v
       (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
-               {:backend bid :ns ns-sym :fn fn-name})))
+                      {:backend bid :ns ns-sym :fn fn-name})))
     v))
 
 (defn- normalize-spec
@@ -188,28 +180,30 @@
    backends accept. `:memory` is the canonical shorthand for the
    ephemeral in-process DB."
   [db-spec]
-  (cond
-    (and (map? db-spec)
-      (= :sqlite (:backend db-spec)))
-    (cond
-      (:datasource db-spec) {:datasource (:datasource db-spec) :backend :sqlite}
-      (:conn db-spec)       {:conn (:conn db-spec) :backend :sqlite}
-      (:path db-spec)       (assoc {:backend :sqlite} :path (:path db-spec))
-      :else                 db-spec)
-    :else db-spec))
+  (cond (and (map? db-spec) (= :sqlite (:backend db-spec)))
+        (cond (:datasource db-spec) {:datasource (:datasource db-spec) :backend :sqlite}
+              (:conn db-spec) {:conn (:conn db-spec) :backend :sqlite}
+              (:path db-spec) (assoc {:backend :sqlite} :path (:path db-spec))
+              :else db-spec)
+        :else db-spec))
 
 (defn- resolve-optional-impl
   "Resolve an optional backend var. Missing vars return nil; bad backend
    selection still throws because the store/spec itself is invalid.
    Auto-loads the backend ns the same way `resolve-impl` does."
   [db-spec-or-store fn-name]
-  (let [bid    (pick-backend-id db-spec-or-store)
-        ns-sym (get-in @backends [bid :ns])]
+  (let [bid
+        (pick-backend-id db-spec-or-store)
+
+        ns-sym
+        (get-in @backends [bid :ns])]
+
     (when-not ns-sym
       (throw (ex-info (str "Backend " bid " not registered")
-               {:backend bid :registered (vec (keys @backends))})))
+                      {:backend bid :registered (vec (keys @backends))})))
     (require-backend-ns! bid ns-sym)
-    (some-> (ns-resolve ns-sym fn-name) deref)))
+    (some-> (ns-resolve ns-sym fn-name)
+            deref)))
 
 ;; =============================================================================
 ;; Connection lifecycle
@@ -234,18 +228,24 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (let [normalized (normalize-spec db-spec)
-        bid        (pick-backend-id (if (map? normalized)
-                                      normalized
-                                      {:backend (pick-backend-id {})}))
-        f          @(resolve-impl {:backend bid} 'db-open!)
-        store      (f normalized)]
-    (cond
-      (nil? store) nil
-      (map? store) (assoc store :backend bid)
-      :else        store)))
+  (let [normalized
+        (normalize-spec db-spec)
 
-(defn db-dispose-connection! [store]
+        bid
+        (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
+
+        f
+        @(resolve-impl {:backend bid} 'db-open!)
+
+        store
+        (f normalized)]
+
+    (cond (nil? store) nil
+          (map? store) (assoc store :backend bid)
+          :else store)))
+
+(defn db-dispose-connection!
+  [store]
   (when store
     (let [f @(resolve-impl store 'db-close!)]
       (f store))))
@@ -264,7 +264,8 @@
    the original args."
   [sym arglist]
   (let [bsym (gensym "backend-fn")]
-    `(defn ~sym ~arglist
+    `(defn ~sym
+       ~arglist
        (let [~bsym @(resolve-impl ~(first arglist) (quote ~sym))]
          (~bsym ~@arglist)))))
 
@@ -284,21 +285,20 @@
 (defdelegate db-log! [db-info opts])
 
 ;; --- Workspace ---
-(defdelegate db-workspace-insert!            [db-info opts])
-(defdelegate db-workspace-update-state!      [db-info workspace-id new-state])
+(defdelegate db-workspace-insert! [db-info opts])
+(defdelegate db-workspace-update-state! [db-info workspace-id new-state])
 ;; Label override + focus stamp + per-repo focus pointer.
-(defdelegate db-workspace-update-label!      [db-info workspace-id label])
+(defdelegate db-workspace-update-label! [db-info workspace-id label])
 (defdelegate db-workspace-set-filesystem-roots! [db-info workspace-id roots])
-(defdelegate db-workspace-touch-focus!       [db-info workspace-id])
-(defdelegate db-repo-focus-get               [db-info repo-id])
-(defdelegate db-repo-focus-set!              [db-info repo-id workspace-id])
-(defdelegate db-workspace-get                [db-info workspace-id])
+(defdelegate db-workspace-touch-focus! [db-info workspace-id])
+(defdelegate db-repo-focus-get [db-info repo-id])
+(defdelegate db-repo-focus-set! [db-info repo-id workspace-id])
+(defdelegate db-workspace-get [db-info workspace-id])
 (defn db-workspace-list-by-repo
-  ([db-info repo-id]
-   ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id))
+  ([db-info repo-id] ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id))
   ([db-info repo-id state-set]
    ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id state-set)))
-(defdelegate db-workspace-for-session        [db-info session-state-id])
+(defdelegate db-workspace-for-session [db-info session-state-id])
 (defdelegate db-session-state-list-for-workspace [db-info workspace-id])
 (defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
 
@@ -423,8 +423,9 @@
   []
   (try (manifest/scan-extensions!) (catch Throwable _ nil))
   (keep (fn [[_ {:keys [ns]}]]
-          (some-> (ns-resolve ns 'db-error->user-message) deref))
-    @backends))
+          (some-> (ns-resolve ns 'db-error->user-message)
+                  deref))
+        @backends))
 
 (defn db-error->user-message
   "Translate a persistence exception into something a human can act on.
@@ -432,14 +433,12 @@
    back to `(ex-message e)`."
   [^Throwable e]
   (or (some (fn [f]
-              (try
-                (when-let [message (f e)]
-                  (when (seq (str message))
-                    (str message)))
-                (catch Throwable _ nil)))
-        (backend-error-translators))
-    (ex-message e)
-    "Internal error"))
+              (try (when-let [message (f e)]
+                     (when (seq (str message)) (str message)))
+                   (catch Throwable _ nil)))
+            (backend-error-translators))
+      (ex-message e)
+      "Internal error"))
 
 ;; =============================================================================
 ;; Process-wide shared connection (singleton helper)
@@ -455,10 +454,9 @@
 
 (defn- store-stale?
   [store db-spec]
-  (boolean
-    (when store
-      (when-let [f (resolve-optional-impl store 'db-store-stale?)]
-        (f store (normalize-spec db-spec))))))
+  (boolean (when store
+             (when-let [f (resolve-optional-impl store 'db-store-stale?)]
+               (f store (normalize-spec db-spec))))))
 
 (defn db-shared-connection!
   "Return the process-wide shared persistence connection for `db-spec`,
@@ -470,25 +468,22 @@
   Pair with `db-dispose-shared-connection!` on process shutdown."
   [db-spec]
   (or (when-let [cur @shared-conn]
-        (when-not (store-stale? cur db-spec)
-          cur))
-    ;; SERIALIZED open. The previous swap! ran `db-create-connection!`
-    ;; INSIDE the swap fn — a side effect swap! may run N times under
-    ;; contention, and N threads racing the first DB touch each opened
-    ;; the SQLite file concurrently: observed live as
-    ;; java.nio.channels.OverlappingFileLockException on 11/12 parallel
-    ;; first requests through the gateway. One thread opens; the rest
-    ;; wait on the monitor and reuse.
-    (locking shared-conn
-      (let [cur @shared-conn]
-        (if (and cur (not (store-stale? cur db-spec)))
-          cur
-          (do
-            (when cur
-              (try (db-dispose-connection! cur) (catch Exception _ nil)))
-            (let [fresh (db-create-connection! db-spec)]
-              (reset! shared-conn fresh)
-              fresh)))))))
+        (when-not (store-stale? cur db-spec) cur))
+      ;; SERIALIZED open. The previous swap! ran `db-create-connection!`
+      ;; INSIDE the swap fn — a side effect swap! may run N times under
+      ;; contention, and N threads racing the first DB touch each opened
+      ;; the SQLite file concurrently: observed live as
+      ;; java.nio.channels.OverlappingFileLockException on 11/12 parallel
+      ;; first requests through the gateway. One thread opens; the rest
+      ;; wait on the monitor and reuse.
+      (locking shared-conn
+        (let [cur @shared-conn]
+          (if (and cur (not (store-stale? cur db-spec)))
+            cur
+            (do (when cur (try (db-dispose-connection! cur) (catch Exception _ nil)))
+                (let [fresh (db-create-connection! db-spec)]
+                  (reset! shared-conn fresh)
+                  fresh)))))))
 
 (defn db-dispose-shared-connection!
   "Close the shared connection if one is open. Idempotent."

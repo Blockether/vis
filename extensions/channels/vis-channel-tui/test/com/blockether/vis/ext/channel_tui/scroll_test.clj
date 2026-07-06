@@ -7,18 +7,16 @@
 
 (deftest scrolled-up?-true-only-when-parked
   (testing ":at intent (user parked above the bottom, reading history)"
-    (is (true? (scroll/scrolled-up? {:mode :at, :offset 0})))
-    (is (true? (scroll/scrolled-up? {:mode :at, :offset 12})))
+    (is (true? (scroll/scrolled-up? {:mode :at :offset 0})))
+    (is (true? (scroll/scrolled-up? {:mode :at :offset 12})))
     (is (true? (scroll/scrolled-up? (scroll/parked 7))))
     (testing "mid-ease toward a parked row still counts as scrolled up"
-      (is (true? (scroll/scrolled-up? {:mode :at, :offset 12, :pos 30})))))
-
+      (is (true? (scroll/scrolled-up? {:mode :at :offset 12 :pos 30})))))
   (testing ":follow intent (tracking the live bottom) is NOT scrolled up"
     (is (false? (scroll/scrolled-up? scroll/follow)))
     (is (false? (scroll/scrolled-up? {:mode :follow})))
     (testing "follow mid-ease (pos pinned) is still following, not scrolled up"
-      (is (false? (scroll/scrolled-up? {:mode :follow, :pos 5})))))
-
+      (is (false? (scroll/scrolled-up? {:mode :follow :pos 5})))))
   (testing "missing/legacy scroll defaults to FOLLOW ⇒ not scrolled up"
     (is (false? (scroll/scrolled-up? nil)))
     (is (false? (scroll/scrolled-up? {})))
@@ -43,7 +41,7 @@
     (is (false? (scroll/bottom-hidden? scroll/follow 0)))
     ;; PageUp in an empty session parks :at offset 0 — STILL nothing below.
     (is (false? (scroll/bottom-hidden? (scroll/up scroll/follow 10 0) 0)))
-    (is (false? (scroll/bottom-hidden? {:mode :at, :offset 0} 0))))
+    (is (false? (scroll/bottom-hidden? {:mode :at :offset 0} 0))))
   (testing "content overflows and the view is parked ABOVE the bottom ⇒ bottom hidden"
     (is (true? (scroll/bottom-hidden? (scroll/parked 0) 100)))
     (is (true? (scroll/bottom-hidden? (scroll/parked 40) 100))))

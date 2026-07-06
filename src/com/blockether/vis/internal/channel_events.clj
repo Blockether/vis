@@ -9,8 +9,7 @@
 
 ;; {channel-id {listener-id listener-fn}}. Channel id is a keyword such as
 ;; :tui. Listener id is any stable value owned by the subscriber.
-(defonce ^:private listeners
-  (atom {}))
+(defonce ^:private listeners (atom {}))
 
 (defn add-channel-event-listener!
   "Subscribe `listener-fn` to events for `channel-id`.
@@ -21,12 +20,10 @@
   [channel-id listener-id listener-fn]
   (when-not (keyword? channel-id)
     (throw (ex-info "channel-id must be a keyword"
-             {:type :vis/channel-event-bad-channel-id
-              :channel-id channel-id})))
+                    {:type :vis/channel-event-bad-channel-id :channel-id channel-id})))
   (when-not (ifn? listener-fn)
     (throw (ex-info "listener-fn must be invokable"
-             {:type :vis/channel-event-bad-listener
-              :listener-id listener-id})))
+                    {:type :vis/channel-event-bad-listener :listener-id listener-id})))
   (swap! listeners assoc-in [channel-id listener-id] listener-fn)
   listener-id)
 
@@ -51,24 +48,26 @@
   [channel-id event]
   (when-not (keyword? channel-id)
     (throw (ex-info "channel-id must be a keyword"
-             {:type :vis/channel-event-bad-channel-id
-              :channel-id channel-id})))
+                    {:type :vis/channel-event-bad-channel-id :channel-id channel-id})))
   (when-not (map? event)
     (throw (ex-info "channel event must be a map"
-             {:type :vis/channel-event-bad-event
-              :event event})))
-  (let [snapshot (get @listeners channel-id)
-        event    (cond-> event
-                   (nil? (:channel/id event)) (assoc :channel/id channel-id))]
+                    {:type :vis/channel-event-bad-event :event event})))
+  (let [snapshot
+        (get @listeners channel-id)
+
+        event
+        (cond-> event
+          (nil? (:channel/id event))
+          (assoc :channel/id channel-id))]
+
     (doseq [[listener-id listener-fn] snapshot]
-      (try
-        (listener-fn event)
-        (catch Throwable t
-          (tel/log! {:level :warn
-                     :id    ::listener-failed
-                     :data  {:channel-id channel-id
-                             :listener-id listener-id
-                             :event-op (:op event)
-                             :error (ex-message t)}
-                     :msg   "Channel event listener failed"}))))
+      (try (listener-fn event)
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::listener-failed
+                        :data {:channel-id channel-id
+                               :listener-id listener-id
+                               :event-op (:op event)
+                               :error (ex-message t)}
+                        :msg "Channel event listener failed"}))))
     (count snapshot)))

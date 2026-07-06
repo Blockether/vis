@@ -3,7 +3,8 @@
   (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]))
 
-(defn- status []
+(defn- status
+  []
   {:authenticated? false
    :provider-id :lmstudio
    :source :local
@@ -32,48 +33,49 @@
   (let [models (:models svar-provider)]
     (if (every? :context models)
       models
-      (try
-        (let [probe   (cond-> svar-provider
-                        (empty? models) (assoc :models [{:name "probe"}]))
-              router  (svar/make-router [probe] (or router-opts {}))
-              by-name (into {}
-                        (keep (fn [m]
-                                (when-let [nm (or (:id m) (:name m))]
-                                  (when (:context m)
-                                    [nm (select-keys m [:context :tool-call?])]))))
-                        (svar/models! router))]
-          ;; detection fills gaps; explicit model values still win per key
-          (mapv (fn [m] (merge (get by-name (:name m)) m)) models))
-        (catch Throwable _ models)))))
+      (try (let [probe (cond-> svar-provider
+                         (empty? models)
+                         (assoc :models [{:name "probe"}]))
+                 router (svar/make-router [probe] (or router-opts {}))
+                 by-name (into {}
+                               (keep (fn [m]
+                                       (when-let [nm (or (:id m) (:name m))]
+                                         (when (:context m)
+                                           [nm (select-keys m [:context :tool-call?])]))))
+                               (svar/models! router))]
+
+             ;; detection fills gaps; explicit model values still win per key
+             (mapv (fn [m]
+                     (merge (get by-name (:name m)) m))
+                   models))
+           (catch Throwable _ models)))))
 
 (vis/register-extension!
   (vis/extension
-    {:ext/name      "provider-lmstudio"
+    {:ext/name "provider-lmstudio"
      :ext/description "LM Studio local OpenAI-compatible provider preset."
-     :ext/version   "0.1.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/providers [{:provider/id                :lmstudio
-                      :provider/label             "LM Studio"
-                      :provider/preset            {:base-url "http://localhost:1234/v1"
-                                                   ;; Sampler defaults for local LM Studio models.
-                                                   ;; Qwen3/Qwen3.5 thinking models (and DeepSeek-R1
-                                                   ;; distills) fall into endless reasoning loops under
-                                                   ;; the default greedy sampler — emitting tens of
-                                                   ;; thousands of `reasoning_content` chars and almost
-                                                   ;; no answer (see LM Studio bug-tracker #1018, QwenLM
-                                                   ;; #145). These are the vendor-recommended anti-loop
-                                                   ;; params: temp 0.6 (DeepSeek's "avoid endless
-                                                   ;; repetition" value), top_p/top_k/min_p per Qwen,
-                                                   ;; and presence_penalty 1.5 to break repetition.
-                                                   ;; Merged as the provider base layer in svar
-                                                   ;; (router/inject-routed-params) — a per-turn
-                                                   ;; `:extra-body` still overrides any of these.
-                                                   :extra-body {:temperature      0.6
-                                                                :top_p            0.95
-                                                                :top_k            20
-                                                                :min_p            0.0
-                                                                :presence_penalty 1.5}}
-                      :provider/status-fn         #'status
-                      :provider/enrich-models-fn  #'enrich-models}]}))
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/providers [{:provider/id :lmstudio
+                      :provider/label "LM Studio"
+                      :provider/preset
+                      {:base-url "http://localhost:1234/v1"
+                       ;; Sampler defaults for local LM Studio models.
+                       ;; Qwen3/Qwen3.5 thinking models (and DeepSeek-R1
+                       ;; distills) fall into endless reasoning loops under
+                       ;; the default greedy sampler — emitting tens of
+                       ;; thousands of `reasoning_content` chars and almost
+                       ;; no answer (see LM Studio bug-tracker #1018, QwenLM
+                       ;; #145). These are the vendor-recommended anti-loop
+                       ;; params: temp 0.6 (DeepSeek's "avoid endless
+                       ;; repetition" value), top_p/top_k/min_p per Qwen,
+                       ;; and presence_penalty 1.5 to break repetition.
+                       ;; Merged as the provider base layer in svar
+                       ;; (router/inject-routed-params) — a per-turn
+                       ;; `:extra-body` still overrides any of these.
+                       :extra-body
+                       {:temperature 0.6 :top_p 0.95 :top_k 20 :min_p 0.0 :presence_penalty 1.5}}
+                      :provider/status-fn #'status
+                      :provider/enrich-models-fn #'enrich-models}]}))

@@ -4,17 +4,13 @@
 
    No I/O, no shell-out, no third-party deps. Cheap to compute, safe
    to call from any thread, never throws."
-  (:require
-   [clojure.string :as string])
-  (:import
-   (java.time ZoneId ZonedDateTime)
-   (java.time.format DateTimeFormatter)))
+  (:require [clojure.string :as string])
+  (:import (java.time ZoneId ZonedDateTime)
+           (java.time.format DateTimeFormatter)))
 
-(defn- system-property ^String [^String key]
-  (System/getProperty key))
+(defn- system-property ^String [^String key] (System/getProperty key))
 
-(defn- system-getenv ^String [^String key]
-  (System/getenv key))
+(defn- system-getenv ^String [^String key] (System/getenv key))
 
 (defn snapshot
   "Return a map of host facts captured from the running JVM:
@@ -35,26 +31,50 @@
    can `:keys`-destructure without hitting the JVM's restriction on
    dots in local-binding identifiers."
   []
-  (let [cwd        (system-property "user.dir")
-        user       (system-property "user.name")
-        home       (system-property "user.home")
-        os-name    (system-property "os.name")
-        os-version (system-property "os.version")
-        os-arch    (system-property "os.arch")
-        shell      (or (system-getenv "SHELL") "unknown")
-        jvm-name   (system-property "java.vm.name")
-        jvm-ver    (system-property "java.version")
-        locale     (.toLanguageTag (java.util.Locale/getDefault))
-        zone       (ZoneId/systemDefault)
-        now        (ZonedDateTime/now zone)]
-    {:cwd        cwd
-     :user       user
-     :home       home
-     :os-name    os-name
+  (let [cwd
+        (system-property "user.dir")
+
+        user
+        (system-property "user.name")
+
+        home
+        (system-property "user.home")
+
+        os-name
+        (system-property "os.name")
+
+        os-version
+        (system-property "os.version")
+
+        os-arch
+        (system-property "os.arch")
+
+        shell
+        (or (system-getenv "SHELL") "unknown")
+
+        jvm-name
+        (system-property "java.vm.name")
+
+        jvm-ver
+        (system-property "java.version")
+
+        locale
+        (.toLanguageTag (java.util.Locale/getDefault))
+
+        zone
+        (ZoneId/systemDefault)
+
+        now
+        (ZonedDateTime/now zone)]
+
+    {:cwd cwd
+     :user user
+     :home home
+     :os-name os-name
      :os-version os-version
-     :os-arch    os-arch
-     :shell      shell
-     :jvm        (string/trim (str (or jvm-name "") " " (or jvm-ver "")))
-     :locale     locale
-     :time       (.format DateTimeFormatter/ISO_OFFSET_DATE_TIME now)
-     :timezone   (str zone)}))
+     :os-arch os-arch
+     :shell shell
+     :jvm (string/trim (str (or jvm-name "") " " (or jvm-ver "")))
+     :locale locale
+     :time (.format DateTimeFormatter/ISO_OFFSET_DATE_TIME now)
+     :timezone (str zone)}))

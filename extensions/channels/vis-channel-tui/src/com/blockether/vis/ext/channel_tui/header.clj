@@ -90,9 +90,10 @@
    always visible. Entries with a workspace record are visible only
    when its state is :active or :merging."
   [entry]
-  (let [state (some-> entry :workspace :state)]
-    (or (nil? state)
-      (contains? active-workspace-states state))))
+  (let [state (some-> entry
+                      :workspace
+                      :state)]
+    (or (nil? state) (contains? active-workspace-states state))))
 
 (defn- tab-entries
   "Return entries to render in the centre strip, ALWAYS non-empty.
@@ -106,26 +107,32 @@
    labelled with the session title (or the `Untitled session`
    placeholder) so the centre slot is never empty."
   [db]
-  (let [entries   (filterv tab-strip-visible? (:tabs db))
-        active-id (or (:active-tab-id db)
-                    (:id (some #(when (:active? %) %) entries))
-                    (:id (first entries)))
+  (let [entries
+        (filterv tab-strip-visible? (:tabs db))
+
+        active-id
+        (or (:active-tab-id db) (:id (some #(when (:active? %) %) entries)) (:id (first entries)))
+
         ;; A tab is "running" when its session has a turn in flight. The
         ;; active tab's run-state lives at the db root; every other tab's
         ;; lives frozen in `:tab-locals` (its streaming worker keeps
         ;; updating it there). This is what surfaces concurrent turns.
-        running?  (fn [id]
-                    (boolean (if (= id active-id)
-                               (:loading? db)
-                               (get-in db [:tab-locals id :loading?]))))
+        running?
+        (fn [id]
+          (boolean (if (= id active-id) (:loading? db) (get-in db [:tab-locals id :loading?]))))
+
         ;; Auto-title generation runs for the ACTIVE session (the host
         ;; fires it at the start of that session's turn), so the spinner
         ;; only ever attaches to the active tab.
-        title-loading? (fn [id]
-                         (and (= id active-id) (boolean (:title-loading? db))))]
+        title-loading?
+        (fn [id]
+          (and (= id active-id) (boolean (:title-loading? db))))]
+
     (if (seq entries)
-      (mapv #(assoc % :running? (running? (:id %))
-               :title-loading? (title-loading? (:id %))) entries)
+      (mapv #(assoc %
+               :running? (running? (:id %))
+               :title-loading? (title-loading? (:id %)))
+            entries)
       [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
@@ -134,9 +141,7 @@
 
 (defn- active-tab-entry-id
   [db entries]
-  (or (:active-tab-id db)
-    (:id (some #(when (:active? %) %) entries))
-    (:id (first entries))))
+  (or (:active-tab-id db) (:id (some #(when (:active? %) %) entries)) (:id (first entries))))
 
 (defn- contributor-disabled?
   [db contribution-id]
@@ -157,10 +162,18 @@
    emphasised). Unknown roles fall back to `:default` (`footer-fg`)."
   [role]
   (case role
-    :muted   t/footer-fg-muted
-    :warn    t/footer-warning-fg
-    :error   t/footer-error-fg
-    :success t/footer-fg-strong
+    :muted
+    t/footer-fg-muted
+
+    :warn
+    t/footer-warning-fg
+
+    :error
+    t/footer-error-fg
+
+    :success
+    t/footer-fg-strong
+
     t/footer-fg))
 
 (defn- align-x
@@ -170,8 +183,12 @@
   ^long [align ^long line-w ^long cols]
   (let [edge-pad 1]
     (case align
-      :left  (long edge-pad)
-      :right (long (max edge-pad (- cols edge-pad line-w)))
+      :left
+      (long edge-pad)
+
+      :right
+      (long (max edge-pad (- cols edge-pad line-w)))
+
       ;; default = :center
       (long (max edge-pad (quot (- cols line-w) 2))))))
 
@@ -187,30 +204,45 @@
    honouring inline sentinels (bold/italic/code/strike) emitted by
    the IR walker."
   [ir ^long cols]
-  (let [attrs   (when (and (>= (count ir) 2) (map? (nth ir 1))) (nth ir 1))
-        align   (or (:align   attrs) :center)
-        fg-role (or (:fg-role attrs) :default)
+  (let [attrs
+        (when (and (>= (count ir) 2) (map? (nth ir 1))) (nth ir 1))
+
+        align
+        (or (:align attrs) :center)
+
+        fg-role
+        (or (:fg-role attrs) :default)
+
         ;; Subtract a 1-col edge pad on each side; tighter wrap than
         ;; the cols arg the painter receives.
-        wrap-w  (max 1 (- cols 2))
+        wrap-w
+        (max 1 (- cols 2))
+
         ;; ir-tui returns vec of `{:runs [{:text :style}...]}`. We
         ;; convert to sentinel-prefixed plain strings via the
         ;; existing adapter so paint-styled-line! can render bold /
         ;; italic / code spans the same way every other styled line
         ;; in the TUI does.
-        lines    (ir-tui/ir->lines ir wrap-w)
-        line-strs (when (seq lines) (ir-tui/lines->sentinel-strings lines))]
+        lines
+        (ir-tui/ir->lines ir wrap-w)
+
+        line-strs
+        (when (seq lines) (ir-tui/lines->sentinel-strings lines))]
+
     (when (seq line-strs)
       (let [fg (fg-role->color fg-role)]
         {:height (count line-strs)
          :draw!
          (fn [^com.googlecode.lanterna.graphics.TextGraphics g ^long row-top]
-           (loop [i 0 lines (seq line-strs)]
+           (loop [i 0
+                  lines (seq line-strs)]
+
              (when lines
                (let [^String line (first lines)
-                     visible-w    (p/display-width line)
-                     x            (align-x align visible-w cols)
-                     y            (+ row-top (long i))]
+                     visible-w (p/display-width line)
+                     x (align-x align visible-w cols)
+                     y (+ row-top (long i))]
+
                  (p/clear-styles! g)
                  (p/set-colors! g fg t/terminal-bg)
                  ;; italic by default for header subtitle rows -
@@ -218,8 +250,7 @@
                  ;; band; extensions can override by emitting their
                  ;; own ITALIC sentinels via [:em ...] inside the IR.
                  (p/enable! g p/ITALIC)
-                 (p/paint-styled-line! g x y line
-                   fg t/terminal-bg t/code-block-fg t/code-block-bg)
+                 (p/paint-styled-line! g x y line fg t/terminal-bg t/code-block-fg t/code-block-bg)
                  (p/clear-styles! g)
                  (recur (inc i) (next lines))))))}))))
 
@@ -234,16 +265,18 @@
    Contribution crashes never propagate — misbehaving extensions just lose
    their row that frame."
   [db cols]
-  (vec
-    (for [{:keys [id] f :fn} (vis/channel-contributions-for :tui :tui.slot/header-row)
-          :when (and (ifn? f)
-                  (not (contributor-disabled? db id)))
-          :let [ir   (try (f db cols) (catch Throwable _ nil))
-                spec (when (ir-root? ir)
-                       (try (ir->header-row-spec ir cols)
-                         (catch Throwable _ nil)))]
-          :when (and spec (pos? (long (or (:height spec) 0))))]
-      {:id id :spec spec})))
+  (vec (for [{:keys [id] f :fn}
+             (vis/channel-contributions-for :tui :tui.slot/header-row)
+
+             :when (and (ifn? f) (not (contributor-disabled? db id)))
+             :let [ir
+                   (try (f db cols) (catch Throwable _ nil))
+
+                   spec
+                   (when (ir-root? ir) (try (ir->header-row-spec ir cols) (catch Throwable _ nil)))]
+             :when (and spec (pos? (long (or (:height spec) 0))))]
+
+         {:id id :spec spec})))
 
 (defn header-rows
   "Rows needed by the header for this app-db. Workspace switcher lives inside
@@ -260,21 +293,20 @@
    ;; height on db state only.
    (header-rows db 0))
   ([db cols]
-   (+ header-rows-base
-     (reduce + 0 (map #(long (:height (:spec %)))
-                   (header-row-specs db cols))))))
+   (+ header-rows-base (reduce + 0 (map #(long (:height (:spec %))) (header-row-specs db cols))))))
 
 (defn- short-id
   "Project a session's UUID onto the shared short-form length."
   [session]
   (vh/short-id (:id session)))
 
-(defn- full-id [session]
-  (some-> session :id str))
+(defn- full-id
+  [session]
+  (some-> session
+          :id
+          str))
 
-(defn- ellipsize
-  [text max-cols]
-  (p/truncate-cols (str text) (max 0 (long max-cols))))
+(defn- ellipsize [text max-cols] (p/truncate-cols (str text) (max 0 (long max-cols))))
 
 (defn- latest-notification
   "Most-recently-pushed active notification, or nil. We display ONE
@@ -293,17 +325,18 @@
   [{:keys [channel-status]}]
   (let [now-ms (System/currentTimeMillis)]
     (->> (vals channel-status)
-      (filter #(seq (:text %)))
-      (remove #(= :ready (:phase %)))
-      (remove #(status-expired? % now-ms))
-      (sort-by #(long (or (:updated-at-ms %) 0)))
-      last)))
+         (filter #(seq (:text %)))
+         (remove #(= :ready (:phase %)))
+         (remove #(status-expired? % now-ms))
+         (sort-by #(long (or (:updated-at-ms %) 0)))
+         last)))
 
 ;; `level->fg` (notification color) + the band rule, left notification slot,
 ;; and id-copy badge now live in `components` (band-rule!, notification-slot!,
 ;; id-badge!).
 
-(defn- id-copy-block-text [id-short]
+(defn- id-copy-block-text
+  [id-short]
   (if id-short
     ;; Space-padded chip label, same shape as the F1/F2 buttons, so `id-badge!`
     ;; can paint it through the shared `button!` and it reads as a real button:
@@ -324,9 +357,7 @@
   [id-short]
   (id-copy-block-text id-short))
 
-(defn- clamp-long
-  [n lo hi]
-  (max (long lo) (min (long hi) (long n))))
+(defn- clamp-long [n lo hi] (max (long lo) (min (long hi) (long n))))
 
 (defn- active-strip-index
   [entries active-id]
@@ -334,22 +365,39 @@
 
 (defn- visible-tab-window
   [entries active-id width]
-  (let [entries (vec entries)
-        n (count entries)
-        width (max 0 (long width))
-        max-visible (vh/max-visible-workspace-count n width)
-        overflow? (> n max-visible)
-        active-idx (active-strip-index entries active-id)
-        half (quot max-visible 2)
-        start (if overflow?
-                (clamp-long (- active-idx half) 0 (max 0 (- n max-visible)))
-                0)
-        end (min n (+ start max-visible))]
+  (let [entries
+        (vec entries)
+
+        n
+        (count entries)
+
+        width
+        (max 0 (long width))
+
+        max-visible
+        (vh/max-visible-workspace-count n width)
+
+        overflow?
+        (> n max-visible)
+
+        active-idx
+        (active-strip-index entries active-id)
+
+        half
+        (quot max-visible 2)
+
+        start
+        (if overflow? (clamp-long (- active-idx half) 0 (max 0 (- n max-visible))) 0)
+
+        end
+        (min n (+ start max-visible))]
+
     {:overflow? overflow?
      :start start
-     :entries (mapv (fn [idx entry] (assoc entry :header/original-index idx))
-                (range start end)
-                (subvec entries start end))}))
+     :entries (mapv (fn [idx entry]
+                      (assoc entry :header/original-index idx))
+                    (range start end)
+                    (subvec entries start end))}))
 
 ;; `truncate-with-ellipsis` + `center-padded` now live in `components` (the
 ;; tab cell that consumes them does too).
@@ -366,35 +414,78 @@
    active/inactive background — but the label itself is centred within the
    inner area `(cell-w - 2*padding)`."
   [g entries active-id row left width]
-  (let [plus-label " + "  ;; minimal accent ＋ chip — the footer owns the `C-x n` hint
-        plus-w (long (p/display-width plus-label))
-        plus-gap 1
+  (let [plus-label
+        " + "
+
+        ;; minimal accent ＋ chip — the footer owns the `C-x n` hint
+        plus-w
+        (long (p/display-width plus-label))
+
+        plus-gap
+        1
+
         ;; `+` at the FAR LEFT of the tab strip — opens a new session (same as
         ;; Ctrl+N). Draw it first, then reserve its width + a 1-col gap and shift
         ;; the tabs right so it reads as part of the centre tab group, sitting
         ;; just ahead of tab 1.
-        _ (components/button! g left row plus-label :header-new-session
-            {:accent? true :register? *register-click-regions?*})
-        left  (+ (long left) plus-w plus-gap)
-        width (max 0 (- (long width) plus-w plus-gap))
-        multi? (> (count entries) 1)
-        {:keys [overflow? entries]} (visible-tab-window entries active-id width)
-        arrow-w 3
-        arrow-gap 1
-        entries-left (if overflow? (+ left arrow-w arrow-gap) left)
-        entries-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
-        n (count entries)]
+        _
+        (components/button! g
+                            left
+                            row
+                            plus-label
+                            :header-new-session
+                            {:accent? true :register? *register-click-regions?*})
+
+        left
+        (+ (long left) plus-w plus-gap)
+
+        width
+        (max 0 (- (long width) plus-w plus-gap))
+
+        multi?
+        (> (count entries) 1)
+
+        {:keys [overflow? entries]}
+        (visible-tab-window entries active-id width)
+
+        arrow-w
+        3
+
+        arrow-gap
+        1
+
+        entries-left
+        (if overflow? (+ left arrow-w arrow-gap) left)
+
+        entries-width
+        (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
+
+        n
+        (count entries)]
+
     (when overflow?
       (components/nav-arrow! g row left vh/workspace-arrow-left :prev *register-click-regions?*)
-      (components/nav-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next
-        *register-click-regions?*))
+      (components/nav-arrow! g
+                             row
+                             (+ left width (- arrow-w))
+                             vh/workspace-arrow-right
+                             :next
+                             *register-click-regions?*))
     (when (and (pos? n) (pos? entries-width))
       ;; Reserve a 1-col `│` divider between each adjacent pair of tabs, then
       ;; share the rest of the width across the tabs.
-      (let [divider-w (max 0 (dec n))
-            tab-total (max 0 (- entries-width divider-w))
-            base  (quot tab-total n)
-            extra (rem tab-total n)
+      (let [divider-w
+            (max 0 (dec n))
+
+            tab-total
+            (max 0 (- entries-width divider-w))
+
+            base
+            (quot tab-total n)
+
+            extra
+            (rem tab-total n)
+
             ;; Lay out each tab cell (the loop advances an extra col past
             ;; each tab for its trailing divider), then hand the drawing to
             ;; `components/tab-cell!` (slab + centered label + hover-✕ close
@@ -402,47 +493,76 @@
             ;; border: `:running` while a turn is in-flight or this active tab's
             ;; title is generating (the border blinks), `:ready` for a finished,
             ;; unread background tab (steady green glow), nil otherwise.
-            cells (loop [idx 0 x entries-left out []]
-                    (if (= idx n)
-                      out
-                      (let [cell-w (+ base (if (< idx extra) 1 0))
-                            entry  (nth entries idx)
-                            active? (= (:id entry) active-id)
-                            tab-no (inc (long (:header/original-index entry)))
-                            status (cond
-                                     ;; The tab you're already looking at gets
-                                     ;; NO cue — the live work is right there in
-                                     ;; the view, so the dots would be noise.
-                                     active?                            nil
-                                     (and (:running? entry)
-                                       (not (:title-loading? entry)))    :running
-                                     (and (not (:running? entry))
-                                       (:unread? entry)
-                                       (not (:title-loading? entry)))    :ready
-                                     (:title-loading? entry)               :running
-                                     :else nil)
-                            label (p/tab-display-label entry)]
-                        (recur (inc idx)
-                          (+ x cell-w (if (< idx (dec n)) 1 0))
-                          (conj out (assoc entry
-                                      :left x
-                                      :width cell-w
-                                      :label label
-                                      :status status
-                                      :tab-no tab-no
-                                      :active? active?
-                                      :last? (= idx (dec n))))))))]
-        (doseq [{:keys [left width active? label status id last? tab-no]
-                 idx :header/original-index}
+            cells
+            (loop [idx
+                   0
+
+                   x
+                   entries-left
+
+                   out
+                   []]
+
+              (if (= idx n)
+                out
+                (let [cell-w
+                      (+ base (if (< idx extra) 1 0))
+
+                      entry
+                      (nth entries idx)
+
+                      active?
+                      (= (:id entry) active-id)
+
+                      tab-no
+                      (inc (long (:header/original-index entry)))
+
+                      status
+                      (cond
+                        ;; The tab you're already looking at gets
+                        ;; NO cue — the live work is right there in
+                        ;; the view, so the dots would be noise.
+                        active? nil
+                        (and (:running? entry) (not (:title-loading? entry))) :running
+                        (and (not (:running? entry)) (:unread? entry) (not (:title-loading? entry)))
+                        :ready
+                        (:title-loading? entry) :running
+                        :else nil)
+
+                      label
+                      (p/tab-display-label entry)]
+
+                  (recur (inc idx)
+                         (+ x cell-w (if (< idx (dec n)) 1 0))
+                         (conj out
+                               (assoc entry
+                                 :left x
+                                 :width cell-w
+                                 :label label
+                                 :status status
+                                 :tab-no tab-no
+                                 :active? active?
+                                 :last? (= idx (dec n))))))))]
+
+        (doseq [{:keys [left width active? label status id last? tab-no] idx :header/original-index}
                 cells
+
                 :when (pos? (long width))]
+
           (components/tab-cell! g
-            {:left left :row row :width width :label label :status status :tab-no tab-no
-             :active? active? :workspace-id id :index idx
-             :register? *register-click-regions?* :closable? multi?})
+                                {:left left
+                                 :row row
+                                 :width width
+                                 :label label
+                                 :status status
+                                 :tab-no tab-no
+                                 :active? active?
+                                 :workspace-id id
+                                 :index idx
+                                 :register? *register-click-regions?*
+                                 :closable? multi?})
           ;; `│` divider after every tab but the last.
-          (when-not last?
-            (components/tab-divider! g row (+ (long left) (long width)))))
+          (when-not last? (components/tab-divider! g row (+ (long left) (long width)))))
         cells))))
 
 (defn draw-header!
@@ -460,91 +580,152 @@
    Workspaces are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspaces."
   [g db header-top cols]
-  (let [workspaces (tab-entries db)
-        top-rule-row header-top
-        content-row (inc header-top)
-        contrib-specs (header-row-specs db cols)
-        bottom-row (dec (+ header-top (header-rows db cols)))
-        edge-pad 1
-        {:keys [left-x left-w center-x center-w right-x]} (vh/slot-layout cols)
-        id-short (short-id (:session db))
-        full-uuid (full-id (:session db))
-        id-copy-text (id-copy-block-text id-short)
-        action-text (right-block-text id-short)
-        banner (latest-notification)
-        status (latest-channel-status db)
-        left-message (or banner status)
-        left-raw (some-> left-message :text)
-        left-level (some-> left-message :level)
-        left-cap (max 0 (- left-w edge-pad 1))
-        left-text (when (seq left-raw) (ellipsize left-raw left-cap))
-        action-w (p/display-width action-text)
-        right-w action-w
-        right-col (max right-x (- cols edge-pad right-w))
-        action-col right-col
-        active-id (active-tab-entry-id db workspaces)
+  (let [workspaces
+        (tab-entries db)
+
+        top-rule-row
+        header-top
+
+        content-row
+        (inc header-top)
+
+        contrib-specs
+        (header-row-specs db cols)
+
+        bottom-row
+        (dec (+ header-top (header-rows db cols)))
+
+        edge-pad
+        1
+
+        {:keys [left-x left-w center-x center-w right-x]}
+        (vh/slot-layout cols)
+
+        id-short
+        (short-id (:session db))
+
+        full-uuid
+        (full-id (:session db))
+
+        id-copy-text
+        (id-copy-block-text id-short)
+
+        action-text
+        (right-block-text id-short)
+
+        banner
+        (latest-notification)
+
+        status
+        (latest-channel-status db)
+
+        left-message
+        (or banner status)
+
+        left-raw
+        (some-> left-message
+                :text)
+
+        left-level
+        (some-> left-message
+                :level)
+
+        left-cap
+        (max 0 (- left-w edge-pad 1))
+
+        left-text
+        (when (seq left-raw) (ellipsize left-raw left-cap))
+
+        action-w
+        (p/display-width action-text)
+
+        right-w
+        action-w
+
+        right-col
+        (max right-x (- cols edge-pad right-w))
+
+        action-col
+        right-col
+
+        active-id
+        (active-tab-entry-id db workspaces)
+
         ;; RIGHT cluster geometry (help/search chips + id badge) is
         ;; right-aligned by ABSOLUTE `cols` math, independent of the centre
         ;; slot. On narrow/medium terminals its real width exceeds the
         ;; layout's `right-w` estimate, so `slot-layout` alone would let the
         ;; chips paint ON TOP of the tab strip. Compute the cluster's true
         ;; left edge here and clamp the centre width to stop short of it.
-        chips     [[:header-help   (str " help ("   (keymap/label-for :toggle-help) ") ")]
-                   [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
-        chip-gap  1
-        cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
-                    (* chip-gap (count chips)))
-        cluster-start (max edge-pad (- action-col cluster-w))
-        center-limit  (- cluster-start (long vh/slot-gap-cols))
-        center-w      (max 0 (min (long center-w) (- center-limit (long center-x))))]
-    (components/band-rule! g top-rule-row cols)
+        chips
+        [[:header-help (str " help (" (keymap/label-for :toggle-help) ") ")]
+         [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
 
+        chip-gap
+        1
+
+        cluster-w
+        (+ (reduce + (map (comp long p/display-width second) chips)) (* chip-gap (count chips)))
+
+        cluster-start
+        (max edge-pad (- action-col cluster-w))
+
+        center-limit
+        (- cluster-start (long vh/slot-gap-cols))
+
+        center-w
+        (max 0 (min (long center-w) (- center-limit (long center-x))))]
+
+    (components/band-rule! g top-rule-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
-
     ;; LEFT 20%: latest notification, otherwise channel status. No title here.
     ;; (Draft status lives in the footer — one indicator, not two.)
     (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
-
     ;; CENTER 60%: the workspace tab strip. Even a single session renders as a
     ;; real tab, so there's one consistent affordance — no special inert-title
     ;; path. The ✕ close button is suppressed when it's the ONLY session, since
     ;; the last tab can't be closed.
     (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
-
     ;; RIGHT 20%: stable session-id copy affordance only.
-    (components/id-badge! g action-col content-row id-copy-text full-uuid
-      *register-click-regions?*)
-
+    (components/id-badge! g action-col content-row id-copy-text full-uuid *register-click-regions?*)
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
     ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a
     ;; cluster just left of the id badge. No `|` separators; the bg IS the
     ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
-    (reduce (fn [x [kind label]]
-              (+ x chip-gap (components/button! g x content-row label kind
-                              {:register? *register-click-regions?*})))
+    (reduce
+      (fn [x [kind label]]
+        (+ x
+           chip-gap
+           (components/button! g x content-row label kind {:register? *register-click-regions?*})))
       cluster-start
       chips)
-
     ;; Extension-contributed rows.
-    (loop [row (inc content-row)
-           specs (seq contrib-specs)]
+    (loop [row
+           (inc content-row)
+
+           specs
+           (seq contrib-specs)]
+
       (when specs
-        (let [{:keys [spec]} (first specs)
-              h (long (:height spec))
-              draw! (:draw! spec)]
+        (let [{:keys [spec]}
+              (first specs)
+
+              h
+              (long (:height spec))
+
+              draw!
+              (:draw! spec)]
+
           (when (pos? h)
             (p/clear-styles! g)
             (p/set-colors! g t/footer-fg t/terminal-bg)
             (p/fill-rect! g 0 row cols h)
-            (when (ifn? draw!)
-              (try (draw! g (long row))
-                (catch Throwable _ nil))))
+            (when (ifn? draw!) (try (draw! g (long row)) (catch Throwable _ nil))))
           (recur (+ row h) (next specs)))))
-
     (components/band-rule! g bottom-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)))

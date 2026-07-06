@@ -22,7 +22,10 @@
   (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
                                 prefix
                                 (make-array java.nio.file.attribute.FileAttribute 0)))))
-(defn- delete-tree! [root] (doseq [f (reverse (file-seq (io/file root)))] (io/delete-file f true)))
+(defn- delete-tree!
+  [root]
+  (doseq [f (reverse (file-seq (io/file root)))]
+    (io/delete-file f true)))
 (defn- with-cwd
   "Run `f` with JVM user.dir pointed at `base` so `/draft` (which clones
    cwd) clones the tiny temp tree, not the whole repo. Restored after."
@@ -35,85 +38,95 @@
     (try (f store) (finally (ps/db-close! store)))))
 (defn- env-with
   [store]
-  {:extensions (atom [(extension/extension {:ext/name "test.draft-slashes",
-                                            :ext/description "Draft slash specs under test.",
-                                            :ext/slash-commands ws-slashes/specs})]),
+  {:extensions (atom [(extension/extension {:ext/name "test.draft-slashes"
+                                            :ext/description "Draft slash specs under test."
+                                            :ext/slash-commands ws-slashes/specs})])
    :db-info store})
 (defn- seed-workspace!
   "Lightweight workspace row rooted at `base` (no clone) to pin the
    session before the real draft is minted."
   [store base]
   (let [id (str (java.util.UUID/randomUUID))]
-    (ps/db-workspace-insert!
-      store
-      {:id id
-       :repo-id "test"
-       :repo-root base
-       :root base
-       :workspace-kind :trunk
-       :workspace-backend :live
-       :state :active})))
+    (ps/db-workspace-insert! store
+                             {:id id
+                              :repo-id "test"
+                              :repo-root base
+                              :root base
+                              :workspace-kind :trunk
+                              :workspace-backend :live
+                              :state :active})))
 (defn- pin-session!
   [store workspace-id]
-  (let [ds (:datasource store)
-        sid (str (java.util.UUID/randomUUID))
-        st (str (java.util.UUID/randomUUID))]
+  (let [ds
+        (:datasource store)
+
+        sid
+        (str (java.util.UUID/randomUUID))
+
+        st
+        (str (java.util.UUID/randomUUID))]
+
     (jdbc/execute! ds
-      ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
-       1])
+                   ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
+                    1])
     (jdbc/execute! ds
-      [(str "INSERT INTO session_state "
-         "(id, session_soul_id, workspace_id, version, created_at) "
-         "VALUES (?,?,?,?,?)") st sid workspace-id 0 1])
+                   [(str "INSERT INTO session_state "
+                         "(id, session_soul_id, workspace_id, version, created_at) "
+                         "VALUES (?,?,?,?,?)") st sid workspace-id 0 1])
     st))
 (defn- dispatch!
   [env store state-id line]
   (slash/dispatch env
-    {:channel/id :tui, :session/id "soul", :session/state-id state-id, :db-info store}
-    line))
+                  {:channel/id :tui :session/id "soul" :session/state-id state-id :db-info store}
+                  line))
 
 (defdescribe ctx-contract-test
-  (it "requires the canonical namespaced session state key"
-    (with-store
-      (fn [store]
-        (let [env (env-with store)
-              out (slash/dispatch env
-                    {:channel/id :tui
-                     :session/id "soul"
-                     :session-state-id (str (java.util.UUID/randomUUID))
-                     :db-info store}
-                    "/draft new flat-key")]
-          (expect (= :error (get-in out [:result :slash/status])))
-          (expect (str/includes? (get-in out [:result :slash/title])
-                    "session not ready")))))))
+             (it "requires the canonical namespaced session state key"
+                 (with-store (fn [store]
+                               (let [env
+                                     (env-with store)
+
+                                     out
+                                     (slash/dispatch env
+                                                     {:channel/id :tui
+                                                      :session/id "soul"
+                                                      :session-state-id
+                                                      (str (java.util.UUID/randomUUID))
+                                                      :db-info store}
+                                                     "/draft new flat-key")]
+
+                                 (expect (= :error (get-in out [:result :slash/status])))
+                                 (expect (str/includes? (get-in out [:result :slash/title])
+                                                        "session not ready")))))))
 ;; =============================================================================
 ;; Specs shape
 ;; =============================================================================
-(defdescribe specs-shape-test
+(defdescribe
+  specs-shape-test
   (it "exposes the full slash spec set (/draft tree, /root, /fs tree)"
-    (expect (= 11 (count ws-slashes/specs))))
+      (expect (= 11 (count ws-slashes/specs))))
   (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
-    (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
+      (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
+        (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
   (it "exposes a TOP-LEVEL /root (quick root change) alongside /fs root"
-    (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
-      (expect (contains? (set (map :slash/name tops)) "root"))))
+      (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
+        (expect (contains? (set (map :slash/name tops)) "root"))))
   (it "the /fs slash commands carry no channel availability gate (every channel gets them)"
-    (let [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
-                    ws-slashes/specs)]
-      (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
+      (let [fs-tree (filter #(or (= "fs" (:slash/name %)) (= ["fs"] (:slash/parent %)))
+                            ws-slashes/specs)]
+        (expect (every? #(nil? (:slash/availability-fn %)) fs-tree))))
   (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
-    (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= 3 (count subs)))
-      (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
+      (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
+        (expect (= 3 (count subs)))
+        (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
-    (let [env (env-with nil)]
-      ;; 11 specs: /draft + new/apply/abandon + /root + /fs + root/add/remove/list/create.
-      ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-      (expect (= 11 (count (slash/active-slashes env))))
-      (expect (some? (slash/slash-by-path env ["draft" "apply"])))
-      (expect (some? (slash/slash-by-path env ["fs" "root"])))
-      (expect (some? (slash/slash-by-path env ["root"]))))))
+      (let [env (env-with nil)]
+        ;; 11 specs: /draft + new/apply/abandon + /root + /fs + root/add/remove/list/create.
+        ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
+        (expect (= 11 (count (slash/active-slashes env))))
+        (expect (some? (slash/slash-by-path env ["draft" "apply"])))
+        (expect (some? (slash/slash-by-path env ["fs" "root"])))
+        (expect (some? (slash/slash-by-path env ["root"]))))))
 ;; =============================================================================
 ;; Dispatch
 ;; =============================================================================
@@ -121,141 +134,177 @@
   "Seed + pin a session, then mint a real draft (clone of `base`) as its
    active draft. Returns [env state-id draft]."
   [store base]
-  (let [seed (seed-workspace! store base)
-        state-id (pin-session! store (:id seed))
-        env (env-with store)
-        draft (workspace/create! store {:session-state-id state-id})]
+  (let [seed
+        (seed-workspace! store base)
+
+        state-id
+        (pin-session! store (:id seed))
+
+        env
+        (env-with store)
+
+        draft
+        (workspace/create! store {:session-state-id state-id})]
+
     [env state-id draft]))
-(defdescribe dispatch-apply-test
+(defdescribe
+  dispatch-apply-test
   (it "/draft apply lands edits AND deletions made in the draft"
-    (let [base (temp-dir "vis-draft-apply")]
-      (try
-        (if-not (workspace/isolated-workspaces-supported? base)
-          ;; No copy-on-write workspace backend in this environment (e.g. CI
-          ;; without rift's native lib / a CoW filesystem) — the live draft
-          ;; round-trip can't run. `capability-gating-test` covers the
-          ;; unavailable path; here we just confirm it IS unavailable.
-          (expect (not (workspace/isolated-workspaces-supported? base)))
-          (do
-            (spit (io/file base "a.txt") "original\n")
-            (spit (io/file base "gone.txt") "remove me\n")
-            (with-cwd
-              base
-              (fn []
-                (with-store
-                  (fn [store]
-                    (let [[env state-id draft] (setup! store base)]
-                      (try (Thread/sleep 8)
-                        (spit (io/file (:root draft) "a.txt") "EDITED\n")
-                        (io/delete-file (io/file (:root draft) "gone.txt"))
-                        (let [out (dispatch! env store state-id "/draft apply")]
-                          (expect (= :ok (get-in out [:result :slash/status])))
-                          (expect (= 2 (get-in out [:result :slash/data :landed])))
-                          (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
-                          (expect (not (.exists (io/file base "gone.txt")))))
-                        (finally
-                          (try (workspace/abandon! store {:workspace-id (:id draft)})
-                            (catch Throwable _ nil)))))))))))
-        (finally (delete-tree! base))))))
-(defdescribe dispatch-abandon-test
-  (it "/draft abandon discards the draft and pins a fresh one"
+      (let [base (temp-dir "vis-draft-apply")]
+        (try (if-not (workspace/isolated-workspaces-supported? base)
+               ;; No copy-on-write workspace backend in this environment (e.g. CI
+               ;; without rift's native lib / a CoW filesystem) — the live draft
+               ;; round-trip can't run. `capability-gating-test` covers the
+               ;; unavailable path; here we just confirm it IS unavailable.
+               (expect (not (workspace/isolated-workspaces-supported? base)))
+               (do (spit (io/file base "a.txt") "original\n")
+                   (spit (io/file base "gone.txt") "remove me\n")
+                   (with-cwd base
+                             (fn []
+                               (with-store
+                                 (fn [store]
+                                   (let [[env state-id draft] (setup! store base)]
+                                     (try
+                                       (Thread/sleep 8)
+                                       (spit (io/file (:root draft) "a.txt") "EDITED\n")
+                                       (io/delete-file (io/file (:root draft) "gone.txt"))
+                                       (let [out (dispatch! env store state-id "/draft apply")]
+                                         (expect (= :ok (get-in out [:result :slash/status])))
+                                         (expect (= 2 (get-in out [:result :slash/data :landed])))
+                                         (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
+                                         (expect (not (.exists (io/file base "gone.txt")))))
+                                       (finally
+                                         (try (workspace/abandon! store {:workspace-id (:id draft)})
+                                              (catch Throwable _ nil)))))))))))
+             (finally (delete-tree! base))))))
+(defdescribe
+  dispatch-abandon-test
+  (it
+    "/draft abandon discards the draft and pins a fresh one"
     (let [base (temp-dir "vis-draft-abandon")]
-      (try
-        (if-not (workspace/isolated-workspaces-supported? base)
-          ;; No CoW workspace backend here (CI) — skip the live round-trip.
-          (expect (not (workspace/isolated-workspaces-supported? base)))
-          (do
-            (spit (io/file base "seed.txt") "seed\n")
-            (with-cwd
-              base
-              (fn []
-                (with-store
-                  (fn [store]
-                    (let [[env state-id draft] (setup! store base)
-                          out (dispatch! env store state-id "/draft abandon not-good")
-                                          ;; abandon discards the draft and re-pins the session to
-                                          ;; a fresh active workspace (trunk) — read it off the
-                                          ;; session.
-                          fresh (:id (workspace/for-session store state-id))]
-                      (try (expect (= :ok (get-in out [:result :slash/status])))
-                        (expect (= (:id draft)
-                                  (get-in out [:result :slash/data :workspace-id])))
-                                           ;; a different, fresh workspace is now the session's
-                                           ;; active one
-                        (expect (some? fresh))
-                        (expect (not= (:id draft) fresh))
-                        (expect (= :discarded
-                                  (:state (workspace/get store (:id draft)))))
-                        (finally
-                                             ;; abandon! already trashed the draft's clone; this is
-                                             ;; a belt-and-braces no-op if the clone is already
-                                             ;; gone.
-                          (try (workspace/abandon! store {:workspace-id (:id draft)})
-                            (catch Throwable _ nil)))))))))))
-        (finally (delete-tree! base))))))
-(defdescribe capability-gating-test
+      (try (if-not (workspace/isolated-workspaces-supported? base)
+             ;; No CoW workspace backend here (CI) — skip the live round-trip.
+             (expect (not (workspace/isolated-workspaces-supported? base)))
+             (do (spit (io/file base "seed.txt") "seed\n")
+                 (with-cwd
+                   base
+                   (fn []
+                     (with-store
+                       (fn [store]
+                         (let [[env state-id draft] (setup! store base)
+                               out (dispatch! env store state-id "/draft abandon not-good")
+                               ;; abandon discards the draft and re-pins the session to
+                               ;; a fresh active workspace (trunk) — read it off the
+                               ;; session.
+                               fresh (:id (workspace/for-session store state-id))]
+
+                           (try (expect (= :ok (get-in out [:result :slash/status])))
+                                (expect (= (:id draft)
+                                           (get-in out [:result :slash/data :workspace-id])))
+                                ;; a different, fresh workspace is now the session's
+                                ;; active one
+                                (expect (some? fresh))
+                                (expect (not= (:id draft) fresh))
+                                (expect (= :discarded (:state (workspace/get store (:id draft)))))
+                                (finally
+                                  ;; abandon! already trashed the draft's clone; this is
+                                  ;; a belt-and-braces no-op if the clone is already
+                                  ;; gone.
+                                  (try (workspace/abandon! store {:workspace-id (:id draft)})
+                                       (catch Throwable _ nil)))))))))))
+           (finally (delete-tree! base))))))
+(defdescribe
+  capability-gating-test
   (it "/draft remains discoverable when no isolation backend is available"
-    (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
-      (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-        (expect (= #{"draft" "new" "apply" "abandon" "root" "fs" "add" "remove" "list" "create"} names)))))
-
+      (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
+        (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
+          (expect (= #{"draft" "new" "apply" "abandon" "root" "fs" "add" "remove" "list" "create"}
+                     names)))))
   (it "/draft new reports the unavailable capability matrix"
-    (with-store
-      (fn [store]
-        (let [base (temp-dir "vis-draft-unavailable")]
-          (try
-            (let [seed (seed-workspace! store base)
-                  state-id (pin-session! store (:id seed))
-                  env (env-with store)]
-              (with-redefs [workspace/isolated-workspaces-supported? (constantly false)
-                            workspace/workspace-capability-matrix
-                            (constantly [{:backend :rift :available? false
-                                          :capabilities #{:isolated-fork}}])]
-                (let [out (dispatch! env store state-id "/draft new test")]
-                  (expect (= :error (get-in out [:result :slash/status])))
-                  (expect (= :rift
-                            (get-in out [:result :slash/data
-                                         :capability-matrix 0 :backend]))))))
-            (finally (delete-tree! base))))))))
+      (with-store
+        (fn [store]
+          (let [base (temp-dir "vis-draft-unavailable")]
+            (try (let [seed (seed-workspace! store base)
+                       state-id (pin-session! store (:id seed))
+                       env (env-with store)]
 
-(defdescribe dispatch-root-test
+                   (with-redefs [workspace/isolated-workspaces-supported? (constantly false)
+                                 workspace/workspace-capability-matrix
+                                 (constantly [{:backend :rift
+                                               :available? false
+                                               :capabilities #{:isolated-fork}}])]
+
+                     (let [out (dispatch! env store state-id "/draft new test")]
+                       (expect (= :error (get-in out [:result :slash/status])))
+                       (expect (= :rift
+                                  (get-in out
+                                          [:result :slash/data :capability-matrix 0 :backend]))))))
+                 (finally (delete-tree! base))))))))
+
+(defdescribe
+  dispatch-root-test
   (it "/root <path> repoints the session's primary filesystem root"
-    (let [a (temp-dir "vis-slash-root-a") b (temp-dir "vis-slash-root-b")]
-      (try
-        (with-store
-          (fn [store]
-            (let [trunk    (workspace/create-trunk-at! store a)
-                  state-id (pin-session! store (:id trunk))
-                  env      (env-with store)
-                  out      (dispatch! env store state-id (str "/root " b))]
-              (expect (= :ok (get-in out [:result :slash/status])))
-              (expect (= (workspace/normalize-root b)
-                        (:root (workspace/for-session store state-id)))))))
-        (finally (delete-tree! a) (delete-tree! b)))))
+      (let [a
+            (temp-dir "vis-slash-root-a")
+
+            b
+            (temp-dir "vis-slash-root-b")]
+
+        (try (with-store (fn [store]
+                           (let [trunk
+                                 (workspace/create-trunk-at! store a)
+
+                                 state-id
+                                 (pin-session! store (:id trunk))
+
+                                 env
+                                 (env-with store)
+
+                                 out
+                                 (dispatch! env store state-id (str "/root " b))]
+
+                             (expect (= :ok (get-in out [:result :slash/status])))
+                             (expect (= (workspace/normalize-root b)
+                                        (:root (workspace/for-session store state-id)))))))
+             (finally (delete-tree! a) (delete-tree! b)))))
   (it "bare /root reports the current root without changing anything"
-    (let [a (temp-dir "vis-slash-root-show")]
-      (try
-        (with-store
-          (fn [store]
-            (let [trunk    (workspace/create-trunk-at! store a)
-                  state-id (pin-session! store (:id trunk))
-                  env      (env-with store)
-                  out      (dispatch! env store state-id "/root")]
-              (expect (= :ok (get-in out [:result :slash/status])))
-              (expect (= (:id trunk)
-                        (:id (workspace/for-session store state-id)))))))
-        (finally (delete-tree! a)))))
+      (let [a (temp-dir "vis-slash-root-show")]
+        (try (with-store (fn [store]
+                           (let [trunk (workspace/create-trunk-at! store a)
+                                 state-id (pin-session! store (:id trunk))
+                                 env (env-with store)
+                                 out (dispatch! env store state-id "/root")]
+
+                             (expect (= :ok (get-in out [:result :slash/status])))
+                             (expect (= (:id trunk)
+                                        (:id (workspace/for-session store state-id)))))))
+             (finally (delete-tree! a)))))
   (it "/fs lists the root plus additional filesystem roots"
-    (let [a (temp-dir "vis-slash-fs-a") ext (temp-dir "vis-slash-fs-ext")]
-      (try
-        (with-store
-          (fn [store]
-            (let [trunk    (workspace/create-trunk-at! store a)
-                  state-id (pin-session! store (:id trunk))
-                  env      (env-with store)
-                  _        (dispatch! env store state-id (str "/fs add " ext))
-                  out      (dispatch! env store state-id "/fs list")]
-              (expect (= :ok (get-in out [:result :slash/status])))
-              (expect (= [(workspace/normalize-root ext)]
-                        (mapv :trunk (get-in out [:result :slash/data :filesystem-roots])))))))
-        (finally (delete-tree! a) (delete-tree! ext))))))
+      (let [a
+            (temp-dir "vis-slash-fs-a")
+
+            ext
+            (temp-dir "vis-slash-fs-ext")]
+
+        (try (with-store
+               (fn [store]
+                 (let [trunk
+                       (workspace/create-trunk-at! store a)
+
+                       state-id
+                       (pin-session! store (:id trunk))
+
+                       env
+                       (env-with store)
+
+                       _
+                       (dispatch! env store state-id (str "/fs add " ext))
+
+                       out
+                       (dispatch! env store state-id "/fs list")]
+
+                   (expect (= :ok (get-in out [:result :slash/status])))
+                   (expect (= [(workspace/normalize-root ext)]
+                              (mapv :trunk
+                                    (get-in out [:result :slash/data :filesystem-roots])))))))
+             (finally (delete-tree! a) (delete-tree! ext))))))

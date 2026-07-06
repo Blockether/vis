@@ -25,9 +25,7 @@
 ;; are the same everywhere so a screenshot of the TUI and a screenshot
 ;; of the web UI feel like the same product.
 
-(def left-slot-ratio
-  "Fraction of the total width given to the LEFT slot (notifications)."
-  3/10)
+(def left-slot-ratio "Fraction of the total width given to the LEFT slot (notifications)." 3/10)
 
 (def right-slot-ratio
   "Fraction of the total width given to the RIGHT slot (channel status +
@@ -38,10 +36,18 @@
   "Compute integer widths `[left center right]` for a header `cols` wide.
    `center = cols - left - right` so rounding errors never bleed off-screen."
   [cols]
-  (let [cols   (max 0 (long cols))
-        left   (long (* cols (double left-slot-ratio)))
-        right  (long (* cols (double right-slot-ratio)))
-        center (max 0 (- cols left right))]
+  (let [cols
+        (max 0 (long cols))
+
+        left
+        (long (* cols (double left-slot-ratio)))
+
+        right
+        (long (* cols (double right-slot-ratio)))
+
+        center
+        (max 0 (- cols left right))]
+
     [left center right]))
 
 (def left-slot-cols
@@ -74,19 +80,38 @@
    Returns `{:left-x :left-w :center-x :center-w :right-x :right-w}` -
    absolute x positions + widths a channel paints directly."
   [cols]
-  (let [cols     (max 0 (long cols))
-        gap      (long slot-gap-cols)
-        left-w   (min (long left-slot-cols) (long (* cols (double left-slot-ratio))))
-        right-w  (min (long right-slot-cols)
-                   (long (* cols (double right-slot-ratio)))
-                   (max 0 (- cols left-w)))
-        center-w (max 0 (- cols left-w right-w (* 2 gap)))
-        left-x   0
-        center-x (min cols (+ left-w gap))
-        right-x  (- cols right-w)]
-    {:left-x left-x :left-w left-w
-     :center-x center-x :center-w center-w
-     :right-x right-x :right-w right-w}))
+  (let [cols
+        (max 0 (long cols))
+
+        gap
+        (long slot-gap-cols)
+
+        left-w
+        (min (long left-slot-cols) (long (* cols (double left-slot-ratio))))
+
+        right-w
+        (min (long right-slot-cols)
+             (long (* cols (double right-slot-ratio)))
+             (max 0 (- cols left-w)))
+
+        center-w
+        (max 0 (- cols left-w right-w (* 2 gap)))
+
+        left-x
+        0
+
+        center-x
+        (min cols (+ left-w gap))
+
+        right-x
+        (- cols right-w)]
+
+    {:left-x left-x
+     :left-w left-w
+     :center-x center-x
+     :center-w center-w
+     :right-x right-x
+     :right-w right-w}))
 
 ;;; ── Workspace switcher sizing policy ───────────────────────────────────
 
@@ -123,11 +148,18 @@
      budget, fall back to the natural fit so tiny surfaces degrade
      gracefully."
   [workspace-n width]
-  (let [width   (max 0 (long width))
-        natural (max 1 (quot width (long tab-entry-target-width)))
-        clamped (max (long min-visible-tab-entries)
-                  (min (long max-visible-tab-entries) natural))
-        cap     (if (< natural (long min-visible-tab-entries)) natural clamped)]
+  (let [width
+        (max 0 (long width))
+
+        natural
+        (max 1 (quot width (long tab-entry-target-width)))
+
+        clamped
+        (max (long min-visible-tab-entries) (min (long max-visible-tab-entries) natural))
+
+        cap
+        (if (< natural (long min-visible-tab-entries)) natural clamped)]
+
     (min (long workspace-n) (long cap))))
 
 ;;; ── Glyphs ─────────────────────────────────────────────────────────────
@@ -136,21 +168,13 @@
 ;; (Lanterna terminal, modern HTML, Telegram); channels needing ASCII
 ;; fallbacks can swap on their side.
 
-(def workspace-arrow-left
-  "Glyph for the `previous workspace` overflow affordance."
-  "«")
+(def workspace-arrow-left "Glyph for the `previous workspace` overflow affordance." "«")
 
-(def workspace-arrow-right
-  "Glyph for the `next workspace` overflow affordance."
-  "»")
+(def workspace-arrow-right "Glyph for the `next workspace` overflow affordance." "»")
 
-(def workspace-ellipsis
-  "Glyph appended when a workspace label has to be truncated."
-  "…")
+(def workspace-ellipsis "Glyph appended when a workspace label has to be truncated." "…")
 
-(def copy-icon
-  "Glyph used by the right-slot `copy session id` affordance."
-  "⧉")
+(def copy-icon "Glyph used by the right-slot `copy session id` affordance." "⧉")
 
 ;;; ── Defaults ───────────────────────────────────────────────────────────
 
@@ -172,14 +196,12 @@
    `untitled-session-label`. Used by both workspace-label sync in
    state and the synthesised fallback workspace in channels."
   [title]
-  (if (and (string? title) (not (str/blank? title)))
-    title
-    untitled-session-label))
+  (if (and (string? title) (not (str/blank? title))) title untitled-session-label))
 
 (defn short-id
   "Shorten a session UUID to the shared display length. Returns
    nil for blank input so channels can use truthy guards."
   [id]
-  (let [id (some-> id str)]
-    (when (seq id)
-      (subs id 0 (min (long id-display-chars) (count id))))))
+  (let [id (some-> id
+                   str)]
+    (when (seq id) (subs id 0 (min (long id-display-chars) (count id))))))

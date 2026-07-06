@@ -16,7 +16,8 @@
    contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter TerminalTextUtils]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter
+            TerminalTextUtils]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 ;;; ── Color ──────────────────────────────────────────────────────────────────
@@ -33,13 +34,13 @@
 
 ;;; ── Text styles (SGR modifiers) ─────────────────────────────────────────────
 
-(def BOLD        SGR/BOLD)
-(def ITALIC      SGR/ITALIC)
-(def UNDERLINE   SGR/UNDERLINE)
-(def REVERSE     SGR/REVERSE)
+(def BOLD SGR/BOLD)
+(def ITALIC SGR/ITALIC)
+(def UNDERLINE SGR/UNDERLINE)
+(def REVERSE SGR/REVERSE)
 (def CROSSED-OUT SGR/CROSSED_OUT)
-(def BLINK       SGR/BLINK)
-(def BORDERED    SGR/BORDERED)
+(def BLINK SGR/BLINK)
+(def BORDERED SGR/BORDERED)
 
 (defn enable!
   "Enable one or more text styles. `modifiers` are SGR constants (BOLD, ITALIC, etc.)."
@@ -53,11 +54,7 @@
   (.disableModifiers g (into-array SGR modifiers))
   g)
 
-(defn clear-styles!
-  "Remove all active text styles."
-  [^TextGraphics g]
-  (.clearModifiers g)
-  g)
+(defn clear-styles! "Remove all active text styles." [^TextGraphics g] (.clearModifiers g) g)
 
 (defn with-style
   "Execute `body-fn` (fn [g] ...) with the given styles enabled, then restore.
@@ -67,15 +64,17 @@
     (.enableModifiers g (into-array SGR styles))
     (let [result (body-fn g)]
       (.clearModifiers g)
-      (when (seq previous-modifiers)
-        (.enableModifiers g (into-array SGR previous-modifiers)))
+      (when (seq previous-modifiers) (.enableModifiers g (into-array SGR previous-modifiers)))
       result)))
 
 (defmacro styled
   "Draw with styles temporarily enabled. Restores previous styles after body.
    Usage: (styled g [BOLD ITALIC] (put-str! g 0 0 \"hello\"))"
   [g styles & body]
-  `(with-style ~g ~styles (fn [~'_g] ~@body)))
+  `(with-style ~g
+               ~styles
+               (fn [~'_g]
+                 ~@body)))
 
 ;;; ── Text ───────────────────────────────────────────────────────────────────
 
@@ -85,8 +84,8 @@
    styled painters consume them, but raw fallback paths must not show PUA tofu."
   ^String [^String s]
   (-> s
-    (.replaceAll "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " ")
-    (.replaceAll "[\\uE110-\\uE119]" "")))
+      (.replaceAll "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " ")
+      (.replaceAll "[\\uE110-\\uE119]" "")))
 
 (defn put-str!
   "Draw a string at (col, row). Control characters are sanitized."
@@ -119,8 +118,12 @@
    g)
   ([^TextGraphics g col row fg]
    (when-let [tc (.getCharacter g (int col) (int row))]
-     (.setCharacter g (int col) (int row)
-       (-> tc (.withForegroundColor fg) (.withModifier SGR/UNDERLINE))))
+     (.setCharacter g
+                    (int col)
+                    (int row)
+                    (-> tc
+                        (.withForegroundColor fg)
+                        (.withModifier SGR/UNDERLINE))))
    g))
 
 (defn dot-cell!
@@ -139,28 +142,34 @@
   [^TextGraphics g col row fg]
   (when-let [tc (.getCharacter g (int col) (int row))]
     (when (#{" " "▁"} (.getCharacterString tc))
-      (.setCharacter g (int col) (int row)
-        (-> tc (.withCharacter \▁) (.withForegroundColor fg)))))
+      (.setCharacter g
+                     (int col)
+                     (int row)
+                     (-> tc
+                         (.withCharacter \▁)
+                         (.withForegroundColor fg)))))
   g)
 
 ;;; ── Rectangles ─────────────────────────────────────────────────────────────
 
 (defn fill-rect!
   "Fill a rectangle at (col, row) of size wxh with the given char (default space)."
-  ([g col row w h]    (fill-rect! g col row w h \space))
+  ([g col row w h] (fill-rect! g col row w h \space))
   ([^TextGraphics g col row w h ch]
-   (.fillRectangle g (TerminalPosition. (int col) (int row))
-     (TerminalSize. (int w) (int h)) (char ch))
+   (.fillRectangle g
+                   (TerminalPosition. (int col) (int row))
+                   (TerminalSize. (int w) (int h))
+                   (char ch))
    g))
 
 ;;; ── Box drawing characters ────────────────────────────────────────────────
 
-(def ^:const BOX_TL  Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-(def ^:const BOX_TR  Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
-(def ^:const BOX_BL  Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-(def ^:const BOX_BR  Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
-(def ^:const BOX_H   Symbols/SINGLE_LINE_HORIZONTAL)
-(def ^:const BOX_V   Symbols/SINGLE_LINE_VERTICAL)
+(def ^:const BOX_TL Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
+(def ^:const BOX_TR Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+(def ^:const BOX_BL Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
+(def ^:const BOX_BR Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+(def ^:const BOX_H Symbols/SINGLE_LINE_HORIZONTAL)
+(def ^:const BOX_V Symbols/SINGLE_LINE_VERTICAL)
 (def ^:const BOX_T_R Symbols/SINGLE_LINE_T_RIGHT)
 (def ^:const BOX_T_L Symbols/SINGLE_LINE_T_LEFT)
 
@@ -217,16 +226,16 @@
 ;; web's status dots. Each glyph MUST be display-width 1 (bare geometric, never a
 ;; VS-16 emoji) so `glyph + space` fills a 2-col gutter and the cell grid stays
 ;; aligned — same rule as SELECTION_GLYPH above.
-(def ^:const STATUS_ON   "●") ;; filled  — enabled / live / healthy
-(def ^:const STATUS_OFF  "○") ;; hollow  — disabled / idle
-(def ^:const MARK_VALUE  "◆") ;; a value you can cycle (enum / choice)
+(def ^:const STATUS_ON "●") ;; filled  — enabled / live / healthy
+(def ^:const STATUS_OFF "○") ;; hollow  — disabled / idle
+(def ^:const MARK_VALUE "◆") ;; a value you can cycle (enum / choice)
 (def ^:const MARK_ACTION "▸") ;; an action you can run
 
 ;; Footer chip icons — replace the literal words "resources"/"dir" in the
 ;; status footer. Bare BMP glyphs (display-width 1, NOT VS-16 emoji) so
 ;; `(count text)` matches the rendered cell count — same grid rule as above.
 (def ^:const GLYPH_RESOURCES "⚙") ;; managed resources (nREPLs, daemons…)
-(def ^:const GLYPH_DIR       "⌂") ;; filesystem-root directories
+(def ^:const GLYPH_DIR "⌂") ;; filesystem-root directories
 
 (def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
 
@@ -245,9 +254,15 @@
   "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
-  (let [right  (+ left w -1)
-        bottom (+ top h -1)
-        inner  (- w 2)]
+  (let [right
+        (+ left w -1)
+
+        bottom
+        (+ top h -1)
+
+        inner
+        (- w 2)]
+
     ;; Corners
     (set-char! g left top BOX_TL)
     (set-char! g right top BOX_TR)
@@ -283,14 +298,12 @@
    See the `Selection marker` block above for the project-wide
    rationale. Callers that need the prefix as a STRING (to inline
    into a row label) should use `selection-prefix` instead."
-  ([g col row selected?]
-   (draw-selection-marker! g col row selected? nil))
+  ([g col row selected?] (draw-selection-marker! g col row selected? nil))
   ([^TextGraphics g col row selected? marker-fg]
    (when selected?
      (let [prev-fg (when marker-fg (.getForegroundColor g))]
        (when marker-fg (set-fg! g marker-fg))
-       (styled g [BOLD]
-         (put-str! g col row SELECTION_GLYPH))
+       (styled g [BOLD] (put-str! g col row SELECTION_GLYPH))
        (when marker-fg (set-fg! g prev-fg))))
    g))
 
@@ -302,16 +315,16 @@
 ;; so display-width and friends can reference them without a forward
 ;; declare; the canonical name lives with the marker constants block.
 
-(def INLINE_BOLD_ON     "\uE110")
-(def INLINE_BOLD_OFF    "\uE111")
-(def INLINE_ITALIC_ON   "\uE112")
-(def INLINE_ITALIC_OFF  "\uE113")
-(def INLINE_STRIKE_ON   "\uE114")
-(def INLINE_STRIKE_OFF  "\uE115")
-(def INLINE_CODE_ON     "\uE116")
-(def INLINE_CODE_OFF    "\uE117")
-(def INLINE_LINK_ON     "\uE118")
-(def INLINE_LINK_OFF    "\uE119")
+(def INLINE_BOLD_ON "\uE110")
+(def INLINE_BOLD_OFF "\uE111")
+(def INLINE_ITALIC_ON "\uE112")
+(def INLINE_ITALIC_OFF "\uE113")
+(def INLINE_STRIKE_ON "\uE114")
+(def INLINE_STRIKE_OFF "\uE115")
+(def INLINE_CODE_ON "\uE116")
+(def INLINE_CODE_OFF "\uE117")
+(def INLINE_LINK_ON "\uE118")
+(def INLINE_LINK_OFF "\uE119")
 
 (def ^:private ^:const INLINE_SENTINEL_LO 0xE110)
 (def ^:private ^:const INLINE_SENTINEL_HI 0xE119)
@@ -321,8 +334,8 @@
    span sentinels above. Cheap range check, no map lookup."
   [^String g]
   (and (= 1 (.length g))
-    (let [c (int (.charAt g 0))]
-      (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
+       (let [c (int (.charAt g 0))]
+         (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
 (defn- sanitize-control-chars
   "Replace every ASCII control character in `s` (codepoints 0x00-0x1F)
@@ -344,12 +357,15 @@
    Inline-span sentinels (\uE110...\uE117) live in the BMP
    private-use area, not C0, so they pass through untouched."
   ^String [^String s]
-  (let [n (.length s)
-        first-bad (loop [i 0]
-                    (cond
-                      (>= i n) -1
-                      (< (int (.charAt s i)) 0x20) i
-                      :else (recur (inc i))))]
+  (let [n
+        (.length s)
+
+        first-bad
+        (loop [i 0]
+          (cond (>= i n) -1
+                (< (int (.charAt s i)) 0x20) i
+                :else (recur (inc i))))]
+
     (if (neg? first-bad)
       s
       (let [sb (StringBuilder. n)]
@@ -397,20 +413,23 @@
       (if (zero? (.length safe))
         0
         (let [cells (TextCharacter/fromString safe)
-              n     (alength cells)]
-          (loop [i 0 width 0]
+              n (alength cells)]
+
+          (loop [i 0
+                 width 0]
+
             (if (>= i n)
               width
               (let [tc ^TextCharacter (aget cells i)
-                    g  ^String (.getCharacterString tc)
-                    w  (cond
-                         (inline-sentinel? g)     0
-                         ;; Defer to lanterna's isDoubleWidth. The fork owns the
-                         ;; per-terminal width policy (VS-16 = 2 on iTerm2/Ghostty/…,
-                         ;; but 1 on Apple Terminal.app — auto-detected there), so
-                         ;; measurement always matches what putString paints.
-                         (.isDoubleWidth tc)      2
-                         :else                    1)]
+                    g ^String (.getCharacterString tc)
+                    w (cond (inline-sentinel? g) 0
+                            ;; Defer to lanterna's isDoubleWidth. The fork owns the
+                            ;; per-terminal width policy (VS-16 = 2 on iTerm2/Ghostty/…,
+                            ;; but 1 on Apple Terminal.app — auto-detected there), so
+                            ;; measurement always matches what putString paints.
+                            (.isDoubleWidth tc) 2
+                            :else 1)]
+
                 (recur (inc i) (+ width w))))))))))
 
 (defn col-prefix-end
@@ -424,25 +443,42 @@
 
    Returns 0 for nil/empty or non-positive `max-cols`."
   ^long [s ^long max-cols]
-  (cond
-    (or (nil? s) (<= max-cols 0)) 0
-    (<= (display-width s) max-cols) (long (.length ^CharSequence s))
-    :else
-    (let [cells (TextCharacter/fromString ^String s)
-          n     (alength cells)]
-      (loop [i 0 char-idx 0 used 0]
-        (if (>= i n)
-          char-idx
-          (let [tc           ^TextCharacter (aget cells i)
-                grapheme     ^String (.getCharacterString tc)
-                grapheme-len (long (.length grapheme))
-                w            (cond
-                               (inline-sentinel? grapheme) 0
-                               (.isDoubleWidth tc)         2
-                               :else                       1)]
-            (if (> (+ used w) max-cols)
-              char-idx
-              (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
+  (cond (or (nil? s) (<= max-cols 0)) 0
+        (<= (display-width s) max-cols) (long (.length ^CharSequence s))
+        :else (let [cells
+                    (TextCharacter/fromString ^String s)
+
+                    n
+                    (alength cells)]
+
+                (loop [i
+                       0
+
+                       char-idx
+                       0
+
+                       used
+                       0]
+
+                  (if (>= i n)
+                    char-idx
+                    (let [tc
+                          ^TextCharacter (aget cells i)
+
+                          grapheme
+                          ^String (.getCharacterString tc)
+
+                          grapheme-len
+                          (long (.length grapheme))
+
+                          w
+                          (cond (inline-sentinel? grapheme) 0
+                                (.isDoubleWidth tc) 2
+                                :else 1)]
+
+                      (if (> (+ used w) max-cols)
+                        char-idx
+                        (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
 
 (defn truncate-cols
   "Return the longest prefix of `s` that fits in at most `max-cols`
@@ -455,43 +491,57 @@
      returned string's `display-width` is exactly `max-cols`. This keeps
      `pad-right` / `pad-left` idempotent under repeated truncation."
   ^String [s ^long max-cols]
-  (cond
-    (or (nil? s) (<= max-cols 0)) ""
-    (<= (display-width s) max-cols) s
-    :else
-    (let [cells (TextCharacter/fromString ^String s)
-          n     (alength cells)
-          sb    (StringBuilder.)]
-      ;; Walk every grapheme, emit it iff it fits, stop on overflow.
-      ;; The earlier (= next max-cols) early-exit was deleted because
-      ;; it stranded trailing zero-width sentinels (style closers): if
-      ;; the budget filled exactly on a visible char and the next
-      ;; grapheme was a `INLINE_*_OFF`, the closer never made it into
-      ;; the output and the SGR style leaked past the cut. The
-      ;; structure below keeps walking sentinels for free (their `w`
-      ;; is zero, so `next` stays under budget) and only stops when a
-      ;; visible grapheme would push past `max-cols`.
-      (loop [i 0 used 0]
-        (if (>= i n)
-          (.toString sb)
-          (let [tc   ^TextCharacter (aget cells i)
-                gs   ^String (.getCharacterString tc)
-                w    (cond
-                       (inline-sentinel? gs) 0
-                       (.isDoubleWidth tc)   2
-                       :else                 1)
-                next (+ used w)]
-            (if (> next max-cols)
-              ;; A wide grapheme would have straddled the cut: drop it
-              ;; and pad with one space so the result's display-width
-              ;; is exactly `max-cols`. Sentinels can't reach this
-              ;; branch (their `w` is zero, so `next` never exceeds).
-              (do (when (< used max-cols) (.append sb \space))
-                (.toString sb))
-              ;; In-budget OR zero-width sentinel: append, advance,
-              ;; continue. For sentinels `w` is 0 so `used` stays put.
-              (do (.append sb gs)
-                (recur (inc i) next)))))))))
+  (cond (or (nil? s) (<= max-cols 0)) ""
+        (<= (display-width s) max-cols) s
+        :else (let [cells
+                    (TextCharacter/fromString ^String s)
+
+                    n
+                    (alength cells)
+
+                    sb
+                    (StringBuilder.)]
+
+                ;; Walk every grapheme, emit it iff it fits, stop on overflow.
+                ;; The earlier (= next max-cols) early-exit was deleted because
+                ;; it stranded trailing zero-width sentinels (style closers): if
+                ;; the budget filled exactly on a visible char and the next
+                ;; grapheme was a `INLINE_*_OFF`, the closer never made it into
+                ;; the output and the SGR style leaked past the cut. The
+                ;; structure below keeps walking sentinels for free (their `w`
+                ;; is zero, so `next` stays under budget) and only stops when a
+                ;; visible grapheme would push past `max-cols`.
+                (loop [i
+                       0
+
+                       used
+                       0]
+
+                  (if (>= i n)
+                    (.toString sb)
+                    (let [tc
+                          ^TextCharacter (aget cells i)
+
+                          gs
+                          ^String (.getCharacterString tc)
+
+                          w
+                          (cond (inline-sentinel? gs) 0
+                                (.isDoubleWidth tc) 2
+                                :else 1)
+
+                          next
+                          (+ used w)]
+
+                      (if (> next max-cols)
+                        ;; A wide grapheme would have straddled the cut: drop it
+                        ;; and pad with one space so the result's display-width
+                        ;; is exactly `max-cols`. Sentinels can't reach this
+                        ;; branch (their `w` is zero, so `next` never exceeds).
+                        (do (when (< used max-cols) (.append sb \space)) (.toString sb))
+                        ;; In-budget OR zero-width sentinel: append, advance,
+                        ;; continue. For sentinels `w` is 0 so `used` stays put.
+                        (do (.append sb gs) (recur (inc i) next)))))))))
 
 (defn fold-cols
   "Character-fold `s` into a vector of segments, each at most `max-cols`
@@ -516,7 +566,7 @@
    ANSI-aware width clip such rows separately."
   [s ^long max-cols]
   (let [^String s (str (or s ""))]
-    (if (<= 0 (.indexOf s (int 27)))   ; ESC (0x1b): plain-text-only primitive
+    (if (<= 0 (.indexOf s (int 27))) ; ESC (0x1b): plain-text-only primitive
       [s]
       (vec (TerminalTextUtils/foldColumns max-cols s)))))
 
@@ -557,77 +607,87 @@
   [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
   (let [;; Capture pre-existing modifiers so inline toggles can stack
         ;; on top of them and we can restore exactly at exit.
-        inherited ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
-        cells     (TextCharacter/fromString line)
-        n         (alength cells)]
+        inherited
+        ^java.util.EnumSet (java.util.EnumSet/copyOf (.getActiveModifiers g))
+
+        cells
+        (TextCharacter/fromString line)
+
+        n
+        (alength cells)]
+
     (.setForegroundColor g base-fg)
     (.setBackgroundColor g base-bg)
-    (cond
-      (zero? n) nil
+    (cond (zero? n) nil
+          ;; Fast path: no sentinels at all -> single putString. The
+          ;; inherited modifiers are still active, so this paints with
+          ;; whatever style the wrapping `styled` block enabled.
+          (loop [i 0]
+            (cond (>= i n) true
+                  (inline-sentinel? (.getCharacterString ^TextCharacter (aget cells i))) false
+                  :else (recur (inc i))))
+          (.putString g (int x) (int y) line)
+          ;; Slow path: walk graphemes, buffer text segments, flush on
+          ;; style transitions. `inline` is the set of toggles activated
+          ;; by sentinels we've seen so far; effective SGR set per flush
+          ;; is `inherited ∪ inline`.
+          :else
+          (let [sb
+                (StringBuilder.)
 
-      ;; Fast path: no sentinels at all -> single putString. The
-      ;; inherited modifiers are still active, so this paints with
-      ;; whatever style the wrapping `styled` block enabled.
-      (loop [i 0]
-        (cond
-          (>= i n) true
-          (inline-sentinel? (.getCharacterString ^TextCharacter (aget cells i))) false
-          :else (recur (inc i))))
-      (.putString g (int x) (int y) line)
+                inline
+                (java.util.EnumSet/noneOf SGR)
 
-      ;; Slow path: walk graphemes, buffer text segments, flush on
-      ;; style transitions. `inline` is the set of toggles activated
-      ;; by sentinels we've seen so far; effective SGR set per flush
-      ;; is `inherited ∪ inline`.
-      :else
-      (let [sb     (StringBuilder.)
-            inline (java.util.EnumSet/noneOf SGR)
-            col    (int-array 1 0)
-            code?  (boolean-array 1 false)
-            flush! (fn []
-                     (when (pos? (.length sb))
-                       (let [seg (.toString sb)]
-                         (.clearModifiers g)
-                         (if (aget code? 0)
-                           ;; Code span: hard-override fg/bg; modifiers
-                           ;; cleared so code reads as a flat zone.
-                           (do (.setForegroundColor g code-fg)
-                             (.setBackgroundColor g code-bg))
-                           ;; Plain span: base colors + (inherited ∪ inline) SGR.
-                           (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
-                             (.addAll effective inline)
-                             (.setForegroundColor g base-fg)
-                             (.setBackgroundColor g base-bg)
-                             (when-not (.isEmpty effective)
-                               (.enableModifiers g (into-array SGR effective)))))
-                         (.putString g (+ (int x) (aget col 0)) (int y) seg)
-                         (aset col 0 (int (+ (aget col 0) (display-width seg))))
-                         (.setLength sb 0))))]
-        (dotimes [i n]
-          (let [tc ^TextCharacter (aget cells i)
-                gs ^String (.getCharacterString tc)]
-            (cond
-              (= gs INLINE_BOLD_ON)    (do (flush!) (.add inline SGR/BOLD))
-              (= gs INLINE_BOLD_OFF)   (do (flush!) (.remove inline SGR/BOLD))
-              (= gs INLINE_ITALIC_ON)  (do (flush!) (.add inline SGR/ITALIC))
-              (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
-              (= gs INLINE_STRIKE_ON)  (do (flush!) (.add inline SGR/CROSSED_OUT))
-              (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
-              (= gs INLINE_CODE_ON)    (do (flush!) (aset code? 0 true))
-              (= gs INLINE_CODE_OFF)   (do (flush!) (aset code? 0 false))
-              (= gs INLINE_LINK_ON)    (do (flush!) (.add inline SGR/UNDERLINE))
-              (= gs INLINE_LINK_OFF)   (do (flush!) (.remove inline SGR/UNDERLINE))
-              :else                    (.append sb gs))))
-        (flush!)
-        ;; Restore the inherited modifier set exactly so the wrapping
-        ;; `styled` form's cleanup sees the state it expects. Without
-        ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
-        ;; could leak BOLD into the next paint call.
-        (.clearModifiers g)
-        (.setForegroundColor g base-fg)
-        (.setBackgroundColor g base-bg)
-        (when-not (.isEmpty inherited)
-          (.enableModifiers g (into-array SGR inherited)))))))
+                col
+                (int-array 1 0)
+
+                code?
+                (boolean-array 1 false)
+
+                flush!
+                (fn []
+                  (when (pos? (.length sb))
+                    (let [seg (.toString sb)]
+                      (.clearModifiers g)
+                      (if (aget code? 0)
+                        ;; Code span: hard-override fg/bg; modifiers
+                        ;; cleared so code reads as a flat zone.
+                        (do (.setForegroundColor g code-fg) (.setBackgroundColor g code-bg))
+                        ;; Plain span: base colors + (inherited ∪ inline) SGR.
+                        (let [effective ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                          (.addAll effective inline)
+                          (.setForegroundColor g base-fg)
+                          (.setBackgroundColor g base-bg)
+                          (when-not (.isEmpty effective)
+                            (.enableModifiers g (into-array SGR effective)))))
+                      (.putString g (+ (int x) (aget col 0)) (int y) seg)
+                      (aset col 0 (int (+ (aget col 0) (display-width seg))))
+                      (.setLength sb 0))))]
+
+            (dotimes [i n]
+              (let [tc ^TextCharacter (aget cells i)
+                    gs ^String (.getCharacterString tc)]
+
+                (cond (= gs INLINE_BOLD_ON) (do (flush!) (.add inline SGR/BOLD))
+                      (= gs INLINE_BOLD_OFF) (do (flush!) (.remove inline SGR/BOLD))
+                      (= gs INLINE_ITALIC_ON) (do (flush!) (.add inline SGR/ITALIC))
+                      (= gs INLINE_ITALIC_OFF) (do (flush!) (.remove inline SGR/ITALIC))
+                      (= gs INLINE_STRIKE_ON) (do (flush!) (.add inline SGR/CROSSED_OUT))
+                      (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
+                      (= gs INLINE_CODE_ON) (do (flush!) (aset code? 0 true))
+                      (= gs INLINE_CODE_OFF) (do (flush!) (aset code? 0 false))
+                      (= gs INLINE_LINK_ON) (do (flush!) (.add inline SGR/UNDERLINE))
+                      (= gs INLINE_LINK_OFF) (do (flush!) (.remove inline SGR/UNDERLINE))
+                      :else (.append sb gs))))
+            (flush!)
+            ;; Restore the inherited modifier set exactly so the wrapping
+            ;; `styled` form's cleanup sees the state it expects. Without
+            ;; this, an unbalanced sentinel (e.g. line ending mid-bold)
+            ;; could leak BOLD into the next paint call.
+            (.clearModifiers g)
+            (.setForegroundColor g base-fg)
+            (.setBackgroundColor g base-bg)
+            (when-not (.isEmpty inherited) (.enableModifiers g (into-array SGR inherited)))))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
@@ -635,98 +695,147 @@
   "Pad string to `w` terminal columns, right-filling with spaces.
    Truncates (column-aware) if too wide."
   [s w]
-  (let [txt  (or s "")
-        cols (display-width txt)
-        w    (long w)]
-    (cond
-      (= cols w) txt
-      (> cols w) (truncate-cols txt w)
-      :else     (str txt (apply str (repeat (- w cols) \space))))))
+  (let [txt
+        (or s "")
+
+        cols
+        (display-width txt)
+
+        w
+        (long w)]
+
+    (cond (= cols w) txt
+          (> cols w) (truncate-cols txt w)
+          :else (str txt (apply str (repeat (- w cols) \space))))))
 
 (defn pad-left
   "Pad string to `w` terminal columns, left-filling with spaces.
    Truncates (column-aware) if too wide."
   [s w]
-  (let [txt  (or s "")
-        cols (display-width txt)
-        w    (long w)]
-    (cond
-      (= cols w) txt
-      (> cols w) (truncate-cols txt w)
-      :else     (str (apply str (repeat (- w cols) \space)) txt))))
+  (let [txt
+        (or s "")
+
+        cols
+        (display-width txt)
+
+        w
+        (long w)]
+
+    (cond (= cols w) txt
+          (> cols w) (truncate-cols txt w)
+          :else (str (apply str (repeat (- w cols) \space)) txt))))
 
 (defn center-text
   "Center string within `w` terminal columns, padding both sides.
    Truncates (column-aware) if too wide."
   [s w]
-  (let [txt  (or s "")
-        cols (display-width txt)
-        w    (long w)]
-    (cond
-      (>= cols w) (truncate-cols txt w)
-      :else      (let [left-pad  (quot (- w cols) 2)
-                       right-pad (- w cols left-pad)]
-                   (str (apply str (repeat left-pad \space))
-                     txt
-                     (apply str (repeat right-pad \space)))))))
+  (let [txt
+        (or s "")
+
+        cols
+        (display-width txt)
+
+        w
+        (long w)]
+
+    (cond (>= cols w) (truncate-cols txt w)
+          :else
+          (let [left-pad
+                (quot (- w cols) 2)
+
+                right-pad
+                (- w cols left-pad)]
+
+            (str (apply str (repeat left-pad \space)) txt (apply str (repeat right-pad \space)))))))
 
 (defn space-between
   "Distribute items across `w` terminal columns with equal gaps.
    First item flush-left, last item flush-right, rest evenly spaced.
    Like CSS justify-content: space-between."
   [items w]
-  (let [n (count items)
-        w (long w)]
-    (cond
-      (zero? n) (apply str (repeat w \space))
-      (= n 1)   (center-text (first items) w)
-      :else
-      (let [total-text (long (reduce + (map display-width items)))
-            total-gaps (- w total-text)
-            gap-count  (dec n)
-            base-gap   (max 1 (quot total-gaps gap-count))
-            extra      (- total-gaps (* base-gap gap-count))]
-        (apply str
-          (interleave
-            items
-            (concat
-                 ;; Distribute remainder across first gaps
-              (map (fn [i]
-                     (apply str (repeat (+ base-gap (if (< (long i) (long extra)) 1 0)) \space)))
-                (range gap-count))
-                 ;; sentinel so interleave doesn't drop last item
-              [""])))))))
+  (let [n
+        (count items)
+
+        w
+        (long w)]
+
+    (cond (zero? n) (apply str (repeat w \space))
+          (= n 1) (center-text (first items) w)
+          :else (let [total-text
+                      (long (reduce + (map display-width items)))
+
+                      total-gaps
+                      (- w total-text)
+
+                      gap-count
+                      (dec n)
+
+                      base-gap
+                      (max 1 (quot total-gaps gap-count))
+
+                      extra
+                      (- total-gaps (* base-gap gap-count))]
+
+                  (apply str
+                    (interleave items
+                                (concat
+                                  ;; Distribute remainder across first gaps
+                                  (map (fn [i]
+                                         (apply str
+                                           (repeat (+ base-gap (if (< (long i) (long extra)) 1 0))
+                                                   \space)))
+                                       (range gap-count))
+                                  ;; sentinel so interleave doesn't drop last item
+                                  [""])))))))
 
 (defn space-around
   "Distribute items across `w` terminal columns with equal space
    around each item. Like CSS justify-content: space-around."
   [items w]
-  (let [n (count items)
-        w (long w)]
-    (cond
-      (zero? n) (apply str (repeat w \space))
-      (= n 1)   (center-text (first items) w)
-      :else
-      (let [total-text (long (reduce + (map display-width items)))
-            total-gaps (- w total-text)
-            slots      (* 2 n) ;; each item gets space on both sides
-            base       (max 0 (quot total-gaps slots))
-            unit-gap   (apply str (repeat base \space))
-            ;; Build: gap item gap | gap item gap | ...
-            parts      (mapcat (fn [item] [unit-gap item unit-gap]) items)
-            result     (apply str parts)
-            result-w   (display-width result)]
-        (cond
-          (= result-w w) result
-          (< result-w w) (str result (apply str (repeat (- w result-w) \space)))
-          :else          (truncate-cols result w))))))
+  (let [n
+        (count items)
+
+        w
+        (long w)]
+
+    (cond (zero? n) (apply str (repeat w \space))
+          (= n 1) (center-text (first items) w)
+          :else (let [total-text
+                      (long (reduce + (map display-width items)))
+
+                      total-gaps
+                      (- w total-text)
+
+                      slots
+                      (* 2 n)
+
+                      ;; each item gets space on both sides
+                      base
+                      (max 0 (quot total-gaps slots))
+
+                      unit-gap
+                      (apply str (repeat base \space))
+
+                      ;; Build: gap item gap | gap item gap | ...
+                      parts
+                      (mapcat (fn [item]
+                                [unit-gap item unit-gap])
+                              items)
+
+                      result
+                      (apply str parts)
+
+                      result-w
+                      (display-width result)]
+
+                  (cond (= result-w w) result
+                        (< result-w w) (str result (apply str (repeat (- w result-w) \space)))
+                        :else (truncate-cols result w))))))
 
 (defn v-center-offset
   "Compute vertical offset to center `content-h` rows within `container-h` rows."
   [content-h container-h]
-  (if (< content-h container-h)
-    (quot (- container-h content-h) 2)
-    0))
+  (if (< content-h container-h) (quot (- container-h content-h) 2) 0))
 
 ;;; ── Word-wrap & justification ──────────────────────────────────────────────
 ;; Backed by the native, grapheme/EAW-aware `TerminalTextUtils` methods in the
@@ -767,9 +876,15 @@
      :justify full-justify the words (flush both margins)."
   [s width mode]
   (case mode
-    :right   (pad-left s width)
-    :center  (center-text s width)
-    :justify (justify-line s width)
+    :right
+    (pad-left s width)
+
+    :center
+    (center-text s width)
+
+    :justify
+    (justify-line s width)
+
     (pad-right s width)))
 
 ;;; ── Flex drawing helpers (layout + draw in one call) ───────────────────────
@@ -807,13 +922,21 @@
   [{:keys [id label dirty? state]}]
   (let [base (or label id "")]
     (str (if (keyword? base) (name base) base)
-      (when dirty? " •")
-      (case state
-        :running  " ▶"
-        :verified " ✓"
-        :accepted " ✓"
-        :error    " !"
-        nil))))
+         (when dirty? " •")
+         (case state
+           :running
+           " ▶"
+
+           :verified
+           " ✓"
+
+           :accepted
+           " ✓"
+
+           :error
+           " !"
+
+           nil))))
 
 (defn tab-layout
   "Return tab geometry for a horizontal tab strip.
@@ -822,48 +945,83 @@
    `:active?`, and `:text` truncated to fit `:width`. Width math uses terminal
    columns, not Java chars. When the strip is too narrow, later tabs may get
    zero width; draw helpers skip those safely."
-  ([tabs left width active-id]
-   (tab-layout tabs left width active-id {}))
+  ([tabs left width active-id] (tab-layout tabs left width active-id {}))
   ([tabs left width active-id {:keys [gap]}]
-   (let [tabs  (vec tabs)
-         n     (count tabs)
-         left  (long left)
-         width (max 0 (long width))
-         gap   (max 0 (long (or gap tab-default-gap)))]
+   (let [tabs
+         (vec tabs)
+
+         n
+         (count tabs)
+
+         left
+         (long left)
+
+         width
+         (max 0 (long width))
+
+         gap
+         (max 0 (long (or gap tab-default-gap)))]
+
      (if (or (zero? n) (zero? width))
        []
-       (let [gap       (if (>= width (+ n (* gap (dec n)))) gap 0)
-             gap-total (* gap (dec n))
-             content-w (max 0 (- width gap-total))
-             base      (quot content-w n)
-             extra     (rem content-w n)]
-         (loop [idx 0 x left out []]
+       (let [gap
+             (if (>= width (+ n (* gap (dec n)))) gap 0)
+
+             gap-total
+             (* gap (dec n))
+
+             content-w
+             (max 0 (- width gap-total))
+
+             base
+             (quot content-w n)
+
+             extra
+             (rem content-w n)]
+
+         (loop [idx
+                0
+
+                x
+                left
+
+                out
+                []]
+
            (if (= idx n)
              out
-             (let [w       (+ base (if (< idx extra) 1 0))
-                   tab     (nth tabs idx)
-                   text    (truncate-cols (tab-display-label tab) w)
-                   active? (if (some? active-id)
-                             (= (:id tab) active-id)
-                             (true? (:active? tab)))
-                   next-x  (+ x w (if (= idx (dec n)) 0 gap))]
+             (let [w
+                   (+ base (if (< idx extra) 1 0))
+
+                   tab
+                   (nth tabs idx)
+
+                   text
+                   (truncate-cols (tab-display-label tab) w)
+
+                   active?
+                   (if (some? active-id) (= (:id tab) active-id) (true? (:active? tab)))
+
+                   next-x
+                   (+ x w (if (= idx (dec n)) 0 gap))]
+
                (recur (inc idx)
-                 next-x
-                 (conj out (assoc tab
-                             :left x
-                             :width w
-                             :active? active?
-                             :text text)))))))))))
+                      next-x
+                      (conj out
+                            (assoc tab
+                              :left x
+                              :width w
+                              :active? active?
+                              :text text)))))))))))
 
 (defn tab-at
   "Return the tab geometry under `col`, or nil. Expects `tab-layout` output."
   [layout col]
   (let [col (long col)]
-    (some (fn [{:keys [left width] :as tab}]
-            (when (and (pos? (long width))
-                    (>= col (long left))
-                    (< col (+ (long left) (long width))))
-              tab))
+    (some
+      (fn [{:keys [left width] :as tab}]
+        (when (and (pos? (long width)) (>= col (long left)) (< col (+ (long left) (long width))))
+          tab))
       layout)))
 
 (defn draw-tabs!
@@ -875,20 +1033,20 @@
 
    This primitive knows layout and drawing only. Callers own domain actions and
    click-region registration."
-  [g tabs {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg bordered?]}]
+  [g tabs
+   {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg
+           bordered?]}]
   (let [layout (tab-layout tabs left width active-id {:gap gap})]
     (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
     (fill-rect! g left row width 1)
     (doseq [{:keys [left width active? text]} layout
             :when (pos? (long width))]
+
       (clear-styles! g)
       (if active?
-        (do (set-colors! g active-fg active-bg)
-          (enable! g BOLD))
-        (do (set-colors! g inactive-fg inactive-bg)
-          (enable! g ITALIC)))
-      (when bordered?
-        (enable! g BORDERED))
+        (do (set-colors! g active-fg active-bg) (enable! g BOLD))
+        (do (set-colors! g inactive-fg inactive-bg) (enable! g ITALIC)))
+      (when bordered? (enable! g BORDERED))
       (fill-rect! g left row width 1)
       (draw-centered! g left row width text))
     (clear-styles! g)
@@ -908,21 +1066,21 @@
 ;; (italic for thinking, dim for code, bold for headers, etc.)
 ;; without visible noise.
 
-(def MARKER_THINKING   "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
-(def MARKER_CODE       "\u200C")  ;; zero-width non-joiner  -> code style
-(def MARKER_RESULT     "\u200D")  ;; zero-width joiner      -> result/return value (success)
-(def MARKER_SEP        "\u2060")  ;; word-joiner            -> separator line
-(def MARKER_CODE_OK    "\u2061")  ;; function application   -> code with success status
-(def MARKER_CODE_ERR   "\u2062")  ;; invisible times        -> code with error status
+(def MARKER_THINKING "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
+(def MARKER_CODE "\u200C")  ;; zero-width non-joiner  -> code style
+(def MARKER_RESULT "\u200D")  ;; zero-width joiner      -> result/return value (success)
+(def MARKER_SEP "\u2060")  ;; word-joiner            -> separator line
+(def MARKER_CODE_OK "\u2061")  ;; function application   -> code with success status
+(def MARKER_CODE_ERR "\u2062")  ;; invisible times        -> code with error status
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
-(def MARKER_DURATION   "\u2064")  ;; invisible plus         -> duration annotation
-(def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    -> iteration header with bg
+(def MARKER_DURATION "\u2064")  ;; invisible plus         -> duration annotation
+(def MARKER_ITERATION_HDR "\u2066")  ;; LRI                    -> iteration header with bg
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
-(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    -> running/neutral code block padding line
+(def MARKER_CODE_PAD "\u206A")  ;; ISS                    -> running/neutral code block padding line
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   -> error code block padding line
 (def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    -> successful code block padding line
-(def MARKER_RECAP       "\uE00E") ;; PUA                    -> iteration recap line (header-bg, bold+italic)
-(def MARKER_ITERATION_PAD   "\u206C")  ;; IAFS                   -> iteration zone padding (margin between blocks)
+(def MARKER_RECAP "\uE00E") ;; PUA                    -> iteration recap line (header-bg, bold+italic)
+(def MARKER_ITERATION_PAD "\u206C")  ;; IAFS                   -> iteration zone padding (margin between blocks)
 (def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   -> final answer header
 (def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   -> answer text line (with answer bg)
 (def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   -> answer padding line
@@ -930,36 +1088,36 @@
 ;; with the iteration/answer markers above. Two parallel sets:
 ;;   - MARKER_MD_*    -> answer-zone markdown (answer-bg)
 ;;   - MARKER_TH_MD_* -> thinking-zone markdown (iteration-header-bg, italic)
-(def MARKER_MD_H1         "\uE001") ;; markdown heading 1 (answer)
-(def MARKER_MD_H2         "\uE002") ;; markdown heading 2 (answer)
-(def MARKER_MD_H3         "\uE003") ;; markdown heading 3 (answer)
-(def MARKER_MD_BOLD       "\uE004") ;; markdown bold line (answer)
-(def MARKER_MD_CODE       "\uE005") ;; markdown fenced code (answer)
-(def MARKER_MD_BULLET     "\uE006") ;; markdown bullet list item (answer)
+(def MARKER_MD_H1 "\uE001") ;; markdown heading 1 (answer)
+(def MARKER_MD_H2 "\uE002") ;; markdown heading 2 (answer)
+(def MARKER_MD_H3 "\uE003") ;; markdown heading 3 (answer)
+(def MARKER_MD_BOLD "\uE004") ;; markdown bold line (answer)
+(def MARKER_MD_CODE "\uE005") ;; markdown fenced code (answer)
+(def MARKER_MD_BULLET "\uE006") ;; markdown bullet list item (answer)
 (def MARKER_MD_TABLE_HEAD "\uE007") ;; markdown table header row (answer)
-(def MARKER_MD_TABLE_SEP  "\uE008") ;; markdown table border / separator (answer)
-(def MARKER_MD_TABLE_ROW  "\uE009") ;; markdown table data row (answer)
-(def MARKER_MD_QUOTE      "\uE00A") ;; markdown blockquote (answer)
-(def MARKER_MD_HR         "\uE00B") ;; markdown horizontal rule (answer)
-(def MARKER_MD_SUMMARY    "\uE00C") ;; markdown <summary> disclosure label (answer)
-(def MARKER_OP_ROW        "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
-(def MARKER_HINT          "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
-(def MARKER_QUEUE_HDR     "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
-(def MARKER_QUEUE_ITEM    "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
-(def MARKER_QUEUE_BORDER  "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
+(def MARKER_MD_TABLE_SEP "\uE008") ;; markdown table border / separator (answer)
+(def MARKER_MD_TABLE_ROW "\uE009") ;; markdown table data row (answer)
+(def MARKER_MD_QUOTE "\uE00A") ;; markdown blockquote (answer)
+(def MARKER_MD_HR "\uE00B") ;; markdown horizontal rule (answer)
+(def MARKER_MD_SUMMARY "\uE00C") ;; markdown <summary> disclosure label (answer)
+(def MARKER_OP_ROW "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
+(def MARKER_HINT "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
+(def MARKER_QUEUE_HDR "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
+(def MARKER_QUEUE_ITEM "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
+(def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
 
-(def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
-(def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)
-(def MARKER_TH_MD_H3         "\uE023") ;; markdown heading 3 (thinking)
-(def MARKER_TH_MD_BOLD       "\uE024") ;; markdown bold line (thinking)
-(def MARKER_TH_MD_CODE       "\uE025") ;; markdown fenced code (thinking)
-(def MARKER_TH_MD_BULLET     "\uE026") ;; markdown bullet list item (thinking)
+(def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)
+(def MARKER_TH_MD_H2 "\uE022") ;; markdown heading 2 (thinking)
+(def MARKER_TH_MD_H3 "\uE023") ;; markdown heading 3 (thinking)
+(def MARKER_TH_MD_BOLD "\uE024") ;; markdown bold line (thinking)
+(def MARKER_TH_MD_CODE "\uE025") ;; markdown fenced code (thinking)
+(def MARKER_TH_MD_BULLET "\uE026") ;; markdown bullet list item (thinking)
 (def MARKER_TH_MD_TABLE_HEAD "\uE027") ;; markdown table header row (thinking)
-(def MARKER_TH_MD_TABLE_SEP  "\uE028") ;; markdown table border (thinking)
-(def MARKER_TH_MD_TABLE_ROW  "\uE029") ;; markdown table data row (thinking)
-(def MARKER_TH_MD_QUOTE      "\uE02A") ;; markdown blockquote (thinking)
-(def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)
-(def MARKER_TH_MD_SUMMARY    "\uE02C") ;; markdown <summary> disclosure label (thinking)
+(def MARKER_TH_MD_TABLE_SEP "\uE028") ;; markdown table border (thinking)
+(def MARKER_TH_MD_TABLE_ROW "\uE029") ;; markdown table data row (thinking)
+(def MARKER_TH_MD_QUOTE "\uE02A") ;; markdown blockquote (thinking)
+(def MARKER_TH_MD_HR "\uE02B") ;; markdown horizontal rule (thinking)
+(def MARKER_TH_MD_SUMMARY "\uE02C") ;; markdown <summary> disclosure label (thinking)
 
 ;; Inline span sentinels (\uE110...\uE117) live in their own section
 ;; near the top of this file because both the width math

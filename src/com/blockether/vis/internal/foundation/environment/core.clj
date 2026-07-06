@@ -17,18 +17,17 @@
    Runtime facts are computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls and explicitly by `(refresh!)`."
-  (:require
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.foundation.environment.agents :as agents]
-   [com.blockether.vis.internal.foundation.environment.git :as git]
-   [com.blockether.vis.internal.foundation.environment.host :as host]
-   [com.blockether.vis.internal.foundation.environment.languages :as languages]
-   [com.blockether.vis.internal.foundation.environment.monorepo :as monorepo]
-   [com.blockether.vis.internal.foundation.environment.render :as render]
-   [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [taoensso.telemere :as tel]))
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.foundation.environment.git :as git]
+            [com.blockether.vis.internal.foundation.environment.host :as host]
+            [com.blockether.vis.internal.foundation.environment.languages :as languages]
+            [com.blockether.vis.internal.foundation.environment.monorepo :as monorepo]
+            [com.blockether.vis.internal.foundation.environment.render :as render]
+            [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel]))
 
 ;; ---------------------------------------------------------------------------
 ;; Snapshot cache. Keyed by canonical cwd so we recompute on
@@ -41,60 +40,67 @@
 ;; extension reload (per plan caveat: extensions holding mutable
 ;; state across reload MUST use defonce). The cwd-keyed snapshot
 ;; covers host/git/languages/monorepo only — agents hold their own cache.
-(defonce ^:private cache
-  (atom {:key nil :value nil}))
+(defonce ^:private cache (atom {:key nil :value nil}))
 
-(defn- canonical-cwd ^String []
+(defn- canonical-cwd
+  ^String []
   ;; Production: channel rebinds *workspace-root* per turn.
   ;; The try/catch covers REPL / test paths where no binding exists.
-  (try
-    (.getCanonicalPath (workspace/cwd))
-    (catch Throwable _
-      (.getPath (workspace/cwd)))))
+  (try (.getCanonicalPath (workspace/cwd)) (catch Throwable _ (.getPath (workspace/cwd)))))
 
 (defn- compute-snapshot
   "Build the full snapshot map. Each piece is independently guarded
    so a failure in one section never poisons the others."
   [^String cwd]
-  (let [cwd-file   (java.io.File. cwd)
-        host-map   (try (host/snapshot)
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::host-failed
-                                  :data  {:error (ex-message t)}})
-                       {}))
-        git-map    (try (git/snapshot cwd-file)
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::git-failed
-                                  :data  {:error (ex-message t)}})
-                       nil))
-        scan-root  (or (some-> ^String (:root git-map) (java.io.File.))
-                     cwd-file)
-        langs-map  (try (languages/scan scan-root)
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::languages-failed
-                                  :data  {:error (ex-message t)}})
-                       nil))
-        mono-map   (try (monorepo/snapshot scan-root)
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::monorepo-failed
-                                  :data  {:error (ex-message t)}})
-                       nil))
-        repos-map  (try (repositories/snapshot scan-root)
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::repositories-failed
-                                  :data  {:error (ex-message t)}})
-                       nil))]
-    {:host         host-map
-     :git          git-map
-     :languages    langs-map
-     :monorepo     mono-map
-     :repositories repos-map}))
+  (let [cwd-file
+        (java.io.File. cwd)
+
+        host-map
+        (try (host/snapshot)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::host-failed :data {:error (ex-message t)}})
+               {}))
+
+        git-map
+        (try (git/snapshot cwd-file)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::git-failed :data {:error (ex-message t)}})
+               nil))
+
+        scan-root
+        (or (some-> ^String (:root git-map)
+                    (java.io.File.))
+            cwd-file)
+
+        langs-map
+        (try (languages/scan scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::languages-failed :data {:error (ex-message t)}})
+               nil))
+
+        mono-map
+        (try (monorepo/snapshot scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::monorepo-failed :data {:error (ex-message t)}})
+               nil))
+
+        repos-map
+        (try (repositories/snapshot scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::repositories-failed :data {:error (ex-message t)}})
+               nil))]
+
+    {:host host-map :git git-map :languages langs-map :monorepo mono-map :repositories repos-map}))
 
 (defn snapshot
   "Full environment snapshot map {:host :git :languages :monorepo :repositories}. Cached per cwd; host helper, not a model tool."
   []
-  (let [cwd     (canonical-cwd)
-        cached  @cache]
+  (let [cwd
+        (canonical-cwd)
+
+        cached
+        @cache]
+
     (if (= cwd (:key cached))
       (:value cached)
       (let [value (compute-snapshot cwd)]
@@ -107,9 +113,8 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use afte
   []
   (reset! cache {:key nil :value nil})
   (try (agents/reload!)
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::agents-reload-failed
-                 :data  {:error (ex-message t)}})))
+       (catch Throwable t
+         (tel/log! {:level :warn :id ::agents-reload-failed :data {:error (ex-message t)}})))
   (snapshot))
 
 ;; ---------------------------------------------------------------------------
@@ -126,26 +131,28 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use afte
 (defn repositories
   "await repositories()
 Returns {\"count\": N, \"repositories\": [{\"path\", \"branch\", \"dirty\": bool, \"changes\": bool, \"stale\": bool, \"stash_count\": N, ...}], \"truncated\": bool}."
-  [] (:repositories (snapshot)))
+  []
+  (:repositories (snapshot)))
 
 (defn git
   "await git()
 Returns {\"root\", \"branch\", \"detached\": bool, \"submodules\": bool, \"worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"stale\", \"dirty\", \"clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
-  [] (:git (snapshot)))
+  []
+  (:git (snapshot)))
 
 (defn languages
   "await languages()
 Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
-  [] (:languages (snapshot)))
+  []
+  (:languages (snapshot)))
 
 (defn monorepo
   "await monorepo()
 Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"truncated\": bool}. \"shape\" is None for single-package repos."
-  [] (:monorepo (snapshot)))
+  []
+  (:monorepo (snapshot)))
 
-(defn- success-envelope
-  [result]
-  (extension/success {:result result}))
+(defn- success-envelope [result] (extension/success {:result result}))
 
 (defn- repositories-tool
   "await repositories()
@@ -179,20 +186,15 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot."
    inline `:tag` lets `register-extension!` populate the op registry
    without an out-of-band `vis/register-op!` doseq."
   [v sym]
-  (vis/symbol v
-    {:symbol sym :tag :observation}))
+  (vis/symbol v {:symbol sym :tag :observation}))
 
-(def repositories-symbol
-  (env-data-symbol #'repositories-tool 'repositories))
+(def repositories-symbol (env-data-symbol #'repositories-tool 'repositories))
 
-(def languages-symbol
-  (env-data-symbol #'languages-tool 'languages))
+(def languages-symbol (env-data-symbol #'languages-tool 'languages))
 
-(def monorepo-symbol
-  (env-data-symbol #'monorepo-tool 'monorepo))
+(def monorepo-symbol (env-data-symbol #'monorepo-tool 'monorepo))
 
-(def refresh!-symbol
-  (env-data-symbol #'refresh!-tool 'refresh!))
+(def refresh!-symbol (env-data-symbol #'refresh!-tool 'refresh!))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance surface.
@@ -204,7 +206,8 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
   []
   (agents/instructions))
 
-(defn- environment-warnings []
+(defn- environment-warnings
+  []
   ;; Keep extension load failures in `(:project ctx) :warnings`. This is not
   ;; a public `v/` tool; it is emergency context for broken extension loads.
   (vec (vis/extension-load-failures)))
@@ -219,8 +222,7 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
   (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
 
 (def environment-symbols
-  [repositories-symbol languages-symbol monorepo-symbol
-   refresh!-symbol
+  [repositories-symbol languages-symbol monorepo-symbol refresh!-symbol
    main-agent-instructions-symbol])
 
 (def ^:private FN_INDEX
@@ -231,21 +233,17 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
   "Foundation-owned structured ctx contribution. Runtime facts, project
    guidance, and extension-load warnings live under `(:project ctx)`."
   [_environment]
-  (try
-    (render/project-context (snapshot) (agents/instructions) (environment-warnings))
-    (catch Throwable t
-      (tel/log! {:level :error :id ::environment-ctx-failed
-                 :data  {:error (ex-message t)}})
-      {})))
+  (try (render/project-context (snapshot) (agents/instructions) (environment-warnings))
+       (catch Throwable t
+         (tel/log! {:level :error :id ::environment-ctx-failed :data {:error (ex-message t)}})
+         {})))
 
 (defn environment-prompt
   [_environment]
-  (try
-    FN_INDEX
-    (catch Throwable t
-      (tel/log! {:level :error :id ::prompt-render-failed
-                 :data  {:error (ex-message t)}})
-      "")))
+  (try FN_INDEX
+       (catch Throwable t
+         (tel/log! {:level :error :id ::prompt-render-failed :data {:error (ex-message t)}})
+         "")))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,

@@ -75,13 +75,13 @@
    The pre-existing `:events` interleaving log was removed: it lived
    only in memory (never persisted), and resumed bubbles re-render
    from this single flat layout. One layout path is enough."
-  (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.form :as form]
-   [com.blockether.vis.internal.iteration :as iteration]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.iteration :as iteration]))
 
-(defn- empty-iteration-entry [iteration]
+(defn- empty-iteration-entry
+  [iteration]
   ;; Per-iteration timeline entry. `:forms` is the canonical per-form
   ;; vector — every form a map carrying primitives (`:code`, `:result`,
   ;; `:error`, ...) and a few pre-derived display projections (the
@@ -90,31 +90,28 @@
   ;; classification). The renderer reads `:forms` directly; no parallel
   ;; arrays.
   {:iteration iteration
-   :thinking  nil
-   :forms     []
+   :thinking nil
+   :forms []
    :provider-fallbacks []
-   :activity  nil
+   :activity nil
    :elided-form-idxs #{}
-   :error     nil
-   :final     nil
-   :done?     false})
+   :error nil
+   :final nil
+   :done? false})
 
 (defn- pad-forms-to
   "Pad `:forms` with placeholder maps until it has at least `n` entries.
    Tolerates out-of-order chunk arrivals (futures landing at higher
    positions before earlier ones)."
   [forms n]
-  (if (< (count forms) n)
-    (into forms (repeat (- n (count forms)) {:position nil}))
-    forms))
+  (if (< (count forms) n) (into forms (repeat (- n (count forms)) {:position nil})) forms))
 
 (defn- envelope-duration-ms
   [envelope]
   (when (and (map? envelope)
-          (nat-int? (:started-at-ms envelope))
-          (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope))
-             (long (:started-at-ms envelope))))))
+             (nat-int? (:started-at-ms envelope))
+             (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
 (defn- form-result-kind
   "Classify a form chunk for the channel's `show-result?` gate.
@@ -131,11 +128,10 @@
                 (e.g. `(select-keys r …)`).
      :value  —  everything else (plain Clojure values)."
   [chunk]
-  (cond
-    (:error chunk)                            :error
-    (extension/tool-result? (:result chunk))  :tool
-    (seq (:channel chunk))                    :tool
-    :else                                     :value))
+  (cond (:error chunk) :error
+        (extension/tool-result? (:result chunk)) :tool
+        (seq (:channel chunk)) :tool
+        :else :value))
 
 (defn- tool-result-detail
   "Project tool-result envelope to the small detail map TUI labels
@@ -144,17 +140,22 @@
   (when (extension/tool-result? tool-result)
     (let [meta (or (:metadata tool-result) {})]
       (cond-> {}
-        (:symbol tool-result) (assoc :op (:symbol tool-result))
-        (:tag tool-result)    (assoc :tag (:tag tool-result))
-        :always (merge (select-keys meta [:spec :paths :hit-count :truncated-by
-                                          :command :cwd :target]))))))
+        (:symbol tool-result)
+        (assoc :op (:symbol tool-result))
 
-(defn- form-result-detail
-  [chunk]
-  (tool-result-detail (:result chunk)))
+        (:tag tool-result)
+        (assoc :tag (:tag tool-result))
 
-(defn- normalize-thinking-text [thinking]
-  (some-> thinking str str/trim))
+        :always
+        (merge (select-keys meta [:spec :paths :hit-count :truncated-by :command :cwd :target]))))))
+
+(defn- form-result-detail [chunk] (tool-result-detail (:result chunk)))
+
+(defn- normalize-thinking-text
+  [thinking]
+  (some-> thinking
+          str
+          str/trim))
 
 (defn- display-form-idx
   "Map original engine `form-idx` to the visible vector index after any
@@ -197,9 +198,7 @@
    chrome, but the code/result row itself is noise in both TUI and CLI
    trace views."
   [chunk]
-  (boolean
-    (or (:vis/structurally-silent? chunk)
-      (= "vis_silent" (:result chunk)))))
+  (boolean (or (:vis/structurally-silent? chunk) (= "vis_silent" (:result chunk)))))
 
 (defn- chunk->form-start
   "Build the initial `:forms` entry for a `:form-start` chunk. Only the
@@ -212,12 +211,12 @@
     ;; ONE canonical list so a running form can hide its invocation code the same
     ;; way the completed form does.
     (form/->display chunk)
-    {:code            (:code chunk)
-     :comment         (:comment chunk)
+    {:code (:code chunk)
+     :comment (:comment chunk)
      :render-segments (:render-segments chunk)
-     :scope           (:scope chunk)
-     :started-at-ms   (:started-at-ms chunk)
-     :silent?         (silent-chunk? chunk)}))
+     :scope (:scope chunk)
+     :started-at-ms (:started-at-ms chunk)
+     :silent? (silent-chunk? chunk)}))
 
 (defn- chunk->form-result
   "Build the completed `:forms` entry for a `:form-result` chunk.
@@ -229,29 +228,29 @@
    `:error` inline with the failing source caret; the per-form result row
    is suppressed)."
   [prev-form chunk]
-  (let [errored?     (some? (:error chunk))]
+  (let [errored? (some? (:error chunk))]
     (merge
       ;; Native-tool op-card fields (pre-rendered card + badge label + colour),
       ;; projected from the ONE canonical list so this builder can't drift from
       ;; the gateway / restore builders (see internal/form.clj).
       (form/->display chunk)
-      {:code            (:code chunk)
-       :comment         (:comment chunk)
+      {:code (:code chunk)
+       :comment (:comment chunk)
        :render-segments (:render-segments chunk)
-       :scope           (or (:scope chunk) (:scope prev-form))
-       :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
-       :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
+       :scope (or (:scope chunk) (:scope prev-form))
+       :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
+       :duration-ms (or (envelope-duration-ms (:envelope chunk)) 0)
        ;; The SINGLE display surface the channels paint (render.clj / web both read
        ;; `(:result form)`): the pre-rendered markdown the loop built — a native
        ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
-       :result          (:result chunk)
+       :result (:result chunk)
        ;; raw stdout kept for any model-context / resume consumer.
-       :stdout          (:stdout chunk)
-       :result-kind     (form-result-kind chunk)
-       :result-detail   (form-result-detail chunk)
-       :error           (:error chunk)
-       :success?        (not errored?)
-       :silent?         (and (not errored?) (silent-chunk? chunk))})))
+       :stdout (:stdout chunk)
+       :result-kind (form-result-kind chunk)
+       :result-detail (form-result-detail chunk)
+       :error (:error chunk)
+       :success? (not errored?)
+       :silent? (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
   [entry display-idx form]
@@ -262,24 +261,25 @@
   "Remove the form at display index `idx` from `:forms`. Indices shift
    down; the channel re-numbers in display order."
   [entry idx]
-  (update entry :forms
-    (fn [forms]
-      (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
-        (into (subvec forms 0 idx) (subvec forms (inc idx)))
-        forms))))
+  (update entry
+          :forms
+          (fn [forms]
+            (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
+              (into (subvec forms 0 idx) (subvec forms (inc idx)))
+              forms))))
 
 (defn- insert-empty-form-at
   "Insert a placeholder form at display index `idx`, padding if needed.
    Used by `unhide-form-slot` when a previously silent form must become
    visible without overwriting later visible slots."
   [entry idx]
-  (update entry :forms
-    (fn [forms]
-      (if (and (vector? forms) (integer? idx) (not (neg? idx)))
-        (let [padded (pad-forms-to forms idx)]
-          (into (conj (subvec padded 0 idx) {:position idx})
-            (subvec padded idx)))
-        forms))))
+  (update entry
+          :forms
+          (fn [forms]
+            (if (and (vector? forms) (integer? idx) (not (neg? idx)))
+              (let [padded (pad-forms-to forms idx)]
+                (into (conj (subvec padded 0 idx) {:position idx}) (subvec padded idx)))
+              forms))))
 
 (defn- hide-form-slot
   "Remember original form index `idx` as elided and drop its current
@@ -291,8 +291,8 @@
     entry
     (let [display-idx (display-form-idx entry idx)]
       (-> entry
-        (update :elided-form-idxs (fnil conj #{}) idx)
-        (drop-form-at display-idx)))))
+          (update :elided-form-idxs (fnil conj #{}) idx)
+          (drop-form-at display-idx)))))
 
 (defn- unhide-form-slot
   "Make original form index `idx` visible again. This happens when a block
@@ -302,8 +302,8 @@
     entry
     (let [display-idx (display-form-idx entry idx)]
       (-> entry
-        (update :elided-form-idxs disj idx)
-        (insert-empty-form-at display-idx)))))
+          (update :elided-form-idxs disj idx)
+          (insert-empty-form-at display-idx)))))
 
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
@@ -317,23 +317,29 @@
     :response-parse
     (if (= :done (:status chunk))
       (-> entry
-        (dissoc :content-stream)
-        (assoc :activity nil :response-parse chunk))
-      (assoc entry :activity :response-parse :response-parse chunk))
+          (dissoc :content-stream)
+          (assoc :activity nil
+                 :response-parse chunk))
+      (assoc entry
+        :activity :response-parse
+        :response-parse chunk))
 
     :reasoning
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
-                          (normalize-thinking-text (:thinking entry)))]
-      (assoc entry :thinking next-thinking :activity nil))
+                            (normalize-thinking-text (:thinking entry)))]
+      (assoc entry
+        :thinking next-thinking
+        :activity nil))
 
     :content
     ;; Provider content stream (answer Markdown) — kept on entry as
     ;; `:content-stream` so the live bubble can render it below the
     ;; reasoning text. Cleared by :response-parse :done and
     ;; :iteration-final once the parsed block takes over.
-    (let [next-content (or (normalize-thinking-text (:content chunk))
-                         (:content-stream entry))]
-      (assoc entry :content-stream next-content :activity nil))
+    (let [next-content (or (normalize-thinking-text (:content chunk)) (:content-stream entry))]
+      (assoc entry
+        :content-stream next-content
+        :activity nil))
 
     :assistant-prose
     ;; Full end-of-iteration commentary (the "prose beyond the code"). The loop
@@ -344,79 +350,94 @@
     ;; the moment the code block landed, because `:content-stream` is dropped
     ;; once `:forms` exists (see render's `content-stream (when (empty? forms) …)`).
     (assoc entry
-      :assistant-prose (or (some-> (:text chunk) str str/trim not-empty)
-                         (:assistant-prose entry))
+      :assistant-prose (or (some-> (:text chunk)
+                                   str
+                                   str/trim
+                                   not-empty)
+                           (:assistant-prose entry))
       :content-stream nil
       :activity nil)
 
     :provider-fallback
     (-> entry
-      (assoc :activity :provider-call)
-      (update :provider-fallbacks conj
-        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+        (assoc :activity :provider-call)
+        (update :provider-fallbacks
+                conj
+                (or (:event chunk)
+                    (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :provider-retry-reset
     ;; Provider stream died after emitting live text. Vis retries the whole
     ;; provider call before any code eval, so rewind the live attempt: drop
     ;; stale reasoning/content/parse state and keep only the retry recap.
     (-> entry
-      (assoc :activity :provider-call)
-      (dissoc :thinking :content-stream :response-parse)
-      (update :provider-fallbacks conj
-        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+        (assoc :activity :provider-call)
+        (dissoc :thinking :content-stream :response-parse)
+        (update :provider-fallbacks
+                conj
+                (or (:event chunk)
+                    (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
-    (let [entry'      (unhide-form-slot entry (:position chunk))
-          display-idx (display-form-idx entry' (:position chunk))]
-      (assoc (assoc-form entry' display-idx (chunk->form-start chunk))
-        :activity nil))
+    (let [entry'
+          (unhide-form-slot entry (:position chunk))
+
+          display-idx
+          (display-form-idx entry' (:position chunk))]
+
+      (assoc (assoc-form entry' display-idx (chunk->form-start chunk)) :activity nil))
 
     :form-result
     (let [silent? (structurally-silent-chunk? chunk)]
       (if silent?
-        (assoc (hide-form-slot entry (:position chunk))
-          :activity nil)
-        (let [entry'      (unhide-form-slot entry (:position chunk))
+        (assoc (hide-form-slot entry (:position chunk)) :activity nil)
+        (let [entry' (unhide-form-slot entry (:position chunk))
               display-idx (display-form-idx entry' (:position chunk))
-              prev-form   (get (:forms entry') display-idx)]
-          (assoc (assoc-form entry' display-idx
-                   (chunk->form-result prev-form chunk))
+              prev-form (get (:forms entry') display-idx)]
+
+          (assoc (assoc-form entry' display-idx (chunk->form-result prev-form chunk))
             :activity nil))))
 
     :iteration-final
-    (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
-          base (assoc entry
-                 :thinking (or (normalize-thinking-text (:thinking chunk))
-                             (normalize-thinking-text (:thinking entry)))
-                 :activity nil
-                 :final    (:final chunk)
-                 :done?    (boolean (:done? chunk)))
+    (let [duplicate-final?
+          (and (:done? entry) (:final entry) (:final chunk))
+
+          base
+          (assoc entry
+            :thinking (or (normalize-thinking-text (:thinking chunk))
+                          (normalize-thinking-text (:thinking entry)))
+            :activity nil
+            :final (:final chunk)
+            :done? (boolean (:done? chunk)))
+
           ;; Structurally-silent bookkeeping blocks (e.g. title updates)
           ;; are hidden as chunks arrive. Other successful `:vis/silent`
           ;; blocks stay in the timeline with `:silent? true`; channel
           ;; settings decide whether to render them.
-          answer-idx   (when-not duplicate-final?
-                         (when (:final chunk) (:answer-position chunk)))
-          silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
-          base         (reduce (fn [e engine-idx]
-                                 (let [display-idx (display-form-idx e engine-idx)]
-                                   (if (and (integer? display-idx)
-                                         (< display-idx (count (:forms e))))
-                                     (assoc-in e [:forms display-idx :silent?] true)
-                                     e)))
-                         base
-                         (sort silent-idxs))]
-      (if (some? answer-idx)
-        (hide-form-slot base answer-idx)
-        base))
+          answer-idx
+          (when-not duplicate-final? (when (:final chunk) (:answer-position chunk)))
+
+          silent-idxs
+          (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
+
+          base
+          (reduce (fn [e engine-idx]
+                    (let [display-idx (display-form-idx e engine-idx)]
+                      (if (and (integer? display-idx) (< display-idx (count (:forms e))))
+                        (assoc-in e [:forms display-idx :silent?] true)
+                        e)))
+                  base
+                  (sort silent-idxs))]
+
+      (if (some? answer-idx) (hide-form-slot base answer-idx) base))
 
     :iteration-error
     (assoc entry
       :thinking (or (normalize-thinking-text (:thinking chunk))
-                  (normalize-thinking-text (:thinking entry)))
+                    (normalize-thinking-text (:thinking entry)))
       :activity nil
-      :error    (:error chunk)
-      :done?    true)
+      :error (:error chunk)
+      :done? true)
 
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))
@@ -434,7 +455,9 @@
    incrementally."
   ([] (make-progress-tracker nil))
   ([{:keys [on-update]}]
-   (let [timeline (atom (sorted-map))
+   (let [timeline
+         (atom (sorted-map))
+
          ;; Canonicalize every entry as it leaves the tracker: layer the
          ;; shared block-level fields (`:scope` `:code` `:ops` `:status`
          ;; `:duration-ms` `:error` + 0-based `:position`) on top of the
@@ -442,24 +465,28 @@
          ;; chunk reducer keeps its transient bookkeeping; consumers
          ;; (renderer, parity test) see the SAME canonical shape the resume
          ;; path produces.
-         canon    (fn [iteration entry]
-                    (iteration/canonicalize
-                      (assoc entry :position (when (integer? iteration)
-                                               (max 0 (dec (long iteration)))))))
-         as-vec   #(vec (map (fn [[it entry]] (canon it entry)) %))]
-     {:on-chunk     (fn [chunk]
-                      ;; Every streaming chunk carries its 1-based iteration
-                      ;; POSITION under `:iteration` (the result map uses
-                      ;; `:iteration-count` for the TOTAL — a different thing).
-                      ;; Skip a chunk with no `:iteration` rather than route it
-                      ;; into a `nil` bucket: that bucket sorts BEFORE every
-                      ;; real iteration and shifts live numbering by +1.
-                      (when-let [iteration (:iteration chunk)]
-                        (let [tl (swap! timeline update iteration
-                                   (fn [entry]
-                                     (update-entry
-                                       (or entry (empty-iteration-entry iteration))
-                                       chunk)))]
-                          (when on-update
-                            (on-update (as-vec tl) chunk)))))
+         canon
+         (fn [iteration entry]
+           (iteration/canonicalize
+             (assoc entry :position (when (integer? iteration) (max 0 (dec (long iteration)))))))
+
+         as-vec
+         #(vec (map (fn [[it entry]]
+                      (canon it entry))
+                    %))]
+
+     {:on-chunk (fn [chunk]
+                  ;; Every streaming chunk carries its 1-based iteration
+                  ;; POSITION under `:iteration` (the result map uses
+                  ;; `:iteration-count` for the TOTAL — a different thing).
+                  ;; Skip a chunk with no `:iteration` rather than route it
+                  ;; into a `nil` bucket: that bucket sorts BEFORE every
+                  ;; real iteration and shifts live numbering by +1.
+                  (when-let [iteration (:iteration chunk)]
+                    (let [tl (swap! timeline update
+                               iteration
+                               (fn [entry]
+                                 (update-entry (or entry (empty-iteration-entry iteration))
+                                               chunk)))]
+                      (when on-update (on-update (as-vec tl) chunk)))))
       :get-timeline #(as-vec @timeline)})))

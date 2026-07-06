@@ -39,12 +39,10 @@
       :slash/body   IR (vector starting with :ir ...) OR Markdown string
       :slash/actions [{:label :slash}]   ;; optional follow-ups
       :slash/data    arbitrary payload (workspace-id, sha, ...)}"
-
-  (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.prompt :as prompt]
-   [taoensso.telemere :as tel]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.prompt :as prompt]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Aggregation
@@ -79,8 +77,8 @@
   [slashes]
   (reduce (fn [acc s]
             (update acc (extension/slash-path s) (fnil conj []) s))
-    {}
-    slashes))
+          {}
+          slashes))
 
 (defn- spec-available-for?
   "True when `spec` permits dispatch for `ctx` per its
@@ -97,8 +95,7 @@
    the first registered."
   [env path]
   (let [path (vec path)]
-    (when (seq path)
-      (first (get (index-by-path (active-slashes env)) path)))))
+    (when (seq path) (first (get (index-by-path (active-slashes env)) path)))))
 
 (defn slash-children
   "Return the vec of slash specs whose `:slash/parent` = `parent` vec.
@@ -107,8 +104,9 @@
   ([env parent]
    (let [parent (vec parent)]
      (->> (active-slashes env)
-       (filter (fn [s] (= parent (vec (:slash/parent s)))))
-       vec))))
+          (filter (fn [s]
+                    (= parent (vec (:slash/parent s)))))
+          vec))))
 
 ;; =============================================================================
 ;; Parsing
@@ -123,8 +121,7 @@
    as `Unknown slash command`. Slash names never contain `/`; nested
    commands are separate tokens (`/draft new`)."
   [text]
-  (boolean (and (string? text)
-             (re-find #"^/[^\s/]+(?:\s|$)" text))))
+  (boolean (and (string? text) (re-find #"^/[^\s/]+(?:\s|$)" text))))
 
 (defn- tokenize
   [text]
@@ -133,8 +130,8 @@
   ;; Telegram bot) never carry shell quotes; their input layer hands
   ;; us pre-trimmed text.
   (->> (str/split (subs text 1) #"\s+")
-    (remove str/blank?)
-    vec))
+       (remove str/blank?)
+       vec))
 
 (defn parse
   "Tokenise a slash `text` into `{:path :args :raw}` or nil.
@@ -146,10 +143,7 @@
   [text]
   (when (slash-text? text)
     (let [tokens (tokenize text)]
-      (when (seq tokens)
-        {:path (vec tokens)
-         :args []
-         :raw  text}))))
+      (when (seq tokens) {:path (vec tokens) :args [] :raw text}))))
 
 (defn- resolve-longest-prefix
   "Walk the token vec back-to-front and return the deepest prefix
@@ -164,15 +158,14 @@
     (loop [n (count tokens)]
       (when (pos? n)
         (let [prefix (subvec tokens 0 n)
-              specs  (get by-path prefix)]
+              specs (get by-path prefix)]
+
           (if (seq specs)
             (let [chosen (or (some (fn [spec]
                                      (when (spec-available-for? spec ctx) spec))
-                               specs)
-                           (first specs))]
-              {:path prefix
-               :args (vec (subvec tokens n))
-               :slash chosen})
+                                   specs)
+                             (first specs))]
+              {:path prefix :args (vec (subvec tokens n)) :slash chosen})
             (recur (dec n))))))))
 
 ;; =============================================================================
@@ -182,13 +175,23 @@
 (defn- missing-requires
   "Return the set of `:slash/requires` entries unsatisfied by `ctx`."
   [slash ctx]
-  (let [needs (set (:slash/requires slash))
-        sat?  (fn [r]
-                (case r
-                  :session   (some? (or (:session/id ctx) (:session-id ctx)))
-                  :workspace (some? (or (:workspace/id ctx) (:workspace-id ctx)))
-                  :channel   (some? (or (:channel/id ctx) (:channel-id ctx)))
-                  false))]
+  (let [needs
+        (set (:slash/requires slash))
+
+        sat?
+        (fn [r]
+          (case r
+            :session
+            (some? (or (:session/id ctx) (:session-id ctx)))
+
+            :workspace
+            (some? (or (:workspace/id ctx) (:workspace-id ctx)))
+
+            :channel
+            (some? (or (:channel/id ctx) (:channel-id ctx)))
+
+            false))]
+
     (into #{} (remove sat?) needs)))
 
 (defn dispatch
@@ -206,59 +209,49 @@
 
    Return shapes documented at the namespace docstring."
   [env ctx text]
-  (cond
-    (not (slash-text? text))
-    {:handled? false}
+  (cond (not (slash-text? text)) {:handled? false}
+        :else (let [tokens (tokenize text)]
+                (if (empty? tokens)
+                  {:handled? true :error "Empty slash command" :reason :unknown}
+                  (if-let [{:keys [path args slash]} (resolve-longest-prefix env ctx tokens)]
+                    (let [ctx* (assoc ctx
+                                 :command/path path
+                                 :command/argv args
+                                 :command/raw text)
+                          missing (missing-requires slash ctx*)]
 
-    :else
-    (let [tokens (tokenize text)]
-      (if (empty? tokens)
-        {:handled? true :error "Empty slash command" :reason :unknown}
-        (if-let [{:keys [path args slash]} (resolve-longest-prefix env ctx tokens)]
-          (let [ctx*    (assoc ctx
-                          :command/path path
-                          :command/argv args
-                          :command/raw  text)
-                missing (missing-requires slash ctx*)]
-            (cond
-              (seq missing)
-              {:handled? true
-               :error    (str "Slash " (pr-str path) " requires " missing)
-               :reason   :requires-failed
-               :missing  missing
-               :path     path}
-
-              ;; resolve-longest-prefix already filtered on
-              ;; availability against the OUTER `ctx`; re-check
-              ;; against `ctx*` (with :command/path stamped) so a
-              ;; spec whose availability depends on path/args still
-              ;; has a chance to refuse.
-              (not (spec-available-for? slash ctx*))
-              {:handled? true
-               :error    (str "Slash " (pr-str path) " not available in this context")
-               :reason   :unavailable
-               :path     path}
-
-              (nil? (:slash/run-fn slash))
-              {:handled? true
-               :error    (str "Slash " (pr-str path) " has no :slash/run-fn")
-               :reason   :no-run-fn
-               :path     path}
-
-              :else
-              (try
-                (let [result ((:slash/run-fn slash) ctx*)]
-                  {:handled? true :result result :path path})
-                (catch Throwable t
-                  (tel/log! {:level :warn :id ::run-fn-threw
-                             :data  {:path  path
-                                     :error (ex-message t)}})
-                  {:handled? true
-                   :error    (or (ex-message t) (str t))
-                   :reason   :run-failed
-                   :ex       t
-                   :path     path}))))
-          {:handled? true
-           :error    (str "Unknown slash command: " text)
-           :reason   :unknown
-           :tokens   tokens})))))
+                      (cond (seq missing) {:handled? true
+                                           :error (str "Slash " (pr-str path) " requires " missing)
+                                           :reason :requires-failed
+                                           :missing missing
+                                           :path path}
+                            ;; resolve-longest-prefix already filtered on
+                            ;; availability against the OUTER `ctx`; re-check
+                            ;; against `ctx*` (with :command/path stamped) so a
+                            ;; spec whose availability depends on path/args still
+                            ;; has a chance to refuse.
+                            (not (spec-available-for? slash ctx*))
+                            {:handled? true
+                             :error (str "Slash " (pr-str path) " not available in this context")
+                             :reason :unavailable
+                             :path path}
+                            (nil? (:slash/run-fn slash))
+                            {:handled? true
+                             :error (str "Slash " (pr-str path) " has no :slash/run-fn")
+                             :reason :no-run-fn
+                             :path path}
+                            :else (try (let [result ((:slash/run-fn slash) ctx*)]
+                                         {:handled? true :result result :path path})
+                                       (catch Throwable t
+                                         (tel/log! {:level :warn
+                                                    :id ::run-fn-threw
+                                                    :data {:path path :error (ex-message t)}})
+                                         {:handled? true
+                                          :error (or (ex-message t) (str t))
+                                          :reason :run-failed
+                                          :ex t
+                                          :path path}))))
+                    {:handled? true
+                     :error (str "Unknown slash command: " text)
+                     :reason :unknown
+                     :tokens tokens})))))

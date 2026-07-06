@@ -36,23 +36,21 @@
    prompt assembly, slash dispatch, `vis extensions list` all just work).
    A file that fails to load becomes a load-failure warning (surfaced via
    `vis doctor`), never a crash."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.vis.internal.agents :as agents]
-   [com.blockether.vis.internal.config :as config]
-   [com.blockether.vis.internal.env-python :as env]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.extension-aggregate :as aggregate]
-   [com.blockether.vis.internal.notifications :as notifications]
-   [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-   [taoensso.telemere :as tel])
-  (:import
-   [java.io File]
-   [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
-   [org.graalvm.polyglot.io IOAccess]
-   [org.graalvm.polyglot.proxy ProxyExecutable]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension-aggregate :as aggregate]
+            [com.blockether.vis.internal.notifications :as notifications]
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [taoensso.telemere :as tel])
+  (:import [java.io File]
+           [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
+           [org.graalvm.polyglot.io IOAccess]
+           [org.graalvm.polyglot.proxy ProxyExecutable]))
 
 (set! *warn-on-reflection* true)
 
@@ -206,28 +204,29 @@ def __vis_registration__():
   "Wrap a Clojure fn as a Python callable: positional Python args marshal
    to Clojure via `->clj`, the return value marshals back via `->py`."
   ^ProxyExecutable [f]
-  (reify ProxyExecutable
-    (execute [_ args]
-      (env/->py (apply f (map env/->clj args))))))
+  (reify
+    ProxyExecutable
+      (execute [_ args] (env/->py (apply f (map env/->clj args))))))
 
 (defn- call-py
   "Enter an extension's context (serialized — Truffle contexts are single-
    entry; same `locking` pattern as the printer context) and call a Python
    callable with marshalled args. Returns the `->clj` view of the result."
   [^Context ctx ^Value f args]
-  (locking ctx
-    (env/->clj (.execute f (object-array (mapv env/->py args))))))
+  (locking ctx (env/->clj (.execute f (object-array (mapv env/->py args))))))
 
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
    Clojure data (ordered maps -> hash maps, seqs -> vectors) so `vis.state`
    rows round-trip through `pr-str`/`edn/read-string`."
   [x]
-  (cond
-    (map? x) (into {} (map (fn [[k v]] [k (plainify v)])) x)
-    (sequential? x) (mapv plainify x)
-    (set? x) (mapv plainify x)
-    :else x))
+  (cond (map? x) (into {}
+                       (map (fn [[k v]]
+                              [k (plainify v)]))
+                       x)
+        (sequential? x) (mapv plainify x)
+        (set? x) (mapv plainify x)
+        :else x))
 
 ;; =============================================================================
 ;; Durable state (`vis.state`) — backed by the `extension_aggregate` table
@@ -249,23 +248,26 @@ def __vis_registration__():
    confine `vis.state` to an in-memory DB."
   nil)
 
-(defn- state-env []
-  (or *state-env*
-    {:db-info (persistance/db-shared-connection! (config/resolve-db-spec))}))
+(defn- state-env
+  []
+  (or *state-env* {:db-info (persistance/db-shared-connection! (config/resolve-db-spec))}))
 
-(defn- state-get* [k]
+(defn- state-get*
+  [k]
   (some-> (aggregate/extension-aggregate-get (state-env)
-            {:key (str k) :kind state-kind :scope :global})
-    :content))
+                                             {:key (str k) :kind state-kind :scope :global})
+          :content))
 
-(defn- state-put!* [k v]
-  (aggregate/extension-aggregate-put! (state-env)
+(defn- state-put!*
+  [k v]
+  (aggregate/extension-aggregate-put!
+    (state-env)
     {:key (str k) :kind state-kind :scope :global :content (plainify v)})
   nil)
 
-(defn- state-del!* [k]
-  (aggregate/extension-delete-aggregate! (state-env)
-    {:key (str k) :kind state-kind :scope :global})
+(defn- state-del!*
+  [k]
+  (aggregate/extension-delete-aggregate! (state-env) {:key (str k) :kind state-kind :scope :global})
   nil)
 
 ;; =============================================================================
@@ -279,23 +281,21 @@ def __vis_registration__():
    explicitly bound `vis` API callbacks."
   ^Context []
   (-> (Context/newBuilder (into-array String ["python"]))
-    (.engine ^Engine @env/shared-engine)
-    (.allowAllAccess false)
-    (.allowIO IOAccess/ALL)
-    (.allowCreateThread true)
-    (.allowCreateProcess true)
-    (.allowNativeAccess false)
-    (.allowPolyglotAccess PolyglotAccess/NONE)
-    (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-    (.build)))
+      (.engine ^Engine @env/shared-engine)
+      (.allowAllAccess false)
+      (.allowIO IOAccess/ALL)
+      (.allowCreateThread true)
+      (.allowCreateProcess true)
+      (.allowNativeAccess false)
+      (.allowPolyglotAccess PolyglotAccess/NONE)
+      (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
+      (.build)))
 
 ;; Python hands LEVEL as a string; the boundary is strings-only, so the
 ;; lookup maps string -> the INTERNAL telemere/notification level keyword.
 ;; No `(keyword …)` minting of Python-supplied data.
-(def ^:private log-levels
-  {"trace" :trace, "debug" :debug, "info" :info, "warn" :warn, "error" :error})
-(def ^:private notify-levels
-  {"info" :info, "success" :success, "warn" :warn, "error" :error})
+(def ^:private log-levels {"trace" :trace "debug" :debug "info" :info "warn" :warn "error" :error})
+(def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
 (defn- bind-host!
   "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
@@ -304,24 +304,32 @@ def __vis_registration__():
    extension's identity (see `*state-env*`)."
   [^Context ctx label]
   (let [g (.getBindings ctx "python")]
-    (.putMember g "__vis_host_state_get__"
-      (->executable (fn [k] (state-get* k))))
-    (.putMember g "__vis_host_state_put__"
-      (->executable (fn [k v] (state-put!* k v))))
-    (.putMember g "__vis_host_state_del__"
-      (->executable (fn [k] (state-del!* k))))
-    (.putMember g "__vis_host_log__"
-      (->executable (fn [level msg]
-                      (let [lvl (get log-levels (str level) :info)]
-                        (tel/log! {:level lvl :id ::extension-log
-                                   :data {:extension label}
-                                   :msg (str msg)}))
-                      nil)))
-    (.putMember g "__vis_host_notify__"
-      (->executable (fn [text level]
-                      (notifications/notify! (str text)
-                        :level (get notify-levels (str level) :info))
-                      nil)))))
+    (.putMember g
+                "__vis_host_state_get__"
+                (->executable (fn [k]
+                                (state-get* k))))
+    (.putMember g
+                "__vis_host_state_put__"
+                (->executable (fn [k v]
+                                (state-put!* k v))))
+    (.putMember g
+                "__vis_host_state_del__"
+                (->executable (fn [k]
+                                (state-del!* k))))
+    (.putMember g
+                "__vis_host_log__"
+                (->executable
+                  (fn [level msg]
+                    (let [lvl (get log-levels (str level) :info)]
+                      (tel/log!
+                        {:level lvl :id ::extension-log :data {:extension label} :msg (str msg)}))
+                    nil)))
+    (.putMember g
+                "__vis_host_notify__"
+                (->executable
+                  (fn [text level]
+                    (notifications/notify! (str text) :level (get notify-levels (str level) :info))
+                    nil)))))
 
 ;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
@@ -337,8 +345,10 @@ def __vis_registration__():
    it crosses the strings-only boundary."
   [env]
   {"cwd" (System/getProperty "user.dir")
-   "session_id" (some-> (:session-id env) str)
-   "channel" (some-> (:channel env) str)})
+   "session_id" (some-> (:session-id env)
+                        str)
+   "channel" (some-> (:channel env)
+                     str)})
 
 (defn- call-py-ext
   "Invoke a Python callable with the extension identity bound (so `vis.state`
@@ -349,9 +359,12 @@ def __vis_registration__():
    resolves through the shared connection / the test binding.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
-  (binding [extension/*current-extension* (or extension/*current-extension*
-                                            {:ext/name ext-name})
-            *state-env* (if (:db-info env) env *state-env*)]
+  (binding [extension/*current-extension*
+            (or extension/*current-extension* {:ext/name ext-name})
+
+            *state-env*
+            (if (:db-info env) env *state-env*)]
+
     (call-py ctx f args)))
 
 (defn- sctx->env
@@ -359,8 +372,11 @@ def __vis_registration__():
    id the dispatcher stamps onto the slash ctx (see `slash/dispatch`)."
   [sctx]
   (cond-> {}
-    (:db-info sctx) (assoc :db-info (:db-info sctx))
-    (:session/id sctx) (assoc :session-id (:session/id sctx))))
+    (:db-info sctx)
+    (assoc :db-info (:db-info sctx))
+
+    (:session/id sctx)
+    (assoc :session-id (:session/id sctx))))
 
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
@@ -368,34 +384,30 @@ def __vis_registration__():
    via `normalize-error`) — Python authors never construct envelopes."
   [ext-name sym ^Context ctx ^Value pyfn]
   (fn [& args]
-    (try
-      (extension/success {:result (call-py-ext ext-name nil ctx pyfn (vec args))})
-      (catch Throwable t
-        (extension/failure
-          {:result nil
-           :throwable t
-           :metadata {:extension ext-name :tool (str sym)}})))))
+    (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn (vec args))})
+         (catch Throwable t
+           (extension/failure
+             {:result nil :throwable t :metadata {:extension ext-name :tool (str sym)}})))))
 
 (defn- activation-adapter
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env]
-    (try
-      (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env)]))
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::activation-failed
-                   :data {:extension ext-name :error (ex-message t)}})
-        false))))
+    (try (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env)]))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::activation-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           false))))
 
 (defn- prompt-adapter
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env]
-    (try
-      (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
-        (when (string? r) r))
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::prompt-failed
-                   :data {:extension ext-name :error (ex-message t)}})
-        nil))))
+    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
+           (when (string? r) r))
+         (catch Throwable t
+           (tel/log!
+             {:level :warn :id ::prompt-failed :data {:extension ext-name :error (ex-message t)}})
+           nil))))
 
 (defn- ctx-adapter
   "`:ext/ctx-fn` for a Python `vis.extension(ctx=...)` callable. Runs per turn
@@ -407,13 +419,12 @@ def __vis_registration__():
    bad optional context never blocks a turn."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env]
-    (try
-      (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
-        (if (map? r) (plainify r) {}))
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::ctx-failed
-                   :data {:extension ext-name :error (ex-message t)}})
-        {}))))
+    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
+           (if (map? r) (plainify r) {}))
+         (catch Throwable t
+           (tel/log!
+             {:level :warn :id ::ctx-failed :data {:extension ext-name :error (ex-message t)}})
+           {}))))
 
 (defn- slash-adapter
   "`:slash/run-fn` for one `vis.slash(...)` entry. The Python callable
@@ -423,19 +434,29 @@ def __vis_registration__():
   (fn [sctx]
     ;; The payload crosses INTO Python (string keys); the response crossed
     ;; BACK via `->clj` (string keys as well).
-    (let [payload {"channel" (some-> (:channel/id sctx) name)
-                   "args" (mapv str (:command/argv sctx))
-                   "raw" (str (:command/raw sctx))
-                   "session_id" (some-> (:session/id sctx) str)}
-          res (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
-      (cond
-        (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
-        (string? res) {:slash/status :ok :slash/title res}
-        (map? res) (cond-> {:slash/status (if (= "error" (get res "status")) :error :ok)}
-                     (get res "title") (assoc :slash/title (str (get res "title")))
-                     (string? (get res "body")) (assoc :slash/body (get res "body"))
-                     (some? (get res "data")) (assoc :slash/data (get res "data")))
-        :else {:slash/status :ok :slash/title (pr-str res)}))))
+    (let [payload
+          {"channel" (some-> (:channel/id sctx)
+                             name)
+           "args" (mapv str (:command/argv sctx))
+           "raw" (str (:command/raw sctx))
+           "session_id" (some-> (:session/id sctx)
+                                str)}
+
+          res
+          (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
+
+      (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
+            (string? res) {:slash/status :ok :slash/title res}
+            (map? res) (cond-> {:slash/status (if (= "error" (get res "status")) :error :ok)}
+                         (get res "title")
+                         (assoc :slash/title (str (get res "title")))
+
+                         (string? (get res "body"))
+                         (assoc :slash/body (get res "body"))
+
+                         (some? (get res "data"))
+                         (assoc :slash/data (get res "data")))
+            :else {:slash/status :ok :slash/title (pr-str res)}))))
 
 (defn- guard-adapter
   "Python `phase='before'` hook -> a host :around op hook. The callable
@@ -445,18 +466,19 @@ def __vis_registration__():
    loop."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args next-fn]
-    (let [res (try
-                (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
-                (catch Throwable t
-                  (tel/log! {:level :warn :id ::op-hook-failed
-                             :data {:extension ext-name :op op-kw :error (ex-message t)}})
-                  nil))]
+    (let [res (try (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::op-hook-failed
+                                :data {:extension ext-name :op op-kw :error (ex-message t)}})
+                     nil))]
       (if (and (map? res) (= "block" (get res "marker")))
         (extension/failure
           {:result nil
            :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
-                   :hint (str "Blocked by the '" ext-name
-                           "' Python extension. Ask the user before retrying.")}})
+                   :hint (str "Blocked by the '"
+                              ext-name
+                              "' Python extension. Ask the user before retrying.")}})
         (next-fn args)))))
 
 (defn- after-adapter
@@ -465,11 +487,15 @@ def __vis_registration__():
    ignored and the original result always flows on."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args result]
-    (try
-      (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::op-hook-failed
-                   :data {:extension ext-name :op op-kw :error (ex-message t)}})))
+    (try (call-py-ext ext-name
+                      env
+                      ctx
+                      pyfn
+                      [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::op-hook-failed
+                      :data {:extension ext-name :op op-kw :error (ex-message t)}})))
     result))
 
 ;; =============================================================================
@@ -489,69 +515,121 @@ def __vis_registration__():
 
 ;; Extension TAG vocabulary: the .py author declares "observation"/"mutation";
 ;; the registry stores the internal tag keyword. Bounded map — no minting.
-(def ^:private symbol-tags {"observation" :observation, "mutation" :mutation})
+(def ^:private symbol-tags {"observation" :observation "mutation" :mutation})
 
 (defn- ->symbol-entry
   "`spec` is a Python registration dict — STRING keys (strings-only boundary)."
   [ext-name alias-sym ^Context ctx spec]
-  (let [sym (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
-        pyfn (get spec "fn")
-        argv (cond-> (mapv clojure.core/symbol (get spec "params"))
-               (get spec "varargs") (-> (conj '&) (conj 'args)))]
+  (let [sym
+        (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
+
+        pyfn
+        (get spec "fn")
+
+        argv
+        (cond-> (mapv clojure.core/symbol (get spec "params"))
+          (get spec "varargs")
+          (-> (conj '&)
+              (conj 'args)))]
+
     (cond-> #:ext.symbol{:symbol sym
                          :fn (tool-adapter ext-name sym ctx pyfn)
                          :doc (str (get spec "doc"))
                          :arglists [argv]
                          :tag (get symbol-tags (str (get spec "tag")) :observation)}
-      (get spec "hidden") (assoc :ext.symbol/hidden? true))))
+      (get spec "hidden")
+      (assoc :ext.symbol/hidden? true))))
 
 (defn- ->slash-spec
   [ext-name ^Context ctx spec]
-  (let [doc (get spec "doc"), usage (get spec "usage")]
+  (let [doc
+        (get spec "doc")
+
+        usage
+        (get spec "usage")]
+
     (cond-> {:slash/name (str (get spec "name"))
              :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
-      (string? doc) (assoc :slash/doc doc)
-      (string? usage) (assoc :slash/usage usage))))
+      (string? doc)
+      (assoc :slash/doc doc)
+
+      (string? usage)
+      (assoc :slash/usage usage))))
 
 (defn- ->op-hook-entries
   [ext-name ^Context ctx spec]
-  (let [before? (= "before" (str (get spec "phase")))
-        pyfn (get spec "fn")
-        f (if before?
-            (guard-adapter ext-name ctx pyfn)
-            (after-adapter ext-name ctx pyfn))]
+  (let [before?
+        (= "before" (str (get spec "phase")))
+
+        pyfn
+        (get spec "fn")
+
+        f
+        (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))]
+
     ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
     ;; canonical tool op keywords). The vocabulary is author-declared config,
     ;; not model data — the one sanctioned mint in this file.
-    (mapv (fn [op] {:op (keyword (str op))
-                    :phase (if before? :around :after)
-                    :fn f})
-      (get spec "ops"))))
+    (mapv (fn [op]
+            {:op (keyword (str op)) :phase (if before? :around :after) :fn f})
+          (get spec "ops"))))
 
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
   [^Context ctx reg]
-  (let [ext-name (str (get reg "name"))
-        alias-sym (some-> (get reg "alias") str clojure.core/symbol)
-        symbols (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
-        slashes (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
-        op-hooks (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
-        prompt (get reg "prompt")
-        ctx-fn (get reg "ctx")
-        activation (get reg "activation")]
+  (let [ext-name
+        (str (get reg "name"))
+
+        alias-sym
+        (some-> (get reg "alias")
+                str
+                clojure.core/symbol)
+
+        symbols
+        (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
+
+        slashes
+        (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
+
+        op-hooks
+        (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
+
+        prompt
+        (get reg "prompt")
+
+        ctx-fn
+        (get reg "ctx")
+
+        activation
+        (get reg "activation")]
+
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
              :ext/kind (str (or (get reg "kind") "python"))
              :ext/source-nses ['com.blockether.vis.internal.python-extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols}
-                           alias-sym (assoc :ext.engine/alias alias-sym))}
-      (get reg "version") (assoc :ext/version (str (get reg "version")))
-      (seq slashes) (assoc :ext/slash-commands slashes)
-      (seq op-hooks) (assoc :ext/op-hooks op-hooks)
-      (string? prompt) (assoc :ext/prompt-fn prompt)
-      (instance? Value prompt) (assoc :ext/prompt-fn (prompt-adapter ext-name ctx prompt))
-      (some? activation) (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))
-      (instance? Value ctx-fn) (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn)))))
+                           alias-sym
+                           (assoc :ext.engine/alias alias-sym))}
+      (get reg "version")
+      (assoc :ext/version (str (get reg "version")))
+
+      (seq slashes)
+      (assoc :ext/slash-commands slashes)
+
+      (seq op-hooks)
+      (assoc :ext/op-hooks op-hooks)
+
+      (string? prompt)
+      (assoc :ext/prompt-fn prompt)
+
+      (instance? Value prompt)
+      (assoc :ext/prompt-fn (prompt-adapter ext-name ctx prompt))
+
+      (some? activation)
+      (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))
+
+      (instance? Value ctx-fn)
+      (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn)))))
 
 ;; =============================================================================
 ;; Loader
@@ -591,13 +669,14 @@ def __vis_registration__():
   (swap! change-listeners dissoc listener-id)
   nil)
 
-(defn- notify-change-listeners! [payload]
+(defn- notify-change-listeners!
+  [payload]
   (doseq [[id f] @change-listeners]
-    (try
-      (f payload)
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::change-listener-failed
-                   :data {:listener id :error (ex-message t)}})))))
+    (try (f payload)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::change-listener-failed
+                      :data {:listener id :error (ex-message t)}})))))
 
 (defn load-failures
   "Load failures from the most recent Python-extension scan:
@@ -609,9 +688,13 @@ def __vis_registration__():
   "Snapshot of the currently loaded Python extensions:
    `{<canonical-path> {:sha ... :ext-name ...}} ` (context handle elided)."
   []
-  (into {} (map (fn [[p e]] [p (dissoc e :context :ext)])) @loaded))
+  (into {}
+        (map (fn [[p e]]
+               [p (dissoc e :context :ext)]))
+        @loaded))
 
-(defn- default-extension-dirs []
+(defn- default-extension-dirs
+  []
   [(io/file (System/getProperty "user.home") ".vis" "extensions")
    (io/file (System/getProperty "user.dir") ".vis" "extensions")])
 
@@ -624,41 +707,57 @@ def __vis_registration__():
                     :when (.isDirectory d)
                     ^File f (sort-by #(.getName ^File %) (.listFiles d))
                     :when (and (.isFile f) (str/ends-with? (.getName f) ".py"))]
+
                 f)]
-    (->> files (reduce (fn [[seen acc] ^File f]
-                         (let [p (.getCanonicalPath f)]
-                           (if (seen p) [seen acc] [(conj seen p) (conj acc f)])))
+    (->> files
+         (reduce (fn [[seen acc] ^File f]
+                   (let [p (.getCanonicalPath f)]
+                     (if (seen p) [seen acc] [(conj seen p) (conj acc f)])))
                  [#{} []])
-      second)))
+         second)))
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
    extension it declares. Returns `{:path :sha :ext-name :context}`;
    throws (with the context closed) on any failure."
   [^File f]
-  (let [path (.getCanonicalPath f)
-        source (slurp f)
-        sha (extension/sha256-hex source)
-        ctx (build-context)]
-    (try
-      (bind-host! ctx (.getName f))
-      (locking ctx
-        (.eval ctx "python" ^String bootstrap-python)
-        (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
-      (let [g (.getBindings ctx "python")
-            reg (call-py ctx (.getMember g "__vis_registration__") [])]
-        (when (nil? reg)
-          (throw (ex-info (str (.getName f) " never called vis.extension(...)")
-                   {:type ::no-registration :file path})))
-        (let [spec (registration->spec ctx reg)
-              validated (extension/register-extension! spec)]
-          (tel/log! {:level :info :id ::loaded
-                     :data {:file path :ext (:ext/name spec)}
-                     :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
-          {:path path :sha sha :ext-name (:ext/name spec) :ext validated :context ctx}))
-      (catch Throwable t
-        (try (.close ctx true) (catch Throwable _))
-        (throw t)))))
+  (let [path
+        (.getCanonicalPath f)
+
+        source
+        (slurp f)
+
+        sha
+        (extension/sha256-hex source)
+
+        ctx
+        (build-context)]
+
+    (try (bind-host! ctx (.getName f))
+         (locking ctx
+           (.eval ctx "python" ^String bootstrap-python)
+           (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
+         (let [g
+               (.getBindings ctx "python")
+
+               reg
+               (call-py ctx (.getMember g "__vis_registration__") [])]
+
+           (when (nil? reg)
+             (throw (ex-info (str (.getName f) " never called vis.extension(...)")
+                             {:type ::no-registration :file path})))
+           (let [spec
+                 (registration->spec ctx reg)
+
+                 validated
+                 (extension/register-extension! spec)]
+
+             (tel/log! {:level :info
+                        :id ::loaded
+                        :data {:file path :ext (:ext/name spec)}
+                        :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
+             {:path path :sha sha :ext-name (:ext/name spec) :ext validated :context ctx}))
+         (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t)))))
 
 (defn- teardown!
   "Deregister every loaded Python extension and close its context."
@@ -684,33 +783,40 @@ def __vis_registration__():
   ([] (load-python-extensions! nil))
   ([{:keys [dirs]}]
    (register-loader-extension!)
-   (let [dirs (or dirs (default-extension-dirs))
-         files (scan dirs)
-         fp (mapv (fn [^File f] [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
-              files)]
+   (let [dirs
+         (or dirs (default-extension-dirs))
+
+         files
+         (scan dirs)
+
+         fp
+         (mapv (fn [^File f]
+                 [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
+               files)]
+
      (if (= fp @last-fingerprint)
        {:loaded (count @loaded) :failed (count @failures) :changed? false}
        (let [old-names (set (map :ext-name (vals @loaded)))]
          (teardown!)
          (reset! failures [])
          (doseq [^File f files]
-           (try
-             (let [{:keys [path ext-name] :as entry} (load-file! f)]
-               ;; A later file (project dir) registering the same
-               ;; extension name supersedes the earlier one — the
-               ;; registry already swapped the registration; close the
-               ;; superseded context so its adapters can't linger.
-               (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
-                       :when (and (= oname ext-name) (not= opath path))]
-                 (try (.close octx true) (catch Throwable _))
-                 (swap! loaded dissoc opath))
-               (swap! loaded assoc path (dissoc entry :path)))
-             (catch Throwable t
-               (tel/log! {:level :warn :id ::load-failed
-                          :data {:file (str f) :error (ex-message t)}
-                          :msg (str "Python extension failed to load: " f
-                                 " — " (ex-message t))})
-               (swap! failures conj {:file (str f) :error (ex-message t)}))))
+           (try (let [{:keys [path ext-name] :as entry} (load-file! f)]
+                  ;; A later file (project dir) registering the same
+                  ;; extension name supersedes the earlier one — the
+                  ;; registry already swapped the registration; close the
+                  ;; superseded context so its adapters can't linger.
+                  (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
+                          :when (and (= oname ext-name) (not= opath path))]
+
+                    (try (.close octx true) (catch Throwable _))
+                    (swap! loaded dissoc opath))
+                  (swap! loaded assoc path (dissoc entry :path)))
+                (catch Throwable t
+                  (tel/log! {:level :warn
+                             :id ::load-failed
+                             :data {:file (str f) :error (ex-message t)}
+                             :msg (str "Python extension failed to load: " f " — " (ex-message t))})
+                  (swap! failures conj {:file (str f) :error (ex-message t)}))))
          (reset! last-fingerprint fp)
          ;; Propagate to live surfaces (cached session envs, TUI slash
          ;; palette). Without this a /reload only updates the GLOBAL
@@ -718,9 +824,9 @@ def __vis_registration__():
          ;; and stale env rows keep calling into the closed contexts.
          (let [entries (vals @loaded)
                new-names (set (map :ext-name entries))]
-           (notify-change-listeners!
-             {:extensions (vec (keep :ext entries))
-              :removed (vec (sort (remove new-names old-names)))}))
+
+           (notify-change-listeners! {:extensions (vec (keep :ext entries))
+                                      :removed (vec (sort (remove new-names old-names)))}))
          {:loaded (count @loaded) :failed (count @failures) :changed? true})))))
 
 (defn reload-python-extensions!
@@ -728,60 +834,70 @@ def __vis_registration__():
    changed). Same return shape as `load-python-extensions!`. Live
    sessions pick the new tool bindings up at the next turn boundary."
   ([] (reload-python-extensions! nil))
-  ([opts]
-   (reset! last-fingerprint nil)
-   (load-python-extensions! opts)))
+  ([opts] (reset! last-fingerprint nil) (load-python-extensions! opts)))
 
 ;; =============================================================================
 ;; The loader's own host extension: `/reload` + doctor surface
 ;; =============================================================================
 
-(defn- reload-slash [_ctx]
+(defn- reload-slash
+  [_ctx]
   ;; One user-facing reload for EVERY hot-reloadable resource: Python
   ;; extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
   ;; templates, and any extension-owned discovery cache registered as a
   ;; reload hook (harness skills/agents).
-  (let [{:keys [loaded failed]} (reload-python-extensions!)
-        hook-results  (extension/run-reload-hooks!)
-        failed-hooks  (into [] (keep (fn [[id r]] (when-not (:ok? r) id))) hook-results)
-        guidance      (try (agents/reload!) nil
-                        (catch Throwable t (ex-message t)))
-        template-cnt  (try (count (prompt-templates/reload!))
-                        (catch Throwable _ nil))]
-    {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance)
-                     :error :ok)
-     :slash/title (str "Reloaded — Python extensions: " loaded " loaded"
-                    (when (pos? (long failed))
-                      (str ", " failed " failed — see `vis doctor`"))
-                    "; skills/agents, prompt templates"
-                    (when template-cnt (str " (" template-cnt ")"))
-                    ", and context files rescanned"
-                    (when (seq failed-hooks)
-                      (str " — hook failures: " (str/join ", " (map str failed-hooks)))))}))
+  (let [{:keys [loaded failed]}
+        (reload-python-extensions!)
 
-(defn- doctor-fn [_env]
-  (vec
-    (concat
-      (for [{:keys [file error]} @failures]
-        {:level :error
-         :check-id ::load
-         :message (str "Python extension failed to load: " file)
-         :remediation error})
-      (for [[path {:keys [ext-name]}] @loaded]
-        {:level :info
-         :check-id ::load
-         :message (str "Python extension '" ext-name "' loaded from " path)}))))
+        hook-results
+        (extension/run-reload-hooks!)
+
+        failed-hooks
+        (into []
+              (keep (fn [[id r]]
+                      (when-not (:ok? r) id)))
+              hook-results)
+
+        guidance
+        (try (agents/reload!) nil (catch Throwable t (ex-message t)))
+
+        template-cnt
+        (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+
+    {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
+     :slash/title
+     (str "Reloaded — Python extensions: " loaded
+          " loaded" (when (pos? (long failed)) (str ", " failed " failed — see `vis doctor`"))
+          "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
+          ", and context files rescanned" (when (seq failed-hooks)
+                                            (str " — hook failures: "
+                                                 (str/join ", " (map str failed-hooks)))))}))
+
+(defn- doctor-fn
+  [_env]
+  (vec (concat (for [{:keys [file error]} @failures]
+                 {:level :error
+                  :check-id ::load
+                  :message (str "Python extension failed to load: " file)
+                  :remediation error})
+               (for [[path {:keys [ext-name]}] @loaded]
+                 {:level :info
+                  :check-id ::load
+                  :message (str "Python extension '" ext-name "' loaded from " path)}))))
 
 (defonce ^:private loader-registered? (atom false))
 
-(defn- register-loader-extension! []
+(defn- register-loader-extension!
+  []
   (when (compare-and-set! loader-registered? false true)
     (extension/register-extension!
       {:ext/name "python-extensions"
-       :ext/description "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
+       :ext/description
+       "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
        :ext/kind "host"
        :ext/source-nses ['com.blockether.vis.internal.python-extensions]
-       :ext/slash-commands [{:slash/name "reload"
-                             :slash/doc "Reload Python extensions, skills/agents, prompt templates, and context files."
-                             :slash/run-fn reload-slash}]
+       :ext/slash-commands
+       [{:slash/name "reload"
+         :slash/doc "Reload Python extensions, skills/agents, prompt templates, and context files."
+         :slash/run-fn reload-slash}]
        :ext/doctor-fn doctor-fn})))

@@ -48,19 +48,27 @@
   "Compute table geometry inside a dialog `bounds` ({:left :inner-w}).
    Pure: no drawing. Useful for mouse hit-testing before `draw!`."
   [{:keys [left inner-w]}]
-  (let [table-x         (+ left 1)
-        table-w         (max 1 (- inner-w 1))
+  (let [table-x
+        (+ left 1)
+
+        table-w
+        (max 1 (- inner-w 1))
+
         ;; Full rendered row width (both `│` borders included).
-        rendered-w      table-w
+        rendered-w
+        table-w
+
         ;; First column hosts the marker inside the box, so the caller's
         ;; data columns get `SELECTION_WIDTH` fewer cells.
-        table-content-w (max 1 (- rendered-w p/SELECTION_WIDTH))]
-    {:marker-col      (+ table-x 2)
-     :table-x         table-x
-     :table-w         table-w
-     :rendered-w      rendered-w
+        table-content-w
+        (max 1 (- rendered-w p/SELECTION_WIDTH))]
+
+    {:marker-col (+ table-x 2)
+     :table-x table-x
+     :table-w table-w
+     :rendered-w rendered-w
      :table-content-w table-content-w
-     :scrollbar-col   (+ table-x table-w)}))
+     :scrollbar-col (+ table-x table-w)}))
 
 (defn rows
   "Resolve the absolute row indices for each painted line, given the
@@ -68,22 +76,23 @@
   [top body-h]
   (let [body-top (+ top 3)]
     {:border-top top
-     :header     (+ top 1)
-     :separator  (+ top 2)
-     :body-top   body-top
-     :body-end   (+ body-top body-h)}))
+     :header (+ top 1)
+     :separator (+ top 2)
+     :body-top body-top
+     :body-end (+ body-top body-h)}))
 
 (defn hit-row
   "Map a mouse `(mx, my)` into a body row index, or nil if outside the
    table body. `geom` is `(layout bounds)`, `top` and `body-h` match the
    `draw!` call, `scroll` is the current scroll offset."
   [{:keys [table-x rendered-w table-content-w]} top body-h scroll mx my]
-  (let [{:keys [body-top]} (rows top body-h)
-        row-w (or rendered-w table-content-w)]
-    (when (and (>= mx table-x)
-            (< mx (+ table-x row-w))
-            (>= my body-top)
-            (< my (+ body-top body-h)))
+  (let [{:keys [body-top]}
+        (rows top body-h)
+
+        row-w
+        (or rendered-w table-content-w)]
+
+    (when (and (>= mx table-x) (< mx (+ table-x row-w)) (>= my body-top) (< my (+ body-top body-h)))
       (+ scroll (- my body-top)))))
 
 (defn- empty-row-cells
@@ -92,10 +101,9 @@
    is only one column."
   [widths message]
   (let [n (count widths)]
-    (cond
-      (zero? n) []
-      (= 1 n)   [message]
-      :else     (assoc (vec (repeat n "")) 1 message))))
+    (cond (zero? n) []
+          (= 1 n) [message]
+          :else (assoc (vec (repeat n "")) 1 message))))
 
 (defn draw!
   "Render a bordered scrollable table in one call.
@@ -125,30 +133,46 @@
    Returns the full layout map (merge of `layout` + `rows`) so callers
    can place mode lines, hint bars, hit-tests, etc."
   [^com.googlecode.lanterna.graphics.TextGraphics g
-   {:keys [bounds top body-h headers widths total scroll selected
-           cell-fn empty-cells empty-message aligns closed?]
-    :or   {empty-message "No items."
-           aligns        (repeat :left)
-           closed?       false}}]
-  (let [{:keys [marker-col table-x rendered-w scrollbar-col]
-         :as   geom} (layout bounds)
-        row-ix     (rows top body-h)
-        {:keys [border-top header separator body-top]} row-ix
-        aligns     (vec (take (count widths) aligns))
-        mk         p/SELECTION_WIDTH
-        pad        (apply str (repeat mk \space))
+   {:keys [bounds top body-h headers widths total scroll selected cell-fn empty-cells empty-message
+           aligns closed?]
+    :or {empty-message "No items." aligns (repeat :left) closed? false}}]
+  (let [{:keys [marker-col table-x rendered-w scrollbar-col] :as geom}
+        (layout bounds)
+
+        row-ix
+        (rows top body-h)
+
+        {:keys [border-top header separator body-top]}
+        row-ix
+
+        aligns
+        (vec (take (count widths) aligns))
+
+        mk
+        p/SELECTION_WIDTH
+
+        pad
+        (apply str (repeat mk \space))
+
         ;; Widen the first column to host the in-box marker gutter and
         ;; indent that column's text so the glyph never overpaints data.
-        full-widths (let [v (vec widths)] (if (seq v) (update v 0 + mk) v))
-        mark-first  (fn [cells]
-                      (let [v (vec cells)] (if (seq v) (update v 0 #(str pad %)) v)))
-        empty-cells (mark-first (or empty-cells (empty-row-cells widths empty-message)))]
+        full-widths
+        (let [v (vec widths)]
+          (if (seq v) (update v 0 + mk) v))
+
+        mark-first
+        (fn [cells]
+          (let [v (vec cells)]
+            (if (seq v) (update v 0 #(str pad %)) v)))
+
+        empty-cells
+        (mark-first (or empty-cells (empty-row-cells widths empty-message)))]
+
     ;; Chrome
     (p/set-colors! g t/dialog-border t/dialog-bg)
     (p/put-str! g table-x border-top (table/boxed-border-line full-widths :top))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/put-str! g table-x header
-      (table/boxed-row-line full-widths (mark-first headers) aligns))
+    (p/put-str! g table-x header (table/boxed-row-line full-widths (mark-first headers) aligns))
     ;; Re-paint the side `│` borders in the border color: the header row
     ;; was painted in dialog-hint-key, which would otherwise leave the
     ;; vertical edges a different color than the top/middle/bottom chrome.
@@ -160,51 +184,51 @@
     (dotimes [i body-h]
       (let [idx (+ scroll i)
             row (+ body-top i)]
-        (cond
-          (< idx total)
-          (do
-            (table/draw-line! g table-x row rendered-w
-              (= idx selected)
-              (table/boxed-row-line full-widths (mark-first (cell-fn idx)) aligns))
-            ;; Re-paint the side `│` borders in the border color: draw-line!
-            ;; filled the whole row in dialog-fg, which would otherwise leave the
-            ;; vertical edges lighter than the top/middle/bottom chrome.
-            (p/set-colors! g t/dialog-border t/dialog-bg)
-            (p/put-str! g table-x row "│")
-            (p/put-str! g (+ table-x (dec rendered-w)) row "│")
-            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-            (p/draw-selection-marker! g marker-col row (= idx selected)))
 
-          (and (zero? total) (zero? i))
-          (do
-            (p/set-colors! g t/dialog-hint t/dialog-bg)
-            (p/fill-rect! g table-x row rendered-w 1)
-            (p/put-str! g table-x row
-              (table/boxed-row-line full-widths empty-cells aligns))
-            (p/set-colors! g t/dialog-border t/dialog-bg)
-            (p/put-str! g table-x row "│")
-            (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
-
-          :else
-          (do
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (p/fill-rect! g table-x row rendered-w 1)
-            (p/put-str! g table-x row
-              (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))
-            (p/set-colors! g t/dialog-border t/dialog-bg)
-            (p/put-str! g table-x row "│")
-            (p/put-str! g (+ table-x (dec rendered-w)) row "│")))))
+        (cond (< idx total) (do (table/draw-line! g
+                                                  table-x
+                                                  row
+                                                  rendered-w
+                                                  (= idx selected)
+                                                  (table/boxed-row-line full-widths
+                                                                        (mark-first (cell-fn idx))
+                                                                        aligns))
+                                ;; Re-paint the side `│` borders in the border color: draw-line!
+                                ;; filled the whole row in dialog-fg, which would otherwise leave the
+                                ;; vertical edges lighter than the top/middle/bottom chrome.
+                                (p/set-colors! g t/dialog-border t/dialog-bg)
+                                (p/put-str! g table-x row "│")
+                                (p/put-str! g (+ table-x (dec rendered-w)) row "│")
+                                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                                (p/draw-selection-marker! g marker-col row (= idx selected)))
+              (and (zero? total) (zero? i))
+              (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/fill-rect! g table-x row rendered-w 1)
+                  (p/put-str! g table-x row (table/boxed-row-line full-widths empty-cells aligns))
+                  (p/set-colors! g t/dialog-border t/dialog-bg)
+                  (p/put-str! g table-x row "│")
+                  (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
+              :else (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                        (p/fill-rect! g table-x row rendered-w 1)
+                        (p/put-str! g
+                                    table-x
+                                    row
+                                    (table/boxed-row-line full-widths
+                                                          (vec (repeat (count full-widths) ""))
+                                                          aligns))
+                        (p/set-colors! g t/dialog-border t/dialog-bg)
+                        (p/put-str! g table-x row "│")
+                        (p/put-str! g (+ table-x (dec rendered-w)) row "│")))))
     ;; Optional closing border (matches navigator-style boxed picker)
     (when closed?
       (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/put-str! g table-x (+ body-top body-h)
-        (table/boxed-border-line full-widths :bottom)))
+      (p/put-str! g table-x (+ body-top body-h) (table/boxed-border-line full-widths :bottom)))
     ;; Scrollbar (own column outside table's right `│` border)
     (scrollbar/draw! g
-      {:col      scrollbar-col
-       :top      body-top
-       :track-h  body-h
-       :total-h  total
-       :inner-h  body-h
-       :scroll   scroll})
+                     {:col scrollbar-col
+                      :top body-top
+                      :track-h body-h
+                      :total-h total
+                      :inner-h body-h
+                      :scroll scroll})
     (merge geom row-ix)))

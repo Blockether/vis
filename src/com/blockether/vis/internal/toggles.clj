@@ -31,60 +31,67 @@
        same id is allowed (idempotent boot path) and merges over
        prior metadata; the live VALUE in `state` is left alone so a
        user override survives a reload."
-  (:require
-   [clojure.spec.alpha :as s]
-   [clojure.string :as str]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]))
 
 ;; =============================================================================
 ;; Specs
 ;; =============================================================================
 
-(s/def :toggle/id           qualified-keyword?)
-(s/def :toggle/label        (s/and string? #(not (str/blank? %))))
-(s/def :toggle/description  string?)
-(s/def :toggle/default      any?)            ;; cross-validated against :type below
-(s/def :toggle/owner        (s/or :internal #{:vis} :extension string?))
-(s/def :toggle/since        string?)
-(s/def :toggle/persist?     boolean?)
-(s/def :toggle/group        keyword?)
-(s/def :toggle/type         #{:boolean :enum})
-(s/def :toggle/choices      (s/coll-of any? :min-count 1))
-(s/def :toggle/channels     (s/coll-of keyword? :min-count 1))
-(s/def :toggle/visible-fn   ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
+(s/def :toggle/id qualified-keyword?)
+(s/def :toggle/label (s/and string? #(not (str/blank? %))))
+(s/def :toggle/description string?)
+(s/def :toggle/default any?)            ;; cross-validated against :type below
+(s/def :toggle/owner
+  (s/or :internal #{:vis}
+        :extension string?))
+(s/def :toggle/since string?)
+(s/def :toggle/persist? boolean?)
+(s/def :toggle/group keyword?)
+(s/def :toggle/type #{:boolean :enum})
+(s/def :toggle/choices (s/coll-of any? :min-count 1))
+(s/def :toggle/channels (s/coll-of keyword? :min-count 1))
+(s/def :toggle/visible-fn ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
 
 (s/def :toggle/spec
-  (s/and
-    (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
-      :opt-un [:toggle/description :toggle/owner :toggle/since
-               :toggle/persist? :toggle/group :toggle/type :toggle/choices
-               :toggle/visible-fn :toggle/channels])
-    (fn cross-validate [{:keys [type choices default]}]
-      (case (or type :boolean)
-        :boolean (boolean? default)
-        :enum    (and (sequential? choices)
-                   (some? default)
-                   (contains? (set choices) default))))))
+  (s/and (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
+                 :opt-un [:toggle/description :toggle/owner :toggle/since :toggle/persist?
+                          :toggle/group :toggle/type :toggle/choices :toggle/visible-fn
+                          :toggle/channels])
+         (fn cross-validate [{:keys [type choices default]}]
+           (case (or type :boolean)
+             :boolean
+             (boolean? default)
+
+             :enum
+             (and (sequential? choices) (some? default) (contains? (set choices) default))))))
 
 ;; =============================================================================
 ;; Registries
 ;; =============================================================================
 
-(defonce ^:private
-  ^{:doc "id -> normalized spec map. Keyed by `:id` so re-register
+(defonce
+  ^:private
+  ^{:doc
+    "id -> normalized spec map. Keyed by `:id` so re-register
           (defonce reload, channel-restart, ext reload) is idempotent."}
   registry
   (atom {}))
 
-(defonce ^:private
-  ^{:doc "id -> current value (boolean). When an id is ABSENT from
+(defonce
+  ^:private
+  ^{:doc
+    "id -> current value (boolean). When an id is ABSENT from
           this map the resolver falls back to the registered default.
           That distinction matters for the `reset-to-default!` op:
           dissoc'ing here is NOT the same as `(set! id false)`."}
   state
   (atom {}))
 
-(defonce ^:private
-  ^{:doc "Vec of listener fns `(fn [{:id :old :new}])`. Each `set!`
+(defonce
+  ^:private
+  ^{:doc
+    "Vec of listener fns `(fn [{:id :old :new}])`. Each `set!`
           / `reset-to-default!` fans out so the TUI render thread,
           channels, and any background consumer can react. Listeners
           run on the calling thread; they MUST be cheap."}
@@ -108,28 +115,43 @@
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
-  [{:keys [id label default description owner since persist? group type choices visible-fn channels settings?]}]
+  [{:keys [id label default description owner since persist? group type choices visible-fn channels
+           settings?]}]
   (let [t (or type :boolean)]
-    (cond-> {:id       id
-             :label    (str label)
-             :type     t
-             :default  (case t
-                         :boolean (boolean default)
-                         :enum    default)
-             :owner    (or owner :vis)
+    (cond-> {:id id
+             :label (str label)
+             :type t
+             :default (case t
+                        :boolean
+                        (boolean default)
+
+                        :enum
+                        default)
+             :owner (or owner :vis)
              :persist? (boolean persist?)
              ;; `:settings? false` keeps a toggle registered/persisted but OUT
              ;; of every channel's Settings dialog (it has its own control,
              ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
              :settings? (not (false? settings?))}
-      description (assoc :description description)
-      since       (assoc :since since)
-      group       (assoc :group group)
-      visible-fn  (assoc :visible-fn visible-fn)
+      description
+      (assoc :description description)
+
+      since
+      (assoc :since since)
+
+      group
+      (assoc :group group)
+
+      visible-fn
+      (assoc :visible-fn visible-fn)
+
       ;; `:channels` (set of channel keywords) scopes a toggle to specific
       ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).
-      (seq channels) (assoc :channels (set channels))
-      (= :enum t) (assoc :choices (vec choices)))))
+      (seq channels)
+      (assoc :channels (set channels))
+
+      (= :enum t)
+      (assoc :choices (vec choices)))))
 
 (defn register-toggle!
   "Register one toggle. `spec` must satisfy `:toggle/spec`.
@@ -140,11 +162,15 @@
   [spec]
   (when-not (s/valid? :toggle/spec spec)
     (throw (ex-info "Invalid toggle spec"
-             {:type    :vis.toggles/invalid-spec
-              :spec    spec
-              :explain (s/explain-data :toggle/spec spec)})))
-  (let [normalized (normalize-spec spec)
-        id         (:id normalized)]
+                    {:type :vis.toggles/invalid-spec
+                     :spec spec
+                     :explain (s/explain-data :toggle/spec spec)})))
+  (let [normalized
+        (normalize-spec spec)
+
+        id
+        (:id normalized)]
+
     (swap! registry assoc id normalized)
     normalized))
 
@@ -178,8 +204,7 @@
    State ops always work on the FULL registry; visibility is a presentation
    concern only."
   []
-  (filterv #(and (not (false? (:settings? %))) (toggle-visible? %))
-    (registered-toggles)))
+  (filterv #(and (not (false? (:settings? %))) (toggle-visible? %)) (registered-toggles)))
 
 (defn toggle-for-channel?
   "True when a toggle should appear in `channel`'s settings UI. A toggle
@@ -198,10 +223,7 @@
   [channel]
   (filterv #(toggle-for-channel? channel %) (visible-toggles)))
 
-(defn toggle-spec
-  "Lookup the registered spec for `id`, or nil."
-  [id]
-  (get @registry id))
+(defn toggle-spec "Lookup the registered spec for `id`, or nil." [id] (get @registry id))
 
 ;; =============================================================================
 ;; State ops
@@ -223,9 +245,7 @@
    boolean-cast convenience for the common boolean path."
   [id]
   (let [s @state]
-    (if (contains? s id)
-      (get s id)
-      (:default (get @registry id)))))
+    (if (contains? s id) (get s id) (:default (get @registry id)))))
 
 (def ^:dynamic *forced-on*
   "Toggle ids forced ON for the current dynamic scope, regardless of the global
@@ -240,8 +260,7 @@
    (`*forced-on*`). Fail-closed: returns `false` when `id` is not registered and
    not forced. Hot-path — one set lookup + one atom deref."
   [id]
-  (or (contains? *forced-on* id)
-    (boolean (value-of id))))
+  (or (contains? *forced-on* id) (boolean (value-of id))))
 
 (defn choices-of
   "Vec of legal choices for an `:enum` toggle. Empty when `id` is
@@ -249,10 +268,7 @@
   [id]
   (or (:choices (get @registry id)) []))
 
-(defn type-of
-  "`:boolean` / `:enum` / nil for unknown."
-  [id]
-  (:type (get @registry id)))
+(defn type-of "`:boolean` / `:enum` / nil for unknown." [id] (:type (get @registry id)))
 
 (defn set-value!
   "Set `id` to `value` and notify listeners. Returns the new value.
@@ -262,38 +278,54 @@
                    `:vis.toggles/invalid-value` so the bug surfaces
                    at the call site instead of later in render."
   [id value]
-  (let [spec (get @registry id)
-        v    (case (or (:type spec) :boolean)
-               :boolean (boolean value)
-               :enum    (let [allowed (set (:choices spec))]
-                          (when-not (contains? allowed value)
-                            (throw (ex-info "Toggle value is not one of the registered :choices"
-                                     {:type    :vis.toggles/invalid-value
-                                      :id      id
-                                      :value   value
-                                      :choices (:choices spec)})))
-                          value))
-        old  (value-of id)]
+  (let [spec
+        (get @registry id)
+
+        v
+        (case (or (:type spec) :boolean)
+          :boolean
+          (boolean value)
+
+          :enum
+          (let [allowed (set (:choices spec))]
+            (when-not (contains? allowed value)
+              (throw
+                (ex-info
+                  "Toggle value is not one of the registered :choices"
+                  {:type :vis.toggles/invalid-value :id id :value value :choices (:choices spec)})))
+            value))
+
+        old
+        (value-of id)]
+
     (swap! state assoc id v)
-    (when (not= old v)
-      (notify! {:id id :old old :new v}))
+    (when (not= old v) (notify! {:id id :old old :new v}))
     v))
 
 (defn cycle-value!
   "Advance an `:enum` toggle one step through its registered
    `:choices`. Wraps at the end. Throws on boolean toggles."
   [id]
-  (let [spec    (get @registry id)
-        choices (vec (:choices spec))]
+  (let [spec
+        (get @registry id)
+
+        choices
+        (vec (:choices spec))]
+
     (when-not (and spec (= :enum (:type spec)))
       (throw (ex-info "cycle-value! requires an :enum toggle"
-               {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
+                      {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
     (when-not (seq choices)
-      (throw (ex-info "Enum toggle has no choices"
-               {:type :vis.toggles/invalid-spec :id id})))
-    (let [current (value-of id)
-          idx     (.indexOf ^java.util.List choices current)
-          next-v  (nth choices (mod (inc (if (neg? idx) -1 idx)) (count choices)))]
+      (throw (ex-info "Enum toggle has no choices" {:type :vis.toggles/invalid-spec :id id})))
+    (let [current
+          (value-of id)
+
+          idx
+          (.indexOf ^java.util.List choices current)
+
+          next-v
+          (nth choices (mod (inc (if (neg? idx) -1 idx)) (count choices)))]
+
       (set-value! id next-v))))
 
 (defn set-enabled!
@@ -305,7 +337,7 @@
   (let [spec (get @registry id)]
     (when (and spec (= :enum (:type spec)))
       (throw (ex-info "set-enabled! is boolean-only; use cycle-value! / set-value! for enum toggles"
-               {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)}))))
+                      {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)}))))
   (set-value! id (boolean value)))
 
 (defn reset-to-default!
@@ -316,8 +348,7 @@
   (let [old (value-of id)]
     (swap! state dissoc id)
     (let [new (value-of id)]
-      (when (not= old new)
-        (notify! {:id id :old old :new new}))
+      (when (not= old new) (notify! {:id id :old old :new new}))
       new)))
 
 (defn snapshot
@@ -327,20 +358,31 @@
    enum toggles surface their raw choice value. Orphans from a
    previously-installed extension are dropped."
   []
-  (let [reg @registry
-        s   @state]
-    (reduce-kv
-      (fn [acc id spec]
-        (if (:persist? spec)
-          (let [v (if (contains? s id) (get s id) (:default spec))
-                v (case (:type spec)
-                    :boolean (boolean v)
-                    :enum    v
-                    (boolean v))]
-            (assoc acc id v))
-          acc))
-      {}
-      reg)))
+  (let [reg
+        @registry
+
+        s
+        @state]
+
+    (reduce-kv (fn [acc id spec]
+                 (if (:persist? spec)
+                   (let [v
+                         (if (contains? s id) (get s id) (:default spec))
+
+                         v
+                         (case (:type spec)
+                           :boolean
+                           (boolean v)
+
+                           :enum
+                           v
+
+                           (boolean v))]
+
+                     (assoc acc id v))
+                   acc))
+               {}
+               reg)))
 
 (defn hydrate-from-config!
   "Bulk-apply persisted toggle values from `(:toggles config-map)`. Silently
@@ -350,13 +392,14 @@
    dropped (logged via the listener) instead of aborting the whole
    hydrate."
   [config-map]
-  (let [persisted (some-> config-map :toggles)]
+  (let [persisted (some-> config-map
+                          :toggles)]
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted
-                :when  (contains? reg id)]
-          (try (set-value! id v)
-            (catch clojure.lang.ExceptionInfo _ nil)))))))
+                :when (contains? reg id)]
+
+          (try (set-value! id v) (catch clojure.lang.ExceptionInfo _ nil)))))))
 
 ;; =============================================================================
 ;; Listener ops
@@ -368,13 +411,20 @@
    extension reload, ...)."
   [f]
   (when (fn? f)
-    (let [key (Object.)
-          entry (with-meta f {::key key})]
+    (let [key
+          (Object.)
+
+          entry
+          (with-meta f {::key key})]
+
       (swap! listeners conj entry)
       (fn dispose! []
-        (swap! listeners
-          (fn [xs]
-            (vec (remove #(identical? key (-> % meta ::key)) xs))))))))
+        (swap! listeners (fn [xs]
+                           (vec (remove #(identical? key
+                                                     (-> %
+                                                         meta
+                                                         ::key))
+                                  xs))))))))
 
 ;; =============================================================================
 ;; Reset (dev / test helper)
@@ -398,35 +448,41 @@
 ;; user override in `state` survives.
 ;; =============================================================================
 
-(defonce ^{:doc "Sentinel that records whether the canonical internal toggles
+(defonce
+  ^{:doc
+    "Sentinel that records whether the canonical internal toggles
           have been installed (idempotent)."
-           :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
+    :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
   host-toggles-installed?
   (do
     ;; NOTE: `:vis/show-raw-code` was retired — the TUI now renders the model's
     ;; raw `:code` unconditionally, the SAME canonical contract as web's
     ;; `block-code`. There is no longer a gate that can hide the source rail.
-
     ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
-
     ;; NOTE: the display gates `:vis/show-thinking`, `:vis/show-iterations`,
     ;; `:vis/show-silent`, and `:vis/show-timestamps` were retired — thinking,
     ;; the full execution trace, silent system calls, and timestamps are now
     ;; ALWAYS shown in both channels (same call as `:vis/show-raw-code`: the
     ;; trace IS the transcript, nothing to hide). The settings projection and
     ;; web `role-time` hardcode these on.
-
+    (register-toggle! {:id :vis/mouse-selection-copy
+                       :label "Mouse selection auto-copy"
+                       :description
+                       "Drag-select visible text; copied automatically on mouse release."
+                       ;; ALWAYS ON — no longer a user-facing setting. Kept registered so the
+                       ;; screen consumer + CLI overrides still resolve it, but `:settings? false`
+                       ;; keeps it out of every Settings dialog.
+                       :default true
+                       :settings? false
+                       :owner :vis
+                       :group :tui-display
+                       :channels #{:tui}
+                       :persist? true})
     (register-toggle!
-      {:id :vis/mouse-selection-copy :label "Mouse selection auto-copy"
-       :description "Drag-select visible text; copied automatically on mouse release."
-       ;; ALWAYS ON — no longer a user-facing setting. Kept registered so the
-       ;; screen consumer + CLI overrides still resolve it, but `:settings? false`
-       ;; keeps it out of every Settings dialog.
-       :default true :settings? false :owner :vis :group :tui-display :channels #{:tui} :persist? true})
-
-    (register-toggle!
-      {:id :network/enabled :label "Network access (Python sandbox)"
-       :description (str "Let the Python sandbox open sockets (urllib/requests/socket). "
+      {:id :network/enabled
+       :label "Network access (Python sandbox)"
+       :description (str
+                      "Let the Python sandbox open sockets (urllib/requests/socket). "
                       "ALWAYS ON — the sandbox always has host socket access. "
                       "Host policy in config.edn :network is a best-effort GUARDRAIL for "
                       "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
@@ -434,28 +490,36 @@
                       "cloud-metadata SSRF defaults.")
        ;; A host capability, not a display concern. ON by default and out of the
        ;; Settings dialog (`:settings? false`) — the Python sandbox is always networked.
-       :default true :settings? false :owner :vis :group :capabilities :persist? true})
-
-    (register-toggle!
-      {:id :voice/respond :label "Voice respond to answers"
-       :description "Speak the final answer aloud via the foundation-voice extension."
-       ;; A voice feature, not a TUI-display concern — its own `:voice` group
-       ;; (channel-neutral; the daemon speaks regardless of channel).
-       :default false :owner :vis :group :voice :persist? true})
-
-    (register-toggle!
-      {:id :vis/reasoning-level :label "Reasoning effort"
-       :description "Reasoning budget hint passed to reasoning-capable models."
-       :type :enum :choices [:quick :balanced :deep]
-       ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
-       ;; dialog — `:settings? false` keeps it registered + persisted but out
-       ;; of every channel's Settings list.
+       :default true
        :settings? false
-       :default :balanced :owner :vis :group :provider :persist? true})
-
+       :owner :vis
+       :group :capabilities
+       :persist? true})
+    (register-toggle! {:id :voice/respond
+                       :label "Voice respond to answers"
+                       :description
+                       "Speak the final answer aloud via the foundation-voice extension."
+                       ;; A voice feature, not a TUI-display concern — its own `:voice` group
+                       ;; (channel-neutral; the daemon speaks regardless of channel).
+                       :default false
+                       :owner :vis
+                       :group :voice
+                       :persist? true})
+    (register-toggle! {:id :vis/reasoning-level
+                       :label "Reasoning effort"
+                       :description "Reasoning budget hint passed to reasoning-capable models."
+                       :type :enum
+                       :choices [:quick :balanced :deep]
+                       ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
+                       ;; dialog — `:settings? false` keeps it registered + persisted but out
+                       ;; of every channel's Settings list.
+                       :settings? false
+                       :default :balanced
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
     ;; NOTE: provider-specific knobs (e.g. :openai-codex/verbosity)
     ;; are registered by their PROVIDER EXTENSIONS, not here — a knob
     ;; belongs next to the backend it tunes, and its `:visible-fn`
     ;; keeps it out of Settings until that provider is configured.
-
     true))

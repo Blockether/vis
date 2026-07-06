@@ -12,10 +12,8 @@
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.gui2 TextEditBuffer TextEditKeymap]
-           [com.googlecode.lanterna.input
-            CharacterPattern CharacterPattern$Matching
-            KeyDecodingProfile KeyStroke KeyType
-            MouseAction MouseActionType]
+           [com.googlecode.lanterna.input CharacterPattern CharacterPattern$Matching
+            KeyDecodingProfile KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]))
 
 ;;; ── Custom input patterns ──────────────────────────────────────────────────
@@ -30,54 +28,41 @@
    mouse sequences. Lanterna keeps a candidate full match only when one
    exists; without this, a lone Esc can stay buffered and the next Enter is
    decoded as Alt+Enter instead of closing/canceling."
-  (reify CharacterPattern
-    (match [_ seq]
-      (when (and (= 1 (.size seq))
-              (= (.get seq 0) ESC_CHAR))
-        (CharacterPattern$Matching.
-          (KeyStroke. KeyType/Escape false false))))))
+  (reify
+    CharacterPattern
+      (match [_ seq]
+        (when (and (= 1 (.size seq)) (= (.get seq 0) ESC_CHAR))
+          (CharacterPattern$Matching. (KeyStroke. KeyType/Escape false false))))))
 
 (def alt-enter-pattern
-  (reify CharacterPattern
-    (match [_ seq]
-      (let [size (.size seq)]
-        (cond
-          (and (= size 2)
-            (= (.get seq 0) ESC_CHAR)
-            (let [c (.get seq 1)]
-              (or (= c (Character. \newline))
-                (= c (Character. \return)))))
-          (CharacterPattern$Matching.
-            (KeyStroke. KeyType/Enter false true))
-
-          (and (= size 1)
-            (= (.get seq 0) ESC_CHAR))
-          CharacterPattern$Matching/NOT_YET
-
-          :else nil)))))
+  (reify
+    CharacterPattern
+      (match [_ seq]
+        (let [size (.size seq)]
+          (cond (and (= size 2)
+                     (= (.get seq 0) ESC_CHAR)
+                     (let [c (.get seq 1)]
+                       (or (= c (Character. \newline)) (= c (Character. \return)))))
+                (CharacterPattern$Matching. (KeyStroke. KeyType/Enter false true))
+                (and (= size 1) (= (.get seq 0) ESC_CHAR)) CharacterPattern$Matching/NOT_YET
+                :else nil)))))
 
 (def alt-backspace-pattern
   "Lanterna's stock Alt+character decoder rejects ISO control chars.
    Option+Backspace commonly arrives as ESC + DEL (0x7f), with some
    terminals using ESC + Ctrl-H (0x08). Surface both as Alt+Backspace
    so the editor can delete one word backward."
-  (reify CharacterPattern
-    (match [_ seq]
-      (let [size (.size seq)]
-        (cond
-          (and (= size 2)
-            (= (.get seq 0) ESC_CHAR)
-            (let [c (.get seq 1)]
-              (or (= c (Character. (char 0x7f)))
-                (= c (Character. (char 0x08))))))
-          (CharacterPattern$Matching.
-            (KeyStroke. KeyType/Backspace false true))
-
-          (and (= size 1)
-            (= (.get seq 0) ESC_CHAR))
-          CharacterPattern$Matching/NOT_YET
-
-          :else nil)))))
+  (reify
+    CharacterPattern
+      (match [_ seq]
+        (let [size (.size seq)]
+          (cond (and (= size 2)
+                     (= (.get seq 0) ESC_CHAR)
+                     (let [c (.get seq 1)]
+                       (or (= c (Character. (char 0x7f))) (= c (Character. (char 0x08))))))
+                (CharacterPattern$Matching. (KeyStroke. KeyType/Backspace false true))
+                (and (= size 1) (= (.get seq 0) ESC_CHAR)) CharacterPattern$Matching/NOT_YET
+                :else nil)))))
 
 (def ctrl-h-pattern
   "Make Ctrl+H reach the app as Ctrl+H. The terminal sends byte 0x08 for Ctrl+H,
@@ -89,12 +74,11 @@
    the LAST full match, so this wins over the stock 0x08->Backspace mapping.
    (Option+Backspace = ESC+0x08 is a TWO-char sequence handled by
    `alt-backspace-pattern`, so it does not collide with this lone-0x08 match.)"
-  (reify CharacterPattern
-    (match [_ seq]
-      (when (and (= 1 (.size seq))
-              (= (.get seq 0) (Character. (char 0x08))))
-        (CharacterPattern$Matching.
-          (KeyStroke. (Character. \h) true false))))))
+  (reify
+    CharacterPattern
+      (match [_ seq]
+        (when (and (= 1 (.size seq)) (= (.get seq 0) (Character. (char 0x08))))
+          (CharacterPattern$Matching. (KeyStroke. (Character. \h) true false))))))
 
 ;; ── Bracketed-paste mode ────────────────────────────────────────────────
 ;;
@@ -141,8 +125,7 @@
   "True for Alt/Option + character `c`, case-insensitive."
   [^KeyStroke key c]
   (and (alt-modifier? key)
-    (= (Character/toLowerCase (char (.getCharacter key)))
-      (Character/toLowerCase (char c)))))
+       (= (Character/toLowerCase (char (.getCharacter key))) (Character/toLowerCase (char c)))))
 
 (defn ctrl-char?
   "True for Ctrl + character `c`, case-insensitive. The reliable, cross-platform
@@ -151,9 +134,8 @@
    control, O=stty DISCARD), which never arrive as a Character keystroke."
   [^KeyStroke key c]
   (and (ctrl-modifier? key)
-    (let [ch (.getCharacter key)]
-      (and ch (= (Character/toLowerCase (char ch))
-                (Character/toLowerCase (char c)))))))
+       (let [ch (.getCharacter key)]
+         (and ch (= (Character/toLowerCase (char ch)) (Character/toLowerCase (char c)))))))
 
 (defn reorder-modifier?
   "True when a MODIFIED arrow should reorder a list item instead of moving the
@@ -170,14 +152,15 @@
   "K/J")
 
 (def ^:private arrow-final->keytype
-  {\A KeyType/ArrowUp
-   \B KeyType/ArrowDown
-   \C KeyType/ArrowRight
-   \D KeyType/ArrowLeft})
+  {\A KeyType/ArrowUp \B KeyType/ArrowDown \C KeyType/ArrowRight \D KeyType/ArrowLeft})
 
 (def ^:private modified-arrow-targets
-  (for [modifier (range 2 9)
-        final (keys arrow-final->keytype)]
+  (for [modifier
+        (range 2 9)
+
+        final
+        (keys arrow-final->keytype)]
+
     (str (char 0x1b) "[1;" modifier final)))
 
 (defn- modified-arrow-keystroke
@@ -186,28 +169,27 @@
     (when-let [^KeyType ktype (arrow-final->keytype final)]
       (let [modifier (Character/digit (.charAt s 4) 10)
             bits (dec modifier)]
+
         (when (<= 2 modifier 8)
           (KeyStroke. ktype
-            (pos? (bit-and bits 4))
-            (pos? (bit-and bits 2))
-            (pos? (bit-and bits 1))))))))
+                      (pos? (bit-and bits 4))
+                      (pos? (bit-and bits 2))
+                      (pos? (bit-and bits 1))))))))
 
 (def modified-arrow-pattern
   "Decode xterm-style modified arrows (`ESC[1;<mod>A-D`) into Lanterna
    KeyStrokes with Ctrl/Alt/Shift flags. macOS/iTerm/Terminal commonly
    use these for Option/Shift arrow combos; Lanterna's stock decoder does
    not consistently surface Alt+arrow across terminals."
-  (reify CharacterPattern
-    (match [_ seq]
-      (let [s (apply str (map char seq))]
-        (cond
-          (some #(= s %) modified-arrow-targets)
-          (CharacterPattern$Matching. (modified-arrow-keystroke s))
-
-          (some #(str/starts-with? % s) modified-arrow-targets)
-          CharacterPattern$Matching/NOT_YET
-
-          :else nil)))))
+  (reify
+    CharacterPattern
+      (match [_ seq]
+        (let [s (apply str (map char seq))]
+          (cond (some #(= s %) modified-arrow-targets) (CharacterPattern$Matching.
+                                                         (modified-arrow-keystroke s))
+                (some #(str/starts-with? % s) modified-arrow-targets)
+                CharacterPattern$Matching/NOT_YET
+                :else nil)))))
 
 (def ^:const PASTE_START_CHAR
   "PUA marker char used as the KeyStroke payload when the bracketed-
@@ -227,35 +209,28 @@
   [^java.util.List s ^String target]
   (let [size (.size s)]
     (and (<= size (.length target))
-      (loop [i 0]
-        (cond
-          (>= i size)             true
-          (= (.charAt target i)
-            (char (.charValue ^Character (.get s i)))) (recur (inc i))
-          :else                   false)))))
+         (loop [i 0]
+           (cond (>= i size) true
+                 (= (.charAt target i) (char (.charValue ^Character (.get s i)))) (recur (inc i))
+                 :else false)))))
 
 (defn- bracket-pattern
   "Build a CharacterPattern that matches `target` (e.g. `ESC[200~`)
    exactly and returns a KeyStroke whose character is `marker`. Used
    by the bracketed-paste START / END detectors."
   [^String target marker]
-  (reify CharacterPattern
-    (match [_ s]
-      (let [size (.size s)]
-        (cond
-          (and (= size (.length target))
-            (bracket-pattern-prefix-match? s target))
-          (CharacterPattern$Matching.
-            (KeyStroke. (Character. (char marker)) false false))
-
-          (and (< size (.length target))
-            (bracket-pattern-prefix-match? s target))
-          CharacterPattern$Matching/NOT_YET
-
-          :else nil)))))
+  (reify
+    CharacterPattern
+      (match [_ s]
+        (let [size (.size s)]
+          (cond (and (= size (.length target)) (bracket-pattern-prefix-match? s target))
+                (CharacterPattern$Matching. (KeyStroke. (Character. (char marker)) false false))
+                (and (< size (.length target)) (bracket-pattern-prefix-match? s target))
+                CharacterPattern$Matching/NOT_YET
+                :else nil)))))
 
 (def paste-start-pattern (bracket-pattern "\u001B[200~" PASTE_START_CHAR))
-(def paste-end-pattern   (bracket-pattern "\u001B[201~" PASTE_END_CHAR))
+(def paste-end-pattern (bracket-pattern "\u001B[201~" PASTE_END_CHAR))
 
 (defn paste-marker?
   "True when `key` is the bracketed-paste START or END marker. Lets
@@ -263,12 +238,11 @@
    handling runs."
   [^KeyStroke key marker]
   (and (= KeyType/Character (.getKeyType key))
-    (some? (.getCharacter key))
-    (= (long (int marker))
-      (long (int (.charValue ^Character (.getCharacter key)))))))
+       (some? (.getCharacter key))
+       (= (long (int marker)) (long (int (.charValue ^Character (.getCharacter key)))))))
 
 (defn paste-start? [key] (paste-marker? key PASTE_START_CHAR))
-(defn paste-end?   [key] (paste-marker? key PASTE_END_CHAR))
+(defn paste-end? [key] (paste-marker? key PASTE_END_CHAR))
 
 (defn keystroke->paste-char
   "Convert one KeyStroke received WHILE INSIDE a bracketed-paste
@@ -278,9 +252,15 @@
    input loop drops those."
   [^KeyStroke key]
   (case (str (.getKeyType key))
-    "Character" (str (.getCharacter key))
-    "Enter"     "\n"
-    "Tab"       "\t"
+    "Character"
+    (str (.getCharacter key))
+
+    "Enter"
+    "\n"
+
+    "Tab"
+    "\t"
+
     nil))
 
 ;; ── SGR mouse mode (1006) ─────────────────────────────────────────────
@@ -315,37 +295,45 @@
    byte distinguish button-press / drag / scroll, the case of the
    final character distinguishes press (`M`) from release (`m`)."
   [^long button ^long _col ^long _row ^long final-ch]
-  (let [release? (= final-ch (long (int \m)))
-        ;; bit 5 (0x20) = drag/move, bit 6 (0x40) = wheel.
-        drag?    (not (zero? (bit-and button 0x20)))
-        wheel?   (not (zero? (bit-and button 0x40)))
-        button-bits (bit-and button 0x03)]
-    (cond
-      wheel?
-      (if (zero? button-bits) MouseActionType/SCROLL_UP
-        MouseActionType/SCROLL_DOWN)
-      drag?
-      ;; button bits 3 (0x03 == 3) means \"no button held\" -> plain
-      ;; cursor movement; otherwise a drag with that button held.
-      (if (= button-bits 3) MouseActionType/MOVE
-        MouseActionType/DRAG)
-      release? MouseActionType/CLICK_RELEASE
-      :else    MouseActionType/CLICK_DOWN)))
+  (let [release?
+        (= final-ch (long (int \m)))
 
-(defn- sgr-button-number ^long [^long button]
+        ;; bit 5 (0x20) = drag/move, bit 6 (0x40) = wheel.
+        drag?
+        (not (zero? (bit-and button 0x20)))
+
+        wheel?
+        (not (zero? (bit-and button 0x40)))
+
+        button-bits
+        (bit-and button 0x03)]
+
+    (cond wheel? (if (zero? button-bits) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
+          drag?
+          ;; button bits 3 (0x03 == 3) means \"no button held\" -> plain
+          ;; cursor movement; otherwise a drag with that button held.
+          (if (= button-bits 3) MouseActionType/MOVE MouseActionType/DRAG)
+          release? MouseActionType/CLICK_RELEASE
+          :else MouseActionType/CLICK_DOWN)))
+
+(defn- sgr-button-number
+  ^long [^long button]
   ;; Map raw SGR button byte to Lanterna's 1-based button number,
   ;; matching `MouseCharacterPattern` semantics (1=left, 2=middle,
   ;; 3=right, 4=wheel-up, 5=wheel-down). For DRAG/MOVE/RELEASE the
   ;; field still carries the button bits, so the same mapping holds.
-  (let [wheel? (not (zero? (bit-and button 0x40)))
-        bits   (bit-and button 0x03)]
-    (cond
-      wheel? (if (zero? bits) 4 5)
-      ;; bits == 3 in non-wheel modes means \"no button held\" -
-      ;; that's the SGR convention for plain motion. Report 0 to
-      ;; match what Lanterna's parser does for legacy MOVE events.
-      (= bits 3) 0
-      :else  (inc bits))))
+  (let [wheel?
+        (not (zero? (bit-and button 0x40)))
+
+        bits
+        (bit-and button 0x03)]
+
+    (cond wheel? (if (zero? bits) 4 5)
+          ;; bits == 3 in non-wheel modes means \"no button held\" -
+          ;; that's the SGR convention for plain motion. Report 0 to
+          ;; match what Lanterna's parser does for legacy MOVE events.
+          (= bits 3) 0
+          :else (inc bits))))
 
 (def sgr-mouse-pattern
   "CharacterPattern matching `ESC [ < N ; N ; N M/m`. Emits a
@@ -357,87 +345,102 @@
    shape, returns nil (no match) the instant a character violates
    it, returns Matching with the built MouseAction once the final
    `M` / `m` byte arrives."
-  (reify CharacterPattern
-    (match [_ chars]
-      (let [^java.util.List chars chars
-            n     (.size chars)]
-        (cond
-          (zero? n) CharacterPattern$Matching/NOT_YET
+  (reify
+    CharacterPattern
+      (match [_ chars]
+        (let [^java.util.List chars
+              chars
 
-          ;; chars[0] must be ESC (0x1B); chars[1] '['; chars[2] '<'.
-          (or (and (>= n 1)
-                (not= \u001B (.charValue ^Character (.get chars 0))))
-            (and (>= n 2)
-              (not= \[ (.charValue ^Character (.get chars 1))))
-            (and (>= n 3)
-              (not= \< (.charValue ^Character (.get chars 2)))))
-          nil
+              n
+              (.size chars)]
 
-          (< n 4) CharacterPattern$Matching/NOT_YET
+          (cond (zero? n) CharacterPattern$Matching/NOT_YET
+                ;; chars[0] must be ESC (0x1B); chars[1] '['; chars[2] '<'.
+                (or (and (>= n 1) (not= \u001B (.charValue ^Character (.get chars 0))))
+                    (and (>= n 2) (not= \[ (.charValue ^Character (.get chars 1))))
+                    (and (>= n 3) (not= \< (.charValue ^Character (.get chars 2)))))
+                nil
+                (< n 4) CharacterPattern$Matching/NOT_YET
+                :else
+                ;; Walk chars[3..] as: digits ';' digits ';' digits final.
+                ;; Keep primitive numeric accumulators. This path runs once
+                ;; per received byte while the user scrolls; persistent
+                ;; vectors here used to peg a core under SGR wheel floods.
+                (loop [i
+                       (long 3)
 
-          :else
-          ;; Walk chars[3..] as: digits ';' digits ';' digits final.
-          ;; Keep primitive numeric accumulators. This path runs once
-          ;; per received byte while the user scrolls; persistent
-          ;; vectors here used to peg a core under SGR wheel floods.
-          (loop [i (long 3)
-                 field (long 0)
-                 acc (long 0)
-                 have-digit? false
-                 button (long 0)
-                 col (long 0)]
-            (if (>= i n)
-              CharacterPattern$Matching/NOT_YET
-              (let [c  (.charValue ^Character (.get chars i))
-                    ci (long (int c))]
-                (cond
-                  ;; ASCII digit: accumulate current numeric field.
-                  (and (>= ci 48) (<= ci 57))
-                  (recur (unchecked-inc i)
-                    field
-                    (unchecked-add (unchecked-multiply acc 10)
-                      (unchecked-subtract ci 48))
-                    true
-                    button
-                    col)
+                       field
+                       (long 0)
 
-                  ;; Field separator. Need at least one digit collected,
-                  ;; and exactly button/col separators before row.
-                  (= c \;)
-                  (cond
-                    (not have-digit?) nil
-                    (>= field 2) nil
-                    (zero? field)
-                    (recur (unchecked-inc i) (long 1) (long 0) false acc col)
-                    :else
-                    (recur (unchecked-inc i) (long 2) (long 0) false button acc))
+                       acc
+                       (long 0)
 
-                  ;; Terminator. Must be `M` or `m`, must arrive with
-                  ;; button + col completed and row in progress.
-                  (or (= c \M) (= c \m))
-                  (if (and (= field 2) have-digit?)
-                    (let [row   acc
-                          atype (sgr-mouse-decode button col row ci)
-                          btn   (sgr-button-number button)
-                          ;; SGR is 1-indexed, Lanterna's 0-indexed.
-                          pos   (TerminalPosition. (max 0 (dec col))
-                                  (max 0 (dec row)))]
-                      (CharacterPattern$Matching.
-                        (MouseAction. atype (int btn) pos)))
-                    nil)
+                       have-digit?
+                       false
 
-                  ;; Anything else - stray byte mid-sequence - rejects
-                  ;; this pattern. Lanterna will hand the chars to the
-                  ;; next pattern in the profile.
-                  :else nil)))))))))
+                       button
+                       (long 0)
+
+                       col
+                       (long 0)]
+
+                  (if (>= i n)
+                    CharacterPattern$Matching/NOT_YET
+                    (let [c
+                          (.charValue ^Character (.get chars i))
+
+                          ci
+                          (long (int c))]
+
+                      (cond
+                        ;; ASCII digit: accumulate current numeric field.
+                        (and (>= ci 48) (<= ci 57)) (recur (unchecked-inc i)
+                                                           field
+                                                           (unchecked-add
+                                                             (unchecked-multiply acc 10)
+                                                             (unchecked-subtract ci 48))
+                                                           true
+                                                           button
+                                                           col)
+                        ;; Field separator. Need at least one digit collected,
+                        ;; and exactly button/col separators before row.
+                        (= c \;) (cond (not have-digit?) nil
+                                       (>= field 2) nil
+                                       (zero? field)
+                                       (recur (unchecked-inc i) (long 1) (long 0) false acc col)
+                                       :else
+                                       (recur (unchecked-inc i) (long 2) (long 0) false button acc))
+                        ;; Terminator. Must be `M` or `m`, must arrive with
+                        ;; button + col completed and row in progress.
+                        (or (= c \M) (= c \m))
+                        (if (and (= field 2) have-digit?)
+                          (let [row
+                                acc
+
+                                atype
+                                (sgr-mouse-decode button col row ci)
+
+                                btn
+                                (sgr-button-number button)
+
+                                ;; SGR is 1-indexed, Lanterna's 0-indexed.
+                                pos
+                                (TerminalPosition. (max 0 (dec col)) (max 0 (dec row)))]
+
+                            (CharacterPattern$Matching. (MouseAction. atype (int btn) pos)))
+                          nil)
+                        ;; Anything else - stray byte mid-sequence - rejects
+                        ;; this pattern. Lanterna will hand the chars to the
+                        ;; next pattern in the profile.
+                        :else nil)))))))))
 
 (defn bare-escape?
   "True for a plain Escape KeyStroke (not a MouseAction)."
   [k]
   (and k
-    (instance? KeyStroke k)
-    (not (instance? MouseAction k))
-    (= KeyType/Escape (.getKeyType ^KeyStroke k))))
+       (instance? KeyStroke k)
+       (not (instance? MouseAction k))
+       (= KeyType/Escape (.getKeyType ^KeyStroke k))))
 
 (defn drain-sgr-leak!
   "Swallow a literal SGR mouse tail that leaked past the decoder.
@@ -458,20 +461,30 @@
    millisecond burst as an Escape press, and an incomplete candidate is
    replayed verbatim."
   [poll-next]
-  (loop [swallowed? false
-         consumed []
-         st ::start
-         fields 0
-         digit? false]
+  (loop [swallowed?
+         false
+
+         consumed
+         []
+
+         st
+         ::start
+
+         fields
+         0
+
+         digit?
+         false]
+
     (let [k (poll-next)]
       (if-not (and k
-                (instance? KeyStroke k)
-                (not (instance? MouseAction k))
-                (= KeyType/Character (.getKeyType ^KeyStroke k)))
-        {:swallowed? swallowed?
-         :replay (if k (conj consumed k) consumed)}
+                   (instance? KeyStroke k)
+                   (not (instance? MouseAction k))
+                   (= KeyType/Character (.getKeyType ^KeyStroke k)))
+        {:swallowed? swallowed? :replay (if k (conj consumed k) consumed)}
         (let [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
               consumed (conj consumed k)]
+
           (case st
             ::start
             (cond
@@ -488,19 +501,15 @@
               {:swallowed? swallowed? :replay consumed})
 
             ::body
-            (cond
-              (and (>= (int ch) 48) (<= (int ch) 57))
-              (recur swallowed? consumed ::body fields true)
-
-              (and (= ch \;) digit? (< (long fields) 2))
-              (recur swallowed? consumed ::body (inc (long fields)) false)
-
-              (and (or (= ch \M) (= ch \m)) (= (long fields) 2) digit?)
-              ;; complete run consumed - drop it, then look for another
-              ;; leaked run immediately behind it.
-              (recur true [] ::start 0 false)
-
-              :else {:swallowed? swallowed? :replay consumed})))))))
+            (cond (and (>= (int ch) 48) (<= (int ch) 57))
+                  (recur swallowed? consumed ::body fields true)
+                  (and (= ch \;) digit? (< (long fields) 2))
+                  (recur swallowed? consumed ::body (inc (long fields)) false)
+                  (and (or (= ch \M) (= ch \m)) (= (long fields) 2) digit?)
+                  ;; complete run consumed - drop it, then look for another
+                  ;; leaked run immediately behind it.
+                  (recur true [] ::start 0 false)
+                  :else {:swallowed? swallowed? :replay consumed})))))))
 
 (defn enable-sgr-mouse!
   "Send `ESC [ ? 1006 h`. Asks the terminal to deliver subsequent
@@ -512,40 +521,28 @@
    alacritty, kitty, wezterm, foot, gnome-terminal, mintty,
    vscode integrated terminal) honours 1006."
   [^java.io.OutputStream out]
-  (try
-    (.write out (.getBytes "\u001B[?1006h" "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out (.getBytes "\u001B[?1006h" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn disable-sgr-mouse!
   "Reverse of `enable-sgr-mouse!`. Sent in the screen tear-down
    `finally` so a crashed TUI doesn't leave the user's shell with
    the mode dangling."
   [^java.io.OutputStream out]
-  (try
-    (.write out (.getBytes "\u001B[?1006l" "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out (.getBytes "\u001B[?1006l" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn enable-bracketed-paste!
   "Tell the terminal to wrap subsequent pastes in `ESC[200~ ... ESC[201~`.
    Bytes go straight to the controlling TTY; safe to call inside the
    screen lifecycle."
   [^java.io.OutputStream out]
-  (try
-    (.write out (.getBytes "\u001B[?2004h" "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out (.getBytes "\u001B[?2004h" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn disable-bracketed-paste!
   "Reverse of `enable-bracketed-paste!`. Always called in the screen
    tear-down `finally` so a crashed TUI doesn't leave the user's
    shell stuck in bracketed-paste mode."
   [^java.io.OutputStream out]
-  (try
-    (.write out (.getBytes "\u001B[?2004l" "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out (.getBytes "\u001B[?2004l" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn set-default-bg!
   "Set the terminal's DEFAULT background color via OSC 11. Modern
@@ -555,31 +552,28 @@
    (often white) instead of the theme background. Best-effort: a
    terminal that ignores OSC 11 simply keeps its own background."
   [^java.io.OutputStream out r g b]
-  (try
-    (.write out (.getBytes (format "\u001B]11;rgb:%02x/%02x/%02x\u0007" (long r) (long g) (long b)) "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out
+               (.getBytes (format "\u001B]11;rgb:%02x/%02x/%02x\u0007" (long r) (long g) (long b))
+                          "UTF-8"))
+       (.flush out)
+       (catch Throwable _ nil)))
 
 (defn reset-default-bg!
   "Reverse of `set-default-bg!` via OSC 111 (reset default background).
    Always called in the screen tear-down `finally` so the user's shell
    gets its original background back."
   [^java.io.OutputStream out]
-  (try
-    (.write out (.getBytes "\u001B]111\u0007" "UTF-8"))
-    (.flush out)
-    (catch Throwable _ nil)))
+  (try (.write out (.getBytes "\u001B]111\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn- stty!
   "Best-effort `stty <flag> < /dev/tty` — Unix only (Windows has no /dev/tty or
    stty; the Windows console TUI never needs this). Bounded + never throws."
   [flag]
   (when (.exists (io/file "/dev/tty"))
-    (try
-      (let [p (process/process {:cmd ["sh" "-c" (str "stty " flag " < /dev/tty")] :err :string})]
-        (.waitFor ^Process (:proc p) 400 java.util.concurrent.TimeUnit/MILLISECONDS)
-        nil)
-      (catch Throwable _ nil))))
+    (try (let [p (process/process {:cmd ["sh" "-c" (str "stty " flag " < /dev/tty")] :err :string})]
+           (.waitFor ^Process (:proc p) 400 java.util.concurrent.TimeUnit/MILLISECONDS)
+           nil)
+         (catch Throwable _ nil))))
 
 (defn disable-literal-next!
   "Disable the tty's IEXTEN so Ctrl+V (VLNEXT — the line discipline's \"literal
@@ -607,15 +601,11 @@
    replacement byte."
   [^UnixTerminal terminal]
   (.addProfile (.getInputDecoder terminal)
-    (reify KeyDecodingProfile
-      (getPatterns [_] [escape-pattern
-                        alt-enter-pattern
-                        alt-backspace-pattern
-                        ctrl-h-pattern
-                        modified-arrow-pattern
-                        paste-start-pattern
-                        paste-end-pattern
-                        sgr-mouse-pattern]))))
+               (reify
+                 KeyDecodingProfile
+                   (getPatterns [_] [escape-pattern alt-enter-pattern alt-backspace-pattern
+                                     ctrl-h-pattern modified-arrow-pattern paste-start-pattern
+                                     paste-end-pattern sgr-mouse-pattern]))))
 
 ;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
 ;;
@@ -628,16 +618,16 @@
 (def ^:private copy-helpers
   ;; argv lists for clipboard-WRITE helpers. Helper reads payload
   ;; from stdin.
-  [["pbcopy"]                            ;; macOS
-   ["wl-copy"]                            ;; Wayland
-   ["xclip" "-selection" "clipboard"]    ;; X11
+  [["pbcopy"] ;; macOS
+   ["wl-copy"] ;; Wayland
+   ["xclip" "-selection" "clipboard"] ;; X11
    ["xsel" "--clipboard" "--input"]])    ;; X11 alt
 
 (def ^:private paste-helpers
   ;; argv lists for clipboard-READ helpers. Helper writes payload
   ;; to stdout, which we capture verbatim and decode as UTF-8.
-  [["pbpaste"]                            ;; macOS
-   ["wl-paste" "--no-newline"]           ;; Wayland
+  [["pbpaste"] ;; macOS
+   ["wl-paste" "--no-newline"] ;; Wayland
    ["xclip" "-selection" "clipboard" "-o"] ;; X11
    ["xsel" "--clipboard" "--output"]])   ;; X11 alt
 
@@ -648,29 +638,38 @@
    raises in the `try` block and we report `{:success? false}` so the
    caller falls through to the next candidate."
   [cmd ^bytes stdin-bytes]
-  (try
-    (let [pb  (ProcessBuilder. ^java.util.List cmd)
-          _   (.redirectErrorStream pb true)
-          p   (.start pb)]
-      (when stdin-bytes
-        (let [out (.getOutputStream p)]
-          (.write out stdin-bytes)
-          (.close out)))
-      (let [in   (.getInputStream p)
-            buf  (java.io.ByteArrayOutputStream.)
-            tmp  (byte-array 4096)]
-        ;; Drain stdout BEFORE waitFor: bigger paste payloads can
-        ;; exceed the OS pipe buffer and deadlock the helper if its
-        ;; output isn't being read.
-        (loop []
-          (let [n (.read in tmp)]
-            (when (pos? n)
-              (.write buf tmp 0 n)
-              (recur))))
-        (.waitFor p 1 java.util.concurrent.TimeUnit/SECONDS)
-        {:success?    (zero? (.exitValue p))
-         :stdout (.toString buf "UTF-8")}))
-    (catch Throwable _ {:success? false :stdout nil})))
+  (try (let [pb
+             (ProcessBuilder. ^java.util.List cmd)
+
+             _
+             (.redirectErrorStream pb true)
+
+             p
+             (.start pb)]
+
+         (when stdin-bytes
+           (let [out (.getOutputStream p)]
+             (.write out stdin-bytes)
+             (.close out)))
+         (let [in
+               (.getInputStream p)
+
+               buf
+               (java.io.ByteArrayOutputStream.)
+
+               tmp
+               (byte-array 4096)]
+
+           ;; Drain stdout BEFORE waitFor: bigger paste payloads can
+           ;; exceed the OS pipe buffer and deadlock the helper if its
+           ;; output isn't being read.
+           (loop []
+
+             (let [n (.read in tmp)]
+               (when (pos? n) (.write buf tmp 0 n) (recur))))
+           (.waitFor p 1 java.util.concurrent.TimeUnit/SECONDS)
+           {:success? (zero? (.exitValue p)) :stdout (.toString buf "UTF-8")}))
+       (catch Throwable _ {:success? false :stdout nil})))
 
 (defn- shell-clipboard-copy!
   "Try every helper in `copy-helpers` until one succeeds. Returns
@@ -681,9 +680,7 @@
     (loop [[cmd & rest] copy-helpers]
       (if (nil? cmd)
         :none
-        (if (:success? (run-shell-helper! cmd bytes))
-          (keyword (first cmd))
-          (recur rest))))))
+        (if (:success? (run-shell-helper! cmd bytes)) (keyword (first cmd)) (recur rest))))))
 
 (defn- shell-clipboard-paste!
   "Try every helper in `paste-helpers` until one returns a non-empty
@@ -692,9 +689,8 @@
   (loop [[cmd & rest] paste-helpers]
     (when cmd
       (let [{:keys [success? stdout]} (run-shell-helper! cmd nil)]
-        (cond
-          (and success? (some? stdout) (pos? (count stdout))) stdout
-          :else (recur rest))))))
+        (cond (and success? (some? stdout) (pos? (count stdout))) stdout
+              :else (recur rest))))))
 
 (defn clipboard-paste
   "Read the system clipboard as a UTF-8 string. Returns the captured
@@ -709,27 +705,25 @@
    helper so \"the copy didn't work\" reports can be diagnosed
    against `~/.vis/vis.log`."
   [^String text]
-  (let [winner (shell-clipboard-copy! text)
-        ok?    (not= winner :none)]
-    (try
-      (tel/log!
-        {:level (if ok? :info :warn)
-         :id    ::clipboard-copy
-         :data  {:winner   winner
-                 :len      (count text)
-                 :platform (System/getProperty "os.name")}
-         :msg   (str "clipboard-copy! winner=" winner
-                  " len=" (count text))})
-      (catch Throwable _ nil))
+  (let [winner
+        (shell-clipboard-copy! text)
+
+        ok?
+        (not= winner :none)]
+
+    (try (tel/log! {:level (if ok? :info :warn)
+                    :id ::clipboard-copy
+                    :data
+                    {:winner winner :len (count text) :platform (System/getProperty "os.name")}
+                    :msg (str "clipboard-copy! winner=" winner " len=" (count text))})
+         (catch Throwable _ nil))
     ok?))
 
 ;;; ── Input buffer state ─────────────────────────────────────────────────────
 
-(defn empty-input []
-  {:lines [""] :crow 0 :ccol 0})
+(defn empty-input [] {:lines [""] :crow 0 :ccol 0})
 
-(defn input->text [{:keys [lines]}]
-  (str/join "\n" lines))
+(defn input->text [{:keys [lines]}] (str/join "\n" lines))
 
 (defn input-empty?
   "True when the input buffer is the pristine empty prompt.
@@ -756,22 +750,25 @@
 (defn- buf->
   "Fold an edited `TextEditBuffer` back onto `st`, preserving any extra keys."
   [st ^TextEditBuffer b]
-  (assoc st :lines (vec (.getLines b)) :crow (.getRow b) :ccol (.getColumn b)))
+  (assoc st
+    :lines (vec (.getLines b))
+    :crow (.getRow b)
+    :ccol (.getColumn b)))
 
-(defn insert-char        [st ch] (buf-> st (.insertCharacter      (->buf st) (char ch))))
-(defn insert-newline     [st]    (buf-> st (.newline              (->buf st))))
-(defn delete-backward    [st]    (buf-> st (.deleteBackward       (->buf st))))
-(defn delete-forward     [st]    (buf-> st (.deleteForward        (->buf st))))
-(defn delete-word-backward [st]  (buf-> st (.deleteWordBackward   (->buf st))))
-(defn delete-line-backward [st]  (buf-> st (.killToLineStart      (->buf st))))
-(defn kill-line          [st]    (buf-> st (.killLine             (->buf st))))
-(defn transpose-chars    [st]    (buf-> st (.transposeCharacters  (->buf st))))
-(defn move-left          [st]    (buf-> st (.moveLeft             (->buf st))))
-(defn move-right         [st]    (buf-> st (.moveRight            (->buf st))))
-(defn move-word-left     [st]    (buf-> st (.moveWordLeft         (->buf st))))
-(defn move-word-right    [st]    (buf-> st (.moveWordRight        (->buf st))))
-(defn move-line-start    [st]    (buf-> st (.moveLineStart        (->buf st))))
-(defn move-line-end      [st]    (buf-> st (.moveLineEnd          (->buf st))))
+(defn insert-char [st ch] (buf-> st (.insertCharacter (->buf st) (char ch))))
+(defn insert-newline [st] (buf-> st (.newline (->buf st))))
+(defn delete-backward [st] (buf-> st (.deleteBackward (->buf st))))
+(defn delete-forward [st] (buf-> st (.deleteForward (->buf st))))
+(defn delete-word-backward [st] (buf-> st (.deleteWordBackward (->buf st))))
+(defn delete-line-backward [st] (buf-> st (.killToLineStart (->buf st))))
+(defn kill-line [st] (buf-> st (.killLine (->buf st))))
+(defn transpose-chars [st] (buf-> st (.transposeCharacters (->buf st))))
+(defn move-left [st] (buf-> st (.moveLeft (->buf st))))
+(defn move-right [st] (buf-> st (.moveRight (->buf st))))
+(defn move-word-left [st] (buf-> st (.moveWordLeft (->buf st))))
+(defn move-word-right [st] (buf-> st (.moveWordRight (->buf st))))
+(defn move-line-start [st] (buf-> st (.moveLineStart (->buf st))))
+(defn move-line-end [st] (buf-> st (.moveLineEnd (->buf st))))
 (defn- emacs-edit
   "Apply a lanterna Emacs editing chord (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
    to input state `st` via the SHARED `TextEditKeymap` — the SAME source of truth
@@ -789,14 +786,14 @@
    PRIMARY trigger, C-x p, is handled by the prefix dispatcher (see
    `resolve-prefix-key`), not here."
   [^KeyStroke key]
-  (boolean
-    (and (= KeyType/Character (.getKeyType key))
-      (.isAltDown key) (not (.isCtrlDown key))
-      (when-let [c (.getCharacter key)]
-        (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
+  (boolean (and (= KeyType/Character (.getKeyType key))
+                (.isAltDown key)
+                (not (.isCtrlDown key))
+                (when-let [c (.getCharacter key)]
+                  (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
 
-(defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
-(defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
+(defn move-up [st] (buf-> st (.moveUp (->buf st))))
+(defn move-down [st] (buf-> st (.moveDown (->buf st))))
 
 ;; ── Paste placeholders  ─────────────────────────────────────────────────
 ;;
@@ -827,12 +824,12 @@
   "Human-readable byte count: 1234 -> 1.2KB, 12 -> 12B. Locale-safe
    (US locale so a Polish JVM doesn't render a comma decimal)."
   [^long n]
-  (cond
-    (< n 1024)         (str n "B")
-    (< n (* 1024 1024)) (String/format java.util.Locale/US "%.1fKB"
-                          (into-array Object [(double (/ n 1024.0))]))
-    :else               (String/format java.util.Locale/US "%.1fMB"
-                          (into-array Object [(double (/ n 1024.0 1024.0))]))))
+  (cond (< n 1024) (str n "B")
+        (< n (* 1024 1024))
+        (String/format java.util.Locale/US "%.1fKB" (into-array Object [(double (/ n 1024.0))]))
+        :else (String/format java.util.Locale/US
+                             "%.1fMB"
+                             (into-array Object [(double (/ n 1024.0 1024.0))]))))
 
 (defn format-paste-placeholder
   "Produce the visible token text for `app-db :pastes` entry `entry`.
@@ -852,18 +849,32 @@
   (if image
     ;; Image drop: name the file + its intrinsic size instead of the
     ;; pasted PATH's line/byte weight, which is meaningless to the user.
-    (let [{:keys [filename width height size-label]} image
-          dims (when (and width height (pos? (long width)) (pos? (long height)))
-                 (str width "×" height))]
-      (str "[Image #" id ": " (or filename "image")
-        (when dims (str " " dims))
-        (when size-label (str ", " size-label)) "]"))
-    (let [text       (str content)
-          line-count (inc (count (filter #(= % \newline) text)))
-          char-count (count text)
-          line-word  (if (= 1 line-count) "line" "lines")]
-      (str "[Pasted #" id ": " line-count " " line-word ", "
-        (format-bytes char-count) "]"))))
+    (let [{:keys [filename width height size-label]}
+          image
+
+          dims
+          (when (and width height (pos? (long width)) (pos? (long height))) (str width "×" height))]
+
+      (str "[Image #"
+           id
+           ": "
+           (or filename "image")
+           (when dims (str " " dims))
+           (when size-label (str ", " size-label))
+           "]"))
+    (let [text
+          (str content)
+
+          line-count
+          (inc (count (filter #(= % \newline) text)))
+
+          char-count
+          (count text)
+
+          line-word
+          (if (= 1 line-count) "line" "lines")]
+
+      (str "[Pasted #" id ": " line-count " " line-word ", " (format-bytes char-count) "]"))))
 
 (def ^:const PASTE_INLINE_MAX_CHARS
   "Threshold below which we DON'T use a placeholder - a short
@@ -876,9 +887,7 @@
    that the user benefits from the placeholder UX. Single-line
    ASCII pastes shorter than `PASTE_INLINE_MAX_CHARS` go inline."
   [^String text]
-  (boolean
-    (or (.contains text "\n")
-      (> (count text) PASTE_INLINE_MAX_CHARS))))
+  (boolean (or (.contains text "\n") (> (count text) PASTE_INLINE_MAX_CHARS))))
 
 (defn expand-paste-placeholders
   "Substitute every `[Pasted #N: ...]` token in `text` with its content
@@ -894,11 +903,16 @@
    payload carrying `$` or `\\` is handled verbatim - we don't
    double-quote here."
   [^String text pastes-map]
-  (str/replace text placeholder-regex
-    (fn [[whole id-str]]
-      (let [id (try (Integer/parseInt id-str) (catch Throwable _ nil))
-            entry (when id (get pastes-map id))]
-        (if entry (str (:content entry)) whole)))))
+  (str/replace text
+               placeholder-regex
+               (fn [[whole id-str]]
+                 (let [id
+                       (try (Integer/parseInt id-str) (catch Throwable _ nil))
+
+                       entry
+                       (when id (get pastes-map id))]
+
+                   (if entry (str (:content entry)) whole)))))
 (def ^:const PASTE_PREVIEW_HEAD_LINES
   "How many leading lines of a pasted payload the collapsed transcript
    preview shows."
@@ -929,13 +943,17 @@
    `PASTE_PREVIEW_HEAD_LINES` and last `PASTE_PREVIEW_TAIL_LINES` lines with
    a `⋯ N more lines ⋯` marker between them. Returns a seq of strings."
   [^String content]
-  (let [lines (str/split (str content) #"\n" -1)
-        n     (count lines)]
+  (let [lines
+        (str/split (str content) #"\n" -1)
+
+        n
+        (count lines)]
+
     (if (<= n (+ PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES 1))
       (map clamp-preview-line lines)
       (concat (map clamp-preview-line (take PASTE_PREVIEW_HEAD_LINES lines))
-        [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
-        (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
+              [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
+              (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
 
 (defn collapse-paste-placeholders
   "Substitute every `[Pasted #N: ...]` token in `text` with a fenced
@@ -953,31 +971,34 @@
    code the payload may itself contain from closing it early. Tokens
    with no entry in `pastes-map` pass through unchanged."
   [^String text pastes-map]
-  (str/replace text placeholder-regex
-    (fn [[whole id-str]]
-      (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
-            entry (when id (get pastes-map id))]
-        (cond
-          (nil? entry) whole
-          ;; Image drop: a `vis-image` fence carries the file path +
-          ;; metadata the renderer reads to draw the picture inline (it
-          ;; re-reads the file, so no base64 rides in the transcript and
-          ;; the image survives a session reopen). Body lines, in order:
-          ;; summary, absolute path, mime, `WxH`, size-label.
-          (:image entry)
-          (let [{:keys [path mime width height size-label]} (:image entry)]
-            (str "\n````vis-image\n"
-              (format-paste-placeholder entry) "\n"
-              path "\n"
-              (or mime "") "\n"
-              (if (and width height) (str width "x" height) "") "\n"
-              (or size-label "") "\n"
-              "````\n"))
-          :else
-          (str "\n````vis-paste\n"
-            (format-paste-placeholder entry) "\n"
-            (:content entry)
-            "\n````\n"))))))
+  (str/replace text
+               placeholder-regex
+               (fn [[whole id-str]]
+                 (let [id
+                       (try (Integer/parseInt id-str) (catch Throwable _ nil))
+
+                       entry
+                       (when id (get pastes-map id))]
+
+                   (cond (nil? entry) whole
+                         ;; Image drop: a `vis-image` fence carries the file path +
+                         ;; metadata the renderer reads to draw the picture inline (it
+                         ;; re-reads the file, so no base64 rides in the transcript and
+                         ;; the image survives a session reopen). Body lines, in order:
+                         ;; summary, absolute path, mime, `WxH`, size-label.
+                         (:image entry)
+                         (let [{:keys [path mime width height size-label]} (:image entry)]
+                           (str "\n````vis-image\n" (format-paste-placeholder entry)
+                                "\n" path
+                                "\n" (or mime "")
+                                "\n" (if (and width height) (str width "x" height) "")
+                                "\n" (or size-label "")
+                                "\n" "````\n"))
+                         :else (str "\n````vis-paste\n"
+                                    (format-paste-placeholder entry)
+                                    "\n"
+                                    (:content entry)
+                                    "\n````\n"))))))
 
 (defn placeholder-id-before-cursor
   "When the cursor of `state` sits IMMEDIATELY AFTER the closing `]`
@@ -995,7 +1016,8 @@
                 ;; line shouldn't get nuked just because the cursor
                 ;; is past it.
                 match-start (when m (str/last-index-of before (first m)))
-                match-end   (when match-start (+ match-start (count (first m))))]
+                match-end (when match-start (+ match-start (count (first m))))]
+
             (when (and m match-end (= match-end (count before)))
               (try (Integer/parseInt (second m)) (catch Throwable _ nil)))))))))
 
@@ -1008,24 +1030,30 @@
    No-op when no placeholder ends at the cursor - the screen loop
    guards via `placeholder-id-before-cursor` first."
   [{:keys [lines crow ccol] :as state}]
-  (let [line   (nth lines crow "")
-        before (subs line 0 ccol)
-        after  (subs line ccol)
-        m      (re-find placeholder-regex before)]
+  (let [line
+        (nth lines crow "")
+
+        before
+        (subs line 0 ccol)
+
+        after
+        (subs line ccol)
+
+        m
+        (re-find placeholder-regex before)]
+
     (if-let [match-start (when m (str/last-index-of before (first m)))]
       (let [new-line (str (subs before 0 match-start) after)
             new-ccol match-start]
+
         (-> state
-          (assoc-in [:lines crow] new-line)
-          (assoc :ccol new-ccol)))
+            (assoc-in [:lines crow] new-line)
+            (assoc :ccol new-ccol)))
       state)))
 
-(def ^:private file-mention-regex
-  #"(?<!\S)@(?:\"([^\"]+)\"|([A-Za-z0-9][A-Za-z0-9._/\-]*))")
+(def ^:private file-mention-regex #"(?<!\S)@(?:\"([^\"]+)\"|([A-Za-z0-9][A-Za-z0-9._/\-]*))")
 
-(defn- file-mention-needs-quotes?
-  [path]
-  (boolean (re-find #"\s" (str path))))
+(defn- file-mention-needs-quotes? [path] (boolean (re-find #"\s" (str path))))
 
 (defn format-file-mention
   "Visible inline file mention token inserted by the `@` picker.
@@ -1033,23 +1061,29 @@
    still recover the exact filename."
   [path]
   (let [path* (str path)]
-    (if (file-mention-needs-quotes? path*)
-      (str "@\"" path* "\"")
-      (str "@" path*))))
+    (if (file-mention-needs-quotes? path*) (str "@\"" path* "\"") (str "@" path*))))
 
 (defn- resolve-local-file
   [path]
-  (try
-    (let [cwd         (.getCanonicalFile (workspace/cwd))
-          cwd-path    (.getPath cwd)
-          prefix      (str cwd-path java.io.File/separator)
-          candidate   (.getCanonicalFile (io/file cwd path))
-          candidate-p (.getPath candidate)]
-      (when (and (.isFile candidate)
-              (or (= candidate-p cwd-path)
-                (str/starts-with? candidate-p prefix)))
-        candidate))
-    (catch Throwable _ nil)))
+  (try (let [cwd
+             (.getCanonicalFile (workspace/cwd))
+
+             cwd-path
+             (.getPath cwd)
+
+             prefix
+             (str cwd-path java.io.File/separator)
+
+             candidate
+             (.getCanonicalFile (io/file cwd path))
+
+             candidate-p
+             (.getPath candidate)]
+
+         (when (and (.isFile candidate)
+                    (or (= candidate-p cwd-path) (str/starts-with? candidate-p prefix)))
+           candidate))
+       (catch Throwable _ nil)))
 
 (defn- file-mention->prompt-block
   "Agent-facing expansion of `@path`. Minimal directive only - tells
@@ -1064,8 +1098,8 @@
    so the agent still sees the user's exact mention."
   [path]
   (if (resolve-local-file path)
-    (str "[Attached File: " path "]\n"
-      "The user attached this file. Read it (via the file/zipper tools) before answering.")
+    (str "[Attached File: " path
+         "]\n" "The user attached this file. Read it (via the file/zipper tools) before answering.")
     (format-file-mention path)))
 
 (defn expand-file-mentions
@@ -1083,28 +1117,46 @@
    previews even when the question is structural and wastes iterations.
    Unknown paths pass through unchanged."
   [^String text]
-  (str/replace text file-mention-regex
-    (fn [[_ quoted-path bare-path]]
-      (file-mention->prompt-block (or quoted-path bare-path)))))
+  (str/replace text
+               file-mention-regex
+               (fn [[_ quoted-path bare-path]]
+                 (file-mention->prompt-block (or quoted-path bare-path)))))
 
-(defn paste-text [{:keys [lines crow ccol] :as st} text]
-  (let [paste-lines  (str/split text #"\r?\n" -1)
-        current-line (nth lines crow)
-        before       (subs current-line 0 ccol)
-        after        (subs current-line ccol)]
+(defn paste-text
+  [{:keys [lines crow ccol] :as st} text]
+  (let [paste-lines
+        (str/split text #"\r?\n" -1)
+
+        current-line
+        (nth lines crow)
+
+        before
+        (subs current-line 0 ccol)
+
+        after
+        (subs current-line ccol)]
+
     (if (= 1 (count paste-lines))
       (-> st
-        (assoc-in [:lines crow] (str before (first paste-lines) after))
-        (assoc :ccol (+ ccol (count (first paste-lines)))))
-      (let [first-l  (str before (first paste-lines))
-            last-l   (str (last paste-lines) after)
-            mid      (subvec (vec paste-lines) 1 (dec (count paste-lines)))
-            new-crow (+ crow (dec (count paste-lines)))]
+          (assoc-in [:lines crow] (str before (first paste-lines) after))
+          (assoc :ccol (+ ccol (count (first paste-lines)))))
+      (let [first-l
+            (str before (first paste-lines))
+
+            last-l
+            (str (last paste-lines) after)
+
+            mid
+            (subvec (vec paste-lines) 1 (dec (count paste-lines)))
+
+            new-crow
+            (+ crow (dec (count paste-lines)))]
+
         (-> st
-          (assoc :lines (into (conj (subvec lines 0 crow) first-l)
-                          (concat mid [last-l] (subvec lines (inc crow)))))
-          (assoc :crow new-crow)
-          (assoc :ccol (count (last paste-lines))))))))
+            (assoc :lines (into (conj (subvec lines 0 crow) first-l)
+                                (concat mid [last-l] (subvec lines (inc crow)))))
+            (assoc :crow new-crow)
+            (assoc :ccol (count (last paste-lines))))))))
 
 ;;; ── Key handling ───────────────────────────────────────────────────────────
 
@@ -1116,42 +1168,37 @@
      • anything else → abort the prefix (no-op), so a stray C-x never swallows
        the next keystroke."
   [^KeyStroke key state]
-  (let [state (dissoc state :prefix)
-        c     (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
+  (let [state
+        (dissoc state :prefix)
+
+        c
+        (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
+
     (cond
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
       ;; second key (C-x C-p) is also accepted for old muscle memory.
-      (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key))
-      {:action :show-palette :state state}
-
+      (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key)) {:action :show-palette
+                                                                             :state state}
       ;; C-x <letter> → a vis verb (plain second key).
-      (and c (keymap/prefix-action-for c))
-      {:action (keymap/prefix-action-for c) :state state}
-
+      (and c (keymap/prefix-action-for c)) {:action (keymap/prefix-action-for c) :state state}
       ;; C-x ← / C-x → → previous / next workspace (Emacs previous-buffer /
       ;; next-buffer). The switch-to-buffer LIST is C-x b (a `:show-sessions`
       ;; prefix verb resolved by the `prefix-action-for` clause above).
       (= KeyType/ArrowLeft (.getKeyType key))
       {:action :select-tab-index :workspace-index :prev :state state}
-
       (= KeyType/ArrowRight (.getKeyType key))
       {:action :select-tab-index :workspace-index :next :state state}
-
       ;; C-x <digit> → jump straight to workspace N (C-x 1 … C-x 9), the Emacs
       ;; numeric buffer reflex (mirrors the M-1 … M-9 chords). Digits are 1-based
       ;; on screen, the index 0-based; C-x 0 is ignored (no 0th workspace). A
       ;; non-existent N is caught downstream and surfaced as a TUI notice.
       (and c (Character/isDigit c) (not= \0 c))
-      {:action :select-tab-index
-       :workspace-index (dec (Character/digit c 10))
-       :state state}
-
+      {:action :select-tab-index :workspace-index (dec (Character/digit c 10)) :state state}
       ;; C-x TAB / C-x S-TAB → Emacs global fold cycle (org/magit `<backtab>`):
       ;; toggle EVERY disclosure collapsed↔expanded in one keystroke. Living behind
       ;; the C-x prefix keeps it off bare Tab/S-Tab (which switch workspaces).
-      (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key))
-      {:action :toggle-all-details :state state}
-
+      (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key)) {:action :toggle-all-details
+                                                             :state state}
       :else {:action :continue :state state})))
 
 (defn handle-key
@@ -1162,175 +1209,146 @@
     (resolve-prefix-key key state)
     (let [ktype (.getKeyType key)]
       (condp = ktype
-      ;; Esc clears a non-empty draft first. Press Esc again on an empty input
-      ;; to keep the existing cancel-turn behaviour.
-        KeyType/Escape
-        (if (input-empty? state)
-          {:action :cancel :state state}
-          {:action :clear-input :state (empty-input)})
-
+        ;; Esc clears a non-empty draft first. Press Esc again on an empty input
+        ;; to keep the existing cancel-turn behaviour.
+        KeyType/Escape (if (input-empty? state)
+                         {:action :cancel :state state}
+                         {:action :clear-input :state (empty-input)})
         KeyType/Character
-        (let [c     (.getCharacter key)
-              ctrl  (.isCtrlDown key)
-              alt   (.isAltDown key)
-            ;; Emacs editing chord result (nil unless `key` is one) — computed
-            ;; once, applied below. Editing keys take PRECEDENCE over app verbs.
+        (let [c (.getCharacter key)
+              ctrl (.isCtrlDown key)
+              alt (.isAltDown key)
+              ;; Emacs editing chord result (nil unless `key` is one) — computed
+              ;; once, applied below. Editing keys take PRECEDENCE over app verbs.
               emacs (emacs-edit key state)]
-          (cond
-          ;; ── Clipboard is the TERMINAL's job, not ours ───────────────────
-          ;; The terminal auto-copies on selection and pastes natively
-          ;; (bracketed paste is caught by the screen loop and turned into a
-          ;; paste placeholder), so the editor binds NEITHER Ctrl+C nor Ctrl+V
-          ;; for clipboard. Ctrl+C keeps its terminal reflex: quit on an empty
-          ;; prompt, clear the draft otherwise — and while a turn is running
-          ;; the screen loop turns that clear into cancel-turn.
-            (and ctrl (= (Character/toLowerCase c) keymap/quit-key))
-            (if (input-empty? state)
-              {:action :quit :state state}
-              {:action :clear-input :state (empty-input)})
 
-          ;; ── Ctrl+G: Emacs keyboard-quit (abort) — same as Escape. The screen
-          ;; loop turns :cancel / :clear-input into "cancel turn / close dialog /
-          ;; clear draft" by priority.
+          (cond
+            ;; ── Clipboard is the TERMINAL's job, not ours ───────────────────
+            ;; The terminal auto-copies on selection and pastes natively
+            ;; (bracketed paste is caught by the screen loop and turned into a
+            ;; paste placeholder), so the editor binds NEITHER Ctrl+C nor Ctrl+V
+            ;; for clipboard. Ctrl+C keeps its terminal reflex: quit on an empty
+            ;; prompt, clear the draft otherwise — and while a turn is running
+            ;; the screen loop turns that clear into cancel-turn.
+            (and ctrl (= (Character/toLowerCase c) keymap/quit-key)) (if (input-empty? state)
+                                                                       {:action :quit :state state}
+                                                                       {:action :clear-input
+                                                                        :state (empty-input)})
+            ;; ── Ctrl+G: Emacs keyboard-quit (abort) — same as Escape. The screen
+            ;; loop turns :cancel / :clear-input into "cancel turn / close dialog /
+            ;; clear draft" by priority.
             (and ctrl (= (Character/toLowerCase c) keymap/abort-key))
             (if (input-empty? state)
               {:action :cancel :state state}
               {:action :clear-input :state (empty-input)})
-
-          ;; ── Emacs editing keys (FULL set, first-class) ──────────────────
-          ;; C-a/C-e begin/end · C-b/C-f back/forward char · C-p/C-n prev/next
-          ;; line · C-k kill-to-end · C-u kill-to-start · C-w kill-word · C-d
-          ;; delete-char · C-t transpose — ALL routed through lanterna's shared
-          ;; `TextEditKeymap`, the SAME source of truth every lanterna `TextBox`
-          ;; (dialog inputs) uses, so the chords behave identically in every
-          ;; input. They take precedence over app verbs / the prefix.
-            emacs
-            {:action :continue :state emacs}
-
-          ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT (PLAIN) key runs a
-          ;; vis command (C-x m model · r reasoning · l length · f search · a
-          ;; attach · v voice · d dirs · s resources · h help) or C-x C-p palette.
-          ;; Plain second keys so Ctrl-byte collisions (Ctrl+S=flow, Ctrl+M=Enter)
-          ;; can't eat them. Resolved at the top of `handle-key` via :prefix.
+            ;; ── Emacs editing keys (FULL set, first-class) ──────────────────
+            ;; C-a/C-e begin/end · C-b/C-f back/forward char · C-p/C-n prev/next
+            ;; line · C-k kill-to-end · C-u kill-to-start · C-w kill-word · C-d
+            ;; delete-char · C-t transpose — ALL routed through lanterna's shared
+            ;; `TextEditKeymap`, the SAME source of truth every lanterna `TextBox`
+            ;; (dialog inputs) uses, so the chords behave identically in every
+            ;; input. They take precedence over app verbs / the prefix.
+            emacs {:action :continue :state emacs}
+            ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT (PLAIN) key runs a
+            ;; vis command (C-x m model · r reasoning · l length · f search · a
+            ;; attach · v voice · d dirs · s resources · h help) or C-x C-p palette.
+            ;; Plain second keys so Ctrl-byte collisions (Ctrl+S=flow, Ctrl+M=Enter)
+            ;; can't eat them. Resolved at the top of `handle-key` via :prefix.
             (and ctrl (= (Character/toLowerCase c) keymap/prefix-key))
             {:action :continue :state (assoc state :prefix :cx)}
-
-          ;; ── Command palette ── M-x (Alt+x), the canonical Emacs alias for the
-          ;; C-x C-p palette (the search / providers / new-session verbs live there).
-            (palette-trigger? key)
-            {:action :show-palette :state state}
-
-          ;; ── Ctrl+L: Emacs recenter — jump the conversation to the bottom and
-          ;; force a repaint (the screen loop owns :recenter).
-            (and ctrl (= (Character/toLowerCase c) keymap/recenter-key))
-            {:action :recenter :state state}
-
-          ;; ── Emacs buffer navigation (faithful) — the transcript IS the buffer:
-          ;;   M-> end-of-buffer (the REAL Emacs "jump to bottom"; C-l above is
-          ;;       recenter, kept as a vis alias), M-< beginning-of-buffer,
-          ;;   C-v scroll forward a screen (page down), M-v scroll backward (page up).
-          ;; Meta needs "Use Option as Meta" on macOS — same as the M-x palette.
-            (and alt (= c \>))
-            {:action :recenter :state state}
-            (and alt (= c \<))
-            {:action :scroll-to-top :state state}
-            (and ctrl (= (Character/toLowerCase c) \v))
-            {:action :scroll-down :state state}
-            (and alt (= (Character/toLowerCase c) \v))
-            {:action :scroll-up :state state}
-
-          ;; ── Emacs word motion — M-b / M-f (backward-word / forward-word).
-          ;; These are ALSO exactly what stock macOS terminals (Ghostty,
-          ;; Terminal.app, iTerm2) send for Option+←/→: their default keybinds
-          ;; translate the chord into `ESC b` / `ESC f`, NOT the xterm modified
-          ;; arrow `ESC[1;3D/C` that `modified-arrow-pattern` decodes. Lanterna
-          ;; surfaces those bytes as Alt+b / Alt+f Character keystrokes, so this
-          ;; clause is what makes Option+arrow word motion work on macOS.
-            (and alt (not ctrl) (= (Character/toLowerCase c) \b))
-            {:action :continue :state (move-word-left state)}
-            (and alt (not ctrl) (= (Character/toLowerCase c) \f))
-            {:action :continue :state (move-word-right state)}
-
-          ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
-          ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
-          ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
+            ;; ── Command palette ── M-x (Alt+x), the canonical Emacs alias for the
+            ;; C-x C-p palette (the search / providers / new-session verbs live there).
+            (palette-trigger? key) {:action :show-palette :state state}
+            ;; ── Ctrl+L: Emacs recenter — jump the conversation to the bottom and
+            ;; force a repaint (the screen loop owns :recenter).
+            (and ctrl (= (Character/toLowerCase c) keymap/recenter-key)) {:action :recenter
+                                                                          :state state}
+            ;; ── Emacs buffer navigation (faithful) — the transcript IS the buffer:
+            ;;   M-> end-of-buffer (the REAL Emacs "jump to bottom"; C-l above is
+            ;;       recenter, kept as a vis alias), M-< beginning-of-buffer,
+            ;;   C-v scroll forward a screen (page down), M-v scroll backward (page up).
+            ;; Meta needs "Use Option as Meta" on macOS — same as the M-x palette.
+            (and alt (= c \>)) {:action :recenter :state state}
+            (and alt (= c \<)) {:action :scroll-to-top :state state}
+            (and ctrl (= (Character/toLowerCase c) \v)) {:action :scroll-down :state state}
+            (and alt (= (Character/toLowerCase c) \v)) {:action :scroll-up :state state}
+            ;; ── Emacs word motion — M-b / M-f (backward-word / forward-word).
+            ;; These are ALSO exactly what stock macOS terminals (Ghostty,
+            ;; Terminal.app, iTerm2) send for Option+←/→: their default keybinds
+            ;; translate the chord into `ESC b` / `ESC f`, NOT the xterm modified
+            ;; arrow `ESC[1;3D/C` that `modified-arrow-pattern` decodes. Lanterna
+            ;; surfaces those bytes as Alt+b / Alt+f Character keystrokes, so this
+            ;; clause is what makes Option+arrow word motion work on macOS.
+            (and alt (not ctrl) (= (Character/toLowerCase c) \b)) {:action :continue
+                                                                   :state (move-word-left state)}
+            (and alt (not ctrl) (= (Character/toLowerCase c) \f)) {:action :continue
+                                                                   :state (move-word-right state)}
+            ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
+            ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
+            ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
             (and alt (Character/isDigit c) (not= \0 c))
-            {:action :select-tab-index
-             :workspace-index (dec (Character/digit c 10))
-             :state state}
-
-          ;; No DIRECT app-verb chords remain — every verb (help included, now
-          ;; C-x h) is C-x-prefixed or in the palette. Clause kept total in
-          ;; case a direct chord is re-added.
-            (and ctrl (keymap/action-for c))
-            {:action (keymap/action-for c) :state state}
-
-          ;; Unbound control / meta chords are ignored instead of inserting their
-          ;; letter payload into the prompt.
+            {:action :select-tab-index :workspace-index (dec (Character/digit c 10)) :state state}
+            ;; No DIRECT app-verb chords remain — every verb (help included, now
+            ;; C-x h) is C-x-prefixed or in the palette. Clause kept total in
+            ;; case a direct chord is re-added.
+            (and ctrl (keymap/action-for c)) {:action (keymap/action-for c) :state state}
+            ;; Unbound control / meta chords are ignored instead of inserting their
+            ;; letter payload into the prompt.
             (or ctrl alt) {:action :continue :state state}
-
             :else {:action :continue :state (insert-char state c)}))
-
-        KeyType/Tab
-        (if (.isShiftDown key)
-          {:action :select-tab-index :workspace-index :prev :state state}
-          {:action :select-tab-index :workspace-index :next :state state})
-
+        KeyType/Tab (if (.isShiftDown key)
+                      {:action :select-tab-index :workspace-index :prev :state state}
+                      {:action :select-tab-index :workspace-index :next :state state})
         KeyType/ReverseTab {:action :select-tab-index :workspace-index :prev :state state}
-
-      ;; App verbs live on cross-platform Ctrl chords (Ctrl+F search, Ctrl+R
-      ;; reasoning, …) + the Ctrl+P palette, dispatched from `keymap/bindings`
-      ;; in the Character branch above. While
-      ;; search is ACTIVE the screen key-loop intercepts typing → query and
-      ;; Ctrl+N/P → next/prev BEFORE this handler.
-
-        KeyType/Enter
-        (if (.isAltDown key)
-          {:action :continue :state (insert-newline state)}
-          {:action :send :state state})
-
-      ;; Backspace: plain deletes a char; Ctrl/Alt+Backspace deletes the word
-      ;; back (the common editor reflex). Help is no longer here — it moved to
-      ;; the C-x prefix (C-x h) — so a ctrl-modified Backspace is free to be
-      ;; word-delete, matching Alt+Backspace.
-        KeyType/Backspace  {:action :continue
-                            :state (if (or (.isAltDown key) (.isCtrlDown key))
-                                     (delete-word-backward state)
-                                     (delete-backward state))}
-      ;; Workspace switching is the Emacs way: C-x ←/→ (previous/next-buffer)
-      ;; and C-x b (switch-to-buffer list) — handled by `resolve-prefix-key`.
-      ;; Bare arrows move the cursor; Ctrl/Alt+arrow is word motion.
-        KeyType/ArrowLeft  {:action :continue
-                            :state (if (or (.isCtrlDown key) (.isAltDown key))
-                                     (move-word-left state)
-                                     (move-left state))}
+        ;; App verbs live on cross-platform Ctrl chords (Ctrl+F search, Ctrl+R
+        ;; reasoning, …) + the Ctrl+P palette, dispatched from `keymap/bindings`
+        ;; in the Character branch above. While
+        ;; search is ACTIVE the screen key-loop intercepts typing → query and
+        ;; Ctrl+N/P → next/prev BEFORE this handler.
+        KeyType/Enter (if (.isAltDown key)
+                        {:action :continue :state (insert-newline state)}
+                        {:action :send :state state})
+        ;; Backspace: plain deletes a char; Ctrl/Alt+Backspace deletes the word
+        ;; back (the common editor reflex). Help is no longer here — it moved to
+        ;; the C-x prefix (C-x h) — so a ctrl-modified Backspace is free to be
+        ;; word-delete, matching Alt+Backspace.
+        KeyType/Backspace {:action :continue
+                           :state (if (or (.isAltDown key) (.isCtrlDown key))
+                                    (delete-word-backward state)
+                                    (delete-backward state))}
+        ;; Workspace switching is the Emacs way: C-x ←/→ (previous/next-buffer)
+        ;; and C-x b (switch-to-buffer list) — handled by `resolve-prefix-key`.
+        ;; Bare arrows move the cursor; Ctrl/Alt+arrow is word motion.
+        KeyType/ArrowLeft {:action :continue
+                           :state (if (or (.isCtrlDown key) (.isAltDown key))
+                                    (move-word-left state)
+                                    (move-left state))}
         KeyType/ArrowRight {:action :continue
                             :state (if (or (.isCtrlDown key) (.isAltDown key))
                                      (move-word-right state)
                                      (move-right state))}
-        KeyType/Home       {:action :continue :state (move-line-start state)}
-      ;; Ctrl+End — "end of buffer": jump the conversation to the newest content
-      ;; (the SAME FOLLOW re-arm the C-l recenter and the `↓ latest` button do).
-      ;; Plain End stays end-of-line editing inside the input box.
-        KeyType/End        (if (.isCtrlDown key)
-                             {:action :recenter :state state}
-                             {:action :continue :state (move-line-end state)})
-      ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ session switcher
-        KeyType/ArrowUp    (if (and (.isAltDown key) (.isShiftDown key))
-                             {:action :show-sessions :state state}
-                             {:action :history-up :state state})
-        KeyType/ArrowDown  (if (and (.isAltDown key) (.isShiftDown key))
-                             {:action :show-sessions :state state}
-                             {:action :history-down :state state})
-        KeyType/PageUp     {:action :scroll-up :state state}
-        KeyType/PageDown   {:action :scroll-down :state state}
-
-      ;; Ignore everything else (including mouse events)
+        KeyType/Home {:action :continue :state (move-line-start state)}
+        ;; Ctrl+End — "end of buffer": jump the conversation to the newest content
+        ;; (the SAME FOLLOW re-arm the C-l recenter and the `↓ latest` button do).
+        ;; Plain End stays end-of-line editing inside the input box.
+        KeyType/End (if (.isCtrlDown key)
+                      {:action :recenter :state state}
+                      {:action :continue :state (move-line-end state)})
+        ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ session switcher
+        KeyType/ArrowUp (if (and (.isAltDown key) (.isShiftDown key))
+                          {:action :show-sessions :state state}
+                          {:action :history-up :state state})
+        KeyType/ArrowDown (if (and (.isAltDown key) (.isShiftDown key))
+                            {:action :show-sessions :state state}
+                            {:action :history-down :state state})
+        KeyType/PageUp {:action :scroll-up :state state}
+        KeyType/PageDown {:action :scroll-down :state state}
+        ;; Ignore everything else (including mouse events)
         {:action :continue :state state}))))
 
 ;;; ── Message formatting ─────────────────────────────────────────────────────
 
-(defn format-message [text]
+(defn format-message
+  [text]
   (let [ls (str/split-lines text)]
-    (into [(str "you: " (first ls))]
-      (map #(str "     " %) (rest ls)))))
+    (into [(str "you: " (first ls))] (map #(str "     " %) (rest ls)))))

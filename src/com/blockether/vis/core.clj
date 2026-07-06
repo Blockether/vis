@@ -39,45 +39,44 @@
    entry class via `:gen-class` for the GraalVM native-image build)."
   (:refer-clojure :exclude [symbol])
   (:gen-class)
-  (:require
-   [com.blockether.vis.internal.cancellation :as cancellation]
-   [com.blockether.vis.internal.commandline  :as commandline]
-   [com.blockether.vis.internal.config       :as config]
-   [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
-   [com.blockether.vis.internal.doctor       :as doctor]
-   [com.blockether.vis.internal.env-python   :as env]
-   [com.blockether.vis.internal.error        :as error]
-   [com.blockether.vis.internal.extension    :as extension]
-   [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
-   [com.blockether.vis.internal.form         :as form]
-   [com.blockether.vis.internal.import       :refer [import-vars]]
-   [com.blockether.vis.internal.format       :as fmt]
-   [com.blockether.vis.internal.gateway.server :as gateway]
-   [com.blockether.vis.internal.gateway.state :as gateway-state]
-   [com.blockether.vis.internal.gateway.wire :as wire]
-   [com.blockether.vis.internal.iteration    :as iteration]
-   [com.blockether.vis.internal.limits-format :as limits-format]
-   [com.blockether.vis.internal.loop         :as lp]
-   [com.blockether.vis.internal.titling      :as titling]
-   [com.blockether.vis.internal.main         :as binary]
-   [com.blockether.vis.internal.manifest     :as manifest]
-   [com.blockether.vis.internal.render       :as ir]
-   [com.blockether.vis.internal.notifications :as notifications]
-   [com.blockether.vis.internal.persistance  :as persistance]
-   [com.blockether.vis.internal.progress     :as progress]
-   [com.blockether.vis.internal.prompt       :as prompt]
-   [com.blockether.vis.internal.pyfmt        :as pyfmt]
-   [com.blockether.vis.internal.python-extensions :as python-extensions]
-   [com.blockether.vis.internal.provider-limits :as provider-limits]
-   [com.blockether.vis.internal.providers    :as providers]
-   [com.blockether.vis.internal.session-model :as session-model]
-   [com.blockether.vis.internal.registry     :as registry]
-   [com.blockether.vis.internal.resources    :as resources]
-   [com.blockether.vis.internal.slash        :as slash]
-   [com.blockether.vis.internal.theme        :as theme]
-   [com.blockether.vis.internal.toggles      :as toggles]
-   [com.blockether.vis.internal.workspace    :as workspace]
-   [taoensso.telemere                        :as tel]))
+  (:require [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.commandline :as commandline]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
+            [com.blockether.vis.internal.doctor :as doctor]
+            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.error :as error]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
+            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.import :refer [import-vars]]
+            [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.gateway.server :as gateway]
+            [com.blockether.vis.internal.gateway.state :as gateway-state]
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.iteration :as iteration]
+            [com.blockether.vis.internal.limits-format :as limits-format]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.titling :as titling]
+            [com.blockether.vis.internal.main :as binary]
+            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.render :as ir]
+            [com.blockether.vis.internal.notifications :as notifications]
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.progress :as progress]
+            [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.pyfmt :as pyfmt]
+            [com.blockether.vis.internal.python-extensions :as python-extensions]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.session-model :as session-model]
+            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.slash :as slash]
+            [com.blockether.vis.internal.theme :as theme]
+            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
@@ -89,188 +88,176 @@
 ;; The gateway-session/turn helpers below are the host contract a route
 ;; contribution builds its handlers from.
 ;; =============================================================================
-(import-vars
-  [gateway-start! gateway/start!]
-  [gateway-stop! gateway/stop!]
-  [gateway-running? gateway/running?]
-  [gateway-auth-required? gateway/auth-required?]
-  [gateway-register-routes! gateway/register-routes!]
-  [gateway-deregister-routes! gateway/deregister-routes!]
-  [gateway-create-session! gateway-state/create-session!]
-  [gateway-soul gateway-state/soul]
-  [gateway-list-sessions gateway-state/list-sessions]
-  [gateway-close-session! gateway-state/close-session!])
+(import-vars [gateway-start! gateway/start!]
+             [gateway-stop! gateway/stop!]
+             [gateway-running? gateway/running?]
+             [gateway-auth-required? gateway/auth-required?]
+             [gateway-register-routes! gateway/register-routes!]
+             [gateway-deregister-routes! gateway/deregister-routes!]
+             [gateway-create-session! gateway-state/create-session!]
+             [gateway-soul gateway-state/soul]
+             [gateway-list-sessions gateway-state/list-sessions]
+             [gateway-close-session! gateway-state/close-session!])
 
-(import-vars
-  [gateway-release-session! gateway-state/release-session!]
-  [gateway-submit-turn! gateway-state/submit-turn!])
+(import-vars [gateway-release-session! gateway-state/release-session!]
+             [gateway-submit-turn! gateway-state/submit-turn!])
 
-(import-vars
-  [gateway-submit-turn-sync! gateway-state/submit-turn-sync!]
-  [gateway-attach-turn-sync! gateway-state/attach-turn-sync!]
-  [gateway-update-queued-turn! gateway-state/update-queued-turn!]
-  [gateway-delete-queued-turn! gateway-state/delete-queued-turn!]
-  [gateway-cancel-turn! gateway-state/cancel-turn!]
-  [gateway-get-turn gateway-state/get-turn]
-  [gateway-list-turns gateway-state/list-turns]
-  [gateway-transcript gateway-state/transcript]
-  [gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!]
-  [gateway-context-snapshot gateway-state/context-snapshot]
-  [gateway-subscribe! gateway-state/subscribe!]
-  [gateway-unsubscribe! gateway-state/unsubscribe!]
-  [gateway-current-seq gateway-state/current-seq])
+(import-vars [gateway-submit-turn-sync! gateway-state/submit-turn-sync!]
+             [gateway-attach-turn-sync! gateway-state/attach-turn-sync!]
+             [gateway-update-queued-turn! gateway-state/update-queued-turn!]
+             [gateway-delete-queued-turn! gateway-state/delete-queued-turn!]
+             [gateway-cancel-turn! gateway-state/cancel-turn!]
+             [gateway-get-turn gateway-state/get-turn]
+             [gateway-list-turns gateway-state/list-turns]
+             [gateway-transcript gateway-state/transcript]
+             [gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!]
+             [gateway-context-snapshot gateway-state/context-snapshot]
+             [gateway-subscribe! gateway-state/subscribe!]
+             [gateway-unsubscribe! gateway-state/unsubscribe!]
+             [gateway-current-seq gateway-state/current-seq])
 
-(import-vars
-  [gateway-events-since gateway-state/events-since]
-  [gateway-session-model gateway-state/session-model]
-  [gateway-session-model-cached gateway-state/session-model-cached]
-  [gateway-set-session-model! gateway-state/set-session-model!])
+(import-vars [gateway-events-since gateway-state/events-since]
+             [gateway-session-model gateway-state/session-model]
+             [gateway-session-model-cached gateway-state/session-model-cached]
+             [gateway-set-session-model! gateway-state/set-session-model!])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
-(import-vars
-  [session-model-of session-model/model-of]
-  [session-model-of-cached session-model/model-of-cached]
-  [set-session-model! session-model/set-model!]
-  [gateway-session-workspace gateway-state/session-workspace-info])
+(import-vars [session-model-of session-model/model-of]
+             [session-model-of-cached session-model/model-of-cached]
+             [set-session-model! session-model/set-model!]
+             [gateway-session-workspace gateway-state/session-workspace-info])
 
 ;; =============================================================================
 ;; Cancellation
 ;; =============================================================================
-(import-vars
-  [cancellation-token cancellation/cancellation-token]
-  [cancellation-atom cancellation/cancellation-atom]
-  [cancellation-set-future! cancellation/cancellation-set-future!]
-  [on-cancel! cancellation/on-cancel!]
-  [cancel! cancellation/cancel!]
-  [cancelled? cancellation/cancelled?]
-  [cancellation? cancellation/cancellation?]
-  [virtual-threads-available? cancellation/virtual-threads-available?]
-  [worker-runtime cancellation/worker-runtime]
-  [worker-future cancellation/worker-future])
+(import-vars [cancellation-token cancellation/cancellation-token]
+             [cancellation-atom cancellation/cancellation-atom]
+             [cancellation-set-future! cancellation/cancellation-set-future!]
+             [on-cancel! cancellation/on-cancel!]
+             [cancel! cancellation/cancel!]
+             [cancelled? cancellation/cancelled?]
+             [cancellation? cancellation/cancellation?]
+             [virtual-threads-available? cancellation/virtual-threads-available?]
+             [worker-runtime cancellation/worker-runtime]
+             [worker-future cancellation/worker-future])
 
 ;; =============================================================================
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
 ;; =============================================================================
-(import-vars
-  [register-toggle! toggles/register-toggle!]
-  [register-toggles! toggles/register-toggles!]
-  [registered-toggles toggles/registered-toggles]
-  [toggle-spec toggles/toggle-spec]
-  [toggle-enabled? toggles/enabled?]
-  [toggle-value toggles/value-of]
-  [toggle-choices toggles/choices-of]
-  [toggle-type toggles/type-of]
-  [toggle-set-enabled! toggles/set-enabled!]
-  [toggle-set-value! toggles/set-value!]
-  [toggle-cycle-value! toggles/cycle-value!]
-  [toggle-reset-to-default! toggles/reset-to-default!]
-  [toggles-snapshot toggles/snapshot]
-  [toggles-hydrate-from-config! toggles/hydrate-from-config!]
-  [visible-toggles toggles/visible-toggles]
-  [toggles-for-channel toggles/toggles-for-channel]
-  [toggle-add-listener! toggles/add-listener!])
+(import-vars [register-toggle! toggles/register-toggle!]
+             [register-toggles! toggles/register-toggles!]
+             [registered-toggles toggles/registered-toggles]
+             [toggle-spec toggles/toggle-spec]
+             [toggle-enabled? toggles/enabled?]
+             [toggle-value toggles/value-of]
+             [toggle-choices toggles/choices-of]
+             [toggle-type toggles/type-of]
+             [toggle-set-enabled! toggles/set-enabled!]
+             [toggle-set-value! toggles/set-value!]
+             [toggle-cycle-value! toggles/cycle-value!]
+             [toggle-reset-to-default! toggles/reset-to-default!]
+             [toggles-snapshot toggles/snapshot]
+             [toggles-hydrate-from-config! toggles/hydrate-from-config!]
+             [visible-toggles toggles/visible-toggles]
+             [toggles-for-channel toggles/toggles-for-channel]
+             [toggle-add-listener! toggles/add-listener!])
 
 ;; =============================================================================
 ;; Workspace
 ;; =============================================================================
-(import-vars
-  [workspace-cwd workspace/cwd]
-  [workspace-root workspace/workspace-root]
-  [workspace-normalize-root workspace/normalize-root]
-  [workspace-subdirs workspace/subdirs]
-  [workspace-create-dir! workspace/create-dir!]
-  [workspace-filesystem-roots workspace/filesystem-roots]
-  [workspace-add-filesystem-root! workspace/add-filesystem-root!]
-  [workspace-remove-filesystem-root! workspace/remove-filesystem-root!]
-  [workspace-change-root! workspace/change-root!]
-  [workspace-backend workspace/workspace-backend]
-  [workspace-register-backend! workspace/register-backend!]
-  [workspace-deregister-backend! workspace/deregister-backend!]
-  [workspace-registered-backends workspace/registered-backends]
-  [workspace-capability-matrix workspace/capability-matrix]
-  [workspace-capabilities-for workspace/workspace-capability-matrix]
-  [workspace-supports? workspace/supports?]
-  [workspace-isolation-supported? workspace/isolated-workspaces-supported?]
-  [workspace-get workspace/get]
-  [workspace-list-active workspace/list-active]
-  [workspace-list-finished workspace/list-finished]
-  [workspace-for-session workspace/for-session]
-  [workspace-status workspace/status]
-  [workspace-trunk-info workspace/trunk-info]
-  [workspace-ensure-workspace! workspace/ensure-workspace!]
-  [workspace-create! workspace/create!]
-  [workspace-create-trunk-at! workspace/create-trunk-at!]
-  [workspace-apply! workspace/apply!]
-  [workspace-abandon! workspace/abandon!]
-  [workspace-set-label! workspace/set-label!]
-  [workspace-focus! workspace/focus!]
-  [workspace-last-focused workspace/last-focused]
-  [workspace-display-label workspace/display-label]
-  [workspace-with-session workspace/workspace-with-session]
-  [workspace-list-active-with-sessions workspace/list-active-with-sessions]
-  [workspace-register-hook! workspace/register-hook!])
+(import-vars [workspace-cwd workspace/cwd]
+             [workspace-root workspace/workspace-root]
+             [workspace-normalize-root workspace/normalize-root]
+             [workspace-subdirs workspace/subdirs]
+             [workspace-create-dir! workspace/create-dir!]
+             [workspace-filesystem-roots workspace/filesystem-roots]
+             [workspace-add-filesystem-root! workspace/add-filesystem-root!]
+             [workspace-remove-filesystem-root! workspace/remove-filesystem-root!]
+             [workspace-change-root! workspace/change-root!]
+             [workspace-backend workspace/workspace-backend]
+             [workspace-register-backend! workspace/register-backend!]
+             [workspace-deregister-backend! workspace/deregister-backend!]
+             [workspace-registered-backends workspace/registered-backends]
+             [workspace-capability-matrix workspace/capability-matrix]
+             [workspace-capabilities-for workspace/workspace-capability-matrix]
+             [workspace-supports? workspace/supports?]
+             [workspace-isolation-supported? workspace/isolated-workspaces-supported?]
+             [workspace-get workspace/get]
+             [workspace-list-active workspace/list-active]
+             [workspace-list-finished workspace/list-finished]
+             [workspace-for-session workspace/for-session]
+             [workspace-status workspace/status]
+             [workspace-trunk-info workspace/trunk-info]
+             [workspace-ensure-workspace! workspace/ensure-workspace!]
+             [workspace-create! workspace/create!]
+             [workspace-create-trunk-at! workspace/create-trunk-at!]
+             [workspace-apply! workspace/apply!]
+             [workspace-abandon! workspace/abandon!]
+             [workspace-set-label! workspace/set-label!]
+             [workspace-focus! workspace/focus!]
+             [workspace-last-focused workspace/last-focused]
+             [workspace-display-label workspace/display-label]
+             [workspace-with-session workspace/workspace-with-session]
+             [workspace-list-active-with-sessions workspace/list-active-with-sessions]
+             [workspace-register-hook! workspace/register-hook!])
 
 ;; =============================================================================
 ;; Slash commands (declarative `:ext/slash-commands`)
 ;; =============================================================================
-(import-vars
-  [active-slashes slash/active-slashes]
-  [registered-slashes slash/registered-slashes]
-  [registered-startable-resources extension/registered-startable-resources]
-  [slash-by-path slash/slash-by-path]
-  [slash-children slash/slash-children]
-  [slash-parse slash/parse]
-  [slash-dispatch slash/dispatch])
+(import-vars [active-slashes slash/active-slashes]
+             [registered-slashes slash/registered-slashes]
+             [registered-startable-resources extension/registered-startable-resources]
+             [slash-by-path slash/slash-by-path]
+             [slash-children slash/slash-children]
+             [slash-parse slash/parse]
+             [slash-dispatch slash/dispatch])
 
 ;; =============================================================================
 ;; Theme facade
 ;; =============================================================================
-(import-vars
-  [default-theme-id theme/default-theme-id]
-  [default-theme theme/default-theme]
-  [vis-light theme/vis-light]
-  [vis-dark theme/vis-dark]
-  [themes theme/themes]
-  [palette theme/palette]
-  [pallete theme/pallete]
-  [theme theme/theme]
-  [color theme/color]
-  [theme-registry theme/theme-registry]
-  [register-theme! theme/register-theme!]
-  [register-themes! theme/register-themes!]
-  [unregister-theme! theme/unregister-theme!]
-  [unregister-themes! theme/unregister-themes!]
-  [reset-themes! theme/reset-themes!]
-  [extension-theme-settings theme/extension-theme-settings]
-  [available-theme-ids theme/available-theme-ids]
-  [theme->web-css-vars theme/theme->web-css-vars]
-  [web-css-root theme/web-css-root])
+(import-vars [default-theme-id theme/default-theme-id]
+             [default-theme theme/default-theme]
+             [vis-light theme/vis-light]
+             [vis-dark theme/vis-dark]
+             [themes theme/themes]
+             [palette theme/palette]
+             [pallete theme/pallete]
+             [theme theme/theme]
+             [color theme/color]
+             [theme-registry theme/theme-registry]
+             [register-theme! theme/register-theme!]
+             [register-themes! theme/register-themes!]
+             [unregister-theme! theme/unregister-theme!]
+             [unregister-themes! theme/unregister-themes!]
+             [reset-themes! theme/reset-themes!]
+             [extension-theme-settings theme/extension-theme-settings]
+             [available-theme-ids theme/available-theme-ids]
+             [theme->web-css-vars theme/theme->web-css-vars]
+             [web-css-root theme/web-css-root])
 
 ;; =============================================================================
 ;; Error formatting
 ;; =============================================================================
-(import-vars
-  [error-message error/error-message]
-  [format-error error/format-error]
-  [final-answer-code-error-message error/final-answer-code-error-message]
-  [db-error->user-message persistance/db-error->user-message])
+(import-vars [error-message error/error-message]
+             [format-error error/format-error]
+             [final-answer-code-error-message error/final-answer-code-error-message]
+             [db-error->user-message persistance/db-error->user-message])
 
 ;; =============================================================================
 ;; Format helpers
 ;; =============================================================================
-(import-vars
-  [format-date fmt/format-date]
-  [format-clojure fmt/format-clojure]
-  [format-duration fmt/format-duration]
-  [format-tokens fmt/format-tokens]
-  [format-cost fmt/format-cost]
-  [format-iterations fmt/format-iterations]
-  [format-meta-line fmt/format-meta-line]
-  [display-model-name fmt/display-model-name]
-  [humanize-fact-key fmt/humanize-fact-key]
-  [meta-summary-line fmt/meta-summary-line]
-  [meta-fallback-note fmt/meta-fallback-note])
+(import-vars [format-date fmt/format-date]
+             [format-clojure fmt/format-clojure]
+             [format-duration fmt/format-duration]
+             [format-tokens fmt/format-tokens]
+             [format-cost fmt/format-cost]
+             [format-iterations fmt/format-iterations]
+             [format-meta-line fmt/format-meta-line]
+             [display-model-name fmt/display-model-name]
+             [humanize-fact-key fmt/humanize-fact-key]
+             [meta-summary-line fmt/meta-summary-line]
+             [meta-fallback-note fmt/meta-fallback-note])
 
 ;; =============================================================================
 ;; Notifications
@@ -282,13 +269,12 @@
 ;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
 ;; advisory metadata for the consumer.
 ;; =============================================================================
-(import-vars
-  [notify! notifications/notify!]
-  [notifications notifications/notifications]
-  [dismiss! notifications/dismiss!]
-  [dismiss-all! notifications/dismiss-all!]
-  [watch-notifications! notifications/watch!]
-  [unwatch-notifications! notifications/unwatch!])
+(import-vars [notify! notifications/notify!]
+             [notifications notifications/notifications]
+             [dismiss! notifications/dismiss!]
+             [dismiss-all! notifications/dismiss-all!]
+             [watch-notifications! notifications/watch!]
+             [unwatch-notifications! notifications/unwatch!])
 
 ;; =============================================================================
 ;; Markdown export
@@ -308,22 +294,19 @@
 ;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
 ;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
 ;; =============================================================================
-(import-vars
-  [render ir/render]
-  [->ast ir/->ast])
+(import-vars [render ir/render] [->ast ir/->ast])
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
 ;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
-(import-vars
-  [form-display-keys form/display-keys]
-  [form->display form/->display]
-  [form<-wire form/<-wire]
-  [tool-label form/tool-label]
-  [result-card form/result-card]
-  [result-cards form/result-cards]
-  [native-tool-form? form/native-tool-form?]
-  [hide-tool-code? form/hide-tool-code?]
-  [coalesce-forms form/coalesce-forms])
+(import-vars [form-display-keys form/display-keys]
+             [form->display form/->display]
+             [form<-wire form/<-wire]
+             [tool-label form/tool-label]
+             [result-card form/result-card]
+             [result-cards form/result-cards]
+             [native-tool-form? form/native-tool-form?]
+             [hide-tool-code? form/hide-tool-code?]
+             [coalesce-forms form/coalesce-forms])
 ;; Canonical native-tool badge colour-role set — each channel's colour map must
 ;; cover every role here (guard tests lock it), so the two maps can't drift.
 (import-vars [tool-color-roles form/tool-color-roles])
@@ -334,30 +317,26 @@
 (import-vars [diff-line-kind ir/diff-line-kind])
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
-(import-vars
-  [normalize-reasoning ir/normalize-reasoning]
-  [reasoning->ir ir/reasoning->ir]
-  [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
-  [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
+(import-vars [normalize-reasoning ir/normalize-reasoning]
+             [reasoning->ir ir/reasoning->ir]
+             [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
+             [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
 ;; falls back to verbatim source when ruff is unavailable.
 (import-vars [beautify-python pyfmt/beautify-python])
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
-(import-vars
-  [wire-json-str wire/json-str]
-  [wire-json-pretty wire/json-str-pretty])
+(import-vars [wire-json-str wire/json-str] [wire-json-pretty wire/json-str-pretty])
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python
 ;; printer) instead of pr-str'd Clojure.
-(import-vars
-  [render-form-value ctx-renderer/render-form-value]
-  [answer->ir ir/answer->ir]
-  [search-text ir/search-text]
-  [extract-code ir/extract-code]
-  [extract-text ir/extract-text]
-  [parse-block-display ir/parse-block-display])
+(import-vars [render-form-value ctx-renderer/render-form-value]
+             [answer->ir ir/answer->ir]
+             [search-text ir/search-text]
+             [extract-code ir/extract-code]
+             [extract-text ir/extract-text]
+             [parse-block-display ir/parse-block-display])
 
 ;; =============================================================================
 ;; Progress tracker
@@ -367,46 +346,43 @@
 ;; =============================================================================
 ;; CLI dispatcher
 ;; =============================================================================
-(import-vars
-  [command registry/command]
-  [resolve-subcommands registry/resolve-subcommands]
-  [find-leaf commandline/find-leaf]
-  [find-named commandline/find-named]
-  [parse-args commandline/parse-args]
-  [validate-args commandline/validate-args]
-  [unknown-flags commandline/unknown-flags]
-  [pad-right commandline/pad-right]
-  [pad-left commandline/pad-left]
-  [render-command commandline/render-command]
-  [render-tree commandline/render-tree]
-  [dispatch! commandline/dispatch!]
-  [register-cmd! registry/register-cmd!]
-  [deregister-cmd! registry/deregister-cmd!]
-  [registered-commands registry/registered-commands]
-  [registered-under registry/registered-under])
+(import-vars [command registry/command]
+             [resolve-subcommands registry/resolve-subcommands]
+             [find-leaf commandline/find-leaf]
+             [find-named commandline/find-named]
+             [parse-args commandline/parse-args]
+             [validate-args commandline/validate-args]
+             [unknown-flags commandline/unknown-flags]
+             [pad-right commandline/pad-right]
+             [pad-left commandline/pad-left]
+             [render-command commandline/render-command]
+             [render-tree commandline/render-tree]
+             [dispatch! commandline/dispatch!]
+             [register-cmd! registry/register-cmd!]
+             [deregister-cmd! registry/deregister-cmd!]
+             [registered-commands registry/registered-commands]
+             [registered-under registry/registered-under])
 
 ;; =============================================================================
 ;; Channel registry
 ;; =============================================================================
-(import-vars
-  [channel registry/channel]
-  [register-channel! registry/register-channel!]
-  [deregister-channel! registry/deregister-channel!]
-  [registered-channels registry/registered-channels]
-  [channel-by-id registry/channel-by-id]
-  [by-cmd registry/by-cmd])
+(import-vars [channel registry/channel]
+             [register-channel! registry/register-channel!]
+             [deregister-channel! registry/deregister-channel!]
+             [registered-channels registry/registered-channels]
+             [channel-by-id registry/channel-by-id]
+             [by-cmd registry/by-cmd])
 
 ;; =============================================================================
 ;; Provider registry
 ;; =============================================================================
-(import-vars
-  [provider registry/provider]
-  [register-provider! registry/register-provider!]
-  [deregister-provider! registry/deregister-provider!]
-  [registered-providers registry/registered-providers]
-  [provider-by-id registry/provider-by-id]
-  [provider-limits provider-limits/provider-limits]
-  [all-provider-limits provider-limits/all-provider-limits])
+(import-vars [provider registry/provider]
+             [register-provider! registry/register-provider!]
+             [deregister-provider! registry/deregister-provider!]
+             [registered-providers registry/registered-providers]
+             [provider-by-id registry/provider-by-id]
+             [provider-limits provider-limits/provider-limits]
+             [all-provider-limits provider-limits/all-provider-limits])
 
 ;; =============================================================================
 ;; Provider management service (channel-neutral; internal/providers.clj)
@@ -415,43 +391,41 @@
 ;; Providers modal: fleet, presets, status probing, account limits,
 ;; live model catalogs, persistence. Channels add only interaction.
 ;; =============================================================================
-(import-vars
-  [provider-auth-kind providers/auth-kind]
-  [provider-oauth-ids providers/oauth-provider-ids]
-  [provider-local-no-auth-ids providers/local-no-auth-provider-ids]
-  [provider-url-host providers/url-host]
-  [provider-fetch-models providers/fetch-models]
-  [provider-model-options providers/model-options]
-  [provider-default-model-names providers/default-model-names]
-  [provider-status providers/provider-status]
-  [provider-status-of-registered providers/safe-provider-status]
-  [provider-limits-safe providers/provider-limits-safe]
-  [provider-initial-status providers/initial-provider-status]
-  [provider-initial-limits providers/initial-provider-limits]
-  [provider-status-text providers/status-text]
-  [provider-status-md providers/status-md]
-  [configured-providers providers/configured-providers]
-  [provider-presets-available providers/available-presets]
-  [provider-ensure-base-url providers/ensure-base-url]
-  [provider-persisted-config providers/persisted-provider-config]
-  [provider-default-model-configs providers/default-model-configs]
-  [provider-config-with-models providers/provider-config-with-models]
-  [save-config-providers! providers/save-providers!]
-  [add-config-provider! providers/add-config-provider!]
-  [update-config-provider! providers/update-config-provider!]
-  [remove-provider! providers/remove-provider!])
+(import-vars [provider-auth-kind providers/auth-kind]
+             [provider-oauth-ids providers/oauth-provider-ids]
+             [provider-local-no-auth-ids providers/local-no-auth-provider-ids]
+             [provider-url-host providers/url-host]
+             [provider-fetch-models providers/fetch-models]
+             [provider-model-options providers/model-options]
+             [provider-default-model-names providers/default-model-names]
+             [provider-status providers/provider-status]
+             [provider-status-of-registered providers/safe-provider-status]
+             [provider-limits-safe providers/provider-limits-safe]
+             [provider-initial-status providers/initial-provider-status]
+             [provider-initial-limits providers/initial-provider-limits]
+             [provider-status-text providers/status-text]
+             [provider-status-md providers/status-md]
+             [configured-providers providers/configured-providers]
+             [provider-presets-available providers/available-presets]
+             [provider-ensure-base-url providers/ensure-base-url]
+             [provider-persisted-config providers/persisted-provider-config]
+             [provider-default-model-configs providers/default-model-configs]
+             [provider-config-with-models providers/provider-config-with-models]
+             [save-config-providers! providers/save-providers!]
+             [add-config-provider! providers/add-config-provider!]
+             [update-config-provider! providers/update-config-provider!]
+             [remove-provider! providers/remove-provider!])
 
 ;; Channel-neutral limits row formatting (internal/limits_format.clj):
 ;; the compact quota summaries every surface (TUI footer + cards, web
 ;; cards) renders identically.
-(import-vars
-  [limits-dynamic-summary limits-format/dynamic-summary]
-  [limits-label+usage limits-format/label+usage]
-  [limits-format-usage limits-format/format-limit-usage]
-  [limits-format-number limits-format/format-limit-number]
-  [limits-generic-label limits-format/generic-limit-label]
-  [limits-percentage-row? limits-format/percentage-limit-row?]
-  [limits-row-has-signal? limits-format/generic-limit-has-signal?])
+(import-vars [limits-dynamic-summary limits-format/dynamic-summary]
+             [limits-label+usage limits-format/label+usage]
+             [limits-format-usage limits-format/format-limit-usage]
+             [limits-format-number limits-format/format-limit-number]
+             [limits-generic-label limits-format/generic-limit-label]
+             [limits-percentage-row? limits-format/percentage-limit-row?]
+             [limits-row-has-signal? limits-format/generic-limit-has-signal?])
 
 ;; =============================================================================
 ;; Persistence facade
@@ -459,68 +433,62 @@
 ;; The namespace and extension slot are spelled `persistance`; public
 ;; prose uses the correct domain word: Persistence.
 ;; =============================================================================
-(import-vars
-  [ds persistance/ds]
-  [now-ms persistance/now-ms]
-  [->id persistance/->id]
-  [->uuid persistance/->uuid]
-  [->ref persistance/->ref]
-  [->kw persistance/->kw]
-  [->kw-back persistance/->kw-back]
-  [->epoch-ms persistance/->epoch-ms]
-  [->date persistance/->date]
-  [db-create-connection! persistance/db-create-connection!]
-  [db-dispose-connection! persistance/db-dispose-connection!]
-  [db-shared-connection! persistance/db-shared-connection!]
-  [db-dispose-shared-connection! persistance/db-dispose-shared-connection!]
-  [register-backend! persistance/register-backend!]
-  [deregister-backend! persistance/deregister-backend!]
-  [registered-backends persistance/registered-backends])
+(import-vars [ds persistance/ds]
+             [now-ms persistance/now-ms]
+             [->id persistance/->id]
+             [->uuid persistance/->uuid]
+             [->ref persistance/->ref]
+             [->kw persistance/->kw]
+             [->kw-back persistance/->kw-back]
+             [->epoch-ms persistance/->epoch-ms]
+             [->date persistance/->date]
+             [db-create-connection! persistance/db-create-connection!]
+             [db-dispose-connection! persistance/db-dispose-connection!]
+             [db-shared-connection! persistance/db-shared-connection!]
+             [db-dispose-shared-connection! persistance/db-dispose-shared-connection!]
+             [register-backend! persistance/register-backend!]
+             [deregister-backend! persistance/deregister-backend!]
+             [registered-backends persistance/registered-backends])
 
 ;; Logging
 (import-vars [db-log! persistance/db-log!])
 
 ;; Session lifecycle (storage facade)
-(import-vars
-  [db-store-session! persistance/db-store-session!]
-  [db-workspace-insert! persistance/db-workspace-insert!]
-  [db-get-session persistance/db-get-session]
-  [db-resolve-session-id persistance/db-resolve-session-id]
-  [db-list-sessions persistance/db-list-sessions]
-  [db-find-session-by-external persistance/db-find-session-by-external]
-  [db-update-session-title! persistance/db-update-session-title!]
-  [db-delete-session-tree! persistance/db-delete-session-tree!]
-  [db-fork-session! persistance/db-fork-session!]
-  [db-list-session-states persistance/db-list-session-states]
-  [db-latest-session-state-id persistance/db-latest-session-state-id])
+(import-vars [db-store-session! persistance/db-store-session!]
+             [db-workspace-insert! persistance/db-workspace-insert!]
+             [db-get-session persistance/db-get-session]
+             [db-resolve-session-id persistance/db-resolve-session-id]
+             [db-list-sessions persistance/db-list-sessions]
+             [db-find-session-by-external persistance/db-find-session-by-external]
+             [db-update-session-title! persistance/db-update-session-title!]
+             [db-delete-session-tree! persistance/db-delete-session-tree!]
+             [db-fork-session! persistance/db-fork-session!]
+             [db-list-session-states persistance/db-list-session-states]
+             [db-latest-session-state-id persistance/db-latest-session-state-id])
 
-(import-vars
-  [db-store-session-turn! persistance/db-store-session-turn!]
-  [db-update-session-turn! persistance/db-update-session-turn!]
-  [db-list-session-turns-by-status persistance/db-list-session-turns-by-status]
-  [db-list-session-turns persistance/db-list-session-turns]
-  [db-retry-session-turn! persistance/db-retry-session-turn!]
-  [db-list-session-turn-states persistance/db-list-session-turn-states])
+(import-vars [db-store-session-turn! persistance/db-store-session-turn!]
+             [db-update-session-turn! persistance/db-update-session-turn!]
+             [db-list-session-turns-by-status persistance/db-list-session-turns-by-status]
+             [db-list-session-turns persistance/db-list-session-turns]
+             [db-retry-session-turn! persistance/db-retry-session-turn!]
+             [db-list-session-turn-states persistance/db-list-session-turn-states])
 
 ;; Iteration lifecycle
-(import-vars
-  [db-store-iteration! persistance/db-store-iteration!]
-  [db-list-session-turn-iterations persistance/db-list-session-turn-iterations])
+(import-vars [db-store-iteration! persistance/db-store-iteration!]
+             [db-list-session-turn-iterations persistance/db-list-session-turn-iterations])
 
 ;; Full-text search
 (import-vars [db-search persistance/db-search])
 
 ;; Turn history
-(import-vars
-  [db-turn-history persistance/db-turn-history]
-  [db-load-latest-ctx persistance/db-load-latest-ctx]
-  [db-load-ctx-history persistance/db-load-ctx-history])
+(import-vars [db-turn-history persistance/db-turn-history]
+             [db-load-latest-ctx persistance/db-load-latest-ctx]
+             [db-load-ctx-history persistance/db-load-ctx-history])
 
 ;; Extension aggregate admin/read facade.
 ;; Writes go through ext-* helpers so extension_id is runtime-owned.
-(import-vars
-  [db-get-extension-aggregate persistance/db-get-extension-aggregate]
-  [db-list-extension-aggregates persistance/db-list-extension-aggregates])
+(import-vars [db-get-extension-aggregate persistance/db-get-extension-aggregate]
+             [db-list-extension-aggregates persistance/db-list-extension-aggregates])
 
 ;; Process-restart cleanup
 (import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
@@ -531,50 +499,46 @@
 (defmacro extension
   "Build extension spec and stamp caller namespace for reload/source tracking."
   [spec]
-  `(extension/extension
-     (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
-(import-vars
-  [symbol extension/symbol]
-  [value extension/value]
-  [render-prompt extension/render-prompt]
-  [op-tag extension/op-tag]
-  [op-presentation extension/op-presentation]
-  [register-extension! extension/register-extension!]
-  [register-op-hook! extension/register-op-hook!]
-  [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
-  [registered-extensions extension/registered-extensions]
-  [registered-extension-ids extension/registered-extension-ids]
-  [extension-namespaces extension/extension-namespaces]
-  [extension-id-of-ns extension/extension-id-of-ns]
-  [registered-extensions-summary extension/registered-extensions-summary]
-  [invoke-symbol-wrapper extension/invoke-symbol-wrapper]
-  [discover-extensions! extension/discover-extensions!]
-  [rediscover! manifest/rediscover!]
-  [extension-load-failures manifest/load-failures]
-  [deregister-extension! extension/deregister-extension!]
-  [extension-source-markers-of extension/extension-source-markers-of]
-  [channel-contributions-for extension/channel-contributions-for])
+  `(extension/extension (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
+(import-vars [symbol extension/symbol]
+             [value extension/value]
+             [render-prompt extension/render-prompt]
+             [op-tag extension/op-tag]
+             [op-presentation extension/op-presentation]
+             [register-extension! extension/register-extension!]
+             [register-op-hook! extension/register-op-hook!]
+             [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
+             [registered-extensions extension/registered-extensions]
+             [registered-extension-ids extension/registered-extension-ids]
+             [extension-namespaces extension/extension-namespaces]
+             [extension-id-of-ns extension/extension-id-of-ns]
+             [registered-extensions-summary extension/registered-extensions-summary]
+             [invoke-symbol-wrapper extension/invoke-symbol-wrapper]
+             [discover-extensions! extension/discover-extensions!]
+             [rediscover! manifest/rediscover!]
+             [extension-load-failures manifest/load-failures]
+             [deregister-extension! extension/deregister-extension!]
+             [extension-source-markers-of extension/extension-source-markers-of]
+             [channel-contributions-for extension/channel-contributions-for])
 
 ;; Project-local Python extensions (`~/.vis/extensions` + `.vis/extensions`,
 ;; trusted GraalPy contexts — see `internal.python-extensions`).
-(import-vars
-  [load-python-extensions! python-extensions/load-python-extensions!]
-  [reload-python-extensions! python-extensions/reload-python-extensions!]
-  [python-extension-load-failures python-extensions/load-failures]
-  [loaded-python-extensions python-extensions/loaded-python-extensions]
-  [add-python-extension-change-listener! python-extensions/add-change-listener!]
-  [remove-python-extension-change-listener! python-extensions/remove-change-listener!])
+(import-vars [load-python-extensions! python-extensions/load-python-extensions!]
+             [reload-python-extensions! python-extensions/reload-python-extensions!]
+             [python-extension-load-failures python-extensions/load-failures]
+             [loaded-python-extensions python-extensions/loaded-python-extensions]
+             [add-python-extension-change-listener! python-extensions/add-change-listener!]
+             [remove-python-extension-change-listener! python-extensions/remove-change-listener!])
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
 ;; supplied :extension-id.
-(import-vars
-  [extension-aggregate-create! extension-aggregate/extension-aggregate-create!]
-  [extension-aggregate-put! extension-aggregate/extension-aggregate-put!]
-  [extension-aggregate-get extension-aggregate/extension-aggregate-get]
-  [extension-list-aggregates extension-aggregate/extension-list-aggregates]
-  [extension-delete-aggregate! extension-aggregate/extension-delete-aggregate!]
-  [extension-update-aggregate! extension-aggregate/extension-update-aggregate!])
+(import-vars [extension-aggregate-create! extension-aggregate/extension-aggregate-create!]
+             [extension-aggregate-put! extension-aggregate/extension-aggregate-put!]
+             [extension-aggregate-get extension-aggregate/extension-aggregate-get]
+             [extension-list-aggregates extension-aggregate/extension-list-aggregates]
+             [extension-delete-aggregate! extension-aggregate/extension-delete-aggregate!]
+             [extension-update-aggregate! extension-aggregate/extension-update-aggregate!])
 
 ;; =============================================================================
 ;; Doctor protocol
@@ -587,60 +551,57 @@
 ;; extension into a level-aware (info / warn / error) report with 0 / 1 / 2
 ;; exit code by max level. See plan §1 Q19 + §10.
 ;; =============================================================================
-(import-vars
-  [run-doctor-checks doctor/run-checks]
-  [doctor-exit-code doctor/exit-code]
-  [doctor-format-output doctor/format-output]
-  [doctor-startup-hint doctor/startup-hint-line])
+(import-vars [run-doctor-checks doctor/run-checks]
+             [doctor-exit-code doctor/exit-code]
+             [doctor-format-output doctor/format-output]
+             [doctor-startup-hint doctor/startup-hint-line])
 
 ;; =============================================================================
 ;; Configuration / paths / logging
 ;; =============================================================================
-(import-vars
-  [init! config/init!]
-  [init-cli! config/init-cli!]
-  [shutdown! config/shutdown!]
-  [config-path config/config-path]
-  [tty-in config/tty-in]
-  [tty-out config/tty-out]
-  [original-stdout config/original-stdout]
-  [load-config-raw config/load-config-raw]
-  [load-config config/load-config]
-  [save-config! config/save-config!]
-  [remove-config-provider! config/remove-config-provider!]
-  [extension-env-overrides config/extension-env-overrides]
-  [extension-env-status config/extension-env-status]
-  [extension-env-value config/extension-env-value]
-  [save-extension-env-var! config/save-extension-env-var!]
-  [reload-config! config/reload-config!]
-  [resolve-config config/resolve-config]
-  [provider-configured? config/provider-configured?]
-  [first-run? config/first-run?]
-  [resolve-db-spec config/resolve-db-spec]
-  [current-config config/current-config]
-  [router-opts config/router-opts]
-  [active-provider config/active-provider]
-  [active-model config/active-model]
-  [provider-ids config/provider-ids]
-  [has-provider? config/has-provider?]
-  [display-label config/display-label]
-  [model-name config/model-name]
-  [provider-base-url config/provider-base-url]
-  [provider-model-visible? config/provider-model-visible?]
-  [provider-presets config/provider-presets]
-  [provider-template config/provider-template]
-  [->svar-model config/->svar-model]
-  [->svar-provider config/->svar-provider])
+(import-vars [init! config/init!]
+             [init-cli! config/init-cli!]
+             [shutdown! config/shutdown!]
+             [config-path config/config-path]
+             [tty-in config/tty-in]
+             [tty-out config/tty-out]
+             [original-stdout config/original-stdout]
+             [load-config-raw config/load-config-raw]
+             [load-config config/load-config]
+             [save-config! config/save-config!]
+             [remove-config-provider! config/remove-config-provider!]
+             [extension-env-overrides config/extension-env-overrides]
+             [extension-env-status config/extension-env-status]
+             [extension-env-value config/extension-env-value]
+             [save-extension-env-var! config/save-extension-env-var!]
+             [reload-config! config/reload-config!]
+             [resolve-config config/resolve-config]
+             [provider-configured? config/provider-configured?]
+             [first-run? config/first-run?]
+             [resolve-db-spec config/resolve-db-spec]
+             [current-config config/current-config]
+             [router-opts config/router-opts]
+             [active-provider config/active-provider]
+             [active-model config/active-model]
+             [provider-ids config/provider-ids]
+             [has-provider? config/has-provider?]
+             [display-label config/display-label]
+             [model-name config/model-name]
+             [provider-base-url config/provider-base-url]
+             [provider-model-visible? config/provider-model-visible?]
+             [provider-presets config/provider-presets]
+             [provider-template config/provider-template]
+             [->svar-model config/->svar-model]
+             [->svar-provider config/->svar-provider])
 
 ;; =============================================================================
 ;; Python sandbox
 ;; =============================================================================
-(import-vars
-  [SYSTEM_VAR_NAMES env/SYSTEM_VAR_NAMES]
-  [system-var-sym? env/system-var-sym?]
-  [create-python-context env/create-python-context]
-  [set-python-binding! env/set-python-binding!]
-  [bind-and-bump! env/bind-and-bump!])
+(import-vars [SYSTEM_VAR_NAMES env/SYSTEM_VAR_NAMES]
+             [system-var-sym? env/system-var-sym?]
+             [create-python-context env/create-python-context]
+             [set-python-binding! env/set-python-binding!]
+             [bind-and-bump! env/bind-and-bump!])
 
 ;; =============================================================================
 ;; Stateful-resource registry — the canonical interface owners use to register a
@@ -648,27 +609,25 @@
 ;; verb takes the owning session id. See `internal.resources`.
 ;; =============================================================================
 
-(import-vars
-  [register-resource! resources/register!]
-  [update-resource! resources/update!]
-  [unregister-resource! resources/unregister!]
-  [list-resources resources/list-resources]
-  [get-resource resources/get-resource]
-  [stop-resource! resources/stop!]
-  [restart-resource! resources/restart!])
+(import-vars [register-resource! resources/register!]
+             [update-resource! resources/update!]
+             [unregister-resource! resources/unregister!]
+             [list-resources resources/list-resources]
+             [get-resource resources/get-resource]
+             [stop-resource! resources/stop!]
+             [restart-resource! resources/restart!])
 
 ;; =============================================================================
 ;; Turn runtime / iteration loop / environment / sessions
 ;; =============================================================================
-(import-vars
-  [turn! lp/turn!]
-  [ask-code! lp/ask-code!]
-  [llm-text! lp/llm-text!]
-  [get-router lp/get-router]
-  [rebuild-router! lp/rebuild-router!]
-  [resolve-effective-model lp/resolve-effective-model]
-  [model-routing-status lp/model-routing-status]
-  [set-provider! lp/set-provider!])
+(import-vars [turn! lp/turn!]
+             [ask-code! lp/ask-code!]
+             [llm-text! lp/llm-text!]
+             [get-router lp/get-router]
+             [rebuild-router! lp/rebuild-router!]
+             [resolve-effective-model lp/resolve-effective-model]
+             [model-routing-status lp/model-routing-status]
+             [set-provider! lp/set-provider!])
 
 ;; Historical public helpers removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
@@ -676,45 +635,42 @@
 ;;   `:repaired-source` / `:repaired?`.
 
 ;; Environment lifecycle
-(import-vars
-  [create-environment lp/create-environment]
-  [dispose-environment! lp/dispose-environment!]
-  [install-extension! lp/install-extension!]
-  [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
+(import-vars [create-environment lp/create-environment]
+             [dispose-environment! lp/dispose-environment!]
+             [install-extension! lp/install-extension!]
+             [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
 
 ;; Auto-archive
 (import-vars [auto-archive-hot-symbols! lp/auto-archive-hot-symbols!])
 
 ;; Sessions
-(import-vars
-  [db-info lp/db-info]
-  [custom-bindings lp/custom-bindings]
-  [get-locals lp/get-locals]
-  [cache-env! lp/cache-env!]
-  [refresh-cached-routers! lp/refresh-cached-routers!]
-  [create! lp/create!]
-  [by-id lp/by-id]
-  [by-channel lp/by-channel]
-  [for-telegram-chat! lp/for-telegram-chat!]
-  [set-title! lp/set-title!]
-  [add-title-listener! titling/add-title-listener!]
-  [remove-title-listener! titling/remove-title-listener!]
-  [add-title-pending-listener! titling/add-title-pending-listener!]
-  [remove-title-pending-listener! titling/remove-title-pending-listener!]
-  [env-for lp/env-for]
-  [send! lp/send!]
-  [close! lp/close!]
-  [delete! lp/delete!]
-  [close-all! lp/close-all!])
+(import-vars [db-info lp/db-info]
+             [custom-bindings lp/custom-bindings]
+             [get-locals lp/get-locals]
+             [cache-env! lp/cache-env!]
+             [refresh-cached-routers! lp/refresh-cached-routers!]
+             [create! lp/create!]
+             [by-id lp/by-id]
+             [by-channel lp/by-channel]
+             [for-telegram-chat! lp/for-telegram-chat!]
+             [set-title! lp/set-title!]
+             [add-title-listener! titling/add-title-listener!]
+             [remove-title-listener! titling/remove-title-listener!]
+             [add-title-pending-listener! titling/add-title-pending-listener!]
+             [remove-title-pending-listener! titling/remove-title-pending-listener!]
+             [env-for lp/env-for]
+             [send! lp/send!]
+             [close! lp/close!]
+             [delete! lp/delete!]
+             [close-all! lp/close-all!])
 
 ;; =============================================================================
 ;; Prompt builders
 ;; =============================================================================
-(import-vars
-  [active-extensions prompt/active-extensions]
-  [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
-  [build-system-prompt prompt/build-system-prompt]
-  [stable-prompt-text prompt/stable-prompt-text])
+(import-vars [active-extensions prompt/active-extensions]
+             [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
+             [build-system-prompt prompt/build-system-prompt]
+             [stable-prompt-text prompt/stable-prompt-text])
 ;; `vis.core/build-iteration-context` is intentionally NOT re-exported:
 ;; callers must use `prompt/build-iteration-context` directly.
 
@@ -741,5 +697,4 @@
 ;; library API.
 ;; =============================================================================
 
-(defn -main [& args]
-  (apply binary/-main args))
+(defn -main [& args] (apply binary/-main args))

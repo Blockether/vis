@@ -33,8 +33,7 @@
    it without introducing a generic pub-sub abstraction nobody asked
    for. If we ever grow more event types, this becomes one consumer
    of a richer system."
-  (:require
-   [taoensso.telemere :as tel]))
+  (:require [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Defaults
@@ -46,8 +45,7 @@
    notice never lingers into the next user action."
   3000)
 
-(def ^:private VALID_LEVELS
-  #{:info :success :warn :error})
+(def ^:private VALID_LEVELS #{:info :success :warn :error})
 
 ;; =============================================================================
 ;; State
@@ -79,22 +77,17 @@
   (when-let [until (:until entry)]
     (< (long until) (now-ms))))
 
-(defn- prune
-  "Drop every expired entry from `coll`."
-  [coll]
-  (filterv (complement expired?) coll))
+(defn- prune "Drop every expired entry from `coll`." [coll] (filterv (complement expired?) coll))
 
 (defn- fire-watchers!
   "Call every registered watcher with the new vec. Errors are
    swallowed and logged, never propagated."
   [snapshot]
   (doseq [[k f] @watchers-atom]
-    (try
-      (f snapshot)
-      (catch Throwable t
-        (tel/log! {:level :error :id ::watcher-error
-                   :data {:key k :error (ex-message t)}}
-          (str "Notifications watcher " k " threw: " (ex-message t)))))))
+    (try (f snapshot)
+         (catch Throwable t
+           (tel/log! {:level :error :id ::watcher-error :data {:key k :error (ex-message t)}}
+                     (str "Notifications watcher " k " threw: " (ex-message t)))))))
 
 ;; =============================================================================
 ;; Public API
@@ -128,24 +121,28 @@
 
    The notification is appended to the in-memory vec and every
    registered watcher is fired with the new full vec."
-  [text & {:keys [level ttl-ms]
-           :or   {level :info ttl-ms DEFAULT_TTL_MS}}]
+  [text & {:keys [level ttl-ms] :or {level :info ttl-ms DEFAULT_TTL_MS}}]
   (when-not (string? text)
-    (throw (ex-info "notify! text must be a String"
-             {:type :vis/notify-bad-text :text text})))
+    (throw (ex-info "notify! text must be a String" {:type :vis/notify-bad-text :text text})))
   (when-not (VALID_LEVELS level)
     (throw (ex-info (str "notify! level must be one of " VALID_LEVELS)
-             {:type :vis/notify-bad-level :level level})))
-  (let [id      (str (java.util.UUID/randomUUID))
-        now     (now-ms)
-        until   (when ttl-ms (+ now (long ttl-ms)))
-        entry   {:id         id
-                 :text       text
-                 :level      level
-                 :created-at now
-                 :until      until}
-        snapshot (swap! notifications-atom
-                   (fn [coll] (conj (prune coll) entry)))]
+                    {:type :vis/notify-bad-level :level level})))
+  (let [id
+        (str (java.util.UUID/randomUUID))
+
+        now
+        (now-ms)
+
+        until
+        (when ttl-ms (+ now (long ttl-ms)))
+
+        entry
+        {:id id :text text :level level :created-at now :until until}
+
+        snapshot
+        (swap! notifications-atom (fn [coll]
+                                    (conj (prune coll) entry)))]
+
     (fire-watchers! snapshot)
     id))
 
@@ -154,19 +151,23 @@
    deadline. Returns true when an entry was actually removed.
    Watchers fire when the value changed."
   [id]
-  (let [removed? (volatile! false)
-        next-vec (swap! notifications-atom
-                   (fn [coll]
-                     (let [filtered (filterv #(not= id (:id %)) coll)]
-                       (vreset! removed? (not= (count coll) (count filtered)))
-                       filtered)))]
+  (let [removed?
+        (volatile! false)
+
+        next-vec
+        (swap! notifications-atom (fn [coll]
+                                    (let [filtered (filterv #(not= id (:id %)) coll)]
+                                      (vreset! removed? (not= (count coll) (count filtered)))
+                                      filtered)))]
+
     (when @removed? (fire-watchers! next-vec))
     @removed?))
 
 (defn dismiss-all!
   "Drop every notification. Returns the new (empty) vec."
   []
-  (let [next-vec (swap! notifications-atom (fn [_] []))]
+  (let [next-vec (swap! notifications-atom (fn [_]
+                                             []))]
     (fire-watchers! next-vec)
     next-vec))
 
@@ -185,8 +186,7 @@
    should bounce work onto a future."
   [key f]
   (when-not (ifn? f)
-    (throw (ex-info "watch! f must be ifn"
-             {:type :vis/notify-bad-watcher :key key})))
+    (throw (ex-info "watch! f must be ifn" {:type :vis/notify-bad-watcher :key key})))
   (swap! watchers-atom assoc key f)
   nil)
 
@@ -195,8 +195,7 @@
    was actually removed."
   [key]
   (let [removed? (volatile! false)]
-    (swap! watchers-atom
-      (fn [m]
-        (vreset! removed? (contains? m key))
-        (dissoc m key)))
+    (swap! watchers-atom (fn [m]
+                           (vreset! removed? (contains? m key))
+                           (dissoc m key)))
     @removed?))

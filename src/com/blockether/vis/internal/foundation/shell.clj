@@ -35,40 +35,37 @@
 
    The `:shell/enabled` toggle is registered HERE, extension-owned under the
    extension's own namespace."
-  (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.resources :as resources]
-   [com.blockether.vis.internal.toggles :as toggles]
-   [com.blockether.vis.internal.paths :as paths]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [com.blockether.vis.internal.foundation.pty :as pty]
-   [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge])
-  (:import
-   (java.io File)
-   (java.lang ProcessHandle)
-   (java.util HashMap)
-   (java.util.concurrent TimeUnit)))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.foundation.pty :as pty]
+            [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge])
+  (:import (java.io File)
+           (java.lang ProcessHandle)
+           (java.util HashMap)
+           (java.util.concurrent TimeUnit)))
 
 ;; =============================================================================
 ;; Toggle (extension-owned)
 ;; =============================================================================
 
-(toggles/register-toggle!
-  {:id          :shell/enabled
-   :label       "Shell commands (compatibility layer)"
-   :description (str "When ON the agent can run shell commands from the"
-                  " sandbox: sync shell_run(cmd) plus background"
-                  " shell_bg(id, cmd) registered as session resources"
-                  " (footer count, F4 dialog, resource_stop). OFF by"
-                  " default - every shell call is refused with a hint"
-                  " until you enable it.")
-   :default     false
-   :owner       "foundation-shell"
-   :group       :tools
-   :persist?    true})
+(toggles/register-toggle! {:id :shell/enabled
+                           :label "Shell commands (compatibility layer)"
+                           :description (str "When ON the agent can run shell commands from the"
+                                             " sandbox: sync shell_run(cmd) plus background"
+                                             " shell_bg(id, cmd) registered as session resources"
+                                             " (footer count, F4 dialog, resource_stop). OFF by"
+                                             " default - every shell call is refused with a hint"
+                                             " until you enable it.")
+                           :default false
+                           :owner "foundation-shell"
+                           :group :tools
+                           :persist? true})
 
 ;; =============================================================================
 ;; Limits
@@ -111,29 +108,39 @@
    balloon the heap. Returns {:text :truncated}. Never throws: a stream closed
    mid-read (the timeout/stop path closes it) just ends the drain."
   [^java.io.Reader r head-limit tail-limit]
-  (let [sb    (StringBuilder.)
-        buf   (char-array 8192)
-        cap   (+ head-limit tail-limit)
-        total (volatile! 0)
-        trunc (volatile! false)]
-    (try
-      (loop []
-        (let [n (.read r buf 0 (alength buf))]
-          (when (pos? n)
-            (vswap! total + n)
-            (.append sb buf 0 n)
-            (when (> (.length sb) cap)
-              (vreset! trunc true)
-              ;; keep the first `head-limit` chars + the last `tail-limit`;
-              ;; excise the run between them so memory stays at ~cap.
-              (.delete sb head-limit (- (.length sb) tail-limit)))
-            (recur))))
-      (catch Throwable _ nil))
-    {:text      (if @trunc
-                  (str (subs (.toString sb) 0 head-limit)
-                    "\n\n…[" (- @total cap) " chars omitted]…\n\n"
-                    (subs (.toString sb) head-limit))
-                  (.toString sb))
+  (let [sb
+        (StringBuilder.)
+
+        buf
+        (char-array 8192)
+
+        cap
+        (+ head-limit tail-limit)
+
+        total
+        (volatile! 0)
+
+        trunc
+        (volatile! false)]
+
+    (try (loop []
+
+           (let [n (.read r buf 0 (alength buf))]
+             (when (pos? n)
+               (vswap! total + n)
+               (.append sb buf 0 n)
+               (when (> (.length sb) cap)
+                 (vreset! trunc true)
+                 ;; keep the first `head-limit` chars + the last `tail-limit`;
+                 ;; excise the run between them so memory stays at ~cap.
+                 (.delete sb (int head-limit) (int (- (.length sb) tail-limit))))
+               (recur))))
+         (catch Throwable _ nil))
+    {:text (if @trunc
+             (str (subs (.toString sb) 0 head-limit)
+                  "\n\n…[" (- @total cap)
+                  " chars omitted]…\n\n" (subs (.toString sb) head-limit))
+             (.toString sb))
      :truncated @trunc}))
 
 (defn- ->pos-long
@@ -142,16 +149,17 @@
    strings/other types with a clean message instead of a raw ClassCastException
    surfacing as an opaque throwable envelope."
   [x what]
-  (cond
-    (nil? x)    nil
-    (number? x) (long (Math/round (double x)))
-    :else       (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
-                         {:type ::bad-option :option what :value x}))))
+  (cond (nil? x) nil
+        (number? x) (long (Math/round (double x)))
+        :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
+                              {:type ::bad-option :option what :value x}))))
 
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
   [s limit]
-  (let [s (-> (str s) (str/replace #"\s+" " ") str/trim)]
+  (let [s (-> (str s)
+              (str/replace #"\s+" " ")
+              str/trim)]
     (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
 
 (defn- resolve-cwd
@@ -159,23 +167,28 @@
    extension wrapper), optionally narrowed by a RELATIVE opts `cwd` that must
    stay inside the root — same containment rule the editing tools enforce."
   ^File [opts]
-  (let [root (.getCanonicalFile (workspace/cwd))
-        rel  (let [c (get opts "cwd")]
-               (when-not (str/blank? (str (or c ""))) (str c)))]
+  (let [root
+        (.getCanonicalFile (workspace/cwd))
+
+        rel
+        (let [c (get opts "cwd")]
+          (when-not (str/blank? (str (or c ""))) (str c)))]
+
     (if-not rel
       root
       (let [dir (.getCanonicalFile (io/file root rel))]
         (when-not (or (= dir root)
-                    (str/starts-with? (.getPath dir)
-                      (str (.getPath root) File/separator)))
-          (throw (ex-info (str "shell cwd '" rel "' escapes the workspace root;"
-                            " relative paths must stay inside it.")
-                   {:type ::cwd-outside-workspace :cwd rel :root (.getPath root)})))
+                      (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
+          (throw (ex-info (str "shell cwd '" rel
+                               "' escapes the workspace root;"
+                               " relative paths must stay inside it.")
+                          {:type ::cwd-outside-workspace :cwd rel :root (.getPath root)})))
         (when-not (.isDirectory dir)
-          (throw (ex-info (str "shell cwd '" rel "' "
-                            (if (.exists dir) "is a file, not a directory."
-                              "does not exist under the workspace root."))
-                   {:type ::cwd-not-a-directory :cwd rel :exists (.exists dir)})))
+          (throw (ex-info (str "shell cwd '" rel
+                               "' " (if (.exists dir)
+                                      "is a file, not a directory."
+                                      "does not exist under the workspace root."))
+                          {:type ::cwd-not-a-directory :cwd rel :exists (.exists dir)})))
         dir))))
 
 (defn- lf
@@ -183,8 +196,7 @@
   ^String [^String s]
   (when s (.replace s "\r\n" "\n")))
 
-(defn- windows?* []
-  (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win"))
+(defn- windows?* [] (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win"))
 
 (defn- find-git-bash
   "Absolute path to a REAL bash on Windows (Git for Windows), or nil. NEVER the
@@ -194,24 +206,41 @@
    override first, then the standard Git install roots, then bash alongside a
    `git.exe` found on PATH (Git\\cmd\\git.exe → Git\\bin\\bash.exe)."
   []
-  (let [path-sep  (System/getProperty "path.separator" ";")
-        from-path (for [dir (str/split (or (System/getenv "PATH") "")
-                              (re-pattern (java.util.regex.Pattern/quote path-sep)))
-                        :when (not (str/blank? dir))
-                        :let  [git (io/file dir "git.exe")]
-                        :when (.isFile git)
-                        :let  [root (some-> git .getParentFile .getParentFile)
-                               bash (when root (io/file root "bin" "bash.exe"))]
-                        :when (and bash (.isFile bash))]
-                    (.getPath bash))
-        roots     (keep identity [(System/getenv "ProgramFiles")
-                                  (System/getenv "ProgramW6432")
-                                  (System/getenv "ProgramFiles(x86)")
-                                  (some-> (System/getenv "LOCALAPPDATA") (str "\\Programs"))])
-        candidates (concat
-                     (when-let [o (System/getenv "VIS_BASH")] [o])
-                     (map #(str % "\\Git\\bin\\bash.exe") roots)
-                     from-path)]
+  (let [path-sep
+        (System/getProperty "path.separator" ";")
+
+        from-path
+        (for [dir
+              (str/split (or (System/getenv "PATH") "")
+                         (re-pattern (java.util.regex.Pattern/quote path-sep)))
+
+              :when (not (str/blank? dir))
+              :let [git
+                    (io/file dir "git.exe")]
+              :when (.isFile git)
+              :let [root
+                    (let [^java.io.File p (.getParentFile ^java.io.File git)]
+                      (when p (.getParentFile p)))
+
+                    bash
+                    (when root (io/file root "bin" "bash.exe"))]
+              :when (and bash (.isFile bash))]
+
+          (.getPath bash))
+
+        roots
+        (keep identity
+              [(System/getenv "ProgramFiles") (System/getenv "ProgramW6432")
+               (System/getenv "ProgramFiles(x86)")
+               (some-> (System/getenv "LOCALAPPDATA")
+                       (str "\\Programs"))])
+
+        candidates
+        (concat (when-let [o (System/getenv "VIS_BASH")]
+                  [o])
+                (map #(str % "\\Git\\bin\\bash.exe") roots)
+                from-path)]
+
     (some #(when (and (not (str/blank? %)) (.isFile (io/file %))) %) candidates)))
 
 (defn- bash-command
@@ -240,15 +269,18 @@
    kill-tree! / shell_send all consume ONE shape regardless of backend. Used as
    the native-Windows fallback (see pty-spawn!)."
   [^Process p]
-  {:pid     (.pid p)
-   :in      (.getInputStream p)
-   :send    (fn [^bytes b]
-              (let [^java.io.OutputStream os (.getOutputStream p)]
-                (.write os b)
-                (.flush os)))
-   :wait    (fn [] (.waitFor p))
-   :alive?  (fn [] (.isAlive p))
-   :destroy (fn [force?] (if force? (.destroyForcibly p) (.destroy p)))})
+  {:pid (.pid p)
+   :in (.getInputStream p)
+   :send (fn [^bytes b]
+           (let [^java.io.OutputStream os (.getOutputStream p)]
+             (.write os b)
+             (.flush os)))
+   :wait (fn []
+           (.waitFor p))
+   :alive? (fn []
+             (.isAlive p))
+   :destroy (fn [force?]
+              (if force? (.destroyForcibly p) (.destroy p)))})
 
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
@@ -267,11 +299,11 @@
     ;; throwing. (ConPTY could restore a real TTY here later.)
     (process->handle (spawn! cmd dir true))
     (pty/spawn! {:command [(bash-command) "-lc" (str cmd)]
-                 :dir     (.getPath dir)
-                 :env     (doto (HashMap. ^java.util.Map (System/getenv))
-                            (.put "TERM" "xterm-256color"))
-                 :cols    120
-                 :rows    40})))
+                 :dir (.getPath dir)
+                 :env (doto (HashMap. ^java.util.Map (System/getenv))
+                        (.put "TERM" "xterm-256color"))
+                 :cols 120
+                 :rows 40})))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
@@ -284,28 +316,41 @@
    by closing the stream in the stop-fn, but the orphan keeps running."
   [p]
   (try
-    (let [pid         (if (map? p) (:pid p) (.pid ^Process p))
-          destroy     (if (map? p)
-                        (:destroy p)
-                        (fn [force?] (if force?
-                                       (.destroyForcibly ^Process p)
-                                       (.destroy ^Process p))))
-          ph          (try (.orElse (ProcessHandle/of pid) nil)
-                        (catch Throwable _ nil))
-          descendants (fn [] (if ph
-                               (-> ph .descendants .iterator iterator-seq)
-                               []))]
-      (run! (fn [^ProcessHandle d] (try (.destroy d) (catch Throwable _ nil)))
-        (descendants))
+    (let [pid
+          (if (map? p) (:pid p) (.pid ^Process p))
+
+          destroy
+          (if (map? p)
+            (:destroy p)
+            (fn [force?]
+              (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+
+          ^ProcessHandle ph
+          (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
+
+          descendants
+          (fn []
+            (if ph
+              (-> ph
+                  .descendants
+                  .iterator
+                  iterator-seq)
+              []))]
+
+      (run! (fn [^ProcessHandle d]
+              (try (.destroy d) (catch Throwable _ nil)))
+            (descendants))
       (destroy false)
       (let [deadline (+ (System/currentTimeMillis) 2000)]
         (loop []
+
           (when (and ph (.isAlive ph) (< (System/currentTimeMillis) deadline))
             (Thread/sleep 50)
             (recur))))
       (when (and ph (.isAlive ph))
-        (run! (fn [^ProcessHandle d] (try (.destroyForcibly d) (catch Throwable _ nil)))
-          (descendants))
+        (run! (fn [^ProcessHandle d]
+                (try (.destroyForcibly d) (catch Throwable _ nil)))
+              (descendants))
         (destroy true)))
     (catch Throwable _ nil))
   nil)
@@ -318,61 +363,76 @@
   "Effective sync timeout from the opts value: default 120, floor 1, cap 600."
   ^long [v]
   (-> (or (->pos-long v "timeout_secs") default-timeout-secs)
-    (max 1)
-    (min max-timeout-secs)))
+      (max 1)
+      (min max-timeout-secs)))
 
 (defn- shell-run-impl
   ([env cmd] (shell-run-impl env cmd nil))
   ([_env cmd opts]
    (let [cmd (str cmd)]
      (when (str/blank? cmd)
-       (throw (ex-info "shell_run needs a non-blank command string."
-                {:type ::blank-command})))
+       (throw (ex-info "shell_run needs a non-blank command string." {:type ::blank-command})))
      (let [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
-           cwd-opt?     (not (str/blank? (str (or (get opts "cwd") ""))))
-           dir   (resolve-cwd opts)
-           t0    (now-ms)
-           p     (spawn! cmd dir false)
+           cwd-opt? (not (str/blank? (str (or (get opts "cwd") ""))))
+           dir (resolve-cwd opts)
+           t0 (now-ms)
+           p (spawn! cmd dir false)
            empty-tail {:text "" :truncated false}
            ;; Separate reader futures per stream — avoids the classic full-pipe
            ;; deadlock on chatty commands. `read-capped` bounds memory to the
            ;; head+tail budget per stream at READ time (dropping only the MIDDLE
            ;; of a huge stream, not its start), so a megabyte-then-killed command
            ;; can't balloon the heap yet the opening context survives.
-           out-f (future (read-capped (io/reader (.getInputStream p)) max-sync-head-chars max-sync-tail-chars))
-           err-f (future (read-capped (io/reader (.getErrorStream p)) max-sync-head-chars max-sync-tail-chars))
+           out-f (future (read-capped (io/reader (.getInputStream p))
+                                      max-sync-head-chars
+                                      max-sync-tail-chars))
+           err-f (future (read-capped (io/reader (.getErrorStream p))
+                                      max-sync-head-chars
+                                      max-sync-tail-chars))
            finished? (try (.waitFor p timeout-secs TimeUnit/SECONDS)
-                       (catch InterruptedException ie
-                         ;; Turn cancellation: kill the spawned tree before
-                         ;; the interrupt propagates to the loop.
-                         (kill-tree! p)
-                         (throw ie)))]
+                          (catch InterruptedException ie
+                            ;; Turn cancellation: kill the spawned tree before
+                            ;; the interrupt propagates to the loop.
+                            (kill-tree! p)
+                            (throw ie)))]
+
        (when-not finished?
          (kill-tree! p)
          ;; Closing the streams unblocks the reader futures on a wedged child
          ;; so their threads don't linger past our 5s deref ceiling.
          (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
            (try (.close s) (catch Throwable _ nil))))
-       (let [out  (deref out-f 5000 empty-tail)
-             err  (deref err-f 5000 empty-tail)
+       (let [out (deref out-f 5000 empty-tail)
+             err (deref err-f 5000 empty-tail)
              exit (when finished? (.exitValue p))
-             t1   (now-ms)]
+             t1 (now-ms)]
+
          (extension/success
            ;; Lean result: this map rides every later prompt as a frozen
            ;; <results> pin, so optional keys appear ONLY when they carry
            ;; signal (model reads them with .get). :op / echoes of the call
            ;; args (cwd default, timeout default) never ship.
-           {:result (cond-> {"cmd" cmd
-                             "stdout" (lf (:text out))
-                             "duration_ms" (- t1 t0)}
-                      finished?         (assoc "exit" exit)
-                      (not finished?)   (assoc "timed_out" true
-                                          "timeout_secs" timeout-secs)
-                      (:truncated out)  (assoc "stdout_truncated" true)
-                      (not (str/blank? (:text err))) (assoc "stderr" (lf (:text err)))
-                      (:truncated err)  (assoc "stderr_truncated" true)
+           {:result (cond-> {"cmd" cmd "stdout" (lf (:text out)) "duration_ms" (- t1 t0)}
+                      finished?
+                      (assoc "exit" exit)
+
+                      (not finished?)
+                      (assoc "timed_out"
+                        true "timeout_secs"
+                        timeout-secs)
+
+                      (:truncated out)
+                      (assoc "stdout_truncated" true)
+
+                      (not (str/blank? (:text err)))
+                      (assoc "stderr" (lf (:text err)))
+
+                      (:truncated err)
+                      (assoc "stderr_truncated" true)
+
                       ;; Relative cwd is `/`-separated on every OS (Windows `\`).
-                      cwd-opt?          (assoc "cwd" (paths/unixify (.getPath dir))))
+                      cwd-opt?
+                      (assoc "cwd" (paths/unixify (.getPath dir))))
             :op :shell/run
             :metadata {:command cmd
                        :exit exit
@@ -396,29 +456,34 @@
   ;; bridge-dir. sweep-orphans! connect-probes each and unlinks the dead ones.
   (do (try (pty-bridge/sweep-orphans!) (catch Throwable _ nil)) true))
 
-(defn- bg-entry [session id]
-  (get-in @bg-procs [(str session) (str id)]))
+(defn- bg-entry [session id] (get-in @bg-procs [(str session) (str id)]))
 
-(defn- drop-bg-entry! [session id]
-  (let [sk (str session) id (str id)]
+(defn- drop-bg-entry!
+  [session id]
+  (let [sk
+        (str session)
+
+        id
+        (str id)]
+
     (swap! bg-procs (fn [m]
                       (let [m (update m sk dissoc id)]
                         (if (empty? (get m sk)) (dissoc m sk) m))))
     nil))
 
-(defn- push-line! [buffer line]
+(defn- push-line!
+  [buffer line]
   ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
   ;; so a Windows-emitted line reads identically to a POSIX one.
-  (let [line (if (and (string? line) (str/ends-with? line "\r"))
-               (subs line 0 (dec (count line)))
-               line)]
-    (swap! buffer
-      (fn [{:keys [lines next-seq dropped]}]
-        (let [lines (conj lines [next-seq line])
-              over  (- (count lines) max-bg-lines)]
-          {:lines    (if (pos? over) (subvec lines over) lines)
-           :next-seq (inc next-seq)
-           :dropped  (+ dropped (max over 0))})))))
+  (let [line
+        (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
+    (swap! buffer (fn [{:keys [lines next-seq dropped]}]
+                    (let [lines (conj lines [next-seq line])
+                          over (- (count lines) max-bg-lines)]
+
+                      {:lines (if (pos? over) (subvec lines over) lines)
+                       :next-seq (inc next-seq)
+                       :dropped (+ dropped (max over 0))})))))
 
 (defn- start-pump!
   "Daemon thread: drain the process's merged output into the ring buffer,
@@ -433,160 +498,206 @@
    joins this thread, so on a manual stop the pump has fully drained before
    the resource is removed. Returns the started Thread."
   ^Thread [session id p buffer exit-atom stopped? bridge-atom]
-  (doto (Thread.
-          (fn []
-            ;; Char-level drain (not `line-seq`) so a newline-free stream
-            ;; (`cat big.bin`) can't grow one unbounded line in memory: a line
-            ;; is force-flushed at `max-line-chars`.
-            (try
-              (with-open [r (io/reader ^java.io.InputStream (:in p))]
-                (let [sb (StringBuilder.)]
-                  (loop []
-                    (let [c (.read r)]
-                      (cond
-                        (= c -1)
-                        (when (pos? (.length sb)) (push-line! buffer (str sb)))
+  (doto
+    (Thread.
+      (fn []
+        ;; Char-level drain (not `line-seq`) so a newline-free stream
+        ;; (`cat big.bin`) can't grow one unbounded line in memory: a line
+        ;; is force-flushed at `max-line-chars`.
+        (try (with-open [r (io/reader ^java.io.InputStream (:in p))]
+               (let [sb (StringBuilder.)]
+                 (loop []
 
-                        (= c (int \newline))
-                        (do (push-line! buffer (str sb)) (.setLength sb 0) (recur))
-
-                        :else
-                        (do (.append sb (char c))
-                          (when (>= (.length sb) max-line-chars)
-                            (push-line! buffer (str sb " …[line truncated]"))
-                            (.setLength sb 0))
-                          (recur)))))))
-              (catch Throwable _ nil))
-            (let [code (try ((:wait p)) (catch Throwable _ nil))]
-              (reset! exit-atom code)
-              (when-not @stopped?
-                ;; Natural child exit (not resource_stop): tear down the attach
-                ;; bridge so its AF_UNIX socket doesn't linger — otherwise a human
-                ;; could `attach` a dead shell and find-socket could pick the
-                ;; stale .sock. On a manual stop the stop-fn owns this teardown.
-                (when-let [b @bridge-atom]
-                  (try ((:stop b)) (catch Throwable _ nil)))
-                (try
-                  (resources/update! session id
-                    {:status :exited
-                     :detail (str "exit " code
-                               " — logs retained until resource_stop")})
-                  (catch Throwable _ nil))))))
+                   (let [c (.read r)]
+                     (cond (= c -1) (when (pos? (.length sb)) (push-line! buffer (str sb)))
+                           (= c (int \newline))
+                           (do (push-line! buffer (str sb)) (.setLength sb 0) (recur))
+                           :else (do (.append sb (char c))
+                                     (when (>= (.length sb) max-line-chars)
+                                       (push-line! buffer (str sb " …[line truncated]"))
+                                       (.setLength sb 0))
+                                     (recur)))))))
+             (catch Throwable _ nil))
+        (let [code (try ((:wait p)) (catch Throwable _ nil))]
+          (reset! exit-atom code)
+          (when-not @stopped?
+            ;; Natural child exit (not resource_stop): tear down the attach
+            ;; bridge so its AF_UNIX socket doesn't linger — otherwise a human
+            ;; could `attach` a dead shell and find-socket could pick the
+            ;; stale .sock. On a manual stop the stop-fn owns this teardown.
+            (when-let [b @bridge-atom]
+              (try ((:stop b)) (catch Throwable _ nil)))
+            (try (resources/update! session
+                                    id
+                                    {:status :exited
+                                     :detail
+                                     (str "exit " code " — logs retained until resource_stop")})
+                 (catch Throwable _ nil))))))
     (.setName (str "vis-shell-bg-" id))
     (.setDaemon true)
     (.start)))
 
 (defn- shell-bg-impl
   [env id cmd]
-  (let [session (:session-id env)
-        id      (str id)
-        cmd     (str cmd)]
+  (let [session
+        (:session-id env)
+
+        id
+        (str id)
+
+        cmd
+        (str cmd)]
+
     (when (str/blank? id)
-      (throw (ex-info "shell_bg needs a non-blank resource id (first arg)."
-               {:type ::blank-id})))
+      (throw (ex-info "shell_bg needs a non-blank resource id (first arg)." {:type ::blank-id})))
     (when (str/blank? cmd)
       (throw (ex-info "shell_bg needs a non-blank command string (second arg)."
-               {:type ::blank-command})))
+                      {:type ::blank-command})))
     (when-let [existing (bg-entry session id)]
       (if ((:alive? (:proc existing)))
-        (throw (ex-info (str "Background shell '" id "' is already running (pid "
-                          (:pid (:proc existing))
-                          "); resource_stop it first or pick a new id.")
-                 {:type ::bg-id-in-use :id id}))
+        (throw (ex-info (str "Background shell '"
+                             id
+                             "' is already running (pid "
+                             (:pid (:proc existing))
+                             "); resource_stop it first or pick a new id.")
+                        {:type ::bg-id-in-use :id id}))
         ;; Exited-but-unread entry under the same id: replacing it discards
         ;; its retained logs by intent (the model chose to reuse the id).
-        (do (resources/unregister! session id)
-          (drop-bg-entry! session id))))
-    (let [dir       (resolve-cwd nil)
-          p         (pty-spawn! cmd dir)
-          buffer    (atom {:lines [] :next-seq 1 :dropped 0})
-          exit-atom (atom nil)
-          stopped?  (atom false)
-          bridge-atom (atom nil)
-          t0        (now-ms)
-          pump      (start-pump! session id p buffer exit-atom stopped? bridge-atom)
+        (do (resources/unregister! session id) (drop-bg-entry! session id))))
+    (let [dir
+          (resolve-cwd nil)
+
+          p
+          (pty-spawn! cmd dir)
+
+          buffer
+          (atom {:lines [] :next-seq 1 :dropped 0})
+
+          exit-atom
+          (atom nil)
+
+          stopped?
+          (atom false)
+
+          bridge-atom
+          (atom nil)
+
+          t0
+          (now-ms)
+
+          pump
+          (start-pump! session id p buffer exit-atom stopped? bridge-atom)
+
           ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
           ;; so a HUMAN can `vis ext shell attach <id>` into the live terminal
           ;; (browser OAuth, a prompt only a person can answer) and detach again,
           ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
           ;; runs, just without human attach.
-          bridge    (try
-                      (pty-bridge/serve!
-                        {:pty       p
-                         :path      (pty-bridge/socket-path session id)
-                         :replay-fn (fn []
-                                      (let [ls (:lines @buffer)]
-                                        (when (seq ls)
-                                          (.getBytes
-                                            (str (str/join "\n" (map second ls)) "\n")
-                                            java.nio.charset.StandardCharsets/UTF_8))))})
-                      (catch Throwable _ nil))]
+          bridge
+          (try (pty-bridge/serve! {:pty p
+                                   :path (pty-bridge/socket-path session id)
+                                   :replay-fn (fn []
+                                                (let [ls (:lines @buffer)]
+                                                  (when (seq ls)
+                                                    (.getBytes
+                                                      (str (str/join "\n" (map second ls)) "\n")
+                                                      java.nio.charset.StandardCharsets/UTF_8))))})
+               (catch Throwable _ nil))]
+
       (reset! bridge-atom bridge)
-      (swap! bg-procs assoc-in [(str session) id]
-        {:proc p :buffer buffer :exit exit-atom :pump pump :stopped? stopped?
-         :send (:send p) :bridge bridge
-         :cmd cmd :cwd (.getPath dir) :started-at t0})
+      (swap! bg-procs assoc-in
+        [(str session) id]
+        {:proc p
+         :buffer buffer
+         :exit exit-atom
+         :pump pump
+         :stopped? stopped?
+         :send (:send p)
+         :bridge bridge
+         :cmd cmd
+         :cwd (.getPath dir)
+         :started-at t0})
       (resources/register! session
-        {:id id
-         :kind :shell
-         :label (one-line cmd 48)
-         :detail cmd
-         :pid (:pid p)
-         :owner "foundation-shell"
-         :status :running}
-        {:stop-fn  (fn []
-                     ;; Tell the pump to stop touching the registry, kill the
-                     ;; tree, then wait for the pump to finish draining BEFORE
-                     ;; the registry drops the resource — so the pump can never
-                     ;; resurrect a partial entry after unregister.
-                     (reset! stopped? true)
-                     (kill-tree! p)
-                     ;; Close the read end so the pump's blocking `.read`
-                     ;; returns even if a detached grandchild still holds the
-                     ;; write end — the pump thread can't outlive the stop.
-                     (try (.close ^java.io.InputStream (:in p)) (catch Throwable _ nil))
-                     (try (.join pump 3000) (catch InterruptedException _ nil))
-                     ;; Tear down the attach socket last: no more human attachers
-                     ;; once the child is gone.
-                     (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
-                     (drop-bg-entry! session id))
-         ;; Alive while the buffer entry exists — an EXITED process is kept
-         ;; (status :exited) so its logs stay readable; only resource_stop
-         ;; (or replacing the id) lets the registry drop it.
-         :alive-fn (fn [] (some? (bg-entry session id)))})
+                           {:id id
+                            :kind :shell
+                            :label (one-line cmd 48)
+                            :detail cmd
+                            :pid (:pid p)
+                            :owner "foundation-shell"
+                            :status :running}
+                           {:stop-fn (fn []
+                                       ;; Tell the pump to stop touching the registry, kill the
+                                       ;; tree, then wait for the pump to finish draining BEFORE
+                                       ;; the registry drops the resource — so the pump can never
+                                       ;; resurrect a partial entry after unregister.
+                                       (reset! stopped? true)
+                                       (kill-tree! p)
+                                       ;; Close the read end so the pump's blocking `.read`
+                                       ;; returns even if a detached grandchild still holds the
+                                       ;; write end — the pump thread can't outlive the stop.
+                                       (try (.close ^java.io.InputStream (:in p))
+                                            (catch Throwable _ nil))
+                                       (try (.join pump 3000) (catch InterruptedException _ nil))
+                                       ;; Tear down the attach socket last: no more human attachers
+                                       ;; once the child is gone.
+                                       (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
+                                       (drop-bg-entry! session id))
+                            ;; Alive while the buffer entry exists — an EXITED process is kept
+                            ;; (status :exited) so its logs stay readable; only resource_stop
+                            ;; (or replacing the id) lets the registry drop it.
+                            :alive-fn (fn []
+                                        (some? (bg-entry session id)))})
       (extension/success
         ;; No :op / :cwd — shell_bg always runs at the workspace root and the
         ;; result rides every later prompt as a frozen <results> pin.
-        {:result (cond-> {"id" id
-                          "pid" (:pid p)
-                          "cmd" cmd
-                          "status" "running"}
-                   bridge (assoc "attach" (str "vis ext shell attach " id)
-                            "socket" (:path bridge)))
+        {:result (cond-> {"id" id "pid" (:pid p) "cmd" cmd "status" "running"}
+                   bridge
+                   (assoc "attach"
+                     (str "vis ext shell attach " id) "socket"
+                     (:path bridge)))
          :op :shell/bg
-         :metadata {:command cmd
-                    :pid (:pid p)
-                    :started-at-ms t0
-                    :finished-at-ms t0
-                    :duration-ms 0}}))))
+         :metadata
+         {:command cmd :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-logs-impl
   ([env id] (shell-logs-impl env id default-log-tail))
   ([env id n]
-   (let [session (:session-id env)
-         id      (str id)
-         entry   (bg-entry session id)]
+   (let [session
+         (:session-id env)
+
+         id
+         (str id)
+
+         entry
+         (bg-entry session id)]
+
      (when-not entry
-       (throw (ex-info (str "No background shell '" id "' in this session —"
-                         " start one with shell_bg(id, cmd); live ids are"
-                         " listed in resources.")
-                {:type ::unknown-bg-id :id id})))
-     (let [n     (-> (or (->pos-long n "n") default-log-tail) (max 1) (min max-bg-lines))
-           {:keys [lines dropped next-seq]} @(:buffer entry)
-           total (dec next-seq)
-           shown (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
-           exit  @(:exit entry)
-           t     (now-ms)]
+       (throw (ex-info (str "No background shell '"
+                            id
+                            "' in this session —"
+                            " start one with shell_bg(id, cmd); live ids are"
+                            " listed in resources.")
+                       {:type ::unknown-bg-id :id id})))
+     (let [n
+           (-> (or (->pos-long n "n") default-log-tail)
+               (max 1)
+               (min max-bg-lines))
+
+           {:keys [lines dropped next-seq]}
+           @(:buffer entry)
+
+           total
+           (dec next-seq)
+
+           shown
+           (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
+
+           exit
+           @(:exit entry)
+
+           t
+           (now-ms)]
+
        (extension/success
          ;; Lean result: no :op / :cmd / :cwd / :pid (the shell_bg result
          ;; already carries process identity) and no :shown_count (it's
@@ -597,13 +708,13 @@
                            "lines" shown
                            "line_count" total
                            "uptime_ms" (- t (:started-at entry))}
-                    (some? exit)    (assoc "exit" exit)
-                    (pos? (long (or dropped 0))) (assoc "dropped" dropped))
+                    (some? exit)
+                    (assoc "exit" exit)
+
+                    (pos? (long (or dropped 0)))
+                    (assoc "dropped" dropped))
           :op :shell/logs
-          :metadata {:id id
-                     :started-at-ms t
-                     :finished-at-ms t
-                     :duration-ms 0}})))))
+          :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
 (defn- shell-send-impl
   "Write `text` to a background shell's STDIN (its PTY master). With enter (default
@@ -613,36 +724,43 @@
    response with shell_logs(id). Returns {id, sent, status}."
   ([env id text] (shell-send-impl env id text nil))
   ([env id text opts]
-   (let [session (:session-id env)
-         id      (str id)
-         entry   (bg-entry session id)
-         enter?  (let [e (get opts "enter" (get opts :enter true))]
-                   (if (nil? e) true (boolean e)))]
+   (let [session
+         (:session-id env)
+
+         id
+         (str id)
+
+         entry
+         (bg-entry session id)
+
+         enter?
+         (let [e (get opts "enter" (get opts :enter true))]
+           (if (nil? e) true (boolean e)))]
+
      (when-not entry
-       (throw (ex-info (str "No background shell '" id "' in this session — start"
-                         " one with shell_bg(id, cmd); live ids are listed in"
-                         " resources.")
-                {:type ::unknown-bg-id :id id})))
+       (throw (ex-info (str "No background shell '"
+                            id
+                            "' in this session — start"
+                            " one with shell_bg(id, cmd); live ids are listed in"
+                            " resources.")
+                       {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
-       (throw (ex-info (str "Background shell '" id "' has exited — nothing to send"
-                         " to. Its logs stay readable until resource_stop.")
-                {:type ::bg-exited :id id})))
+       (throw (ex-info (str "Background shell '" id
+                            "' has exited — nothing to send"
+                            " to. Its logs stay readable until resource_stop.")
+                       {:type ::bg-exited :id id})))
      (let [send-fn (:send entry)]
        (when (nil? send-fn)
          (throw (ex-info (str "Background shell '" id "' has no writable stdin.")
-                  {:type ::no-stdin :id id})))
+                         {:type ::no-stdin :id id})))
        (let [payload (str text (when enter? "\n"))
-             t       (now-ms)]
+             t (now-ms)]
+
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
-         (extension/success
-           {:result {"id" id
-                     "sent" (count payload)
-                     "status" "running"}
-            :op :shell/send
-            :metadata {:id id
-                       :started-at-ms t
-                       :finished-at-ms t
-                       :duration-ms 0}}))))))
+         (extension/success {:result {"id" id "sent" (count payload) "status" "running"}
+                             :op :shell/send
+                             :metadata
+                             {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; =============================================================================
 ;; Toggle gate + env injection (one before-fn does both)
@@ -655,8 +773,8 @@
 
 (def ^:private disabled-hint
   (str "The shell layer is OFF. Only the USER can enable it: settings dialog ->"
-    " 'Shell commands (compatibility layer)' toggle. Tell the user instead of"
-    " retrying; use cat/ls/rg/patch/write for file work meanwhile."))
+       " 'Shell commands (compatibility layer)' toggle. Tell the user instead of"
+       " retrying; use cat/ls/rg/patch/write for file work meanwhile."))
 
 (defn- shell-gate-before-fn
   "Compose the `:shell/enabled` toggle gate with env injection: when the
@@ -668,34 +786,38 @@
     (if (toggles/enabled? :shell/enabled)
       {:env env :fn f :args (into [env] args)}
       (let [t (now-ms)]
-        {:result (extension/failure
-                   {:result nil
-                    :op op
-                    :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
-                    :error {:message (str (op-label op) " blocked: " disabled-hint)
-                            :type ::disabled
-                            :reason :shell-disabled
-                            :hint disabled-hint
-                            :loop-hint disabled-hint}})}))))
+        {:result (extension/failure {:result nil
+                                     :op op
+                                     :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
+                                     :error {:message (str (op-label op) " blocked: " disabled-hint)
+                                             :type ::disabled
+                                             :reason :shell-disabled
+                                             :hint disabled-hint
+                                             :loop-hint disabled-hint}})}))))
 
 (defn- shell-on-error
   "Failure envelope for thrown impl errors; mirrors editing's interrupted-vs-
    throwable split so turn cancellation renders as a clean interruption."
   [op]
   (fn [err _env _f _args]
-    (let [interrupted? (instance? InterruptedException err)
-          t (now-ms)]
+    (let [interrupted?
+          (instance? InterruptedException err)
+
+          t
+          (now-ms)]
+
       {:result (extension/failure
                  {:result nil
                   :op op
-                  :metadata (cond-> {:started-at-ms t
-                                     :finished-at-ms t
-                                     :duration-ms 0}
-                              interrupted? (assoc :interrupted? true
-                                             :status :interrupted))
+                  :metadata (cond-> {:started-at-ms t :finished-at-ms t :duration-ms 0}
+                              interrupted?
+                              (assoc :interrupted?
+                                true :status
+                                :interrupted))
                   :error (when interrupted?
-                           {:message (str (op-label op) " interrupted while running;"
-                                       " the spawned process tree was killed.")})
+                           {:message (str (op-label op)
+                                          " interrupted while running;"
+                                          " the spawned process tree was killed.")})
                   :throwable (when-not interrupted? err)})})))
 
 ;; =============================================================================
@@ -705,42 +827,54 @@
 ;; `shell_bg` / `shell_logs`.
 ;; =============================================================================
 
-(def ^{:doc "await shell_run(\"git status\")
+(def
+  ^{:doc
+    "await shell_run(\"git status\")
 await shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
 
 Run a command via bash -lc in the workspace root.
 Returns {\"cmd\", \"stdout\", \"duration_ms\"} plus, only when meaningful (use .get): \"exit\", \"timed_out\"+\"timeout_secs\", \"stderr\", \"stdout_truncated\"/\"stderr_truncated\", \"cwd\".
 opts: {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}.
 Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure. On timeout there is NO \"exit\" key."
-       :arglists '([cmd] [cmd opts])}
-  shell-run shell-run-impl)
+    :arglists '([cmd] [cmd opts])}
+  shell-run
+  shell-run-impl)
 
-(def ^{:doc "await shell_bg(\"dev-server\", \"npm run dev\")
+(def
+  ^{:doc
+    "await shell_bg(\"dev-server\", \"npm run dev\")
 
 Start a background command (bash -lc, workspace root) as a session resource `id`; no timeout — use for daemons / watchers / long builds.
 Returns {\"id\", \"pid\", \"cmd\", \"status\": \"running\"}.
 Read output with shell_logs(id); stop and discard logs with resource_stop(id) — the ONLY stop path.
 Gotcha: `id` must be unique among RUNNING shells; reusing an exited id discards its retained logs."
-       :arglists '([id cmd])}
-  shell-bg shell-bg-impl)
+    :arglists '([id cmd])}
+  shell-bg
+  shell-bg-impl)
 
-(def ^{:doc "await shell_logs(\"dev-server\")
+(def
+  ^{:doc
+    "await shell_logs(\"dev-server\")
 await shell_logs(\"dev-server\", 500)
 
 Tail a background shell's captured output. shell_logs(id) keeps the last 200 lines, shell_logs(id, n) the last n (max 2000).
 Returns {\"id\", \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\", \"uptime_ms\"} plus, only when meaningful (use .get): \"exit\", \"dropped\".
 Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines), \"line_count\" is total-ever."
-       :arglists '([id] [id n])}
-  shell-logs shell-logs-impl)
+    :arglists '([id] [id n])}
+  shell-logs
+  shell-logs-impl)
 
-(def ^{:doc "await shell_send(\"dev-server\", \"y\")
+(def
+  ^{:doc
+    "await shell_send(\"dev-server\", \"y\")
 await shell_send(\"slack-auth\", \"xoxp-my-token\", {\"enter\": true})
 
 Type into a background shell's STDIN — the send-keys equivalent. The process runs under a REAL pty (isatty() true, $TERM set), so interactive prompts (password / `read` / REPL / y-N confirm) accept input. `text` is written to its stdin; with enter (default true) a trailing newline SUBMITS the line. Read what came back with shell_logs(id).
 Returns {\"id\", \"sent\", \"status\"}.
 Gotcha: only a RUNNING background shell accepts input; an exited one raises. A step only a HUMAN can finish (browser OAuth, a device-code prompt) can't be typed by the agent — tell the user to run `vis ext shell attach <id>` in their own terminal to take over the live session, then detach with Ctrl-] (the child keeps running). The shell_bg result carries the exact `attach` command."
-       :arglists '([id text] [id text opts])}
-  shell-send shell-send-impl)
+    :arglists '([id text] [id text opts])}
+  shell-send
+  shell-send-impl)
 
 ;; =============================================================================
 ;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
@@ -760,34 +894,54 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    failed — plenty of tools (git, curl, …) write normal output to stderr on
    success, so labelling that as an error is misleading."
   [r]
-  (let [exit    (get r "exit")
-        failed? (or (get r "timed_out") (and exit (not (zero? exit))))
-        note    (cond (get r "timed_out")           " (timed out)"
-                  (and exit (not (zero? exit))) (str " (exit " exit ")")
-                  :else                         "")
-        body    (->> [(fence (get r "stdout"))
-                      (when-let [e (fence (get r "stderr"))]
-                        (if failed? (str "stderr:\n" e) e))]
-                  (remove nil?)
-                  (str/join "\n\n"))]
-    {:summary (str "$ " (get r "cmd") note)
-     :body    (when (seq body) body)}))
+  (let [exit
+        (get r "exit")
+
+        failed?
+        (or (get r "timed_out") (and exit (not (zero? exit))))
+
+        note
+        (cond (get r "timed_out") " (timed out)"
+              (and exit (not (zero? exit))) (str " (exit " exit ")")
+              :else "")
+
+        body
+        (->> [(fence (get r "stdout"))
+              (when-let [e (fence (get r "stderr"))]
+                (if failed? (str "stderr:\n" e) e))]
+             (remove nil?)
+             (str/join "\n\n"))]
+
+    {:summary (str "$ " (get r "cmd") note) :body (when (seq body) body)}))
 
 (defn- render-shell-bg-result
   "shell_bg → `bg `<id>` started (pid N)` headline only."
   [r]
-  {:summary (str "bg `" (get r "id") "` " (or (get r "status") "started")
-              (when-let [pid (get r "pid")] (str " (pid " pid ")")))})
+  {:summary (str "bg `"
+                 (get r "id")
+                 "` "
+                 (or (get r "status") "started")
+                 (when-let [pid (get r "pid")]
+                   (str " (pid " pid ")")))})
 
 (defn- render-shell-logs-result
   "shell_logs → `<id> <status> — N lines` headline + the captured lines."
   [r]
-  (let [lines (get r "lines")
-        text  (->> lines (map (fn [pair] (if (sequential? pair) (second pair) pair)))
-                (str/join "\n"))]
-    {:summary (str "`" (get r "id") "` " (or (get r "status") "?") " — " (count lines) " lines"
-                (when-let [d (get r "dropped")] (str " (" d " dropped)")))
-     :body    (fence text)}))
+  (let [lines
+        (get r "lines")
+
+        text
+        (->> lines
+             (map (fn [pair]
+                    (if (sequential? pair) (second pair) pair)))
+             (str/join "\n"))]
+
+    {:summary (str "`" (get r "id")
+                   "` " (or (get r "status") "?")
+                   " — " (count lines)
+                   " lines" (when-let [d (get r "dropped")]
+                              (str " (" d " dropped)")))
+     :body (fence text)}))
 
 (defn- render-shell-send-result
   "shell_send → `→ `<id>` sent N chars` headline only."
@@ -800,77 +954,89 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
 ;; =============================================================================
 
 (def shell-run-symbol
-  (vis/symbol #'shell-run
+  (vis/symbol
+    #'shell-run
     {:symbol 'run
      :native-tool? true
      :name "shell_run"
-               ;; shell_run(cmd, {opts}) — cmd positional, the rest an options dict.
+     ;; shell_run(cmd, {opts}) — cmd positional, the rest an options dict.
      :call {:pos ["cmd"] :rest :opt}
      :render render-shell-run-result
      :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties {"cmd"          {:type "string" :description "Command line, run via bash -lc in the workspace root."}
-                           "timeout_secs" {:type "integer" :description "Sync timeout seconds (default 120, max 600)."}
-                           "cwd"          {:type "string" :description "Relative directory inside the workspace to run in."}}
-              :required ["cmd"]}
+     :schema
+     {:type "object"
+      :properties
+      {"cmd" {:type "string" :description "Command line, run via bash -lc in the workspace root."}
+       "timeout_secs" {:type "integer" :description "Sync timeout seconds (default 120, max 600)."}
+       "cwd" {:type "string" :description "Relative directory inside the workspace to run in."}}
+      :required ["cmd"]}
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
      :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
   (vis/symbol #'shell-bg
-    {:symbol 'bg
-     :native-tool? true
-     :name "shell_bg"
+              {:symbol 'bg
+               :native-tool? true
+               :name "shell_bg"
                ;; shell_bg(id, cmd) — both positional.
-     :call {:pos ["id" "cmd"]}
-     :render render-shell-bg-result
-     :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties {"id"  {:type "string" :description "Unique resource id among RUNNING shells; read logs / stop by it."}
-                           "cmd" {:type "string" :description "Background command (bash -lc, workspace root); no timeout."}}
-              :required ["id" "cmd"]}
-     :before-fn (shell-gate-before-fn :shell/bg)
-     :tag :mutation
-     :on-error-fn (shell-on-error :shell/bg)}))
+               :call {:pos ["id" "cmd"]}
+               :render render-shell-bg-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties
+                        {"id" {:type "string"
+                               :description
+                               "Unique resource id among RUNNING shells; read logs / stop by it."}
+                         "cmd" {:type "string"
+                                :description
+                                "Background command (bash -lc, workspace root); no timeout."}}
+                        :required ["id" "cmd"]}
+               :before-fn (shell-gate-before-fn :shell/bg)
+               :tag :mutation
+               :on-error-fn (shell-on-error :shell/bg)}))
 
 (def shell-logs-symbol
   (vis/symbol #'shell-logs
-    {:symbol 'logs
-     :native-tool? true
-     :name "shell_logs"
+              {:symbol 'logs
+               :native-tool? true
+               :name "shell_logs"
                ;; shell_logs(id, n?) — id positional, optional trailing n.
-     :call {:pos ["id"] :opt-pos ["n"]}
-     :render render-shell-logs-result
-     :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties {"id" {:type "string" :description "The background shell's resource id."}
-                           "n"  {:type "integer" :description "Tail the last n lines (default 200, max 2000)."}}
-              :required ["id"]}
-     :before-fn (shell-gate-before-fn :shell/logs)
-     :tag :observation
-     :on-error-fn (shell-on-error :shell/logs)}))
+               :call {:pos ["id"] :opt-pos ["n"]}
+               :render render-shell-logs-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties
+                        {"id" {:type "string" :description "The background shell's resource id."}
+                         "n" {:type "integer"
+                              :description "Tail the last n lines (default 200, max 2000)."}}
+                        :required ["id"]}
+               :before-fn (shell-gate-before-fn :shell/logs)
+               :tag :observation
+               :on-error-fn (shell-on-error :shell/logs)}))
 
 (def shell-send-symbol
   (vis/symbol #'shell-send
-    {:symbol 'send
-     :native-tool? true
-     :name "shell_send"
+              {:symbol 'send
+               :native-tool? true
+               :name "shell_send"
                ;; shell_send(id, text, {opts}) — id + text positional, rest an options dict.
-     :call {:pos ["id" "text"] :rest :opt}
-     :render render-shell-send-result
-     :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties {"id"    {:type "string" :description "The background shell's resource id."}
-                           "text"  {:type "string" :description "Text written to the shell's stdin."}
-                           "enter" {:type "boolean" :description "Append a newline to SUBMIT the line (default true)."}}
-              :required ["id" "text"]}
-     :before-fn (shell-gate-before-fn :shell/send)
-     :tag :mutation
-     :on-error-fn (shell-on-error :shell/send)}))
+               :call {:pos ["id" "text"] :rest :opt}
+               :render render-shell-send-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties
+                        {"id" {:type "string" :description "The background shell's resource id."}
+                         "text" {:type "string" :description "Text written to the shell's stdin."}
+                         "enter" {:type "boolean"
+                                  :description
+                                  "Append a newline to SUBMIT the line (default true)."}}
+                        :required ["id" "text"]}
+               :before-fn (shell-gate-before-fn :shell/send)
+               :tag :mutation
+               :on-error-fn (shell-on-error :shell/send)}))
 
-(def shell-symbols
-  [shell-run-symbol shell-bg-symbol shell-logs-symbol shell-send-symbol])
+(def shell-symbols [shell-run-symbol shell-bg-symbol shell-logs-symbol shell-send-symbol])
 
 (defn shell-prompt
   "Prompt fragment advertising the shell surface — ONLY while the toggle is
@@ -878,7 +1044,8 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    disabled layer costs zero prompt tokens and the model never sees it."
   [_env]
   (if (toggles/enabled? :shell/enabled)
-    (str/join "\n"
+    (str/join
+      "\n"
       ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run / subprocess.Popen / os.system ALSO work (bridged to this tool — Popen runs in the BACKGROUND like shell_bg), but shell_run / shell_bg are cleaner — no exception dance."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
        "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
@@ -902,38 +1069,45 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
    `--socket PATH` targets an explicit socket; otherwise the newest shell whose
    id matches. Returns the attach exit code."
   [_parsed residual]
-  (let [args   (vec residual)
-        socket (loop [xs args]
-                 (cond (empty? xs)            nil
-                   (= (first xs) "--socket")  (second xs)
-                   :else                      (recur (rest xs))))
-        id     (first (remove #(str/starts-with? % "--") args))]
+  (let [args
+        (vec residual)
+
+        socket
+        (loop [xs args]
+          (cond (empty? xs) nil
+                (= (first xs) "--socket") (second xs)
+                :else (recur (rest xs))))
+
+        id
+        (first (remove #(str/starts-with? % "--") args))]
+
     (pty-bridge/attach! {:id id :socket socket})))
 
 (def shell-cli
   "CLI surface mounted under `vis ext shell`. Only `attach` for now — the human
    passthrough onto a background PTY the agent spawned."
-  [{:cmd/name  "shell"
-    :cmd/doc   "Attach a real terminal to a live background shell (shell_bg)."
+  [{:cmd/name "shell"
+    :cmd/doc "Attach a real terminal to a live background shell (shell_bg)."
     :cmd/usage "vis ext shell attach <id>"
     :cmd/subcommands
-    [{:cmd/name      "attach"
-      :cmd/doc       "Join a background shell's PTY in your terminal; Ctrl-] detaches (child keeps running)."
-      :cmd/usage     "vis ext shell attach <id> [--socket PATH]"
+    [{:cmd/name "attach"
+      :cmd/doc
+      "Join a background shell's PTY in your terminal; Ctrl-] detaches (child keeps running)."
+      :cmd/usage "vis ext shell attach <id> [--socket PATH]"
       :cmd/owns-tty? true
-      :cmd/examples  ["vis ext shell attach slack-auth"
-                      "vis ext shell attach dev-server"]
-      :cmd/run-fn    #'shell-attach-command}]}])
+      :cmd/examples ["vis ext shell attach slack-auth" "vis ext shell attach dev-server"]
+      :cmd/run-fn #'shell-attach-command}]}])
 
 (def vis-extension
   (vis/extension
-    {:ext/name        "foundation-shell"
-     :ext/description "Shell compatibility layer (toggle :shell/enabled, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
-     :ext/version     "0.1.0"
-     :ext/author      "Blockether"
-     :ext/owner       "vis"
-     :ext/license     "Apache-2.0"
-     :ext/kind        "foundation"
+    {:ext/name "foundation-shell"
+     :ext/description
+     "Shell compatibility layer (toggle :shell/enabled, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/kind "foundation"
      ;; The toggle IS the activation gate: when OFF the extension is
      ;; inactive, so `sync-active-extension-symbols!` (per-env install +
      ;; every turn start) REMOVES shell_run/shell_bg/shell_logs from the
@@ -941,10 +1115,10 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
      ;; plain NameError, and the prompt fragment is gone. The before-fn
      ;; refusal below stays as defense-in-depth for the same-turn window
      ;; where the toggle flips after symbols were already bound.
-     :ext/activation-fn (fn [_env] (toggles/enabled? :shell/enabled))
-     :ext/engine      {:ext.engine/alias   'shell
-                       :ext.engine/symbols shell-symbols}
-     :ext/prompt-fn      shell-prompt
-     :ext/cli            shell-cli}))
+     :ext/activation-fn (fn [_env]
+                          (toggles/enabled? :shell/enabled))
+     :ext/engine {:ext.engine/alias 'shell :ext.engine/symbols shell-symbols}
+     :ext/prompt-fn shell-prompt
+     :ext/cli shell-cli}))
 
 (vis/register-extension! vis-extension)

@@ -29,13 +29,11 @@
 
    Failure paths throw `ex-info` with `:type :clj/nrepl-*` so the
    Vis tool wrapper can surface a clean error to the model."
-  (:require
-   [clojure.edn :as edn]
-   [clojure.string :as str]
-   [nrepl.core :as nrepl]
-   [nrepl.transport :as transport])
-  (:import
-   (java.io IOException)))
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [nrepl.core :as nrepl]
+            [nrepl.transport :as transport])
+  (:import (java.io IOException)))
 
 ;; ---------------------------------------------------------------------------
 ;; Connection cache
@@ -53,21 +51,26 @@
   [host port timeout-ms]
   (try
     (nrepl/connect :host (or host "localhost")
-      :port (int port)
-      :transport-fn transport/bencode
-      ;; transport-level read timeout; eval timeout is enforced
-      ;; separately via combined-response-fn below.
-      :timeout (long timeout-ms))
+                   :port (int port)
+                   :transport-fn transport/bencode
+                   ;; transport-level read timeout; eval timeout is enforced
+                   ;; separately via combined-response-fn below.
+                   :timeout (long timeout-ms))
     (catch Throwable t
-      (throw (ex-info (str "nREPL connect failed on " (or host "localhost") ":" port
-                        " — is the REPL running? Check ctx (session_env.languages.clojure.nrepl) or repl_start(\"clojure\").")
-               {:type :clj/nrepl-connect-failed
-                :host (or host "localhost")
-                :port port
-                :cause (.getMessage t)})))))
+      (throw
+        (ex-info
+          (str
+            "nREPL connect failed on "
+            (or host "localhost")
+            ":"
+            port
+            " — is the REPL running? Check ctx (session_env.languages.clojure.nrepl) or repl_start(\"clojure\").")
+          {:type :clj/nrepl-connect-failed
+           :host (or host "localhost")
+           :port port
+           :cause (.getMessage t)})))))
 
-(defn- evict! [host port]
-  (swap! connections dissoc (key-of host port)))
+(defn- evict! [host port] (swap! connections dissoc (key-of host port)))
 
 (defn- connection-for
   "Get a cached connection or open a new one. The cached value is a
@@ -76,9 +79,9 @@
   [host port timeout-ms]
   (let [k (key-of host port)]
     (or (get-in @connections [k :conn])
-      (let [c (open! host port timeout-ms)]
-        (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
-        c))))
+        (let [c (open! host port timeout-ms)]
+          (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
+          c))))
 
 (defn close-all!
   "Close every cached connection. Idempotent. Useful from
@@ -105,78 +108,126 @@
    Stops on first :status containing done, after deadline, or on terminal errors
    that nREPL reports on *err* without a final done message."
   [responses deadline]
-  (loop [rs       responses
-         values   []
-         out-acc  (StringBuilder.)
-         err-acc  (StringBuilder.)
-         ns*      nil
-         status   #{}
-         ex       nil
-         root-ex  nil]
-    (cond
-      (> (System/currentTimeMillis) deadline)
-      {"timed_out" true
-       "value"      (peek values)
-       "values"     values
-       "out"        (.toString out-acc)
-       "err"        (.toString err-acc)
-       "ns"         ns*
-       "status"     (conj status "timeout")
-       "ex"         ex
-       "root_ex"    root-ex}
+  (loop [rs
+         responses
 
-      (empty? rs)
-      {"timed_out" false
-       "value"      (peek values)
-       "values"     values
-       "out"        (.toString out-acc)
-       "err"        (.toString err-acc)
-       "ns"         ns*
-       "status"     (vec status)
-       "ex"         ex
-       "root_ex"    root-ex}
+         values
+         []
 
-      :else
-      ;; nREPL keys are *strings* over bencode; some clients keywordize.
-      ;; Read both shapes so we don't silently lose value / status / out
-      ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
-      ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
-      (let [msg (first rs)
-            mg  (fn [k] (or (get msg k) (get msg (keyword k))))
-            v   (mg "value")
-            o   (mg "out")
-            e   (mg "err")
-            n   (mg "ns")
-            s   (mg "status")
-            ex2 (mg "ex")
-            rx2 (mg "root-ex")]
-        (when o (.append out-acc ^String o))
-        (when e (.append err-acc ^String e))
-        (let [new-status   (into status (cond
-                                          (nil? s)    []
-                                          (string? s) [s]
-                                          (coll? s)   (map str s)
-                                          :else       [(str s)]))
-              done?        (contains? new-status "done")
-              terminal-error? (terminal-error-output? (.toString err-acc))
-              values'      (cond-> values v (conj v))
-              ns''         (or n ns*)
-              ex''         (or ex2 ex)
-              rx''         (or rx2 root-ex)]
-          (if (or done? terminal-error?)
-            ;; Drain no further. Once "done" arrived the eval is complete; for
-            ;; terminal errors nREPL may never send done, and waiting for it
-            ;; turns a useful syntax error into a timeout.
-            {"timed_out" false
-             "value"      (peek values')
-             "values"     values'
-             "out"        (.toString out-acc)
-             "err"        (.toString err-acc)
-             "ns"         ns''
-             "status"     (cond-> new-status terminal-error? (conj "eval-error"))
-             "ex"         ex''
-             "root_ex"    rx''}
-            (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
+         out-acc
+         (StringBuilder.)
+
+         err-acc
+         (StringBuilder.)
+
+         ns*
+         nil
+
+         status
+         #{}
+
+         ex
+         nil
+
+         root-ex
+         nil]
+
+    (cond (> (System/currentTimeMillis) deadline) {"timed_out" true
+                                                   "value" (peek values)
+                                                   "values" values
+                                                   "out" (.toString out-acc)
+                                                   "err" (.toString err-acc)
+                                                   "ns" ns*
+                                                   "status" (conj status "timeout")
+                                                   "ex" ex
+                                                   "root_ex" root-ex}
+          (empty? rs) {"timed_out" false
+                       "value" (peek values)
+                       "values" values
+                       "out" (.toString out-acc)
+                       "err" (.toString err-acc)
+                       "ns" ns*
+                       "status" (vec status)
+                       "ex" ex
+                       "root_ex" root-ex}
+          :else
+          ;; nREPL keys are *strings* over bencode; some clients keywordize.
+          ;; Read both shapes so we don't silently lose value / status / out
+          ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
+          ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
+          (let [msg
+                (first rs)
+
+                mg
+                (fn [k]
+                  (or (get msg k) (get msg (keyword k))))
+
+                v
+                (mg "value")
+
+                o
+                (mg "out")
+
+                e
+                (mg "err")
+
+                n
+                (mg "ns")
+
+                s
+                (mg "status")
+
+                ex2
+                (mg "ex")
+
+                rx2
+                (mg "root-ex")]
+
+            (when o (.append out-acc ^String o))
+            (when e (.append err-acc ^String e))
+            (let [new-status
+                  (into status
+                        (cond (nil? s) []
+                              (string? s) [s]
+                              (coll? s) (map str s)
+                              :else [(str s)]))
+
+                  done?
+                  (contains? new-status "done")
+
+                  terminal-error?
+                  (terminal-error-output? (.toString err-acc))
+
+                  values'
+                  (cond-> values
+                    v
+                    (conj v))
+
+                  ns''
+                  (or n ns*)
+
+                  ex''
+                  (or ex2 ex)
+
+                  rx''
+                  (or rx2 root-ex)]
+
+              (if (or done? terminal-error?)
+                ;; Drain no further. Once "done" arrived the eval is complete; for
+                ;; terminal errors nREPL may never send done, and waiting for it
+                ;; turns a useful syntax error into a timeout.
+                {"timed_out" false
+                 "value" (peek values')
+                 "values" values'
+                 "out" (.toString out-acc)
+                 "err" (.toString err-acc)
+                 "ns" ns''
+                 "status" (cond-> new-status
+                            terminal-error?
+                            (conj "eval-error"))
+                 "ex" ex''
+                 "root_ex" rx''}
+                (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
 ;; ---------------------------------------------------------------------------
 ;; error enrichment — a beautiful, structured stacktrace on the eval-error path
@@ -187,39 +238,51 @@
    Reads the string-keyed combined map (post strings-only boundary shape)."
   [combined]
   (boolean (or (contains? (get combined "status") "eval-error")
-             (get combined "ex")
-             (get combined "root_ex"))))
+               (get combined "ex")
+               (get combined "root_ex"))))
 
 (defn- sget
   "Read an nREPL response key that may arrive as a string or a keyword."
   [m k]
   (or (get m k) (get m (keyword k))))
 
-(defn- frame-flags [f]
-  (set (map str (sget f "flags"))))
+(defn- frame-flags [f] (set (map str (sget f "flags"))))
 
 (defn- cider-frame->line
   "`user/handle-request  (handler.clj:42)` from a cider-nrepl frame map."
   [f]
-  (str (sget f "name") "  (" (sget f "file")
-    (when-let [l (sget f "line")] (str ":" l)) ")"))
+  (str (sget f "name")
+       "  ("
+       (sget f "file")
+       (when-let [l (sget f "line")]
+         (str ":" l))
+       ")"))
 
 (defn- pick-frames
   "Drop cider's `dup`/`tooling` noise frames (the same ones its own UI hides by
    default), keep the rest in order, cap the depth."
   [frames limit]
   (->> frames
-    (remove #(let [fl (frame-flags %)] (or (fl "dup") (fl "tooling"))))
-    (map cider-frame->line)
-    (take limit)
-    vec))
+       (remove #(let [fl
+                      (frame-flags %)]
 
-(defn- simple-class [cls]
-  (let [s (str cls)
-        i (.lastIndexOf s ".")]
+                  (or (fl "dup") (fl "tooling"))))
+       (map cider-frame->line)
+       (take limit)
+       vec))
+
+(defn- simple-class
+  [cls]
+  (let [s
+        (str cls)
+
+        i
+        (.lastIndexOf s ".")]
+
     (if (neg? i) s (subs s (inc i)))))
 
-(defn- cause->headline [c]
+(defn- cause->headline
+  [c]
   (let [msg (str (:message c))]
     (str (simple-class (:class c)) (when (seq msg) (str ": " msg)))))
 
@@ -228,40 +291,62 @@
    The root (innermost) cause carries the real throw site + message; earlier
    causes are threaded into the headline as a `← caused by` chain."
   [causes]
-  (let [causes (vec causes)
-        root   (or (last (filter #(seq (sget % "stacktrace")) causes))
-                 (last causes))
-        heads  (map #(cause->headline {:class (sget % "class") :message (sget % "message")})
-                 causes)]
+  (let [causes
+        (vec causes)
+
+        root
+        (or (last (filter #(seq (sget % "stacktrace")) causes)) (last causes))
+
+        heads
+        (map #(cause->headline {:class (sget % "class") :message (sget % "message")}) causes)]
+
     {"error_message" (str/join "\n  ← caused by " heads)
-     "error_data"    (some-> (sget root "data") not-empty)
-     "trace"         (pick-frames (sget root "stacktrace") 16)}))
+     "error_data" (some-> (sget root "data")
+                          not-empty)
+     "trace" (pick-frames (sget root "stacktrace") 16)}))
 
 (defn- collect-op
   "Drive an op on `session` to `done`, returning `{:status #{..} :msgs [..]}`.
    Bails on the deadline; never blocks past it."
   [session op deadline]
-  (loop [rs     (session {:op op})
-         msgs   []
-         status #{}]
+  (loop [rs
+         (session {:op op})
+
+         msgs
+         []
+
+         status
+         #{}]
+
     (if (or (empty? rs) (> (System/currentTimeMillis) deadline))
       {:status status :msgs msgs}
-      (let [msg (first rs)
-            s   (sget msg "status")
-            st  (into status (cond (nil? s) [] (string? s) [s]
-                               (coll? s) (map str s) :else [(str s)]))
-            msgs' (cond-> msgs (sget msg "class") (conj msg))]
-        (if (contains? st "done")
-          {:status st :msgs msgs'}
-          (recur (next rs) msgs' st))))))
+      (let [msg
+            (first rs)
+
+            s
+            (sget msg "status")
+
+            st
+            (into status
+                  (cond (nil? s) []
+                        (string? s) [s]
+                        (coll? s) (map str s)
+                        :else [(str s)]))
+
+            msgs'
+            (cond-> msgs
+              (sget msg "class")
+              (conj msg))]
+
+        (if (contains? st "done") {:status st :msgs msgs'} (recur (next rs) msgs' st))))))
 
 (def ^:private e-fetch-code
   "Portable fallback (no cider-nrepl): read `*e` in-session and hand back a
    readable `{\"error_message\" \"error_data\" \"trace\"}` map — demunged user
    frames, JVM/nREPL plumbing filtered out. STRING keys so the parsed map merges
    cleanly into the string-keyed eval result (crosses the strings-only boundary)."
-  (str "(when-let [e *e]"
-    "  {\"error_message\" (str (.getSimpleName (class e))"
+  (str
+    "(when-let [e *e]" "  {\"error_message\" (str (.getSimpleName (class e))"
     "                       (let [m (.getMessage e)] (when (seq (str m)) (str \": \" m))))"
     "   \"error_data\" (when (instance? clojure.lang.IExceptionInfo e) (pr-str (ex-data e)))"
     "   \"trace\" (let [fs (map (fn [^StackTraceElement el]"
@@ -278,14 +363,15 @@
    leftover messages. Returns true once the stream is clean (done reached)."
   [responses deadline]
   (loop [rs responses]
-    (cond
-      (> (System/currentTimeMillis) deadline) false
-      (empty? rs)                             true
-      :else
-      (let [s   (sget (first rs) "status")
-            st  (cond (nil? s) #{} (string? s) #{s}
-                  (coll? s) (set (map str s)) :else #{(str s)})]
-        (if (contains? st "done") true (recur (next rs)))))))
+    (cond (> (System/currentTimeMillis) deadline) false
+          (empty? rs) true
+          :else (let [s (sget (first rs) "status")
+                      st (cond (nil? s) #{}
+                               (string? s) #{s}
+                               (coll? s) (set (map str s))
+                               :else #{(str s)})]
+
+                  (if (contains? st "done") true (recur (next rs)))))))
 
 (defn- fetch-stacktrace!
   "Guarded second round-trip on the SAME `session` (so `*e` is bound) to enrich an
@@ -297,20 +383,19 @@
    any failure so the base result is untouched."
   [session responses]
   (let [deadline (+ (System/currentTimeMillis) 3000)]
-    (try
-      (when (drain-to-done! responses deadline)
-        (or
-          (some (fn [op]
-                  (let [{:keys [status msgs]} (collect-op session op deadline)]
-                    (when (and (seq msgs) (not (contains? status "unknown-op")))
-                      (stacktrace->result msgs))))
-            ["stacktrace" "analyze-last-stacktrace"])
-          (let [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
-                v (get r "value")]
-            (when (and (string? v) (not= "nil" v))
-              (let [m (try (edn/read-string v) (catch Throwable _ nil))]
-                (when (map? m) (not-empty m)))))))
-      (catch Throwable _ nil))))
+    (try (when (drain-to-done! responses deadline)
+           (or (some (fn [op]
+                       (let [{:keys [status msgs]} (collect-op session op deadline)]
+                         (when (and (seq msgs) (not (contains? status "unknown-op")))
+                           (stacktrace->result msgs))))
+                     ["stacktrace" "analyze-last-stacktrace"])
+               (let [r (combine (session {:op "eval" :code e-fetch-code}) deadline)
+                     v (get r "value")]
+
+                 (when (and (string? v) (not= "nil" v))
+                   (let [m (try (edn/read-string v) (catch Throwable _ nil))]
+                     (when (map? m) (not-empty m)))))))
+         (catch Throwable _ nil))))
 
 (defn eval!
   "Evaluate `code` in the nREPL at `host:port`. Opts:
@@ -329,43 +414,66 @@
    timeout) is reported inside the returned map so the model can
    read it as data."
   [{:keys [host port code ns timeout-ms pretty? print-margin]
-    :or   {host "localhost" timeout-ms 30000 print-margin 100}}]
+    :or {host "localhost" timeout-ms 30000 print-margin 100}}]
   (when-not (pos? (or port 0))
-    (throw (ex-info "eval! requires a positive :port"
-             {:type :clj/nrepl-bad-args :port port})))
+    (throw (ex-info "eval! requires a positive :port" {:type :clj/nrepl-bad-args :port port})))
   (when-not (string? code)
-    (throw (ex-info "eval! requires a :code string"
-             {:type :clj/nrepl-bad-args :code code})))
-  (let [start    (System/currentTimeMillis)
-        deadline (+ start (long timeout-ms))]
+    (throw (ex-info "eval! requires a :code string" {:type :clj/nrepl-bad-args :code code})))
+  (let [start
+        (System/currentTimeMillis)
+
+        deadline
+        (+ start (long timeout-ms))]
+
     (try
-      (let [conn     (connection-for host port timeout-ms)
-            client   (nrepl/client conn timeout-ms)
-            session  (nrepl/client-session client)
-            req      (cond-> {:op "eval" :code code}
-                       (string? ns) (assoc :ns ns)
-                       pretty?      (assoc :nrepl.middleware.print/print "nrepl.util.print/pprint"
-                                      :nrepl.middleware.print/options {:right-margin print-margin}))
-            responses (session req)
-            combined (combine responses deadline)
-            combined (if (eval-error? combined)
-                       (merge combined (fetch-stacktrace! session responses))
-                       combined)
-            elapsed  (- (System/currentTimeMillis) start)]
-        (assoc combined "ms" elapsed "port" (int port) "host" host))
+      (let [conn
+            (connection-for host port timeout-ms)
+
+            client
+            (nrepl/client conn timeout-ms)
+
+            session
+            (nrepl/client-session client)
+
+            req
+            (cond-> {:op "eval" :code code}
+              (string? ns)
+              (assoc :ns ns)
+
+              pretty?
+              (assoc :nrepl.middleware.print/print
+                "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                {:right-margin print-margin}))
+
+            responses
+            (session req)
+
+            combined
+            (combine responses deadline)
+
+            combined
+            (if (eval-error? combined)
+              (merge combined (fetch-stacktrace! session responses))
+              combined)
+
+            elapsed
+            (- (System/currentTimeMillis) start)]
+
+        (assoc combined
+          "ms" elapsed
+          "port" (int port)
+          "host" host))
       (catch IOException ioe
         (evict! host port)
         (throw (ex-info (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
-                 {:type :clj/nrepl-io
-                  :host host :port port
-                  :cause (.getMessage ioe)})))
+                        {:type :clj/nrepl-io :host host :port port :cause (.getMessage ioe)})))
       (catch Throwable t
         (if (= :clj/nrepl-connect-failed (:type (ex-data t)))
           (throw t)
-          (throw (ex-info (str "nREPL eval failed: " (.getMessage t))
-                   {:type :clj/nrepl-eval-failed
-                    :host host :port port
-                    :cause (.getMessage t)})))))))
+          (throw
+            (ex-info
+              (str "nREPL eval failed: " (.getMessage t))
+              {:type :clj/nrepl-eval-failed :host host :port port :cause (.getMessage t)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; probe — cheap liveness check (no code execution)
@@ -378,12 +486,21 @@
    when no recognisable version is present."
   [versions]
   (when (map? versions)
-    (let [vget (fn [k] (or (get versions k) (get versions (name k))))
-          vstr (fn [m] (when (map? m)
-                         (or (get m :version-string) (get m "version-string"))))
-          out  (into {}
-                 (keep (fn [k] (when-let [s (vstr (vget k))] [k s])))
-                 [:clojure :clojurescript :nrepl :java])]
+    (let [vget
+          (fn [k]
+            (or (get versions k) (get versions (name k))))
+
+          vstr
+          (fn [m]
+            (when (map? m) (or (get m :version-string) (get m "version-string"))))
+
+          out
+          (into {}
+                (keep (fn [k]
+                        (when-let [s (vstr (vget k))]
+                          [k s])))
+                [:clojure :clojurescript :nrepl :java])]
+
       (not-empty out))))
 
 (defn- detect-dialect
@@ -392,31 +509,38 @@
    piggieback, self-hosted) surface a clojurescript version or cljs/shadow
    ops. Returns `:cljs`, `:clj`, or `:unknown`."
   [versions ops]
-  (let [opset    (set (map name (cond
-                                  (map? ops)  (keys ops)
-                                  (coll? ops) ops
-                                  :else       nil)))
-        cljs-op? (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
-    (cond
-      (:clojurescript versions) :cljs
-      cljs-op?                   :cljs
-      (:clojure versions)        :clj
-      :else                      :unknown)))
+  (let [opset
+        (set (map name
+                  (cond (map? ops) (keys ops)
+                        (coll? ops) ops
+                        :else nil)))
+
+        cljs-op?
+        (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
+
+    (cond (:clojurescript versions) :cljs
+          cljs-op? :cljs
+          (:clojure versions) :clj
+          :else :unknown)))
 
 (defn- server-cwd
   "Best-effort working directory of the server JVM via a single
    `(System/getProperty \"user.dir\")` eval. Returns a path string or nil
    (e.g. a non-JVM cljs runtime where `System` is undefined). Never throws."
   [host port timeout-ms]
-  (try
-    (let [r (eval! {:host host :port port
-                    :code "(System/getProperty \"user.dir\")"
-                    :timeout-ms timeout-ms})
-          v (get r "value")]
-      (when (string? v)
-        (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
-          (when (and (string? parsed) (seq parsed)) parsed))))
-    (catch Throwable _ nil)))
+  (try (let [r
+             (eval! {:host host
+                     :port port
+                     :code "(System/getProperty \"user.dir\")"
+                     :timeout-ms timeout-ms})
+
+             v
+             (get r "value")]
+
+         (when (string? v)
+           (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
+             (when (and (string? parsed) (seq parsed)) parsed))))
+       (catch Throwable _ nil)))
 
 (defn probe!
   "Best-effort liveness probe for the nREPL at `host:port`. Sends a single
@@ -440,54 +564,73 @@
   (if-not (pos? (or port 0))
     {:status :down}
     (try
-      (let [conn     (connection-for host port timeout-ms)
-            client   (nrepl/client conn timeout-ms)
-            session  (nrepl/client-session client)
-            deadline (+ (System/currentTimeMillis) (long timeout-ms))
-            responses (session {:op "describe"})
-            up       (fn [versions ops]
-                       (cond-> {:status   :up
-                                :versions (or versions {})
-                                :dialect  (detect-dialect (or versions {}) ops)}
-                         true (as-> m
-                                (if-let [cwd (server-cwd host port timeout-ms)]
-                                  (assoc m :cwd cwd)
-                                  m))))]
-        (loop [rs       responses
-               versions nil
-               ops      nil
-               done?    false]
-          (cond
-            done?
-            (up versions ops)
+      (let [conn
+            (connection-for host port timeout-ms)
 
-            (empty? rs)
-            (if versions (up versions ops) {:status :unresponsive})
+            client
+            (nrepl/client conn timeout-ms)
 
-            (> (System/currentTimeMillis) deadline)
-            (if versions (up versions ops) {:status :unresponsive})
+            session
+            (nrepl/client-session client)
 
-            :else
-            (let [msg (first rs)
-                  mg  (fn [k] (or (get msg k) (get msg (keyword k))))
-                  v   (describe-versions (mg "versions"))
-                  o   (mg "ops")
-                  s   (mg "status")
-                  st  (cond
-                        (nil? s)    #{}
-                        (string? s) #{s}
-                        (coll? s)   (set (map str s))
-                        :else       #{(str s)})]
-              (recur (next rs)
-                (or v versions)
-                (or o ops)
-                (contains? st "done"))))))
+            deadline
+            (+ (System/currentTimeMillis) (long timeout-ms))
+
+            responses
+            (session {:op "describe"})
+
+            up
+            (fn [versions ops]
+              (cond-> {:status :up
+                       :versions (or versions {})
+                       :dialect (detect-dialect (or versions {}) ops)}
+                true
+                (as-> m (if-let [cwd (server-cwd host port timeout-ms)]
+                          (assoc m :cwd cwd)
+                          m))))]
+
+        (loop [rs
+               responses
+
+               versions
+               nil
+
+               ops
+               nil
+
+               done?
+               false]
+
+          (cond done? (up versions ops)
+                (empty? rs) (if versions (up versions ops) {:status :unresponsive})
+                (> (System/currentTimeMillis) deadline)
+                (if versions (up versions ops) {:status :unresponsive})
+                :else (let [msg
+                            (first rs)
+
+                            mg
+                            (fn [k]
+                              (or (get msg k) (get msg (keyword k))))
+
+                            v
+                            (describe-versions (mg "versions"))
+
+                            o
+                            (mg "ops")
+
+                            s
+                            (mg "status")
+
+                            st
+                            (cond (nil? s) #{}
+                                  (string? s) #{s}
+                                  (coll? s) (set (map str s))
+                                  :else #{(str s)})]
+
+                        (recur (next rs) (or v versions) (or o ops) (contains? st "done"))))))
       (catch clojure.lang.ExceptionInfo e
         (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
           {:status :down}
           {:status :unresponsive}))
-      (catch IOException _
-        (evict! host port)
-        {:status :down})
-      (catch Throwable _
-        {:status :unresponsive}))))
+      (catch IOException _ (evict! host port) {:status :down})
+      (catch Throwable _ {:status :unresponsive}))))

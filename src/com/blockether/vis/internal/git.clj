@@ -20,8 +20,7 @@
 
 (def ^:private default-git-timeout-secs 10)
 
-(defonce ^:private working-tree-status-cache
-  (atom {:cwd nil :expires-at 0 :value nil}))
+(defonce ^:private working-tree-status-cache (atom {:cwd nil :expires-at 0 :value nil}))
 
 ;; One in-flight refresh at a time — a CAS guard so a burst of footer repaints
 ;; can't spawn N concurrent git walks.
@@ -45,25 +44,31 @@
   ([^File dir args] (run-git dir args nil))
   ([^File dir args {:keys [timeout-secs]}]
    (let [t0 (System/currentTimeMillis)]
-     (try
-       (let [cmd (into ["git"] (map str) args)
-             pb  (ProcessBuilder. ^java.util.List cmd)]
-         (.directory pb (or dir (cwd-file)))
-         (let [p    (.start pb)
-               out  (future (slurp (io/reader (.getInputStream p))))
-               err  (future (slurp (io/reader (.getErrorStream p))))
-               done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
-           (when-not done
-             (.destroyForcibly p)
-             (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
-               (try (.close s) (catch Throwable _ nil))))
-           {:exit (when done (.exitValue p))
-            :out  (deref out 2000 "")
-            :err  (deref err 2000 "")
-            :timed-out? (not done)
-            :duration-ms (- (System/currentTimeMillis) t0)}))
-       (catch Throwable _ {:exit nil :out "" :err "" :timed-out? false
-                           :duration-ms (- (System/currentTimeMillis) t0)})))))
+     (try (let [cmd (into ["git"] (map str) args)
+                pb (ProcessBuilder. ^java.util.List cmd)]
+
+            (.directory pb (or dir (cwd-file)))
+            (let [p (.start pb)
+                  out (future (slurp (io/reader (.getInputStream p))))
+                  err (future (slurp (io/reader (.getErrorStream p))))
+                  done
+                  (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
+
+              (when-not done
+                (.destroyForcibly p)
+                (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
+                  (try (.close s) (catch Throwable _ nil))))
+              {:exit (when done (.exitValue p))
+               :out (deref out 2000 "")
+               :err (deref err 2000 "")
+               :timed-out? (not done)
+               :duration-ms (- (System/currentTimeMillis) t0)}))
+          (catch Throwable _
+            {:exit nil
+             :out ""
+             :err ""
+             :timed-out? false
+             :duration-ms (- (System/currentTimeMillis) t0)})))))
 
 (defn- git-ok
   "stdout of `git <args>` when it exits 0, else nil."
@@ -99,15 +104,16 @@
    `:workspace/sandbox?`."
   [root]
   (if (and root
-        (let [f (File. (str root))]
-          (and (.exists f) (in-repository? f))))
+           (let [f (File. (str root))]
+             (and (.exists f) (in-repository? f))))
     :git
     :none))
 
 (defn repo-name
   "Human label for the repository containing `start` — its top-level dir name."
   [^File start]
-  (some-> (repo-work-tree start) .getName))
+  (some-> (repo-work-tree start)
+          .getName))
 
 ;; =============================================================================
 ;; porcelain v2 status parsing
@@ -131,80 +137,97 @@
    Returns {:branch <str> :head <sha|nil> :detached? bool :upstream? bool
             :ahead <int> :behind <int> :entries [{:x :y :type :path :dir?}]}."
   [^File dir {:keys [ignored? untracked-all?]}]
-  (let [args (cond-> ["status" "--porcelain=v2" "--branch" "-z"]
-               ignored?       (conj "--ignored=matching")
-               untracked-all? (conj "--untracked-files=all"))
-        {:keys [exit out]} (run-git dir args)]
+  (let [args
+        (cond-> ["status" "--porcelain=v2" "--branch" "-z"]
+          ignored?
+          (conj "--ignored=matching")
+
+          untracked-all?
+          (conj "--untracked-files=all"))
+
+        {:keys [exit out]}
+        (run-git dir args)]
+
     (when (= 0 exit)
       (let [toks (vec (remove empty? (str/split (or out "") #"\u0000")))]
         (loop [i 0
-               acc {:branch nil :head nil :detached? false :upstream? false
-                    :ahead 0 :behind 0 :entries []}]
+               acc {:branch nil
+                    :head nil
+                    :detached? false
+                    :upstream? false
+                    :ahead 0
+                    :behind 0
+                    :entries []}]
+
           (if (>= i (count toks))
             acc
             (let [t (nth toks i)]
-              (cond
-                (str/starts-with? t "# branch.oid ")
-                (recur (inc i) (let [v (str/trim (subs t 13))]
-                                 (assoc acc :head (when-not (= v "(initial)") v))))
+              (cond (str/starts-with? t "# branch.oid ")
+                    (recur (inc i)
+                           (let [v (str/trim (subs t 13))]
+                             (assoc acc :head (when-not (= v "(initial)") v))))
+                    (str/starts-with? t "# branch.head ") (recur (inc i)
+                                                                 (let [v (str/trim (subs t 14))]
+                                                                   (assoc acc
+                                                                     :branch v
+                                                                     :detached? (= v
+                                                                                   "(detached)"))))
+                    (str/starts-with? t "# branch.upstream ") (recur (inc i)
+                                                                     (assoc acc :upstream? true))
+                    (str/starts-with? t "# branch.ab ")
+                    (recur (inc i)
+                           (let [[a b] (str/split (str/trim (subs t 12)) #" ")]
+                             (assoc acc
+                               :ahead (parse-long (str (some-> a
+                                                               (subs 1))))
+                               :behind (parse-long (str (some-> b
+                                                                (subs 1)))))))
+                    (str/starts-with? t "# ") (recur (inc i) acc)
+                    (str/starts-with? t "1 ")
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 9) 8 "")]
 
-                (str/starts-with? t "# branch.head ")
-                (recur (inc i) (let [v (str/trim (subs t 14))]
-                                 (assoc acc :branch v :detached? (= v "(detached)"))))
+                      (recur (inc i)
+                             (update acc
+                                     :entries
+                                     conj
+                                     {:x (nth xy 0) :y (nth xy 1) :type :changed :path path})))
+                    (str/starts-with? t "2 ")
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 10) 9 "")]
 
-                (str/starts-with? t "# branch.upstream ")
-                (recur (inc i) (assoc acc :upstream? true))
+                      ;; type-2 records carry the original path in the NEXT token.
+                      (recur (+ i 2)
+                             (update acc
+                                     :entries
+                                     conj
+                                     {:x (nth xy 0) :y (nth xy 1) :type :changed :path path})))
+                    (str/starts-with? t "u ")
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 11) 10 "")]
 
-                (str/starts-with? t "# branch.ab ")
-                (recur (inc i)
-                  (let [[a b] (str/split (str/trim (subs t 12)) #" ")]
-                    (assoc acc :ahead (parse-long (str (some-> a (subs 1))))
-                      :behind (parse-long (str (some-> b (subs 1)))))))
-
-                (str/starts-with? t "# ")
-                (recur (inc i) acc)
-
-                (str/starts-with? t "1 ")
-                (let [xy   (subs t 2 4)
-                      path (nth (str/split t #" " 9) 8 "")]
-                  (recur (inc i)
-                    (update acc :entries conj {:x (nth xy 0) :y (nth xy 1)
-                                               :type :changed :path path})))
-
-                (str/starts-with? t "2 ")
-                (let [xy   (subs t 2 4)
-                      path (nth (str/split t #" " 10) 9 "")]
-                  ;; type-2 records carry the original path in the NEXT token.
-                  (recur (+ i 2)
-                    (update acc :entries conj {:x (nth xy 0) :y (nth xy 1)
-                                               :type :changed :path path})))
-
-                (str/starts-with? t "u ")
-                (let [xy   (subs t 2 4)
-                      path (nth (str/split t #" " 11) 10 "")]
-                  (recur (inc i)
-                    (update acc :entries conj {:x (nth xy 0) :y (nth xy 1)
-                                               :type :unmerged :path path})))
-
-                (str/starts-with? t "? ")
-                (recur (inc i)
-                  (update acc :entries conj {:type :untracked :path (subs t 2)}))
-
-                (str/starts-with? t "! ")
-                (let [path (subs t 2)]
-                  (recur (inc i)
-                    (update acc :entries conj {:type :ignored :path path
-                                               :dir? (str/ends-with? path "/")})))
-
-                :else (recur (inc i) acc)))))))))
+                      (recur (inc i)
+                             (update acc
+                                     :entries
+                                     conj
+                                     {:x (nth xy 0) :y (nth xy 1) :type :unmerged :path path})))
+                    (str/starts-with? t "? ")
+                    (recur (inc i) (update acc :entries conj {:type :untracked :path (subs t 2)}))
+                    (str/starts-with? t "! ")
+                    (let [path (subs t 2)]
+                      (recur (inc i)
+                             (update acc
+                                     :entries
+                                     conj
+                                     {:type :ignored :path path :dir? (str/ends-with? path "/")})))
+                    :else (recur (inc i) acc)))))))))
 
 (defn- branch-label
   "Footer branch label; detached HEADs shorten to `detached:<sha8>`."
   [{:keys [branch detached? head]}]
-  (cond
-    detached?          (str "detached:" (if head (subs head 0 (min 8 (count head))) "unknown"))
-    (str/blank? branch) "unknown"
-    :else              branch))
+  (cond detached? (str "detached:" (if head (subs head 0 (min 8 (count head))) "unknown"))
+        (str/blank? branch) "unknown"
+        :else branch))
 
 ;; =============================================================================
 ;; environment-facing counters (env block + footer)
@@ -215,21 +238,37 @@
    A→added, D→removed, else-modifying→changed. Worktree side (Y): D→missing,
    else-modifying→modified. `?`→untracked, `u`→conflicting."
   [entries]
-  (reduce
-    (fn [m {:keys [type x y]}]
-      (case type
-        :untracked (update m :untracked inc)
-        :unmerged  (update m :conflicting inc)
-        :ignored   m
-        :changed   (cond-> m
-                     (= x \A) (update :added inc)
-                     (= x \D) (update :removed inc)
-                     (and (not= x \.) (not= x \A) (not= x \D)) (update :changed inc)
-                     (= y \D) (update :missing inc)
-                     (and (not= y \.) (not= y \D)) (update :modified inc))
-        m))
-    {:modified 0 :untracked 0 :added 0 :changed 0 :missing 0 :removed 0 :conflicting 0}
-    entries))
+  (reduce (fn [m {:keys [type x y]}]
+            (case type
+              :untracked
+              (update m :untracked inc)
+
+              :unmerged
+              (update m :conflicting inc)
+
+              :ignored
+              m
+
+              :changed
+              (cond-> m
+                (= x \A)
+                (update :added inc)
+
+                (= x \D)
+                (update :removed inc)
+
+                (and (not= x \.) (not= x \A) (not= x \D))
+                (update :changed inc)
+
+                (= y \D)
+                (update :missing inc)
+
+                (and (not= y \.) (not= y \D))
+                (update :modified inc))
+
+              m))
+          {:modified 0 :untracked 0 :added 0 :changed 0 :missing 0 :removed 0 :conflicting 0}
+          entries))
 
 (defn status-counts
   "Detailed, environment-facing counters from a parsed porcelain map (as
@@ -237,27 +276,27 @@
   [porcelain]
   (let [{:keys [modified untracked added changed missing removed conflicting]}
         (count-buckets (:entries porcelain))
-        changes? (boolean (some pos? [modified untracked added changed
-                                      missing removed conflicting]))]
-    {:clean?      (not changes?)
-     :dirty?      changes?
-     :changes?    changes?
-     :modified    modified
-     :untracked   untracked
-     :added       added
-     :changed     changed
-     :missing     missing
-     :removed     removed
+
+        changes?
+        (boolean (some pos? [modified untracked added changed missing removed conflicting]))]
+
+    {:clean? (not changes?)
+     :dirty? changes?
+     :changes? changes?
+     :modified modified
+     :untracked untracked
+     :added added
+     :changed changed
+     :missing missing
+     :removed removed
      :conflicting conflicting}))
 
 (defn- dirty-counts
   "User-facing dirty buckets (footer): modified / created / deleted."
   [porcelain]
-  (let [{:keys [modified changed added untracked missing removed]}
-        (count-buckets (:entries porcelain))]
-    {:modified (+ modified changed)
-     :created  (+ added untracked)
-     :deleted  (+ missing removed)}))
+  (let [{:keys [modified changed added untracked missing removed]} (count-buckets (:entries
+                                                                                    porcelain))]
+    {:modified (+ modified changed) :created (+ added untracked) :deleted (+ missing removed)}))
 
 ;; =============================================================================
 ;; porcelain-like status entries + snapshot
@@ -267,12 +306,17 @@
   "Compact status code for one parsed entry (`M`/`A`/`D`/`??`/`UU`)."
   [{:keys [type x y]}]
   (case type
-    :untracked "??"
-    :unmerged  "UU"
-    :changed   (cond
-                 (or (= x \D) (= y \D)) "D"
-                 (= x \A)               "A"
-                 :else                  "M")
+    :untracked
+    "??"
+
+    :unmerged
+    "UU"
+
+    :changed
+    (cond (or (= x \D) (= y \D)) "D"
+          (= x \A) "A"
+          :else "M")
+
     nil))
 
 (defn status-snapshot
@@ -280,14 +324,15 @@
   [^File start]
   (let [dir (if (and start (.isFile ^File start)) (.getParentFile ^File start) start)]
     (when-let [p (porcelain-tokens (or dir (cwd-file)) nil)]
-      {:branch  (branch-label p)
-       :head    (:head p)
-       :clean?  (empty? (:entries p))
+      {:branch (branch-label p)
+       :head (:head p)
+       :clean? (empty? (:entries p))
        :entries (->> (:entries p)
-                  (keep (fn [e] (when-let [c (entry-code e)]
-                                  {:status c :file (:path e)})))
-                  distinct
-                  vec)})))
+                     (keep (fn [e]
+                             (when-let [c (entry-code e)]
+                               {:status c :file (:path e)})))
+                     distinct
+                     vec)})))
 
 (defn file-dirty?
   "True when `f` is a TRACKED file carrying UNCOMMITTED changes — modified in
@@ -295,16 +340,20 @@
    (brand-new) file is NOT dirty (write is how you create one) and a clean
    tracked file is fine. Repo-less / nil-safe → false."
   [^File f]
-  (boolean
-    (when (and f (.exists ^File f))
-      (let [cf  (.getCanonicalFile ^File f)
-            dir (.getParentFile cf)
-            {:keys [exit out]} (run-git dir ["status" "--porcelain" "-z" "--"
-                                             (.getPath cf)])]
-        (and (= 0 exit)
-          (some (fn [line]
-                  (and (seq line) (not (str/starts-with? line "??"))))
-            (remove empty? (str/split (or out "") #"\u0000"))))))))
+  (boolean (when (and f (.exists ^File f))
+             (let [cf
+                   (.getCanonicalFile ^File f)
+
+                   dir
+                   (.getParentFile ^java.io.File cf)
+
+                   {:keys [exit out]}
+                   (run-git dir ["status" "--porcelain" "-z" "--" (.getPath cf)])]
+
+               (and (= 0 exit)
+                    (some (fn [line]
+                            (and (seq line) (not (str/starts-with? line "??"))))
+                          (remove empty? (str/split (or out "") #"\u0000"))))))))
 
 ;; =============================================================================
 ;; working-tree status (footer) + cache
@@ -325,13 +374,9 @@
   ([^File start]
    (if-let [top (repo-work-tree start)]
      (if-let [p (porcelain-tokens top nil)]
-       (merge {:workspace? true
-               :repo (.getName top)
-               :branch (branch-label p)}
-         (dirty-counts p)
-         {:upstream? (:upstream? p)
-          :ahead (:ahead p)
-          :behind (:behind p)})
+       (merge {:workspace? true :repo (.getName top) :branch (branch-label p)}
+              (dirty-counts p)
+              {:upstream? (:upstream? p) :ahead (:ahead p) :behind (:behind p)})
        {:workspace? false})
      {:workspace? false})))
 
@@ -342,15 +387,12 @@
    spawns at most one git walk. Never throws."
   [cwd ^File start ttl-ms]
   (when (compare-and-set! status-refreshing? false true)
-    (future
-      (try
-        (let [value (if start (working-tree-status start) (working-tree-status))]
-          (reset! working-tree-status-cache
-            {:cwd cwd,
-             :expires-at (+ (System/currentTimeMillis) (long ttl-ms)),
-             :value value}))
-        (catch Throwable _ nil)
-        (finally (reset! status-refreshing? false))))))
+    (future (try
+              (let [value (if start (working-tree-status start) (working-tree-status))]
+                (reset! working-tree-status-cache
+                  {:cwd cwd :expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
+              (catch Throwable _ nil)
+              (finally (reset! status-refreshing? false))))))
 
 (defn- serve-cached-status
   "Stale-while-revalidate read for the render hot path: return the cached
@@ -360,8 +402,12 @@
    git status is advisory chrome, never worth a synchronous ~2ms git walk on
    the render thread (which caused a periodic hitch every time the TTL lapsed)."
   [cwd ^File start now-ms ttl-ms]
-  (let [{:keys [expires-at value] cached-cwd :cwd} @working-tree-status-cache
-        same? (= cwd cached-cwd)]
+  (let [{:keys [expires-at value] cached-cwd :cwd}
+        @working-tree-status-cache
+
+        same?
+        (= cwd cached-cwd)]
+
     (when (or (not same?) (>= (long now-ms) (long expires-at)))
       (refresh-status-async! cwd start ttl-ms))
     (when same? value)))
@@ -375,10 +421,8 @@
    a footer repaint costs a cache read, not a git walk. Keyed by cwd so every
    UI namespace shares one resolved view."
   ([] (cached-working-tree-status (System/currentTimeMillis) default-cache-ms))
-  ([^File start]
-   (cached-working-tree-status start (System/currentTimeMillis) default-cache-ms))
-  ([now-ms ttl-ms]
-   (serve-cached-status (.getPath (cwd-file)) nil now-ms ttl-ms))
+  ([^File start] (cached-working-tree-status start (System/currentTimeMillis) default-cache-ms))
+  ([now-ms ttl-ms] (serve-cached-status (.getPath (cwd-file)) nil now-ms ttl-ms))
   ([^File start now-ms ttl-ms]
    (serve-cached-status (.getPath (.getCanonicalFile start)) start now-ms ttl-ms)))
 
@@ -396,24 +440,40 @@
       :ignored-exact #{<repo-rel-path> …}
       :ignored-prefixes [\"dir/\" …]}"
   [^File top]
-  (let [p (porcelain-tokens top {:ignored? true :untracked-all? true})
-        entries (:entries p)
-        status-of (fn [{:keys [type x y]}]
-                    (case type
-                      :unmerged  :conflict
-                      :untracked :untracked
-                      :changed   (cond
-                                   (or (= x \D) (= y \D)) :deleted
-                                   (= x \A)               :added
-                                   :else                  :modified)
-                      nil))
-        path-status (reduce (fn [m e]
-                              (if-let [s (status-of e)]
-                                (assoc m (:path e) s)
-                                m))
-                      {} (remove #(= :ignored (:type %)) entries))
-        ignored (filter #(= :ignored (:type %)) entries)]
-    {:repo-root        top
-     :path-status      path-status
-     :ignored-exact    (into #{} (comp (remove :dir?) (map :path)) ignored)
+  (let [p
+        (porcelain-tokens top {:ignored? true :untracked-all? true})
+
+        entries
+        (:entries p)
+
+        status-of
+        (fn [{:keys [type x y]}]
+          (case type
+            :unmerged
+            :conflict
+
+            :untracked
+            :untracked
+
+            :changed
+            (cond (or (= x \D) (= y \D)) :deleted
+                  (= x \A) :added
+                  :else :modified)
+
+            nil))
+
+        path-status
+        (reduce (fn [m e]
+                  (if-let [s (status-of e)]
+                    (assoc m (:path e) s)
+                    m))
+                {}
+                (remove #(= :ignored (:type %)) entries))
+
+        ignored
+        (filter #(= :ignored (:type %)) entries)]
+
+    {:repo-root top
+     :path-status path-status
+     :ignored-exact (into #{} (comp (remove :dir?) (map :path)) ignored)
      :ignored-prefixes (into [] (comp (filter :dir?) (map :path)) ignored)}))
