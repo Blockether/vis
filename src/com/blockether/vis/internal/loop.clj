@@ -427,6 +427,16 @@
                                                       not-empty)
           :else nil)))
 
+(defn- turn-error-data
+  "Structured provider-error map carried on a fallback error-answer IR
+   (`:vis/provider-error-data` on the IR root), for the first-class
+   `session_turn_state.error` column. nil for a normal answer — an error is not
+   an answer, so a successful turn stores no error."
+  [answer]
+  (let [v (:result answer answer)]
+    (when (and (vector? v) (= :ir (first v)) (map? (second v)))
+      (:vis/provider-error-data (second v)))))
+
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -6372,6 +6382,8 @@
             (try (persistance/db-update-session-turn! db-info
                                                       session-turn-id
                                                       {:answer fallback-answer
+                                                       ;; First-class structured error for a failed turn.
+                                                       :error (turn-error-data fallback-answer)
                                                        :iteration-count iteration-count
                                                        :duration-ms duration-ms
                                                        :status status

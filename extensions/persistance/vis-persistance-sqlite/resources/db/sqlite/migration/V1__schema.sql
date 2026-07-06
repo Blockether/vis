@@ -302,6 +302,13 @@ CREATE TABLE session_turn_state (
   -- so branched timelines keep their pre-fork history.
   ctx                          BLOB,
 
+  -- Nippy-encoded STRUCTURED terminal error for a turn that ended in
+  -- status='error' (the provider-error map: kind / message / provider /
+  -- attempts / routing trace). FIRST-CLASS, distinct from answer_markdown: an
+  -- error is NOT an answer, so it's stored here (queryable) and channels render
+  -- the error CARD from it. NULL for a successful turn.
+  error                        BLOB,
+
   created_at                   INTEGER NOT NULL,
 
   UNIQUE (session_turn_soul_id, version)
