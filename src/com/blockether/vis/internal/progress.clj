@@ -180,17 +180,6 @@
 ;; suppresses its result echo. Plus structurally code-free recap blocks.
 ;; That is the whole rule.
 
-(defn- visible-code-segments?
-  "True when the chunk has at least one `:code` segment that should
-   reach the user, regardless of structural subforms. Reads from
-   `:render-segments` first (the loop carries the parsed segments on
-   the chunk); falls back to a quick non-blank check when missing."
-  [chunk]
-  (let [segments (:render-segments chunk)]
-    (if (seq segments)
-      (boolean (some #(= :code (:kind %)) segments))
-      (not (str/blank? (str/trim (str (:code chunk))))))))
-
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
    structurally code-free recap blocks, and forms whose RESULT is the

@@ -74,7 +74,7 @@
 ;; ── 2. find / find_kind — rewrite-clj search, language-neutral ────────────────
 (defdescribe find-search-test
              (it "{find: text} jumps to the next node whose text contains it (every language)"
-                 (doseq [{:keys [lang src needle]}
+                 (doseq [{:keys [lang needle]}
                          [{:lang "clojure" :needle "defn b"} {:lang "python" :needle "def b"}
                           {:lang "javascript" :needle "function b"} {:lang "rust" :needle "fn b"}
                           {:lang "go" :needle "return x"}]]

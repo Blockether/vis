@@ -601,7 +601,7 @@
         stdout
         (event-get event :stdout)
 
-        result
+        _result
         (event-get event :result)
 
         error

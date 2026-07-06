@@ -26,8 +26,6 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
-           [java.math BigInteger]
-           [java.security MessageDigest]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path SimpleFileVisitor
             StandardCopyOption]
            [java.nio.file.attribute BasicFileAttributes]))

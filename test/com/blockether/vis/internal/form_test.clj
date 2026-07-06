@@ -7,7 +7,8 @@
    the card / badge while persisted ones kept it. If a NEW key is added to
    `form/display-keys` but a boundary stops carrying it, `survives-the-gateway`
    fails — no more chasing it through tmux."
-  (:require [com.blockether.vis.internal.form :as form]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -52,7 +53,7 @@
 (defn- wire-key
   [k]
   (if (keyword? k)
-    (clojure.string/replace (str (when (namespace k) (str (namespace k) "/")) (name k)) "-" "_")
+    (str/replace (str (when (namespace k) (str (namespace k) "/")) (name k)) "-" "_")
     k))
 
 (defn- simulate-wire

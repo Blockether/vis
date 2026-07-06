@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.prompt :as prompt]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe prompt-assembly-test
              (it "normalizes core addendum and extension prompt text"

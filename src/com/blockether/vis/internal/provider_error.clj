@@ -113,6 +113,42 @@
                (str/includes? text "premature")
                (str/includes? text "eof"))))))
 
+(defn transport-throwable?
+  "True when Throwable `t` is a CONNECTION/transport failure — the SAME
+   classification `transport-error?` makes from a parsed provider error, but
+   taken straight off a Throwable so the RETRY gate and the human message agree.
+
+   Walks the whole cause chain for the message text. Idempotent by definition:
+   a transport failure means the request never reached the model (the socket
+   closed with no bytes, was reset/refused/timed out, DNS/TLS died), so it is
+   ALWAYS safe to retry — regardless of whether a response STREAM had started
+   (a pre-response failure carries no `:stream?`, yet is the safest retry of
+   all). A real REJECTION carries an HTTP status, so `transport-error?`'s
+   `nil status` guard keeps 4xx/5xx out of this path."
+  [^Throwable t]
+  (when t
+    (let [chain
+          (take 16
+                (take-while some?
+                            (iterate (fn [^Throwable x]
+                                       (some-> x
+                                               .getCause))
+                                     t)))
+
+          text
+          (str/join "\n"
+                    (keep (fn [^Throwable x]
+                            (.getMessage x))
+                          chain))
+
+          data
+          (ex-data t)
+
+          status
+          (or (:status data) (:status (:data data)))]
+
+      (transport-error? status text nil))))
+
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 
 (defn auth-provider-next-step

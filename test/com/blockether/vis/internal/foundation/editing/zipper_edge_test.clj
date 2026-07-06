@@ -7,7 +7,6 @@
      5. empty / already-broken inputs — documented behavior."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.zipper :as z]
-            [com.blockether.vis.internal.foundation.editing.core :as editing]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defn- all-paths

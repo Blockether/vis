@@ -12,9 +12,8 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [taoensso.telemere :as tel])
-  (:import [java.util.concurrent Executors ScheduledExecutorService ScheduledFuture TimeUnit]))
+            [com.blockether.vis.internal.workspace :as workspace])
+  (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
 (defonce ^:private event-registry (atom {}))
@@ -623,7 +622,7 @@
 (defn- label-from-title
   [title fallback]
   (if (and (string? title) (not (str/blank? title))) title (or fallback untitled-session-label)))
-(defn- active-tab-label [db fallback] (label-from-title (:title db) fallback))
+
 (defn- ensure-tabs
   [db]
   (let [entries
@@ -1244,21 +1243,23 @@
                             (assoc :workspace workspace)
 
                             (:root workspace)
-                            (assoc :workspace/root (:root workspace)))]
+                            (assoc :workspace/root (:root workspace)))
 
-                      (let [db' (-> db
-                                    (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
-                                           :active-tab-id id)
-                                    ;; Make the new tab the live root state (a fresh session view);
-                                    ;; finalize-db snapshots this back into the tab's locals.
-                                    (merge (empty-tab-state))
-                                    (assoc :session session
-                                           :workspace workspace
-                                           :workspace/root (:root workspace)
-                                           :title nil
-                                           :messages (or history [])
-                                           :input-history (history-user-texts history)))]
-                        (seed-ctx db')))))))
+                          db'
+                          (-> db
+                              (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+                                     :active-tab-id id)
+                              ;; Make the new tab the live root state (a fresh session view);
+                              ;; finalize-db snapshots this back into the tab's locals.
+                              (merge (empty-tab-state))
+                              (assoc :session session
+                                     :workspace workspace
+                                     :workspace/root (:root workspace)
+                                     :title nil
+                                     :messages (or history [])
+                                     :input-history (history-user-texts history)))]
+
+                      (seed-ctx db'))))))
 (reg-event-db :open-building-tab
               ;; Optimistic new tab for a session whose cold env/runtime is still being
               ;; built on a background worker (chat/make-session-async's `:building`

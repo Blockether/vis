@@ -4,8 +4,7 @@
    The mutable session state lives outside this namespace; these functions only
    advance the turn/iteration cursor, project form envelopes for persisted
    result messages, and compute utilization metadata."
-  (:require [clojure.set :as set]
-            [clojure.string :as str]))
+  (:require [clojure.string :as str]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call request-size guardrail surfaced to the model as

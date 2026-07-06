@@ -1249,7 +1249,7 @@
             (indent-rows indent)
             (conj overlay-blank-row)
             (conj overlay-blank-row))))))
-(defn- task-overlay-lines
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} task-overlay-lines
   "TASKS section body with progressive disclosure: a progress header
    (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
    entry per task, status-sorted (candidate → doing → todo →
@@ -1298,30 +1298,6 @@
            (conj overlay-blank-row)
            (into cards)
            vec)))))
-(defn- plan-history-lines
-  "PLAN HISTORY section body — the append-only task ledger's PAST plan
-   generations (`:timeline` on the F2 ctx cache, from `vis/plan-timeline`).
-   One dim block per dropped generation, newest first: a `Plan #N` header
-   then one glyph+title row per step, frozen at the status it had when the
-   whole-replace dropped it. nil when there are no past generations."
-  [timeline]
-  (let [past (vec (remove :current? (or timeline [])))]
-    (when (seq past)
-      (-> (->> (rseq past)
-               (mapcat
-                 (fn [{:keys [gen steps]}]
-                   (concat
-                     [[[(str "Plan #" gen
-                             "  ·  " (count steps)
-                             " step" (when (not= 1 (count steps)) "s")) t/footer-fg-strong true]]]
-                     (map (fn [{:keys [key title status]}]
-                            (let [st (keyword (str (or status "todo")))]
-                              [[(str (task-status-glyph st) " ") t/footer-fg-muted false]
-                               [(str (or (not-empty (str title)) key)) t/footer-fg-muted false]]))
-                          steps)
-                     [overlay-blank-row])))
-               vec)
-          (indent-rows 5)))))
 
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active . / superseded
@@ -1450,7 +1426,7 @@
         indent-rows
         (conj overlay-blank-row)
         (conj overlay-blank-row))))
-(defn- fact-overlay-lines
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} fact-overlay-lines
   "FACTS section body - one `fact-entry-rows` card per fact, active facts
    first then superseded. `expanded` is the set of fact keys (as strings)
    whose file list is currently unfolded. Empty state is a single hint row."
@@ -1464,11 +1440,7 @@
          (mapcat (fn [[k f]]
                    (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
          vec)))
-(defn- section-line
-  "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
-  ([label] (section-line label 0))
-  ([label indent]
-   [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
+
 (defn context-overlay!
   "Dialog showing the session's working memory - `:session/tasks` AND
    `:session/facts` - the W3 user-visible panel (F2). Uses the shared
@@ -1483,8 +1455,8 @@
    scrolls through the shared `scrollable-dialog-body!` (same plumbing as F1
    help). `ctx` is `{:tasks ... :facts ...}`. Returns
    `{:scroll :max-scroll :selectable-ranges}`."
-  [g cols rows {:keys [tasks facts archived timeline]} scroll expanded]
-  (let [body-w
+  [g cols rows _ctx scroll _expanded]
+  (let [_body-w
         (dialogs/default-content-width cols)
 
         blank

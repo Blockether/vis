@@ -14,10 +14,8 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.iteration :as iteration]
             [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.session-model :as session-model]
@@ -291,7 +289,15 @@
         (let [t (:throwable outcome)
               can-retry? (and (< attempt PROVIDER_STREAM_REWIND_RETRIES)
                               (not (provider-call-cancelled? environment))
-                              (or (stream-transport-error? t) (empty-content-error? t)))]
+                              ;; `stream-transport-error?` covers MID-stream drops (chunks
+                              ;; delivered, needs the UI rewind); `perr/transport-throwable?`
+                              ;; covers PRE-response connection failures (no bytes / reset /
+                              ;; refused / DNS / TLS) that never started a stream — the safest,
+                              ;; most idempotent retry, and the case the old `:stream?` gate
+                              ;; silently dropped even while telling the user "just retry".
+                              (or (stream-transport-error? t)
+                                  (perr/transport-throwable? t)
+                                  (empty-content-error? t)))]
 
           (if can-retry?
             (let [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
@@ -1944,14 +1950,6 @@
 ;; messages change → one deliberate cache bust, paid only under window
 ;; pressure instead of on every call.
 ;; -----------------------------------------------------------------------------
-
-(defn- form-label
-  "The short marker for a form in a `<results>` block: its call/tool NAME
-   (mirrors pi's `toolName` — `rg`, `git_status`, `len`), or a one-line source
-   snippet when the form is a bare expression with no call head (a list
-   comprehension, arithmetic, a subscript)."
-  [src]
-  (or (not-empty (ctx-engine/form-head-name (str src))) (ctx-engine/compact-src src)))
 
 (defn- iter-of-scope
   "Form scope `\"t1/i2/f3\"` → its iteration scope `\"t1/i2\"` (drops the `/fN`).
@@ -4430,67 +4428,6 @@
        "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
        "Pick one. Do not investigate further."))
 
-(defn- rejection-fact-entries
-  "Collect compact rejection / auto-repair summaries for one iteration.
-   Kept as an internal audit helper for preflight/syntax repair diagnostics."
-  [turn-position iteration-position code-entries form-results]
-  (let [clip
-        (fn [s]
-          (let [s (str s)]
-            (if (> (count s) 240) (str (subs s 0 240) " ...") s)))
-
-        mk
-        (fn [tag k]
-          (str "turn_" turn-position "_i" iteration-position "_" tag "_" k))
-
-        preflight
-        (keep-indexed
-          (fn [k entry]
-            (when-let [pe (:vis/preflight-error entry)]
-              [(mk "preflight" k)
-               {:status :active
-                :content (str "## Preflight rejection (t"
-                              turn-position
-                              "/i"
-                              iteration-position
-                              ")\n\n"
-                              "**kind:** "
-                              (clip (pr-str pe))
-                              "\n\n"
-                              "An engine GATE rejected this block before eval - model-facing only "
-                              "(no user error box). Offending source:\n\n```\n"
-                              (clip (:expr entry))
-                              "\n```")}]))
-          code-entries)
-
-        syntax
-        (keep-indexed (fn [k result]
-                        (let [err
-                              (:error result)
-
-                              data
-                              (:data err)]
-
-                          (when (and err (= :python/syntax (:phase data)))
-                            [(mk "syntax" k)
-                             {:status :active
-                              :content (str "## Syntax rejection (t"
-                                            turn-position
-                                            "/i"
-                                            iteration-position
-                                            ")\n\n"
-                                            "**phase:** "
-                                            (pr-str (:phase data))
-                                            "\n\n"
-                                            (or (:message err) "(no message)")
-                                            "\n\nOffending source:\n\n```\n"
-                                            (clip (or (:code data)
-                                                      (:expr (nth code-entries k nil))))
-                                            "\n```")}])))
-                      form-results)]
-
-    (vec (concat preflight syntax))))
-
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -5023,33 +4960,33 @@
                                             (assoc :error (:error llm-provider)))
                     iteration-position (inc (long iteration))
                     current-session (session-snapshot)
-                    iteration-hints (collect-iteration-start-hints
-                                      environment
-                                      active-exts
-                                      {:environment environment
-                                       :phase :turn.iteration/start
-                                       :session current-session
-                                       :iteration iteration-position
-                                       :session-title (:title current-session)
-                                       ;; Title setup is host-owned by `maybe-auto-title!`.
-                                       ;; Keep the model-facing title hook quiet.
-                                       :title-refresh? false
-                                       :turn-position turn-position
-                                       ;; Use `:last-iter-input` so the hint reflects the SIZE OF
-                                       ;; THE NEXT REQUEST instead of the cumulative-turn total.
-                                       ;; `:input-tokens` (cumulative) is kept on the snapshot for
-                                       ;; budget-aware extensions that want to surface turn-level
-                                       ;; spend separately. Falls back to the previous persisted
-                                       ;; request on iter 0 (before this turn has provider usage)
-                                       ;; so first-iter hints are not gated on a missing sample.
-                                       :input-tokens (let [u @usage-atom]
-                                                       (if (pos? (long (:iter-count u)))
-                                                         (long (:last-iter-input u))
-                                                         (long (:previous-request-input u))))
-                                       :cumulative-input-tokens (:input-tokens @usage-atom)
-                                       :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
-                                       :iter-count (:iter-count @usage-atom)
-                                       :context-limit effective-context-limit})
+                    _iteration-hints (collect-iteration-start-hints
+                                       environment
+                                       active-exts
+                                       {:environment environment
+                                        :phase :turn.iteration/start
+                                        :session current-session
+                                        :iteration iteration-position
+                                        :session-title (:title current-session)
+                                        ;; Title setup is host-owned by `maybe-auto-title!`.
+                                        ;; Keep the model-facing title hook quiet.
+                                        :title-refresh? false
+                                        :turn-position turn-position
+                                        ;; Use `:last-iter-input` so the hint reflects the SIZE OF
+                                        ;; THE NEXT REQUEST instead of the cumulative-turn total.
+                                        ;; `:input-tokens` (cumulative) is kept on the snapshot for
+                                        ;; budget-aware extensions that want to surface turn-level
+                                        ;; spend separately. Falls back to the previous persisted
+                                        ;; request on iter 0 (before this turn has provider usage)
+                                        ;; so first-iter hints are not gated on a missing sample.
+                                        :input-tokens (let [u @usage-atom]
+                                                        (if (pos? (long (:iter-count u)))
+                                                          (long (:last-iter-input u))
+                                                          (long (:previous-request-input u))))
+                                        :cumulative-input-tokens (:input-tokens @usage-atom)
+                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
+                                        :iter-count (:iter-count @usage-atom)
+                                        :context-limit effective-context-limit})
                     ;; Stamp :engine/utilization onto the ctx so the next
                     ;; render surfaces :session/utilization (how much of
                     ;; the window the LAST request used). :engine/* is
@@ -7356,7 +7293,7 @@
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
         ;; (D12 retired `:engine/pending-satisfies` along with
         ;; satisfy-hint!; hook-task satisfaction is plain `plan_step`.)
-        ctx-loop-env
+        _ctx-loop-env
         {:ctx-atom ctx-atom
          :turn-state-atom turn-state-atom
          ;; DB + session id ride on the same env
@@ -7671,29 +7608,6 @@
 ;; newly added extension stays invisible to running sessions and stale rows
 ;; keep calling into the closed GraalPy context ("Context execution was
 ;; cancelled"). Same propagation pattern as `refresh-cached-routers!`.
-(defonce ^{:private true :clj-kondo/ignore [:unused-private-var]} python-extensions-env-sync
-  (python-extensions/add-change-listener!
-    ::sync-cached-envs
-    (fn [{:keys [extensions removed]}]
-      (doseq [[id {:keys [environment]}] @cache]
-        (try (when (seq removed)
-               (when-let [exts-atom (:extensions environment)]
-                 (let [gone (set removed)]
-                   (swap! exts-atom (fn [exts]
-                                      (vec (remove #(gone (:ext/name %)) exts)))))))
-             ;; install-extension! replaces same-name rows and re-syncs the
-             ;; sandbox bindings, so reloaded tools point at the NEW context.
-             (doseq [ext extensions]
-               (install-extension! environment ext))
-             ;; Removals with nothing (re)loaded still need a binding re-sync
-             ;; so the dropped extension's tools leave the sandbox.
-             (when (and (seq removed) (empty? extensions))
-               (sync-active-extension-symbols! environment))
-             (catch Throwable t
-               (tel/log! {:level :warn
-                          :id ::python-ext-env-sync-failed
-                          :data {:session id :error (ex-message t)}
-                          :msg "Failed to sync Python extensions into a cached session env"})))))))
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates

@@ -460,16 +460,6 @@
      (or (:title soul) "Untitled")]
     (status-chip (:status soul))))
 
-(defn- fmt-tok
-  "Compact token count: 842 / 12.4k / 1.2M. Hand-rolled so no JVM
-   locale can inject a comma separator."
-  [n]
-  (when (number? n)
-    (let [n (long n)]
-      (cond (>= n 1000000) (str (quot n 1000000) "." (mod (quot n 100000) 10) "M")
-            (>= n 1000) (str (quot n 1000) "." (mod (quot n 100) 10) "k")
-            :else (str n)))))
-
 (defn- routing-footer
   "Provider/model this session routes through, shown as a compact chip in the
    bottom dock DIRECTLY UNDER the composer (moved here from the context rail —
@@ -649,7 +639,7 @@
   "Right rail for session-scoped gateway capabilities. This is where web exposes
    the same canonical controls the TUI surfaces in its footer/dialogs: routing,
    filesystem roots (`/fs`), and managed resources."
-  [sid snapshot]
+  [sid _snapshot]
   [:aside.rail
    [:div.rail-head [:h2 "Context"]
     [:button.rail-close.bar-toggle
@@ -1332,19 +1322,6 @@
        (filter #(= "queued" (pick % :status)))
        reverse
        vec))
-
-(defn- queued-merge-text
-  "Join every queued request (oldest-first) with a blank line so several voice
-  fragments can be reviewed and merged into one prompt before the queue drains."
-  [turns]
-  (->> turns
-       reverse ; queued-turns returns newest-first
-       (map #(some-> %
-                     :request
-                     str))
-       (remove str/blank?)
-       (str/join "\n\n")
-       str/trim))
 
 (defn- queued-content
   [sid]

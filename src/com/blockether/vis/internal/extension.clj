@@ -30,7 +30,6 @@
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
@@ -1967,7 +1966,7 @@
           op-kw
           (keyword (tool-call-name ext sym))
 
-          original-args
+          _original-args
           args
 
           t0

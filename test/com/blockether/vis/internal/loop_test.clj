@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
             [com.blockether.vis.internal.foundation.shell :as sh]
@@ -2354,7 +2355,7 @@
       ;; the real tags; the serial path still runs (both blocks present, paired).
       (let [env (lp/create-environment ::router {:db :memory})]
         (try (let [active (deref (:extensions env))
-                   tags (com.blockether.vis.internal.extension/native-tool-tags active)]
+                   tags (extension/native-tool-tags active)]
 
                (expect (= :observation (get tags "cat")))
                (expect (= :mutation (get tags "patch")))

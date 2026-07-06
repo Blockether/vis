@@ -27,8 +27,7 @@
             [honey.sql :as sql]
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
-            [taoensso.nippy :as nippy]
-            [taoensso.telemere :as tel])
+            [taoensso.nippy :as nippy])
   (:import (com.zaxxer.hikari HikariConfig HikariDataSource)
            (java.io File RandomAccessFile)
            (java.nio.channels FileLock)
@@ -1731,76 +1730,77 @@
                       (assoc-in [:actual :provider] (->kw llm-provider))
 
                       llm-model
-                      (assoc-in [:actual :model] (str llm-model)))))]
+                      (assoc-in [:actual :model] (str llm-model)))))
 
-          ;; 1. Iteration row - includes the single-form code payload inline.
-          ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
-          (let [iteration-cols (prepare-iteration-columns opts)]
-            (execute!
-              tx-info
-              {:insert-into :session_turn_iteration
-               :values [(cond-> (merge {:id iteration-id-s
-                                        :session_turn_state_id session-turn-state-id-s
-                                        :position position
-                                        :status (normalize-status (cond answer :done
-                                                                        error :error
-                                                                        (:error iteration-cols)
-                                                                        :error
-                                                                        :else :done))
-                                        :llm_thinking (str/trim (or thinking ""))
-                                        :llm_assistant_prose (str/trim (or assistant-prose ""))
-                                        :llm_full_duration_ms (long (or llm-full-duration-ms 0))
-                                        :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :llm_assistant_message (when (some? llm-assistant-message)
-                                                                 (->json llm-assistant-message))
-                                        :created_at now
-                                        :finished_at now}
-                                       iteration-cols)
-                          ;; Token / cost columns - omitted when nil so the
-                          ;; row keeps NULL (the schema marks them nullable
-                          ;; for exactly this reason: an LLM call that
-                          ;; failed before returning usage produces no
-                          ;; tokens, no cost, no fake zeros).
-                          ;; Phase B canonical columns. :input is TOTAL,
-                          ;; details (regular / cache-write / cache-read)
-                          ;; are subsets obeying the canonical invariant.
-                          (some? (:input tokens))
-                          (assoc :input_tokens (long (:input tokens)))
+              ;; 1. Iteration row - includes the single-form code payload inline.
+              ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
+              iteration-cols
+              (prepare-iteration-columns opts)]
 
-                          ;; :input-regular derived from invariant when absent
-                          ;; on per-iter rows. The invariant is enforced at the
-                          ;; canonical boundary in svar 0.6+, so this is a safe
-                          ;; compute even when the accumulator did not surface it.
-                          true
-                          (assoc :input_regular_tokens
-                            (long (or (:input-regular tokens)
-                                      (max 0
-                                           (- (long (or (:input tokens) 0))
-                                              (long (or cache-created-tokens 0))
-                                              (long (or (:cached tokens) 0)))))))
+          (execute!
+            tx-info
+            {:insert-into :session_turn_iteration
+             :values [(cond-> (merge {:id iteration-id-s
+                                      :session_turn_state_id session-turn-state-id-s
+                                      :position position
+                                      :status (normalize-status (cond answer :done
+                                                                      error :error
+                                                                      (:error iteration-cols) :error
+                                                                      :else :done))
+                                      :llm_thinking (str/trim (or thinking ""))
+                                      :llm_assistant_prose (str/trim (or assistant-prose ""))
+                                      :llm_full_duration_ms (long (or llm-full-duration-ms 0))
+                                      :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
+                                      :llm_assistant_message (when (some? llm-assistant-message)
+                                                               (->json llm-assistant-message))
+                                      :created_at now
+                                      :finished_at now}
+                                     iteration-cols)
+                        ;; Token / cost columns - omitted when nil so the
+                        ;; row keeps NULL (the schema marks them nullable
+                        ;; for exactly this reason: an LLM call that
+                        ;; failed before returning usage produces no
+                        ;; tokens, no cost, no fake zeros).
+                        ;; Phase B canonical columns. :input is TOTAL,
+                        ;; details (regular / cache-write / cache-read)
+                        ;; are subsets obeying the canonical invariant.
+                        (some? (:input tokens))
+                        (assoc :input_tokens (long (:input tokens)))
 
-                          (some? cache-created-tokens)
-                          (assoc :input_cache_write_tokens (long cache-created-tokens))
+                        ;; :input-regular derived from invariant when absent
+                        ;; on per-iter rows. The invariant is enforced at the
+                        ;; canonical boundary in svar 0.6+, so this is a safe
+                        ;; compute even when the accumulator did not surface it.
+                        true
+                        (assoc :input_regular_tokens
+                          (long (or (:input-regular tokens)
+                                    (max 0
+                                         (- (long (or (:input tokens) 0))
+                                            (long (or cache-created-tokens 0))
+                                            (long (or (:cached tokens) 0)))))))
 
-                          (some? (:cached tokens))
-                          (assoc :input_cache_read_tokens (long (:cached tokens)))
+                        (some? cache-created-tokens)
+                        (assoc :input_cache_write_tokens (long cache-created-tokens))
 
-                          (some? (:output tokens))
-                          (assoc :output_tokens (long (:output tokens)))
+                        (some? (:cached tokens))
+                        (assoc :input_cache_read_tokens (long (:cached tokens)))
 
-                          (some? (:reasoning tokens))
-                          (assoc :output_reasoning_tokens (long (:reasoning tokens)))
+                        (some? (:output tokens))
+                        (assoc :output_tokens (long (:output tokens)))
 
-                          (some? cost-usd)
-                          (assoc :cost_usd (double cost-usd))
+                        (some? (:reasoning tokens))
+                        (assoc :output_reasoning_tokens (long (:reasoning tokens)))
 
-                          (seq routing)
-                          (merge (routing-summary-columns routing)))]})
-            (doseq [[idx event] (map-indexed vector (:trace routing))]
-              (execute! tx-info
-                        {:insert-into :llm_routing_event
-                         :values [(routing-event-row iteration-id-s now idx event)]}))
-            iteration-id))))))
+                        (some? cost-usd)
+                        (assoc :cost_usd (double cost-usd))
+
+                        (seq routing)
+                        (merge (routing-summary-columns routing)))]})
+          (doseq [[idx event] (map-indexed vector (:trace routing))]
+            (execute! tx-info
+                      {:insert-into :llm_routing_event
+                       :values [(routing-event-row iteration-id-s now idx event)]}))
+          iteration-id)))))
 
 ;; =============================================================================
 ;; Read helpers
