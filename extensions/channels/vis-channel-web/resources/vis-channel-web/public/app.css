@@ -868,7 +868,7 @@ transition:border-color .14s,box-shadow .14s}
 font-size:.92rem;font-weight:650;color:var(--fg);letter-spacing:-.01em}
 .modal-res-start-hint{margin:0;text-transform:none;letter-spacing:0;font-weight:400;
 font-size:.78rem;color:var(--dim)}
-.modal-res-start-form{grid-column:1 / -1;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:.7rem}
+.modal-res-start-form{grid-column:1 / -1;display:flex;flex-direction:column;align-items:stretch;gap:.7rem}
 .modal-res-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.6rem;flex:1 1 100%}
 .modal-res-field{display:flex;flex-direction:column;gap:.3rem;font-size:.66rem;
 text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:600}
@@ -902,9 +902,14 @@ background:var(--bg);color:var(--fg);font:inherit;text-transform:none;letter-spa
 transition:border-color .12s,box-shadow .12s}
 .modal-res-field textarea:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
 .modal-res-fieldhint{text-transform:none;letter-spacing:normal;font-weight:400;font-size:.7rem;color:var(--dim)}
-.modal-res-form-actions{grid-column:1 / -1;display:flex;justify-content:flex-end;gap:.5rem;flex:1 1 100%;margin-top:.2rem}
-.btn-go{background:var(--primary);color:#fff;border-color:transparent;font-weight:600}
-.btn-go:hover{filter:brightness(1.05)}
+.modal-res-form-actions{grid-column:1 / -1;flex:1 1 100%;display:flex;gap:.5rem;margin-top:.5rem;padding-top:.7rem;border-top:1px solid var(--line)}
+.modal-res-form-actions>button{flex:1 1 0}
+/* two theme-driven action buttons: secondary (Cancel) + primary (Connect) */
+.btn-primary{padding:var(--ctl-py) var(--ctl-px);border-radius:var(--r-sm);border:1px solid transparent;background:var(--primary);color:var(--primary-fg);font-size:.84rem;font-weight:600;cursor:pointer;text-align:center;transition:filter .12s}
+.btn-primary:hover{filter:brightness(1.06)}
+.btn-primary:active{transform:translateY(1px)}
+.btn-secondary{padding:var(--ctl-py) var(--ctl-px);border-radius:var(--r-sm);border:1px solid var(--line2);background:var(--bg);color:var(--secondary);font-size:.84rem;font-weight:600;cursor:pointer;text-align:center;transition:background .12s,border-color .12s}
+.btn-secondary:hover{background:var(--hover);border-color:var(--secondary)}
 /* segmented transport chooser (Local / Remote) */
 .bg-seg{grid-column:1 / -1;flex:1 1 100%;display:inline-flex;gap:0;padding:.2rem;margin-bottom:.2rem;
 border:1px solid var(--line2);border-radius:var(--r-md);background:var(--bg);width:max-content;max-width:100%}
