@@ -24,7 +24,7 @@ src:url('/ui/fonts/hanken-grotesk.woff2') format('woff2')}
 @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:100 800;font-display:swap;
 src:url('/ui/fonts/jetbrains-mono.woff2') format('woff2')}
 :root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--surface:#f8f8f8;
---line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#8a8a8a;
+--line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#6b6b6b;
 --primary:#2563eb;--primary-fg:#f0f4fc;--accent:#2563eb;--secondary:#1e1e1e;--warning:#503c00;--warning-bg:#fff5b4;
 --hover:#f4f4f3;
 --err:#dc3232;--ok:#28a03c;
@@ -165,7 +165,7 @@ pointer-events:none;background:linear-gradient(to bottom,transparent,var(--bg))}
 /* left-aligned prose in chat answers AND modals - justify created
    painful word-gaps; left keeps an even, readable rag */
 .md p,.md li,.modal-body p,.modal-body li{text-align:left}
-.prose.md{font-family:var(--serif);font-size:.96rem}
+.prose.md{font-family:var(--serif);font-size:.88rem}
 .fact-content.md{font-size:.84rem;margin:.4rem 0}
 .md p{margin:.45rem 0}
 .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{
@@ -450,13 +450,13 @@ padding:.85rem .65rem;background:var(--panel2);display:flex;flex-direction:colum
 /* flat modern primary: solid gold, no gradient/inset bevel */
 .newchat-btn{display:flex;align-items:center;justify-content:center;gap:.5rem;width:100%;
 border:0;border-radius:var(--r-md);
-padding:.55rem .8rem;font-weight:700;font-size:.84rem;color:var(--primary-fg);
+padding:.42rem .7rem;font-weight:600;font-size:.8rem;color:var(--primary-fg);
 background:var(--primary);
 transition:filter .12s,transform .08s}
 .newchat-btn:hover{filter:brightness(1.06)}
 .newchat-btn:active{transform:translateY(1px)}
 .newchat-plus{flex:none;display:inline-flex;align-items:center;justify-content:center;
-  width:1em;height:1em;font-weight:700;font-size:1.05rem;line-height:1;transform:translateY(-.04em)}
+  width:1em;height:1em;font-weight:700;font-size:.98rem;line-height:1;transform:translateY(-.04em)}
 /* ONLY the session list scrolls; head + foot stay pinned */
 .side-sessions{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
 /* per-row delete: ALWAYS visible (dim, neutral), red only on the
@@ -493,7 +493,7 @@ animation:blink 1.2s infinite ease-in-out}
 .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:.1rem;
 padding-top:.55rem;border-top:1px solid var(--line)}
 .side-foot-btn{display:flex;align-items:center;gap:.6rem;border-radius:var(--r-md);
-padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
+padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .side-foot-btn:hover{background:var(--hover)}
 .side-foot-btn .icon{color:var(--dim);flex:none}
 /* ── add-directory filesystem picker modal ───────────────────────── */
@@ -600,7 +600,7 @@ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ── sidebar select-mode: bulk session delete ──────────────────── */
 .side-tools{display:none}
 .side-select-toggle{border:1px solid var(--line2);background:var(--bg);color:var(--secondary);
-font-size:.84rem;font-weight:700;padding:.55rem .7rem;border-radius:var(--r-sm);
+font-size:.8rem;font-weight:600;padding:.42rem .6rem;border-radius:var(--r-sm);
 display:inline-flex;align-items:center;gap:.3rem;
 transition:background .12s,color .12s,border-color .12s}
 .side-select-toggle:hover{background:var(--hover);color:var(--fg);border-color:var(--accent)}
@@ -842,6 +842,8 @@ box-shadow:var(--shadow-lg);
 animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 /* wide variant for content-heavy dialogs (Settings): roomier cap */
 .modal.modal-wide{max-width:min(60rem,calc(100vw - 2rem));min-width:min(34rem,calc(100vw - 2rem))}
+/* mid variant: a touch roomier than default (Backgrounds) */
+.modal.modal-mid{max-width:min(50rem,calc(100vw - 2rem));min-width:min(30rem,calc(100vw - 2rem))}
 .modal-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;
 padding:.35rem .7rem;border-bottom:1px solid var(--line);flex:none;
 background:var(--bg);position:relative;z-index:1;min-height:2.35rem}
@@ -1060,9 +1062,9 @@ letter-spacing:.04em;text-transform:uppercase;color:var(--dim)}
 background:color-mix(in srgb,var(--fg) 2%,var(--bg));display:flex;flex-direction:column;gap:.4rem;transition:border-color .14s,box-shadow .14s,transform .14s}
 .pcard:hover{border-color:var(--line2);box-shadow:0 3px 12px rgba(0,0,0,.16);transform:translateY(-1px)}
 .pcard-line{display:flex;align-items:center;gap:.55rem}
-.pcard-pri{font-family:var(--mono);font-size:.72rem;color:var(--dim);background:var(--panel2);border-radius:var(--r-xs);padding:.06rem .35rem}
+.pcard-pri{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:1.6rem;height:1.6rem;font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--secondary);background:color-mix(in srgb,var(--secondary) 12%,var(--panel2));border-radius:var(--r-sm)}
 .pcard-moves{display:inline-flex;align-items:center;gap:.2rem;flex:none}
-.pcard-move{width:1.8rem;height:1.8rem;border:1px solid var(--line2);border-radius:var(--r-sm);
+.pcard-move{width:1.6rem;height:1.6rem;border:1px solid var(--line2);border-radius:var(--r-sm);
 background:var(--bg);color:var(--dim);font-weight:700;line-height:1;cursor:pointer;
 touch-action:manipulation;transition:border-color .12s,color .12s,background .12s}
 .pcard-move:hover:not(:disabled){border-color:var(--primary);background:var(--hover);color:var(--secondary)}

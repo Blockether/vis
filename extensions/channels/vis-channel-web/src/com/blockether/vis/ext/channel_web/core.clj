@@ -1885,10 +1885,14 @@
        :body (not-found-page {:title "session not found"
                               :detail "that conversation doesn't exist or was deleted."})})))
 
+(declare export-session-html)
+
 (defn- export-handler
-  "GET /ui/session/:sid/export.html — download the session transcript as a
-   STANDALONE, vis-light-styled HTML document (the same renderer the CLI's
-   `vis sessions export --html` uses, so every surface exports identically)."
+  "GET /ui/session/:sid/export.html — download the session as a STANDALONE,
+   self-contained HTML file that is the SAME chat view /ui renders (user/vis
+   bubbles + inline op-card trace + a session-summary card on top, with the
+   marked/DOMPurify/Prism scripts inlined). No per-turn summaries — exactly the
+   web view, just offline."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     (if (and sid (vis/gateway-soul sid))
@@ -1896,7 +1900,7 @@
         {:status 200
          :headers {"Content-Type"        "text/html; charset=utf-8"
                    "Content-Disposition" (str "attachment; filename=\"" fname "\"")}
-         :body (transcript/transcript-html (vis/db-info) sid)})
+         :body (export-session-html sid)})
       {:status 404
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (not-found-page {:title "session not found"
@@ -1956,8 +1960,25 @@
        [:div.role.role-vis "Vis"]
        (if-let [error (:error result)]
          [:p.empty.slash-error (str error)]
-         [:div.prose.md (ir->hiccup (or (:ir result) (:result result)
-                                      [:p "done"]))])])))
+         ;; `result` is the slash-dispatch ENVELOPE; the run-fn's card lives at
+         ;; `:result` as a `:slash/{title,body}` map (NOT IR — feeding it raw to
+         ;; ir->hiccup dumped the EDN literal). Render the title as a heading and
+         ;; coerce the body (IR / hiccup / markdown string / nil) the way the
+         ;; persisted answer_markdown does.
+         (let [r     (:result result)
+               title (some-> (:slash/title r) str str/trim not-empty)
+               body  (:slash/body r)
+               body* (cond
+                       (nil? body)    nil
+                       (string? body) (md->hiccup body)
+                       (vector? body) (ir->hiccup body)
+                       :else          (md->hiccup (pr-str body)))]
+           [:div.prose.md
+            (cond
+              (and title body*) (list [:p [:strong title]] body*)
+              title             [:p [:strong title]]
+              body*             body*
+              :else             [:p "done"])]))])))
 
 (defn- run-slash
   "Dispatch a /command through the engine's slash handling — the same
@@ -2396,10 +2417,17 @@
   [sid eid sr env]
   (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
         olabel (or (:options-label sr) "options")
-        fields (seq (:fields sr))]
+        fields (seq (:fields sr))
+        root   (str (:workspace/root env))]
     [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
                                  :hx-target "#modal" :hx-swap "innerHTML"}
      [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
+     (when (:dir? sr)
+       [:label.modal-res-field
+        [:span "Directory"]
+        [:input {:type "text" :name "dir" :value root :placeholder root
+                 :autocomplete "off" :spellcheck "false"}]
+        [:span.modal-res-fieldhint "where the REPL boots — defaults to the workspace root"]])
      (when (:options-fn sr)
        (if (seq opts)
          [:div.alias-chips
@@ -2588,11 +2616,15 @@
                                      (when-not (str/blank? v) [k v]))))
                            (:fields sr))
         selected (if (seq (:fields sr)) submitted-fields opts)
+        dir      (let [d (str/trim (str (get-in request [:form-params "dir"])))]
+                   (when-not (str/blank? d) d))
         notice (cond
                  (not (and sid kind)) "missing session or kind"
                  (nil? sr) (str "unknown startable: " kind)
                  :else
-                 (try ((:start-fn sr) (vis/env-for sid) selected) nil
+                 (try ((:start-fn sr)
+                       (cond-> (vis/env-for sid) dir (assoc :startable/dir dir))
+                       selected) nil
                    (catch Throwable t
                      (str "Could not start " (:label sr) ": " (ex-message t)))))]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -2692,7 +2724,7 @@
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
                   :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
-      [:span.pcard-pri (str "(" (inc idx) ")")]
+      [:span.pcard-pri (inc idx)]
       [:span.pcard-moves
        (move-act "up" "↑" (zero? idx))
        (move-act "down" "↓" (>= idx (dec total)))]
@@ -3610,7 +3642,7 @@
       [:span (str (:turns totals 0)) " turns"]
       [:span (str (:iterations totals 0)) " iterations"]
       (when tokens [:span (str (+ (long (:input tokens 0)) (long (:output tokens 0)))) " tokens"])
-      (when-let [c (:cost-usd totals)] [:span (format "$%.4f" (double c))])]]))
+      (when-let [c (:cost-usd totals)] [:span (String/format java.util.Locale/US "$%.4f" (object-array [(double c)]))])]]))
 
 (defn- export-turn-static
   "Turn rendered for a STATIC export — identical to `turn-block`, but the trace
