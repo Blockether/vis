@@ -50,8 +50,7 @@
   (:require [clojure.string :as str]
             [clojure+.walk :as cwalk]
             [com.blockether.ruff :as ruff]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.toggles :as toggles])
+            [com.blockether.vis.internal.persistance :as persistance])
   (:import [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
            [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
            [org.commonmark.node BlockQuote BulletList Code Emphasis FencedCodeBlock HardLineBreak

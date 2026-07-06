@@ -5,8 +5,7 @@
    `--session-id` / `--resume` argument parser, where a silent
    accept of unknown flags previously masked typos like
    `--sessions-id`."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -63,8 +62,6 @@
 (def ^:private selected-transcript-text (deref #'screen/selected-transcript-text))
 
 (def ^:private release-selection-focus (deref #'screen/release-selection-focus))
-
-(def ^:private copyable-bubble-text (deref #'screen/copyable-bubble-text))
 
 (def ^:private input-selectable-ranges (deref #'screen/input-selectable-ranges))
 

@@ -7,10 +7,8 @@
    and renders the standing context block."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.resources :as resources]
             [taoensso.telemere :as tel]))

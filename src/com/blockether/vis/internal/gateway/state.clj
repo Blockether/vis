@@ -502,7 +502,16 @@
         (and (contains? terminal-turn-statuses status)
              (str/blank? (str engine-id))
              (= (str (:request live)) (str (:user-request row)))
-             (= (str (:answer_md live)) (str (:answer-markdown row)))
+             ;; Answer text matches, OR the live row never captured an answer.
+             ;; A FAILED/cancelled turn's failure text lands only on the durable
+             ;; row (`answer-markdown`); the transient live row's `answer_md` is
+             ;; blank. The old strict equality therefore never matched an error
+             ;; turn, so BOTH rows rendered — the same "Could not reach provider"
+             ;; twice. Request + terminal-status + created-after-start still
+             ;; identifies the one turn; drop the answer requirement when the
+             ;; live side has nothing to compare.
+             (or (= (str (:answer_md live)) (str (:answer-markdown row)))
+                 (str/blank? (str (:answer_md live))))
              (if-let [created (date->ms (:created-at row))]
                (>= created (long (or (:started_at live) 0)))
                true)))))

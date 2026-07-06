@@ -414,25 +414,25 @@
 
           (expect (= p/MARKER_THINKING (marker-of comment-line)))
           (expect (str/starts-with? (body-of comment-line) " ;;")))))
-  (defdescribe provider-fallback-notice-test
-               (it "renders provider fallback recap lines above fallback details"
-                   (let [lines
-                         (format-iteration-entry {:provider-fallbacks
-                                                  [{:failed-provider
-                                                    {:id :anthropic-coding-plan
-                                                     :model "claude-opus-4-7"
-                                                     :error "Exceptional status code: 429"}}]}
-                                                 120
-                                                 1
-                                                 {})
+  (describe "provider-fallback-notice-test"
+            (it "renders provider fallback recap lines above fallback details"
+                (let [lines
+                      (format-iteration-entry {:provider-fallbacks
+                                               [{:failed-provider
+                                                 {:id :anthropic-coding-plan
+                                                  :model "claude-opus-4-7"
+                                                  :error "Exceptional status code: 429"}}]}
+                                              120
+                                              1
+                                              {})
 
-                         body
-                         (str/join "\n" (map (comp strip-ansi body-of) lines))]
+                      body
+                      (str/join "\n" (map (comp strip-ansi body-of) lines))]
 
-                     ;; The recap rail is retired; provider fallback notices were
-                     ;; recap-only rows and no longer surface.
-                     (expect (not (str/includes? body "RECAP")))
-                     (expect (not (str/includes? body "Provider fallback:"))))))
+                  ;; The recap rail is retired; provider fallback notices were
+                  ;; recap-only rows and no longer surface.
+                  (expect (not (str/includes? body "RECAP")))
+                  (expect (not (str/includes? body "Provider fallback:"))))))
   (it "formats same-provider retry notices as recap rows"
       (let [lines
             (format-iteration-entry {:provider-fallbacks [{:event/type :llm.routing/provider-retry
@@ -971,23 +971,22 @@
           ;; Plain `:value` result bodies (`:vis/silent`, `3`) are hidden
           ;; per user directive — only tool channel-render output paints.
           (expect (not (str/includes? shown-body ":vis/silent"))))))
-  (defdescribe repeated-error-collapse-test
-               (it "squashes repeated identical provider errors into one counted row"
-                   (render/invalidate-cache!)
-                   (let [err
-                         {:message "Stream ended before terminal marker."
-                          :data {:type :svar.core/stream-truncated}}
+  (describe "repeated-error-collapse-test"
+            (it "squashes repeated identical provider errors into one counted row"
+                (render/invalidate-cache!)
+                (let [err
+                      {:message "Stream ended before terminal marker."
+                       :data {:type :svar.core/stream-truncated}}
 
-                         body
-                         (strip-ansi (:text (render/progress->lines-data
-                                              {:iterations (vec (repeat 11 {:error err}))}
-                                              80
-                                              {:show-thinking true :show-iterations true}
-                                              {:now-ms 1000 :turn-start-ms 0})))]
+                      body
+                      (strip-ansi (:text (render/progress->lines-data
+                                           {:iterations (vec (repeat 11 {:error err}))}
+                                           80
+                                           {:show-thinking true :show-iterations true}
+                                           {:now-ms 1000 :turn-start-ms 0})))]
 
-                     (expect (str/includes? body
-                                            "ERROR x 11: Stream ended before terminal marker."))
-                     (expect (= 1 (count (re-seq #"ERROR" body))))))))
+                  (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
+                  (expect (= 1 (count (re-seq #"ERROR" body))))))))
 
 (defdescribe
   progress-streaming-perf-test

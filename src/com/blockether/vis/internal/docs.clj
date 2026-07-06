@@ -188,9 +188,9 @@
     (str "/docs/assets/" rel)))
 
 (defn- theme-css
-  [mode]
   "The theme stylesheet with font URLs rooted for `mode`. Tokens in the CSS
    base are replaced with rooted asset paths so fonts load from any page depth."
+  [mode]
   (let
     [base
      "

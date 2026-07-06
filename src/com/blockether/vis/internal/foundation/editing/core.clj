@@ -98,24 +98,27 @@
   (when (paths/pathological-index-root? root)
     (throw (ex-info "refusing to fff-index the home directory or a filesystem root"
                     {:type :ext.foundation.editing/pathological-root :path (.getPath root)})))
-  (let [k (.getCanonicalPath root)]
-    (let [idx (try (fff/create {:base-path k
-                                :watch? false
-                                :ai-mode? true
-                                :enable-content-indexing? true
-                                :enable-mmap-cache? false})
-                   (catch Throwable t
-                     (throw (ex-info
-                              (str "rg requires fff for directory search, but fff failed for " k)
-                              {:type :ext.foundation.editing/fff-unavailable :path k}
-                              t))))]
-      (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
-        (.close ^java.io.Closeable idx)
-        (throw (ex-info "rg fff scan did not complete in time"
-                        {:type :ext.foundation.editing/fff-scan-timeout
-                         :path k
-                         :timeout-ms rg-fff-scan-timeout-ms})))
-      idx)))
+  (let [k
+        (.getCanonicalPath root)
+
+        idx
+        (try (fff/create {:base-path k
+                          :watch? false
+                          :ai-mode? true
+                          :enable-content-indexing? true
+                          :enable-mmap-cache? false})
+             (catch Throwable t
+               (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
+                               {:type :ext.foundation.editing/fff-unavailable :path k}
+                               t))))]
+
+    (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
+      (.close ^java.io.Closeable idx)
+      (throw (ex-info "rg fff scan did not complete in time"
+                      {:type :ext.foundation.editing/fff-scan-timeout
+                       :path k
+                       :timeout-ms rg-fff-scan-timeout-ms})))
+    idx))
 
 (defn- rg-fff-candidate-files
   [roots needles files]
@@ -3717,34 +3720,34 @@
         path
         (cond (string? a) a
               (map? a) (get a "path")
-              :else a)]
+              :else a)
 
-    ;; Resolve through safe-path (workspace-cwd confinement) like every other file
-    ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
-    ;; path (that resolves against the JVM user.dir, not the workspace root, so a
-    ;; nested `src/foo.clj` 404s while cat finds it).
-    (let [f
-          (ensure-existing-file! (safe-path path))
+        ;; Resolve through safe-path (workspace-cwd confinement) like every other file
+        ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
+        ;; path (that resolves against the JVM user.dir, not the workspace root, so a
+        ;; nested `src/foo.clj` 404s while cat finds it).
+        f
+        (ensure-existing-file! (safe-path path))
 
-          abs
-          (.getPath f)
+        abs
+        (.getPath f)
 
-          language
-          (outline/detect-language abs)
+        language
+        (outline/detect-language abs)
 
-          skeleton
-          (when language (outline/file-skeleton abs (slurp f)))]
+        skeleton
+        (when language (outline/file-skeleton abs (slurp f)))]
 
-      (tool-success {:op :outline
-                     :path path
-                     :kind :file
-                     :result
-                     (cond skeleton {"skeleton" skeleton "language" language "path" path}
-                           language {"language" language
-                                     "path" path
-                                     "note"
-                                     "No structural outline for this language yet — use cat(path)."}
-                           :else {"path" path "note" "Unknown language — use cat(path)."})}))))
+    (tool-success {:op :outline
+                   :path path
+                   :kind :file
+                   :result (cond skeleton {"skeleton" skeleton "language" language "path" path}
+                                 language
+                                 {"language" language
+                                  "path" path
+                                  "note"
+                                  "No structural outline for this language yet — use cat(path)."}
+                                 :else {"path" path "note" "Unknown language — use cat(path)."})})))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these

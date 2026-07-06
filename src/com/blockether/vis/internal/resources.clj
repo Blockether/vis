@@ -32,8 +32,7 @@
    ctx stays PURE DATA: it advertises `can_stop`/`can_restart` but never carries a
    callable. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io])
+  (:require [clojure.java.io :as io])
   (:import (java.lang ProcessHandle)))
 
 ;; ---------------------------------------------------------------------------
@@ -56,14 +55,6 @@
 ;; session. Survives restart for display + pid re-attach; owners re-register
 ;; thunks on init.
 ;; ---------------------------------------------------------------------------
-
-(defn- read-persisted
-  []
-  (locking registry-lock
-    (try (when (.isFile registry-file)
-           (let [m (edn/read-string (slurp registry-file))]
-             (when (map? m) m)))
-         (catch Throwable _ nil))))
 
 (defn- write-persisted!
   [session->id->data]

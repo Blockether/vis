@@ -10,16 +10,6 @@
 ;; (with docstring) stays intact; this is a render-time transform.
 ;; =============================================================================
 
-(defn- normalize-ws
-  "Drop trailing per-line whitespace + collapse runs of blank lines so
-   docstring-stripped output can be compared with a stable expected
-   string regardless of how zprint normalizes spacing."
-  [s]
-  (-> s
-      (str/replace #"[ \t]+\n" "\n")
-      (str/replace #"\n{2,}" "\n")
-      str/trim))
-
 (defdescribe humanize-fact-key-test
              (it "renders turn_<N> as Turn <N>, capitalizing other keys"
                  ;; Fact keys are model-authored strings (strings-only boundary).

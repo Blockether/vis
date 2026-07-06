@@ -17,7 +17,6 @@
            [java.text SimpleDateFormat]
            [java.util Locale TimeZone]))
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
-(defn- input-field-bg [] t/input-field-bg)
 
 (defn- abbreviate-home
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with
@@ -1696,13 +1695,7 @@
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
     (try (vis/resolve-effective-model router) (catch Throwable _ nil))))
 (defn- current-provider-id [] (:provider (current-model-info)))
-(defn- reasoning-effort-configurable?
-  []
-  (let [info (current-model-info)]
-    (or (nil? info)
-        (and (boolean (:reasoning? info))
-             (not= false (:reasoning-effort? info))
-             (not= :zai-thinking (:reasoning-style info))))))
+
 (defn- theme-choice-order
   []
   (try (mapv keyword (shared-theme/available-theme-ids))
@@ -2058,7 +2051,7 @@
 
     "unset"))
 (defn- settings-option-label
-  [{:keys [key label type choices set-key item-id toggle-id] env-name :name} values]
+  [{:keys [key label type choices toggle-id] env-name :name} values]
   (case type
     :choice
     (str label ": " (clojure.core/name (or (get values key) (first choices))))
@@ -2736,7 +2729,7 @@
 
              (if (< entry-idx visual-n)
                (let [{:keys [row-idx part text]} (nth entries entry-idx)
-                     {:keys [key type label]} (nth rows row-idx)
+                     {:keys [label]} (nth rows row-idx)
                      option-label (nth labels row-idx)
                      selected? (= row-idx @selected)
                      [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
@@ -2978,13 +2971,7 @@
   [v]
   (when-let [ms (date->millis v)]
     (java.util.Date. ms)))
-(defn- format-session-date
-  [v]
-  (if-let [date (date-value v)]
-    (let [^SimpleDateFormat fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
-      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
-      (.format fmt date))
-    "-"))
+
 (def ^:private session-table-headers
   ["" "ID" "Title" "Turns" "Created at" "Time" "Modified at" "Time"])
 (def ^:private session-table-aligns [:left :left :left :right :left :left :left :left])
@@ -3183,7 +3170,7 @@
             bottom-row
             (+ body-top body-h)
 
-            visible
+            _visible
             (min total body-h)
 
             _
