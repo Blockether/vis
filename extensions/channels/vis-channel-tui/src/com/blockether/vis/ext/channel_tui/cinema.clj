@@ -1,27 +1,23 @@
 (ns com.blockether.vis.ext.channel-tui.cinema
-  "Headless session → screencast. Replays a persisted session's transcript
+  "Headless session → MP4 screencast. Replays a persisted session's transcript
    through the REAL TUI render pipeline (`screen/render-frame!` painting into a
    Lanterna `VirtualTerminal` — no TTY needed) at full fidelity, with every
-   disclosure UNCOLLAPSED, and serialises the captured frames two ways:
+   disclosure UNCOLLAPSED, and encodes the captured frames to `.mp4`:
 
-     - `.cast`  — asciinema v2. Truecolor-perfect, tiny, scrubbable in any
-                  asciinema player. This is the literal \"cinema\" format.
-     - `.mp4`   — pure-JVM H.264 via jcodec's `AWTSequenceEncoder` (each frame
-                  rendered to a `BufferedImage` with Java2D). Pixel-exact because
-                  WE draw the glyphs — no external player font drift. No native
-                  deps, GraalVM-friendly.
+     pure-JVM H.264 via jcodec's `AWTSequenceEncoder` (each frame rendered to a
+     `BufferedImage` with Java2D). Pixel-exact because WE draw the glyphs — no
+     external player font drift. No native deps, GraalVM-friendly.
 
-   Both come off ONE paced grid stream. Pacing honours the recorded per-turn
-   `:duration-ms` (a slow turn stays proportionally slow, a fast one fast),
-   uniformly compressed to a watchable target length — no per-element speeds
-   are invented. The reveal is a smooth top→bottom autoscroll of the fully
-   expanded transcript: you watch the session progress exactly as it looked
-   live, just piece by piece.
+   The viewport rides the generation frontier straight DOWN the transcript
+   at a constant reading speed (ms per row), so a tall turn scrolls in over
+   proportionally more time and the WHOLE replay length scales with the
+   session's content — no fixed budget everything is crammed into. Motion is
+   monotonic (driven off one stable full-layout pass), so it never bounces
+   back up: you watch the session stream in exactly as it looked live.
 
    The heavy TUI stack (`screen`, Lanterna) is reached via `requiring-resolve`
    so merely loading this namespace stays cheap."
-  (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
@@ -39,16 +35,24 @@
   {:cols        120
    :rows        42
    :fps         8
-   ;; Uniform time budget the whole replay is compressed into. Relative pacing
-   ;; between turns is preserved; only the global scale changes.
-   :target-ms   30000
+   ;; Constant downward scroll speed: ms of video per transcript ROW. The
+   ;; viewport rides the "generation frontier" straight down the transcript at
+   ;; this rate, so a TALL turn takes proportionally longer to stream in and
+   ;; the whole replay length scales with the session's content instead of
+   ;; being crammed into a fixed budget.
+   :scroll-ms-per-row 22
+   ;; Per-message floor so a short turn still gets a readable beat before the
+   ;; scroll moves on to the next one.
+   :min-msg-ms  1100
+   ;; Overall length guard rails — a tiny session is stretched to at least
+   ;; min, a giant one compressed to at most max (relative pacing preserved).
+   :min-total-ms 10000
+   :max-total-ms 240000
+   ;; Hold the final (bottom) frame briefly so the ending doesn't cut abruptly.
+   :end-hold-ms 1200
    ;; Hard ceiling on frame count so a pathological session can't blow up the
    ;; encoder / output size.
-   :max-frames  600
-   ;; Minimum on-screen dwell (ms, pre-scaling) so instant user turns and
-   ;; zero-duration in-flight turns still get a readable beat.
-   :min-user-ms 1800
-   :min-turn-ms 1200
+   :max-frames  2400
    ;; MP4 glyph cell size in pixels (width is derived from the mono font).
    :font-size   18
    :theme       theme/default-theme-id})
@@ -84,137 +88,106 @@
                        :reverse (boolean (.contains mods SGR/REVERSE))})
                     {:ch " " :fg [0 0 0] :bg [0 0 0]})))))))
 
-(defn- msg-duration-ms
-  [{:keys [min-user-ms min-turn-ms]} m]
-  (let [floor (if (= :assistant (:role m)) min-turn-ms min-user-ms)]
-    (max (long floor) (long (or (:duration-ms m) 0)))))
-
-(defn- offset-at
-  "Piecewise-linear time→scroll-offset lookup over `ctrl` [[t-ms offset] …]
-   (t-ms ascending). Clamps outside the range."
-  [ctrl ^double t]
-  (let [n (count ctrl)]
-    (loop [i 1]
-      (if (>= i n)
-        (double (second (nth ctrl (dec n))))
-        (let [[t0 o0] (nth ctrl (dec i))
-              [t1 o1] (nth ctrl i)]
-          (cond
-            (<= t (double t0)) (double o0)
-            (<= t (double t1)) (let [span (- (double t1) (double t0))]
-                                 (if (<= span 0.0)
-                                   (double o1)
-                                   (+ (double o0)
-                                     (* (- (double o1) (double o0))
-                                       (/ (- t (double t0)) span)))))
-            :else (recur (inc i))))))))
-
 (defn session->frames
   "Replay `session-id` headless and return
    `{:cols :rows :frames [{:grid :delay-ms} …] :video-ms}`.
 
-   `opts` overrides `defaults`. The transcript is fully expanded and the
-   viewport autoscrolls top→bottom paced by scaled per-turn durations."
+   `opts` overrides `defaults`. The transcript is fully EXPANDED. We take ONE
+   full-layout pass (every message shown) to capture the stable per-message row
+   offsets and total height, then drive a MONOTONIC downward scroll off those
+   fixed offsets: the viewport bottom rides each message's row span across a
+   time slice proportional to that message's height (constant reading speed).
+
+   Because the scroll target comes from the stable full layout — never a
+   per-frame total that the virtualizer keeps revising — the motion only ever
+   travels DOWN and never bounces back up. It reads like the session streaming
+   in live: content scrolls up from the bottom as the frontier descends, tall
+   turns take longer, and the overall length scales with the session."
   [session-id opts]
-  (let [{:keys [cols rows fps target-ms max-frames] :as cfg} (merge defaults opts)
-        history ((rebuild-history-fn) session-id)
+  (let [{:keys [cols rows fps scroll-ms-per-row min-msg-ms min-total-ms
+                max-total-ms end-hold-ms max-frames]} (merge defaults opts)
+        history (vec ((rebuild-history-fn) session-id))
+        n       (count history)
         render! (render-frame-fn)
         vt (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
         scr (doto (TerminalScreen. vt) (.startScreen))
         base (do (state/init!) @state/app-db)
-        db (assoc base
-             :session {:id session-id}
-             :messages (vec history)
-             :detail-expansions {:vis.channel-tui/baseline :expand})
-        ;; One full render establishes the expanded layout geometry.
-        layout (render! scr cols rows (assoc db :scroll scroll/follow)
-                 (System/currentTimeMillis))
-        total-h (long (:total-h layout))
-        inner-h (long (:inner-h layout))
-        offsets (mapv long (:offsets layout))
-        max-s (max 0 (- total-h inner-h))
-        durs (mapv #(msg-duration-ms cfg %) history)
-        cum (vec (reductions + 0 durs))            ; length (count history)+1
-        total-real (double (max 1 (peek cum)))
-        scale (/ (double target-ms) total-real)
-        ;; Control points: message boundary i reveals at scaled time, viewport
-        ;; anchored to that message's document row (clamped to max scroll).
-        n-ctrl (min (count offsets) (count cum))
-        ctrl (mapv (fn [i]
-                     [(* (double (nth cum i)) scale)
-                      (double (min (nth offsets i) max-s))])
-               (range n-ctrl))
-        video-ms (long (* total-real scale))
-        frame-dt (max 1 (long (/ 1000 (long fps))))
-        raw-times (range 0 (inc video-ms) frame-dt)
-        times (if (> (count raw-times) max-frames)
-                ;; Downsample to the cap, preserving even spacing.
-                (let [step (/ (double (count raw-times)) max-frames)]
-                  (map #(nth (vec raw-times) (min (dec (count raw-times))
-                                               (long (* % step))))
-                    (range max-frames)))
-                raw-times)
-        frames (vec
-                 (for [t times]
-                   (let [off (long (Math/round (offset-at ctrl (double t))))]
-                     (render! scr cols rows
-                       (assoc db :scroll (scroll/parked off))
-                       (System/currentTimeMillis))
-                     (.refresh scr)
-                     {:grid (capture-grid scr cols rows)
-                      :delay-ms frame-dt})))]
+        db0 (assoc base
+              :session {:id session-id}
+              ;; Headless replay: no live provider-limits polling, so tell the
+              ;; footer to keep the "limits:" row clean instead of "loading…".
+              :cinema? true
+              ;; Every disclosure open — this is a full-fidelity replay.
+              :detail-expansions {:vis.channel-tui/baseline :expand})
+        ;; ONE full layout pass (every message shown) → STABLE per-message row
+        ;; offsets + total height. Driving the scroll off these FIXED offsets
+        ;; (never a per-frame total) is what keeps the motion monotonic: the
+        ;; view can only travel DOWN, so it never yanks back up when the
+        ;; virtualized layout revises an off-screen height estimate.
+        full-db (assoc db0 :messages history :scroll scroll/follow)
+        full-ly (render! scr cols rows full-db (System/currentTimeMillis))
+        offsets (vec (:offsets full-ly))
+        total-h (long (or (:total-h full-ly) 0))
+        inner-h (long (or (:inner-h full-ly) 0))
+        max-s   (max 0 (- total-h inner-h))
+        ;; Top / bottom row of each message. `offsets` is length n+1 (last =
+        ;; total-h); fall back to total-h defensively for the final bottom.
+        tops    (mapv #(long (nth offsets % 0)) (range n))
+        bottoms (mapv (fn [i] (long (nth offsets (inc i) total-h))) (range n))
+        heights (mapv (fn [i] (max 0 (- (long (bottoms i)) (long (tops i))))) (range n))
+        ;; Time each message's scroll slice gets: proportional to its height
+        ;; (constant speed), floored so short turns still read.
+        raw-win (mapv #(max (long min-msg-ms) (long (* (long scroll-ms-per-row) (long %)))) heights)
+        raw-total (double (max 1 (reduce + 0 raw-win)))
+        scale   (cond
+                  (> raw-total (double max-total-ms)) (/ (double max-total-ms) raw-total)
+                  (< raw-total (double min-total-ms)) (/ (double min-total-ms) raw-total)
+                  :else 1.0)
+        wins    (mapv #(* scale (double %)) raw-win)
+        wstart  (vec (reductions + 0.0 wins))          ; length n+1
+        scroll-ms (long (peek wstart))
+        video-ms  (+ scroll-ms (long end-hold-ms))
+        ;; Viewport bottom (the "generation frontier") at wall-clock t: walk
+        ;; message i's [top,bottom] row span across its time window. Monotonic
+        ;; in t, so the derived scroll offset only ever increases.
+        reveal-bottom
+        (fn [t]
+          (if (zero? n)
+            0.0
+            (let [t  (double (min (double t) (double scroll-ms)))
+                  i  (max 0 (min (dec n) (dec (count (take-while #(<= (double %) t) wstart)))))
+                  w0 (double (wstart i)) w1 (double (wstart (inc i)))
+                  frac (if (> w1 w0) (min 1.0 (/ (- t w0) (- w1 w0))) 1.0)
+                  o0 (double (tops i)) o1 (double (bottoms i))]
+              (+ o0 (* frac (- o1 o0))))))
+        frame-dt  (max 1 (long (/ 1000 (long fps))))
+        raw-times (vec (range 0 (inc video-ms) frame-dt))
+        times     (if (> (count raw-times) max-frames)
+                    ;; Downsample to the cap, preserving even spacing.
+                    (let [step (/ (double (count raw-times)) max-frames)]
+                      (mapv #(nth raw-times (min (dec (count raw-times)) (long (* % step))))
+                        (range max-frames)))
+                    raw-times)
+        frames
+        (loop [ts times, acc (transient [])]
+          (if (seq ts)
+            (let [t   (first ts)
+                  rb  (reveal-bottom t)
+                  ;; Anchor the viewport so its BOTTOM edge sits at the frontier.
+                  st  (long (max 0 (min max-s (Math/round (- rb (double inner-h))))))
+                  db  (assoc db0
+                        :messages history
+                        :scroll (scroll/parked st)
+                        ;; Feed the stable full layout so `render-frame!` derives
+                        ;; the real `prev-max-s` and never clamps our offset.
+                        :layout full-ly)
+                  _ (render! scr cols rows db (System/currentTimeMillis))
+                  _ (.refresh scr)
+                  grid (capture-grid scr cols rows)]
+              (recur (rest ts) (conj! acc {:grid grid :delay-ms frame-dt})))
+            (persistent! acc)))]
     (.stopScreen scr)
     {:cols cols :rows rows :frames frames :video-ms video-ms}))
-
-;; ── asciinema .cast emitter ─────────────────────────────────────────────────
-
-(defn- sgr-seq
-  "ANSI SGR to enter a cell's style (reset first, then truecolor + modifiers)."
-  [{:keys [fg bg bold italic underline reverse]}]
-  (let [[fr fg* fb] fg [br bg* bb] bg]
-    (str "\u001b[0"
-      ";38;2;" fr ";" fg* ";" fb
-      ";48;2;" br ";" bg* ";" bb
-      (when bold ";1") (when italic ";3") (when underline ";4") (when reverse ";7")
-      "m")))
-
-(defn- style-key [c]
-  [(:fg c) (:bg c) (:bold c) (:italic c) (:underline c) (:reverse c)])
-
-(defn- grid->ansi
-  "Full-frame repaint: home cursor, then every row with run-length SGR."
-  [grid]
-  (let [sb (StringBuilder.)]
-    (.append sb "\u001b[H")
-    (doseq [[y row] (map-indexed vector grid)]
-      (when (pos? y) (.append sb "\r\n"))
-      (loop [cells row prev nil]
-        (when-let [c (first cells)]
-          (let [k (style-key c)]
-            (when (not= k prev) (.append sb (sgr-seq c)))
-            (.append sb (:ch c))
-            (recur (next cells) k))))
-      (.append sb "\u001b[0m"))
-    (str sb)))
-
-(defn frames->cast
-  "Serialise a `session->frames` result to an asciinema v2 `.cast` string."
-  [{:keys [cols rows frames]}]
-  (let [header {:version 2 :width cols :height rows
-                :timestamp (quot (System/currentTimeMillis) 1000)
-                :env {"TERM" "xterm-256color" "SHELL" "vis"}}
-        sb (StringBuilder.)]
-    (.append sb (json/write-str header))
-    (.append sb "\n")
-    ;; Clear once up front, then a full repaint per frame at its cumulative time.
-    (.append sb (json/write-str [0.0 "o" "\u001b[2J\u001b[H"]))
-    (.append sb "\n")
-    (loop [fs frames t 0.0]
-      (when-let [f (first fs)]
-        (.append sb (json/write-str [(/ (double t) 1000.0) "o" (grid->ansi (:grid f))]))
-        (.append sb "\n")
-        (recur (next fs) (+ t (double (:delay-ms f))))))
-    (str sb)))
 
 ;; ── MP4 (jcodec) emitter ────────────────────────────────────────────────────
 
@@ -295,28 +268,24 @@
         (try (tui-theme/apply-theme! prior) (catch Throwable _ nil))))))
 
 (defn export!
-  "Render `session-id` to a screencast file.
+  "Render `session-id` to an MP4 screencast file.
 
    opts:
-     :format   :cast (default) | :mp4
-     :out      output path (default: <session-id>.<ext> in the cwd)
-     :cols :rows :fps :target-ms :theme :font-size  — see `defaults`
+     :out      output path (default: <session-id>.mp4 in the cwd)
+     :cols :rows :fps :scroll-ms-per-row :theme :font-size  — see `defaults`
 
    Returns `{:path :format :frames :video-ms :cols :rows}`."
   [session-id opts]
-  (let [{:keys [format out theme] :or {format :cast theme "vis-light"} :as opts} opts
-        ext (case format :mp4 "mp4" "cast")
-        out (or out (str session-id "." ext))]
+  (let [{:keys [out theme] :or {theme "vis-light"} :as opts} opts
+        out (or out (str session-id ".mp4"))]
     (with-theme
       theme
       (fn []
         (let [{:keys [frames video-ms cols rows] :as cap}
               (session->frames session-id (dissoc opts :format :out))]
-          (case format
-            :mp4 (frames->mp4! cap out opts)
-            (spit out (frames->cast cap)))
+          (frames->mp4! cap out opts)
           {:path (str (.getAbsolutePath (io-file out)))
-           :format format
+           :format :mp4
            :frames (count frames)
            :video-ms video-ms
            :cols cols :rows rows})))))

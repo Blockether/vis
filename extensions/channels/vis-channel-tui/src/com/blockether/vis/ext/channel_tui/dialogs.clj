@@ -711,7 +711,8 @@
   [^TerminalScreen screen sr]
   (let [fields (vec (:fields sr))
         n      (count fields)
-        states (mapv (fn [_] {:text (atom []) :cursor (atom 0)}) fields)
+        states (mapv (fn [f] (let [d (vec (str (or (:default f) "")))]
+                               {:text (atom d) :cursor (atom (count d))})) fields)
         focus  (atom 0)                       ;; 0..n-1 = fields, n = Start button
         paste  (volatile! nil)
         val-of (fn [i] (str/trim (apply str @(:text (nth states i)))))
@@ -750,12 +751,19 @@
                 (do (p/set-colors! g t/dialog-hint t/dialog-bg)
                   (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
                 (p/put-str! g (+ left 3) iy (ellipsize val body-w))))))
-        ;; Start button via the shared button component.
+        ;; Add button — the primary action, centered and framed so it reads
+        ;; as a button: a solid accent block when focused, accent-inked when not.
         (let [by       (+ content-top (* n 3))
-              focused? (= @focus n)]
+              focused? (= @focus n)
+              label    "  Add  "
+              bw       (count label)
+              bx       (+ (inc left) (max 0 (quot (- inner-w bw) 2)))]
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) by inner-w 1)
-          (draw-button! g (+ left 2) by "+ Add" focused?))
+          (if focused?
+            (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+            (p/set-colors! g t/dialog-hint-key t/dialog-bg))
+          (p/put-str! g bx by label))
         (draw-hint-bar! g left hint-row inner-w
           [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
         (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
@@ -847,20 +855,32 @@
                                               (str " · " v))))
                      startables)))]
         (when sr
-          (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
-                opts (when-let [f (:options-fn sr)]
-                       (try (vec (f env)) (catch Throwable _ nil)))
-                selected (cond
-                           (seq (:fields sr)) (startable-fields-form! screen sr)
-                           (:options-fn sr) (multi-select-dialog! screen
-                                              (str (:label sr) " — " (or (:options-label sr) "options"))
-                                              (or opts []))
-                           :else [])]
-            (when (and (some? selected) (not= ::cancel selected))
-              (try ((:start-fn sr) env (not-empty selected))
-                (catch Throwable t
-                  (vis/notify! (str "Start failed: " (ex-message t))
-                    :level :warn :ttl-ms 4000))))))))
+          (let [env  (try (vis/env-for session-id) (catch Throwable _ nil))
+                root (str (:workspace/root env))
+                dir  (when (:dir? sr)
+                       (let [r (startable-fields-form! screen
+                                 (assoc sr :label (str (:label sr) " directory")
+                                   :fields [{:name "dir" :label "Directory"
+                                             :default root :placeholder root}]))]
+                         (if (= ::cancel r)
+                           ::cancel
+                           (let [d (str/trim (str (:dir r)))]
+                             (if (str/blank? d) root d)))))]
+            (when-not (= ::cancel dir)
+              (let [env      (cond-> env dir (assoc :startable/dir dir))
+                    opts     (when-let [f (:options-fn sr)]
+                               (try (vec (f env)) (catch Throwable _ nil)))
+                    selected (cond
+                               (seq (:fields sr)) (startable-fields-form! screen sr)
+                               (:options-fn sr) (multi-select-dialog! screen
+                                                  (str (:label sr) " — " (or (:options-label sr) "options"))
+                                                  (or opts []))
+                               :else [])]
+                (when (and (some? selected) (not= ::cancel selected))
+                  (try ((:start-fn sr) env (not-empty selected))
+                    (catch Throwable t
+                      (vis/notify! (str "Start failed: " (ex-message t))
+                        :level :warn :ttl-ms 4000))))))))))
     nil))
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).

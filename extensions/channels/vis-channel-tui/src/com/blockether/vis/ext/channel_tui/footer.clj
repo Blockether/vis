@@ -247,8 +247,10 @@
         status (:status report)]
     (cond
       ;; No envelope at all (first paint after launch / provider switch),
-      ;; or polled report is for a different provider — show \"loading\".
-      (or (nil? provider-limits) (nil? report)) "limits: loading…"
+      ;; or polled report is for a different provider — show "loading".
+      ;; A headless cinema replay never polls, so keep that row clean
+      ;; instead of a forever-stuck "loading…".
+      (or (nil? provider-limits) (nil? report)) (when-not (:cinema? db) "limits: loading…")
       (= :error status) (let [msg (or (get-in report [:error :message]) "unavailable")]
                           (str "limits: error (" msg ")"))
       (= :unauthenticated status) "limits: sign in required"
