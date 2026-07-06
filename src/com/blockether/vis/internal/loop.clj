@@ -5888,12 +5888,30 @@
    tokens. Called by `run-turn!` when slash dispatch said the user
    message was NOT a slash."
   [env user-request loop-opts]
-  (let [session-turn-id
+  (let [;; Persist EVERY image the user attached to this turn as durable
+        ;; `session_turn_attachment` BLOB bytes: INLINE uploads (web/API base64,
+        ;; carried on `:user/attachments`) AND terminal-drop images (paths pasted
+        ;; into the message, sniffed + loaded here via the same magic-byte scan
+        ;; the assemble seam uses). Storing the bytes - not just the on-disk path
+        ;; - lets resume + history re-render survive the source file moving or
+        ;; being deleted. Best-effort: a scan failure never blocks the turn.
+        disk-attachments
+        (try (:attached (attachments/collect-user-images user-request
+                                                         {:workspace-root (:workspace/root env)}))
+             (catch Throwable t
+               (tel/log!
+                 {:level :warn :id ::turn-image-persist-scan-failed :data {:error (ex-message t)}})
+               nil))
+
+        turn-attachments
+        (into (vec (:user/attachments env)) disk-attachments)
+
+        session-turn-id
         (persistance/db-store-session-turn!
           (:db-info env)
           (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
-            (seq (:user/attachments env))
-            (assoc :attachments (:user/attachments env))))
+            (seq turn-attachments)
+            (assoc :attachments turn-attachments)))
 
         turn-position
         (session-turn-position env session-turn-id)
