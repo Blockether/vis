@@ -41,8 +41,8 @@
 
         q1
         (vis/db-store-session-turn!
-          s
-          {:parent-session-id cid :user-request "First turn" :status :running})]
+         s
+         {:parent-session-id cid :user-request "First turn" :status :running})]
 
     ;; Turn 1: terminal iteration with a `(def ...)` var, an `(done ...)`
     ;; block (idx 1), thinking trace, and answer.
@@ -62,8 +62,8 @@
     (vis/db-update-session-turn! s q1 {:status :done :answer-markdown "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-session-turn!
-               s
-               {:parent-session-id cid :user-request "Second turn that fails" :status :running})]
+              s
+              {:parent-session-id cid :user-request "Second turn that fails" :status :running})]
       (h/store-iteration! s
                           {:session-turn-id q2
                            :code "Let"
@@ -200,8 +200,8 @@
       (let [s (vis/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "empty" :model "x"})
                    q (vis/db-store-session-turn!
-                       s
-                       {:parent-session-id cid :user-request "empty turn" :status :running})
+                      s
+                      {:parent-session-id cid :user-request "empty turn" :status :running})
                    _ (h/store-iteration! s
                                          {:session-turn-id q
                                           :code ""
@@ -220,40 +220,40 @@
                (expect (true? (:returned-empty-code? iter))))
              (finally (vis/db-dispose-connection! s)))))
   (it
-    "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
-    (let [s (vis/db-create-connection! :memory)]
-      (try (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
-                 turn (vis/db-store-session-turn!
-                        s
-                        {:parent-session-id cid :user-request "run a tool" :status :running})
-                 code "(v/tool \"echo hi\")"
-                 value (tool-result "echo hi")]
+   "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
+   (let [s (vis/db-create-connection! :memory)]
+     (try (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
+                turn (vis/db-store-session-turn!
+                      s
+                      {:parent-session-id cid :user-request "run a tool" :status :running})
+                code "(v/tool \"echo hi\")"
+                value (tool-result "echo hi")]
 
              ;; Cross-turn def survival is gone; the iteration row carries
              ;; the per-form envelope directly. tool-call detection now
              ;; flows through the block's :result, not a separate :vars
              ;; sidecar.
-             (h/store-iteration!
-               s
-               {:session-turn-id turn :code code :result value :answer "done" :duration-ms 10})
-             (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-             (let [data (transcript/transcript s cid)
-                   call (first (:calls data))
-                   code-row (first (filter #(= :code (:kind %)) (:timeline data)))
-                   tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
+            (h/store-iteration!
+             s
+             {:session-turn-id turn :code code :result value :answer "done" :duration-ms 10})
+            (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
+            (let [data (transcript/transcript s cid)
+                  call (first (:calls data))
+                  code-row (first (filter #(= :code (:kind %)) (:timeline data)))
+                  tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
 
-               (expect (= [{:role :user :turn-id turn :content "run a tool"}
-                           {:role :assistant :turn-id turn :content "done"}]
-                          (:dialog data)))
-               (expect (= 1 (count (:calls data))))
-               (expect (= :v/tool (:op call)))
-               (expect (= code (:code call)))
-               (expect (= "echo hi" (:command call)))
-               (expect (= 0 (get-in call [:result-summary :exit])))
-               (expect (= "t1/i1/f1" (:ref code-row)))
-               (expect (= (:parent-ref call) (:ref code-row)))
-               (expect (= call tool-row))))
-           (finally (vis/db-dispose-connection! s))))))
+              (expect (= [{:role :user :turn-id turn :content "run a tool"}
+                          {:role :assistant :turn-id turn :content "done"}]
+                         (:dialog data)))
+              (expect (= 1 (count (:calls data))))
+              (expect (= :v/tool (:op call)))
+              (expect (= code (:code call)))
+              (expect (= "echo hi" (:command call)))
+              (expect (= 0 (get-in call [:result-summary :exit])))
+              (expect (= "t1/i1/f1" (:ref code-row)))
+              (expect (= (:parent-ref call) (:ref code-row)))
+              (expect (= call tool-row))))
+          (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Markdown renderer - spot-check a few literals the CLI relies on.
@@ -269,28 +269,28 @@
                (expect (str/includes? out "Session not found")))
              (finally (vis/db-dispose-connection! s)))))
   (it
-    "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
-    (let [s (vis/db-create-connection! :memory)]
-      (try (let [cid (seed! s)
-                 resolve
-                 (var-get (resolve
-                            'com.blockether.vis.internal.foundation.transcript/resolve-session-ref))
-                 prefix (subs (str cid) 0 8)
-                 full (str cid)
-                 md (transcript/transcript-md s prefix)]
+   "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
+   (let [s (vis/db-create-connection! :memory)]
+     (try (let [cid (seed! s)
+                resolve
+                (var-get (resolve
+                          'com.blockether.vis.internal.foundation.transcript/resolve-session-ref))
+                prefix (subs (str cid) 0 8)
+                full (str cid)
+                md (transcript/transcript-md s prefix)]
 
              ;; The prefix-aware resolver returns the canonical UUID.
-             (expect (= (str cid) (str (resolve s prefix))))
-             (expect (= (str cid) (str (resolve s full))))
+            (expect (= (str cid) (str (resolve s prefix))))
+            (expect (= (str cid) (str (resolve s full))))
              ;; And the prefix flows through `transcript-md` so callers render a real artifact
              ;; instead of the "Session not found" fallback string.
-             (expect (string? md))
-             (expect (str/includes? md "## Turn-by-turn breakdown"))
-             (expect (not (str/includes? md "Session not found")))
+            (expect (string? md))
+            (expect (str/includes? md "## Turn-by-turn breakdown"))
+            (expect (not (str/includes? md "Session not found")))
              ;; Unknown well-formed UUIDs still miss; bogus garbage still misses.
-             (expect (nil? (resolve s "00000000-0000-0000-0000-000000000000")))
-             (expect (nil? (resolve s "definitely-not-a-uuid-prefix"))))
-           (finally (vis/db-dispose-connection! s)))))
+            (expect (nil? (resolve s "00000000-0000-0000-0000-000000000000")))
+            (expect (nil? (resolve s "definitely-not-a-uuid-prefix"))))
+          (finally (vis/db-dispose-connection! s)))))
   ;; Removed: "accepts an unambiguous string prefix in the Markdown
   ;; renderer too" and "can render dialog-only Markdown from the same
   ;; transcript data". The transcript markdown header / dialog layout
@@ -304,8 +304,8 @@
         (try (let [huge (apply str (repeat 50000 "x"))
                    cid (h/store-session! s {:channel :tui :title "Huge"})
                    qid (vis/db-store-session-turn!
-                         s
-                         {:parent-session-id cid :user-request "huge" :status :running})]
+                        s
+                        {:parent-session-id cid :user-request "huge" :status :running})]
 
                (h/store-iteration! s
                                    {:session-turn-id qid
@@ -318,69 +318,75 @@
                  (expect (str/includes? out huge))))
              (finally (vis/db-dispose-connection! s)))))
   (it
-    "renders flat mixed-block code when render segments are not persisted"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
-              qid (vis/db-store-session-turn!
-                    s
-                    {:parent-session-id cid :user-request "mixed" :status :running})]
+   "renders flat mixed-block code when render segments are not persisted"
+   (let [s (vis/db-create-connection! :memory)]
+     (try
+       (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
+             qid (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id cid :user-request "mixed" :status :running})]
 
-          (let [fence (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(read-file \"a\")")]
-            (h/store-iteration!
-              s
-              {:session-turn-id qid
-               :code fence
-               :forms
-               [{:scope "t1/i1/f1" :tag :mutation :src "(def x 1)" :result 1}
-                {:scope "t1/i1/f2" :tag :mutation :src "(set-session-title! \"Mixed\")" :result :ok}
-                {:scope "t1/i1/f3" :tag :observation :src "(read-file \"a\")" :result {:path "a"}}]
-               :answer "Done"}))
-          (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
-          (let [out (transcript/transcript-md s cid)]
-            (expect (str/includes? out "(def x 1)"))
-            (expect (str/includes? out "set-session-title!"))
-            (expect (str/includes? out "(read-file"))))
-        (finally (vis/db-dispose-connection! s)))))
+         (let [fence (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(read-file \"a\")")]
+           (h/store-iteration!
+            s
+            {:session-turn-id qid
+             :code fence
+             :forms
+             [{:scope "t1/i1/f1" :tag :mutation :src "(def x 1)" :result 1}
+              {:scope "t1/i1/f2" :tag :mutation :src "(set-session-title! \"Mixed\")" :result :ok}
+              {:scope "t1/i1/f3" :tag :observation :src "(read-file \"a\")" :result {:path "a"}}]
+             :answer "Done"}))
+         (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
+         (let [out (transcript/transcript-md s cid)]
+           (expect (str/includes? out "(def x 1)"))
+           (expect (str/includes? out "set-session-title!"))
+           (expect (str/includes? out "(read-file"))))
+       (finally (vis/db-dispose-connection! s)))))
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump" (was already `#_`-disabled). It asserted on the removed
   ;; prompt-body / LLM-message-envelope render (SYS_PROMPT_TEXT_FIXTURE,
   ;; "LLM messages", role snapshots) which no longer exists. Surviving
   ;; renderer output is covered by the structural data tests above and
   ;; the huge/mixed-block render tests here.
-)
+  )
 
 ;; ---------------------------------------------------------------------------
-;; No UUID leaks in user/LLM-facing surfaces.
+;; No UUID leaks in the turn-by-turn BODY.
 ;;
-;; Channels render `position`, never `:id`. UUIDs are programmatic-only.
-;; This test pins the rule against the markdown transcript renderer; sister
-;; tests in render_test.clj (TUI) and bot_test.clj (Telegram) cover their
-;; respective channels.
+;; The summary header intentionally shows the session `ID` (a UUID) - that's a
+;; single, deliberate identity row the operator asked for. The turn/iteration
+;; BODY must still render `position` (int), never a turn/message `:id` (uuid).
+;; This test pins the rule against the markdown transcript body; sister tests
+;; in render_test.clj (TUI) and bot_test.clj (Telegram) cover their channels.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private uuid-pattern
   ;; Canonical 36-char UUID with hyphens. The fixture's seed-generated UUIDs
-  ;; will match this; we want them ABSENT from the rendered markdown.
+  ;; will match this; we want them ABSENT from the rendered turn-by-turn body.
   #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 (defn- uuid-leak? [^String text] (boolean (re-find uuid-pattern text)))
 
 (defdescribe transcript-md-no-uuid-leak-test
-             (it "rendered transcript markdown contains zero UUID substrings"
-                 (let [s (vis/db-create-connection! :memory)]
-                   (try (let [cid (seed! s)
-                              out (transcript/transcript-md s cid)]
+  (it "turn-by-turn transcript body contains zero UUID substrings"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let [cid (seed! s)
+                   full (transcript/transcript-md s cid)
+                              ;; The summary header intentionally carries the
+                              ;; session ID; scope the leak check to the body.
+                   marker "## Turn-by-turn breakdown"
+                   idx (str/index-of full marker)
+                   body (if idx (subs full idx) full)]
 
-                          (expect (string? out))
+               (expect (string? full))
                           ;; Position-based rendering present (sanity).
-                          (expect (str/includes? out "Turn"))
-                          ;; The hard rule: no UUIDs leak into agent/user-facing output.
-                          ;; If this fails, find the renderer site rendering :id (UUID)
-                          ;; instead of :position (int).
-                          (when (uuid-leak? out)
-                            (println "UUID LEAK in transcript:")
-                            (println (subs out 0 (min 400 (count out))))
-                            (println "..."))
-                          (expect (not (uuid-leak? out))))
-                        (finally (vis/db-dispose-connection! s))))))
+               (expect (str/includes? body "Turn"))
+                          ;; The hard rule: no UUIDs leak into the turn body.
+                          ;; If this fails, find the renderer site rendering :id
+                          ;; (UUID) instead of :position (int).
+               (when (uuid-leak? body)
+                 (println "UUID LEAK in transcript body:")
+                 (println (subs body 0 (min 400 (count body))))
+                 (println "..."))
+               (expect (not (uuid-leak? body))))
+             (finally (vis/db-dispose-connection! s))))))

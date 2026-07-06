@@ -144,32 +144,32 @@
         candidate-keys
         (->> roots
              (mapcat
-               (fn [^File root]
-                 (cond (.isFile root) [(.getCanonicalPath root)]
+              (fn [^File root]
+                (cond (.isFile root) [(.getCanonicalPath root)]
                        ;; Never fff-scan $HOME or a filesystem root — the walk never
                        ;; finishes and hangs the tool. Skip this root; other (real
                        ;; project) roots still search normally.
-                       (paths/pathological-index-root? root) nil
-                       :else (with-open [idx (rg-fff-open root)]
-                               (let [base (.getCanonicalFile root)]
+                      (paths/pathological-index-root? root) nil
+                      :else (with-open [idx (rg-fff-open root)]
+                              (let [base (.getCanonicalFile root)]
                                  ;; doall: realize the lazy hits INSIDE with-open, before
                                  ;; the fresh instance is closed.
-                                 (doall (mapcat
-                                          (fn [query]
-                                            (let [path-items (:items (fff/search idx
-                                                                                 {:query query
-                                                                                  :page-size 1000}))
-                                                  grep-items (:matches (fff/grep
-                                                                         idx
-                                                                         {:query query
-                                                                          :mode mode
-                                                                          :page-limit 1000
-                                                                          :max-matches-per-file 1
-                                                                          :time-budget-ms 1500}))]
+                                (doall (mapcat
+                                        (fn [query]
+                                          (let [path-items (:items (fff/search idx
+                                                                               {:query query
+                                                                                :page-size 1000}))
+                                                grep-items (:matches (fff/grep
+                                                                      idx
+                                                                      {:query query
+                                                                       :mode mode
+                                                                       :page-limit 1000
+                                                                       :max-matches-per-file 1
+                                                                       :time-budget-ms 1500}))]
 
-                                              (concat (rel-paths base path-items)
-                                                      (rel-paths base grep-items))))
-                                          queries)))))))
+                                            (concat (rel-paths base path-items)
+                                                    (rel-paths base grep-items))))
+                                        queries)))))))
              distinct)]
 
     (vec (keep by-canon candidate-keys))))
@@ -217,9 +217,9 @@
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
     (throw
-      (ex-info
-        "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
-        {:type :ext.foundation.editing/blank-path :path p})))
+     (ex-info
+      "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
+      {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd
         (workspace/cwd)
 
@@ -572,41 +572,41 @@
         (mapv protected-failure-row blocked)]
 
     (extension/failure
-      {:result nil
-       :op op
-       :metadata {:target first-tgt
-                  :started-at-ms t
-                  :finished-at-ms t
-                  :duration-ms 0
-                  :access-intent access-intent
-                  :protected-paths failures}
-       :error {:message (str op
-                             " blocked: "
-                             (:resolved first-tgt)
-                             " is protected; use the owning extension API instead.")
-               :type :ext.foundation.editing/path-protected
-               :reason :path-protected
-               :intent access-intent
-               :hint first-hint
-               :loop-hint first-hint
-               :failures failures
-               :kind kind}})))
+     {:result nil
+      :op op
+      :metadata {:target first-tgt
+                 :started-at-ms t
+                 :finished-at-ms t
+                 :duration-ms 0
+                 :access-intent access-intent
+                 :protected-paths failures}
+      :error {:message (str op
+                            " blocked: "
+                            (:resolved first-tgt)
+                            " is protected; use the owning extension API instead.")
+              :type :ext.foundation.editing/path-protected
+              :reason :path-protected
+              :intent access-intent
+              :hint first-hint
+              :loop-hint first-hint
+              :failures failures
+              :kind kind}})))
 
 (defn- path-protection-error-failure
   [op kind err]
   (let [t (now-ms)]
     (extension/failure
-      {:result nil
-       :op op
-       :metadata {:target (path->target "." kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
-       :error {:message "Protected path registry failed; refusing direct file operation."
-               :type :ext.foundation.editing/path-protection-error
-               :reason :path-protection-error
-               :hint
-               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
-               :loop-hint
-               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
-               :cause (ex-message err)}})))
+     {:result nil
+      :op op
+      :metadata {:target (path->target "." kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
+      :error {:message "Protected path registry failed; refusing direct file operation."
+              :type :ext.foundation.editing/path-protection-error
+              :reason :path-protection-error
+              :hint
+              "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+              :loop-hint
+              "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+              :cause (ex-message err)}})))
 
 (defn- path-protected-before-fn
   [op kind access-intent path-extractor]
@@ -619,25 +619,70 @@
 
                blocked
                (keep
-                 (fn [target]
-                   (when-let [rule (resolve-protected-access rules target)]
-                     (when (and (blocked-access? access-intent (:access rule))
-                                (not
-                                  (current-dir-read-ancestor-match? op access-intent target rule)))
-                       (assoc rule
-                         :target target
-                         :intent access-intent))))
-                 targets)]
+                (fn [target]
+                  (when-let [rule (resolve-protected-access rules target)]
+                    (when (and (blocked-access? access-intent (:access rule))
+                               (not
+                                (current-dir-read-ancestor-match? op access-intent target rule)))
+                      (assoc rule
+                             :target target
+                             :intent access-intent))))
+                targets)]
 
            (if (seq blocked)
              {:result (path-protected-failure op kind access-intent (vec blocked))}
              {:env env :fn f :args args}))
          (catch Throwable t {:result (path-protection-error-failure op kind t)}))))
 
+(defn- mutation-atomic?
+  "True when a write/patch args vector carries the documented `atomic` escape
+   flag - on the write opts map, or on ANY patch edit map."
+  [args]
+  (let [a (first args)]
+    (boolean (cond (map? a) (get a "atomic")
+                   (sequential? a) (some #(and (map? %) (get % "atomic")) a)
+                   :else false))))
+
+(defn- plan-required-failure
+  "Failure envelope for a write-intent op the env's `:mutation-gate` refused.
+   `refusal` is the gate's human-readable reason string."
+  [op kind paths refusal]
+  (let [t (now-ms)]
+    (extension/failure
+     {:result nil
+      :op op
+      :metadata {:target (path->target "." kind)
+                 :started-at-ms t
+                 :finished-at-ms t
+                 :duration-ms 0
+                 :paths paths}
+      :error {:message (str refusal)
+              :type :ext.foundation.editing/plan-required
+              :reason :plan-required
+              :hint (str refusal)
+              :loop-hint (str refusal)
+              :paths paths}})))
+
 (defn- plan-gated-before-fn
-  "Path-protection for write-intent ops (patch / write / move / delete)."
+  "Write-intent gate for patch / write / struct_patch. Path-protection runs
+   FIRST (owner-API refusals always win); only AFTER it clears does this
+   consult the env's OPTIONAL `:mutation-gate`. The gate receives
+   `{:op :paths :atomic?}` and returns a refusal string to short-circuit with a
+   `:plan-required` failure, or nil to pass through. No `:mutation-gate` on the
+   env = pass through unchanged (the gate is opt-in)."
   [op kind access path-extractor]
-  (path-protected-before-fn op kind access path-extractor))
+  (let [protect (path-protected-before-fn op kind access path-extractor)]
+    (fn [env f args]
+      (let [out (protect env f args)]
+        (if (contains? out :result)
+          out
+          (if-let [gate (:mutation-gate env)]
+            (let [paths (extracted-paths path-extractor args)
+                  refusal (gate {:op op :paths paths :atomic? (mutation-atomic? args)})]
+              (if (and (string? refusal) (not (str/blank? refusal)))
+                {:result (plan-required-failure op kind paths refusal)}
+                {:env env :fn f :args args}))
+            out))))))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
@@ -661,11 +706,11 @@
   [{:keys [op path kind result metadata]}]
   (let [t (now-ms)]
     (extension/success
-      {:result result
-       :op op
-       :metadata
-       (merge {:target (path->target path kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
-              metadata)})))
+     {:result result
+      :op op
+      :metadata
+      (merge {:target (path->target path kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
+             metadata)})))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
@@ -687,16 +732,16 @@
             {:message (str (name op) " interrupted while running; operation was cancelled.")})]
 
       {:result (extension/failure
-                 {:result nil
-                  :op op
-                  :metadata
-                  (cond-> {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
-                    interrupted?
-                    (assoc :interrupted?
-                      true :status
-                      :interrupted))
-                  :error error
-                  :throwable (when-not error err)})})))
+                {:result nil
+                 :op op
+                 :metadata
+                 (cond-> {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
+                   interrupted?
+                   (assoc :interrupted?
+                          true :status
+                          :interrupted))
+                 :error error
+                 :throwable (when-not error err)})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
@@ -910,8 +955,8 @@
 
         (as-> (read-file path from-line n) out
           (assoc out
-            :range [from-line to-line]
-            :anchors (patch/lines->anchors (:lines out))))))))
+                 :range [from-line to-line]
+                 :anchors (patch/lines->anchors (:lines out))))))))
 
 (defn- read-file-ranges
   "Read several inclusive 1-based line ranges from one file. Result keeps both
@@ -930,7 +975,7 @@
                       (read-file path start n)]
 
                   (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
-                    :range [start end])))
+                         :range [start end])))
               pairs)
 
         f
@@ -1308,27 +1353,27 @@
 (defn- coerce-find-spec
   [args]
   (let
-    [[a b]
-     args
+   [[a b]
+    args
 
-     spec
-     (cond
-       (and (= 1 (count args)) (string? a)) {"query" a}
-       (and (= 2 (count args)) (string? a) (map? b)) (assoc b "query" a)
-       (and (= 1 (count args)) (map? a)) a
-       :else
-       (throw
-         (ex-info
-           "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
-           {:type :ext.foundation.editing/invalid-find-args
-            :expected '([query] [query opts] [spec-map])
-            :got args})))
+    spec
+    (cond
+      (and (= 1 (count args)) (string? a)) {"query" a}
+      (and (= 2 (count args)) (string? a) (map? b)) (assoc b "query" a)
+      (and (= 1 (count args)) (map? a)) a
+      :else
+      (throw
+       (ex-info
+        "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
+        {:type :ext.foundation.editing/invalid-find-args
+         :expected '([query] [query opts] [spec-map])
+         :got args})))
 
-     allowed-keys
-     #{"query" "paths" "path" "limit" "is_hidden" "is_respect_gitignore"}
+    allowed-keys
+    #{"query" "paths" "path" "limit" "is_hidden" "is_respect_gitignore"}
 
-     unknown-keys
-     (seq (remove allowed-keys (keys spec)))]
+    unknown-keys
+    (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
       (throw (ex-info (str "find spec has unknown keys: "
@@ -1388,42 +1433,42 @@
   [roots query is_hidden is_respect_gitignore candidate-page]
   (->> roots
        (mapcat
-         (fn [^File root]
-           (cond (.isFile root) [{:path (rel-path root)
-                                  :file-name (.getName root)
-                                  :size (.length root)
-                                  :binary? false
-                                  :source :direct-file
-                                  :score 1.0}]
+        (fn [^File root]
+          (cond (.isFile root) [{:path (rel-path root)
+                                 :file-name (.getName root)
+                                 :size (.length root)
+                                 :binary? false
+                                 :source :direct-file
+                                 :score 1.0}]
                  ;; skip $HOME / filesystem roots (never indexable); other
                  ;; roots still contribute results
-                 (paths/pathological-index-root? root) nil
-                 :else
-                 (with-open [idx (rg-fff-open root)]
-                   (let [base (.getCanonicalFile root)]
+                (paths/pathological-index-root? root) nil
+                :else
+                (with-open [idx (rg-fff-open root)]
+                  (let [base (.getCanonicalFile root)]
                      ;; doall: realize hits INSIDE with-open, before the
                      ;; fresh instance is closed.
-                     (doall
-                       (->> (:items (fff/search idx {:query query :page-size candidate-page}))
-                            (keep
-                              (fn [{:keys [relative-path file-name git-status size modified
-                                           frecency-score binary?]}]
-                                (let [f (io/file base relative-path)
-                                      rel (rel-path f)
-                                      score (find-relevance query rel)]
+                    (doall
+                     (->> (:items (fff/search idx {:query query :page-size candidate-page}))
+                          (keep
+                           (fn [{:keys [relative-path file-name git-status size modified
+                                        frecency-score binary?]}]
+                             (let [f (io/file base relative-path)
+                                   rel (rel-path f)
+                                   score (find-relevance query rel)]
 
-                                  (when (and (>= score find-min-score)
-                                             (or is_hidden (not (.isHidden f)))
-                                             (or (not is_respect_gitignore)
-                                                 (not (ignored? (load-ignore-node base) f base))))
-                                    {:path rel
-                                     :file-name (or file-name (.getName f))
-                                     :size size
-                                     :modified modified
-                                     :frecency-score frecency-score
-                                     :git-status git-status
-                                     :binary? (boolean binary?)
-                                     :score score})))))))))))
+                               (when (and (>= score find-min-score)
+                                          (or is_hidden (not (.isHidden f)))
+                                          (or (not is_respect_gitignore)
+                                              (not (ignored? (load-ignore-node base) f base))))
+                                 {:path rel
+                                  :file-name (or file-name (.getName f))
+                                  :size size
+                                  :modified modified
+                                  :frecency-score frecency-score
+                                  :git-status git-status
+                                  :binary? (boolean binary?)
+                                  :score score})))))))))))
        (distinct)
        vec))
 
@@ -1498,8 +1543,8 @@
                                             (fn [cur]
                                               (-> (or cur
                                                       (assoc it
-                                                        :score 0.0
-                                                        :terms #{}))
+                                                             :score 0.0
+                                                             :terms #{}))
                                                   (update :score max (:score it))
                                                   (update :terms conj t)))))
                                   m
@@ -1568,8 +1613,8 @@
 
             (contains? it :git-status)
             (assoc "git_status"
-              (let [g (:git-status it)]
-                (if (keyword? g) (name g) g)))
+                   (let [g (:git-status it)]
+                     (if (keyword? g) (name g) g)))
 
             (contains? it :binary?)
             (assoc "binary" (boolean (:binary? it)))
@@ -1611,30 +1656,30 @@
    nothing matched."
   [& args]
   (let
-    [{:strs [query searched_paths limit item_count truncated_by] :as out}
-     (find-search args)
+   [{:strs [query searched_paths limit item_count truncated_by] :as out}
+    (find-search args)
 
      ;; A 0-result find is almost always a MISUSE: the model passed a
      ;; content/concept phrase to a FILENAME matcher. Steer it — a bare
      ;; "0 matches" just makes it retry the same wrong query (the exact loop
      ;; the user hit). Only fires on empty so a normal hit set stays lean.
-     multiword?
-     (> (count (str/split (str/trim (str query)) #"\s+")) 2)
+    multiword?
+    (> (count (str/split (str/trim (str query)) #"\s+")) 2)
 
-     out
-     (cond-> out
-       (zero? (long (or item_count 0)))
-       (assoc "hint"
-         (str
-           "No FILENAME/PATH matched \""
-           query
-           "\". find_files matches file "
-           "NAMES, not contents. "
-           (if multiword?
-             (str "That query looks like CONTENT (a phrase describing code) — "
-                  "search inside files with rg(\"a distinctive term\") instead, "
-                  "or shorten this to a single filename fragment.")
-             "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
+    out
+    (cond-> out
+      (zero? (long (or item_count 0)))
+      (assoc "hint"
+             (str
+              "No FILENAME/PATH matched \""
+              query
+              "\". find_files matches file "
+              "NAMES, not contents. "
+              (if multiword?
+                (str "That query looks like CONTENT (a phrase describing code) — "
+                     "search inside files with rg(\"a distinctive term\") instead, "
+                     "or shorten this to a single filename fragment.")
+                "Try a shorter/different filename fragment, or rg(...) to search file contents."))))]
 
     (tool-success {:op :find_files
                    :path (first searched_paths)
@@ -1833,15 +1878,15 @@
                     (cond-> {:path path :line line-no :text text}
                       want-before?
                       (assoc :before
-                        (mapv (fn [j]
-                                [(inc j) (nth lines j)])
-                              (range (max 0 (- i before-ctx)) i)))
+                             (mapv (fn [j]
+                                     [(inc j) (nth lines j)])
+                                   (range (max 0 (- i before-ctx)) i)))
 
                       want-after?
                       (assoc :after
-                        (mapv (fn [j]
-                                [(inc j) (nth lines j)])
-                              (range (inc i) (min n (+ i after-ctx 1))))))]
+                             (mapv (fn [j]
+                                     [(inc j) (nth lines j)])
+                                   (range (inc i) (min n (+ i after-ctx 1))))))]
 
                 (recur (inc i) (conj! out hit)))
               :else (recur (inc i) out))))
@@ -1989,7 +2034,7 @@
                             (swap! bytes-used + (hit-bytes hit*))
                             (cond (>= (count @out) limit) (reset! cap-reason :limit)
                                   (>= @bytes-used max-rg-result-bytes) (reset! cap-reason
-                                                                         :bytes)))))))
+                                                                               :bytes)))))))
                   {:hits (vec @out) :truncated-by (or @cap-reason :end-of-results)}))))
 
 ;; =============================================================================
@@ -2069,8 +2114,8 @@
                                       str/trim
                                       not-empty)]
               (throw (ex-info
-                       "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
-                       {:type :ext.foundation.editing/invalid-patch-edit :path stated :edit edit})))
+                      "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
+                      {:type :ext.foundation.editing/invalid-patch-edit :path stated :edit edit})))
             (cond-> (assoc edit "path" path)
               (some? expected_mtime)
               (assoc "expected_mtime" expected_mtime)
@@ -2096,51 +2141,51 @@
   [edits]
   (let [edits (normalize-patch-edits-input edits)]
     (mapv
-      (fn [edit]
-        (when-not (map? edit)
-          (throw (ex-info "patch edit must be a map"
-                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-        (let [missing (seq (remove #(contains? edit %) patch-required-keys))
-              unknown (seq (remove patch-allowed-keys (keys edit)))]
+     (fn [edit]
+       (when-not (map? edit)
+         (throw (ex-info "patch edit must be a map"
+                         {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+       (let [missing (seq (remove #(contains? edit %) patch-required-keys))
+             unknown (seq (remove patch-allowed-keys (keys edit)))]
 
-          (when missing
-            (throw (ex-info (str "patch edit missing required keys: "
-                                 (str/join ", " (map #(str "'" % "'") missing))
-                                 " — every edit needs 'from_anchor' (a lineno:hash"
-                                 " from a fresh cat) plus its replacement content.")
-                            {:type :ext.foundation.editing/invalid-patch-edit
-                             :missing (vec missing)
-                             :edit edit})))
+         (when missing
+           (throw (ex-info (str "patch edit missing required keys: "
+                                (str/join ", " (map #(str "'" % "'") missing))
+                                " — every edit needs 'from_anchor' (a lineno:hash"
+                                " from a fresh cat) plus its replacement content.")
+                           {:type :ext.foundation.editing/invalid-patch-edit
+                            :missing (vec missing)
+                            :edit edit})))
           ;; The removed text-matcher API (`search`/`nth`/grouped `edits`
           ;; carrying `search`) keeps getting re-hallucinated. Name it
           ;; explicitly so the model corrects to anchors in ONE step
           ;; instead of staring at a generic ":from_anchor missing".
-          (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
-            (throw (ex-info
-                     (str
-                       "patch is ANCHOR-ONLY — `"
-                       (str/join "`/`" legacy)
-                       "` was removed; there is no text search/replace. "
-                       "cat the file, then pass `from_anchor` (a lineno:hash from the "
-                       "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
-                     {:type :ext.foundation.editing/invalid-patch-edit
-                      :removed (vec legacy)
-                      :edit edit})))
-          (when-not (contains? edit "from_anchor")
-            (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
-                            {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-          (when unknown
-            (throw (ex-info (str "patch edit has unknown keys: "
-                                 (str/join ", " (map #(str "'" % "'") unknown))
-                                 ". Allowed: "
-                                 (str/join ", " (sort patch-allowed-keys))
-                                 ".")
-                            {:type :ext.foundation.editing/invalid-patch-edit
-                             :unknown (vec unknown)
-                             :allowed (vec patch-allowed-keys)
-                             :edit edit}))))
-        (update edit "path" str))
-      edits)))
+         (when-let [legacy (seq (filter #(contains? edit %) #{"search" "nth" "replace_all"}))]
+           (throw (ex-info
+                   (str
+                    "patch is ANCHOR-ONLY — `"
+                    (str/join "`/`" legacy)
+                    "` was removed; there is no text search/replace. "
+                    "cat the file, then pass `from_anchor` (a lineno:hash from the "
+                    "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
+                   {:type :ext.foundation.editing/invalid-patch-edit
+                    :removed (vec legacy)
+                    :edit edit})))
+         (when-not (contains? edit "from_anchor")
+           (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
+                           {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+         (when unknown
+           (throw (ex-info (str "patch edit has unknown keys: "
+                                (str/join ", " (map #(str "'" % "'") unknown))
+                                ". Allowed: "
+                                (str/join ", " (sort patch-allowed-keys))
+                                ".")
+                           {:type :ext.foundation.editing/invalid-patch-edit
+                            :unknown (vec unknown)
+                            :allowed (vec patch-allowed-keys)
+                            :edit edit}))))
+       (update edit "path" str))
+     edits)))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -2310,8 +2355,8 @@
                                       :to_anchor (or to_anchor from_anchor)}]
                       (if stale
                         (let [check (assoc base-check
-                                      :reason :stale
-                                      :stale stale)]
+                                           :reason :stale
+                                           :stale stale)]
                           (recur (inc idx)
                                  (next remaining)
                                  origs
@@ -2324,8 +2369,8 @@
                                                                   replace)]
                           (if-let [err (:error res)]
                             (let [check (assoc base-check
-                                          :reason (:reason err)
-                                          :hash-error err)]
+                                               :reason (:reason err)
+                                               :hash-error err)]
                               (recur (inc idx)
                                      (next remaining)
                                      origs
@@ -2339,8 +2384,8 @@
                                         :path rel
                                         :edit-index idx}
                                   check (assoc base-check
-                                          :pass :hashline
-                                          :applied-positions [(:applied-line res)])]
+                                               :pass :hashline
+                                               :applied-positions [(:applied-line res)])]
 
                               (recur (inc idx)
                                      (next remaining)
@@ -2403,90 +2448,90 @@
   ;; anchor-resolution `reason`s and would otherwise flatten it to "edit N in P
   ;; failed." (the exact wrong report this guards against).
   (or
-    message
-    (:message path-error)
-    (let [head (str "edit " edit-index " in " path)]
-      (case reason
-        :hashline-malformed
-        (str head
-             " failed: " (name (:which hash-error))
-             "_anchor " (pr-str (:anchor hash-error))
-             " is not a `lineno:hash` anchor"
-             " - every :from_anchor needs BOTH the line number AND the hash"
-             " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor" " cat printed.")
+   message
+   (:message path-error)
+   (let [head (str "edit " edit-index " in " path)]
+     (case reason
+       :hashline-malformed
+       (str head
+            " failed: " (name (:which hash-error))
+            "_anchor " (pr-str (:anchor hash-error))
+            " is not a `lineno:hash` anchor"
+            " - every :from_anchor needs BOTH the line number AND the hash"
+            " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor" " cat printed.")
 
-        :hashline-line-out-of-range
-        (str head
-             " failed: " (name (:which hash-error))
-             "_anchor line " (:line hash-error)
-             " is outside the file (it has " (:lines hash-error)
-             " lines). Re-read with cat for fresh" " `lineno:hash` anchors, then resend the batch.")
+       :hashline-line-out-of-range
+       (str head
+            " failed: " (name (:which hash-error))
+            "_anchor line " (:line hash-error)
+            " is outside the file (it has " (:lines hash-error)
+            " lines). Re-read with cat for fresh" " `lineno:hash` anchors, then resend the batch.")
 
-        :hashline-not-found
-        (str head
-             " failed: " (name (:which hash-error))
-             "_anchor hash " (pr-str (:hash hash-error))
-             " matches no line in the current file"
-             " (that line changed or the file moved — anchors go STALE after"
-             " any write/patch)."
-             (if-let [ca (:current-anchor hash-error)]
-               (str " Line " (:stated-line hash-error)
-                    " is NOW `" ca
-                    "`" (when-let [t (:current-text hash-error)]
-                          (str " = "
-                               (pr-str (cond-> (str t)
-                                         (> (count (str t)) 80)
-                                         (-> (subs 0 80)
-                                             (str " …"))))))
-                    ". Use that anchor if it's still your target; otherwise re-`cat`"
-                    " the exact lines for fresh :anchors, then resend the batch.")
-               (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
-                    " then resend the batch.")))
+       :hashline-not-found
+       (str head
+            " failed: " (name (:which hash-error))
+            "_anchor hash " (pr-str (:hash hash-error))
+            " matches no line in the current file"
+            " (that line changed or the file moved — anchors go STALE after"
+            " any write/patch)."
+            (if-let [ca (:current-anchor hash-error)]
+              (str " Line " (:stated-line hash-error)
+                   " is NOW `" ca
+                   "`" (when-let [t (:current-text hash-error)]
+                         (str " = "
+                              (pr-str (cond-> (str t)
+                                        (> (count (str t)) 80)
+                                        (-> (subs 0 80)
+                                            (str " …"))))))
+                   ". Use that anchor if it's still your target; otherwise re-`cat`"
+                   " the exact lines for fresh :anchors, then resend the batch.")
+              (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
+                   " then resend the batch.")))
 
-        :hashline-misplaced
-        (str head
-             " failed: "
-             (name (:which hash-error))
-             "_anchor "
-             (pr-str (:hash hash-error))
-             " says line "
-             (:stated-line hash-error)
-             " but that content is at line(s) "
-             (pr-str (:found-lines hash-error))
-             " — too far to be drift, so this looks like a stale/misattributed"
-             " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
-             " editing (this guard is what stops an edit landing on the wrong line).")
+       :hashline-misplaced
+       (str head
+            " failed: "
+            (name (:which hash-error))
+            "_anchor "
+            (pr-str (:hash hash-error))
+            " says line "
+            (:stated-line hash-error)
+            " but that content is at line(s) "
+            (pr-str (:found-lines hash-error))
+            " — too far to be drift, so this looks like a stale/misattributed"
+            " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
+            " editing (this guard is what stops an edit landing on the wrong line).")
 
-        :overlapping-edits
-        (str head
-             " failed: this edit's target overlaps another edit"
-             " in the same file — two edits touch the same lines. Merge"
-             " them into ONE edit, or split into separate patch calls.")
+       :overlapping-edits
+       (str head
+            " failed: this edit's target overlaps another edit"
+            " in the same file — two edits touch the same lines. Merge"
+            " them into ONE edit, or split into separate patch calls.")
 
-        :hashline-range-inverted
-        (str head
-             " failed: :to_anchor line "
-             (:to-line hash-error)
-             " precedes :from_anchor line "
-             (:from-line hash-error)
-             ".")
+       :hashline-range-inverted
+       (str head
+            " failed: :to_anchor line "
+            (:to-line hash-error)
+            " precedes :from_anchor line "
+            (:from-line hash-error)
+            ".")
 
-        :stale
-        (str head
-             " failed: file changed since :expected-"
-             (name (:reason stale))
-             " check (expected "
-             (or (:expected_mtime stale) (:expected_size stale))
-             ", actual "
-             (or (:actual-mtime stale) (:actual-size stale))
-             "). Re-read the file before retrying.")
+       :stale
+       (str head
+            " failed: file changed since :expected-"
+            (name (:reason stale))
+            " check (expected "
+            (or (:expected_mtime stale) (:expected_size stale))
+            ", actual "
+            (or (:actual-mtime stale) (:actual-size stale))
+            "). Re-read the file before retrying.")
 
-        :missing-anchor
-        (str head
-             " failed: no :from_anchor — patch is anchor-only."
-             " Re-read with cat and use the `lineno:hash` anchor it prints.")
+       :missing-anchor
+       (str head
+            " failed: no :from_anchor — patch is anchor-only."
+            " Re-read with cat and use the `lineno:hash` anchor it prints.")
 
-        (str head " failed.")))))
+       (str head " failed.")))))
 
 (defn- patch-failure-message
   [failures]
@@ -2494,8 +2539,8 @@
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
   ;; must not assume a partial application and must not re-read to \"repair\" it.
   (let
-    [atomic
-     "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
+   [atomic
+    "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
       ;; Show EVERY failing edit, not just the first — reporting only `first:`
@@ -2847,13 +2892,13 @@
           (let [n (bump-patch-fail-count! file)]
             {:success? false
              :failures [(cond-> (assoc fail
-                                  :edit-index 0
-                                  :path rel)
+                                       :edit-index 0
+                                       :path rel)
                           n
                           (assoc :consecutive-failures n))]
              :checks [(assoc fail
-                        :edit-index 0
-                        :path rel)]
+                             :edit-index 0
+                             :path rel)]
              :loop-hint (patch-loop-hint n rel)
              :message (cond-> (:message fail)
                         (>= n patch-fail-loop-threshold)
@@ -3037,9 +3082,9 @@
                                  :range (:range out)}}))
 
      (throw
-       (ex-info
-         "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
-         {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
+      (ex-info
+       "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
+       {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
   ([path mode start end]
    (case mode
      ;; (cat path :range start end) — INCLUSIVE start..end (both 1-based).
@@ -3153,12 +3198,12 @@
           (and (= 1 (count args)) (query-arg? a)) {"query" (->query a)}
           ;; rg("x", {opts}) — query + an options MAP.
           (and (= 2 (count args)) (query-arg? a) (map? (first more))) (assoc (first more)
-                                                                        "query" (->query a))
+                                                                             "query" (->query a))
           :else (throw (ex-info
-                         "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
-                         {:type :ext.foundation.editing/invalid-rg-arity
-                          :expected '([query] [query opts] [spec-map])
-                          :got args})))
+                        "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
+                        {:type :ext.foundation.editing/invalid-rg-arity
+                         :expected '([query] [query opts] [spec-map])
+                         :got args})))
 
         {:keys [needles paths include is_files_only context limit]}
         (coerce-rg-spec spec)
@@ -3228,19 +3273,19 @@
                   mm)]
 
             (assoc shared
-              "matches" matches
-              "hit_count" (count hits)
-              "file_count" (count ordered-paths)
-              "first_hit" (when (pos? (count hits))
-                            (let [{:keys [path line]} (nth hits 0)]
-                              (str path ":" line)))
-              "context" (when (pos? context) {"before" context "after" context})))
+                   "matches" matches
+                   "hit_count" (count hits)
+                   "file_count" (count ordered-paths)
+                   "first_hit" (when (pos? (count hits))
+                                 (let [{:keys [path line]} (nth hits 0)]
+                                   (str path ":" line)))
+                   "context" (when (pos? context) {"before" context "after" context})))
 
           :files-only
           (let [files (vec (:files out))]
             (assoc shared
-              "files" files
-              "file_count" (count files))))]
+                   "files" files
+                   "file_count" (count files))))]
 
     (tool-success {:op :rg
                    :path (if (= 1 (count paths)) (first paths) ".")
@@ -3497,30 +3542,30 @@
       ;; model can read them as plain map keys (no try/catch needed).
       (let [first-failure (first (:failures result))]
         (extension/failure
-          {:result nil
-           :op :patch
-           :metadata (cond-> {:target {:requested (str (or (:path first-failure) "."))
-                                       :resolved nil
-                                       :absolute nil
-                                       :kind :file}
-                              :mode :exact-replace
-                              :started-at-ms (now-ms)
-                              :finished-at-ms (now-ms)
-                              :duration-ms 0}
+         {:result nil
+          :op :patch
+          :metadata (cond-> {:target {:requested (str (or (:path first-failure) "."))
+                                      :resolved nil
+                                      :absolute nil
+                                      :kind :file}
+                             :mode :exact-replace
+                             :started-at-ms (now-ms)
+                             :finished-at-ms (now-ms)
+                             :duration-ms 0}
                        ;; Whole-batch candidates on a SYNTAX refusal — metadata
                        ;; only (the model-facing throw carries `:error` alone),
                        ;; so a language pack's :around op-hook can whole-source-
                        ;; repair the broken files and commit the batch itself.
-                       (:candidate-plans result)
-                       (assoc :candidate-plans
-                         (:candidate-plans result) :broken-paths
-                         (:broken-paths result)))
-           :error {:message (:message result)
-                   :reason (:reason first-failure)
-                   :failures (:failures result)
-                   :checks (:checks result)
-                   :loop-hint (:loop-hint result)
-                   :mode :exact-replace}})))))
+                      (:candidate-plans result)
+                      (assoc :candidate-plans
+                             (:candidate-plans result) :broken-paths
+                             (:broken-paths result)))
+          :error {:message (:message result)
+                  :reason (:reason first-failure)
+                  :failures (:failures result)
+                  :checks (:checks result)
+                  :loop-hint (:loop-hint result)
+                  :mode :exact-replace}})))))
 
 (defn- normalize-write-args
   "Accept write args EITHER as a single options map
@@ -3573,22 +3618,22 @@
                                   :file-befores [(select-keys plan [:path :before])]}}))
       (let [first-failure (first (:failures result))]
         (extension/failure
-          {:result nil
-           :op :write
-           :metadata {:target {:requested (str (or (:path first-failure) (:path args) "."))
-                               :resolved nil
-                               :absolute nil
-                               :kind :file}
-                      :mode :write
-                      :started-at-ms (now-ms)
-                      :finished-at-ms (now-ms)
-                      :duration-ms 0}
-           :error {:message (:message result)
-                   :reason (:reason first-failure)
-                   :failures (:failures result)
-                   :checks (:checks result)
-                   :loop-hint (:loop-hint result)
-                   :mode :write}})))))
+         {:result nil
+          :op :write
+          :metadata {:target {:requested (str (or (:path first-failure) (:path args) "."))
+                              :resolved nil
+                              :absolute nil
+                              :kind :file}
+                     :mode :write
+                     :started-at-ms (now-ms)
+                     :finished-at-ms (now-ms)
+                     :duration-ms 0}
+          :error {:message (:message result)
+                  :reason (:reason first-failure)
+                  :failures (:failures result)
+                  :checks (:checks result)
+                  :loop-hint (:loop-hint result)
+                  :mode :write}})))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Returns the canonical foundation map shape so the
@@ -4101,7 +4146,7 @@
                                                          [(str "  used: "
                                                                (str/join ", "
                                                                          (map #(rg-anchor-lineno
-                                                                                 (get % "anchor"))
+                                                                                (get % "anchor"))
                                                                               us)))])))
                                      "\n```"))))))}))
 
@@ -4253,185 +4298,185 @@
 
 (def cat-symbol
   (vis/symbol
-    #'cat-tool
-    {:symbol 'cat
-     :native-tool? true
+   #'cat-tool
+   {:symbol 'cat
+    :native-tool? true
      ;; cat(path, {opts}) — path positional, the rest a Python options dict.
-     :call {:pos ["path"] :rest :opt}
-     :description (str
-                    "Read a file and get back its content as anchored lines "
-                    "(`lineno:hash` keys you can patch against). Optional slice: `range` "
-                    "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
-                    "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
-                    "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
-                    "tiny slices you then re-read.")
-     :render render-cat-result
-     :color-role :tool-color/read
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string"
-               :description "File path (relative to a filesystem root or absolute under one)."}
-       "range" {:type "array"
-                :items {:type "integer"}
-                :description "Optional [start,end] line range (1-based, inclusive)."}
-       "ranges" {:type "array"
-                 :items {:type "array" :items {:type "integer"}}
-                 :description "Optional several [[s,e],…] windows in one call."}
-       "anchor"
-       {:description
-        "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
-       "tail" {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
-      :required ["path"]}
-     :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :cat :file nil)}))
+    :call {:pos ["path"] :rest :opt}
+    :description (str
+                  "Read a file and get back its content as anchored lines "
+                  "(`lineno:hash` keys you can patch against). Optional slice: `range` "
+                  "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
+                  "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
+                  "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
+                  "tiny slices you then re-read.")
+    :render render-cat-result
+    :color-role :tool-color/read
+    :schema
+    {:type "object"
+     :properties
+     {"path" {:type "string"
+              :description "File path (relative to a filesystem root or absolute under one)."}
+      "range" {:type "array"
+               :items {:type "integer"}
+               :description "Optional [start,end] line range (1-based, inclusive)."}
+      "ranges" {:type "array"
+                :items {:type "array" :items {:type "integer"}}
+                :description "Optional several [[s,e],…] windows in one call."}
+      "anchor"
+      {:description
+       "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
+      "tail" {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
+     :required ["path"]}
+    :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
+    :tag :observation
+    :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
 (def ls-symbol
   (vis/symbol
-    #'ls-tool
-    {:symbol 'ls
-     :native-tool? true
+   #'ls-tool
+   {:symbol 'ls
+    :native-tool? true
      ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
      ;; opts are present force a leading path (default "."). Escape hatch:
      ;; returns RAW arg values (the engine renders them).
-     :call (fn [input]
-             (let [path
-                   (get input "path")
+    :call (fn [input]
+            (let [path
+                  (get input "path")
 
-                   opts
-                   (dissoc input "path")]
+                  opts
+                  (dissoc input "path")]
 
-               (if (seq opts) {:args [(or path ".") opts]} {:args (if path [path] [])})))
-     :description (str
-                    "List the entries of a directory `path` (default: the workspace root), grouped "
-                    "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
-                    "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
-     :render render-ls-result
-     :color-role :tool-color/read
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string" :description "Directory to list (default workspace root)."}
-       "depth" {:type "integer" :description "Recursion depth (default shallow)."}
-       "limit" {:type "integer" :description "Max entries before truncation (default 3000)."}
-       "is_files_only" {:type "boolean" :description "List only files."}
-       "is_dirs_only" {:type "boolean" :description "List only directories."}
-       "is_hidden" {:type "boolean" :description "Include dotfiles."}
-       "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
-      :required []}
-     :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :ls :dir nil)}))
+              (if (seq opts) {:args [(or path ".") opts]} {:args (if path [path] [])})))
+    :description (str
+                  "List the entries of a directory `path` (default: the workspace root), grouped "
+                  "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
+                  "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
+    :render render-ls-result
+    :color-role :tool-color/read
+    :schema
+    {:type "object"
+     :properties
+     {"path" {:type "string" :description "Directory to list (default workspace root)."}
+      "depth" {:type "integer" :description "Recursion depth (default shallow)."}
+      "limit" {:type "integer" :description "Max entries before truncation (default 3000)."}
+      "is_files_only" {:type "boolean" :description "List only files."}
+      "is_dirs_only" {:type "boolean" :description "List only directories."}
+      "is_hidden" {:type "boolean" :description "Include dotfiles."}
+      "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
+     :required []}
+    :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
+    :tag :observation
+    :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def find-symbol
   (vis/symbol
-    #'find-tool
-    {:symbol 'find_files
-     :native-tool? true
-     :description
-     (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
-          "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
-          "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
-          "the likely ones. Scope with `paths`.")
-     :render render-find-result
-     :color-role :tool-color/search
-     :schema
-     {:type "object"
-      :properties
-      {"query" {:type "string"
-                :description
-                "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
-       "paths"
-       {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
-      :required ["query"]}
-     :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
+   #'find-tool
+   {:symbol 'find_files
+    :native-tool? true
+    :description
+    (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
+         "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
+         "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
+         "the likely ones. Scope with `paths`.")
+    :render render-find-result
+    :color-role :tool-color/search
+    :schema
+    {:type "object"
+     :properties
+     {"query" {:type "string"
+               :description
+               "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
+      "paths"
+      {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
+     :required ["query"]}
+    :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
+    :tag :observation
+    :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
 
 (def rg-symbol
   (vis/symbol
-    #'rg-tool
-    {:symbol 'rg
-     :native-tool? true
-     :description
-     (str "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
-          "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
-          "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
-          "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
-          "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
-          "returns just the files that contain a match. No regex / no AND — filter the "
-          "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
-          "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
-     :render render-rg-result
-     :color-role :tool-color/search
-     :schema
-     {:type "object"
-      :properties
-      {"query"
-       {:type "array"
-        :items {:type "string"}
-        :description
-        "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
-       "paths" {:type "array"
-                :items {:type "string"}
-                :description "Restrict to these paths (default the whole tree)."}
-       "include" {:type "array"
-                  :items {:type "string"}
-                  :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
-       "context" {:type "integer" :description "Lines of context around each match."}
-       "is_files_only" {:type "boolean"
-                        :description
-                        "Return just the distinct files that contain a match, no per-line hits."}}
-      :required ["query"]}
-     :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :rg :dir nil)}))
+   #'rg-tool
+   {:symbol 'rg
+    :native-tool? true
+    :description
+    (str "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
+         "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
+         "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
+         "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
+         "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
+         "returns just the files that contain a match. No regex / no AND — filter the "
+         "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
+         "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
+    :render render-rg-result
+    :color-role :tool-color/search
+    :schema
+    {:type "object"
+     :properties
+     {"query"
+      {:type "array"
+       :items {:type "string"}
+       :description
+       "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
+      "paths" {:type "array"
+               :items {:type "string"}
+               :description "Restrict to these paths (default the whole tree)."}
+      "include" {:type "array"
+                 :items {:type "string"}
+                 :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
+      "context" {:type "integer" :description "Lines of context around each match."}
+      "is_files_only" {:type "boolean"
+                       :description
+                       "Return just the distinct files that contain a match, no per-line hits."}}
+     :required ["query"]}
+    :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
+    :tag :observation
+    :on-error-fn (tool-failure-on-error :rg :dir nil)}))
 
 (def patch-symbol
   (vis/symbol
-    #'patch-tool
-    {:symbol 'patch
-     :native-tool? true
+   #'patch-tool
+   {:symbol 'patch
+    :native-tool? true
      ;; patch(edits) OR patch({path, edits}) — carry a single-file top-level
      ;; `path` through so the {path, edits} form isn't dropped. One positional
      ;; arg either way. Escape hatch: returns the RAW value (engine renders).
-     :call (fn [input]
-             (if-let [p (get input "path")]
-               {:args [{"path" p "edits" (get input "edits")}]}
-               {:args [(get input "edits")]}))
-     :description (str
-                    "Apply anchored edits. Each edit anchors to a `from_anchor` "
-                    "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
-                    "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-                    "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
-                    "SINGLE FILE: set top-level `path` and give each edit just "
-                    "{from_anchor, replace[, to_anchor]} (they inherit the path). "
-                    "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
-     :render render-patch-result
-     :color-role :tool-color/edit
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string"
-               :description
-               "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
-       "edits"
-       {:type "array"
-        :description
-        "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
-        :items {:type "object"
-                :properties
-                {"path" {:type "string"
-                         :description "File path (omit when top-level `path` is set)."}
-                 "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
-                 "to_anchor" {:type "string" :description "Optional end anchor for a span."}
-                 "replace" {:type "string" :description "Replacement text."}}
-                :required ["from_anchor" "replace"]}}}
-      :required ["edits"]}
-     :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :patch :file nil)}))
+    :call (fn [input]
+            (if-let [p (get input "path")]
+              {:args [{"path" p "edits" (get input "edits")}]}
+              {:args [(get input "edits")]}))
+    :description (str
+                  "Apply anchored edits. Each edit anchors to a `from_anchor` "
+                  "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
+                  "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
+                  "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
+                  "SINGLE FILE: set top-level `path` and give each edit just "
+                  "{from_anchor, replace[, to_anchor]} (they inherit the path). "
+                  "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
+    :render render-patch-result
+    :color-role :tool-color/edit
+    :schema
+    {:type "object"
+     :properties
+     {"path" {:type "string"
+              :description
+              "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
+      "edits"
+      {:type "array"
+       :description
+       "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
+       :items {:type "object"
+               :properties
+               {"path" {:type "string"
+                        :description "File path (omit when top-level `path` is set)."}
+                "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
+                "to_anchor" {:type "string" :description "Optional end anchor for a span."}
+                "replace" {:type "string" :description "Replacement text."}}
+               :required ["from_anchor" "replace"]}}}
+     :required ["edits"]}
+    :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
 (def write-symbol
   ;; write reuses the patch channel renderer because its `:result`
@@ -4603,54 +4648,54 @@
                                   :op (:op plan)
                                   :file-befores [(select-keys plan [:path :before])]}}))
       (extension/failure
-        {:result nil
-         :op :struct_patch
-         :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
-                    :mode :struct_patch}
-         :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
+       {:result nil
+        :op :struct_patch
+        :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
+                   :mode :struct_patch}
+        :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
 
 (def struct-patch-symbol
   (vis/symbol
-    #'struct-patch-tool
-    {:symbol 'struct_patch
-     :native-tool? true
-     :active-fn structural-supported?
-     :description (str
-                    "Structural edit via tree-sitter (every language): locate a node by NAME "
-                    "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
-                    "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
-                    "for code. ops by name: replace | insert_before | insert_after | append | "
-                    "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
-                    "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
-                    "replace | insert_before | insert_after | append_child | prepend_child. "
-                    "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
-     :render render-patch-result
-     :color-role :tool-color/edit
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string" :description "File to edit."}
-       "op"
-       {:type "string"
-        :description
-        "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
-       "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
-       "code" {:type "string"
-               :description "Replacement/insertion source (or the new name for rename)."}
-       "kind" {:type "string"
-               :description "function/class/method/… — disambiguates same-named defs."}
-       "match" {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
-       "anchor" {:type "string"
-                 :description "For move_before/move_after: the def to relocate next to."}
-       "at" {:type "array"
-             :items {:type "integer"}
-             :description "Named-child index path from sexpr(path) (path-based ops)."}
-       "nav" {:type "array"
-              :description "Relative zipper moves applied after `at` (strings or maps)."}}
-      :required ["path"]}
-     :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
+   #'struct-patch-tool
+   {:symbol 'struct_patch
+    :native-tool? true
+    :active-fn structural-supported?
+    :description (str
+                  "Structural edit via tree-sitter (every language): locate a node by NAME "
+                  "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
+                  "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
+                  "for code. ops by name: replace | insert_before | insert_after | append | "
+                  "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
+                  "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
+                  "replace | insert_before | insert_after | append_child | prepend_child. "
+                  "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
+    :render render-patch-result
+    :color-role :tool-color/edit
+    :schema
+    {:type "object"
+     :properties
+     {"path" {:type "string" :description "File to edit."}
+      "op"
+      {:type "string"
+       :description
+       "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
+      "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
+      "code" {:type "string"
+              :description "Replacement/insertion source (or the new name for rename)."}
+      "kind" {:type "string"
+              :description "function/class/method/… — disambiguates same-named defs."}
+      "match" {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
+      "anchor" {:type "string"
+                :description "For move_before/move_after: the def to relocate next to."}
+      "at" {:type "array"
+            :items {:type "integer"}
+            :description "Named-child index path from sexpr(path) (path-based ops)."}
+      "nav" {:type "array"
+             :description "Relative zipper moves applied after `at` (strings or maps)."}}
+     :required ["path"]}
+    :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
 
 ;; -----------------------------------------------------------------------------
 ;; Structural ZIPPER — a language-neutral node cursor (tree-sitter), the synergy
@@ -4733,7 +4778,7 @@
                          :path path
                          :kind :file
                          :result (assoc (zip-shape r)
-                                   "can" (zipper/moves-available lang source at))}))))))
+                                        "can" (zipper/moves-available lang source at))}))))))
 
 (def sexpr-symbol
   (vis/symbol #'sexpr-tool
@@ -4780,12 +4825,12 @@
   (cond-> {"anchor" (:anchor o)}
     (:is-definition o)
     (assoc "is_definition"
-      true "kind"
-      (:kind o) "visibility"
-      (:visibility o) "signature"
-      (:signature o) "doc"
-      (:doc o) "end_anchor"
-      (:end-anchor o))))
+           true "kind"
+           (:kind o) "visibility"
+           (:visibility o) "signature"
+           (:signature o) "doc"
+           (:doc o) "end_anchor"
+           (:end-anchor o))))
 
 (defn- occurrences-tool
   "Every OCCURRENCE of an identifier across the project (or within `paths`), via
@@ -4813,9 +4858,9 @@
               (and (= 1 (count args)) (map? a)) a
               (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) "name" a)
               :else (throw
-                      (ex-info
-                        "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
-                        {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
+                     (ex-info
+                      "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
+                      {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
 
         name
         (get spec "name")
@@ -4943,9 +4988,9 @@
                          (if (seq hits)
                            (let [renamed
                                  (structural/edit-source
-                                   path
-                                   src
-                                   {:op :rename :target name :kind nil :code new_name :match nil})]
+                                  path
+                                  src
+                                  {:op :rename :target name :kind nil :code new_name :match nil})]
                              (write-safe {"path" path "content" renamed "allow_dirty" true})
                              (update acc :changed conj path))
                            acc))
@@ -4990,61 +5035,61 @@
 
 (def create-dirs-symbol
   (vis/symbol
-    #'create-dirs-tool
-    {:symbol 'create-dirs
-     :native-tool? true
-     :call {:pos ["path"]}
-     :name "create_dirs"
-     :description
-     "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
-     :render render-create-dirs-result
-     :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Directory path to create."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
+   #'create-dirs-tool
+   {:symbol 'create-dirs
+    :native-tool? true
+    :call {:pos ["path"]}
+    :name "create_dirs"
+    :description
+    "Ensure a directory exists (creating parents), confined to filesystem roots. Returns {`path`, `created`, `already_existed`}."
+    :render render-create-dirs-result
+    :color-role :tool-color/edit
+    :schema {:type "object"
+             :properties {"path" {:type "string" :description "Directory path to create."}}
+             :required ["path"]}
+    :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
 
 (def copy-symbol
   (vis/symbol
-    #'copy-tool
-    {:symbol 'copy
-     :native-tool? true
+   #'copy-tool
+   {:symbol 'copy
+    :native-tool? true
      ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
-     :call {:pos ["src" "dest"] :rest :opt}
-     :description
-     "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
-     :render render-copy-result
-     :color-role :tool-color/move
-     :schema {:type "object"
-              :properties {"src" {:type "string" :description "Source path."}
-                           "dest" {:type "string" :description "Destination path."}
-                           "is_overwrite" {:type "boolean"
-                                           :description
-                                           "Overwrite an existing dest (default false)."}}
-              :required ["src" "dest"]}
-     :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :copy :path nil)}))
+    :call {:pos ["src" "dest"] :rest :opt}
+    :description
+    "Copy a file or directory from `src` to `dest` (confined to filesystem roots). Without is_overwrite an existing dest fails."
+    :render render-copy-result
+    :color-role :tool-color/move
+    :schema {:type "object"
+             :properties {"src" {:type "string" :description "Source path."}
+                          "dest" {:type "string" :description "Destination path."}
+                          "is_overwrite" {:type "boolean"
+                                          :description
+                                          "Overwrite an existing dest (default false)."}}
+             :required ["src" "dest"]}
+    :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
 (def move-symbol
   (vis/symbol
-    #'move-tool
-    {:symbol 'move
-     :native-tool? true
-     :call {:pos ["src" "dest"]}
-     :description
-     "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
-     :render render-move-result
-     :color-role :tool-color/move
-     :schema {:type "object"
-              :properties {"src" {:type "string" :description "Source path."}
-                           "dest" {:type "string" :description "Destination path."}}
-              :required ["src" "dest"]}
-     :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :move :path nil)}))
+   #'move-tool
+   {:symbol 'move
+    :native-tool? true
+    :call {:pos ["src" "dest"]}
+    :description
+    "Move/rename a file or directory from `src` to `dest` (confined to filesystem roots)."
+    :render render-move-result
+    :color-role :tool-color/move
+    :schema {:type "object"
+             :properties {"src" {:type "string" :description "Source path."}
+                          "dest" {:type "string" :description "Destination path."}}
+             :required ["src" "dest"]}
+    :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :move :path nil)}))
 
 (def delete-symbol
   (vis/symbol #'delete-tool
@@ -5063,21 +5108,21 @@
 
 (def delete-if-exists-symbol
   (vis/symbol
-    #'delete-if-exists-tool
-    {:symbol 'delete-if-exists
-     :native-tool? true
-     :call {:pos ["path"]}
-     :name "delete_if_exists"
-     :description
-     "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
-     :render render-delete-result
-     :color-role :tool-color/delete
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to delete if present."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
+   #'delete-if-exists-tool
+   {:symbol 'delete-if-exists
+    :native-tool? true
+    :call {:pos ["path"]}
+    :name "delete_if_exists"
+    :description
+    "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
+    :render render-delete-result
+    :color-role :tool-color/delete
+    :schema {:type "object"
+             :properties {"path" {:type "string" :description "Path to delete if present."}}
+             :required ["path"]}
+    :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
+    :tag :mutation
+    :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
 (def file-exists-symbol
   (vis/symbol #'exists-tool
@@ -5141,47 +5186,47 @@
         (project-languages-line)]
 
     (str/join
-      "\n"
-      (concat
-        (keep
-          identity
-          [lang-line
-           (str
-             "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
-             (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
-             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only.")
-           ""])
-        (if struct?
-          ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
-           "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
-           "  λ inspect:"
-           "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
-           "    body(symbol)  → cat(path, {\"anchor\": [outline_anchor, outline_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
-           "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
-           "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
-           "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
-           "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
-           "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
-           "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
-           "    new_file      → write(path, content)"
-           "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
-           "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
-           "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."]
+     "\n"
+     (concat
+      (keep
+       identity
+       [lang-line
+        (str
+         "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
+         (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
+         ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only.")
+        ""])
+      (if struct?
+        ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
+         "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
+         "  λ inspect:"
+         "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
+         "    body(symbol)  → cat(path, {\"anchor\": [outline_anchor, outline_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
+         "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
+         "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
+         "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
+         "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
+         "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
+         "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
+         "    new_file      → write(path, content)"
+         "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
+         "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
+         "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."]
           ;; No structurally-supported code in this project → anchor-based editing only.
-          ["EDIT (no tree-sitter language detected here — structural editors are OFF):"
-           "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # anchor-only, atomic, re-parsed for known formats  (span: add \"to_anchor\"; delete: replace \"\")"
-           "    new_file      → write(path, content)"
-           "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
-        [""
-         "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
-         "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
-         "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
-         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
-         "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
-         "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
-        (when struct?
-          ["  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."])
-        ["" "INVARIANTS" "  - Paths stay inside the workspace root."]))))
+        ["EDIT (no tree-sitter language detected here — structural editors are OFF):"
+         "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # anchor-only, atomic, re-parsed for known formats  (span: add \"to_anchor\"; delete: replace \"\")"
+         "    new_file      → write(path, content)"
+         "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
+      [""
+       "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
+       "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
+       "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
+       "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
+       "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
+       "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
+      (when struct?
+        ["  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."])
+      ["" "INVARIANTS" "  - Paths stay inside the workspace root."]))))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. A `delay` so the language/env
