@@ -69,6 +69,19 @@
 (defn- parse-args [s]
   (vec (remove str/blank? (str/split (str s) #"\s+"))))
 
+(defn- parse-env
+  "Parse a textarea of `KEY=VALUE` lines into a `{\"KEY\" \"VALUE\"}` map.
+   Blank lines and lines without `=` are ignored; keys/values are trimmed."
+  [s]
+  (into {}
+    (keep (fn [line]
+            (let [line (str/trim line)]
+              (when-let [i (and (seq line) (str/index-of line "="))]
+                (let [k (str/trim (subs line 0 i))]
+                  (when (seq k)
+                    [k (str/trim (subs line (inc i)))]))))))
+    (str/split-lines (str s))))
+
 (defn- add-configured-server!
   [name spec]
   (let [server (some-> name str str/trim not-empty)
@@ -81,7 +94,7 @@
     server))
 
 (defn- add-stdio-server!
-  [{:keys [name command args cwd]}]
+  [{:keys [name command args cwd env]}]
   (let [cmd (some-> command str str/trim not-empty)]
     (when-not cmd
       (throw (ex-info "Command is required for a local MCP server" {:type :mcp/config})))
@@ -89,18 +102,22 @@
       (cond-> {:transport :stdio
                :command cmd
                :args (parse-args args)}
-        (some-> cwd str str/trim not-empty) (assoc :cwd (str/trim cwd))))))
+        (some-> cwd str str/trim not-empty) (assoc :cwd (str/trim cwd))
+        (seq (parse-env env))              (assoc :env (parse-env env))))))
 
 (defn- add-http-server!
-  [{:keys [name url authorization]}]
-  (let [u (some-> url str str/trim not-empty)]
+  [{:keys [name url authorization token]}]
+  (let [u    (some-> url str str/trim not-empty)
+        ;; A bare `token` is the friendly path — sent as `Bearer <token>`.
+        ;; A full `authorization` header value (any scheme) still wins if given.
+        auth (or (some-> authorization str str/trim not-empty)
+               (some-> token str str/trim not-empty (->> (str "Bearer "))))]
     (when-not u
       (throw (ex-info "URL is required for a remote MCP server" {:type :mcp/config})))
     (add-configured-server! name
       (cond-> {:transport :http
                :url u}
-        (some-> authorization str str/trim not-empty)
-        (assoc :headers {"Authorization" (str/trim authorization)})))))
+        auth (assoc :headers {"Authorization" auth})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Live connections, partitioned by session: { session-id { server conn } }
@@ -418,7 +435,7 @@
      :ext/ctx-fn            contribute
      :ext/startable-resources
      [{:kind          :mcp-configured
-       :label         "configured MCP client"
+       :label         "Connect configured MCP"
        :options-label "client"
        ;; Only when MCP is ON *and* there's at least one configured server to
        ;; connect to — an empty "connect to configured client" row is noise.
@@ -428,22 +445,35 @@
                         (let [session (:session-id env)
                               names   (if (sequential? selected) selected [selected])]
                           (doseq [s names :when s] (connect-server! session (str s)))))}
-      {:kind     :mcp-stdio
-       :label    "local command MCP client"
+      {:kind       :mcp-stdio
+       :label      "MCP server"
+       ;; Grouped with :mcp-http under one "MCP server" row; the web shows a
+       ;; Local/Remote transport chooser that swaps between the two variants.
+       :group      "MCP server"
+       :variant    {:id "local" :label "Local"
+                    :hint "Runs a command on this machine (stdio)"}
        :visible-fn mcp-enabled?
-       :fields   [{:name :name :label "Client name" :placeholder "filesystem" :required true}
+       :fields   [{:name :name :label "Name" :placeholder "filesystem" :required true}
                   {:name :command :label "Command" :placeholder "npx" :required true}
                   {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
-                  {:name :cwd :label "Working directory" :placeholder "optional"}]
+                  {:name :env :label "Environment" :type :textarea
+                   :placeholder "KEY=VALUE (one per line)"
+                   :hint "secrets like GITHUB_TOKEN=… — stored in config.edn"}
+                  {:name :cwd :label "Directory" :placeholder "optional"}]
        :start-fn (fn [env fields]
                    (let [server (add-stdio-server! fields)]
                      (connect-server! (:session-id env) server)))}
-      {:kind     :mcp-http
-       :label    "remote HTTP MCP client"
+      {:kind       :mcp-http
+       :label      "MCP server"
+       :group      "MCP server"
+       :variant    {:id "remote" :label "Remote"
+                    :hint "Connects to a URL over HTTP"}
        :visible-fn mcp-enabled?
-       :fields   [{:name :name :label "Client name" :placeholder "remote" :required true}
-                  {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
-                  {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
+       :fields   [{:name :name :label "Name" :placeholder "linear" :required true}
+                  {:name :url :label "URL" :placeholder "https://mcp.linear.app/sse" :required true}
+                  {:name :token :label "Auth token" :type :password
+                   :placeholder "paste token"
+                   :hint "stored in config.edn, sent as Bearer"}]
        :start-fn (fn [env fields]
                    (let [server (add-http-server! fields)]
                      (connect-server! (:session-id env) server)))}]

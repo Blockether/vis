@@ -362,7 +362,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). C-x s opens resources directly; C-x p remains the
       ;; global command palette.
-      true (conj {:text     (str " resources " res-count " (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " backgrounds " res-count " (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right

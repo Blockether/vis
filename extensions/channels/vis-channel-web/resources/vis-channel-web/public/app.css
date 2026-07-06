@@ -524,14 +524,14 @@ transition:background .1s,border-color .1s}
 .dir-jump:hover{background:var(--hover);border-color:var(--accent)}
 .dir-jump .icon{width:13px;height:13px;color:var(--dim)}
 /* breadcrumb — home glyph + path hops, current folder bold (not a link) */
-.dir-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:.1rem;
+.dir-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:0;
 font-family:var(--mono);font-size:.8rem}
-.dir-crumb{display:inline-flex;align-items:center;padding:.2rem .42rem;border-radius:var(--r-sm);
+.dir-crumb{display:inline-flex;align-items:center;padding:.2rem .35rem;border-radius:var(--r-sm);
 color:var(--dim);border:none;background:none;cursor:pointer;transition:background .1s,color .1s}
 button.dir-crumb:hover{background:var(--hover);color:var(--fg)}
 .dir-crumb-home .icon{width:14px;height:14px}
 .dir-crumb-here{color:var(--fg);font-weight:700;cursor:default}
-.dir-crumb:not(:last-child)::after{content:"/";margin-left:.25rem;color:var(--line2)}
+.dir-crumb:not(:last-child)::after{content:"/";margin:0 .1rem;color:var(--line2)}
 /* subfolder list — real folder rows with a navigate chevron */
 .dir-list{list-style:none;display:flex;flex-direction:column;gap:2px;
 max-height:38vh;overflow-y:auto;margin:0;padding:0}
@@ -573,31 +573,28 @@ padding:0 .9rem;border-radius:var(--r-md);border:1px solid var(--line2);backgrou
 color:var(--fg);font-size:.84rem;font-weight:600;cursor:pointer;transition:background .1s,border-color .1s}
 .fs-create-btn:hover{background:var(--hover);border-color:var(--accent)}
 .fs-create-btn .icon{width:15px;height:15px}
-/* primary action: full-width, names the folder it will add + shows the path */
+/* picker actions — compact, clearly-clickable buttons (add-as-root / make-root) */
 .fs-add-form{margin-top:.2rem;padding-top:.85rem;border-top:1px solid var(--line)}
-.fs-add-btn{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
-padding:.7rem .9rem;border-radius:var(--r-lg);border:0;cursor:pointer;
-background:var(--primary);color:#fff;transition:filter .12s}
-.fs-add-btn:hover{filter:brightness(1.05)}
-.fs-add-btn .icon{width:18px;height:18px;flex:none}
-.fs-add-text{display:flex;flex-direction:column;gap:.05rem;min-width:0}
-.fs-add-main{font-size:.9rem;font-weight:700;line-height:1.2}
-.fs-add-sub{font-family:var(--mono);font-size:.74rem;font-weight:500;opacity:.78;
-overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fs-add-btn,.fs-root-btn{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;
+padding:.55rem .8rem;border-radius:var(--r-md);font-size:.85rem;font-weight:600;line-height:1.2;
+cursor:pointer;transition:filter .12s,background .1s,border-color .1s}
+.fs-add-btn{border:0;background:var(--primary);color:#fff}
+.fs-add-btn:hover{filter:brightness(1.06)}
+.fs-root-btn{border:1px solid var(--line2);background:var(--bg);color:var(--fg)}
+.fs-root-btn:hover{background:var(--hover);border-color:var(--accent)}
+.fs-add-btn .icon,.fs-root-btn .icon{width:16px;height:16px;flex:none}
 /* stacked picker actions: add-as-root + make-root offered together */
 .fs-actions{display:flex;flex-direction:column;gap:.45rem;margin-top:.2rem;padding-top:.85rem;border-top:1px solid var(--line)}
 .fs-actions .fs-add-form,.fs-actions .dir-already{margin-top:0;padding-top:0;border-top:0}
-/* secondary action: promote the browsed folder to the session's ROOT */
 .fs-root-form{margin:0}
-.fs-root-btn{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
-padding:.7rem .9rem;border-radius:var(--r-lg);cursor:pointer;
-border:1px solid var(--line);background:var(--panel2);color:var(--fg);transition:filter .12s}
-.fs-root-btn:hover{filter:brightness(1.05)}
-.fs-root-btn .icon{width:18px;height:18px;flex:none}
-/* already-a-root state: muted green, not a button (no add to fake) */
-.dir-already{display:flex;align-items:center;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-lg);
+/* already-a-root / current-root state: muted green info, not a button */
+.dir-already{display:flex;align-items:center;gap:.55rem;padding:.55rem .8rem;border-radius:var(--r-md);
 background:color-mix(in srgb,var(--ok) 12%,var(--bg));color:var(--ok);cursor:default}
-.dir-already .icon{width:18px;height:18px;flex:none}
+.dir-already .icon{width:16px;height:16px;flex:none}
+.dir-already .fs-add-text{display:flex;flex-direction:column;gap:.05rem;min-width:0}
+.dir-already .fs-add-main{font-size:.85rem;font-weight:700;line-height:1.2}
+.dir-already .fs-add-sub{font-family:var(--mono);font-size:.72rem;font-weight:500;opacity:.78;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ── sidebar select-mode: bulk session delete ──────────────────── */
 .side-tools{display:none}
 .side-select-toggle{border:1px solid var(--line2);background:var(--bg);color:var(--secondary);
@@ -897,6 +894,24 @@ background:var(--bg);transition:background .1s,border-color .1s,color .1s}
 color:var(--warning);font-weight:600}
 .alias-chip input:focus-visible + span{box-shadow:0 0 0 3px var(--warning-bg)}
 .modal-res-hint{color:var(--dim);font-size:.8rem;font-style:italic}
+/* progressive add: per-field hint, textarea, form actions, transport seg */
+.modal-res-field textarea{padding:var(--field-py) var(--field-px);border:1px solid var(--line2);border-radius:var(--r-sm);
+background:var(--bg);color:var(--fg);font:inherit;text-transform:none;letter-spacing:normal;resize:vertical;min-height:2.6rem;
+transition:border-color .12s,box-shadow .12s}
+.modal-res-field textarea:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
+.modal-res-fieldhint{text-transform:none;letter-spacing:normal;font-weight:400;font-size:.7rem;color:var(--dim)}
+.modal-res-form-actions{grid-column:1 / -1;display:flex;justify-content:flex-end;gap:.5rem;flex:1 1 100%;margin-top:.2rem}
+.btn-go{background:var(--primary);color:#fff;border-color:transparent;font-weight:600}
+.btn-go:hover{filter:brightness(1.05)}
+/* segmented transport chooser (Local / Remote) */
+.bg-seg{grid-column:1 / -1;flex:1 1 100%;display:inline-flex;gap:0;padding:.2rem;margin-bottom:.2rem;
+border:1px solid var(--line2);border-radius:var(--r-md);background:var(--bg);width:max-content;max-width:100%}
+.bg-seg-btn{appearance:none;border:0;background:transparent;cursor:pointer;color:var(--dim);
+padding:.34rem .95rem;border-radius:var(--r-sm);font:inherit;font-size:.8rem;font-weight:600;
+transition:background .12s,color .12s}
+.bg-seg-btn:hover{color:var(--fg)}
+.bg-seg-btn.is-active{background:var(--panel2);color:var(--fg);box-shadow:0 1px 2px rgba(20,20,20,.08)}
+.bg-seg-btn:focus-visible{outline:0;box-shadow:0 0 0 3px var(--warning-bg)}
 /* live resources: each a card with a status dot, type badge, name + actions */
 .modal-resources{display:flex;flex-direction:column;gap:.4rem;margin-top:.1rem}
 .modal-res-row{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;
