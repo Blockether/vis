@@ -496,7 +496,7 @@
                   ;; trace made resumed sessions look different from live.
                   ;; Suppress it so resume matches live: just the answer.
                   slash-turn? (some (fn [it]
-                                      (some #(= :user-slash (:tag %)) (:forms it)))
+                                      (some #(#{:user-slash :user-shell} (:tag %)) (:forms it)))
                                     turn-iterations)
                   trace (if slash-turn?
                           []
