@@ -144,7 +144,13 @@
     (when-not (= "up" (get (repl/status dir) "status"))
       (let [r (repl/start! dir {})]
         (register-repl-resource! (:session-id env) dir r nil)))
-    (extension/success {:result (repl/eval! dir code tmo)})))
+    ;; Carry the evaluated code back on the result (string key) so the shared
+    ;; repl_eval op-card can surface the FORM section — the render fn sees only
+    ;; the result map, not the call args.
+    (let [res (repl/eval! dir code tmo)]
+      (extension/success {:result (cond-> res
+                                    (map? res)
+                                    (assoc "code" code))}))))
 
 ;; =============================================================================
 ;; Manifest

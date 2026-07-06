@@ -1379,10 +1379,40 @@
 ;; Turn - session_turn_soul + session_turn_state
 ;; =============================================================================
 
+(defn- store-turn-attachments!
+  "Insert one `session_turn_attachment` row per validated inline image. Each
+   attachment is `{:media-type :base64 :size? :filename? :kind?}`; the base64
+   payload decodes to raw bytes for the BLOB column. Skips any entry whose
+   base64 fails to decode — never aborts the enclosing turn insert."
+  [tx-info soul-id-s attachments now]
+  (doseq [[position att] (map-indexed vector (or attachments []))]
+    (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
+                                (catch Throwable _ nil))]
+      (execute! tx-info
+                {:insert-into :session_turn_attachment
+                 :values [{:id (str (new-uuid))
+                           :session_turn_soul_id soul-id-s
+                           :position position
+                           :kind (or (some-> (:kind att)
+                                             name)
+                                     "image")
+                           :media_type (str (:media-type att))
+                           :filename (:filename att)
+                           :size_bytes (long (or (:size att) (alength data)))
+                           :bytes data
+                           :created_at now}]}))))
+
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
+
+   `:attachments` — validated INLINE image uploads `[{:media-type :base64 :size
+   :filename}]` (web/API, no durable disk path) — persist as
+   `session_turn_attachment` rows so resume + history re-render survive a
+   restart. Disk-path images are re-derivable from `:user-request` text and are
+   NOT stored here.
+
    Returns the session-turn-soul UUID."
-  [db-info {:keys [parent-session-id user-request status]}]
+  [db-info {:keys [parent-session-id user-request status attachments]}]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
@@ -1424,7 +1454,31 @@
                                :version 0
                                :status (normalize-status (or status :running))
                                :created_at now}]})
+          (store-turn-attachments! tx-info (str soul-id) attachments now)
           soul-id)))))
+
+(defn db-list-turn-attachments
+  "Ordered validated image attachments persisted for one `session_turn_soul`.
+   Returns `[{:position :kind :media-type :filename :size :base64}]` — the
+   base64-encoded bytes match the shape the prompt assembler + web history
+   re-render consume — or `[]` when none / no datasource."
+  [db-info session-turn-soul-id]
+  (if-not (and (ds db-info) session-turn-soul-id)
+    []
+    (let [soul-id-s (->ref session-turn-soul-id)]
+      (mapv (fn [row]
+              (let [^bytes bs (:bytes row)]
+                {:position (:position row)
+                 :kind (:kind row)
+                 :media-type (:media_type row)
+                 :filename (:filename row)
+                 :size (long (or (:size_bytes row) (alength bs)))
+                 :base64 (.encodeToString (java.util.Base64/getEncoder) bs)}))
+            (query! db-info
+                    {:select [:*]
+                     :from :session_turn_attachment
+                     :where [:= :session_turn_soul_id soul-id-s]
+                     :order-by [[:position :asc]]})))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]

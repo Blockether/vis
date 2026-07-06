@@ -51,8 +51,9 @@
 (def ^:private label-overrides
   "Native-tool WIRE name → a nicer op-card LABEL. Most tools read fine uppercased
    (RG, CAT, PATCH); a few don't — `python_execution` is the model writing/running
-   code, but its card surfaces what that run produced, so it reads `RESULT`."
-  {"python_execution" "RESULT"})
+   code, but its card surfaces what that run produced, so it reads `RESULT`;
+   `repl_eval` reads as the terse `REPL` badge its collapsed/expanded card wants."
+  {"python_execution" "RESULT" "repl_eval" "REPL"})
 
 (def tool-color-roles
   "The canonical set of native-tool op-card BADGE colour roles — the ONE list both

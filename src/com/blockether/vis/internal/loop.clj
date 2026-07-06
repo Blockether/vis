@@ -4572,11 +4572,18 @@
         ;; blocks on the initial user message. Engine-side so every channel
         ;; (TUI/web/Telegram) gets the same behavior; never throws.
         user-attachments
-        (try (attachments/collect-user-images user-request
-                                              {:workspace-root (:workspace/root environment)})
-             (catch Throwable t
-               (tel/log! {:level :warn :id ::user-image-scan-failed :data {:error (ex-message t)}})
-               {:attached [] :skipped []}))
+        (let [disk
+              (try (attachments/collect-user-images user-request
+                                                    {:workspace-root (:workspace/root environment)})
+                   (catch Throwable t
+                     (tel/log!
+                       {:level :warn :id ::user-image-scan-failed :data {:error (ex-message t)}})
+                     {:attached [] :skipped []}))]
+          ;; INLINE (web/API) uploads — validated in prepare-turn-context and
+          ;; carried on the env — ride AHEAD of disk-scanned images; both feed
+          ;; the same multimodal assemble seam.
+          {:attached (into (vec (:user/attachments environment)) (:attached disk))
+           :skipped (into (vec (:user/skipped-attachments environment)) (:skipped disk))})
 
         _
         (when (seq (:attached user-attachments))
@@ -5884,7 +5891,9 @@
   (let [session-turn-id
         (persistance/db-store-session-turn!
           (:db-info env)
-          {:parent-session-id (:session-id env) :user-request user-request :status :running})
+          (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
+            (seq (:user/attachments env))
+            (assoc :attachments (:user/attachments env))))
 
         turn-position
         (session-turn-position env session-turn-id)
@@ -6175,6 +6184,11 @@
           ;; primitive every poll site checks.
           cancel-token (or cancel-token (cancellation/cancellation-token))
           cancel-atom (cancellation/cancellation-atom cancel-token)
+          ;; INLINE image uploads (web/API base64, no durable disk path):
+          ;; validate here (magic-byte sniff + size/count caps) so BOTH the
+          ;; assemble seam and turn persistence see the canonical
+          ;; `{:attached :skipped}` shape.
+          prepared-attachments (attachments/prepare-inline-attachments (:user/attachments opts))
           ;; `user-request` = ONLY the current turn's user message.
           ;; Prior dialog transcript is dropped here — one ask, one value.
           ;; Durable context flows through ctx and persisted iterations, not
@@ -6235,7 +6249,10 @@
                                             :vcs/kind :vcs/ref :vcs/mainline])
           ;; Reseat :router to the preference-hoisted one — run-iteration-phase
           ;; routes off THIS environment's router, not the ctx :router below.
-          environment (cond-> (assoc env :router env-router)
+          environment (cond-> (assoc env
+                                :router env-router
+                                :user/attachments (:attached prepared-attachments)
+                                :user/skipped-attachments (:skipped prepared-attachments))
                         (seq workspace-overrides)
                         (merge workspace-overrides)
 

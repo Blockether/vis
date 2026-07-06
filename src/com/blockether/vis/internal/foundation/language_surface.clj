@@ -55,8 +55,8 @@
 
                  (when f
                    (assoc entry
-                          :language language
-                          :handler f)))))))
+                     :language language
+                     :handler f)))))))
 
 (def ^:private capability->tool
   "language-tool key -> the facade verb shown in the capability matrix."
@@ -97,12 +97,12 @@
   [env]
   (when-let [data (capability-data env)]
     (str
-     "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-     (str/join "\n"
-               (for [[lang tools] data]
-                 (str "  " lang " : " (str/join " · " tools))))
+      "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
+      (str/join "\n"
+                (for [[lang tools] data]
+                  (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-     "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
+      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -129,8 +129,8 @@
 
     (cond (= 1 (count matches)) (first matches)
           (empty? handlers) (throw (ex-info
-                                    (str "No language extension registered for " (name capability))
-                                    {:type :language-surface/no-handler :capability capability}))
+                                     (str "No language extension registered for " (name capability))
+                                     {:type :language-surface/no-handler :capability capability}))
           (empty? matches) (throw (ex-info (str "No " (name capability)
                                                 " handler for language " lang)
                                            {:type :language-surface/no-language-handler
@@ -138,14 +138,14 @@
                                             :capability capability
                                             :available (vec (keep :language handlers))}))
           :else (throw (ex-info
-                        (str
-                         "Multiple language handlers match "
-                         (or lang "current workspace")
-                         "; pass the language as first arg, e.g. repl_eval with language first")
-                        {:type :language-surface/ambiguous-language
-                         :language lang
-                         :capability capability
-                         :available (vec (keep :language matches))})))))
+                         (str
+                           "Multiple language handlers match "
+                           (or lang "current workspace")
+                           "; pass the language as first arg, e.g. repl_eval with language first")
+                         {:type :language-surface/ambiguous-language
+                          :language lang
+                          :capability capability
+                          :available (vec (keep :language matches))})))))
 
 (defn- parse-language-call
   [args]
@@ -214,14 +214,14 @@
         {:language (or language (opts-language opts)) :id id :op op :opts opts})
 
       (throw
-       (ex-info
-        "repl_start expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
-        {:type :language-surface/bad-args
-         :got args
-         :examples ["repl_start('clojure')"
-                    "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
-                    "repl_start('clojure', 'status')"
-                    "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+        (ex-info
+          "repl_start expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
+          {:type :language-surface/bad-args
+           :got args
+           :examples ["repl_start('clojure')"
+                      "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
+                      "repl_start('clojure', 'status')"
+                      "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
 
 (defn- dispatch-start-repl!
   [env args]
@@ -444,42 +444,112 @@
 
     (subs cls 0 (min 60 (count cls)))))
 
+(def ^:private repl-form-inline-max
+  "Display-width budget for the evaluated FORM on the collapsed chip. A form wider
+   than this (or any multi-line form) is too long to ride inline, so it's clipped
+   on the chip and promoted to its own FORM section when expanded."
+  56)
+
+(defn- one-line
+  "Collapse `s` to a single trimmed line — every run of whitespace (incl. newlines)
+   becomes one space. nil/blank → nil."
+  [s]
+  (not-empty (str/trim (str/replace (str s) #"\s+" " "))))
+
+(defn- clip-chip
+  "Clip `s` to `n` display chars with a trailing ellipsis, so one long form or value
+   never blows out the single-line collapsed summary."
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) (long n)) (str (subs s 0 (max 0 (dec (long n)))) "…") s)))
+
+(defn- sect
+  "One labeled body SECTION — a bold uppercase header over a fenced monospace block,
+   the shape the collapsed/expanded repl_eval card stacks (RESULT / STDOUT / …). nil
+   when there's nothing to show, so an empty section drops out of the join."
+  [label s]
+  (let [s (str/trimr (str s))]
+    (when (seq s) (str "**" label "**\n```\n" s "\n```"))))
+
 (defn- render-repl-eval-result
-  "repl_eval → `(Nms)` headline, or `(Nms) — <Error>` on failure (REPL_EVAL badge
-   names the tool). The body always opens with one blank line so it never fuses
-   with the badge. Happy path: value then out. Error path: the exception MESSAGE
-   first, then the filtered TRACE (and any ex-data) — the *what* before the
-   *where*. `:error_message`/`:trace` come enriched from the nREPL client; we fall
-   back to the raw `:err` one-liner when no structured trace was available."
+  "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge
+   names the tool). The COLLAPSED chip carries the evaluated FORM (clipped) plus a
+   value/error PREVIEW so a run reads at a glance — `(+ 1 1)  ⇒ 2`, `(/ 1 0)  ✗
+   ArithmeticException`. EXPANDED, the body stacks labeled sections, each fenced and
+   separated by one blank line:
+     - FORM   — only when the form is multi-line / too wide to sit on the chip;
+     - RESULT — the value (shown even when `nil`); ERROR replaces it on failure;
+     - STDOUT — `:out` when non-blank;
+     - STDERR — `:err` when non-blank (success path only; on failure the stream IS
+                the stacktrace, surfaced under ERROR).
+   `:error_message`/`:trace`/`:error_data` come enriched from the nREPL client; we
+   fall back to the raw `:err` one-liner when no structured trace was captured."
   [r]
-  (let [emsg
+  (let [code
+        (not-empty (str (get r "code")))
+
+        value
+        (get r "value")
+
+        out
+        (get r "out")
+
+        err
+        (get r "err")
+
+        emsg
         (not-empty (str (get r "error_message")))
 
         trace
         (get r "trace")
 
-        err
-        (or (get r "err") (get r "ex") (get r "root_ex"))
+        edata
+        (get r "error_data")
 
         error?
-        (boolean (or emsg (seq (str err))))
+        (boolean (or emsg
+                     (not-empty (str (get r "ex")))
+                     (not-empty (str (get r "root_ex")))
+                     (some #{"eval-error"} (get r "status"))))
 
-        blocks
+        long-form?
+        (boolean (and code (or (str/includes? code "\n") (> (count code) repl-form-inline-max))))
+
+        ;; The form on the chip: single-lined + clipped. Short → it's the whole
+        ;; story; long → it's a teaser and the full form leads the expanded body.
+        form-chip
+        (some-> code
+                one-line
+                (clip-chip repl-form-inline-max))
+
+        preview
         (if error?
-          [(fence nil (or emsg (str err))) (fence "trace" (when (seq trace) (str/join "\n" trace)))
-           (fence "data" (get r "error_data")) (fence "out" (get r "out"))]
-          [(fence nil (get r "value")) (fence "out" (get r "out"))])
+          (str "✗ " (if emsg (short-error emsg) "error"))
+          (str "⇒ " (clip-chip (or (one-line value) "nil") repl-form-inline-max)))
+
+        summary
+        (not-empty (str (when form-chip (str form-chip "  ")) preview))
+
+        error-body
+        (str/join "\n"
+                  (remove str/blank?
+                    [(or emsg (str err)) (when (seq trace) (str/join "\n" trace))
+                     (when (seq (str edata)) (str "ex-data: " edata))]))
+
+        ;; Fixed section order; each gate matches the design. ERROR stands in for
+        ;; RESULT on failure and sits LAST, after any captured stdout.
+        sections
+        (if error?
+          [(when long-form? (sect "FORM" code)) (sect "STDOUT" out) (sect "ERROR" error-body)]
+          [(when long-form? (sect "FORM" code)) (sect "RESULT" value) (sect "STDOUT" out)
+           (sect "STDERR" err)])
 
         body
-        (->> blocks
+        (->> sections
              (remove nil?)
              (str/join "\n\n"))]
 
-    {:summary (not-empty
-               (str (when (get r "ms") (str "(" (get r "ms") "ms)"))
-                    (when error?
-                      (str (when (get r "ms") " ") "— " (if emsg (short-error emsg) "error")))))
-     :body (when (seq body) (str "\n" body))}))
+    {:summary summary :body (when (seq body) (str "\n" body))}))
 
 (defn- render-repl-status-result
   "repl_status → `N REPLs: id (status), …`."
@@ -553,33 +623,33 @@
 
 (def format-symbol
   (vis/symbol
-   #'format-code
-   {:symbol 'format_code
-    :native-tool? true
+    #'format-code
+    {:symbol 'format_code
+     :native-tool? true
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
-    :call {:lead-opt "language" :rest :always}
-    :render render-format-result
-    :color-role :tool-color/edit
-    :schema
-    {:type "object"
-     :properties
-     {"language" {:type "string"
-                  :description
-                  "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
-      "code" {:type "string" :description "Source to format (returns the formatted text)."}
-      "path"
-      {:type "string"
-       :description
-       "Format this ONE file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code. A directory is walked RECURSIVELY for source files."}
-      "paths"
-      {:type "array"
-       :items {:type "string"}
-       :description
-       "Format MANY paths IN PLACE (returns a per-file changed roll-up). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code/path; OMIT all to format the workspace's default source paths recursively."}}
-     :required []}
-    :before-fn inject-env
-    :tag :mutation}))
+     :call {:lead-opt "language" :rest :always}
+     :render render-format-result
+     :color-role :tool-color/edit
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string"
+                   :description
+                   "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
+       "code" {:type "string" :description "Source to format (returns the formatted text)."}
+       "path"
+       {:type "string"
+        :description
+        "Format this ONE file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code. A directory is walked RECURSIVELY for source files."}
+       "paths"
+       {:type "array"
+        :items {:type "string"}
+        :description
+        "Format MANY paths IN PLACE (returns a per-file changed roll-up). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code/path; OMIT all to format the workspace's default source paths recursively."}}
+      :required []}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def lint-symbol
   (vis/symbol #'lint-code
@@ -608,71 +678,71 @@
 
 (def test-symbol
   (vis/symbol
-   #'run-tests
-   {:symbol 'run_tests
-    :native-tool? true
-    :call {:lead-opt "language" :rest :always}
-    :render render-test-result
-    :color-role :tool-color/test
-    :schema
-    {:type "object"
-     :properties
-     {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
-      "namespaces" {:type "array"
-                    :items {:type "string"}
-                    :description "Test namespaces/modules to run (e.g. [\"my.app.core-test\"])."}
-      "paths" {:type "array"
+    #'run-tests
+    {:symbol 'run_tests
+     :native-tool? true
+     :call {:lead-opt "language" :rest :always}
+     :render render-test-result
+     :color-role :tool-color/test
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+       "namespaces" {:type "array"
+                     :items {:type "string"}
+                     :description "Test namespaces/modules to run (e.g. [\"my.app.core-test\"])."}
+       "paths" {:type "array"
+                :items {:type "string"}
+                :description "Dirs/files to discover *_test namespaces under."}
+       "only" {:type "array"
                :items {:type "string"}
-               :description "Dirs/files to discover *_test namespaces under."}
-      "only" {:type "array"
-              :items {:type "string"}
-              :description "Restrict to these fully-qualified test vars."}
-      "include"
-      {:type "array" :items {:type "string"} :description "Only run tests carrying these tags."}
-      "exclude"
-      {:type "array" :items {:type "string"} :description "Skip tests carrying these tags."}}
-     :required []}
-    :before-fn inject-env
-    :tag :mutation}))
+               :description "Restrict to these fully-qualified test vars."}
+       "include"
+       {:type "array" :items {:type "string"} :description "Only run tests carrying these tags."}
+       "exclude"
+       {:type "array" :items {:type "string"} :description "Skip tests carrying these tags."}}
+      :required []}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def repl-eval-symbol
   (vis/symbol
-   #'repl-eval
-   {:symbol 'repl_eval
-    :native-tool? true
-    :call {:lead-opt "language" :rest :always}
-    :render render-repl-eval-result
-    :color-role :tool-color/shell
-    :schema
-    {:type "object"
-     :properties
-     {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
-      "code" {:type "string" :description "Source to evaluate in the language REPL."}
-      "id" {:type "string" :description "Target a specific registered REPL resource by id."}}
-     :required ["code"]}
-    :before-fn inject-env
-    :tag :mutation}))
+    #'repl-eval
+    {:symbol 'repl_eval
+     :native-tool? true
+     :call {:lead-opt "language" :rest :always}
+     :render render-repl-eval-result
+     :color-role :tool-color/shell
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+       "code" {:type "string" :description "Source to evaluate in the language REPL."}
+       "id" {:type "string" :description "Target a specific registered REPL resource by id."}}
+      :required ["code"]}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def start-repl-symbol
   (vis/symbol
-   #'start-repl
-   {:symbol 'repl_start
-    :native-tool? true
-    :call {:lead-opt "language" :rest :always}
-    :render render-repl-start-result
-    :color-role :tool-color/shell
-    :schema {:type "object"
-             :properties
-             {"language" {:type "string"
-                          :description "Language pack; OMIT to infer from the workspace."}
-              "id" {:type "string" :description "Resource id for the REPL (default per language)."}
-              "dir" {:type "string" :description "Directory to start the REPL in."}
-              "aliases" {:type "array"
-                         :items {:type "string"}
-                         :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
-             :required []}
-    :before-fn inject-env
-    :tag :mutation}))
+    #'start-repl
+    {:symbol 'repl_start
+     :native-tool? true
+     :call {:lead-opt "language" :rest :always}
+     :render render-repl-start-result
+     :color-role :tool-color/shell
+     :schema {:type "object"
+              :properties
+              {"language" {:type "string"
+                           :description "Language pack; OMIT to infer from the workspace."}
+               "id" {:type "string" :description "Resource id for the REPL (default per language)."}
+               "dir" {:type "string" :description "Directory to start the REPL in."}
+               "aliases" {:type "array"
+                          :items {:type "string"}
+                          :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
+              :required []}
+     :before-fn inject-env
+     :tag :mutation}))
 
 (def repl-stop-symbol
   (vis/symbol #'repl-stop
@@ -701,6 +771,6 @@
   [env]
   (when-let [matrix (capability-matrix env)]
     (str
-     matrix
-     "\n"
-     "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_stop")))
+      matrix
+      "\n"
+      "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_stop")))

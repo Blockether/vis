@@ -355,12 +355,17 @@
 
          run
          (fn [p]
-           (nrepl-client/eval! {:host host
-                                :port p
-                                :code code
-                                :ns ns
-                                :pretty? true
-                                :timeout-ms (or timeout_ms 30000)}))]
+           ;; Carry the evaluated FORM back on the result (string key, crosses the
+           ;; strings-only boundary) so the repl_eval op-card can show it in the
+           ;; collapsed chip / expanded FORM section — the render fn sees only the
+           ;; result map, never the call args.
+           (assoc (nrepl-client/eval! {:host host
+                                       :port p
+                                       :code code
+                                       :ns ns
+                                       :pretty? true
+                                       :timeout-ms (or timeout_ms 30000)})
+             "code" code))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked, with no

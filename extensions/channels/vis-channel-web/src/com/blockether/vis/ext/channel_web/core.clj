@@ -2323,6 +2323,20 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (html (queued-content sid)) "")}))
 
+(defn- composer-attachments
+  "Composer image uploads ride as one or more `attachment` form fields, each a
+   base64 (optionally `data:`-prefixed) image payload. Ring folds duplicate
+   fields into a vector; normalize to the `[{:base64 ...}]` shape the engine's
+   `attachments/prepare-inline-attachments` validates (magic-byte sniff + caps).
+   The declared media type is re-sniffed engine-side, so only the bytes matter."
+  [raw]
+  (->> (cond (nil? raw) []
+             (sequential? raw) raw
+             :else [raw])
+       (remove str/blank?)
+       (mapv (fn [b64]
+               {:base64 (str b64)}))))
+
 (defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
    engine slash dispatch and answers inline (no LLM turn); anything
@@ -2423,7 +2437,16 @@
                     (if (:handled? result)
                       (slash-bubble result)
                       (slash-bubble {:error (str "unknown command: " text)})))})
-      :else (let [result (when sid (vis/gateway-submit-turn! sid {:request text}))]
+      :else (let [atts
+                  (composer-attachments (get-in request [:form-params "attachment"]))
+
+                  result
+                  (when sid
+                    (vis/gateway-submit-turn! sid
+                                              (cond-> {:request text}
+                                                (seq atts)
+                                                (assoc :attachments atts))))]
+
               {:status 200
                :headers {"Content-Type" "text/html; charset=utf-8"}
                :body (let [turn (:turn result)]
