@@ -52,7 +52,11 @@
       (expect (= "clojure" (outline/code-language "a.clj")))
       (expect (= "python" (outline/code-language "a.py")))
       (expect (= "rust" (outline/code-language "a.rs")))
-      (expect (= "json" (outline/code-language "a.json"))))
+      (expect (= "json" (outline/code-language "a.json")))
+      ;; EDN is Clojure-reader data — the pack's ext table omits `.edn`, so vis
+      ;; maps it to the `clojure` grammar as a strict structured-config format.
+      (expect (= "clojure" (outline/code-language "deps.edn")))
+      (expect (= "clojure" (outline/detect-language "a/b/vis.edn"))))
   (it "prose / markup / data / unknown resolve to nil"
       (expect (nil? (outline/code-language "a.txt")))   ;; pack → vimdoc
       (expect (nil? (outline/code-language "a.md")))    ;; pack → markdown
@@ -60,7 +64,11 @@
       (expect (nil? (outline/code-language "a.log")))   ;; pack → nil
       (expect (nil? (outline/code-language "README")))) ;; extensionless
   (it "detect-language still sees the pack's broad set (unchanged)"
-      (expect (= "vimdoc" (outline/detect-language "a.txt")))))
+      (expect (= "vimdoc" (outline/detect-language "a.txt"))))
+  (it "EDN files get real structural editing (node replace) via the clojure grammar"
+      (let [deps "{:deps {foo/bar {:mvn/version \"1.0\"}}}\n"]
+        (expect (= "{:deps {foo/bar {:mvn/version \"2.0\"}}}\n"
+                   (edit "deps.edn" deps {:op :replace-node :match "\"1.0\"" :code "\"2.0\""}))))))
 
 (defdescribe occurrences-test
              (it "Clojure: the definition is MARKED among the uses (kind/visibility/signature/span)"

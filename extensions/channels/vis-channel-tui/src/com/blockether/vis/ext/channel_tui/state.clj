@@ -959,11 +959,18 @@
                                                  (if expanded? :collapse :expand)})))))
 (reg-event-db :set-detail-labels
               ;; C-x t — vim-style jump labels. `on?` true turns the overlay ON
-              ;; (the renderer stamps a letter badge on every visible disclosure
-              ;; and the next keypress toggles that one); false turns it off. A
-              ;; pure flag flip — no height changes, so no scroll parking.
-              (fn [db [_ on?]]
-                (assoc db :detail-labels-active? (boolean on?))))
+              ;; (the renderer stamps a letter badge on every disclosure that was
+              ;; visible WHEN the mode opened and the next keypress toggles that
+              ;; one); false turns it off. `labels` is the FROZEN `[label region]`
+              ;; assignment captured from the frame under the cursor at open —
+              ;; the painter and the input handler both read it, so a live stream
+              ;; growing underneath can't reshuffle the letters or race the
+              ;; keypress mid-jump. A pure flag flip — no height changes, so no
+              ;; scroll parking.
+              (fn [db [_ on? labels]]
+                (assoc db
+                  :detail-labels-active? (boolean on?)
+                  :detail-labels (when on? (vec labels)))))
 (reg-event-db :select-preview-mode
               (fn [db [_ session-id node-id mode]]
                 (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))

@@ -2893,9 +2893,10 @@
         (@#'render/detail-node-id
          {:session-turn-id turn :section :user :kind :image :details-path ["1"]})]
 
-    (it "collapsed by default: `Image` chevron shows, no reserved rows"
-        (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
-          (expect (str/includes? txt "▸ [Image #1: shot.png 1200×800, 245KB]"))))
+    (it "collapsed by default on a non-graphical terminal: `Image` chevron shows, no reserved rows"
+        (with-redefs [timg/images-protocol (constantly nil)]
+          (let [txt (:text (render/format-answer-markdown-data ir 76 (opts {})))]
+            (expect (str/includes? txt "▸ [Image #1: shot.png 1200×800, 245KB]")))))
     (it "expanded on an image terminal: a paint-meta row + reserved box survive trimming"
         (with-redefs [timg/images-protocol (constantly :kitty)]
           (let [{:keys [line-meta]}

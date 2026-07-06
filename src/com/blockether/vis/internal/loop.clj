@@ -2285,6 +2285,12 @@
       ;; a dict/list reads as structured data rather than reflowed prose.
       (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
                                   {:body (str "```python\n" s "\n```")})
+      ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
+      ;; carried as its fallback body) rides stdout as MARKDOWN so the channel
+      ;; paints it inline; wrapping it in a ``` block would escape the 4-backtick
+      ;; fence, so pass the stdout through verbatim (unclipped — the fence is small
+      ;; and self-bounded) whenever one is present.
+      (str/includes? (str (:stdout result*)) "````vis-image") {:body (str (:stdout result*))}
       ;; python_execution printed output → fenced so newlines are preserved verbatim
       ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
       ;; CommonMark SoftLineBreak → :space path if left unwrapped).
@@ -2706,8 +2712,6 @@
         (conj (pop messages) (update last-msg :content #(str % "\n\n" hint)))
         (conj (vec messages) {:role "user" :content hint})))
     messages))
-
-(declare rejection-fact-entries)
 
 ;; ── Native tool surface (maki-style HYBRID) ──────────────────────────────────
 ;; The model calls the file tools DIRECTLY (cat / rg / find / patch / move /
