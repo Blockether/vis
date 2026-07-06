@@ -727,6 +727,19 @@
                   (str "Session not found: " (:session-id data) "\n"))]
      (session-envelope :session-report-md report))))
 
+(defn- foundation-report-html
+  "Render the same canonical data returned by `foundation-inspect` as a
+   standalone, vis-light-styled HTML document. Returns a Vis tool
+   envelope; sandbox callers receive the unwrapped string."
+  ([env]
+   (foundation-report-html env (:session-id env)))
+  ([env session-id]
+   (let [data (foundation-inspect-data env session-id)
+         report (if-let [transcript-data (:transcript data)]
+                  (transcript/transcript->html transcript-data)
+                  (str "Session not found: " (:session-id data) "\n"))]
+     (session-envelope :session-report-html report))))
+
 (defn- foundation-sessions
   "Envelope-wrapped session index (see `foundation-sessions-data`).
    Returns a Vis tool envelope; sandbox callers receive the unwrapped
@@ -768,6 +781,11 @@ Returns a Markdown string: every turn, iteration, code, result, answer. Same dat
 session_state, pre-rendered. Most useful for OTHER sessions — your own live state is
 already in the `session` bag and your transcript is already on the wire."
        :arglists '([] [session-id])} session-report-md foundation-report)
+(def ^{:doc "await session_report_html(session_id)  # standalone HTML report for ANOTHER conversation
+Returns a self-contained HTML document (vis-light themed): every turn, iteration, code,
+result, answer - the same data as session_report_md, styled to match the web TUI. Write it
+to a file to open in a browser. Most useful for OTHER sessions."
+       :arglists '([] [session-id])} session-report-html foundation-report-html)
 (def ^{:doc "await sessions()  # index of EVERY past conversation, newest-first
 Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\"} ...]. Pass a channel
 keyword to filter. Take an id from here into session_state(id) / session_report_md(id) to
@@ -784,6 +802,11 @@ investigate that conversation."
     {:before-fn inject-environment
      :tag       :observation}))
 
+(def session-report-html-symbol
+  (vis/symbol #'session-report-html
+    {:before-fn inject-environment
+     :tag       :observation}))
+
 (def sessions-symbol
   (vis/symbol #'sessions
     {:before-fn inject-environment
@@ -792,6 +815,7 @@ investigate that conversation."
 (def all-symbols
   [session-state-symbol
    session-report-md-symbol
+   session-report-html-symbol
    sessions-symbol])
 
 (def introspection-prompt

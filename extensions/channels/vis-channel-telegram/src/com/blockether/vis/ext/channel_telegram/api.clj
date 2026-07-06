@@ -239,3 +239,22 @@
       (throw (ex-info (str "Telegram sendAudio failed: " (:description resp))
                {:body resp})))
     resp))
+
+(defn send-document!
+  "Upload `doc-file` to Telegram as a generic document attachment.
+
+   `filename` names the file the recipient downloads (Telegram uses it
+   verbatim). `caption` is optional chat text shown under the document."
+  ([token chat-id doc-file filename]
+   (send-document! token chat-id doc-file filename nil))
+  ([token chat-id doc-file filename caption]
+   (let [resp (post-multipart! token "/sendDocument"
+                (cond-> [{:name "chat_id" :content (str chat-id)}
+                         {:name "document" :content (io/file doc-file)
+                          :file-name (str filename)}]
+                  (not (str/blank? (str caption)))
+                  (conj {:name "caption" :content (str caption)})))]
+     (when-not (:ok resp)
+       (throw (ex-info (str "Telegram sendDocument failed: " (:description resp))
+                {:body resp})))
+     resp)))

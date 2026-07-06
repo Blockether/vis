@@ -53,6 +53,7 @@
    vars, per-block forensic previews, and final answer text. Large
    fields are bounded so reports stay safe to open."
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis])
   (:import
@@ -507,17 +508,17 @@
                  (keep (fn [{:keys [kind source value]}]
                          (case kind
                            :code (when-not (str/blank? (str source))
-                                   (render-fenced "clojure" source))
+                                   (render-fenced "python" source))
                            :title (str "_session title:_ `" (or value "") "`\n")
                            :answer-ref nil
                            nil))
                    render-segments))]
       (when-not (str/blank? body) body))
-    (render-fenced "clojure" code)))
+    (render-fenced "python" code)))
 
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
-   in a fenced ```clojure block, result line, fenced error. `answer?`
+   in a fenced ```python block, result line, fenced error. `answer?`
    flips on the block the iteration's `:answer-position` points at —
    the block that called `done(...)` — so the reader spots the
    terminal block at a glance.
@@ -687,4 +688,191 @@
   ([db-info session-id opts]
    (if-let [data (transcript db-info session-id)]
      (transcript->md data opts)
+     (str "Session not found: " session-id "\n"))))
+
+;; =============================================================================
+;; HTML renderer. Renders the Markdown transcript to a STANDALONE HTML
+;; document styled with the vis-light theme's shared web CSS variables
+;; (`vis/web-css-root`), so an exported transcript reads the same colors
+;; as the web TUI. Pure transformation over the Markdown surface - no DB
+;; calls, no side effects. Every channel (web, TUI, CLI) exports through
+;; here so the output is byte-identical across surfaces.
+;; =============================================================================
+
+(defn- html-escape
+  [s]
+  (-> (str s)
+    (str/replace "&" "&amp;")
+    (str/replace "<" "&lt;")
+    (str/replace ">" "&gt;")))
+
+(defn- render-inline
+  "Escape HTML then apply the constrained inline Markdown the transcript
+   emits: `code`, **bold**, _italic_. Code spans are pulled out first so
+   their contents aren't re-interpreted as bold/italic or double-escaped."
+  [s]
+  (let [codes (atom [])
+        with-holes (str/replace (str s) #"`([^`]*)`"
+                     (fn [[_ inner]]
+                       (let [idx (count @codes)]
+                         (swap! codes conj inner)
+                         (str "\u0000" idx "\u0000"))))
+        escaped (html-escape with-holes)
+        bolded  (str/replace escaped #"\*\*([^*]+)\*\*" "<strong>$1</strong>")
+        italic  (str/replace bolded #"(?<!\w)_([^_]+)_(?!\w)" "<em>$1</em>")]
+    (str/replace italic #"\u0000(\d+)\u0000"
+      (fn [[_ idx]]
+        (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
+
+(defn- md->html
+  "Line-based converter for the CONSTRAINED Markdown the transcript renderer
+   emits: ATX headers (`#`..`######`), fenced code blocks, `- ` bullet lists,
+   blank-line-separated paragraphs, and inline `code`/**bold**/_italic_.
+   Not a general Markdown parser - it only has to handle what we produce."
+  [md]
+  (let [lines (str/split-lines (str md))]
+    (letfn [(flush-para [buf]
+              (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
+            (flush-list [buf]
+              (when (seq buf)
+                [(str "<ul>"
+                   (apply str (map #(str "<li>" (render-inline %) "</li>") buf))
+                   "</ul>")]))
+            (flush [state buf lang]
+              (case state
+                :para (flush-para buf)
+                :list (flush-list buf)
+                :code [(str "<pre><code"
+                         (when lang (str " class=\"language-" (html-escape lang) "\""))
+                         ">" (html-escape (str/join "\n" buf)) "</code></pre>")]
+                nil))]
+      (loop [ls lines, out [], state :none, buf [], lang nil]
+        (if (empty? ls)
+          (str/join "\n" (into out (flush state buf lang)))
+          (let [line (first ls), rst (rest ls)]
+            (cond
+              (= state :code)
+              (if (str/starts-with? line "```")
+                (recur rst (into out (flush :code buf lang)) :none [] nil)
+                (recur rst out :code (conj buf line) lang))
+
+              (str/starts-with? line "```")
+              (let [l (str/trim (subs line 3))]
+                (recur rst (into out (flush state buf lang)) :code []
+                  (when-not (str/blank? l) l)))
+
+              (re-matches #"#{1,6}\s+.*" line)
+              (let [[_ hashes text] (re-matches #"(#{1,6})\s+(.*)" line)
+                    n (count hashes)]
+                (recur rst (conj (into out (flush state buf lang))
+                             (str "<h" n ">" (render-inline text) "</h" n ">"))
+                  :none [] nil))
+
+              (re-matches #"-\s+.*" line)
+              (let [text (str/replace-first line #"-\s+" "")]
+                (if (= state :list)
+                  (recur rst out :list (conj buf text) nil)
+                  (recur rst (into out (flush state buf lang)) :list [text] nil)))
+
+              (str/blank? line)
+              (recur rst (into out (flush state buf lang)) :none [] nil)
+
+              :else
+              (if (= state :list)
+                (recur rst (into out (flush :list buf lang)) :para [line] nil)
+                (recur rst out :para (conj buf line) nil)))))))))
+
+(def ^:private transcript-html-styles
+  "Standalone stylesheet layered AFTER `web-css-root` so it consumes the
+   theme's shared CSS vars. Maps the transcript's block structure onto the
+   vis palette - ground, ink, accent headers, code panels, hairline rules."
+  (str
+    "body{margin:0;background:var(--bg);color:var(--fg);"
+    "font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
+    ".transcript{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 6rem;}"
+    "h1{font-size:1.9rem;margin:.2em 0 .6em;}"
+    "h2{font-size:1.4rem;margin:2.2rem 0 .9rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);}"
+    "h3{font-size:1.18rem;margin:1.8rem 0 .6rem;color:var(--primary);}"
+    "h4{font-size:1.02rem;margin:1.3rem 0 .5rem;color:var(--secondary);}"
+    "h5{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--dim);"
+    "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;}"
+    "h6{font-size:.85rem;margin:1rem 0 .4rem;color:var(--dim);}"
+    "a{color:var(--primary);}"
+    "p{margin:.6em 0;}"
+    "ul{margin:.4em 0;padding-left:1.4em;}"
+    "li{margin:.2em 0;}"
+    "strong{color:var(--fg);font-weight:650;}"
+    "em{color:var(--dim);font-style:normal;}"
+    "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;"
+    "background:var(--code-bg);padding:.1em .35em;border-radius:4px;}"
+    "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
+    "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
+    "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"))
+
+(def ^:private prism-token-css
+  "The vis-light Prism token theme, mirrored from vis-channel-web/public/app.css
+   (its `prism — vis-light token theme` block). Uses the SAME `web-css-root`
+   CSS vars the web /ui does, so exported code highlights IDENTICALLY. Tiny,
+   stable 9-rule block kept in sync by hand."
+  (str
+    ".token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}"
+    ".token.punctuation{color:var(--dim)}"
+    ".token.keyword,.token.boolean,.token.important{color:var(--primary);font-weight:600}"
+    ".token.string,.token.char,.token.attr-value,.token.triple-quoted-string{color:var(--ok)}"
+    ".token.number,.token.constant,.token.symbol{color:var(--secondary)}"
+    ".token.function,.token.class-name,.token.decorator{color:var(--warning)}"
+    ".token.builtin,.token.attr-name,.token.property{color:var(--accent)}"
+    ".token.operator,.token.entity,.token.url{color:var(--fg)}"
+    ".token.variable,.token.regex{color:var(--err)}"))
+
+(def ^:private prism-js
+  "The vendored Prism highlighter (from the web channel's resources), read once
+   and INLINED into HTML exports so a standalone file syntax-highlights code
+   blocks with zero network fetch — the SAME highlighter the web /ui loads.
+   nil when that resource isn't on the classpath (export still renders, just
+   without highlighting)."
+  (delay (some-> (io/resource "vis-channel-web/public/prism.min.js") slurp)))
+
+(defn transcript->html
+  "Render transcript data as a STANDALONE HTML document, styled with the
+   vis-light theme's shared web CSS variables so an exported transcript
+   matches the web TUI's colors. Pure transformation over `transcript`'s
+   data shape (via the Markdown surface). Returns a string.
+
+   Opts:
+   - `:mode`     - `:full` (default) or `:dialog`, forwarded to `transcript->md`.
+   - `:theme-id` - theme id for the embedded CSS (default `:vis-light`)."
+  ([data] (transcript->html data {:mode :full}))
+  ([data {:keys [mode theme-id] :or {mode :full theme-id :vis-light} :as opts}]
+   (let [title (or (some-> data :session :title) "vis transcript")
+         body  (md->html (transcript->md data (assoc opts :mode mode)))]
+     (str "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+       "<meta charset=\"utf-8\">\n"
+       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+       "<title>" (html-escape title) "</title>\n"
+       "<style>\n"
+       (vis/web-css-root theme-id) "\n"
+       transcript-html-styles "\n"
+       prism-token-css "\n"
+       "</style>\n</head>\n<body>\n<main class=\"transcript\">\n"
+       body
+       "\n</main>\n"
+       ;; Inline the vendored Prism highlighter so the standalone file
+       ;; syntax-highlights `<code class=\"language-*\">` on open — same
+       ;; highlighter + token theme as the web /ui, no network fetch.
+       (when-let [js @prism-js]
+         (str "<script>" js "</script>\n"
+           "<script>window.Prism&&Prism.highlightAll&&Prism.highlightAll();</script>\n"))
+       "</body>\n</html>\n"))))
+
+(defn transcript-html
+  "Render the session as a STANDALONE HTML document. Single transformation
+   over `transcript`'s data. Returns a string; returns
+   `\"Session not found: <id>\\n\"` (no throw) on a missing id so pipelines
+   stay clean."
+  ([db-info session-id]
+   (transcript-html db-info session-id {:mode :full}))
+  ([db-info session-id opts]
+   (if-let [data (transcript db-info session-id)]
+     (transcript->html data opts)
      (str "Session not found: " session-id "\n"))))
