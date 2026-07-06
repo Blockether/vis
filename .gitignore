@@ -31,6 +31,11 @@ LANTERNA_3X_API_REFERENCE.md
 # Test data (large / binary)
 schema-therapy.pdf
 schema-therapy.pageindex/
+# Screen recordings / large media scratch — too big for GitHub (>100 MB),
+# and `git add -A` should never stage them. Use Git LFS if any must be tracked.
+*.mp4
+*.mov
+siema.mp4
 
 # Bench trajectories / results / harness output (large, generated).
 # Datasets under packages/vis-benchmark/data/ ARE tracked.
