@@ -6002,6 +6002,198 @@
                  :msg "router health gate: unreachable local providers demoted to last resort"}))
     gated))
 
+(defn- parse-bang
+  "Parse a `!`/`!&` shell-sugar user message into `{:kind :run|:bg :cmd :id?}`,
+   or nil when `text` is NOT a bang. `!<cmd>` desugars to `shell_run(cmd)`
+   (synchronous); `!&<cmd>` desugars to `shell_bg(id, cmd)` in the background
+   under an auto-generated resource id. A blank command (a bare `!`) is ordinary
+   prose, so it returns nil and the message runs as a normal turn."
+  [text]
+  (when (string? text)
+    (let [t (str/triml text)]
+      (cond (str/starts-with? t "!&")
+            (let [cmd (str/trim (subs t 2))]
+              (when (seq cmd)
+                {:kind :bg :cmd cmd :id (str "bg-" (subs (str (java.util.UUID/randomUUID)) 0 8))}))
+            (str/starts-with? t "!") (let [cmd (str/trim (subs t 1))]
+                                       (when (seq cmd) {:kind :run :cmd cmd}))))))
+
+(defn- bang-card->markdown
+  "Combine a native shell op-card `{:summary :body}` into the answer Markdown a
+   `!`/`!&` turn shows as its answer bubble."
+  [{:keys [summary body]}]
+  (let [summary
+        (some-> summary
+                str
+                str/trim
+                not-empty)
+
+        body
+        (some-> body
+                str
+                str/trimr
+                not-empty)]
+
+    (cond (and summary body) (str summary "\n\n" body)
+          summary summary
+          body body
+          :else "_shell command produced no output_")))
+
+(defn- run-bang-turn!
+  "LLM-free `!`/`!&` shell-sugar turn: run the shell tool DIRECTLY (honoring the
+   user-owned `:shell/enabled` toggle), then persist ONE synthetic iteration —
+   the SAME shape `run-slash-turn!` writes — whose form carries the shell RESULT
+   map, native-tool identity, and `:tag :user-shell`. The op-card renders as the
+   answer bubble (channels suppress the redundant trace by that tag), and the
+   persisted `:result` rides later prompts' prior-turn context exactly as a
+   model-issued `shell_run` / `shell_bg` does across turns. Returns the same
+   shape `iteration-loop` would (so callers don't special-case bang turns)."
+  [env user-request {:keys [kind cmd id]}]
+  (let [db-info
+        (:db-info env)
+
+        turn-id
+        (persistance/db-store-session-turn!
+          db-info
+          {:parent-session-id (:session-id env) :user-request user-request :status :running})
+
+        turn-pos
+        (or (session-turn-position env turn-id) 1)
+
+        _
+        (ctx-loop/set-turn-state! env
+                                  :iteration-id nil
+                                  :session-turn-id turn-id
+                                  :user-request user-request
+                                  :turn-position turn-pos
+                                  :iteration 1
+                                  :form-idx 0)
+
+        enabled?
+        (toggles/enabled? :shell/enabled)
+
+        tool-name
+        (if (= kind :bg) "shell_bg" "shell_run")
+
+        t0
+        (System/currentTimeMillis)
+
+        ;; Run the shell tool. `requiring-resolve` keeps foundation-shell a
+        ;; DROPPABLE plug-in (nil when the jar is absent) and avoids a compile-time
+        ;; cycle; the `:shell/enabled` gate is applied HERE (the symbol's own
+        ;; before-fn gate is bypassed by the direct var call).
+        envelope
+        (when enabled?
+          (try
+            (if (= kind :bg)
+              ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell-bg)
+                env
+                id
+                cmd)
+              ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell-run) env cmd))
+            (catch Throwable t
+              (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
+              {:result nil :error {:message (or (ex-message t) (str t))}})))
+
+        t1
+        (System/currentTimeMillis)
+
+        result-map
+        (:result envelope)
+
+        err
+        (:error envelope)
+
+        active-exts
+        ;; `registered-extensions` (NOT activation-filtered) so the shell op-card
+        ;; renderers resolve even when the shell layer's activation-fn is false —
+        ;; the `:shell/enabled` gate is applied above, renderer lookup is display-only.
+        (try (extension/registered-extensions) (catch Throwable _ []))
+
+        renderers
+        (try (extension/native-tool-renderers active-exts) (catch Throwable _ {}))
+
+        color-roles
+        (try (extension/native-tool-color-roles active-exts) (catch Throwable _ {}))
+
+        display
+        (when (some? result-map)
+          (try (tool-result-display {:result result-map} tool-name renderers)
+               (catch Throwable _ nil)))
+
+        answer-md
+        (cond (not enabled?) (str "**Shell layer is OFF.** Only you can enable it: settings dialog"
+                                  " → 'Shell commands (compatibility layer)'. Then `"
+                                  cmd
+                                  "` will run.")
+              (some? err) (str "**shell error**\n\n```\n" (or (:message err) (pr-str err)) "\n```")
+              display (bang-card->markdown display)
+              :else (str "_ran `" cmd "`_"))
+
+        block
+        (cond-> {:code (str tool-name "(" (pr-str cmd) ")")
+                 :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
+                 :vis/tool-name tool-name
+                 :tool-color-role (get color-roles tool-name)
+                 :envelope {:started-at-ms t0 :finished-at-ms t1}}
+          (some? result-map)
+          (assoc :result result-map)
+
+          (some? err)
+          (assoc :error err)
+
+          display
+          (assoc :result-render
+            (:body display) :result-summary
+            (:summary display)))
+
+        ;; One block = one form. Stamp `:tag :user-shell` so the channels suppress
+        ;; the redundant trace card (the answer bubble already shows it), the same
+        ;; way `:user-slash` is suppressed.
+        forms
+        (mapv #(assoc % :tag :user-shell)
+              (ctx-engine/blocks->forms [block] {:turn turn-pos :iter 1} nil))
+
+        ;; Snapshot CTX like run-slash-turn! / run-normal-turn! so resume is stable.
+        ctx-snapshot
+        (when-let [ca (:ctx-atom env)]
+          (let [stamped (ctx-loop/stamp-cursor env @ca)
+                gced (ctx-engine/gc-pass stamped)
+                clean (-> gced
+                          (dissoc "session_scope")
+                          ctx-engine/strip-ephemeral)]
+
+            (reset! ca clean)
+            clean))]
+
+    (try (persistance/db-store-iteration! db-info
+                                          {:session-turn-id turn-id
+                                           :code user-request
+                                           :forms forms
+                                           :duration-ms (- t1 t0)
+                                           :llm-full-duration-ms 0
+                                           :thinking ""
+                                           :answer answer-md
+                                           :llm-messages []
+                                           :llm-returned-empty-code? false})
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::bang-iter-persist-failed :data {:error (ex-message t)}})))
+    (persistance/db-update-session-turn! db-info
+                                         turn-id
+                                         {:answer-markdown answer-md
+                                          :iteration-count 1
+                                          :duration-ms (- t1 t0)
+                                          :status :success
+                                          :prior-outcome :complete
+                                          :ctx ctx-snapshot})
+    {:session-turn-id turn-id
+     :answer answer-md
+     :iteration-count 1
+     :duration-ms (- t1 t0)
+     :status :success
+     :prior-outcome :complete}))
+
+
 (defn run-turn!
   "Store turn -> iteration-loop -> update turn -> return result.
 
@@ -6097,18 +6289,20 @@
                           :data {:user-request user-request :error (ex-message t)}})
                {:handled? false}))]
 
-    (if (:handled? slash-result)
-      (if-let [expansion (when (= :unknown (:reason slash-result))
-                           (try (prompt-templates/expand env user-request)
-                                (catch Throwable t
-                                  (tel/log! {:level :warn
-                                             :id ::template-expand-threw
-                                             :data {:user-request user-request
-                                                    :error (ex-message t)}})
-                                  nil)))]
-        (run-normal-turn! env (:text expansion) loop-opts)
-        (run-slash-turn! env user-request slash-result))
-      (run-normal-turn! env user-request loop-opts))))
+    (if-let [bang (parse-bang user-request)]
+      (run-bang-turn! env user-request bang)
+      (if (:handled? slash-result)
+        (if-let [expansion (when (= :unknown (:reason slash-result))
+                             (try (prompt-templates/expand env user-request)
+                                  (catch Throwable t
+                                    (tel/log! {:level :warn
+                                               :id ::template-expand-threw
+                                               :data {:user-request user-request
+                                                      :error (ex-message t)}})
+                                    nil)))]
+          (run-normal-turn! env (:text expansion) loop-opts)
+          (run-slash-turn! env user-request slash-result))
+        (run-normal-turn! env user-request loop-opts)))))
 
 (defn custom-bindings
   "Current custom sandbox bindings {sym -> value}."
