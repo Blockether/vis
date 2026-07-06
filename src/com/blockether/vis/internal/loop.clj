@@ -2396,7 +2396,7 @@
         ;; doesn't store a return, so it gets no handle).
         result-handle
         (fn [tc own]
-          (when (and (:id tc) (some #(contains? % :result) own))
+          (when (and (:id tc) (some #(some? (:result %)) own))
             (str "# saved: native_tools_results["
                  (pr-str (str (:id tc)))
                  "] — re-read without re-running")))
