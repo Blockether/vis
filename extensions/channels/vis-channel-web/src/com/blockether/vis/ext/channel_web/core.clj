@@ -2412,7 +2412,7 @@
 
 (defn- bg-start-form
   "The submit form for ONE startable variant `sr`: its option chips or its
-   declared fields, ending in Cancel + Connect. Posts the canonical
+   declared fields, ending in Cancel + Add. Posts the canonical
    /resources/start; `eid` lets Cancel restore the collapsed card."
   [sid eid sr env]
   (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
@@ -2442,7 +2442,7 @@
       [:button.btn-secondary {:type "button"
                               :hx-get (str "/ui/session/" sid "/backgrounds/add?entry=" eid "&collapse=1")
                               :hx-target (str "#bg-" eid) :hx-swap "innerHTML"} "Cancel"]
-      [:button.btn-primary {:type "submit"} "Connect"]]]))
+      [:button.btn-primary {:type "submit"} "Add"]]]))
 
 (defn- bg-expanded
   "Expanded card body. A grouped entry shows a segmented transport chooser
@@ -2479,7 +2479,7 @@
         v0   (first vs)
         hint (cond
                (> (count vs) 1)   (str/join " · " (map #(get-in % [:variant :label]) vs))
-               (:fields v0)       "configure and connect"
+               (:fields v0)       "configure and add"
                (:options-fn v0)   (str "pick " (or (:options-label v0) "options") " and start")
                :else              "start")]
     (list
@@ -3832,7 +3832,7 @@
           (icon "check")
           [:span.fs-add-text
            [:span.fs-add-main "This is the session's root"]
-           [:span.fs-add-sub canon]]]
+           [:span.fs-add-sub (abbrev-home canon)]]]
          ;; already an ADDITIONAL filesystem root — can still be promoted
          already?
          [:div.fs-actions
@@ -3840,7 +3840,7 @@
            (icon "check")
            [:span.fs-add-text
             [:span.fs-add-main "Already a filesystem root for this session"]
-            [:span.fs-add-sub canon]]]
+            [:span.fs-add-sub (abbrev-home canon)]]]
           set-root-form]
          :else
          [:div.fs-actions

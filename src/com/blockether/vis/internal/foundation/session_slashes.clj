@@ -13,24 +13,12 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.titling :as titling]))
 
-(def ^:private transcript-html-fn
-  ;; Deferred resolve: `foundation.transcript` pulls in `vis.core`, which
-  ;; transitively requires this ns — resolve the renderer at call time to
-  ;; dodge the load cycle (same pattern as the CLI export path).
-  (delay (requiring-resolve
-           'com.blockether.vis.internal.foundation.transcript/transcript-html)))
-
 (defn- export-html
-  "Styled standalone HTML for a session. PREFERS the web channel's export —
-   the SAME chat view /ui renders (bubbles + inline op-cards + inlined
-   scripts) — which is present whenever a live slash runs; falls back to the
-   plain transcript renderer if that ext isn't on the classpath."
-  [db sid]
-  (or (try (when-let [f (requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html)]
-             (let [h (str (f sid))]
-               (when-not (str/starts-with? h "Session not found") h)))
-        (catch Throwable _ nil))
-    (@transcript-html-fn db sid)))
+  "Standalone HTML for a session — the SAME chat view /ui renders (bubbles +
+   inline op-cards + inlined scripts), via the web channel's canonical
+   `export-session-html`."
+  [_db sid]
+  (str ((requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html) sid)))
 
 (defn- err [msg & {:as extras}]
   (merge {:slash/status :error, :slash/title msg} extras))

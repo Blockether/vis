@@ -58,8 +58,7 @@
   com.blockether/lanterna          {:mvn/version "3.1.5-vis.21"}
   ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
   ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
-  ;; jcodec-javase. Only pulled in when the TUI jar is present; the .cast
-  ;; (asciinema) emitter needs no dependency at all.
+  ;; jcodec-javase. Only pulled in when the TUI jar is present.
   org.jcodec/jcodec                {:mvn/version "0.2.5"}
   org.jcodec/jcodec-javase         {:mvn/version "0.2.5"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}

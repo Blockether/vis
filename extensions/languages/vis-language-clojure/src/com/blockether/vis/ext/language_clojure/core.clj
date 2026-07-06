@@ -202,7 +202,7 @@
   [env aliases]
   (let [root (env-root env)
         sid  (:session-id env)
-        dir  (resolve-repl-dir root nil)
+        dir  (resolve-repl-dir root (:startable/dir env))
         als  (coerce-aliases aliases)]
     (when-not (.isDirectory (io/file dir))
       (throw (ex-info (str "REPL target dir does not exist: " dir)
@@ -635,6 +635,7 @@
      ;; Start. Always allowed (the self-start flag gates only the model).
      :ext/startable-resources
      [{:kind          :nrepl
+       :dir?          true
        :label         "nREPL"
        :options-label "aliases"
        ;; options-fn RENDERS aliases in deps.edn spelling (":dev"); start-fn

@@ -573,6 +573,9 @@
 ;;    :options-label string?                   ; what the options are ("aliases")
 ;;    :options-fn    (fn [env] -> [opt-str …]) ; PROPOSE choices (optional)
 ;;    :fields        [{:name keyword :label string :placeholder string? :required boolean?}]
+;;    :dir?          boolean?                  ; offer a working-directory input (defaults to
+;;                                             ; the workspace root); the chosen dir rides into
+;;                                             ; start-fn's env under :startable/dir
 ;;    :start-fn      (fn [env selected])}       ; selected is opts vec or field map
 (s/def :startable/kind keyword?)
 (s/def :startable/name keyword?)
@@ -584,9 +587,10 @@
   (s/keys :req-un [:startable/name :startable/label]
     :opt-un [:startable/placeholder :startable/required]))
 (s/def :startable/visible-fn ifn?) ;; () -> bool; hide a startable from Resources UIs (e.g. behind a toggle)
+(s/def :startable/dir? boolean?) ;; offer a working-directory input; chosen dir arrives in start-fn's env as :startable/dir
 (s/def ::startable (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
                      :opt-un [:startable/options-fn :startable/options-label :startable/fields
-                              :startable/visible-fn]))
+                              :startable/visible-fn :startable/dir?]))
 (s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the

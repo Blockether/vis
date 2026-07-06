@@ -1709,24 +1709,12 @@
     (stdout! "")
     (shutdown-agents)))
 
-(def ^:private transcript-html-fn
-  ;; Deferred resolve: `foundation.transcript` requires `vis.core`, which
-  ;; requires THIS namespace - a direct require would cycle. Resolve at
-  ;; call time (same pattern as `vis.core`'s channel-event vars).
-  (delay (requiring-resolve
-           'com.blockether.vis.internal.foundation.transcript/transcript-html)))
-
 (defn- export-html-str
-  "Styled standalone HTML for a session. PREFERS the web channel's export (the
-   SAME chat view /ui renders — bubbles + inline op-cards + inlined scripts);
-   falls back to the plain transcript renderer when the web ext isn't on the
-   classpath OR its gateway-backed reads aren't available headless."
-  [db sid]
-  (or (try (when-let [f (requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html)]
-             (let [h (str (f sid))]
-               (when-not (str/starts-with? h "Session not found") h)))
-        (catch Throwable _ nil))
-    (@transcript-html-fn db sid)))
+  "Standalone HTML for a session — the SAME chat view /ui renders (bubbles +
+   inline op-cards + inlined scripts), via the web channel's canonical
+   `export-session-html`. Requires the web extension on the classpath."
+  [_db sid]
+  (str ((requiring-resolve 'com.blockether.vis.ext.channel-web.core/export-session-html) sid)))
 
 (defn- cinema-export-fn
   "Resolve the headless session-cinema exporter from the channel-tui extension,
@@ -1756,12 +1744,11 @@
         session   (session-or-exit! d (get parsed "session-id"))
         md?       (boolean (get parsed "md"))
         html-path (some-> (get parsed "html") str/trim not-empty resolve-out-path)
-        cast-path (some-> (get parsed "cast") str/trim not-empty resolve-out-path)
         mp4-path  (some-> (get parsed "mp4") str/trim not-empty resolve-out-path)
         chosen    (filterv some? [(when md? :md) (when html-path :html)
-                                  (when cast-path :cast) (when mp4-path :mp4)])]
+                                  (when mp4-path :mp4)])]
     (when (> (count chosen) 1)
-      (stdout! "Choose exactly one of --md, --html PATH, --cast PATH, or --mp4 PATH.")
+      (stdout! "Choose exactly one of --md, --html PATH, or --mp4 PATH.")
       (shutdown-agents)
       (System/exit 2))
     (cond
@@ -1772,9 +1759,9 @@
         (spit target (export-html-str d (:id session)))
         (stdout! (str "Exported HTML: " (.getPath target))))
 
-      (or cast-path mp4-path)
-      (let [fmt  (if mp4-path :mp4 :cast)
-            path (or mp4-path cast-path)
+      mp4-path
+      (let [fmt  :mp4
+            path mp4-path
             export! (cinema-export-fn)]
         (when-let [parent (.getParentFile (io/file path))]
           (.mkdirs parent))
@@ -1785,7 +1772,7 @@
                        (:path res) (:frames res)
                        (long (/ (:video-ms res) 1000)))))
           (do
-            (stdout! "Cinema export (--cast/--mp4) needs the channel-tui extension, which is not installed.")
+            (stdout! "Cinema export (--mp4) needs the channel-tui extension, which is not installed.")
             (shutdown-agents)
             (System/exit 2))))
 
@@ -2539,21 +2526,18 @@
           :cmd/run-fn cli-delete-session!}
          {:cmd/name   "export"
           :cmd/parent ["sessions"]
-          :cmd/doc    "Export a session: Markdown on stdout, HTML to a file, or a headless screencast (.cast / .mp4) of the TUI transcript."
-          :cmd/usage  "vis sessions export <SESSION-ID> [--md | --html PATH | --cast PATH | --mp4 PATH]"
+          :cmd/doc    "Export a session: Markdown on stdout, HTML to a file, or a headless MP4 screencast of the TUI transcript."
+          :cmd/usage  "vis sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]"
           :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
                         :doc  "Session id (full UUID or unambiguous prefix)."}
                        {:name "md" :kind :flag :type :boolean
                         :doc  "Print Markdown to stdout (default)."}
                        {:name "html" :kind :flag :type :string
                         :doc  "Write styled HTML export to PATH."}
-                       {:name "cast" :kind :flag :type :string
-                        :doc  "Write an asciinema .cast screencast of the (uncollapsed) TUI transcript to PATH."}
                        {:name "mp4" :kind :flag :type :string
                         :doc  "Write a pure-JVM H.264 .mp4 screencast of the (uncollapsed) TUI transcript to PATH."}]
           :cmd/examples ["vis sessions export 3a7b2c1d --md"
                          "vis sessions export 3a7b2c1d --html out.html"
-                         "vis sessions export 3a7b2c1d --cast session.cast"
                          "vis sessions export 3a7b2c1d --mp4 session.mp4"]
           :cmd/run-fn cli-export-session!}
          {:cmd/name   "search"
