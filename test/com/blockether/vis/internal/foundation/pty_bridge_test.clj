@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.pty-bridge-test
-  (:require [com.blockether.vis.internal.foundation.pty-bridge :as pb]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.pty-bridge :as pb]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
            (java.net UnixDomainSocketAddress)
@@ -43,7 +44,7 @@
   (let [buf
         (ByteBuffer/allocate 1024)
 
-        n
+        _n
         (.read ch buf)]
 
     (.flip buf)
@@ -54,8 +55,8 @@
 (defdescribe pty-bridge-test
              (it "socket-path encodes session + id and find-socket matches by id suffix"
                  (let [p (pb/socket-path "sess-abc" "dev-server")]
-                   (expect (clojure.string/ends-with? (str (.getFileName p)) "__dev-server.sock"))
-                   (expect (clojure.string/includes? (str (.getFileName p)) "sess-abc"))))
+                   (expect (str/ends-with? (str (.getFileName p)) "__dev-server.sock"))
+                   (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
              (it "replays recent output, tees live output, and forwards client input"
                  (let [{:keys [sent handle listeners]}
                        (fake-pty)

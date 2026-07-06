@@ -16,8 +16,7 @@
    inside the track encodes the scroll fraction."
   (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
-  (:import [com.googlecode.lanterna Symbols]
-           [com.googlecode.lanterna.graphics TextGraphics]
+  (:import [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input MouseAction MouseActionType]))
 (def ^:const THUMB_H 1)
 ;;; ── Geometry ───────────────────────────────────────────────────────────────

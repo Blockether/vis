@@ -47,11 +47,6 @@
   [env]
   (boundary/boundary-view (:result env)))
 
-(defn- citations
-  "Pull the citation vec out of an envelope."
-  [env]
-  (get (envelope-result env) "citations"))
-
 (defdescribe
   papers-test
   (describe

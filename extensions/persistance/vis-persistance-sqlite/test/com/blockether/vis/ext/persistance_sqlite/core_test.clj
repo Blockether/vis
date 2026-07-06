@@ -23,7 +23,6 @@
             [com.blockether.vis.ext.persistance-sqlite.registrar]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
-            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]

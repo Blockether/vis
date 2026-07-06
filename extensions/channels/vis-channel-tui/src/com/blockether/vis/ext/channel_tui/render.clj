@@ -7,8 +7,6 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.iteration :as iteration]
             [com.blockether.vis.internal.provider-error :as perr])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
@@ -1249,53 +1247,7 @@
             (if (= 0 code) base-fg (ansi-code->fg code fg base-fg)))
           current-fg
           codes))
-(defn- format-clojure-ansi
-  "Format Clojure/EDN source via zprint and keep zprint's ANSI syntax
-   coloring. The TUI painter translates those ANSI SGR codes to
-   Lanterna colors; raw ANSI is never written to the terminal.
 
-   Used for CODE blocks only (the user's authored source). Result
-   bodies use `format-clojure-plain` instead: still pretty-printed,
-   but with no ANSI syntax coloring.
-
-   Channel render strips `(def NAME \"doc\" …)` docstring slots before
-   pretty-printing — the human reader sees the binding name + the
-   value, not the model-forced docstring noise. The persisted source
-   keeps the docstring so var meta + restore continue to work.
-
-   Live progress redraws on the spinner cadence while a provider call
-   is in flight. Without this cache, every tick re-ran zprint over
-   every already-finished form in the progress trace, so a long trace
-   could make the TUI look frozen even though app-db had advanced."
-  [code-text width]
-  (let [code-text
-        (str code-text)
-
-        width
-        (long width)
-
-        stripped
-        code-text]
-
-    (cached* [:clojure-ansi width stripped] #(fmt/format-clojure-ansi stripped width))))
-(defn- format-clojure-plain
-  "Pretty-print Clojure/EDN source via zprint WITHOUT ANSI syntax
-   coloring. This is the result-body formatter: pretty layout is OK,
-   ANSI syntax highlighting is not.
-
-   Same docstring-strip pass as `format-clojure-ansi` runs before
-   zprint formats the source."
-  [code-text width]
-  (let [code-text
-        (str code-text)
-
-        width
-        (long width)
-
-        stripped
-        code-text]
-
-    (cached* [:clojure-plain width stripped] #(fmt/format-clojure stripped width))))
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
    ANSI foreground codes are translated to Lanterna foreground colors;
@@ -1492,14 +1444,7 @@
     t/code-error-fg
 
     nil))
-(defn- silent-form-count
-  [message]
-  (let [n (reduce +
-                  0
-                  (map (fn [trace]
-                         (count (filter :silent? (:forms trace))))
-                       (or (:traces message) [])))]
-    (when (pos? n) n)))
+
 ;; The assistant footer line + routing fallback note are the SHARED, humanized
 ;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
 ;; `vis/meta-fallback-note`), so the CLI bracket, this TUI footer, and the
@@ -3262,28 +3207,7 @@
     (mapv (fn [line]
             {:line (str marker line) :meta meta})
           wrapped)))
-(defn- channel-ir? [x] (and (vector? x) (= :ir (first x))))
-(defn- channel-body-blank?
-  [x]
-  (cond (nil? x) true
-        (channel-ir? x) (<= (count (vis/->ast x)) 2)
-        :else (str/blank? (str x))))
-(defn- channel-body-plain-text [x] (if (channel-ir? x) (vis/render x :plain) (str x)))
-(defn- ir-body-entries
-  "Render canonical channel IR into painter entries. This path is IR-only:
-   render-fn output must already be `[:ir ...]`; strings belong to
-   raw value fallback paths, not tool/channel rendering.
 
-   Channel IR renders in place. Do not stringify it and do not prepend
-   generic result/body markers: plain IR paragraphs should inherit the
-   surrounding assistant background, while explicit IR structure (code,
-   headings, lists, tables) owns its own row styling.
-
-   Returns `nil` for empty IR."
-  [ir _body-marker max-w]
-  (when (and (channel-ir? ir) (not (channel-body-blank? ir)))
-    (let [entries (ir-tui/ir->entries (vis/->ast ir) max-w {:mode :channel})]
-      (when (seq entries) entries))))
 (defn- tag-copy-block-body
   "Stamp every body row of an expanded disclosure with copy metadata so a
    single click on the body lines copies the WHOLE disclosure body, not
@@ -3337,127 +3261,7 @@
                     :else line)))
        (str/join "\n")
        str/trim))
-(defn- split-entry-marker-body
-  "Split one rendered entry into original block marker + visible body.
-   Keeps prior tool badge colours: plain channel badge remains plain;
-   raw result badge keeps result-marker colours."
-  [{:keys [line]}]
-  (let [s (str (or line ""))]
-    (if (marker-prefix? s) [(subs s 0 1) (subs s 1)] ["" s])))
-(defn- append-right-label
-  "Append `right` so its final cell lands on `max-w`'s right edge.
 
-   Collapsed tool rows (`▸ CAT … tN/iN/bN`) are painted inside a fixed-width
-   result/code area. The scope stamp is chrome, not part of the badge label,
-   so use display-cell widths all the way through instead of string counts or
-   incidental padding."
-  ^String [left right max-w]
-  (let [max-w
-        (max 1 (long max-w))
-
-        right
-        (some-> right
-                str/trim
-                not-empty)]
-
-    (if-not right
-      (ellipsize-cols left max-w)
-      (let [gap-w
-            2
-
-            right-w
-            (p/display-width right)]
-
-        (if (> (+ right-w gap-w 1) max-w)
-          (ellipsize-cols left max-w)
-          (let [left-w
-                (max 1 (- max-w right-w gap-w))
-
-                left
-                (ellipsize-cols left left-w)
-
-                pad-w
-                (- max-w (p/display-width left) right-w)]
-
-            (str left (repeat-str \space pad-w) right)))))))
-(defn- collapsible-tool-summary-entry
-  [{:keys [session-id detail-expansions max-w session-turn-id iteration-number block-number kind
-           color-role scope]
-    :as opts} first-entry hidden-entries]
-  (let [node-id
-        (or (:node-id opts)
-            (detail-node-id {:session-turn-id session-turn-id
-                             :iteration-number iteration-number
-                             :block-number block-number
-                             :section :iteration
-                             :kind kind}))
-
-        expanded?
-        (detail-expanded? detail-expansions session-id node-id false)
-
-        chevron
-        (if expanded? "▾" "▸")
-
-        ;; First entry IS the summary badge by construction: the proof
-        ;; envelope's sink `:result` contract is `{:summary :display}` and
-        ;; the chokepoints (`progress/format-form-result`,
-        ;; `chat/form-result-render`) flatten it summary-first via
-        ;; `render-fn-result->ir`. No IR sniffing / first-paragraph
-        ;; heuristic — the badge row is whatever the tool's `:summary`
-        ;; rendered to (first [:strong ...] = label).
-        [marker body]
-        (split-entry-marker-body first-entry)
-
-        head
-        (or (some-> body
-                    str/trim
-                    not-empty)
-            "TOOL")
-
-        ;; Keep the collapsed tool badge focused on the tool summary only.
-        ;; Scope stays in the per-form footer chrome; duplicating it after
-        ;; badge text (e.g. "PATCH ... t24/i1/b1") is noisy.
-        visible
-        (ellipsize-cols (str chevron " " head) max-w)
-
-        meta
-        (when (and session-id node-id)
-          {:kind :toggle-details
-           :session-id (str session-id)
-           :node-id (str node-id)
-           :collapsed? (not expanded?)
-           :color-role color-role})]
-
-    (cond-> [{:line (str marker visible) :meta meta}]
-      expanded?
-      (into hidden-entries))))
-(defn- maybe-collapse-block
-  "Canonical tool-result collapse. TUI shows only the badge/head row by
-   default; the chevron at left toggles the full body. The badge is the
-   tool's `:summary` (flattened to the first IR block upstream via
-   `render-fn-result->ir`); the rest is the `:display` body. No
-   first-paragraph heuristic — summary is explicit in the contract."
-  [{:keys [body-marker lines max-w raw-text] :as opts}]
-  (let [body-value
-        (or raw-text (str/join "\n" lines))
-
-        entries
-        (if (channel-ir? body-value)
-          (ir-body-entries body-value body-marker max-w)
-          (mapv (fn [line]
-                  {:line (str body-marker line) :meta nil})
-                lines))]
-
-    (when (seq entries)
-      (let [first-entry
-            (first entries)
-
-            hidden-entries
-            (vec (rest entries))]
-
-        (if (seq hidden-entries)
-          (collapsible-tool-summary-entry opts first-entry hidden-entries)
-          entries)))))
 (defn- thinking-padded-block
   "Wrap reasoning content rows in the thinking-bg top/bottom padding the
    bubble painter expects (neutral blank above, thinking pad row inside)."
@@ -3577,34 +3381,7 @@
                       (assoc-in [last-i :meta] (or (:meta (nth trimmed last-i)) (:meta header)))))
                 body))
             [{:line (str thinking-marker "") :meta nil}]))))))
-(defn- markdown-fence-marker-line?
-  "True for standalone Markdown fence opener/closer lines. Tool
-   results are output, not prose; TUI result panes must not parse or
-   paint these as Markdown. We drop only the fence marker rows, keeping
-   the payload lines literal."
-  [line]
-  (let [s (str/triml (str line))]
-    (or (str/starts-with? s "```") (str/starts-with? s "~~~"))))
-(defn- strip-markdown-fence-marker-lines
-  "Remove Markdown fence marker rows from result text while preserving
-   the fenced body exactly. Applied to successful result bodies before
-   wrapping so ` ```diagram ` / ` ```diff ` never trigger TUI Markdown
-   structural rendering in result panes."
-  [text]
-  (->> (str/split-lines (str text))
-       (remove markdown-fence-marker-line?)
-       (str/join "\n")))
-(defn- maybe-collapse-raw-text-block
-  "Render a tool result as default-collapsed badge/head row. Full body
-   appears only after its chevron is toggled."
-  [{:keys [raw-text max-w] :as opts}]
-  (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))]
-    (when-not (channel-body-blank? raw-value)
-      (let [lines (when-not (channel-ir? raw-value)
-                    (wrap-text (channel-body-plain-text raw-value) max-w))]
-        (maybe-collapse-block (assoc opts
-                                :lines lines
-                                :raw-text raw-value))))))
+
 (defn- strip-paint-markers-line
   "Return user-visible text for a prewrapped internal painter line.
    The TUI painter consumes these markers from `:lines`; `:text` is
@@ -3716,174 +3493,7 @@
               (assoc :repeat-count run))]
 
         (recur (conj acc [i entry]) (+ i run) (subvec remaining run))))))
-(def ^:private rate-limit-recovery-hint
-  "rate limit: wait, re-authenticate, or switch provider/model")
-(defn- rate-limit-reason?
-  [reason]
-  (boolean (when-let [reason-name (some-> reason
-                                          name)]
-             (str/includes? reason-name "rate-limit"))))
-(defn- rate-limit-text?
-  [s]
-  (boolean (when-let [text (some-> s
-                                   str
-                                   str/lower-case)]
-             (or (str/includes? text "429")
-                 (str/includes? text "rate limit")
-                 (str/includes? text "rate-limit")))))
-(defn- rate-limit-notice?
-  [notice failed-provider why]
-  (or (= 429 (:status notice))
-      (= 429 (:status failed-provider))
-      (rate-limit-reason? (:reason notice))
-      (rate-limit-text? why)))
-(defn- append-rate-limit-hint
-  [s rate-limit?]
-  (cond-> s
-    rate-limit?
-    (str " — " rate-limit-recovery-hint)))
 
-(defn- format-fallback-notice
-  [{:keys [reason failed-provider new-provider] :as notice}]
-  (let [event?
-        (contains? notice :event/type)
-
-        failed-provider
-        (or failed-provider notice)
-
-        retry?
-        (= :llm.routing/provider-retry (:event/type notice))
-
-        failed-id
-        (if event?
-          (or (:from-provider notice) (:provider notice))
-          (or (some-> (:id failed-provider)
-                      name)
-              (some-> (:provider-id failed-provider)
-                      name)
-              (some-> (:provider failed-provider)
-                      name)
-              "unknown"))
-
-        failed-model
-        (if event? (or (:from-model notice) (:model notice)) (:model failed-provider))
-
-        new-id
-        (if event?
-          (:to-provider notice)
-          (or (some-> (:id new-provider)
-                      name)
-              (some-> (:provider-id new-provider)
-                      name)
-              (some-> (:provider new-provider)
-                      name)))
-
-        new-model
-        (if event? (:to-model notice) (:model new-provider))
-
-        from
-        (str failed-id (when failed-model (str "/" failed-model)))
-
-        to
-        (when (or new-id new-model)
-          (str (or new-id "unknown") (when new-model (str "/" new-model))))
-
-        why
-        (or (:error notice)
-            (:error failed-provider)
-            (some-> reason
-                    name)
-            "provider fallback")
-
-        kind
-        (if retry? "retry same provider" "provider fallback")
-
-        delay
-        (when (and retry? (:delay-ms notice))
-          (str ", retry in " (long (/ (long (:delay-ms notice)) 1000)) "s"))]
-
-    (append-rate-limit-hint
-      (str (if retry? "↻ " "↪ ") kind ": " from (when to (str " → " to)) " — " why delay)
-      (rate-limit-notice? notice failed-provider why))))
-(defn- consult-recap
-  "Project a single resolved consult entry into a multi-line recap
-   body. The first line is the CONSULT-tagged header (id + confidence
-   + first citation title). Subsequent lines carry the prose synthesis
-   (markdown content) and a citation list. The painter applies the
-   CONSULT badge to the head row; continuation rows fall through to
-   the neutral recap paint (dialog-hint, bold + italic).
-
-   Active entries:
-     CONSULT  :id :confidence — <citation-title or content-head>
-     <markdown body>
-     Citations:
-       • type :title :url
-       ...
-
-   Failed entries:
-     CONSULT  :id :failed (:error-kw)
-     <:reason text>"
-  [{:keys [id result]}]
-  (let [entry result]
-    (case (:status entry)
-      :failed
-      (let [head (str "CONSULT  " id " :failed (" (:error entry) ")")
-            reason (some-> entry
-                           :reason
-                           str)]
-
-        (if (str/blank? reason) head (str head "\n" reason)))
-
-      :active
-      (let [confidence (or (:confidence entry) :medium)
-            first-cite (first (:citations entry))
-            content (or (:content entry) "")
-            tag (or (some-> first-cite
-                            :title)
-                    (some-> first-cite
-                            :url)
-                    (when (string? content) (str/trim (subs content 0 (min 80 (count content))))))
-            head (str "CONSULT  " id " " confidence " — " tag)
-            body (when (and (string? content) (not (str/blank? content))) (str/trim content))
-            citations (vec (or (:citations entry) []))
-            citation-lines
-            (when (seq citations)
-              (str "Citations:\n"
-                   (str/join
-                     "\n"
-                     (map (fn [c]
-                            (let [t (or (:title c) (:url c) "?")
-                                  u (when (and (:title c) (:url c)) (:url c))]
-
-                              (str "  • " (name (or (:type c) :web)) " " t (when u (str " — " u)))))
-                          citations))))]
-
-        (cond-> head
-          body
-          (str "\n" body)
-
-          citation-lines
-          (str "\n" citation-lines)))
-
-      (str "CONSULT  " id " " (:status entry)))))
-(defn- pending-consult-recap
-  "Project a pending consult intent into a CONSULT-prefixed recap string.
-   Body carries the spinner glyph + preference + the focus head OR the
-   question head as a hint about what's being researched on the side
-   thread."
-  [{:keys [id preference focus question]}]
-  (let [focus-head
-        (when (seq focus)
-          (str/trim (subs (str (first focus)) 0 (min 60 (count (str (first focus)))))))
-
-        question-head
-        (when (and (str/blank? (str focus-head)) (string? question))
-          (str/trim (subs question 0 (min 60 (count question)))))
-
-        hint
-        (or focus-head question-head "")]
-
-    (str "CONSULT  " id " " preference " ⟳ pending" (when (seq hint) (str " — " hint)))))
 (defn- tool-card-entries
   "Render ONE op-card (`vis/result-card` descriptor) into TUI line entries: the tool
    LABEL + tool-authored SUMMARY on a headline painted in the tool's colour, the
@@ -4393,7 +4003,7 @@
                         ;; WHOLE op-card paints on one `result-bg` band — code AND
                         ;; prose/eval output alike. Embedded ANSI (diff +/-)
                         ;; survives via `paint-ansi-line!` in that paint branch.
-                        ->result
+                        _->result
                         (fn [e]
                           (let [l
                                 (str (:line e))

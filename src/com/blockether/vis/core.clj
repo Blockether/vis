@@ -54,7 +54,6 @@
             [com.blockether.vis.internal.gateway.server :as gateway]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.iteration :as iteration]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.titling :as titling]
@@ -75,8 +74,7 @@
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [taoensso.telemere :as tel]))
+            [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; =============================================================================
 ;; Gateway (HTTP/SSE server over the session/turn runtime)

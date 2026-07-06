@@ -18,7 +18,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.extension :as extension]
-            [lazytest.core :refer [defdescribe expect it throws?]]))
+            [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
 (defn- private-fn
   [name]
@@ -363,6 +363,15 @@
                                             :ext/description "Test protected paths."
                                             :ext/protected-paths (constantly (vec rules))})])})
 
+(defn- gate-env
+  "A non-protecting env carrying a `:mutation-gate` stub that records the call
+   payload into `seen!` and returns `ret` (a refusal string or nil)."
+  [seen! ret]
+  {:extensions (atom [])
+   :mutation-gate (fn [payload]
+                    (reset! seen! payload)
+                    ret)})
+
 (defdescribe
   protected-path-before-fn-test
   (it
@@ -585,16 +594,8 @@
   ;; FORCING plan-gate composition — write/patch consult env :mutation-gate AFTER
   ;; path-protection clears. (proposal Decision 2 / G1)
   ;; =============================================================================
-  (defn- gate-env
-    "A non-protecting env carrying a `:mutation-gate` stub that records the call
-   payload into `seen!` and returns `ret` (a refusal string or nil)."
-    [seen! ret]
-    {:extensions (atom [])
-     :mutation-gate (fn [payload]
-                      (reset! seen! payload)
-                      ret)})
-  (defdescribe
-    plan-gate-before-fn-test
+  (describe
+    "plan-gate-before-fn-test"
     (it "write SHORT-CIRCUITS with a :plan-required failure when the gate refuses"
         (let [seen
               (atom nil)

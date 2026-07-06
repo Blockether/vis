@@ -28,7 +28,6 @@
   (:import [org.graalvm.polyglot Context Engine Value PolyglotAccess PolyglotException]
            [org.graalvm.polyglot.io IOAccess]
            [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
-           [java.nio.charset StandardCharsets]
            [java.util ArrayList LinkedHashMap]))
 
 (set! *warn-on-reflection* true)
@@ -926,13 +925,6 @@ def __vis_native_result_scan__(__vis_tree__):
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
                     {:type :vis/empty-block :form-count 0}))))
 
-(def ^:private free-names-py-src
-  ;; Free NAMES a block reads but never binds itself — the bare `a` in
-  ;; `print(a)`. Collect Load-context Names, subtract everything bound IN this
-  ;; block (Store/Del targets, function/class defs, import names, function args,
-  ;; comprehension/walrus targets).
-  "import ast as __ast__\n__t__=__ast__.parse(__vis_src__)\n__load__=set()\n__bound__=set()\nfor __n__ in __ast__.walk(__t__):\n    if isinstance(__n__, __ast__.Name):\n        (__load__ if isinstance(__n__.ctx, __ast__.Load) else __bound__).add(__n__.id)\n    elif isinstance(__n__, (__ast__.FunctionDef, __ast__.AsyncFunctionDef, __ast__.ClassDef)):\n        __bound__.add(__n__.name)\n    elif isinstance(__n__, __ast__.arg):\n        __bound__.add(__n__.arg)\n    elif isinstance(__n__, (__ast__.Import, __ast__.ImportFrom)):\n        for __a__ in __n__.names:\n            __bound__.add((__a__.asname or __a__.name).split('.')[0])\nsorted(__load__ - __bound__)")
-
 (def BANNED_DEF_HEADS
   "Python constructs refused pre-eval — belt-and-suspenders against the obvious
    sandbox-escape footguns on top of the Context restrictions."
@@ -971,7 +963,7 @@ def __vis_native_result_scan__(__vis_tree__):
 ;; Sandbox bindings
 ;; =============================================================================
 
-(defn- ^Value python-globals [python-context] (.getBindings ^Context python-context "python"))
+(defn- python-globals ^Value [python-context] (.getBindings ^Context python-context "python"))
 
 (declare add-protected-names!)
 
@@ -1096,17 +1088,17 @@ def __vis_native_result_scan__(__vis_tree__):
         (:python-context env)
 
         g
-        (python-globals python-context)]
+        (python-globals python-context)
 
-    (let [v1
-          (.getMember g "_1")
+        v1
+        (.getMember g "_1")
 
-          v2
-          (.getMember g "_2")]
+        v2
+        (.getMember g "_2")]
 
-      (.putMember g "_3" v2)
-      (.putMember g "_2" v1)
-      (.putMember g "_1" (->py value)))))
+    (.putMember g "_3" v2)
+    (.putMember g "_2" v1)
+    (.putMember g "_1" (->py value))))
 
 (defn push-eval-error!
   "Park the most recent uncaught error in the sandbox `_e` slot. The `_1/_2/_3`
