@@ -94,7 +94,14 @@ before Docker or Harbor starts.
    `openai/` litellm prefix when omitted, injects a dummy non-secret
    `OPENAI_API_KEY=lmstudio` if no key is present, and defaults
    `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT=required` so Senior SWE-Bench forced
-   tool emits use the string form accepted by LM Studio.
+   tool emits use the string form accepted by LM Studio. That compatibility
+   mode also enables parsing plain JSON assistant text when a local model
+   returns the forced emit payload without an OpenAI tool-call wrapper. For
+   forced single-tool emits, the wrapper also sends LM Studio a
+   `response_format=json_schema` request so final judge output is constrained
+   without changing the exploratory tool-use turns. LM Studio runs also default
+   `VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER=3` because local judge calls can
+   exceed Harbor's default verifier timeout.
 
 ## Runner Comparison
 
@@ -413,7 +420,8 @@ keeps the comparison column as `pending-data` with the fair comparison params.
 | `VIS_BENCH_VERIFIER_JUDGE_MODEL` | unset | Explicit Senior SWE-Bench judge model. |
 | `VIS_BENCH_VERIFIER_CLASSIFIER_MODEL` | unset | Explicit patch-classifier model. |
 | `VIS_BENCH_VERIFIER_OPENAI_BASE_URL` | env OpenAI base URL or unset | OpenAI-compatible verifier endpoint. |
-| `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT` | `required` for LM Studio, unset otherwise | Rewrites forced OpenAI function `tool_choice` objects to a compatible string in the copied verifier. Use `none` to disable. |
+| `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT` | `required` for LM Studio, unset otherwise | Rewrites forced OpenAI function `tool_choice` objects to a compatible string in the copied verifier, enables request-level `response_format=json_schema` for forced single-tool emits, and enables plain-JSON fallback for missing tool-call wrappers. Use `none` to disable. |
+| `VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER` | `3` for LM Studio, unset otherwise | Passed to Harbor as `--verifier-timeout-multiplier`; increase for slow local judges. |
 | `VIS_BENCH_PREPARE_PYTHON_DEV_IMAGE` | `auto` | Build/use python-dev image for known affected tasks. |
 | `VIS_BENCH_TASK_IMAGE` | unset | Override the selected task image. |
 | `VIS_BENCH_CONTINUE_ON_FAILURE` | `0` | Continue subset execution after a task failure. |
