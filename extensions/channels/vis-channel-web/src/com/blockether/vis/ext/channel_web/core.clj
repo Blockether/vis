@@ -397,47 +397,47 @@
         (theme-bg-color css-root)]
 
     (str
-      "<!DOCTYPE html>"
-      (h/html
-        [:html
-         [:head [:meta {:charset "utf-8"}]
-          [:meta
-           {:name "viewport"
-            :content
-            "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
-          [:meta {:id "theme-color-meta" :name "theme-color" :content theme-bg}]
-          [:meta {:name "apple-mobile-web-app-status-bar-style" :content "default"}]
+     "<!DOCTYPE html>"
+     (h/html
+      [:html
+       [:head [:meta {:charset "utf-8"}]
+        [:meta
+         {:name "viewport"
+          :content
+          "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
+        [:meta {:id "theme-color-meta" :name "theme-color" :content theme-bg}]
+        [:meta {:name "apple-mobile-web-app-status-bar-style" :content "default"}]
           ;; Mobile Safari data detectors turned cat anchors/ranges like `123:456`
           ;; into tappable phone links. Keep transcript labels literal text.
-          [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
-          [:title (str title " · vis")]
+        [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
+        [:title (str title " · vis")]
           ;; `?v=` cache-buster (asset-version, new every gateway start) so a
           ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
           ;; cached app.css/ui.js even with no-cache, on reopened tabs.
           ;; Preload the two vendored variable fonts so first paint has the real
           ;; typeface (no FOUT) — they're same-origin under /ui/fonts.
-          [:link
-           {:rel "preload"
-            :href "/ui/fonts/hanken-grotesk.woff2"
-            :as "font"
-            :type "font/woff2"
-            :crossorigin "anonymous"}]
-          [:link
-           {:rel "preload"
-            :href "/ui/fonts/jetbrains-mono.woff2"
-            :as "font"
-            :type "font/woff2"
-            :crossorigin "anonymous"}]
-          [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
-          [:style {:id "theme-vars"} css-root]
+        [:link
+         {:rel "preload"
+          :href "/ui/fonts/hanken-grotesk.woff2"
+          :as "font"
+          :type "font/woff2"
+          :crossorigin "anonymous"}]
+        [:link
+         {:rel "preload"
+          :href "/ui/fonts/jetbrains-mono.woff2"
+          :as "font"
+          :type "font/woff2"
+          :crossorigin "anonymous"}]
+        [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
+        [:style {:id "theme-vars"} css-root]
           ;; All vendored, all local — nothing loads from outside vis.
-          [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/purify.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
-         (into [:body] body)]))))
+        [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/purify.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
+       (into [:body] body)]))))
 
 ;; =============================================================================
 ;; Defensive readers (context snapshot values may carry string OR kw
@@ -455,10 +455,10 @@
    boundaries so the status chip and the host-generated title stay live."
   [soul]
   (list
-    [:span.bar-name
-     {:role "button" :tabindex "0" :data-rename (or (:title soul) "") :title "Rename this session"}
-     (or (:title soul) "Untitled")]
-    (status-chip (:status soul))))
+   [:span.bar-name
+    {:role "button" :tabindex "0" :data-rename (or (:title soul) "") :title "Rename this session"}
+    (or (:title soul) "Untitled")]
+   (status-chip (:status soul))))
 
 (defn- routing-footer
   "Provider/model this session routes through, shown as a compact chip in the
@@ -622,10 +622,10 @@
                                name)
                   meta (str/join "  ·  "
                                  (remove nil?
-                                   [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
-                                      (str ":" p))
-                                    (when-let [s (pick r :status)]
-                                      (name s))]))]
+                                         [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
+                                            (str ":" p))
+                                          (when-let [s (pick r :status)]
+                                            (name s))]))]
 
               [:li.ctx-resource
                [:span {:class (str "res-dot " (resource-status-class (pick r :status)))}]
@@ -1156,7 +1156,7 @@
                              ;; reads/edits of a file render as one multi-span/multi-diff card,
                              ;; not look-alike siblings.
                              (for [form (vis/coalesce-forms (remove engine-empty-iteration-form?
-                                                              (or (:forms it) [])))]
+                                                                    (or (:forms it) [])))]
                                (list (when-let [src (:src form)]
                                        (when-not (or (str/blank? (str src))
                                                      (engine-chrome-form? form)
@@ -1231,25 +1231,25 @@
          (= "running" status)]
 
      (list
-       [:div.tsep]
-       (user-bubble (pick turn :request) (pick turn :started_at) (turn-live-key "user" turn))
-       (when-not (and running? live-replay?) (trace-lazy turn))
-       (cond
-         (or (pick turn :answer_md) (pick turn :error)) (vis-bubble turn)
+      [:div.tsep]
+      (user-bubble (pick turn :request) (pick turn :started_at) (turn-live-key "user" turn))
+      (when-not (and running? live-replay?) (trace-lazy turn))
+      (cond
+        (or (pick turn :answer_md) (pick turn :error)) (vis-bubble turn)
          ;; running: the answer streams into #live and the bottom ticker
          ;; shows the dots - nothing static to pin here.
-         running? nil
+        running? nil
          ;; Errored turn that left NO answer (a hard provider/infrastructure
          ;; failure — e.g. "selector manager closed", a 400, a stream drop —
          ;; that the engine couldn't turn into a fallback answer). The raw
          ;; message isn't persisted, so say what happened plainly instead of
          ;; a cryptic "(error)".
-         (= "error" status)
-         [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-          [:p.bubble-stopped
-           "This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
-         :else [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                [:p.empty (str "(" (or status "no answer") ")")]])))))
+        (= "error" status)
+        [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+         [:p.bubble-stopped
+          "This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
+        :else [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+               [:p.empty (str "(" (or status "no answer") ")")]])))))
 
 ;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
 ;; Extensions contribute footer items by declaring, on their extension
@@ -1661,56 +1661,56 @@
                  "X-Accel-Buffering" "no"}
        :body (reify
                ring-protocols/StreamableResponseBody
-                 (write-body-to-stream [_ _ output-stream]
-                   (let [^OutputStream out
-                         output-stream
+               (write-body-to-stream [_ _ output-stream]
+                 (let [^OutputStream out
+                       output-stream
 
-                         sub-id
-                         (str (java.util.UUID/randomUUID))
+                       sub-id
+                       (str (java.util.UUID/randomUUID))
 
-                         sink
-                         (fn [event]
-                           (locking out
-                             (doseq [frame (event->frames sid event)]
+                       sink
+                       (fn [event]
+                         (locking out
+                           (doseq [frame (event->frames sid event)]
                                ;; stamp the gateway seq so the client can
                                ;; rewind a reconnect to it (pings carry none —
                                ;; an id-less frame leaves lastEventId alone)
-                               (write-frame! out (assoc frame :id (:seq event))))
-                             (.flush out)))]
+                             (write-frame! out (assoc frame :id (:seq event))))
+                           (.flush out)))]
 
-                     (try (locking out
+                   (try (locking out
                             ;; 8KB SSE comment pad (clients ignore comments): proxy
                             ;; edges (Cloudflare tunnel) buffer a streaming body until
                             ;; a byte threshold — without the pad the first real frames
                             ;; sit in the edge buffer and live streaming looks dead.
                             ;; ONLY for proxied requests; a direct localhost client
                             ;; needs no pad and shouldn't pay the bytes.
-                            (when proxied?
-                              (.write out
-                                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                                 StandardCharsets/UTF_8))
-                              (.flush out))
+                          (when proxied?
+                            (.write out
+                                    (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                               StandardCharsets/UTF_8))
+                            (.flush out))
                             ;; Immediate NAMED ping (not a comment): the page's
                             ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
                             ;; stream proves itself within a second; silence means an
                             ;; edge proxy is buffering the body and ui.js falls back
                             ;; to polling /ui/session/:sid/poll.
-                            (write-frame! out {:event "ping" :html ""})
-                            (.flush out)
-                            (doseq [event (vis/gateway-subscribe!
-                                            sid
-                                            sub-id
-                                            sink
-                                            (or from (vis/gateway-current-seq sid)))]
-                              (sink event)))
-                          (loop []
+                          (write-frame! out {:event "ping" :html ""})
+                          (.flush out)
+                          (doseq [event (vis/gateway-subscribe!
+                                         sid
+                                         sub-id
+                                         sink
+                                         (or from (vis/gateway-current-seq sid)))]
+                            (sink event)))
+                        (loop []
 
-                            (Thread/sleep (long HEARTBEAT_MS))
-                            (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
-                            (recur))
-                          (catch Throwable _ nil)
-                          (finally (vis/gateway-unsubscribe! sid sub-id)
-                                   (try (.close out) (catch Throwable _ nil)))))))})))
+                          (Thread/sleep (long HEARTBEAT_MS))
+                          (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
+                          (recur))
+                        (catch Throwable _ nil)
+                        (finally (vis/gateway-unsubscribe! sid sub-id)
+                                 (try (.close out) (catch Throwable _ nil)))))))})))
 
 (defn- poll-handler
   "GET /ui/session/:sid/poll?from=N — the SSE stream's PULL twin for
@@ -1767,43 +1767,43 @@
    form contract stays POST /ui/auth with the `token` field."
   [& [error]]
   (page
-    "connect"
-    [:main.auth
-     [:div.auth-card [:div.auth-mark "vis"] [:p.tagline "see it think"]
-      [:div.auth-lock
+   "connect"
+   [:main.auth
+    [:div.auth-card [:div.auth-mark "vis"] [:p.tagline "see it think"]
+     [:div.auth-lock
+      [:svg
+       {:viewBox "0 0 24 24"
+        :width "14"
+        :height "14"
+        :fill "none"
+        :stroke "currentColor"
+        :stroke-width "2"
+        :stroke-linecap "round"
+        :stroke-linejoin "round"} [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
+       [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]] [:span "bearer token required"]]
+     (when error [:p.auth-error error])
+     [:form {:method "post" :action "/ui/auth"}
+      [:input.auth-input
+       {:type "password"
+        :name "token"
+        :placeholder "paste your gateway token"
+        :autofocus true
+        :autocomplete "off"
+        :autocapitalize "off"
+        :spellcheck "false"
+        :required true
+        :aria-label "gateway bearer token"}]
+      [:button.auth-go {:type "submit"} "Connect"
        [:svg
         {:viewBox "0 0 24 24"
-         :width "14"
-         :height "14"
+         :width "15"
+         :height "15"
          :fill "none"
          :stroke "currentColor"
          :stroke-width "2"
          :stroke-linecap "round"
-         :stroke-linejoin "round"} [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
-        [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]] [:span "bearer token required"]]
-      (when error [:p.auth-error error])
-      [:form {:method "post" :action "/ui/auth"}
-       [:input.auth-input
-        {:type "password"
-         :name "token"
-         :placeholder "paste your gateway token"
-         :autofocus true
-         :autocomplete "off"
-         :autocapitalize "off"
-         :spellcheck "false"
-         :required true
-         :aria-label "gateway bearer token"}]
-       [:button.auth-go {:type "submit"} "Connect"
-        [:svg
-         {:viewBox "0 0 24 24"
-          :width "15"
-          :height "15"
-          :fill "none"
-          :stroke "currentColor"
-          :stroke-width "2"
-          :stroke-linecap "round"
-          :stroke-linejoin "round"} [:path {:d "M5 12h14"}] [:path {:d "m12 5 7 7-7 7"}]]]]
-      [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
+         :stroke-linejoin "round"} [:path {:d "M5 12h14"}] [:path {:d "m12 5 7 7-7 7"}]]]]
+     [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
 
 (defn- not-found-page
   "Styled error page for a wrong /ui address or a missing session. Reuses the
@@ -1944,9 +1944,9 @@
 
         live-html
         (apply str
-          (->> live-frames
-               (filter #(= "message" (:event %)))
-               (map :html)))
+               (->> live-frames
+                    (filter #(= "message" (:event %)))
+                    (map :html)))
 
         live-think
         (->> live-frames
@@ -1955,84 +1955,84 @@
              :html)]
 
     (page
-      (or (:title soul) "session")
-      [:div.app
-       {:hx-ext "sse"
-        :sse-connect (str "/ui/session/" sid "/stream?from=" from)
-        :data-sid (str sid)
-        :data-from (str from)}
+     (or (:title soul) "session")
+     [:div.app
+      {:hx-ext "sse"
+       :sse-connect (str "/ui/session/" sid "/stream?from=" from)
+       :data-sid (str sid)
+       :data-from (str from)}
        ;; SSE watchdog target: the stream pings this (hx-swap none) so
        ;; ui.js can tell a LIVE stream from one an edge proxy buffers —
        ;; silence after connect flips the page to /poll pulling.
-       [:div#ssewatch {:sse-swap "ping" :hx-swap "none" :hidden true}]
-       [:header.bar
-        [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
-         (icon "sidebar")]
-        [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"} (bar-title-content soul)]
-        [:span.session-id (subs (str sid) 0 8)]
-        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
-         (icon "layers")]] [:div#modal]
+      [:div#ssewatch {:sse-swap "ping" :hx-swap "none" :hidden true}]
+      [:header.bar
+       [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
+        (icon "sidebar")]
+       [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"} (bar-title-content soul)]
+       [:span.session-id (subs (str sid) 0 8)]
+       [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
+        (icon "layers")]] [:div#modal]
        ;; mobile-drawer backdrop: dim + tap-to-close when the sidebar/rail is open
-       [:div.scrim {:aria-hidden "true"}]
-       [:div.layout (sessions-sidebar sid)
+      [:div.scrim {:aria-hidden "true"}]
+      [:div.layout (sessions-sidebar sid)
         ;; ONE center flex column holds the thread AND the composer dock,
         ;; so both center in the SAME box between the rails — the input
         ;; can never drift out of line with the chat column again.
-        [:div.center
-         [:main.thread
-          [:div.column
-           (if (seq turns)
-             (list (when older? (older-sentinel sid oldest-tid))
-                   (map #(turn-block % live-replay?) window))
-             [:div.hello-wrap [:h1.hello "What are we building?"]
-              [:p.hello-sub "vis works in this workspace — ask for anything."]])
+       [:div.center
+        [:main.thread
+         [:div.column
+          (if (seq turns)
+            (list (when older? (older-sentinel sid oldest-tid))
+                  (map #(turn-block % live-replay?) window))
+            [:div.hello-wrap [:h1.hello "What are we building?"]
+             [:p.hello-sub "vis works in this workspace — ask for anything."]])
            ;; Live bubbles land here (user message from the form response,
            ;; the answer from the `message` SSE event). Work below holds
            ;; ONLY trace: code, results, iteration ticks.
-           [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}
+          [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}
             ;; Running turn: its current trace, server-rendered (see
             ;; inflight-live-frames). Empty for an idle session — history sits in
             ;; the turn-blocks above.
-            (when (seq live-html) (h/raw live-html))]
-           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
-            (cond
+           (when (seq live-html) (h/raw live-html))]
+          [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
+           (cond
               ;; Current thinking ticker (server-rendered) so it's there on load,
               ;; not popped in by the next reasoning delta.
-              (seq (str live-think)) (h/raw live-think)
-              running? [:div.dots [:span] [:span] [:span]])] [:div.thread-tail]]]
-         [:div.dock
-          [:button#jump-bottom.jump-bottom
-           {:type "button"
-            :hidden true
-            :aria-label "Jump to bottom"
-            :title "Jump to newest message"} (icon "arrow-down") [:span "Bottom"]]
-          [:div#suggest.suggest {:hidden true}]
+             (seq (str live-think)) (h/raw live-think)
+             running? [:div.dots [:span] [:span] [:span]])] [:div.thread-tail]]]
+        [:div.dock
+         [:button#jump-bottom.jump-bottom
+          {:type "button"
+           :hidden true
+           :aria-label "Jump to bottom"
+           :title "Jump to newest message"} (icon "arrow-down") [:span "Bottom"]]
+         [:div#suggest.suggest {:hidden true}]
           ;; Stop control - SSE fills #turnctl with the stop button on turn.started
           ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
-          [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"} (queued-content sid)]
-          [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
-           (when running? (stop-button sid))]
-          [:form.composer
-           {:hx-post (str "/ui/session/" sid "/turns")
-            :hx-target "#live"
-            :hx-swap "beforeend"
-            :data-files-url (str "/v1/sessions/" sid "/suggest")
-            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
+         [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"} (queued-content sid)]
+         [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
+          (when running? (stop-button sid))]
+         [:form.composer
+          {:hx-post (str "/ui/session/" sid "/turns")
+           :hx-target "#live"
+           :hx-swap "beforeend"
+           :data-files-url (str "/v1/sessions/" sid "/suggest")
+           "hx-on::after-request" "if(event.detail.successful) this.reset()"}
            ;; No add-file BUTTON — type `@` to attach a file (the composer's
            ;; @-picker), keeping the input edges symmetric and uncluttered.
-           [:textarea
-            {:name "request"
-             :rows 1
-             :autocomplete "off"
-             :autocapitalize "off"
-             :autocorrect "off"
-             :spellcheck "false"
-             :placeholder "Ask vis…   (@ to add a file)"}]
-           [:button.mic
-            {:type "button" :aria-label "Dictate" :data-voice-url (str "/ui/session/" sid "/voice")}
-            (icon "mic")] [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
-         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]
-        (context-rail sid snapshot)]])))
+          [:textarea
+           {:name "request"
+            :rows 1
+            :autocomplete "off"
+            :autocapitalize "off"
+            :autocorrect "off"
+            :spellcheck "false"
+            :placeholder "Ask vis…   (@ to add a file)"}]
+          [:button.mic
+           {:type "button" :aria-label "Dictate" :data-voice-url (str "/ui/session/" sid "/voice")}
+           (icon "mic")] [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
+        [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]
+       (context-rail sid snapshot)]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -2213,31 +2213,31 @@
 (defn- slash-bubble
   [result]
   (html
-    (list
-      [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-       (if-let [error (:error result)]
-         [:p.empty.slash-error (str error)]
+   (list
+    [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+     (if-let [error (:error result)]
+       [:p.empty.slash-error (str error)]
          ;; `result` is the slash-dispatch ENVELOPE; the run-fn's card lives at
          ;; `:result` as a `:slash/{title,body}` map (NOT IR — feeding it raw to
          ;; ir->hiccup dumped the EDN literal). Render the title as a heading and
          ;; coerce the body (IR / hiccup / markdown string / nil) the way the
          ;; persisted answer_markdown does.
-         (let [r (:result result)
-               title (some-> (:slash/title r)
-                             str
-                             str/trim
-                             not-empty)
-               body (:slash/body r)
-               body* (cond (nil? body) nil
-                           (string? body) (md->hiccup body)
-                           (vector? body) (ir->hiccup body)
-                           :else (md->hiccup (pr-str body)))]
+       (let [r (:result result)
+             title (some-> (:slash/title r)
+                           str
+                           str/trim
+                           not-empty)
+             body (:slash/body r)
+             body* (cond (nil? body) nil
+                         (string? body) (md->hiccup body)
+                         (vector? body) (ir->hiccup body)
+                         :else (md->hiccup (pr-str body)))]
 
-           [:div.prose.md
-            (cond (and title body*) (list [:p [:strong title]] body*)
-                  title [:p [:strong title]]
-                  body* body*
-                  :else [:p "done"])]))])))
+         [:div.prose.md
+          (cond (and title body*) (list [:p [:strong title]] body*)
+                title [:p [:strong title]]
+                body* body*
+                :else [:p "done"])]))])))
 
 (defn- run-slash
   "Dispatch a /command through the engine's slash handling — the same
@@ -2381,7 +2381,7 @@
       (and sid (= native "switch-session")) {:status 200
                                              :headers {"Content-Type" "text/html; charset=utf-8"}
                                              :body (oob-modal (:body (sessions-switch-handler
-                                                                       request)))}
+                                                                      request)))}
       ;; `/fork-session [title]` — mint a fresh workspace clone + fork the
       ;; current session's latest state (TUI parity), then refresh so the page
       ;; loads the forked branch.
@@ -2883,57 +2883,57 @@
   ([sid] (resources-modal sid nil))
   ([sid notice]
    (modal-shell
-     "Backgrounds"
-     {:class "modal-mid"}
-     (when notice [:p.slash-error notice])
+    "Backgrounds"
+    {:class "modal-mid"}
+    (when notice [:p.slash-error notice])
      ;; One collapsed card PER declared startable ENTRY (data-driven from
      ;; :ext/startable-resources). Clicking a card's Add button reveals its
      ;; form via an htmx fragment swap — grouped startables (e.g. MCP) show a
      ;; Local/Remote transport chooser. Nothing resource-specific here.
-     (let [startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
-       (for [entry (startable-entries startables)]
-         (bg-card sid entry)))
-     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
-       (if (seq rs)
-         [:ul.modal-resources
-          (for [r rs]
-            (let [rid (str (or (pick r :id) (pick r :name)))
-                  kind (some-> (or (pick r :kind) (pick r :type))
-                               name)]
+    (let [startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
+      (for [entry (startable-entries startables)]
+        (bg-card sid entry)))
+    (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
+      (if (seq rs)
+        [:ul.modal-resources
+         (for [r rs]
+           (let [rid (str (or (pick r :id) (pick r :name)))
+                 kind (some-> (or (pick r :kind) (pick r :type))
+                              name)]
 
-              [:li.modal-res-row [:span.res-dot]
-               [:span.modal-res-name
+             [:li.modal-res-row [:span.res-dot]
+              [:span.modal-res-name
                 ;; the resource's own label is the readable NAME (e.g.
                 ;; "nREPL vis :dev :test"); port/status ride below it.
-                [:span.modal-res-title
+               [:span.modal-res-title
                  ;; lead with the kind as a prominent TYPE badge so the row
                  ;; reads "what it is" at a glance, then the readable name.
-                 (when kind [:span.modal-res-type kind])
-                 [:span.modal-res-title-text (str (or (pick r :label) (pick r :id) "resource"))]]
-                [:span.modal-res-meta
-                 (str/join "  ·  "
-                           (remove nil?
-                             [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
-                                (str ":" p))
-                              (when-let [s (pick r :status)]
-                                (name s))]))]]
+                (when kind [:span.modal-res-type kind])
+                [:span.modal-res-title-text (str (or (pick r :label) (pick r :id) "resource"))]]
+               [:span.modal-res-meta
+                (str/join "  ·  "
+                          (remove nil?
+                                  [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))]
+                                     (str ":" p))
+                                   (when-let [s (pick r :status)]
+                                     (name s))]))]]
                ;; rid rides in the BODY (hx-vals), not the path — resource ids
                ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
                ;; can't carry.
-               [:span.modal-res-actions
-                [:button.btn-sm
-                 {:type "button"
-                  :hx-post (str "/ui/session/" sid "/resources/restart")
-                  :hx-vals (json-text {:rid rid})
-                  :hx-target "#modal"
-                  :hx-swap "innerHTML"} "restart"]
-                [:button.btn-sm.btn-danger
-                 {:type "button"
-                  :hx-post (str "/ui/session/" sid "/resources/stop")
-                  :hx-vals (json-text {:rid rid})
-                  :hx-target "#modal"
-                  :hx-swap "innerHTML"} "stop"]]]))]
-         [:p.empty "nothing running yet — add a background above"])))))
+              [:span.modal-res-actions
+               [:button.btn-sm
+                {:type "button"
+                 :hx-post (str "/ui/session/" sid "/resources/restart")
+                 :hx-vals (json-text {:rid rid})
+                 :hx-target "#modal"
+                 :hx-swap "innerHTML"} "restart"]
+               [:button.btn-sm.btn-danger
+                {:type "button"
+                 :hx-post (str "/ui/session/" sid "/resources/stop")
+                 :hx-vals (json-text {:rid rid})
+                 :hx-target "#modal"
+                 :hx-swap "innerHTML"} "stop"]]]))]
+        [:p.empty "nothing running yet — add a background above"])))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -3052,10 +3052,10 @@
         (cond (not (and sid kind)) "missing session or kind"
               (nil? sr) (str "unknown startable: " kind)
               :else (try ((:start-fn sr)
-                           (cond-> (vis/env-for sid)
-                             dir
-                             (assoc :startable/dir dir))
-                           selected)
+                          (cond-> (vis/env-for sid)
+                            dir
+                            (assoc :startable/dir dir))
+                          selected)
                          nil
                          (catch Throwable t
                            (str "Could not start " (:label sr) ": " (ex-message t)))))]
@@ -3186,9 +3186,9 @@
      (cond-> {:id (str "pcard-" pid) :data-pid pid}
        loading?
        (assoc :hx-get
-         (str base "/p/" pid "/diag") :hx-trigger
-         "load" :hx-swap
-         "outerHTML"))
+              (str base "/p/" pid "/diag") :hx-trigger
+              "load" :hx-swap
+              "outerHTML"))
      [:div.pcard-line [:span.pcard-pri (inc idx)]
       [:span.pcard-moves (move-act "up" "↑" (zero? idx)) (move-act "down" "↓" (>= idx (dec total)))]
       [:span.pcard-label label] [:span.pcard-host host]
@@ -3398,27 +3398,27 @@
         (vis/provider-model-options probe (:default-models preset) show-all?)]
 
     (modal-shell
-      (str (:label preset) " — Select Model")
-      (modal-back (str base "/add") "Add Provider")
-      (if (empty? models)
-        [:p.empty "No models reported. Is the provider reachable / the key valid?"]
-        [:div.model-chips.pick
-         (for [m models]
-           [:button.model-chip
-            {:type "button"
-             :hx-post (str base "/add/" (name pid) "/confirm")
-             :hx-vals (json-text
-                        {:model m :api_key (or api-key "") :base_url (or (:base-url preset) "")})
-             :hx-target "#modal"
-             :hx-swap "innerHTML"} m])])
-      (when (and (not show-all?) (pos? hidden-count))
-        [:button.show-all
-         {:type "button"
-          :hx-post (str base "/add/" (name pid) "/models")
-          :hx-vals (json-text
-                     {:api_key (or api-key "") :base_url (or (:base-url preset) "") :show_all "1"})
-          :hx-target "#modal"
-          :hx-swap "innerHTML"} (str "Show all models… (" hidden-count " hidden)")]))))
+     (str (:label preset) " — Select Model")
+     (modal-back (str base "/add") "Add Provider")
+     (if (empty? models)
+       [:p.empty "No models reported. Is the provider reachable / the key valid?"]
+       [:div.model-chips.pick
+        (for [m models]
+          [:button.model-chip
+           {:type "button"
+            :hx-post (str base "/add/" (name pid) "/confirm")
+            :hx-vals (json-text
+                      {:model m :api_key (or api-key "") :base_url (or (:base-url preset) "")})
+            :hx-target "#modal"
+            :hx-swap "innerHTML"} m])])
+     (when (and (not show-all?) (pos? hidden-count))
+       [:button.show-all
+        {:type "button"
+         :hx-post (str base "/add/" (name pid) "/models")
+         :hx-vals (json-text
+                   {:api_key (or api-key "") :base_url (or (:base-url preset) "") :show_all "1"})
+         :hx-target "#modal"
+         :hx-swap "innerHTML"} (str "Show all models… (" hidden-count " hidden)")]))))
 
 (def ^:private oauth-web-flows
   "In-memory web OAuth handshakes keyed by provider id. The provider owns
@@ -3507,49 +3507,49 @@
         (oauth-provider-detected? pid)]
 
     (modal-shell
-      (str (:label preset) " — Sign In")
-      (modal-back (str base "/add") "Add Provider")
-      (cond detected? [:div.oauth-ready
-                       [:p "Authenticated — credentials are now available on this machine."]
-                       [:button.send-wide
-                        {:type "button"
-                         :hx-post (str base "/add/" (name pid) "/confirm")
-                         :hx-vals (json-text {:api_key ""})
-                         :hx-target "#modal"
-                         :hx-swap "innerHTML"} (str "Add " (:label preset))]]
-            (= status :pending)
-            [:div.oauth-pending [:p "Finish the provider-owned sign-in, then return here."]
-             (when (seq lines)
-               [:div
-                (for [line lines]
-                  (if-let [url (url-line? line)]
-                    [:p [:a {:href url :target "_blank" :rel "noreferrer"} url]]
-                    [:p line]))])
-             [:form.key-form
-              {:hx-post (str base "/add/" (name pid) "/auth/finish")
-               :hx-target "#modal"
-               :hx-swap "innerHTML"}
-              [:input
-               {:type "text"
-                :name "redirect"
-                :autocomplete "off"
-                :placeholder "Paste final redirect URL / authorization code if the provider asks"}]
-              [:button.send-wide {:type "submit"} "Submit code / check"]]
-             [:button.send-wide
-              {:type "button"
-               :hx-get (str base "/add/" (name pid) "/auth")
-               :hx-target "#modal"
-               :hx-swap "innerHTML"} "I authorized — check status"]]
-            :else [:div.oauth-pending
-                   [:p
-                    (str (:label preset)
-                         " supports OAuth. Vis can now start that flow from the web UI.")]
-                   [:button.send-wide
-                    {:type "button"
-                     :hx-post (str base "/add/" (name pid) "/auth/start")
-                     :hx-target "#modal"
-                     :hx-swap "innerHTML"} "Start sign-in"] [:p "Terminal fallback:"]
-                   [:pre.cmd (str "vis providers auth " (name pid))]]))))
+     (str (:label preset) " — Sign In")
+     (modal-back (str base "/add") "Add Provider")
+     (cond detected? [:div.oauth-ready
+                      [:p "Authenticated — credentials are now available on this machine."]
+                      [:button.send-wide
+                       {:type "button"
+                        :hx-post (str base "/add/" (name pid) "/confirm")
+                        :hx-vals (json-text {:api_key ""})
+                        :hx-target "#modal"
+                        :hx-swap "innerHTML"} (str "Add " (:label preset))]]
+           (= status :pending)
+           [:div.oauth-pending [:p "Finish the provider-owned sign-in, then return here."]
+            (when (seq lines)
+              [:div
+               (for [line lines]
+                 (if-let [url (url-line? line)]
+                   [:p [:a {:href url :target "_blank" :rel "noreferrer"} url]]
+                   [:p line]))])
+            [:form.key-form
+             {:hx-post (str base "/add/" (name pid) "/auth/finish")
+              :hx-target "#modal"
+              :hx-swap "innerHTML"}
+             [:input
+              {:type "text"
+               :name "redirect"
+               :autocomplete "off"
+               :placeholder "Paste final redirect URL / authorization code if the provider asks"}]
+             [:button.send-wide {:type "submit"} "Submit code / check"]]
+            [:button.send-wide
+             {:type "button"
+              :hx-get (str base "/add/" (name pid) "/auth")
+              :hx-target "#modal"
+              :hx-swap "innerHTML"} "I authorized — check status"]]
+           :else [:div.oauth-pending
+                  [:p
+                   (str (:label preset)
+                        " supports OAuth. Vis can now start that flow from the web UI.")]
+                  [:button.send-wide
+                   {:type "button"
+                    :hx-post (str base "/add/" (name pid) "/auth/start")
+                    :hx-target "#modal"
+                    :hx-swap "innerHTML"} "Start sign-in"] [:p "Terminal fallback:"]
+                  [:pre.cmd (str "vis providers auth " (name pid))]]))))
 
 (defn- add-provider-step
   "Step 2 of Add Provider, by auth kind:
@@ -3759,21 +3759,21 @@
   [request]
   (let [tid (get-in request [:path-params :tid])]
     (html-ok
-      (html (or
+     (html (or
               ;; The completion event can reach Safari before the gateway has made
               ;; the iteration rows visible to lazy trace reads. Wait briefly so the
               ;; first post-run click expands reliably; cap at 3s to match the web
               ;; edge-proxy watchdog budget.
-              (let [deadline (+ (System/currentTimeMillis) 3000)]
-                (loop []
+            (let [deadline (+ (System/currentTimeMillis) 3000)]
+              (loop []
 
-                  (or (trace-body {:turn_id tid})
-                      (when (< (System/currentTimeMillis) deadline) (Thread/sleep 100) (recur)))))
+                (or (trace-body {:turn_id tid})
+                    (when (< (System/currentTimeMillis) deadline) (Thread/sleep 100) (recur)))))
               ;; Empty/failed read (e.g. starved by a concurrent live-stream
               ;; write). Keep the lazy trigger so re-opening retries instead
               ;; of permanently swapping in a dead empty body.
-              [:div.trace-body
-               [:div.block-loading "no trace recorded yet — close and re-open to retry"]])))))
+            [:div.trace-body
+             [:div.block-loading "no trace recorded yet — close and re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
@@ -3837,15 +3837,15 @@
    close-on-select hid."
   [request]
   (with-session request
-                (fn [sid]
-                  (vis/gateway-set-session-model! sid
-                                                  (get-in request [:form-params "provider"])
-                                                  (get-in request [:form-params "model"]))
-                  (str (html (model-pick-body sid))
+    (fn [sid]
+      (vis/gateway-set-session-model! sid
+                                      (get-in request [:form-params "provider"])
+                                      (get-in request [:form-params "model"]))
+      (str (html (model-pick-body sid))
                        ;; Routing lives in the footer dock now — the #footwrap OOB swap
                        ;; re-renders the provider/model chip after a model change.
-                       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
-                              (footer-content sid)])))))
+           (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
+                  (footer-content sid)])))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
@@ -3857,30 +3857,30 @@
    (the slow probes); swapped over the skeleton card."
   [request]
   (with-session request
-                (fn [sid]
-                  (let [pid
-                        (path-pid request)
+    (fn [sid]
+      (let [pid
+            (path-pid request)
 
-                        providers
-                        (vis/configured-providers)
+            providers
+            (vis/configured-providers)
 
-                        idx
-                        (or (some (fn [[i p]]
-                                    (when (= pid (:id p)) i))
-                                  (map-indexed vector providers))
-                            0)
+            idx
+            (or (some (fn [[i p]]
+                        (when (= pid (:id p)) i))
+                      (map-indexed vector providers))
+                0)
 
-                        provider
-                        (configured-provider pid)]
+            provider
+            (configured-provider pid)]
 
-                    (if-not provider
-                      (providers-modal sid)
-                      (html (provider-card sid
-                                           provider
-                                           idx
-                                           (count providers)
-                                           {:status (vis/provider-status provider)
-                                            :limits (vis/provider-limits-safe provider)})))))))
+        (if-not provider
+          (providers-modal sid)
+          (html (provider-card sid
+                               provider
+                               idx
+                               (count providers)
+                               {:status (vis/provider-status provider)
+                                :limits (vis/provider-limits-safe provider)})))))))
 
 (defn- provider-add-picker-handler [request] (with-session request add-provider-picker))
 
@@ -3891,27 +3891,27 @@
 (defn- provider-add-oauth-start-handler
   [request]
   (with-session request
-                (fn [sid]
-                  (let [pid (path-pid request)]
-                    (start-oauth-web-flow! sid pid)
-                    (Thread/sleep 250)
-                    (oauth-web-view sid pid)))))
+    (fn [sid]
+      (let [pid (path-pid request)]
+        (start-oauth-web-flow! sid pid)
+        (Thread/sleep 250)
+        (oauth-web-view sid pid)))))
 
 (defn- provider-add-oauth-finish-handler
   [request]
   (with-session request
-                (fn [sid]
-                  (let [pid
-                        (path-pid request)
+    (fn [sid]
+      (let [pid
+            (path-pid request)
 
-                        input
-                        (str/trim (str (get-in request [:form-params "redirect"])))
+            input
+            (str/trim (str (get-in request [:form-params "redirect"])))
 
-                        flow
-                        (get @oauth-web-flows pid)]
+            flow
+            (get @oauth-web-flows pid)]
 
-                    (when (and flow (seq input)) (deliver (:input flow) input) (Thread/sleep 500))
-                    (oauth-web-view sid pid)))))
+        (when (and flow (seq input)) (deliver (:input flow) input) (Thread/sleep 500))
+        (oauth-web-view sid pid)))))
 
 (defn- provider-add-step-handler
   [request]
@@ -3922,43 +3922,43 @@
    picker for a preset being added."
   [request]
   (with-session request
-                (fn [sid]
-                  (let [pid
-                        (path-pid request)
+    (fn [sid]
+      (let [pid
+            (path-pid request)
 
-                        api-key
-                        (get-in request [:form-params "api_key"])
+            api-key
+            (get-in request [:form-params "api_key"])
 
-                        base-url
-                        (not-empty (get-in request [:form-params "base_url"]))
+            base-url
+            (not-empty (get-in request [:form-params "base_url"]))
 
-                        show-all?
-                        (= "1" (get-in request [:form-params "show_all"]))]
+            show-all?
+            (= "1" (get-in request [:form-params "show_all"]))]
 
-                    (if-let [preset (some-> (preset-by-id pid)
-                                            (cond->
-                                              base-url
-                                              (assoc :base-url base-url)))]
-                      (add-model-picker sid preset (not-empty api-key) show-all?)
-                      (providers-modal sid))))))
+        (if-let [preset (some-> (preset-by-id pid)
+                                (cond->
+                                 base-url
+                                  (assoc :base-url base-url)))]
+          (add-model-picker sid preset (not-empty api-key) show-all?)
+          (providers-modal sid))))))
 
 (defn- provider-add-confirm-handler
   [request]
   (with-session request
-                (fn [sid]
-                  (confirm-add-provider! sid
-                                         (path-pid request)
-                                         (not-empty (get-in request [:form-params "api_key"]))
-                                         (not-empty (get-in request [:form-params "base_url"]))
-                                         (get-in request [:form-params "model"])))))
+    (fn [sid]
+      (confirm-add-provider! sid
+                             (path-pid request)
+                             (not-empty (get-in request [:form-params "api_key"]))
+                             (not-empty (get-in request [:form-params "base_url"]))
+                             (get-in request [:form-params "model"])))))
 
 (defn- provider-remove-handler
   [request]
   (with-session request
-                (fn [sid]
-                  (vis/remove-config-provider! (path-pid request) :web-provider-remove)
-                  (try (vis/reload-config!) (catch Throwable _ nil))
-                  (providers-modal sid))))
+    (fn [sid]
+      (vis/remove-config-provider! (path-pid request) :web-provider-remove)
+      (try (vis/reload-config!) (catch Throwable _ nil))
+      (providers-modal sid))))
 
 (defn- provider-models-handler
   [request]
@@ -3967,9 +3967,9 @@
 (defn- provider-model-options-handler
   [request]
   (with-session request
-                #(provider-model-options-view %
-                                              (path-pid request)
-                                              (= "1" (get-in request [:query-params "show_all"])))))
+    #(provider-model-options-view %
+                                  (path-pid request)
+                                  (= "1" (get-in request [:query-params "show_all"])))))
 
 (defn- move-model-first
   [models nm]
@@ -4088,8 +4088,8 @@
 
                 (if (and idx j (<= 0 j) (< j (count v)))
                   (assoc v
-                    idx (v j)
-                    j (v idx))
+                         idx (v j)
+                         j (v idx))
                   providers)))]
 
         (when (not= reordered providers)
@@ -4232,7 +4232,7 @@
                                                     (if clean (clean raw) raw))})})
                        (catch Throwable t
                          (tel/log!
-                           {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
+                          {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
                          {:status 400
                           :headers {"Content-Type" "application/json; charset=utf-8"}
                           ;; null-message throwables (ExceptionInInitializerError, NPE — the
@@ -4269,9 +4269,9 @@
 (vis/register-toggle! {:id :vis-channel-web/theme
                        :label "Web theme"
                        :description (str
-                                      "Theme for the web companion UI - picked from the SAME shared"
-                                      " registry the TUI paints from (internal/theme.clj), so every"
-                                      " registered theme works in both places.")
+                                     "Theme for the web companion UI - picked from the SAME shared"
+                                     " registry the TUI paints from (internal/theme.clj), so every"
+                                     " registered theme works in both places.")
                        :type :enum
                        :choices (mapv keyword (vis/available-theme-ids))
                        :default (keyword vis/default-theme-id)
@@ -4315,17 +4315,17 @@
    marked -> DOMPurify -> innerHTML, then Prism-highlight every `language-*`
    block. No htmx/SSE — a standalone file has no server to talk to."
   (str
-    "(function(){function render(){" "if(typeof marked!=='undefined'){"
-    "document.querySelectorAll('[data-md]:not([data-md-done])').forEach(function(el){"
-    "try{var raw=el.getAttribute('data-md')||'';"
-    "var out=marked.parse?marked.parse(raw):marked(raw);"
-    "if(typeof DOMPurify!=='undefined')out=DOMPurify.sanitize(out);"
-    "el.innerHTML=out;el.setAttribute('data-md-done','1');}catch(e){}});}"
-    "if(typeof Prism!=='undefined'&&Prism.highlightElement){"
-    "document.querySelectorAll('code[class*=\"language-\"]:not([data-hl-done])').forEach(function(el){"
-    "try{Prism.highlightElement(el);el.setAttribute('data-hl-done','1');}catch(e){}});}}"
-    "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',render);}else{render();}"
-    "})();"))
+   "(function(){function render(){" "if(typeof marked!=='undefined'){"
+   "document.querySelectorAll('[data-md]:not([data-md-done])').forEach(function(el){"
+   "try{var raw=el.getAttribute('data-md')||'';"
+   "var out=marked.parse?marked.parse(raw):marked(raw);"
+   "if(typeof DOMPurify!=='undefined')out=DOMPurify.sanitize(out);"
+   "el.innerHTML=out;el.setAttribute('data-md-done','1');}catch(e){}});}"
+   "if(typeof Prism!=='undefined'&&Prism.highlightElement){"
+   "document.querySelectorAll('code[class*=\"language-\"]:not([data-hl-done])').forEach(function(el){"
+   "try{Prism.highlightElement(el);el.setAttribute('data-hl-done','1');}catch(e){}});}}"
+   "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',render);}else{render();}"
+   "})();"))
 
 (def ^:private export-css
   "Layout override for the standalone export: the live UI centers the thread via
@@ -4338,32 +4338,34 @@
        ".export-summary{max-width:860px;margin:1.75rem auto .5rem;padding:1rem 1.25rem;"
        "border:1px solid var(--line);border-radius:14px;background:var(--code-bg)}"
        ".export-title{margin:0 0 .6rem;font-size:1.5rem;color:var(--fg)}"
-       ".export-meta{display:flex;flex-wrap:wrap;gap:.4rem .9rem;color:var(--dim);font-size:.85rem}"
-       ".export-meta span{white-space:nowrap}"))
+       ;; Borderless, grouped two-column summary table (canonical session-summary).
+       ".export-summary-table{width:100%;border-collapse:collapse;font-size:.9rem;margin:.1rem 0 0}"
+       ".export-summary-table td{padding:.4rem .2rem;vertical-align:top;border:0;border-top:1px solid var(--line)}"
+       ".export-summary-table tr:first-child td{border-top:0}"
+       ".export-summary-table .esum-group td{border-top:0;padding:1.1rem .2rem .3rem;color:var(--dim);"
+       "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}"
+       ".export-summary-table tr:first-child .esum-group td{padding-top:.2rem}"
+       ".esum-k{color:var(--dim);white-space:nowrap;padding-right:1.2rem;width:1%}"
+       ".esum-v{color:var(--fg);word-break:break-word}"
+       ".esum-v.esum-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}"
+       "@media (max-width:640px){.export-summary{padding:.85rem .9rem}"
+       ".export-summary-table td,.export-summary-table tr{display:block}"
+       ".esum-k{padding:.5rem 0 0;white-space:normal;width:auto}.esum-v{padding:.05rem 0 .1rem}}"))
 
 (defn- export-summary-card
-  "Session summary shown ABOVE the transcript — title, id, model/provider, and
-   the turn/iteration/token/cost totals from the canonical transcript `data`."
-  [sid title data]
-  (let [totals
-        (:totals data)
-
-        sess
-        (:session data)
-
-        tokens
-        (:tokens totals)]
-
-    [:section.export-summary [:h1.export-title title]
-     [:div.export-meta [:span "id " (subs (str sid) 0 8)]
-      (when-let [m (:model sess)]
-        [:span "model " m])
-      (when-let [p (:provider sess)]
-        [:span "provider " (name p)]) [:span (str (:turns totals 0)) " turns"]
-      [:span (str (:iterations totals 0)) " iterations"]
-      (when tokens [:span (str (+ (long (:input tokens 0)) (long (:output tokens 0)))) " tokens"])
-      (when-let [c (:cost-usd totals)]
-        [:span (String/format java.util.Locale/US "$%.4f" (object-array [(double c)]))])]]))
+  "Session summary shown ABOVE the transcript - the CANONICAL grouped
+   `transcript/session-summary` rows (Session / Timing / Activity / Providers &
+   models / Cost & tokens) rendered as a borderless two-column table, the SAME
+   shape the Markdown + standalone-HTML surfaces emit. One source of truth."
+  [_sid title data]
+  [:section.export-summary [:h1.export-title title]
+   [:table.export-summary-table
+    [:tbody
+     (for [[label rows] (transcript/session-summary data)]
+       (list [:tr.esum-group [:td {:colspan 2} label]]
+             (for [[k v mono?] rows]
+               [:tr [:td.esum-k k]
+                [:td {:class (str "esum-v" (when mono? " esum-mono"))} (str v)]])))]]])
 
 (defn- export-turn-static
   "Turn rendered for a STATIC export — identical to `turn-block`, but the trace
@@ -4392,7 +4394,7 @@
       (str "Session not found: " sid "\n")
       (let [turns
             (remove #(= "queued" (pick % :status))
-              (reverse (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
+                    (reverse (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
 
             title
             (or (:title soul) (get-in data [:session :title]) "vis session")
@@ -4763,10 +4765,10 @@
        ;; Removed from INSIDE the picker: re-render the browser at the
        ;; folder being viewed, plus OOB-refresh the rail + footer.
        (str
-         (html
-           (dir-browser sid (fs-picker-base sid at) :notice "Removed this folder from the session"))
-         (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"} (filesystem-section sid)])
-         (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
+        (html
+         (dir-browser sid (fs-picker-base sid at) :notice "Removed this folder from the session"))
+        (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"} (filesystem-section sid)])
+        (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
        (str (html [:div {:id "fs-roots-wrap" :hx-swap-oob "innerHTML"}
                    (filesystem-section sid "Removed filesystem root")])
             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))}))
@@ -4920,36 +4922,36 @@
   ;; origin hop boring. (The edge may STILL buffer SSE bodies — the
   ;; ui.js watchdog + /poll fallback covers that.)
   (let
-    [pb
-     (doto (ProcessBuilder. ["cloudflared" "tunnel" "--protocol" "http2" "--url" local-url])
-       (.redirectErrorStream true))
+   [pb
+    (doto (ProcessBuilder. ["cloudflared" "tunnel" "--protocol" "http2" "--url" local-url])
+      (.redirectErrorStream true))
 
-     process
-     (try
-       (.start pb)
-       (catch java.io.IOException _
-         (throw
-           (ex-info
-             (str
-               "cloudflared binary not found on PATH. "
-               "Install it first (e.g. `brew install cloudflared`) - "
-               "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
-             {:cloudflared/missing? true}))))
+    process
+    (try
+      (.start pb)
+      (catch java.io.IOException _
+        (throw
+         (ex-info
+          (str
+           "cloudflared binary not found on PATH. "
+           "Install it first (e.g. `brew install cloudflared`) - "
+           "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+          {:cloudflared/missing? true}))))
 
-     url-promise
-     (promise)
+    url-promise
+    (promise)
 
-     reader
-     (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream process)))]
+    reader
+    (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream process)))]
 
     (doto (Thread. ^Runnable
-                   (fn []
-                     (loop []
+           (fn []
+             (loop []
 
-                       (when-let [line (.readLine reader)]
-                         (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
-                           (deliver url-promise url))
-                         (recur)))))
+               (when-let [line (.readLine reader)]
+                 (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
+                   (deliver url-promise url))
+                 (recur)))))
       (.setDaemon true)
       (.start))
     {:process process :url (deref url-promise 30000 nil)}))
@@ -4980,17 +4982,17 @@
       (println "auth: disabled (loopback default; pass --require-token to enable)"))
     (when cloudflared?
       (println
-        "cloudflared: token auth FORCED on (public tunnel) - paste the bearer token from the file above into the connect page")
+       "cloudflared: token auth FORCED on (public tunnel) - paste the bearer token from the file above into the connect page")
       (try
         (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
           (.addShutdownHook (Runtime/getRuntime)
                             (Thread. ^Runnable
-                                     (fn []
-                                       (.destroy ^Process process))))
+                             (fn []
+                               (.destroy ^Process process))))
           (if url
             (println (str "cloudflared tunnel: " url "/ui"))
             (println
-              "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))
+             "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))
         (catch clojure.lang.ExceptionInfo e
           (if (:cloudflared/missing? (ex-data e))
             (println (str "cloudflared: " (ex-message e)))
@@ -4999,17 +5001,17 @@
     @(promise)))
 
 (vis/register-extension!
-  (vis/extension
-    {:ext/name "channel-web"
-     :ext/description "Web companion - the gateway /ui chat instrument (hiccup + HTMX + SSE)."
-     :ext/version "0.2.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/channels [{:channel/id :web
-                     :channel/cmd "web"
-                     :channel/doc "Serve the gateway with the /ui web companion."
-                     :channel/usage
-                     "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
-                     :channel/main-fn #'channel-main}]
-     :ext/channel-contributions {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
+ (vis/extension
+  {:ext/name "channel-web"
+   :ext/description "Web companion - the gateway /ui chat instrument (hiccup + HTMX + SSE)."
+   :ext/version "0.2.0"
+   :ext/author "Blockether"
+   :ext/owner "vis"
+   :ext/license "Apache-2.0"
+   :ext/channels [{:channel/id :web
+                   :channel/cmd "web"
+                   :channel/doc "Serve the gateway with the /ui web companion."
+                   :channel/usage
+                   "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
+                   :channel/main-fn #'channel-main}]
+   :ext/channel-contributions {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
