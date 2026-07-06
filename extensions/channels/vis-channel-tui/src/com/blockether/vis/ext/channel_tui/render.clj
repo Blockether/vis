@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.highlight :as hl]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -3868,6 +3869,15 @@
                 code-text
                 (str/trim (str (vis/beautify-python code)))
 
+                ;; Syntax-color the executed source (always Python in the engine
+                ;; loop) with the tree-sitter highlighter — the SAME ANSI-SGR run
+                ;; mechanism `paint-ansi-line!` already translates for diff fences,
+                ;; so no painter change is needed. Split into per-line colored rows.
+                colored-lines
+                (when-not error
+                  (some-> (hl/highlight "python" code-text)
+                          str/split-lines))
+
                 inline-error-code-lines
                 (when error (inline-error-context-lines code-text error))
 
@@ -3876,10 +3886,17 @@
                 ;; stops overflowing / being clipped; indentation and in-row
                 ;; alignment survive and lines within budget pass through. The
                 ;; error path (`inline-error-code-lines`) is left UNFOLDED so its
-                ;; `^---` caret stays column-aligned to the source.
+                ;; `^---` caret stays column-aligned to the source. A row that fits
+                ;; keeps its COLORED form; a folded (over-wide) row falls back to
+                ;; its plain segments so the column math (ANSI-blind) and overflow
+                ;; guards stay correct.
                 code-lines
                 (or inline-error-code-lines
-                    (mapcat #(p/fold-cols % fill-w) (str/split-lines code-text)))
+                    (vec (mapcat (fn [plain colored]
+                                   (let [folded (p/fold-cols plain fill-w)]
+                                     (if (and colored (= 1 (count folded))) [colored] folded)))
+                                 (str/split-lines code-text)
+                                 (or colored-lines (repeat nil)))))
 
                 code-node-id
                 (when session-id
