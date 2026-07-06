@@ -1064,23 +1064,24 @@
    "pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;"
    "padding:1rem 1.1rem;overflow-x:auto;margin:.85em 0;}"
    "pre code{background:none;padding:0;font-size:.85em;line-height:1.5;}"
-    ;; Summary card - borderless, quiet hairlines between rows only.
-   ".tx-summary{width:100%;border-collapse:collapse;margin:.4rem 0 2rem;" "font-size:.92rem;}"
-   ".tx-summary td{padding:.4rem .2rem;vertical-align:top;border:0;"
-   "border-top:1px solid var(--line);}"
-   ".tx-summary tr:first-child td{border-top:0;}"
-   ".tx-summary .tx-group td{border-top:0;padding:1.1rem .2rem .2rem;"
-   "color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-   "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;}"
-   ".tx-summary tr:first-child .tx-group td,.tx-summary .tx-group:first-child td{padding-top:.2rem;}"
-   ".tx-summary .tx-k{color:var(--dim);white-space:nowrap;padding-right:1.2rem;width:1%;}"
-   ".tx-summary .tx-v{color:var(--fg);word-break:break-word;}"
-   ".tx-summary .tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+    ;; Summary card - full-viewport responsive grid of stat cards (one per
+    ;; session-summary group), breaking out of the 860px transcript column.
+   ".tx-summary{position:relative;left:50%;transform:translateX(-50%);"
+   "width:min(1360px,94vw);display:grid;gap:.9rem;align-items:start;margin:.4rem 0 2.2rem;"
+   "grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));font-size:.92rem;}"
+   ".tx-card{border:1px solid var(--line);border-radius:10px;background:var(--code-bg);"
+   "padding:.4rem 1rem .9rem;}"
+   ".tx-card-title{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+   "font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;padding:.7rem 0 .1rem;}"
+   ".tx-row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;"
+   "padding:.4rem 0;border-top:1px solid var(--line);}"
+   ".tx-card-title + .tx-row{border-top:0;}"
+   ".tx-k{color:var(--dim);white-space:nowrap;flex:0 0 auto;}"
+   ".tx-v{color:var(--fg);text-align:right;word-break:break-word;min-width:0;}"
+   ".tx-v.tx-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
    "font-size:.88em;}"
-   "@media (max-width:640px){.tx-summary,.tx-summary td{display:block;width:auto;}"
-   ".tx-summary tr{display:block;}"
-   ".tx-summary .tx-k{border-top:0;padding:.55rem 0 0;white-space:normal;}"
-   ".tx-summary .tx-v{padding:.05rem 0 .1rem;}" ".tx-summary .tx-group td{padding-top:1rem;}}"))
+   "@media (max-width:640px){.tx-summary{width:100%;left:0;transform:none;}"
+   ".tx-card{padding:.35rem .85rem .8rem;}}"))
 
 (def ^:private prism-token-css
   "The vis-light Prism token theme, mirrored from vis-channel-web/public/app.css
@@ -1108,8 +1109,9 @@
                  slurp)))
 
 (defn- render-summary-html
-  "Standalone HTML summary card: a title `<h1>` plus a borderless, grouped
-   two-column table of session facts + activity/cost rollups."
+  "Standalone HTML summary card: a title `<h1>` plus a full-viewport responsive
+   grid of stat cards - one per canonical `session-summary` group (Session /
+   Timing / Activity / Providers & models / Cost & tokens)."
   [data]
   (let [title (or (some-> data
                           :session
@@ -1118,20 +1120,22 @@
     (str "<h1>"
          (render-inline title)
          "</h1>\n"
-         "<table class=\"tx-summary\"><tbody>\n"
+         "<div class=\"tx-summary\">\n"
          (apply str
                 (for [[label rows] (session-summary data)]
-                  (str "<tr class=\"tx-group\"><td colspan=\"2\">" (html-escape label)
-                       "</td></tr>\n" (apply str
-                                             (for [[k v mono?] rows]
-                                               (str "<tr><td class=\"tx-k\">"
-                                                    (html-escape k)
-                                                    "</td><td class=\"tx-v"
-                                                    (when mono? " tx-mono")
-                                                    "\">"
-                                                    (render-inline v)
-                                                    "</td></tr>\n"))))))
-         "</tbody></table>\n")))
+                  (str "<div class=\"tx-card\"><div class=\"tx-card-title\">" (html-escape label)
+                       "</div>\n"
+                       (apply str
+                              (for [[k v mono?] rows]
+                                (str "<div class=\"tx-row\"><span class=\"tx-k\">"
+                                     (html-escape k)
+                                     "</span><span class=\"tx-v"
+                                     (when mono? " tx-mono")
+                                     "\">"
+                                     (render-inline v)
+                                     "</span></div>\n")))
+                       "</div>\n")))
+         "</div>\n")))
 
 (defn transcript->html
   "Render transcript data as a STANDALONE HTML document, styled with the
