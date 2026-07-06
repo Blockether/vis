@@ -552,13 +552,15 @@ border:1px dashed var(--line2);border-radius:var(--r-md);margin:0}
 .dir-roots-zone{gap:.4rem}
 .dir-roots{list-style:none;display:flex;flex-direction:column;gap:.25rem;margin:.1rem 0 0;padding:0}
 .dir-root{display:flex;align-items:center;gap:.45rem;font-size:.8rem;line-height:1.4}
-.dir-root-mark{flex:none;color:var(--secondary);font-size:.6rem;line-height:1}
+.dir-root-mark{flex:none;display:inline-flex;color:var(--secondary)}
+.dir-root-mark .icon{width:12px;height:12px}
 .dir-root-empty{list-style:none;font-size:.78rem;color:var(--dim);font-style:italic;padding:.1rem 0}
 .dir-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
 .dir-root-remove:hover{color:var(--err);background:var(--panel2)}
 .dir-root-remove .icon{width:13px;height:13px}
 /* membership mark on each subfolder row: filled = already a root, hollow = addable */
-.dir-row-mark{flex:none;width:.85rem;text-align:center;font-size:.6rem;line-height:1}
+.dir-row-mark{flex:none;display:inline-flex;justify-content:center;width:.9rem}
+.dir-row-mark .icon{width:12px;height:12px}
 .dir-row-mark.is-root{color:var(--secondary)}
 .dir-row-mark.is-add{color:var(--line2)}
 .dir-notice{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--ok);margin:0}

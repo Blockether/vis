@@ -3630,12 +3630,12 @@
       [:ul.dir-roots
        (when base
          [:li.dir-root
-          [:span.dir-root-mark "\u25cf"]
+          [:span.dir-root-mark (icon "check")]
           [:span.ctx-mono.fs-root-path (abbrev-home base)]
           [:span.fs-root-tag "workspace"]])
        (for [{:keys [trunk]} extras]
          [:li.dir-root
-          [:span.dir-root-mark "\u25cf"]
+          [:span.dir-root-mark (icon "check")]
           [:span.ctx-mono.fs-root-path (abbrev-home trunk)]
           [:span.fs-root-tag "added"]
           [:button.dir-root-remove {:type "button"
@@ -3665,7 +3665,7 @@
                  r?    (root-of? child)]
              [:li
               [:button.dir-row (merge {:type "button"} (nav child))
-               [:span.dir-row-mark {:class (if r? "is-root" "is-add")} (if r? "\u25cf" "\u25cb")]
+               [:span.dir-row-mark {:class (if r? "is-root" "is-add")} (icon (if r? "check" "plus"))]
                (icon "folder") [:span.dir-row-name k] (icon "chevron-right")]]))]
         [:p.dir-empty "This folder has no subfolders."])]
      (when err [:p.dir-err (icon "info") [:span (str err)]])
