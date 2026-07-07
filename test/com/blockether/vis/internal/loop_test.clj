@@ -772,7 +772,7 @@
 (defn- stub-tool-iter
   "Trailer entry for conversation-suffix tests: one tool call with its
    result, an assistant message carrying thinking + the tool_use."
-  [{:keys [id provider model replay? content]
+  [{:keys [id provider model replay? content attachments]
     :or {provider :lmstudio model "google/gemma-4-12b-qat" replay? true}}]
   [id
    {:assistant-message
@@ -784,6 +784,7 @@
     :llm-provider provider
     :llm-model model
     :preserved-thinking/replay? replay?
+    :attachments attachments
     :tool-calls [{:id (str "tc-" id) :name "find_files" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
@@ -864,6 +865,46 @@
                        (conversation-suffix [(stub-tool-iter {:id 1 :replay? false})] target)]
 
                    (expect (empty? suffix)))))
+
+(defdescribe
+  conversation-suffix-image-replay-test
+  ;; Generated figures (matplotlib plt.show()) an iteration's tool call
+  ;; produced are persisted as :attachments and replayed to the model as
+  ;; their OWN vision user message AFTER the <results> — but ONLY when the
+  ;; target model advertises :vision.
+  (let [att
+        {:tool-call-id "tc-1" :media-type "image/png" :base64 "QUJD" :filename "plot.png" :size 3}]
+    (it "appends a vision user message with the image AFTER results"
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
+
+          ;; [assistant-replay, <results>, image-user] — image is LAST so it
+          ;; never sits between a tool_use and its tool_result.
+          (expect (= 3 (count suffix)))
+          (let [img (last suffix)]
+            (expect (= "user" (:role img)))
+            (expect (= ["image_url"] (mapv :type (:content img))))
+            (expect (= "data:image/png;base64,QUJD"
+                       (-> img
+                           :content
+                           first
+                           :image_url
+                           :url))))))
+    (it "omits the image entirely for a text-only (non-vision) target"
+        (let [target {:provider :zai-coding-plan :model "glm-5-turbo"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
+
+          ;; back to the plain [assistant, results] pair, no image block
+          (expect (= 2 (count suffix)))
+          (expect (not-any? (fn [m]
+                              (and (vector? (:content m))
+                                   (some #(= "image_url" (:type %)) (:content m))))
+                            suffix))))
+    (it "emits no image message when an iteration produced no attachments"
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+
+          (expect (= 2 (count suffix)))))))
 
 ;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
 ;; tests removed: those fns were deleted with the fenced-era machinery (lenient
@@ -1304,9 +1345,10 @@
                     ;; native cat/rg carry :result (their value); python_execution
                     ;; carries :stdout (what it printed) — the engine emits ONE
                     ;; channel per call, never both.
-                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "AAA"}
-                                {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
-                                {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+                    :forms-vec
+                    [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "AAA"}
+                     {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
+                     {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
               by-id
               (into {} (map (juxt :tool_use_id :content)) (:content m))]
@@ -1327,9 +1369,10 @@
       (let [m
             (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "call_1|fc_9" :name "rg"}
                                {:id "P" :name "python_execution"}]
-                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
-                              {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
-                              {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+                  :forms-vec
+                  [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
+                   {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
+                   {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
             by-id
             (into {} (map (juxt :tool_use_id :content)) (:content m))]
@@ -2240,37 +2283,49 @@
   ;; __vis_par_isolated__ + cat are wired exactly as production). Proves: ordered
   ;; re-split (result[i] ↔ entry[i]), per-call error isolation (a missing file
   ;; only fails ITS slot), and — with slow fake tools — real concurrency.
-  (it "runs an all-cat batch concurrently, preserving order + isolating one failure"
-      (let [env (lp/create-environment ::router {:db :memory})
-            root (env-root env)
-            pa (write-tmp! root "AAA-content")
-            pc (write-tmp! root "CCC-content")]
-        (try (let [;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
-                   entries [{:expr (str "cat(" (pr-str pa) ", {})")
-                             :svar/tool-call-id "id-0"
-                             :vis/tool-name "cat"}
-                            {:expr "cat(\"/no/such/file-xyz.txt\", {})"
-                             :svar/tool-call-id "id-1"
-                             :vis/tool-name "cat"}
-                            {:expr (str "cat(" (pr-str pc) ", {})")
-                             :svar/tool-call-id "id-2"
-                             :vis/tool-name "cat"}]
-                   out (execute-observation-batch env entries)]
+  (it
+    "runs an all-cat batch concurrently, preserving order + isolating one failure"
+    (let [env
+          (lp/create-environment ::router {:db :memory})
 
-               (expect (= 3 (count out)))
-               ;; ordered + paired: slot 0 read AAA, slot 2 read CCC, both succeeded
-               (expect (nil? (:error (nth out 0))))
-               (expect (some? (:result (nth out 0))))
-               (expect (str/includes? (str (:result (nth out 0))) "AAA-content"))
-               (expect (nil? (:error (nth out 2))))
-               (expect (str/includes? (str (:result (nth out 2))) "CCC-content"))
-               ;; ISOLATION: only slot 1 errored; its siblings still returned values
-               (expect (nil? (:result (nth out 1))))
-               (expect (some? (:error (nth out 1))))
-               (expect (map? (:error (nth out 1)))))
-             (finally (lp/dispose-environment! env)
-                      (.delete (java.io.File. ^String pa))
-                      (.delete (java.io.File. ^String pc))))))
+          root
+          (env-root env)
+
+          pa
+          (write-tmp! root "AAA-content")
+
+          pc
+          (write-tmp! root "CCC-content")]
+
+      (try (let [;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
+                 entries
+                 [{:expr (str "cat(" (pr-str pa) ", {})")
+                   :svar/tool-call-id "id-0"
+                   :vis/tool-name "cat"}
+                  {:expr "cat(\"/no/such/file-xyz.txt\", {})"
+                   :svar/tool-call-id "id-1"
+                   :vis/tool-name "cat"}
+                  {:expr (str "cat(" (pr-str pc) ", {})")
+                   :svar/tool-call-id "id-2"
+                   :vis/tool-name "cat"}]
+
+                 out
+                 (execute-observation-batch env entries)]
+
+             (expect (= 3 (count out)))
+             ;; ordered + paired: slot 0 read AAA, slot 2 read CCC, both succeeded
+             (expect (nil? (:error (nth out 0))))
+             (expect (some? (:result (nth out 0))))
+             (expect (str/includes? (str (:result (nth out 0))) "AAA-content"))
+             (expect (nil? (:error (nth out 2))))
+             (expect (str/includes? (str (:result (nth out 2))) "CCC-content"))
+             ;; ISOLATION: only slot 1 errored; its siblings still returned values
+             (expect (nil? (:result (nth out 1))))
+             (expect (some? (:error (nth out 1))))
+             (expect (map? (:error (nth out 1)))))
+           (finally (lp/dispose-environment! env)
+                    (.delete (java.io.File. ^String pa))
+                    (.delete (java.io.File. ^String pc))))))
   (it "actually overlaps calls on virtual threads (wall ≈ max, not sum)"
       ;; Bind two SLOW fake observation tools via set-python-binding! so their
       ;; host bodies (Thread/sleep) overlap. 3×250ms serial=750ms; concurrent≈250.
@@ -2303,14 +2358,23 @@
   ;; PAIRED to its own tool_use_id in the emitted blocks + :form-result chunks.
   (it
     "pairs each batched observation result to its tool_use_id, in order"
-    (let [env (lp/create-environment ::router {:db :memory})
-          chunks (atom [])
-          root (env-root env)
-          pa (write-tmp! root "FIRST-file")
-          pb (write-tmp! root "SECOND-file")]
+    (let [env
+          (lp/create-environment ::router {:db :memory})
+
+          chunks
+          (atom [])
+
+          root
+          (env-root env)
+
+          pa
+          (write-tmp! root "FIRST-file")
+
+          pb
+          (write-tmp! root "SECOND-file")]
+
       (try
         (let [active (deref (:extensions env))]
-
           (with-redefs [svar/ask-code! (fn [_router _opts]
                                          {:stop-reason :tool-calls
                                           :tool-calls [{:id "call_A" :name "cat" :input {:path pa}}

@@ -2517,6 +2517,36 @@
                          (:content assistant-message)))]
       (when (seq content) (assoc assistant-message :content content)))))
 
+(defn- attachment->image-block
+  "Canonical multimodal image block for one stored iteration attachment. The
+   `image_url` data-URI shape is svar's cross-wire canonical form — it
+   translates to Anthropic `image` / OpenAI `image_url` / Gemini inline data
+   per provider, and svar auto-flags the Copilot vision header when present."
+  [{:keys [media-type base64]}]
+  {:type "image_url"
+   :image_url {:url (str "data:" (or (not-empty (str media-type)) "image/png") ";base64," base64)}})
+
+(defn- target-supports-vision?
+  "True when the replay `target` model advertises `:vision` in svar's per-model
+   capability registry. Gates generated-figure replay so a text-only model is
+   never handed image blocks (Copilot without vision, glm-5-turbo, deepseek …)."
+  [target]
+  (contains? (:capabilities (svar-router/infer-model-metadata {:name (str (:model target))}))
+             :vision))
+
+(defn- iteration-image-message
+  "A `{:role \"user\"}` message carrying every image a prior iteration's tool
+   calls produced (matplotlib figures), as canonical `image_url` blocks — the
+   vision replay of generated artifacts, sourced from the iteration's persisted
+   `:attachments`. nil when the iteration produced none. Emitted as its OWN
+   message right AFTER the iteration's `<results>` so an image never sits
+   between an assistant `tool_use` and its answering `tool_result` (which would
+   break tool-call adjacency on the OpenAI chat wire)."
+  [iter-rec]
+  (when-let [atts (seq (:attachments iter-rec))]
+    {:role "user" :content (mapv attachment->image-block atts)}))
+
+
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
    as an `[assistant-replay, <results> user message]` PAIR, in iteration
@@ -2545,12 +2575,32 @@
         (vec (or trailer-iters []))
 
         compatible
-        (into #{} (map first) (compatible-preserved-thinking-trailer-iters iters target))]
+        (into #{} (map first) (compatible-preserved-thinking-trailer-iters iters target))
+
+        ;; Generated figures replay only to a vision-capable target; a
+        ;; text-only model gets the fence's summary/ASCII already carried in
+        ;; the results text, never image blocks it can't consume.
+        vision?
+        (target-supports-vision? target)]
 
     (vec
       (mapcat
         (fn [[pos iter-rec :as entry]]
-          (let [results (iteration-results-message iter-rec)]
+          (let [results
+                (iteration-results-message iter-rec)
+
+                ;; Image artifacts this iteration produced, as their OWN user
+                ;; message appended AFTER the results (keeps tool_use/tool_result
+                ;; adjacency intact). nil for text targets or image-less iters.
+                img
+                (when vision? (iteration-image-message iter-rec))
+
+                +img
+                (fn [msgs]
+                  (cond-> (vec msgs)
+                    img
+                    (conj img)))]
+
             (cond
               ;; Cross-turn seed: opted out of replay; its evidence lives in
               ;; the frozen prior-turn context, so emitting here would
@@ -2562,23 +2612,23 @@
               (:collapsed? iter-rec) (if results [results] [])
               ;; Same provider+model, valid signature → verbatim replay
               ;; with the full thinking chain.
-              (contains? compatible pos) (let [replay (first (preserved-thinking-replay-messages
-                                                               [entry]))]
-                                           (cond-> [replay]
-                                             results
-                                             (conj results)))
+              (contains? compatible pos)
+              (+img (let [replay (first (preserved-thinking-replay-messages [entry]))]
+                      (cond-> [replay]
+                        results
+                        (conj results))))
               ;; Mismatched provider/model or poisoned signature: replay
               ;; SANS thinking so the tool_use ids stay answerable, then
               ;; the results.
               :else (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
-                      (cond-> [stripped]
-                        results
-                        (conj results))
+                      (+img (cond-> [stripped]
+                              results
+                              (conj results)))
                       ;; No assistant message (errored before one landed) or
                       ;; nothing but thinking: no tool_use to answer — degrade
                       ;; the results to plain text.
                       (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
-                        [textual]
+                        (+img [textual])
                         [])))))
         iters))))
 
@@ -5668,6 +5718,13 @@
                                                     ;; ONE scope source: persistence and the context
                                                     ;; wire both read it, so scopes stay consistent.
                                                     :forms-vec forms-vec
+                                                    ;; Outbound image artifacts this iteration's
+                                                    ;; tool calls produced (matplotlib figures),
+                                                    ;; each `{:tool-call-id :media-type :base64 …}`.
+                                                    ;; The conversation-suffix replays them as a
+                                                    ;; vision user message so the model SEES its
+                                                    ;; own plots within the turn.
+                                                    :attachments iteration-attachments
                                                     :ctx-diff iter-ctx-diff
                                                     :llm-provider (:llm-provider iteration-result)
                                                     :llm-model (:llm-model iteration-result)
