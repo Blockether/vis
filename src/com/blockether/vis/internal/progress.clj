@@ -303,6 +303,16 @@
     :provider-call
     (assoc entry :activity :provider-call)
 
+    :shell-run
+    (assoc entry
+      :activity :shell-run
+      :shell/cmd (:cmd chunk))
+
+    :shell-bg
+    (assoc entry
+      :activity :shell-bg
+      :shell/cmd (:cmd chunk))
+
     :response-parse
     (if (= :done (:status chunk))
       (-> entry

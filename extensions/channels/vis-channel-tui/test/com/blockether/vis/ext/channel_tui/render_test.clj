@@ -14,6 +14,7 @@
 (def ^:private bang-prefix @#'render/bang-prefix)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
+(def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 (def ^:private coalesce-forms vis/coalesce-forms)
 
 (defn- native-form
@@ -224,16 +225,16 @@
                  (expect (= " 6 more " (input-more-hint 10 4)))))
 
 (defdescribe bang-prefix-test
-             (it "tints only a `!`/`!&` head that carries a real command (parse-bang parity)"
+             (it "tints a `!`/`!&` head the instant the marker is typed"
                  (expect (= "!" (bang-prefix "!ls -la")))
                  (expect (= "!&" (bang-prefix "!&tail -f x")))
                  (expect (= "!" (bang-prefix "   !grep foo")))
-                 ;; A bare marker is ordinary prose — no tint, and a bare `!&`
-                 ;; never falls through to the `!` branch.
-                 (expect (= nil (bang-prefix "!")))
-                 (expect (= nil (bang-prefix "!&")))
-                 (expect (= nil (bang-prefix "!   ")))
-                 (expect (= nil (bang-prefix "!&   ")))
+                 ;; A bare marker already signals shell intent — tint at once,
+                 ;; and a bare `!&` never falls through to the `!` branch.
+                 (expect (= "!" (bang-prefix "!")))
+                 (expect (= "!&" (bang-prefix "!&")))
+                 (expect (= "!" (bang-prefix "!   ")))
+                 (expect (= "!&" (bang-prefix "!&   ")))
                  (expect (= nil (bang-prefix "hello ! world")))
                  (expect (= nil (bang-prefix nil)))))
 
@@ -878,6 +879,22 @@
             (expect (not (str/includes? body "hidden while live")))
             (expect (str/includes? body "alpha"))
             (expect (str/includes? body "beta")))))
+  (it "labels a shell-run `!` bang turn in the spinner instead of the provider placeholder"
+      ;; A bang turn never enters iteration-loop, so it streams ONE
+      ;; shell-phase chunk while the shell blocks; the spinner must read
+      ;; `Vis is running: <cmd>` — never the zero-iterations provider fallback.
+      (let [body (strip-ansi (render/progress->text
+                               {:iterations
+                                [{:iteration 1
+                                  :activity :shell-run
+                                  :shell/cmd
+                                  "cd ../ && git clone git@github.com:Blockether/spel.git"}]}
+                               80
+                               {:show-thinking true :show-iterations true}
+                               {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (str/includes? body "Vis is running:"))
+        (expect (str/includes? body "git clone"))
+        (expect (not (str/includes? body "Vis is calling the provider")))))
   (it "live progress previews huge thinking with the viewport-driven truncation"
       ;; The single-iteration truncation summary only fires when a
       ;; viewport budget is supplied (the renderer can't decide to
@@ -2465,6 +2482,22 @@
         (expect (= p/MARKER_CODE_OK (marker-of clipped)))
         (expect (str/includes? clipped "\u001b[32m"))
         (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12))))
+  (it "truncate-with-suffix keeps ANSI colour on a highlighted thinking peek row"
+      ;; A collapsed thinking band appends " …" to its last peek row via
+      ;; `truncate-with-suffix`. That row can be a syntax-highlighted code line
+      ;; carrying `\u001b[..m` SGR runs; truncation must stay ANSI-aware so the
+      ;; ESC bytes survive (colours kept) and the SGR params don't leak as text.
+      (let [code-line
+            (str "\u001b[36mdefn\u001b[0m qux [w] (+ w \u001b[34m3\u001b[0m))")
+
+            out
+            (truncate-with-suffix code-line " …" 30)]
+
+        (expect (str/includes? out "\u001b[36m"))
+        (expect (str/includes? out "\u001b[0m"))
+        ;; No bare SGR param text leaks once the real escapes are stripped.
+        (expect (not (re-find #"\[[0-9;]*m" (strip-ansi out))))
+        (expect (<= (p/display-width (strip-ansi out)) 30))))
   (it "reuses clipped prewrapped rows while scrolling huge trace bubbles"
       (render/invalidate-cache!)
       (let [huge-line
