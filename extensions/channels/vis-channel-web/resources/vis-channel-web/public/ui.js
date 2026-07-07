@@ -1203,6 +1203,40 @@
     });
   }
 
+  /* Never yank the field the user is typing in out from under them. A live
+     innerHTML swap that replaces a container holding the focused textarea/
+     input (the #queued editor) destroys that node — dropping focus + caret
+     mid-keystroke, every autosave echo / turn boundary. The queue's membership
+     is already what the user sees, so skip the swap while they're in it; a
+     genuine add/delete re-renders the moment they blur. */
+  function holdsActiveField(el) {
+    var a = document.activeElement;
+    if (!a || a === document.body || !el || !el.contains(a)) { return false; }
+    return a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable;
+  }
+
+  /* Bound the live thread's DOM: a turn with hundreds of tool calls piles up
+     thousands of #live nodes. content-visibility keeps them cheap to PAINT,
+     but the raw node count still costs memory + slows every querySelectorAll.
+     Trim the oldest from the TOP — but ONLY while riding the bottom, so the
+     cut is off-screen and never steals content from someone scrolled up
+     re-reading. A full refresh reconstructs the whole turn server-side. */
+  var LIVE_MAX = 400;
+  function trimLive() {
+    var live = document.getElementById("live");
+    if (!live) { return; }
+    var over = live.children.length - LIVE_MAX;
+    if (over <= 0) { return; }
+    var thread = document.querySelector(".thread");
+    if (thread &&
+        thread.scrollHeight - thread.scrollTop - thread.clientHeight > 160) {
+      return;
+    }
+    while (over-- > 0 && live.firstElementChild) {
+      live.removeChild(live.firstElementChild);
+    }
+  }
+
   document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
     var data = (e.detail && e.detail.data) || "";
     alive = Date.now();
@@ -1214,6 +1248,7 @@
        when switching sessions. beforeend live messages still dedupe by key. */
     var mode = e.target && (e.target.getAttribute("hx-swap") || "innerHTML").trim();
     if (polling || hasExistingLiveKey(data) ||
+        (mode !== "beforeend" && holdsActiveField(e.target)) ||
         (mode !== "beforeend" && e.target && e.target.innerHTML === data)) {
       e.preventDefault();
     }
@@ -1228,6 +1263,12 @@
     };
   }
 
+  /* keep #live bounded on the SSE path too (poll path trims in applyFrame) */
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    var t = e.detail && e.detail.target;
+    if (t && t.id === "live") { trimLive(); }
+  });
+
   function applyFrame(f) {
     var nodes = document.querySelectorAll('[sse-swap~="' + f.event + '"]');
     nodes.forEach(function (el) {
@@ -1236,8 +1277,12 @@
       if (mode === "beforeend") {
         if (hasExistingLiveKey(f.html)) { return; }
         el.insertAdjacentHTML("beforeend", f.html);
+        trimLive();
       }
-      else { el.innerHTML = f.html; }
+      else {
+        if (holdsActiveField(el)) { return; }
+        el.innerHTML = f.html;
+      }
       if (window.htmx) { window.htmx.process(el); }
     });
   }

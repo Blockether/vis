@@ -4030,18 +4030,22 @@
     ;; warning and keep every provider that DID resolve. Falling through with
     ;; the others (or none) lets the app start and surface a fixable message.
     (->> (:providers config)
-      (keep (fn [p]
-              (try
-                (enrich-provider-models (config/->svar-provider p) ropts)
-                (catch Throwable t
-                  (tel/log! {:level :warn :id ::provider-unavailable-skipped
-                             :data {:provider (:id p)
-                                    :status (:status (ex-data t))
-                                    :error (ex-message t)}
-                             :msg (str "Provider " (some-> (:id p) name)
-                                    " unavailable — skipping (" (ex-message t) ")")})
-                  nil))))
-      vec)))
+         (keep (fn [p]
+                 (try (enrich-provider-models (config/->svar-provider p) ropts)
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::provider-unavailable-skipped
+                                   :data {:provider (:id p)
+                                          :status (:status (ex-data t))
+                                          :error (ex-message t)}
+                                   :msg (str "Provider "
+                                             (some-> (:id p)
+                                                     name)
+                                             " unavailable — skipping ("
+                                             (ex-message t)
+                                             ")")})
+                        nil))))
+         vec)))
 
 (defn- honor-config-primary!
   "svar's `make-router` PREPENDS each known provider's catalog `:default-models`
@@ -6481,15 +6485,32 @@
           env-router (cond-> (:router env)
                        (and model (not (str/blank? (str model))))
                        (router-for-model model))
+          root-resolved-model (when env-router (resolve-effective-model env-router))
+          root-model (or (:name root-resolved-model) model)
+          root-provider (:provider root-resolved-model)
           ;; …but vector order does NOT bind svar's actual selection (it sorts
           ;; by provider :priority). FORCE the pick into `:routing` so the call
           ;; truly lands on the chosen provider+model. A caller-supplied
           ;; `:routing` (e.g. sub_loop's own pin) wins on merge.
-          routing (merge (forced-routing-for-pref (:router env) pref-provider model)
-                         (or routing {}))
-          root-resolved-model (when env-router (resolve-effective-model env-router))
-          root-model (or (:name root-resolved-model) model)
-          root-provider (:provider root-resolved-model)
+          routing (let [merged (merge (forced-routing-for-pref (:router env) pref-provider model)
+                                      (or routing {}))]
+                    ;; MAIN turn (depth 0): pin the ACTIVE provider+model so a provider
+                    ;; failure surfaces as an error the USER acts on (retry / switch
+                    ;; provider — TUI Ctrl+K) instead of svar silently hopping across the
+                    ;; whole configured fleet (`with-provider-fallback` → the confusing
+                    ;; "tried every provider" card). A session pick already pins this way;
+                    ;; this makes the DEFAULT (no-pick) turn behave identically. sub_loop
+                    ;; CHILDREN (depth > 0) are EXEMPT — dispatched agents legitimately
+                    ;; optimize / fall back across the `models` list they were given.
+                    (cond-> merged
+                      (and root-provider
+                           root-model
+                           (not (contains? merged :provider))
+                           (not (contains? merged :model))
+                           (zero? (long (or (some-> (:depth-atom env)
+                                                    deref)
+                                            0))))
+                      (merge (forced-routing-for-pref (:router env) root-provider root-model))))
           db-info (:db-info env)
           custom-bindings (custom-bindings env)
           python-context (:python-context env)
