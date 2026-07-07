@@ -4093,6 +4093,13 @@
         (reset! router-atom r)
         r)))
 
+(defn router-initialized?
+  "True once the shared router has been built (via `get-router`/`rebuild-router!`).
+   Lets a frontend defer the FIRST build to lazy first-use instead of forcing it
+   at startup — so OAuth token fetches (Copilot/Codex) never run at TUI boot."
+  []
+  (some? @router-atom))
+
 (defn rebuild-router!
   "Rebuild the router from the given config. Used when provider settings change.
 
