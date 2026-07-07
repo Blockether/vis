@@ -1764,27 +1764,53 @@
                        :plans
                        first
                        :after)))))
-  (it "grouped same-file patch rejects per-edit :path and preserves all-or-nothing"
+  (it "grouped same-file patch TOLERATES a redundant per-edit :path echoing the group"
+      (let [patch
+            (private-fn "patch-safe")
+
+            p
+            (write-temp! "bbfs/patch-grouped-echo.txt" "alpha\nbeta\n")
+
+            r
+            ;; A per-edit :path that EQUALS the group's :path is redundant but
+            ;; harmless — the model routinely echoes it to satisfy the required
+            ;; JSON key. It must NOT hard-fail (that stranded the loop re-issuing
+            ;; the identical call); it applies as normal.
+            (patch {"path" p
+                    "edits"
+                    [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}]})]
+
+        (expect (true? (:success? r)))
+        (expect (= "ALPHA\nbeta\n" (slurp p)))))
+  (it "grouped patch rejects a per-edit :path pointing at a DIFFERENT file"
+      (let [patch
+            (private-fn "patch-safe")
+
+            p
+            (write-temp! "bbfs/patch-grouped-conflict.txt" "alpha\nbeta\n")
+
+            err
+            (try (patch {"path" p
+                         "edits" [{"path" "target/editing-test/bbfs/other.txt"
+                                   "from_anchor" (patch/line-anchor 1 "alpha")
+                                   "replace" "ALPHA"}]})
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? err))
+        (expect (= "alpha\nbeta\n" (slurp p)))))
+  (it "grouped same-file patch preserves all-or-nothing on a bad anchor"
       (let [patch
             (private-fn "patch-safe")
 
             p
             (write-temp! "bbfs/patch-grouped-bad.txt" "alpha\nbeta\n")
 
-            err
-            (try (patch {"path" p
-                         "edits" [{"path" p
-                                   "from_anchor" (patch/line-anchor 1 "alpha")
-                                   "replace" "ALPHA"}]})
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))
-
             r
             (patch {"path" p
                     "edits" [{"from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
                              {"from_anchor" (patch/line-anchor 9 "missing") "replace" "x"}]})]
 
-        (expect (some? err))
         (expect (false? (:success? r)))
         (expect (= "alpha\nbeta\n" (slurp p)))))
   (it "editing an unknown path surfaces a structured :file-not-found failure"
