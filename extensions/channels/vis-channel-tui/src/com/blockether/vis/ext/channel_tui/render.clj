@@ -607,17 +607,16 @@
   (let [hidden (max 0 (- (long total-visual-rows) (long text-rows)))]
     (when (pos? hidden) (str " " hidden " more "))))
 (defn- bang-prefix
-  "The `!`/`!&` shell-sugar marker at the head of `line`, but only when a
-   non-blank command follows it — the exact shape `internal.loop/parse-bang`
-   turns into a `shell_run`/`shell_bg` turn. Returns \"!&\", \"!\", or nil, so the
-   input tints the marker in the shell accent ONLY when the turn will actually
-   run a shell command (a bare `!`/`!&` is ordinary prose → nil). Nested like
-   `parse-bang` so a bare `!&` never falls through to the `!` branch."
+  "The `!`/`!&` shell-sugar marker at the head of `line`. Returns \"!&\", \"!\",
+   or nil, so the input tints the marker in the shell accent the INSTANT the
+   prefix is typed — a bare `!`/`!&` already signals shell intent, we don't wait
+   for a command to follow. Nested cond so a bare `!&` never falls through to
+   the `!` branch."
   [line]
   (when (string? line)
     (let [t (str/triml line)]
-      (cond (str/starts-with? t "!&") (when (seq (str/trim (subs t 2))) "!&")
-            (str/starts-with? t "!") (when (seq (str/trim (subs t 1))) "!")))))
+      (cond (str/starts-with? t "!&") "!&"
+            (str/starts-with? t "!") "!"))))
 
 
 (defn draw-input-box!
@@ -1252,6 +1251,9 @@
 (defn- ansi-code->fg
   [code current-fg base-fg]
   (case code
+    7
+    t/warning-fg
+
     0
     base-fg
 
@@ -3049,7 +3051,17 @@
     ;; Only the informative `[turn 7 · iteration 3 · …]` form is kept, when present.
     (if (seq parts) (str "[" (str/join " · " parts) "]") "")))
 (defn- truncate-with-suffix
-  "Truncate `s` so that `s` + `suffix` together fit within `max-w` display\n   columns, then append `suffix`. The result NEVER exceeds `max-w`, so the\n   painter won't re-wrap the marker onto its own line. Unlike `ellipsize-cols`\n   (which adds a marker only WHEN `s` overflows), `suffix` is ALWAYS appended —\n   use this for \"there's more\" markers such as \" …\"."
+  "Truncate `s` so that `s` + `suffix` together fit within `max-w` display
+   columns, then append `suffix`. The result NEVER exceeds `max-w`, so the
+   painter won't re-wrap the marker onto its own line. Unlike `ellipsize-cols`
+   (which adds a marker only WHEN `s` overflows), `suffix` is ALWAYS appended —
+   use this for \"there's more\" markers such as \" …\".
+
+   Truncation is ANSI-aware via `truncate-ansi-cols`: a collapsed thinking-band
+   peek row can be a syntax-highlighted code line carrying `\\u001b[..m` SGR
+   runs, and `p/truncate-cols` would strip the ESC bytes (leaving literal
+   `[36m`/`[0m` text and dropping the colours). `truncate-ansi-cols` keeps SGR
+   zero-width, so the row keeps its colour and the visible body still fits."
   ^{:tag String} [s suffix max-w]
   (let [mw
         (max 0 (long (or max-w 0)))
@@ -3057,7 +3069,7 @@
         room
         (max 0 (- mw (p/display-width suffix)))]
 
-    (str (p/truncate-cols (str/trimr (str s)) room) suffix)))
+    (str (truncate-ansi-cols (str/trimr (str s)) room) suffix)))
 (defn- ellipsize-cols
   ^{:tag String} [s max-w]
   (cond (<= max-w 0) ""
@@ -3593,17 +3605,32 @@
 
             (assoc e :line (str result-marker stripped))))
 
+        ir
+        (some-> body-text
+                vis/markdown->ir)
+
+        ;; A `vis-image` result must NEVER start life collapsed: the whole
+        ;; point is to SEE the picture. Detect one in the body so the op-card
+        ;; defaults to expanded (and force the inner image disclosure open).
+        has-image?
+        (boolean (some (fn [n]
+                         (and (vector? n) (= :code (first n)) (= "vis-image" (:lang (second n)))))
+                       (some-> ir
+                               (nthrest 2))))
+
         entries
-        (when body-text
-          (tag-copy-block-body (vec (paste-aware-ir->entries (vis/markdown->ir body-text)
+        (when ir
+          (tag-copy-block-body (vec (paste-aware-ir->entries ir
                                                              fill-w
-                                                             (assoc opts :mode :channel)))
+                                                             (assoc opts
+                                                               :mode :channel
+                                                               :image-default-expanded? true)))
                                node-id
                                body-text))]
 
     (if (and node-id (seq entries))
       (let [expanded?
-            (detail-expanded? detail-expansions session-id node-id false)
+            (detail-expanded? detail-expansions session-id node-id has-image?)
 
             body-entries
             (into [(->result {:line ""})] (mapv ->result entries))
@@ -4383,12 +4410,17 @@
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
-   the provider, thinking, executing, retrying, or cancelling.
+   the provider, thinking, executing, running a shell command, retrying,
+   or cancelling.
 
    Anthropomorphic `Vis is ...` phrasing reads as a status sentence
    instead of a system log line. No elapsed-time-driven escalation -
    wall-clock is already shown right next to this string in the
-   spinner row, the user can read the seconds themselves."
+   spinner row, the user can read the seconds themselves.
+
+   A `!`/`!&` bang turn carries `{:activity :shell-run|:shell-bg}` and
+   `:shell/cmd` on its single iteration; the shell branches read those
+   so the bubble says `Vis is running: <cmd>` while the shell blocks."
   [iterations cancelling?]
   (let [n
         (count iterations)
@@ -4411,12 +4443,26 @@
              (not (str/blank? (:thinking last-iteration))))
 
         executing?
-        (and (not errored?) last-iteration (seq (:forms last-iteration)))]
+        (and (not errored?) last-iteration (seq (:forms last-iteration)))
+
+        shell-cmd
+        (some-> (:shell/cmd last-iteration)
+                str
+                (str/split #"\n")
+                first
+                str/trim)
+
+        shell-label
+        (cond (str/blank? shell-cmd) "…"
+              (> (count shell-cmd) 64) (str (subs shell-cmd 0 61) "…")
+              :else shell-cmd)]
 
     (cond cancelling? "Vis is cancelling"
           errored? (let [label (prettify-error-type err)]
                      (str "Vis is retrying" (when label (str " after " label)) " (iter " n ")"))
           (zero? n) "Vis is calling the provider"
+          (= :shell-run activity) (str "Vis is running: " shell-label)
+          (= :shell-bg activity) (str "Vis is starting: " shell-label)
           (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
           thinking? (str "Vis is thinking (iter " n ")")
@@ -5841,8 +5887,7 @@
                   (when (and width height) (str width "×" height))
 
                   desc
-                  (str "🖼  "
-                       (or (not-empty (last (str/split (str path) #"/"))) "image")
+                  (str (or (not-empty (last (str/split (str path) #"/"))) "image")
                        (when dims (str "  " dims))
                        (when size-label (str "  " size-label)))
 

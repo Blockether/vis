@@ -116,7 +116,7 @@
       (inlines->runs children (conj style :link) (or (:href attrs) href))
 
       :img
-      [{:text (str "🖼 " (or (:alt attrs) (:src attrs) "image"))
+      [{:text (str (or (:alt attrs) (:src attrs) "image"))
         :style (conj style :dim)
         :href (:src attrs)
         :node node}]

@@ -3894,24 +3894,58 @@
   ^long [k]
   (try (Long/parseLong (rg-anchor-lineno k)) (catch Exception _ 0)))
 
+(defn- rg-needle-re
+  "Literal regex fragment for ONE OR `needle`, honoring rg smart-case: an
+   all-lowercase needle matches any case (scoped inside `(?i:…)`) so its
+   case-insensitivity can't leak into a sibling alternative; one carrying an
+   uppercase letter stays exact. `Pattern/quote` makes metacharacters literal."
+  [needle]
+  (let [quoted (java.util.regex.Pattern/quote needle)]
+    (if (re-find #"[A-Z]" needle) quoted (str "(?i:" quoted ")"))))
+
+(defn- highlight-needles
+  "Wrap every occurrence of any OR `needle` in `text` with reverse-video SGR
+   (\u001B[7m … \u001B[0m) so BOTH channels paint the matched search term: the
+   TUI's `paint-ansi-line!` maps the code to a fg, the web's `ansi->hiccup`
+   turns it into a `.rg-hit` span (client `colorizeAnsi` re-applies it after the
+   `marked` re-render). One non-overlapping pass, longest needle first, so a
+   short needle can't re-wrap a longer one's match."
+  [needles ^String text]
+  (if (or (not (seq needles)) (str/blank? text))
+    text
+    (let [frags (into []
+                      (keep (fn [n]
+                              (when (seq n) (try (rg-needle-re n) (catch Exception _ nil)))))
+                      (sort-by #(- (count %)) needles))]
+      (if (seq frags)
+        (str/replace text
+                     (re-pattern (str/join "|" frags))
+                     (fn [m]
+                       (str "\u001B[7m" m "\u001B[0m")))
+        text))))
+
 (defn- rg-row
-  "One `  <lineno>  <text>` gutter row for a match or a context line."
-  [k txt]
-  (str "  " (rg-anchor-lineno k) "  " (str/trimr (str txt))))
+  "One `  <lineno>  <text>` gutter row for a match or a context line. Any OR
+   `needle` occurrence in the text is wrapped for highlight (see
+   `highlight-needles`)."
+  [needles k txt]
+  (str "  " (rg-anchor-lineno k) "  " (str/trimr (highlight-needles needles (str txt)))))
 
 (defn- rg-hit-rows
   "Rows for ONE match anchor `k` → value `v`. Without a context window `v` is the
    bare matched line (a string). WITH one it is `{:text <match> :before {anchor→text}
    :after {anchor→text}}` — render the before-context, then the matched line, then
    the after-context, each as a line-numbered gutter row (sorted by line number)."
-  [k v]
+  [needles k v]
   (if (map? v)
     (let [ctx-rows (fn [m]
                      (map (fn [[ck cv]]
-                            (rg-row ck cv))
+                            (rg-row needles ck cv))
                           (sort-by (comp rg-anchor-lineno-long key) m)))]
-      (concat (ctx-rows (get v "before")) [(rg-row k (get v "text"))] (ctx-rows (get v "after"))))
-    [(rg-row k v)]))
+      (concat (ctx-rows (get v "before"))
+              [(rg-row needles k (get v "text"))]
+              (ctx-rows (get v "after"))))
+    [(rg-row needles k v)]))
 
 (defn- render-rg-result
   "rg → a `{:summary :body}` card for whichever MODE ran — each carries a DIFFERENT
@@ -3950,7 +3984,9 @@
       (contains? r "files")
       {:summary (with-query files-word)
        :body (when-let [files (seq (get r "files"))]
-               (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
+               (str "\n```\n"
+                    (str/join "\n" (map #(str "  " (highlight-needles needles (kw->str %))) files))
+                    "\n```"))}
       ;; content (default) — per-line hits grouped by file.
       :else (let [hc
                   (or (get r "hit_count") 0)
@@ -3962,7 +3998,7 @@
                          "`\n\n```\n"
                          (str/join "\n"
                                    (mapcat (fn [[k v]]
-                                             (rg-hit-rows k v))
+                                             (rg-hit-rows needles k v))
                                            (sort-by (comp rg-anchor-lineno-long key) hits)))
                          "\n```"))]
 

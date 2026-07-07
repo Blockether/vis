@@ -1480,6 +1480,38 @@
                      :from :session_turn_attachment
                      :where [:= :session_turn_soul_id soul-id-s]
                      :order-by [[:position :asc]]})))))
+(defn db-list-turns-attachments
+  "Batch variant of [[db-list-turn-attachments]]: validated image attachments
+   for MANY `session_turn_soul` ids in ONE query, grouped as
+   `{soul-id-string [{:position :kind :media-type :filename :size :base64} …]}`
+   (each vector ordered by `:position`). Missing ids are simply absent from the
+   map. Safe: no ids / no datasource -> `{}`. Lets the gateway hydrate a whole
+   session's attachments without an N+1 per-turn query."
+  [db-info session-turn-soul-ids]
+  (let [ids (->> session-turn-soul-ids
+                 (keep #(some-> %
+                                ->ref))
+                 distinct
+                 vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (reduce (fn [m row]
+                (let [^bytes bs (:bytes row)]
+                  (update m
+                          (:session_turn_soul_id row)
+                          (fnil conj [])
+                          {:position (:position row)
+                           :kind (:kind row)
+                           :media-type (:media_type row)
+                           :filename (:filename row)
+                           :size (long (or (:size_bytes row) (alength bs)))
+                           :base64 (.encodeToString (java.util.Base64/getEncoder) bs)})))
+              {}
+              (query! db-info
+                      {:select [:*]
+                       :from :session_turn_attachment
+                       :where [:in :session_turn_soul_id ids]
+                       :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]

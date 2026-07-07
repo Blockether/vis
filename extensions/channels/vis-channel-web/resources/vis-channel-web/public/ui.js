@@ -41,6 +41,51 @@
     el.appendChild(frag);
   }
 
+  function ansiClass(codes) {
+    /* mirrors core.clj `ansi-class`: SGR code → CSS class. 7 (reverse video) is
+       the shared rg search-hit marker → .rg-hit; 31-36/90 are shell/test colors. */
+    var set = {};
+    (codes || "").split(";").forEach(function (c) { if (c !== "") { set[c] = 1; } });
+    if (set["7"]) { return "rg-hit"; }
+    if (set["0"]) { return null; }
+    if (set["31"]) { return "ansi-fg-red"; }
+    if (set["32"]) { return "ansi-fg-green"; }
+    if (set["33"]) { return "ansi-fg-yellow"; }
+    if (set["34"]) { return "ansi-fg-blue"; }
+    if (set["35"]) { return "ansi-fg-magenta"; }
+    if (set["36"]) { return "ansi-fg-cyan"; }
+    if (set["90"]) { return "ansi-fg-dim"; }
+    return null;
+  }
+  function colorizeAnsi(el) {
+    /* The server's ansi->hiccup already turns SGR runs into spans, but marked
+       re-renders [data-md] from scratch and would leak raw ESC bytes — re-apply
+       the SAME spans client-side (the twin of colorizeDiff). */
+    var text = el.textContent;
+    if (text.indexOf("\u001b") === -1) { return; }
+    var frag = document.createDocumentFragment();
+    var re = /\u001b\[([0-9;]*)m/g, last = 0, cls = null, m;
+    function flush(end) {
+      if (end > last) {
+        var s = text.slice(last, end);
+        if (!s) { return; }
+        if (cls) {
+          var span = document.createElement("span");
+          span.className = cls;
+          span.textContent = s;
+          frag.appendChild(span);
+        } else {
+          frag.appendChild(document.createTextNode(s));
+        }
+      }
+    }
+    while ((m = re.exec(text)) !== null) { flush(m.index); cls = ansiClass(m[1]); last = re.lastIndex; }
+    flush(text.length);
+    el.textContent = "";
+    el.appendChild(frag);
+    el.setAttribute("data-hl-done", "1");
+  }
+
   /* ── syntax highlight: every `language-*` code block (trace
      cells, IR fences, marked output) through the vendored Prism */
   function highlightCode(root) {
@@ -50,6 +95,15 @@
       .forEach(function (el) {
         el.setAttribute("data-hl-done", "1");
         try { colorizeDiff(el); } catch (e) { /* plain text is fine */ }
+      });
+    /* ANSI-colored code (rg search hits wrap matched needles in \u001b[7m…\u001b[0m;
+       shell/test output carries color codes too). Turn ESC runs into spans BEFORE
+       Prism and mark done so Prism can't flatten them — mirrors the diff pass. */
+    (root || document).querySelectorAll('pre > code:not([data-hl-done])')
+      .forEach(function (el) {
+        if ((el.textContent || "").indexOf("\u001b") !== -1) {
+          try { colorizeAnsi(el); } catch (e) { /* plain text is fine */ }
+        }
       });
     if (typeof Prism === "undefined" || !Prism.highlightElement) { return; }
     (root || document).querySelectorAll('code[class*="language-"]:not([data-hl-done])')
@@ -494,14 +548,14 @@
       var composerForm = composer.closest ? composer.closest("form.composer") : null;
       /* Shell-sugar affordance: a `!`/`!&` composer runs in your SHELL, not the
          model. Toggle a mode class so the frame tints to the shell tool color +
-         a corner pill appears — pure CSS, ZERO layout shift. Mirrors the engine's
-         `internal.loop/parse-bang`: only a NON-blank command counts (a bare
-         `!`/`!&` is ordinary prose). */
+         a corner pill appears — pure CSS, ZERO layout shift. The tint fires the
+         INSTANT `!`/`!&` is typed: a bare prefix already signals shell intent,
+         so we don't wait for a command to follow. */
       function syncShellMode() {
         if (!composerForm) { return; }
         var t = composer.value.replace(/^\s+/, ""), run = false, bg = false;
-        if (t.indexOf("!&") === 0) { bg = t.slice(2).trim() !== ""; }
-        else if (t.charAt(0) === "!") { run = t.slice(1).trim() !== ""; }
+        if (t.indexOf("!&") === 0) { bg = true; }
+        else if (t.charAt(0) === "!") { run = true; }
         composerForm.classList.toggle("shell-bg", bg);
         composerForm.classList.toggle("shell-run", run);
       }
@@ -998,6 +1052,103 @@
           function (justFinished) { if (!justFinished) { startRecording(); } },
           function (err) { micNote("Voice model: " + err); }
         );
+      });
+    }
+
+    /* ── composer attachments: preview tray with per-file remove ─────────
+       The <input type=file> FileList is read-only, so we keep our OWN array
+       and rebuild a DataTransfer to set input.files — that is exactly what the
+       multipart POST sends. Picking more files ADDS to the set (dedup by
+       name+size+mtime); the ✕ on a chip removes just that one; a successful
+       send resets the form and clears the tray. Images preview as a small
+       thumbnail (spinner until decoded) so an upload is never silent. */
+    var attachInput = document.querySelector(".composer .attach-input");
+    if (attachInput && form) {
+      var attachFiles = [];
+      var tray = null;
+      var humanSize = function (n) {
+        if (n < 1024) { return n + " B"; }
+        if (n < 1048576) { return Math.round(n / 1024) + " KB"; }
+        return (n / 1048576).toFixed(1) + " MB";
+      };
+      var syncInput = function () {
+        try {
+          var dt = new DataTransfer();
+          attachFiles.forEach(function (f) { dt.items.add(f); });
+          attachInput.files = dt.files;
+        } catch (e) { /* older browsers: leave the native FileList untouched */ }
+      };
+      var renderTray = function () {
+        if (!attachFiles.length) {
+          if (tray && tray.parentNode) { tray.parentNode.removeChild(tray); }
+          tray = null;
+          return;
+        }
+        if (!tray) {
+          tray = document.createElement("div");
+          tray.className = "attachments";
+          form.insertBefore(tray, form.firstChild);
+        }
+        tray.innerHTML = "";
+        attachFiles.forEach(function (f, idx) {
+          var chip = document.createElement("div");
+          chip.className = "attach-chip";
+          var thumb = document.createElement("span");
+          thumb.className = "attach-thumb";
+          if (/^image\//.test(f.type) && window.URL && URL.createObjectURL) {
+            thumb.classList.add("loading");
+            var url = URL.createObjectURL(f);
+            var img = new Image();
+            img.alt = f.name;
+            img.onload = function () { thumb.classList.remove("loading"); URL.revokeObjectURL(url); };
+            img.onerror = function () { thumb.classList.remove("loading"); URL.revokeObjectURL(url); };
+            img.src = url;
+            thumb.appendChild(img);
+          } else {
+            thumb.innerHTML = '<svg class="icon"><use href="/ui/icons.svg#paperclip"/></svg>';
+          }
+          var meta = document.createElement("span");
+          meta.className = "attach-meta";
+          var nm = document.createElement("span");
+          nm.className = "attach-name";
+          nm.textContent = f.name;
+          var sz = document.createElement("span");
+          sz.className = "attach-size";
+          sz.textContent = humanSize(f.size);
+          meta.appendChild(nm);
+          meta.appendChild(sz);
+          var rm = document.createElement("button");
+          rm.type = "button";
+          rm.className = "attach-remove";
+          rm.setAttribute("aria-label", "Remove " + f.name);
+          rm.title = "Remove";
+          rm.innerHTML = '<svg class="icon"><use href="/ui/icons.svg#x"/></svg>';
+          rm.addEventListener("click", function () {
+            attachFiles.splice(idx, 1);
+            syncInput();
+            renderTray();
+          });
+          chip.appendChild(thumb);
+          chip.appendChild(meta);
+          chip.appendChild(rm);
+          tray.appendChild(chip);
+        });
+      };
+      attachInput.addEventListener("change", function () {
+        Array.prototype.forEach.call(attachInput.files, function (f) {
+          var dup = attachFiles.some(function (g) {
+            return g.name === f.name && g.size === f.size && g.lastModified === f.lastModified;
+          });
+          if (!dup) { attachFiles.push(f); }
+        });
+        syncInput();
+        renderTray();
+      });
+      /* the form resets itself after a successful send (hx-on::after-request);
+         drop our mirror on the next tick so the tray clears with it */
+      form.addEventListener("reset", function () {
+        attachFiles = [];
+        setTimeout(function () { syncInput(); renderTray(); }, 0);
       });
     }
   });

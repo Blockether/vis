@@ -231,7 +231,7 @@ details.trace{margin:.2rem 0}
 .live .trace,.live .trace-body{display:flex;flex-direction:column;gap:.45rem}
 .live .block{margin:.18rem 0}
 .block{border-left:2px solid var(--line2);margin:.18rem 0;padding:.1rem 0 .1rem .8rem;
-font-size:.8rem}
+font-size:.73rem}
 /* the model's commentary (block-prose) is the model TALKING, not a trace card:
    it reads like the answer bubble's prose, so it carries NO left accent wall. */
 .block-prose{border-left:0;padding-left:0;margin-left:0}
@@ -241,15 +241,15 @@ font-size:.8rem}
    thinking block in #live still animates once (it appears once). */
 .thinking .block{animation:none}
 .block .ir-pre{margin:.15rem 0}
-.block-code-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--primary);color:var(--fg)}
+.block-code-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.12rem;margin:.18rem 0;padding:.35rem 0 .35rem .8rem;border-left:2px solid var(--primary);color:var(--fg)}
 .block-code-label{color:var(--primary);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-code{border-left:0;padding:0;
 margin:0;max-height:32rem;overflow:auto}
 /* result: the human surface for a form return value, rendered as Markdown. */
 .block-result-cards{display:flex;flex-direction:column;min-width:0}
-.block-result-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.25rem;margin:.18rem 0;padding:.1rem .6rem .1rem .8rem;border-left:2px solid var(--primary);border-radius:0 var(--r-sm) var(--r-sm) 0;background:color-mix(in srgb,var(--primary) 5%,var(--bg));color:var(--fg)}
+.block-result-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.12rem;margin:.18rem 0;padding:.35rem .6rem .35rem .8rem;border-left:2px solid var(--primary);border-radius:0 var(--r-sm) var(--r-sm) 0;background:color-mix(in srgb,var(--primary) 5%,var(--bg));color:var(--fg)}
 .block-result-label{color:var(--dim);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
-.block-result-summary{margin-left:.5rem;min-width:0;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
+.block-result-summary{min-width:0;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
 /* the whole result card is a disclosure: its summary row IS the op badge, chevron in the card's gold accent. */
 summary.block-result-label{padding-left:.1rem;padding-top:0;padding-bottom:0}
 summary.block-result-label::before{color:var(--primary)}
@@ -258,8 +258,16 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-result>:first-child{margin-top:0}
 .block-result>:last-child{margin-bottom:0}
 /* opt-in breathing room under the op headline (rg's body starts with a blank line). */
-.block-result.has-head-gap{margin-top:.45rem}
+.block-result.has-head-gap{margin-top:.3rem}
 .block-result-more{margin:.05rem 0 .2rem 0}
+/* mobile: the whole trace stack (tool calls, results, summaries) shrinks so a
+   burst of rg/patch cards stays scannable on a phone — labels + bodies too. */
+@media(max-width:42rem){
+  .block{font-size:.68rem}
+  .block-result-summary{font-size:.66rem}
+  .block-code-label,.block-result-label,.block-thinking-label,.trace-meta{font-size:.62rem}
+  .md pre code,.ir-pre{font-size:.68rem}
+}
 /* Code/result bodies keep the DEFAULT grey .ir-pre box (and inline-code chip) —
    exactly like the error card's <pre>: the content reads as a bubble sitting
    inside the left accent wall, with no surrounding card. */
@@ -300,7 +308,7 @@ overflow-wrap:anywhere;margin-top:0;text-align:justify;hyphens:auto}
 .block-think-body>:first-child{margin-top:0}
 .block-think-body>:last-child{margin-bottom:0}
 .block-think-body p,.block-think-body li{text-align:justify}
-.block-sum{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;min-width:0;align-items:baseline;gap:.4rem;
+.block-sum{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;min-width:0;align-items:center;gap:.4rem;
 user-select:none;padding:.26rem .5rem;border:1px solid transparent;border-radius:var(--r-sm);
 background:transparent}
 .block-sum::-webkit-details-marker{display:none}
@@ -363,6 +371,10 @@ padding:.6rem .8rem;overflow-x:auto;font-size:.76rem;margin:.4rem 0;line-height:
 .ansi-fg-blue,.ansi-fg-cyan{color:var(--primary)}
 .ansi-fg-magenta{color:var(--warning)}
 .ansi-fg-dim{color:var(--dim)}
+/* reverse-video SGR (\u001b[7m) — the shared rg renderer wraps matched search
+   needles in it so the term reads as a hit in BOTH channels (the TUI maps the
+   same code to a fg). A real mark-style background, not a syntax color. */
+.rg-hit{background:color-mix(in srgb,var(--primary) 24%,transparent);color:var(--fg);border-radius:2px;padding:0 .12em;font-weight:600;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ir-code{background:var(--code-bg);border-radius:var(--r-xs);padding:.06rem .32rem;font-size:.86em;color:var(--secondary)}
 /* suggestions popup (slash + @files) */
 .suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
@@ -390,7 +402,7 @@ white-space:nowrap;letter-spacing:-.01em}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
 .dock{position:relative;padding:.4rem 1.2rem 1.4rem;background:linear-gradient(to top,var(--bg) 65%,transparent);overflow-anchor:none;contain:layout}
-.composer{max-width:56rem;margin:0 auto;display:flex;align-items:center;gap:.5rem;
+.composer{max-width:56rem;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-lg);
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--primary)}
@@ -663,6 +675,7 @@ background:color-mix(in srgb,var(--primary) 10%,var(--bg));font-weight:600}
 .composer.recording,.composer.transcribing-on{align-items:center}
 .composer.recording textarea{display:none}
 .composer.recording .mic,.composer.recording .send{display:none}
+.composer.recording .attach,.composer.transcribing-on .attach{display:none}
 .composer.transcribing-on textarea{display:none}
 .composer.transcribing-on .send{display:none}
 .mic-note{flex-basis:100%;font-size:.78rem;color:var(--err);
@@ -687,15 +700,36 @@ height:34px;padding:0 .4rem}
 background:linear-gradient(180deg,var(--primary),var(--accent));
 transition:height .09s ease;box-shadow:0 0 6px color-mix(in srgb,var(--primary) 35%,transparent)}
 .mic{flex:none;width:34px;height:34px;border-radius:var(--r-circle);display:flex;align-items:center;
-justify-content:center;color:var(--dim);transition:color .15s,background .15s}
-.mic:hover{background:var(--panel2);color:var(--secondary)}
+justify-content:center;color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,var(--bg));transition:color .15s,background .15s}
+.mic:hover{background:color-mix(in srgb,var(--accent) 26%,var(--bg));color:var(--accent)}
 .mic.recording{background:var(--err);color:var(--bg);animation:pulse 1.2s infinite}
 .mic.mic-error{color:var(--err)}
 .mic.model-loading{color:var(--secondary);cursor:progress;animation:pulse 1.5s infinite}
 .attach{flex:none;width:34px;height:34px;border-radius:var(--r-circle);display:flex;align-items:center;
-justify-content:center;color:var(--dim);cursor:pointer;transition:color .15s,background .15s}
-.attach:hover{background:var(--panel2);color:var(--secondary)}
+justify-content:center;color:var(--secondary);background:color-mix(in srgb,var(--secondary) 15%,var(--bg));cursor:pointer;transition:color .15s,background .15s}
+.attach:hover{background:color-mix(in srgb,var(--secondary) 26%,var(--bg));color:var(--secondary)}
 .attach-input{display:none}
+/* trailing action cluster: attach + mic + send hug each other on the right */
+.composer-actions{flex:none;display:flex;align-items:center;gap:.15rem}
+/* attachment preview tray — one removable chip per picked file, wraps to its
+   own row above the input so an upload is visible before it is sent */
+.attachments{flex-basis:100%;order:-1;display:flex;flex-wrap:wrap;gap:.4rem;padding:.1rem .1rem .35rem}
+.attach-chip{display:flex;align-items:center;gap:.45rem;max-width:15rem;padding:.28rem .3rem;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r-xs)}
+.attach-thumb{flex:none;width:34px;height:34px;border-radius:var(--r-2xs);overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--dim)}
+.attach-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.attach-thumb.loading::after{content:"";width:14px;height:14px;border:2px solid var(--line2);border-top-color:var(--secondary);border-radius:var(--r-circle);animation:spin .7s linear infinite}
+.attach-thumb.loading img{display:none}
+.attach-meta{min-width:0;display:flex;flex-direction:column;line-height:1.15}
+.attach-name{font-size:.76rem;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attach-size{font-size:.68rem;color:var(--dim)}
+.attach-remove{flex:none;width:20px;height:20px;border:0;border-radius:var(--r-circle);background:transparent;color:var(--dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
+.attach-remove:hover{background:var(--bg);color:var(--err)}
+.attach-remove .icon{width:13px;height:13px}
+/* inline image attachments shown INSIDE a user bubble (persist across refresh) */
+.bubble-media{display:flex;flex-wrap:wrap;gap:.4rem;margin:.15rem 0 .5rem}
+.bubble-img{display:block;flex:none;line-height:0;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line2);transition:filter .15s}
+.bubble-img:hover{filter:brightness(1.05)}
+.bubble-img img{display:block;max-width:min(260px,100%);max-height:260px;width:auto;height:auto;object-fit:cover}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:26rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
@@ -1180,6 +1214,9 @@ padding:.2rem .8rem;margin:.5rem 0;background:color-mix(in srgb,var(--err) 8%,va
 .scrim{position:fixed;inset:0;background:rgba(20,20,20,.42);z-index:55;
 opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color:transparent}
 @media(max-width:68rem){
+  /* trace/tool cards read smaller on phones so summaries don't dominate */
+  .block{font-size:.72rem}
+  .block-result-summary{font-size:.68rem}
   .sidebar,.rail{position:fixed;top:0;bottom:0;height:100dvh;z-index:60;
     overflow-y:auto;transition:transform .22s ease;
     box-shadow:0 0 48px rgba(20,20,20,.22);will-change:transform}
