@@ -3037,6 +3037,16 @@
         (<= (p/display-width s) max-w) s
         (= max-w 1) "..."
         :else (truncate-with-suffix s "..." max-w)))
+(defn- close-dangling-code-span
+  "After a raw-markdown summary is ellipsized to fit a collapsed badge, its
+   trailing inline-code path chip (`` `…/file.clj` ``) can lose its CLOSING
+   backtick to the truncation — leaving `` `src/…/foo... `` unmatched. The IR
+   walker then treats the whole span as literal text and the path chip's `` 
+   background is silently dropped. Re-close an odd trailing backtick so a
+   truncated path keeps its code-chip styling (the `` `…` `` markup chars are
+   zero-width once rendered, so this doesn't push past the width budget)."
+  ^String [^String s]
+  (if (odd? (count (filterv #(= \` %) s))) (str s "`") s))
 (defn- format-detail-summary-line
   "Put the human-readable detail info on the right edge. The
    whole row is already painted as a bold disclosure band by
@@ -3056,7 +3066,7 @@
             (max 1 (- max-w suffix-w gap-w))
 
             left
-            (ellipsize-cols left left-w)
+            (close-dangling-code-span (ellipsize-cols left left-w))
 
             pad-w
             (max gap-w (- max-w (p/display-width left) suffix-w))]
