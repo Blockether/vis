@@ -15,10 +15,10 @@
                                       :headers {\"Authorization\" \"Bearer ...\"}}}}}
 
    Five model-facing verbs under alias `mcp` (flat sandbox renders `alias_name`):
-     mcp_servers()                — configured servers + status + tool counts
-     mcp_tools(server)            — a server's tools (auto-connects)
-     mcp_call(server, tool, args) — call a tool (auto-connects)
-     mcp_connect(server) / mcp_disconnect(server) — manage the connection
+     mcp__servers()                — configured servers + status + tool counts
+     mcp__tools(server)            — a server's tools (auto-connects)
+     mcp__call(server, tool, args) — call a tool (auto-connects)
+     mcp__connect(server) / mcp__disconnect(server) — manage the connection
 
    Live connections + tool counts also ride in ctx under `env.mcp`."
   (:require [clojure.string :as str]
@@ -43,7 +43,7 @@
    :label "MCP servers"
    :description (str "When ON the agent can connect to the Model Context Protocol"
                      " servers declared in ~/.vis/config.edn (:mcp :servers) and call"
-                     " their tools (mcp_servers / mcp_tools / mcp_call). Each live"
+                     " their tools (mcp__servers / mcp__tools / mcp__call). Each live"
                      " connection is a session resource (footer count, F4, resource_stop)."
                      " ON by default — connects automatically when MCP servers are configured.")
    :default true
@@ -358,33 +358,33 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Public, doc-bearing vars (model-facing surface). Under alias `mcp` they bind
-;; as mcp_servers / mcp_tools / mcp_call / mcp_connect / mcp_disconnect.
+;; as mcp__servers / mcp__tools / mcp__call / mcp__connect / mcp__disconnect.
 ;; ---------------------------------------------------------------------------
 
 (def
   ^{:doc
-    "List the Model Context Protocol servers declared in ~/.vis/config.edn (:mcp :servers) with their connection status. Returns {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connecting happens lazily on mcp_tools/mcp_call, or explicitly via mcp_connect."
+    "List the Model Context Protocol servers declared in ~/.vis/config.edn (:mcp :servers) with their connection status. Returns {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connecting happens lazily on mcp__tools/mcp__call, or explicitly via mcp__connect."
     :arglists '([])}
   mcp-servers
   mcp-servers-impl)
 
 (def
   ^{:doc
-    "List a server's tools. mcp_tools(server) connects to the configured server if needed, then returns {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Use the input_schema to shape the args for mcp_call."
+    "List a server's tools. mcp__tools(server) connects to the configured server if needed, then returns {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Use the input_schema to shape the args for mcp__call."
     :arglists '([server])}
   mcp-tools
   mcp-tools-impl)
 
 (def
   ^{:doc
-    "Call a tool on an MCP server. mcp_call(server, tool, args) connects if needed and invokes `tool` with `args` (a dict matching that tool's input_schema; omit or {} for no args). Returns {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}. Read text blocks via content[i][\"text\"]."
+    "Call a tool on an MCP server. mcp__call(server, tool, args) connects if needed and invokes `tool` with `args` (a dict matching that tool's input_schema; omit or {} for no args). Returns {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}. Read text blocks via content[i][\"text\"]."
     :arglists '([server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
 
 (def
   ^{:doc
-    "Explicitly connect to a configured MCP server and register it as a session resource (footer count, F4, resource_stop). Returns {\"server\": S, \"connected\": bool, \"tools\": N}. Usually unnecessary — mcp_tools/mcp_call auto-connect."
+    "Explicitly connect to a configured MCP server and register it as a session resource (footer count, F4, resource_stop). Returns {\"server\": S, \"connected\": bool, \"tools\": N}. Usually unnecessary — mcp__tools/mcp__call auto-connect."
     :arglists '([server])}
   mcp-connect
   mcp-connect-impl)
@@ -400,14 +400,23 @@
 ;; Symbols + ctx + prompt + extension
 ;; ---------------------------------------------------------------------------
 
+;; Tool NAMES use a `mcp__` (DOUBLE-underscore) prefix, never `mcp_`. Anthropic's
+;; Claude-subscription OAuth endpoint reserves the single-underscore `mcp_<x>`
+;; namespace for its own managed MCP-connector tools; a CLIENT tool named
+;; `mcp_<x>` makes the whole request classify as a third-party MCP integration
+;; and 400 with "third-party apps now draw from your extra usage" — every turn
+;; with MCP enabled died on OAuth. Verified by wire probe: `mcp_call` → 400,
+;; `mcp__call` → 200. Double underscore keeps the family grouping, stays a valid
+;; Python identifier (verbs bind positionally under the wire name), and dodges
+;; the reservation. Do NOT revert to a single underscore.
 (def ^:private mcp-symbols
   [(vis/symbol #'mcp-servers
                {:symbol 'servers
-                :name "mcp_servers"
+                :name "mcp__servers"
                 :native-tool? true
                 :render render-mcp-servers-result
-                ;; mcp verbs bind positionally under the wire name: mcp_servers(),
-                ;; mcp_tools(server), mcp_call(server, tool, args?), mcp_(dis)connect(server).
+                ;; mcp verbs bind positionally under the wire name: mcp__servers(),
+                ;; mcp__tools(server), mcp__call(server, tool, args?), mcp_(dis)connect(server).
                 :call {:pos []}
                 :color-role :tool-color/meta
                 :schema {:type "object" :properties {} :required []}
@@ -416,7 +425,7 @@
                 :on-error-fn (mcp-on-error :mcp/servers)})
    (vis/symbol #'mcp-tools
                {:symbol 'tools
-                :name "mcp_tools"
+                :name "mcp__tools"
                 :native-tool? true
                 :render render-mcp-tools-result
                 :call {:pos ["server"]}
@@ -432,7 +441,7 @@
    (vis/symbol
      #'mcp-call
      {:symbol 'call
-      :name "mcp_call"
+      :name "mcp__call"
       :native-tool? true
       :render render-mcp-call-result
       :call {:pos ["server" "tool"] :opt-pos ["args"]}
@@ -440,7 +449,7 @@
       :schema {:type "object"
                :properties
                {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}
-                "tool" {:type "string" :description "Tool name on that server (see mcp_tools)."}
+                "tool" {:type "string" :description "Tool name on that server (see mcp__tools)."}
                 "args" {:type "object"
                         :description "Args matching the tool's input_schema; omit or {} for none."}}
                :required ["server" "tool"]}
@@ -449,7 +458,7 @@
       :on-error-fn (mcp-on-error :mcp/call)})
    (vis/symbol #'mcp-connect
                {:symbol 'connect
-                :name "mcp_connect"
+                :name "mcp__connect"
                 :native-tool? true
                 :render render-mcp-connect-result
                 :call {:pos ["server"]}
@@ -465,7 +474,7 @@
                 :on-error-fn (mcp-on-error :mcp/connect)})
    (vis/symbol #'mcp-disconnect
                {:symbol 'disconnect
-                :name "mcp_disconnect"
+                :name "mcp__disconnect"
                 :native-tool? true
                 :render render-mcp-disconnect-result
                 :call {:pos ["server"]}
@@ -506,14 +515,14 @@
   (str
     "MCP servers available. Connect to Model Context Protocol servers (declared in\n"
     "~/.vis/config.edn under :mcp :servers) and call their tools. Verbs (alias mcp):\n"
-    "  mcp_servers()                  — configured servers + connection status + tool counts\n"
-    "  mcp_tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
-    "  mcp_call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
-    "  mcp_connect(server) / mcp_disconnect(server) — manage the connection explicitly\n"
+    "  mcp__servers()                  — configured servers + connection status + tool counts\n"
+    "  mcp__tools(server)              — a server's tools (name/description/input_schema); auto-connects\n"
+    "  mcp__call(server, tool, args)   — call a tool; args is a dict matching its input_schema; auto-connects\n"
+    "  mcp__connect(server) / mcp__disconnect(server) — manage the connection explicitly\n"
     "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
     "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
-    "Workflow: mcp_servers() to see what's there → mcp_tools(server) to learn a tool's input_schema →\n"
-    "mcp_call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"]."))
+    "Workflow: mcp__servers() to see what's there → mcp__tools(server) to learn a tool's input_schema →\n"
+    "mcp__call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"]."))
 
 (defn- activation-fn
   "Active when at least one MCP server is configured."
@@ -531,7 +540,7 @@
   (vis/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp_servers/mcp_tools/mcp_call), each live connection a session resource. Gated by :mcp/enabled (ON by default). Activates when servers are configured."
+     "Model Context Protocol (MCP) client: connect to stdio/HTTP MCP servers declared in config (:mcp :servers), call their tools (mcp__servers/mcp__tools/mcp__call), each live connection a session resource. Gated by :mcp/enabled (ON by default). Activates when servers are configured."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
