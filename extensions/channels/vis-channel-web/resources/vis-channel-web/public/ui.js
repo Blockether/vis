@@ -491,9 +491,25 @@
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(grow);
       }
-      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); renderOverlay(); });
+      var composerForm = composer.closest ? composer.closest("form.composer") : null;
+      /* Shell-sugar affordance: a `!`/`!&` composer runs in your SHELL, not the
+         model. Toggle a mode class so the frame tints to the shell tool color +
+         a corner pill appears — pure CSS, ZERO layout shift. Mirrors the engine's
+         `internal.loop/parse-bang`: only a NON-blank command counts (a bare
+         `!`/`!&` is ordinary prose). */
+      function syncShellMode() {
+        if (!composerForm) { return; }
+        var t = composer.value.replace(/^\s+/, ""), run = false, bg = false;
+        if (t.indexOf("!&") === 0) { bg = t.slice(2).trim() !== ""; }
+        else if (t.charAt(0) === "!") { run = t.slice(1).trim() !== ""; }
+        composerForm.classList.toggle("shell-bg", bg);
+        composerForm.classList.toggle("shell-run", run);
+      }
+      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); renderOverlay(); syncShellMode(); });
+      if (composerForm) { composerForm.addEventListener("reset", function () { setTimeout(syncShellMode, 0); }); }
       composer.addEventListener("scroll", function () { if (overlay) { overlay.scrollTop = composer.scrollTop; } });
       syncSend();
+      syncShellMode();
       composer.addEventListener("blur", function () {
         setTimeout(hideSuggest, 150);
       });

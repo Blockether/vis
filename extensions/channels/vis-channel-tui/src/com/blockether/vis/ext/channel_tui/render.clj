@@ -606,6 +606,20 @@
   [total-visual-rows text-rows]
   (let [hidden (max 0 (- (long total-visual-rows) (long text-rows)))]
     (when (pos? hidden) (str " " hidden " more "))))
+(defn- bang-prefix
+  "The `!`/`!&` shell-sugar marker at the head of `line`, but only when a
+   non-blank command follows it — the exact shape `internal.loop/parse-bang`
+   turns into a `shell_run`/`shell_bg` turn. Returns \"!&\", \"!\", or nil, so the
+   input tints the marker in the shell accent ONLY when the turn will actually
+   run a shell command (a bare `!`/`!&` is ordinary prose → nil). Nested like
+   `parse-bang` so a bare `!&` never falls through to the `!` branch."
+  [line]
+  (when (string? line)
+    (let [t (str/triml line)]
+      (cond (str/starts-with? t "!&") (when (seq (str/trim (subs t 2))) "!&")
+            (str/starts-with? t "!") (when (seq (str/trim (subs t 1))) "!")))))
+
+
 (defn draw-input-box!
   "Draw bordered input area with internal padding. Returns
    [cursor-col cursor-row] in screen coords.
@@ -659,6 +673,18 @@
           (let [line (nth visual-lines vi)]
             (when (pos? (count line))
               (.putString g input-pad-x (+ text-top i) (subs line 0 (min (count line) text-w))))))))
+    ;; Shell-sugar affordance: when the first visible row is a `!`/`!&` turn
+    ;; that WILL run a shell command, tint JUST the marker in the shell accent
+    ;; so the prompt reads as "runs in your shell, not the model". Pure
+    ;; overpaint of already-drawn text — no extra rows, no layout shift.
+    (when (zero? v-scroll)
+      (when-let [pfx (bang-prefix (first visual-lines))]
+        (let [line0 (first visual-lines)
+              lead (- (count line0) (count (str/triml line0)))]
+
+          (.setForegroundColor g t/tool-color-shell)
+          (.setBackgroundColor g t/box-bg)
+          (.putString g (+ input-pad-x lead) text-top pfx))))
     ;; Cursor position (visual coords)
     [(+ input-pad-x cursor-vcol) (+ text-top (- cursor-vrow v-scroll))]))
 (def ^:private slash-desc-separator

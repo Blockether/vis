@@ -11,6 +11,7 @@
 
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private input-more-hint @#'render/input-more-hint)
+(def ^:private bang-prefix @#'render/bang-prefix)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
 (def ^:private coalesce-forms vis/coalesce-forms)
@@ -221,6 +222,20 @@
                  (expect (= nil (input-more-hint 4 4)))
                  (expect (= " 1 more " (input-more-hint 5 4)))
                  (expect (= " 6 more " (input-more-hint 10 4)))))
+
+(defdescribe bang-prefix-test
+             (it "tints only a `!`/`!&` head that carries a real command (parse-bang parity)"
+                 (expect (= "!" (bang-prefix "!ls -la")))
+                 (expect (= "!&" (bang-prefix "!&tail -f x")))
+                 (expect (= "!" (bang-prefix "   !grep foo")))
+                 ;; A bare marker is ordinary prose — no tint, and a bare `!&`
+                 ;; never falls through to the `!` branch.
+                 (expect (= nil (bang-prefix "!")))
+                 (expect (= nil (bang-prefix "!&")))
+                 (expect (= nil (bang-prefix "!   ")))
+                 (expect (= nil (bang-prefix "!&   ")))
+                 (expect (= nil (bang-prefix "hello ! world")))
+                 (expect (= nil (bang-prefix nil)))))
 
 (defdescribe
   live-running-block-test
