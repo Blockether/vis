@@ -120,6 +120,13 @@ channels:
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.
 
+While you're typing a shell shortcut, the composer flags it visually so a
+shell command never looks like an ordinary message — with **no layout shift**.
+The TUI tints just the leading `!`/`!&` marker in the shell tool color; the web
+composer tints its frame and shows a small `shell` / `shell &` pill in the
+corner. The cue only lights up once a real command follows the marker (a bare
+`!`/`!&` stays neutral), mirroring the run/no-run rule above.
+
 The command output renders as the turn's answer bubble and is persisted in the
 transcript. Crucially, the result **lands in context exactly like a
 model-issued `shell_run` / `shell_bg` call** — so a later turn can reason over
