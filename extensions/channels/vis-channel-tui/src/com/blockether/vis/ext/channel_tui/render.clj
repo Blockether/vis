@@ -653,9 +653,35 @@
         (max 0 (- cursor-vrow (dec text-rows)))
 
         more-hint
-        (input-more-hint (count visual-lines) text-rows)]
+        (input-more-hint (count visual-lines) text-rows)
+
+        bang-pfx
+        (bang-prefix (first visual-lines))]
 
     (draw-box-border! g box-top box-bottom cols hint false)
+    ;; Shell-sugar affordance: a `!`/`!&` turn that WILL run a shell command
+    ;; dresses the whole prompt in the shell accent so it reads as "runs in
+    ;; your shell, not the model" - MIRRORS the web composer (frame tint + a
+    ;; `shell`/`shell &` pill). Re-tint the top + bottom rules and embed a
+    ;; centered pill in the top rule (`more-hint` repaints over it just below).
+    ;; Pure overpaint of already-drawn chrome - no extra rows, no layout shift.
+    (when bang-pfx
+      (let [pad
+            INPUT_BORDER_HORIZONTAL_PAD
+
+            rule-w
+            (max 0 (- cols (* 2 pad)))
+
+            bar
+            (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)
+
+            pill
+            (if (= bang-pfx "!&") " shell & " " shell ")]
+
+        (.setForegroundColor g t/tool-color-shell)
+        (.setBackgroundColor g t/terminal-bg)
+        (.putString g (int pad) (int box-top) (embed-in-bar bar pill))
+        (.putString g (int pad) (int box-bottom) bar)))
     (when more-hint
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
@@ -673,18 +699,19 @@
           (let [line (nth visual-lines vi)]
             (when (pos? (count line))
               (.putString g input-pad-x (+ text-top i) (subs line 0 (min (count line) text-w))))))))
-    ;; Shell-sugar affordance: when the first visible row is a `!`/`!&` turn
-    ;; that WILL run a shell command, tint JUST the marker in the shell accent
-    ;; so the prompt reads as "runs in your shell, not the model". Pure
-    ;; overpaint of already-drawn text — no extra rows, no layout shift.
-    (when (zero? v-scroll)
-      (when-let [pfx (bang-prefix (first visual-lines))]
-        (let [line0 (first visual-lines)
-              lead (- (count line0) (count (str/triml line0)))]
+    ;; Marker: tint JUST the leading `!`/`!&` in the typed text (only when the
+    ;; first row is actually on-screen, i.e. not scrolled off the top). Pairs
+    ;; with the shell-accent frame drawn above.
+    (when (and bang-pfx (zero? v-scroll))
+      (let [line0
+            (first visual-lines)
 
-          (.setForegroundColor g t/tool-color-shell)
-          (.setBackgroundColor g t/box-bg)
-          (.putString g (+ input-pad-x lead) text-top pfx))))
+            lead
+            (- (count line0) (count (str/triml line0)))]
+
+        (.setForegroundColor g t/tool-color-shell)
+        (.setBackgroundColor g t/box-bg)
+        (.putString g (+ input-pad-x lead) text-top bang-pfx)))
     ;; Cursor position (visual coords)
     [(+ input-pad-x cursor-vcol) (+ text-top (- cursor-vrow v-scroll))]))
 (def ^:private slash-desc-separator
