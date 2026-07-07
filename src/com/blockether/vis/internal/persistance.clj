@@ -328,6 +328,8 @@
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
 (defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
+(defdelegate db-list-iteration-attachments [db-info iteration-id])
+(defdelegate db-list-iterations-attachments [db-info iteration-ids])
 
 ;; --- Full-text search ---
 (def search-query-dsl-doc
