@@ -98,6 +98,16 @@ font:inherit;padding:0;cursor:pointer;transition:transform .12s,border-color .12
    hashes) instead of stretching the column into a horizontal scroll. */
 .thread pre{overflow-x:auto;max-width:100%}
 .block{overflow-wrap:anywhere;min-width:0}
+/* A long turn (esp. a Cloudflare-tunneled session on polling) accretes
+   hundreds of blocks; the thread grows into a scroll box so tall the
+   compositor can't cover it, which shows as white/checkerboard tiles when
+   you scroll up. Let the browser SKIP layout+paint for turn blocks that are
+   scrolled out of view. `contain-intrinsic-size:auto …` remembers each
+   node's real height after its first render, so scrollHeight stays stable
+   for the bottom-follow + scroll-up-restore logic; only OFF-screen nodes are
+   skipped, so on-screen streaming and the `rise` entrance are untouched. */
+.thread .bubble,
+.thread .trace{content-visibility:auto;contain-intrinsic-size:auto 5rem}
 /* animate ONLY live arrivals — replaying the entrance on every page
    refresh for the whole history reads as flicker */
 #live .bubble,#live .tsep{animation:rise .25s ease both}
@@ -1083,6 +1093,18 @@ animation:foot-in .2s ease both}
 .foot-routing:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
 .foot-routing .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
 .foot-routing-overload{display:inline-flex;align-items:center;gap:.25rem;color:var(--err);font-weight:650}
+/* Reasoning effort chip — a twin of .foot-routing for thinking depth. Hidden
+   when the resolved model can't take a reasoning level (non-reasoning models,
+   zai-thinking, or :reasoning-effort? false); the backend gates it the same way
+   in loop.clj, so the chip never offers a lever the model would ignore. */
+.foot-effort{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);
+font-size:.72rem;font-weight:600;color:var(--dim);background:transparent;
+border:1px solid var(--line2);border-radius:var(--r-pill);padding:.12rem .6rem;cursor:pointer;
+animation:foot-in .2s ease both}
+.foot-effort:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
+.foot-effort .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
+.foot-effort.disabled{opacity:.45;cursor:not-allowed}
+.foot-effort.disabled:hover{border-color:var(--line2);color:var(--dim);background:transparent}
 
 .active-model-hint{color:var(--dim);font-weight:400}
 /* footer draft / filesystem-root isolation badge — drafts are notable, so amber */
