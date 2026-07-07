@@ -1512,6 +1512,66 @@
                        :from :session_turn_attachment
                        :where [:in :session_turn_soul_id ids]
                        :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
+(defn db-list-iteration-attachments
+  "Ordered OUTBOUND artifacts persisted for ONE `session_turn_iteration` (its
+   id, not the soul). Returns `[{:tool-call-id :position :kind :media-type
+   :filename :size :base64}]` — base64-encoded inline bytes matching the shape
+   the prompt assembler + web history re-render consume — ordered by
+   `(tool_call_id, position)`, or `[]` when none / no datasource."
+  [db-info iteration-id]
+  (if-not (and (ds db-info) iteration-id)
+    []
+    (let [iter-id-s (->ref iteration-id)]
+      (mapv (fn [row]
+              (let [^bytes bs (:bytes row)]
+                {:tool-call-id (:tool_call_id row)
+                 :position (:position row)
+                 :kind (:kind row)
+                 :media-type (:media_type row)
+                 :filename (:filename row)
+                 :size (long (or (:size_bytes row) (alength bs)))
+                 :base64 (.encodeToString (java.util.Base64/getEncoder) bs)}))
+            (query! db-info
+                    {:select [:*]
+                     :from :session_iteration_attachment
+                     :where [:= :session_turn_iteration_id iter-id-s]
+                     :order-by [[:tool_call_id :asc] [:position :asc]]})))))
+
+(defn db-list-iterations-attachments
+  "Batch variant of [[db-list-iteration-attachments]]: OUTBOUND artifacts for
+   MANY `session_turn_iteration` ids in ONE query, grouped as
+   `{iteration-id-string [{:tool-call-id :position :kind :media-type :filename
+   :size :base64} …]}` (each vector ordered by `(tool_call_id, position)`).
+   Missing ids are simply absent. Safe: no ids / no datasource -> `{}`. Lets a
+   history replay hydrate a whole conversation's generated images without an
+   N+1 per-iteration query."
+  [db-info iteration-ids]
+  (let [ids (->> iteration-ids
+                 (keep #(some-> %
+                                ->ref))
+                 distinct
+                 vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (reduce (fn [m row]
+                (let [^bytes bs (:bytes row)]
+                  (update m
+                          (:session_turn_iteration_id row)
+                          (fnil conj [])
+                          {:tool-call-id (:tool_call_id row)
+                           :position (:position row)
+                           :kind (:kind row)
+                           :media-type (:media_type row)
+                           :filename (:filename row)
+                           :size (long (or (:size_bytes row) (alength bs)))
+                           :base64 (.encodeToString (java.util.Base64/getEncoder) bs)})))
+              {}
+              (query! db-info
+                      {:select [:*]
+                       :from :session_iteration_attachment
+                       :where [:in :session_turn_iteration_id ids]
+                       :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
+                                  [:position :asc]]})))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]
@@ -1753,6 +1813,40 @@
       (:at-ms event)
       (assoc :at_ms (long (:at-ms event))))))
 
+(defn- store-iteration-attachments!
+  "Insert one `session_iteration_attachment` row per OUTBOUND artifact a tool
+   call produced inside this iteration (the canonical case: a `matplotlib`
+   figure emitted by `plt.show()`/`plt.savefig()` from `python_execution`).
+   Each attachment is `{:tool-call-id? :media-type :base64 :filename? :size?
+   :kind?}`; the base64 payload decodes to raw bytes for the inline BLOB.
+
+   Grain is `(iteration, tool_call_id, position)` — so `position` is a 0-based
+   ordinal RESET per `tool_call_id` group (one call may emit several figures,
+   even same-named), matching the table's `UNIQUE` constraint. A `nil`
+   tool-call-id (a whole-iteration artifact) forms its own group. Skips any
+   entry whose base64 fails to decode — never aborts the enclosing iteration
+   insert."
+  [tx-info iteration-id-s attachments now]
+  (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
+    (doseq [[position att] (map-indexed vector group)]
+      (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
+                                  (catch Throwable _ nil))]
+        (execute! tx-info
+                  {:insert-into :session_iteration_attachment
+                   :values [{:id (str (new-uuid))
+                             :session_turn_iteration_id iteration-id-s
+                             :tool_call_id (some-> (:tool-call-id att)
+                                                   str)
+                             :position position
+                             :kind (or (some-> (:kind att)
+                                               name)
+                                       "image")
+                             :media_type (str (:media-type att))
+                             :filename (:filename att)
+                             :size_bytes (long (or (:size att) (alength data)))
+                             :bytes data
+                             :created_at now}]})))))
+
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row in a single SQLite transaction.
@@ -1769,7 +1863,7 @@
   [db-info
    {:keys [session-turn-id thinking assistant-prose answer llm-full-duration-ms error llm-routing
            cache-created-tokens llm-provider llm-model llm-assistant-message
-           llm-returned-empty-code? tokens cost-usd]
+           llm-returned-empty-code? tokens cost-usd attachments]
     :as opts}]
   (when (ds db-info)
     (sqlite-write-tx!
@@ -1888,6 +1982,7 @@
 
                         (seq routing)
                         (merge (routing-summary-columns routing)))]})
+          (store-iteration-attachments! tx-info iteration-id-s attachments now)
           (doseq [[idx event] (map-indexed vector (:trace routing))]
             (execute! tx-info
                       {:insert-into :llm_routing_event

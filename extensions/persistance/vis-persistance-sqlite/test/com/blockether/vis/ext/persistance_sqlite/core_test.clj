@@ -124,7 +124,57 @@
           (expect (= 1 (count rows)))
           (expect (= {:iteration-id (str iid) :iteration-form-index 0}
                      (select-keys (:scope (first rows)) [:iteration-id :iteration-form-index])))
-          (expect (= {:ok true} (:content (first rows))))))))
+          (expect (= {:ok true} (:content (first rows)))))))
+  (it
+    "stores and lists iteration attachments per (call, position)"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "plot it"})
+
+          png
+          (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 1 2 3 4]))
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) png)
+
+          iid
+          (h/store-iteration!
+            s
+            {:session-turn-id tid
+             :status :done
+             :code "plt.show()"
+             :forms
+             [{:scope "t1/i1" :tag :observation :src "plt.show()" :svar/tool-call-id "call_A"}]
+             ;; One call emits TWO same-named figures (position 0 and 1); a
+             ;; third artifact is iteration-level (nil call-id, its own group).
+             :attachments
+             [{:tool-call-id "call_A"
+               :media-type "image/png"
+               :base64 b64
+               :filename "fig.png"
+               :size (alength png)}
+              {:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "fig.png"}
+              {:tool-call-id nil :media-type "image/png" :base64 b64}]})
+
+          got
+          (vis/db-list-iteration-attachments s iid)]
+
+      (expect (= 3 (count got)))
+      ;; Grain (call, position): call_A gets 0 and 1, the nil-call artifact 0.
+      (expect (= [[nil 0] ["call_A" 0] ["call_A" 1]] (mapv (juxt :tool-call-id :position) got)))
+      ;; Base64 payload round-trips byte-for-byte.
+      (expect (every? #(= b64 (:base64 %)) got))
+      (expect (= "image/png" (:media-type (first got))))
+      (expect (= 8 (:size (first got))))
+      ;; Batch variant groups by iteration id.
+      (let [batch (vis/db-list-iterations-attachments s [iid])]
+        (expect (= 1 (count batch)))
+        (expect (= 3 (count (get batch (str iid)))))))))
 
 (defdescribe
   sqlite-extension-aggregate-index-data-filter-test
