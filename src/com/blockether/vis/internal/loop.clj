@@ -15,7 +15,6 @@
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -3725,6 +3724,10 @@
                              ;; One block = one tool call, so this is the
                              ;; call's whole stdout (no per-form split).
                              :stdout (:stdout result)
+                             ;; Images the block PRODUCED (matplotlib show/savefig),
+                             ;; captured at the SOURCE into the sandbox sink — carried
+                             ;; down so the DB attachment OWNS the bytes (no parsing).
+                             :images (:images result)
                              :error (op-error (:error result)
                                               {:code code :phase (get-in result [:envelope :op])})
                              :envelope (:envelope result)
@@ -5492,16 +5495,16 @@
                         block-code (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         ;; Outbound artifacts a tool call PRODUCED this
-                        ;; iteration: every `vis-image` fence a block printed
-                        ;; (matplotlib `plt.show()`/`savefig`) re-read to inline
-                        ;; bytes and stamped with the block's tool-call-id, so
+                        ;; iteration: every image a block PRODUCED (matplotlib
+                        ;; `plt.show()`/`savefig`), captured at the SOURCE into the
+                        ;; sandbox sink and stamped with the block's tool-call-id, so
                         ;; the figure PNG is OWNED by the DB and survives a
                         ;; restart / replay (V1 only kept the temp-file path).
                         iteration-attachments
                         (into []
                               (mapcat (fn [b]
                                         (map #(assoc % :tool-call-id (:svar/tool-call-id b))
-                                             (mpl-capture/collect-stdout-images (:stdout b)))))
+                                             (:images b))))
                               blocks)
                         iteration-id
                         (persistance/db-store-iteration!

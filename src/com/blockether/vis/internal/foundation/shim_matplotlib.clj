@@ -20,7 +20,8 @@
    Together with `shim-yaml` this demonstrates the sandbox-shim mechanism: an
    extension turns a host / JVM capability into a real importable Python module
    while `env-python` stays completely generic about which shims exist."
-  (:require [com.blockether.vis.core :as vis])
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.awt BasicStroke Color Font Graphics2D RenderingHints]
            [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream]
@@ -617,21 +618,41 @@
    filesystem is denied (the inline-image path for `plt.show()`) — returning
    `[true [abs-path width height byte-count]]`."
   []
-  {"__vis_mpl_render__"
-   (fn [spec]
-     (mpl-envelope #(render-png-base64 spec)))
+  {"__vis_mpl_render__" (fn [spec]
+                          (mpl-envelope #(render-png-base64 spec)))
    "__vis_mpl_render_file__"
    (fn [spec]
      (mpl-envelope
-       #(let [bytes (.decode (Base64/getDecoder) ^String (render-png-base64 spec))
-              dir (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl")
-                    (.mkdirs))
-              f (java.io.File/createTempFile "fig-" ".png" dir)
-              w (int (as-double (or (get spec "width") 640)))
-              h (int (as-double (or (get spec "height") 480)))]
+       #(let [b64
+              (render-png-base64 spec)
+
+              bytes
+              (.decode (Base64/getDecoder) ^String b64)
+
+              dir
+              (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-mpl") (.mkdirs))
+
+              f
+              (java.io.File/createTempFile "fig-" ".png" dir)
+
+              w
+              (int (as-double (or (get spec "width") 640)))
+
+              h
+              (int (as-double (or (get spec "height") 480)))]
+
           (with-open [o (java.io.FileOutputStream. f)]
             (.write o ^bytes bytes))
-          [(.getAbsolutePath f) w h (alength bytes)])))})
+          ;; SINK the bytes at the source — the engine OWNS this figure (a DB
+          ;; attachment) with no stdout-fence parsing. The temp file stays only
+          ;; for the inline display fence. No-op when no per-block sink is bound.
+          (mpl-capture/record-image! {:kind "image"
+                                      :media-type "image/png"
+                                      :base64 b64
+                                      :size (alength bytes)
+                                      :filename (.getName f)
+                                      :dims (str w "x" h)}) [(.getAbsolutePath f) w h
+                                                             (alength bytes)])))})
 
 (def ^:private matplotlib-shim-src
   "Pure-Python preamble publishing a minimal `matplotlib` package with a
