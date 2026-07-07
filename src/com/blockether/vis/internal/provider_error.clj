@@ -62,7 +62,10 @@
                  ;; the title already says "All providers unavailable" and the
                  ;; per-provider attempts carry the detail — the bare wrapper echo
                  ;; adds nothing, so don't repeat it as a fact row.
-                 (str/includes? t "all providers exhausted")))))
+                 (str/includes? t "all providers exhausted")
+                 ;; svar's single-provider terminal error (new in 0.7.55) — the
+                 ;; title + next-step already say it; the bare echo adds nothing.
+                 (str/includes? t "provider unavailable")))))
 
 (defn invalid-thinking-signature-message?
   [message]
@@ -182,6 +185,8 @@
        "(Vis resends the same request). If it keeps failing, check your internet "
        "connection, any VPN/proxy/firewall, and the provider's status page."))
 
+(declare provider-error-attempts)
+
 (defn provider-error-explanation
   "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
    failure, shared by every surface. The actionable step lives in
@@ -222,8 +227,15 @@
       (rate-limit-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rate-limited the request before the model ran."
            (when (seq provider-message) (str " Provider message: " provider-message)))
-      (= "All providers exhausted" message)
-      "WHAT HAPPENED: Vis tried every configured provider (route + fallbacks) and each attempt failed before a usable response came back. Your transcript and tool results are intact — nothing was lost."
+      (or (= "All providers exhausted" message) (= "Provider unavailable" message))
+      (if (or (= "Provider unavailable" message) (<= (count (provider-error-attempts err)) 1))
+        (str "WHAT HAPPENED: the request to the selected provider failed before a usable "
+             "response came back. Vis did NOT fall back across your other providers — the "
+             "choice of where to go next is yours. Your transcript and tool results are "
+             "intact — nothing was lost.")
+        (str "WHAT HAPPENED: every provider in this turn's fallback list was tried and each "
+             "attempt failed before a usable response came back. Your transcript and tool "
+             "results are intact — nothing was lost."))
       (seq provider-message)
       (str
         "WHAT HAPPENED: the provider rejected the request before the model ran. Provider message: "
@@ -252,7 +264,7 @@
       :transport
       "Could not reach provider"
 
-      (if (= "All providers exhausted" message)
+      (if (and (= "All providers exhausted" message) (> (count (provider-error-attempts err)) 1))
         "All providers unavailable"
         "Provider unavailable"))))
 
@@ -282,9 +294,9 @@
       :transport
       (transport-next-step)
 
-      (if (= "All providers exhausted" message)
+      (if (and (= "All providers exhausted" message) (> (count (provider-error-attempts err)) 1))
         "NEXT STEP: retry once (transient outages recover), then check provider status, auth, and quota — or switch provider/model (TUI: Ctrl+K · CLI: `vis providers`)."
-        "NEXT STEP: retry; if it persists, check the provider's status page, your auth, and your quota."))))
+        "NEXT STEP: retry once (transient outages recover); if it persists, switch provider/model (TUI: Ctrl+K · CLI: `vis providers`) or check that provider's status, auth, and quota."))))
 
 (defn provider-error-attempts
   "The per-provider failure records svar accumulates on an `all-providers-exhausted`

@@ -52,6 +52,57 @@
       ;; title + attempts already carry it — no redundant `Wrapper: …` line
       (expect (not-any? #(= "Wrapper" (first %)) (perr/provider-error-facts exhausted-err)))))
 
+(def ^:private single-attempt-err
+  "A pinned main turn (post cross-provider-fallback removal) fails on ONE provider,
+   yet svar still wraps it as `all-providers-exhausted`. The presentation must NOT
+   claim the whole fleet was tried."
+  {:message "All providers exhausted"
+   :data {:type :svar.llm/all-providers-exhausted
+          :attempts [{:provider "zai-coding-plan"
+                      :model "glm-5.2"
+                      :status 500
+                      :reason :transient-error
+                      :error "boom"}]}})
+
+(defdescribe single-provider-exhausted-test
+             (it "one attempt does NOT claim the whole fleet was tried"
+                 (expect (= "Provider unavailable" (perr/provider-error-title single-attempt-err)))
+                 (let [ex (perr/provider-error-explanation single-attempt-err)]
+                   (expect (str/includes? ex "selected provider"))
+                   (expect (not (str/includes? ex "every provider"))))
+                 (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
+                                        "switch provider/model")))
+             (it "two+ attempts still read as the fleet-wide exhaustion"
+                 (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
+                 (expect (str/includes? (perr/provider-error-explanation exhausted-err)
+                                        "every provider"))))
+
+(def ^:private provider-unavailable-err
+  "svar >= 0.7.55 no longer wraps a one-provider turn as `all-providers-exhausted`:
+   it throws `:svar.llm/provider-unavailable` with message `Provider unavailable`
+   and the upstream transient's status preserved. Exactly the turn-1 screenshot."
+  {:message "Provider unavailable"
+   :data {:type :svar.llm/provider-unavailable
+          :status 500
+          :attempts [{:provider "zai-coding-plan"
+                      :model "glm-5.2"
+                      :status 500
+                      :reason :transient-error
+                      :error "boom"}]}})
+
+(defdescribe provider-unavailable-message-test
+             (it "the native single-provider message reads as one provider, not the fleet"
+                 (expect (= "Provider unavailable"
+                            (perr/provider-error-title provider-unavailable-err)))
+                 (let [ex (perr/provider-error-explanation provider-unavailable-err)]
+                   (expect (str/includes? ex "selected provider"))
+                   (expect (not (str/includes? ex "every provider"))))
+                 (expect (str/includes? (perr/provider-error-next-step provider-unavailable-err)
+                                        "switch provider/model")))
+             (it "the bare `Provider unavailable` wrapper is NOT repeated as a fact row"
+                 (expect (not-any? #(= "Wrapper" (first %))
+                                   (perr/provider-error-facts provider-unavailable-err)))))
+
 (defdescribe transport-error-test
              ;; A socket that dies before any response byte arrives ("HTTP/1.1 header
              ;; parser received no bytes") is a network/transport failure, NOT a rejection
