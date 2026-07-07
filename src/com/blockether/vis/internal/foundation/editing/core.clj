@@ -2121,29 +2121,42 @@
     (when (empty? edits)
       (throw (ex-info "patch grouped \"edits\" must not be empty"
                       {:type :ext.foundation.editing/invalid-patch-edit-group :edit group})))
-    (mapv (fn [edit]
-            (when-not (map? edit)
-              (throw (ex-info "patch grouped \"edits\" entries must be maps"
-                              {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-            ;; The LLM-facing JSON schema marks :path as required, so callers
-            ;; routinely echo an EMPTY :path (""/nil) into each grouped edit
-            ;; just to satisfy it. Treat a blank per-edit :path as ABSENT and
-            ;; only refuse a genuinely conflicting NON-EMPTY path — the group's
-            ;; :path is assoc'd over it below regardless.
-            (when-let [stated (some-> (get edit "path")
-                                      str
-                                      str/trim
-                                      not-empty)]
-              (throw (ex-info
-                       "patch grouped \"edits\" inherit \"path\"; do not repeat it per edit"
-                       {:type :ext.foundation.editing/invalid-patch-edit :path stated :edit edit})))
-            (cond-> (assoc edit "path" path)
-              (some? expected_mtime)
-              (assoc "expected_mtime" expected_mtime)
+    (mapv
+      (fn [edit]
+        (when-not (map? edit)
+          (throw (ex-info "patch grouped \"edits\" entries must be maps"
+                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+        ;; The LLM-facing JSON schema marks :path as required, so callers
+        ;; routinely echo the group's :path into each grouped edit just to
+        ;; satisfy it. A per-edit :path is REDUNDANT (the group's :path is
+        ;; assoc'd over it below regardless), so treat a blank OR
+        ;; group-matching path as harmless — never HARD-FAIL the whole patch
+        ;; over it (that stranded the model re-issuing the identical call).
+        ;; Only a per-edit path pointing at a DIFFERENT file is a genuine
+        ;; conflict a group can't express — that still refuses.
+        (when-let [stated (some-> (get edit "path")
+                                  str
+                                  str/trim
+                                  not-empty)]
+          (when-not (= stated
+                       (some-> path
+                               str
+                               str/trim))
+            (throw (ex-info (str "patch grouped \"edits\" share the group \"path\" (" path
+                                 "); this edit names a different \"path\" (" stated
+                                 "). Split conflicting paths into separate "
+                                 "groups, one per file.")
+                            {:type :ext.foundation.editing/invalid-patch-edit
+                             :group-path path
+                             :edit-path stated
+                             :edit edit}))))
+        (cond-> (assoc edit "path" path)
+          (some? expected_mtime)
+          (assoc "expected_mtime" expected_mtime)
 
-              (some? expected_size)
-              (assoc "expected_size" expected_size)))
-          edits)))
+          (some? expected_size)
+          (assoc "expected_size" expected_size)))
+      edits)))
 
 (defn- normalize-patch-edits-input
   [edits]
@@ -3706,18 +3719,21 @@
                     {:src (path->target src :path) :dest (path->target dest :path) :opts opts}}))))
 
 (defn- delete-tool
-  "Delete a path.
+  "Delete a path (file or directory).
      await delete(path)
+     await delete(path, {\"is_missing_ok\": True})   # no-op instead of raising when absent
 
-   Returns {\"path\": path, \"deleted\": True}.
-   Gotcha: errors if path is missing — use delete_if_exists to no-op instead."
-  [path]
-  (delete-safe path)
-  (tool-success {:op :delete
-                 :path path
-                 :kind :path
-                 :result {"path" path "deleted" true}
-                 :metadata {:deleted? true}}))
+   Returns {\"path\": path, \"deleted\": bool}. Without is_missing_ok a missing path
+   raises; with it, \"deleted\" is False when nothing was there (folds in the old
+   delete_if_exists)."
+  [path & {:as opts}]
+  (let [deleted?
+        (if (get opts "is_missing_ok") (delete-if-exists-safe path) (do (delete-safe path) true))]
+    (tool-success {:op :delete
+                   :path path
+                   :kind :path
+                   :result {"path" path "deleted" deleted?}
+                   :metadata {:deleted? deleted?}})))
 
 (defn- delete-if-exists-tool
   "Delete a path if it exists (no-op otherwise).
@@ -4393,7 +4409,7 @@
   (vis/symbol
     #'ls-tool
     {:symbol 'ls
-     :native-tool? true
+     :native-tool? false
      ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
      ;; opts are present force a leading path (default "."). Escape hatch:
      ;; returns RAW arg values (the engine renders them).
@@ -5071,7 +5087,7 @@
 (def symbol-rename-symbol
   (vis/symbol #'symbol-rename-tool
               {:symbol 'symbol_rename
-               :native-tool? true
+               :native-tool? false
                :active-fn structural-supported?
                :description
                (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
@@ -5149,25 +5165,32 @@
      :on-error-fn (tool-failure-on-error :move :path nil)}))
 
 (def delete-symbol
-  (vis/symbol #'delete-tool
-              {:symbol 'delete
-               :native-tool? true
-               :call {:pos ["path"]}
-               :description "Delete a file or directory at `path` (confined to filesystem roots)."
-               :render render-delete-result
-               :color-role :tool-color/delete
-               :schema {:type "object"
-                        :properties {"path" {:type "string" :description "Path to delete."}}
-                        :required ["path"]}
-               :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
-               :tag :mutation
-               :on-error-fn (tool-failure-on-error :delete :path nil)}))
+  (vis/symbol
+    #'delete-tool
+    {:symbol 'delete
+     :native-tool? true
+     :call {:pos ["path"] :rest :opt}
+     :description
+     "Delete a file or directory at `path` (confined to filesystem roots). Pass {is_missing_ok: True} to no-op instead of erroring when the path is absent (folds in the old delete_if_exists)."
+     :render render-delete-result
+     :color-role :tool-color/delete
+     :schema {:type "object"
+              :properties
+              {"path" {:type "string" :description "Path to delete."}
+               "is_missing_ok"
+               {:type "boolean"
+                :description
+                "No-op instead of raising when the path does not exist (default false)."}}
+              :required ["path"]}
+     :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
+     :tag :mutation
+     :on-error-fn (tool-failure-on-error :delete :path nil)}))
 
 (def delete-if-exists-symbol
   (vis/symbol
     #'delete-if-exists-tool
     {:symbol 'delete-if-exists
-     :native-tool? true
+     :native-tool? false
      :call {:pos ["path"]}
      :name "delete_if_exists"
      :description
@@ -5249,9 +5272,9 @@
           identity
           [lang-line
            (str
-             "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
-             (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
-             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only.")
+             "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / patch / move / delete / copy / file_exists / write"
+             (when struct? " / outline / struct_patch / sexpr / occurrences")
+             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (ls, symbol_rename and delete_if_exists are python_execution-ONLY, not native — call them inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
            ""])
         (if struct?
           ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
