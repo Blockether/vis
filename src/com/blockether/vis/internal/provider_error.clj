@@ -78,6 +78,17 @@
           #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
           text)))))
 
+(defn- anthropic-extra-usage-error?
+  "True for Anthropic's 'third-party apps now draw from your extra usage' 400 —
+   a quota/billing gate that svar retries transiently but that persists when the
+   user's extra-usage allowance is genuinely exhausted."
+  [status message wrapper-message]
+  (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
+    (boolean (and (= 400 status)
+                  (or (str/includes? text "draw from your extra usage")
+                      (str/includes? text "third-party apps now draw")
+                      (str/includes? text "extra usage"))))))
+
 (defn- rate-limit-error?
   [status message wrapper-message]
   (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
@@ -200,6 +211,12 @@
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected credentials before the model ran."
            (when (seq provider-message) (str " Provider message: " provider-message)))
+      (anthropic-extra-usage-error? status provider-message message)
+      (str
+        "WHAT HAPPENED: Anthropic rejected the request — your Claude subscription's extra-usage allowance is exhausted. "
+        "Third-party apps (including Vis) now draw from extra usage rather than your plan. "
+        "Provider message: " (or provider-message
+                                 "Third-party apps now draw from your extra usage"))
       (transport-error? status provider-message message)
       "WHAT HAPPENED: Vis could not complete the HTTP request to the provider — the connection dropped before any response came back (a network/transport failure; here the socket closed with no bytes). The model never saw the request, so nothing was rejected and nothing was lost."
       (rate-limit-error? status provider-message message)
@@ -225,6 +242,9 @@
 
       :auth
       "Provider authentication failed"
+
+      :anthropic-extra-usage
+      "Claude subscription quota exhausted"
 
       :rate-limit
       "Provider rate-limited"
@@ -252,6 +272,9 @@
 
       :auth
       (auth-provider-next-step data)
+
+      :anthropic-extra-usage
+      "NEXT STEP: add extra usage credits at https://claude.ai/settings/usage then retry. If you haven't set a spend limit yet, set one there to unblock requests."
 
       :rate-limit
       (rate-limit-next-step)
@@ -310,6 +333,7 @@
 
     (cond (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           (auth-provider-error? status provider-message message) :auth
+          (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
           (transport-error? status provider-message message) :transport
           :else :generic)))

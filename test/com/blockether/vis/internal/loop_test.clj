@@ -1984,11 +1984,11 @@
 
 (def ^:private real-call-shapes
   (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
-         {"mcp_servers" {:pos []}
-          "mcp_tools" {:pos ["server"]}
-          "mcp_call" {:pos ["server" "tool"] :opt-pos ["args"]}
-          "mcp_connect" {:pos ["server"]}
-          "mcp_disconnect" {:pos ["server"]}}))
+         {"mcp__servers" {:pos []}
+          "mcp__tools" {:pos ["server"]}
+          "mcp__call" {:pos ["server" "tool"] :opt-pos ["args"]}
+          "mcp__connect" {:pos ["server"]}
+          "mcp__disconnect" {:pos ["server"]}}))
 
 (defdescribe
   tool-call->python-source-test
@@ -2112,15 +2112,15 @@
                    (synth {:name "run_tests" :input {"namespaces" ["a.b"]}})))
         (expect (= "repl_stop(\"r1\")" (synth {:name "repl_stop" :input {"id" "r1"}}))))
     (it "mcp verbs bind positionally under the wire name"
-        (expect (= "mcp_servers()" (synth {:name "mcp_servers" :input {}})))
-        (expect (= "mcp_tools(\"fs\")" (synth {:name "mcp_tools" :input {"server" "fs"}})))
-        (expect (= "mcp_call(\"fs\", \"read\", {\"p\": 1})"
-                   (synth {:name "mcp_call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
-        (expect (= "mcp_call(\"fs\", \"read\")"
-                   (synth {:name "mcp_call" :input {"server" "fs" "tool" "read"}})))
-        (expect (= "mcp_connect(\"fs\")" (synth {:name "mcp_connect" :input {"server" "fs"}})))
-        (expect (= "mcp_disconnect(\"fs\")"
-                   (synth {:name "mcp_disconnect" :input {"server" "fs"}}))))))
+        (expect (= "mcp__servers()" (synth {:name "mcp__servers" :input {}})))
+        (expect (= "mcp__tools(\"fs\")" (synth {:name "mcp__tools" :input {"server" "fs"}})))
+        (expect (= "mcp__call(\"fs\", \"read\", {\"p\": 1})"
+                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
+        (expect (= "mcp__call(\"fs\", \"read\")"
+                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read"}})))
+        (expect (= "mcp__connect(\"fs\")" (synth {:name "mcp__connect" :input {"server" "fs"}})))
+        (expect (= "mcp__disconnect(\"fs\")"
+                   (synth {:name "mcp__disconnect" :input {"server" "fs"}}))))))
 
 ;; ===========================================================================
 ;; All-observation concurrent batch
