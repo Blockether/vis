@@ -9,6 +9,9 @@
      2. ancestors     `AGENTS.md` / `CLAUDE.md` in every ancestor
                       directory of the workspace root (outermost first)
      3. workspace     `AGENTS.md` / `CLAUDE.md` at the workspace root
+   4. added roots   `AGENTS.md` / `CLAUDE.md` at each ADDED filesystem
+                    root's own directory (folders granted beyond the
+                    primary workspace — no ancestor walk)
 
    Per DIRECTORY precedence is strict: AGENTS.md wins; CLAUDE.md is
    only consulted when AGENTS.md is absent in that directory. Across
@@ -149,7 +152,7 @@
 
 (defn- read-guidance-entry
   "Read one candidate into a stacked-file entry, or a warning on I/O
-   failure. `scope` is :global | :ancestor | :project."
+   failure. `scope` is :global | :ancestor | :project | :extra-root."
   [scope {:keys [source ^java.io.File file]}]
   (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely file)]
     (if err
@@ -180,6 +183,9 @@
 
          :project
          " (workspace root)"
+
+         :extra-root
+         " (added folder)"
 
          "")))
 
@@ -215,82 +221,115 @@
 (defn scan-roots
   "Stacked scan: guidance file in `global-dir` first (when non-nil),
    then AGENTS.md / CLAUDE.md from every ancestor of `workspace-root`
-   (outermost first) down to the workspace root itself. Pure I/O;
-   exposed for testing against fixture roots.
+   (outermost first) down to the workspace root itself, then each added
+   `extra-root`'s OWN directory (no ancestor walk — only what the user
+   granted). Pure I/O; exposed for testing against fixture roots.
+
+   Precedence is render order: user-global → ancestors → workspace root →
+   added roots. Nearer files land LATER and positionally override outer
+   rules, so the primary workspace stays authoritative over any added
+   folder. An extra-root whose guidance file coincides with an already-seen
+   path (the workspace root, an ancestor, or a duplicate) is dropped.
 
    Returns `{:result r :warnings [...]}` where `r` is:
 
      present: {:found? true
-               :files  [{:scope :global|:ancestor|:project
+               :files  [{:scope :global|:ancestor|:project|:extra-root
                          :source :agents-md|:claude-md
                          :path \"…\" :bytes N :content \"…\"} …]
                ;; legacy single-file view (innermost file + combined content)
                :source <legacy kw> :path \"…\" :bytes <total> :content \"…\"}
      absent:  {:found? false}"
-  [^java.io.File global-dir ^java.io.File workspace-root]
-  (let [chain
-        (ancestor-chain workspace-root)
+  ([^java.io.File global-dir ^java.io.File workspace-root]
+   (scan-roots global-dir workspace-root nil))
+  ([^java.io.File global-dir ^java.io.File workspace-root extra-roots]
+   (let [chain
+         (ancestor-chain workspace-root)
 
-        n
-        (count chain)
+         n
+         (count chain)
 
-        dirs
-        (concat (when global-dir [[:global global-dir]])
-                (map-indexed (fn [i d]
-                               [(if (= i (dec n)) :project :ancestor) d])
-                             chain))
+         dirs
+         (concat (when global-dir [[:global global-dir]])
+                 (map-indexed (fn [i d]
+                                [(if (= i (dec n)) :project :ancestor) d])
+                              chain)
+                 (map (fn [d]
+                        ;; Canonicalize so dedup matches the (already-canonical)
+                        ;; ancestor/workspace candidate paths — a symlinked or
+                        ;; relative extra-root path would otherwise escape dedup.
+                        (let [c (try (.getCanonicalFile ^java.io.File d) (catch Throwable _ d))]
+                          [:extra-root c]))
+                      extra-roots))
 
-        ;; The global dir may coincide with an ancestor (e.g. workspace under
-        ;; ~/.vis) — drop the duplicate ancestor read, global already has it.
-        reads
-        (loop [ds
-               dirs
+         ;; The global dir may coincide with an ancestor (e.g. workspace under
+         ;; ~/.vis) — drop the duplicate read; the same dedup drops an extra-root
+         ;; that coincides with the workspace root, an ancestor, or another extra.
+         reads
+         (loop [ds
+                dirs
 
-               seen
-               #{}
+                seen
+                #{}
 
-               acc
-               []]
+                acc
+                []]
 
-          (if (empty? ds)
-            acc
-            (let [[scope ^java.io.File d]
-                  (first ds)
+           (if (empty? ds)
+             acc
+             (let [[scope ^java.io.File d]
+                   (first ds)
 
-                  cand
-                  (guidance-candidate d)
+                   cand
+                   (guidance-candidate d)
 
-                  path
-                  (some-> cand
-                          ^java.io.File (:file)
-                          .getAbsolutePath)]
+                   path
+                   (some-> cand
+                           ^java.io.File (:file)
+                           .getAbsolutePath)]
 
-              (if (and cand (not (contains? seen path)))
-                (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
-                (recur (rest ds) seen acc)))))
+               (if (and cand (not (contains? seen path)))
+                 (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
+                 (recur (rest ds) seen acc)))))
 
-        entries
-        (vec (keep :entry reads))
+         entries
+         (vec (keep :entry reads))
 
-        warnings
-        (vec (keep :warning reads))]
+         warnings
+         (vec (keep :warning reads))]
 
-    {:result (if (seq entries)
-               (let [innermost (peek entries)]
-                 {:found? true
-                  :files entries
-                  :source (legacy-source innermost)
-                  :path (:path innermost)
-                  :bytes (reduce + 0 (map :bytes entries))
-                  :content (combined-content entries)})
-               {:found? false})
-     :warnings warnings}))
+     {:result (if (seq entries)
+                (let [innermost (peek entries)]
+                  {:found? true
+                   :files entries
+                   :source (legacy-source innermost)
+                   :path (:path innermost)
+                   :bytes (reduce + 0 (map :bytes entries))
+                   :content (combined-content entries)})
+                {:found? false})
+      :warnings warnings})))
+
+(defn- extra-root-dirs
+  "The added filesystem roots' REAL (trunk) dirs as Files, for the stacked
+   guidance scan. Only the trunk is read — a draft clone wouldn't carry a
+   freshly-added rules file, and live roots have trunk==clone anyway. Reads
+   the per-turn `*filesystem-roots*` binding (empty when unbound / single-root)."
+  []
+  (into []
+        (keep (fn [{:keys [trunk]}]
+                (some-> trunk
+                        str
+                        str/trim
+                        not-empty
+                        java.io.File.)))
+        workspace/*filesystem-roots*))
 
 (defn scan
-  "Scan the user-global `~/.vis` dir plus the active workspace root's
-   ancestor chain for project-guidance files (stacked)."
+  "Scan the user-global `~/.vis` dir, the active workspace root's ancestor
+   chain, and each added filesystem root's own directory for project-guidance
+   files (stacked)."
   []
-  (scan-roots (global-config-dir) (repo-cwd)))
+  (scan-roots (global-config-dir) (repo-cwd) (extra-root-dirs)))
 
 ;; =============================================================================
 ;; Marker cache — stat-only revalidation on the hot path
@@ -315,7 +354,9 @@
 
 (defn- guidance-marker
   []
-  {:global (dir-marker (global-config-dir)) :chain (mapv dir-marker (ancestor-chain (repo-cwd)))})
+  {:global (dir-marker (global-config-dir))
+   :chain (mapv dir-marker (ancestor-chain (repo-cwd)))
+   :extras (mapv dir-marker (extra-root-dirs))})
 
 (defn- rescan!
   [cwd marker]
