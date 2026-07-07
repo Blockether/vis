@@ -21,6 +21,7 @@
   (:require [charred.api :as json]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
             [flatland.ordered.map :as omap]
@@ -2141,9 +2142,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         read-printed
         (fn []
           (let [p (->clj (.getMember g "__vis_printed_results__"))]
-            (when (seq p) (vec p))))]
+            (when (seq p) (vec p))))
 
-    (with-bindings {@current-form-idx-var 0}
+        sink
+        (atom [])]
+
+    (with-bindings {@current-form-idx-var 0 #'mpl-capture/*image-sink* sink}
       (try
         ;; Run the whole-block coroutine; it stashes the program's value in
         ;; `__vis_async_result__` and prints to `baos`. (Globals it assigns
@@ -2164,31 +2168,53 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
               ;; true ⇔ the block printed NOTHING but tool results — only then may
               ;; the human display replace the raw stdout with cards (no text lost).
               only?
-              (true? (->clj (.getMember g "__vis_only_results__")))]
+              (true? (->clj (.getMember g "__vis_only_results__")))
+
+              ;; Images the block PRODUCED (matplotlib show/savefig), captured at
+              ;; the source into the per-block sink — folded in as `:images` so the
+              ;; loop OWNS the bytes with NO stdout-fence parsing.
+              images
+              (mpl-capture/drain sink)]
 
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
           ;;   - the returned value (`:result`) → a native tool call (never prints).
           ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
-          ;; it is DISPLAY-only (cards), NOT a second context channel.
+          ;; it is DISPLAY-only (cards), NOT a second context channel. `:images`
+          ;; ride alongside EITHER — a produced-artifact channel, not context.
           (if out
             (cond-> {:stdout out}
+              images
+              (assoc :images images)
+
               printed
               (assoc :printed-results printed)
 
               (and printed only?)
               (assoc :only-printed-results? true))
             (cond-> {}
+              images
+              (assoc :images images)
+
               (some? res)
               (assoc :result res))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
-          ;; ONE place; any partial stdout before it rides along.
-          (let [out (read-out)]
+          ;; ONE place; any partial stdout (and any image produced before it)
+          ;; rides along.
+          (let [out
+                (read-out)
+
+                images
+                (mpl-capture/drain sink)]
+
             (cond-> {:error (map-polyglot-error e code)}
               out
-              (assoc :stdout out))))))))
+              (assoc :stdout out)
+
+              images
+              (assoc :images images))))))))
 
 (declare protected-rebind-error)
 
