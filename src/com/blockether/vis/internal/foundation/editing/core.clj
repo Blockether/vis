@@ -120,59 +120,80 @@
                        :timeout-ms rg-fff-scan-timeout-ms})))
     idx))
 
+(defn- rg-needle-hostile-to-fff?
+  "fff's candidate pre-filter (fuzzy path + content grep) honors a needle as a
+   REGEX/glob, so a needle with a quantifier/bracket char — e.g. an ear-muffed
+   Clojure var `*workspace-root*`, `(defn foo`, `arr[0]` — matches NOTHING (or
+   errors) and yields zero candidate files. With no fallback the literal
+   `make-line-matcher` then never runs, so a query that SHOULD hit returns empty.
+   `.`/`|`/`^`/`$` only OVER-match (still correct after the literal filter) and
+   `.` is ubiquitous, so they stay on the fff fast path."
+  [^String needle]
+  (boolean (re-find #"[*+?(){}\[\]]" needle)))
+
 (defn- rg-fff-candidate-files
   [roots needles files]
-  (let [by-canon
-        (into {}
-              (map (fn [^File f]
-                     [(.getCanonicalPath f) f]))
-              files)
+  (if (some rg-needle-hostile-to-fff? needles)
+    ;; A needle carrying a quantifier/bracket char (`*workspace-root*`,
+    ;; `(defn foo`, `arr[0]`) makes fff match NOTHING (or error) and yield zero
+    ;; candidate files — and with no fallback the literal `make-line-matcher`
+    ;; never runs, so a query that SHOULD hit returns empty. Skip fff and scan
+    ;; the full walk; make-line-matcher is the literal-substring contract.
+    ;; (`.`/`|`/`^`/`$` only OVER-match — still correct after the literal filter
+    ;; — and `.` is ubiquitous, so they stay on the fff fast path.)
+    (vec files)
+    (let [by-canon
+          (into {}
+                (map (fn [^File f]
+                       [(.getCanonicalPath f) f]))
+                files)
 
-        queries
-        needles
+          queries
+          needles
 
-        mode
-        :plain
+          mode
+          :plain
 
-        rel-paths
-        (fn [base items]
-          (keep (fn [{:keys [relative-path]}]
-                  (some-> (io/file base relative-path)
-                          .getCanonicalPath))
-                items))
+          rel-paths
+          (fn [base items]
+            (keep (fn [{:keys [relative-path]}]
+                    (some-> (io/file base relative-path)
+                            .getCanonicalPath))
+                  items))
 
-        candidate-keys
-        (->> roots
-             (mapcat
-               (fn [^File root]
-                 (cond (.isFile root) [(.getCanonicalPath root)]
-                       ;; Never fff-scan $HOME or a filesystem root — the walk never
-                       ;; finishes and hangs the tool. Skip this root; other (real
-                       ;; project) roots still search normally.
-                       (paths/pathological-index-root? root) nil
-                       :else (with-open [idx (rg-fff-open root)]
-                               (let [base (.getCanonicalFile root)]
-                                 ;; doall: realize the lazy hits INSIDE with-open, before
-                                 ;; the fresh instance is closed.
-                                 (doall (mapcat
-                                          (fn [query]
-                                            (let [path-items (:items (fff/search idx
-                                                                                 {:query query
-                                                                                  :page-size 1000}))
-                                                  grep-items (:matches (fff/grep
-                                                                         idx
-                                                                         {:query query
-                                                                          :mode mode
-                                                                          :page-limit 1000
-                                                                          :max-matches-per-file 1
-                                                                          :time-budget-ms 1500}))]
+          candidate-keys
+          (->> roots
+               (mapcat
+                 (fn [^File root]
+                   (cond (.isFile root) [(.getCanonicalPath root)]
+                         ;; Never fff-scan $HOME or a filesystem root — the walk never
+                         ;; finishes and hangs the tool. Skip this root; other (real
+                         ;; project) roots still search normally.
+                         (paths/pathological-index-root? root) nil
+                         :else
+                         (with-open [idx (rg-fff-open root)]
+                           (let [base (.getCanonicalFile root)]
+                             ;; doall: realize the lazy hits INSIDE with-open, before
+                             ;; the fresh instance is closed.
+                             (doall
+                               (mapcat
+                                 (fn [query]
+                                   (let [path-items
+                                         (:items (fff/search idx {:query query :page-size 1000}))
+                                         grep-items (:matches (fff/grep idx
+                                                                        {:query query
+                                                                         :mode mode
+                                                                         :page-limit 1000
+                                                                         :max-matches-per-file 1
+                                                                         :time-budget-ms 1500}))]
 
-                                              (concat (rel-paths base path-items)
-                                                      (rel-paths base grep-items))))
-                                          queries)))))))
-             distinct)]
+                                     (concat (rel-paths base path-items)
+                                             (rel-paths base grep-items))))
+                                 queries)))))))
+               distinct)]
 
-    (vec (keep by-canon candidate-keys))))
+      (vec (keep by-canon candidate-keys)))))
+
 
 (def ^:private default-find-limit 50)
 (def ^:private default-list-depth 10)

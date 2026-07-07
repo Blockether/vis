@@ -477,10 +477,11 @@
    (user-global → ancestor directories → workspace root) so nearer rules
    positionally override outer ones. Returns nil when no file is present
    or every file is empty."
-  []
+  [environment]
   (try
     (let [{:keys [found? source path content files]}
-          (agents/instructions)
+          (binding [workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
+            (agents/instructions))
 
           ;; Back-compat: a single-file legacy shape (no :files) still renders.
           files
@@ -513,7 +514,7 @@
                      (str (count files)
                           " stacked guidance files — "
                           "user-global first, then each ancestor directory, "
-                          "then the workspace root. NEARER (later) files "
+                          "then the workspace root, then any added folders. NEARER (later) files "
                           "override earlier ones on conflict.")
                      (str (agents/origin-label (first files)) " (" (:path (first files)) ")."))
                    " These are PROJECT-OWNED instructions; honor them "
@@ -822,7 +823,7 @@
         (when (= :cli (:channel environment)) (prompt-block "cli-autonomous" cli-autonomous-rules))
 
         project-block
-        (project-instructions-block)
+        (project-instructions-block environment)
 
         turn-system-block
         (turn-system-context-block environment active-extensions)

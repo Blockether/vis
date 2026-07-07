@@ -116,3 +116,60 @@
 
                                      (expect (false? (:found? result)))
                                      (expect (empty? warnings)))))))
+
+(defdescribe scan-extra-roots-test
+             (it "extra roots land AFTER the workspace root; own dir only — no ancestor walk"
+                 (with-tmp-root*
+                   (fn [^java.io.File root]
+                     (let [ws
+                           (doto (java.io.File. root "ws") .mkdirs)
+
+                           nested
+                           (doto (java.io.File. root "nested") .mkdirs)
+
+                           extra
+                           (doto (java.io.File. nested "extra") .mkdirs)]
+
+                       (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
+                       (spit (java.io.File. nested "AGENTS.md") "NESTED-PARENT-RULE")
+                       (spit (java.io.File. extra "AGENTS.md") "EXTRA-RULE")
+                       (let [{:keys [result warnings]}
+                             (agents/scan-roots nil ws [extra])
+
+                             scoped
+                             (mapv (juxt :scope :content) (:files result))]
+
+                         (expect (true? (:found? result)))
+                         (expect (empty? warnings))
+                         ;; own dir only: the extra's PARENT rule never appears
+                         (expect (not-any? #(= "NESTED-PARENT-RULE" (second %)) scoped))
+                         (expect (some #(= "EXTRA-RULE" (second %)) scoped))
+                         ;; precedence: workspace root first, extra root LAST
+                         (expect (= [:project "WS-RULE"] (first scoped)))
+                         (expect (= [:extra-root "EXTRA-RULE"] (peek scoped))))))))
+             (it "an extra root coinciding with the workspace root is deduped"
+                 (with-tmp-root* (fn [^java.io.File root]
+                                   (let [ws (doto (java.io.File. root "ws") .mkdirs)]
+                                     (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
+                                     (let [{:keys [result warnings]} (agents/scan-roots nil ws [ws])
+                                           files (:files result)]
+
+                                       (expect (= 1 (count files)))
+                                       (expect (= :project (:scope (first files))))
+                                       (expect (empty? warnings)))))))
+             (it "an extra root with no guidance file contributes nothing"
+                 (with-tmp-root* (fn [^java.io.File root]
+                                   (let [ws
+                                         (doto (java.io.File. root "ws") .mkdirs)
+
+                                         extra
+                                         (doto (java.io.File. root "extra") .mkdirs)]
+
+                                     (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
+                                     (let [{:keys [result]}
+                                           (agents/scan-roots nil ws [extra])
+
+                                           scoped
+                                           (mapv (juxt :scope :content) (:files result))]
+
+                                       (expect (= [[:project "WS-RULE"]] scoped))))))))
