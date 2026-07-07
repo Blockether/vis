@@ -498,7 +498,7 @@
 
 (defn clj-format-fn
   "Format Clojure source via the language facade (`format_code`). Accepts:
-     - a raw code string / {\"code\": ...}   -> return the formatted text
+     - a raw code string / {\"code\": ...}   -> report changed? + char delta (NO text)
      - {\"path\": \"src/foo.clj\"}              -> format that file IN PLACE
      - {\"paths\": [\"src\" \"test\" ...]}        -> format those paths IN PLACE; a
          DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx under it)
@@ -561,8 +561,8 @@
          (extension/success
            {:result (cond-> {"op" "clj-format"
                              "changed" (not= out code)
-                             "repaired" (not= (or (repair/fix-delimiters code) code) code)
-                             "text" out}
+                             "chars" (- (count out) (count code))
+                             "repaired" (not= (or (repair/fix-delimiters code) code) code)}
                       path
                       (assoc "path"
                         (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"
