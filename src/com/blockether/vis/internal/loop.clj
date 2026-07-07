@@ -4023,7 +4023,25 @@
    (e.g. LM Studio resolving real context windows)."
   [config]
   (let [ropts (config/router-opts config)]
-    (mapv #(enrich-provider-models (config/->svar-provider %) ropts) (:providers config))))
+    ;; RESILIENT build: `->svar-provider` may eagerly fetch an OAuth token
+    ;; (Copilot/Codex), and that can fail (expired token, GitHub 403
+    ;; "not accessible by integration", network). A single failing provider
+    ;; must NOT abort the whole router build and crash startup — skip it with a
+    ;; warning and keep every provider that DID resolve. Falling through with
+    ;; the others (or none) lets the app start and surface a fixable message.
+    (->> (:providers config)
+      (keep (fn [p]
+              (try
+                (enrich-provider-models (config/->svar-provider p) ropts)
+                (catch Throwable t
+                  (tel/log! {:level :warn :id ::provider-unavailable-skipped
+                             :data {:provider (:id p)
+                                    :status (:status (ex-data t))
+                                    :error (ex-message t)}
+                             :msg (str "Provider " (some-> (:id p) name)
+                                    " unavailable — skipping (" (ex-message t) ")")})
+                  nil))))
+      vec)))
 
 (defn- honor-config-primary!
   "svar's `make-router` PREPENDS each known provider's catalog `:default-models`
