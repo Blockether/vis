@@ -179,6 +179,29 @@
               (grep {"query" ["alpha" "gamma"] "paths" [(temp-dir-path "rgsimple")]})]
 
           (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
+    (it "rg-needle-hostile-to-fff? flags quantifier/bracket needles (fff fast-path gate)"
+        (let [hostile? (private-fn "rg-needle-hostile-to-fff?")]
+          ;; These make fff match NOTHING/error → zero candidate files → the
+          ;; literal matcher never ran → 0 hits (the regression).
+          (expect (hostile? "*workspace-root*"))
+          (expect (hostile? "(defn foo"))
+          (expect (hostile? "arr[0]"))
+          (expect (hostile? "foo{bar"))
+          ;; No quantifier/bracket char → stays on the fff fast path.
+          (expect (not (hostile? "workspace-root")))
+          (expect (not (hostile? "config.json")))))
+    (it "rg-search finds an ear-muffed *var* (fff pre-filter bypassed, literal match)"
+        ;; fff honors `*workspace-root*` as a regex/glob → 0 candidate files →
+        ;; the literal `make-line-matcher` never ran → 0 hits. Bypass fff for
+        ;; such needles so the literal-substring contract holds.
+        (let [_
+              (write-temp! "rgstar/a.clj" "(def ^:dynamic *workspace-root* \"/x\")\n")
+
+              out
+              (grep {"query" ["*workspace-root*"] "paths" [(temp-dir-path "rgstar")]})]
+
+          (expect (= 1 (count (:hits out))))
+          (expect (= "(def ^:dynamic *workspace-root* \"/x\")" (:text (first (:hits out)))))))
     (it ":is_files_only returns distinct :files, never :hits"
         (let [_
               (write-temp! "rgsimplefo/a.py" "alpha\nalpha\n")
