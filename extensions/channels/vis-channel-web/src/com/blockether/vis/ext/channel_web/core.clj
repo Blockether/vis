@@ -45,6 +45,14 @@
 
 (def ^:private HEARTBEAT_MS 15000)
 
+;; The reasoning ticker (#thinking) shows only the LATEST thought and is
+;; transient — a long reasoning stream fires a `reasoning.delta` per token, and
+;; on a Cloudflare-tunneled SSE each becomes its own write+flush. Coalesce that
+;; burst to at most one ticker write per this window so we stop hammering the
+;; edge; the pinned thought (`iteration.completed`) and every non-ticker frame
+;; still pass through untouched.
+(def ^:private THINKING_COALESCE_MS 100)
+
 (def ^:private ui-load-stamp
   "Re-evaluated on every namespace (re)load — deliberately `def`, NOT
    `defonce`. The gateway contribution's `:rev` rides it so a REPL
@@ -612,6 +620,61 @@
        (when overload
          [:span.foot-routing-overload (icon "info")
           (str (:overloaded-model overload) " → " (or (:serving-model overload) "none"))])])))
+(def ^:private reasoning-level-order [:quick :balanced :deep])
+
+(defn- session-resolved-model-info
+  "Root model descriptor the router resolves to — the same `resolve-effective-model`
+  `providers-modal` reads for its 'default-active' line. Used only to GATE the
+  effort chip (does this model accept a reasoning level?). The backend re-gates
+  per turn (`loop.clj`), so a stale read here is harmless: at worst the chip
+  shows for a model the engine then ignores. Returns nil when the router can't
+  resolve (not configured, transient error)."
+  []
+  (try (vis/resolve-effective-model (vis/get-router)) (catch Throwable _ nil)))
+
+(defn- reasoning-effort-configurable?
+  "Twin of the backend gate (`loop.clj/reasoning-effort-configurable?`) and the
+  TUI's — true when the resolved model accepts a caller-selected reasoning
+  effort. Keeps the chip from offering a lever the model would silently drop."
+  [info]
+  (and (boolean (:reasoning? info))
+       (not= false (:reasoning-effort? info))
+       (not= :zai-thinking (:reasoning-style info))))
+
+(defn- session-reasoning-level
+  "Current reasoning effort for the chip, mirroring the TUI's global
+  `:vis/reasoning-level` toggle (persisted in `~/.vis/config.edn`, shared across
+  every channel). Falls back to the toggle's registered default (:balanced) when
+  the store hasn't been touched."
+  []
+  (or (try (vis/toggle-value :vis/reasoning-level) (catch Throwable _ nil)) :balanced))
+
+(defn- reasoning-footer
+  "Reasoning-effort chip — a TWIN of `routing-footer` in the bottom dock. Opens
+  the effort picker (3 levels: quick / balanced / deep), the same values the TUI
+  footer cycles with Ctrl+R. Source of truth is the global `:vis/reasoning-level`
+  toggle, so a change here is immediately visible to the TUI/Telegram and vice
+  versa.
+
+  Rendered only when the resolved model is reasoning-configurable — matching the
+  backend gate (`loop.clj`), so the chip never appears for models that would
+  ignore the level. Takes only `sid` so the SSE `footer` frames re-render it."
+  [sid]
+  (when sid
+    (let [info (session-resolved-model-info)]
+      ;; `nil? info` (router unresolvable) still shows the chip: the picker is
+      ;; harmless and the backend re-gates per turn anyway. Only a resolved,
+      ;; non-configurable model hides it.
+      (when (or (nil? info) (reasoning-effort-configurable? info))
+        (let [level (session-reasoning-level)]
+          [:button.foot-effort
+           {:type "button"
+            :hx-get (str "/ui/session/" sid "/reasoning")
+            :hx-target "#modal"
+            :hx-swap "innerHTML"
+            :aria-label "Change reasoning effort"
+            :title "Change reasoning effort"} (icon "activity")
+           [:span "effort: " (name level)]])))))
 
 (defn- abbrev-home
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with
@@ -1140,12 +1203,14 @@
     (boolean (re-find #"(?i)cancellation|cancelled|canceled|interrupt" s))))
 
 (defn- block-error
-  [error]
-  (if (cancellation-error? error)
-    ;; user stopped the turn — a muted note, not a red error row
-    [:div.block.block-stopped [:span.block-tag "stopped"] [:span.act-dim "you stopped this turn"]]
-    [:div.block.block-error [:span.block-tag.bad "error"]
-     [:pre.ir-pre.act-error [:code (error-text error)]]]))
+  ([error] (block-error error nil))
+  ([error live-key]
+   (if (cancellation-error? error)
+     ;; user stopped the turn — a muted note, not a red error row
+     [:div.block.block-stopped (live-key-attr live-key) [:span.block-tag "stopped"]
+      [:span.act-dim "you stopped this turn"]]
+     [:div.block.block-error (live-key-attr live-key) [:span.block-tag.bad "error"]
+      [:pre.ir-pre.act-error [:code (error-text error)]]])))
 
 (defn- think-md->hiccup
   "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
@@ -1394,10 +1459,11 @@
 (defn- footer-content
   [sid]
   ;; Bottom dock under the composer: the session's provider/model chip
-  ;; (`routing-footer`, moved here from the context rail) followed by any
-  ;; extension footer contributions.
+  ;; (`routing-footer`) + the reasoning-effort chip (`reasoning-footer`),
+  ;; followed by any extension footer contributions. Both mirror the TUI
+  ;; footer (model + reasoning: deep) and re-render on every `footer` SSE frame.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer) (catch Throwable _ []))]
-    [:footer.foot (routing-footer sid)
+    [:footer.foot (routing-footer sid) (reasoning-footer sid)
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -1562,12 +1628,17 @@
               {:event "message" :html (html out)})
 
             error-frame
-            (when (:error event) {:event "message" :html (html (block-error (:error event)))})]
+            (when (:error event)
+              {:event "message"
+               :html (html (block-error (:error event)
+                                        (turn-live-key (str "error:" (:iteration event)) event)))})]
 
         (into [] (keep identity [code-frame result-frame error-frame]))))
 
     "iteration.error"
-    [{:event "message" :html (html (block-error (:error event)))}]
+    [{:event "message"
+      :html (html (block-error (:error event)
+                               (turn-live-key (str "error:" (:iteration event)) event)))}]
 
     "iteration.completed"
     (let [thought (block-thinking (:thinking event)
@@ -1800,15 +1871,29 @@
                          sub-id
                          (str (java.util.UUID/randomUUID))
 
+                         ;; Tracks the last ticker write so a `reasoning.delta`
+                         ;; token-burst coalesces to one write per window.
+                         last-thinking
+                         (volatile! 0)
+
                          sink
                          (fn [event]
                            (locking out
-                             (doseq [frame (event->frames sid event)]
-                               ;; stamp the gateway seq so the client can
-                               ;; rewind a reconnect to it (pings carry none —
-                               ;; an id-less frame leaves lastEventId alone)
-                               (write-frame! out (assoc frame :id (:seq event))))
-                             (.flush out)))]
+                             (let [now (System/currentTimeMillis)]
+                               ;; Drop intermediate reasoning ticks that land inside
+                               ;; the coalesce window: they only re-render the
+                               ;; transient #thinking ticker, so skipping a few costs
+                               ;; nothing but spares the tunnel a write+flush each.
+                               (when-not (and (= "reasoning.delta" (:type event))
+                                              (< (- now @last-thinking) THINKING_COALESCE_MS))
+                                 (when (= "reasoning.delta" (:type event))
+                                   (vreset! last-thinking now))
+                                 (doseq [frame (event->frames sid event)]
+                                   ;; stamp the gateway seq so the client can
+                                   ;; rewind a reconnect to it (pings carry none —
+                                   ;; an id-less frame leaves lastEventId alone)
+                                   (write-frame! out (assoc frame :id (:seq event))))
+                                 (.flush out)))))]
 
                      (try (locking out
                             ;; 8KB SSE comment pad (clients ignore comments): proxy
@@ -3524,6 +3609,53 @@
   [sid]
   (modal-shell "Session model" (model-pick-body sid)))
 
+(defn- reasoning-pick-body
+  "The effort picker's SWAPPABLE inner content (active level line + 3 chips),
+  wrapped in `#reasoning-pick`. Picking a chip POSTs /reasoning and swaps JUST
+  this node (`hx-target #reasoning-pick`, outerHTML) — so the modal shell +
+  overlay stay put (same trick as `model-pick-body`). Source of truth is the
+  global `:vis/reasoning-level` toggle: a level set here is what the next turn's
+  `:reasoning-default` carries (see `submit-turn-handler`)."
+  [sid]
+  (let [info
+        (session-resolved-model-info)
+
+        configurable?
+        (reasoning-effort-configurable? info)
+
+        current
+        (session-reasoning-level)
+
+        chip
+        (fn [level label]
+          [:button.model-chip
+           {:type "button"
+            :class (str "model-chip" (when (= level current) " current"))
+            :hx-post (str "/ui/session/" sid "/reasoning")
+            :hx-vals (json-text {:level (name level)})
+            :hx-target "#reasoning-pick"
+            :hx-swap "outerHTML"} label])]
+
+    [:div#reasoning-pick
+     [:p.active-model "Reasoning effort: " [:strong (name current)]
+      [:span.active-model-hint
+       (if configurable?
+         " · how hard reasoning-capable models think before answering"
+         (str " · this model ("
+              (or (:name info) "?")
+              ") ignores the level — it is kept for the next reasoning model"))]]
+     [:div.model-chips.pick (chip :quick "quick") (chip :balanced "balanced")
+      (chip :deep "deep")]]))
+
+(defn- session-reasoning-picker
+  "Footer-opened reasoning-effort chooser — the twin of `session-model-picker`.
+  Three levels (quick / balanced / deep), the same cycle the TUI footer walks
+  with Ctrl+R and `:vis/reasoning-level` persists globally. The backend maps
+  these onto the provider wire (and clamps Copilot+Claude `:deep` → `:balanced`
+  when the premium cap is off, see `copilot-claude-safe-reasoning-level`)."
+  [sid]
+  (modal-shell "Reasoning effort" (reasoning-pick-body sid)))
+
 (defn- configured-provider [pid] (some #(when (= pid (:id %)) %) (vis/configured-providers)))
 
 (defn- preset-by-id [pid] (some #(when (= pid (:id %)) %) (vis/provider-presets)))
@@ -4033,6 +4165,34 @@
   "GET /ui/session/:sid/model — open the per-session model picker."
   [request]
   (with-session request session-model-picker))
+
+(defn- set-reasoning-handler
+  "POST /ui/session/:sid/reasoning {level} — set the global reasoning-effort
+   toggle (`:vis/reasoning-level`) for this install. Shared with the TUI/Telegram
+   footers, so a change here shows up there instantly. Re-renders the picker BODY
+   in place (`#reasoning-pick`) so the modal stays open with the new highlight,
+   and OOB-refreshes `#footwrap` so the effort chip's label updates — the same
+   dual-swap `set-provider-handler` uses for the model chip."
+  [request]
+  (with-session
+    request
+    (fn [sid]
+      (when-let [raw (not-empty (get-in request [:form-params "level"]))]
+        (let [kw (keyword (str/trim raw))]
+          ;; Only accept the registered enum values — guards against
+          ;; a hand-crafted POST. Unknown levels are a silent no-op
+          ;; (the picker re-renders unchanged), never a throw.
+          (when (contains? (set reasoning-level-order) kw)
+            (try (vis/toggle-set-value! :vis/reasoning-level kw) (catch Throwable _ nil)))))
+      (str (html (reasoning-pick-body sid))
+           ;; The effort chip lives in the footer dock — OOB-swap it
+           ;; so its `effort: <level>` label tracks the new value.
+           (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))))
+
+(defn- session-reasoning-handler
+  "GET /ui/session/:sid/reasoning — open the reasoning-effort picker."
+  [request]
+  (with-session request session-reasoning-picker))
 
 (defn- provider-diag-handler
   "GET .../providers/:pid/diag — one card with auth + limits computed
@@ -5016,6 +5176,7 @@
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
    ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
    ["/ui/session/:sid/model" {:get #'session-model-handler}]
+   ["/ui/session/:sid/reasoning" {:get #'session-reasoning-handler :post #'set-reasoning-handler}]
    ["/ui/session/:sid/resources" {:get #'resources-modal-handler}]
    ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
    ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
