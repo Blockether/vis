@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -5440,6 +5441,18 @@
                                     [])
                         block-code (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
+                        ;; Outbound artifacts a tool call PRODUCED this
+                        ;; iteration: every `vis-image` fence a block printed
+                        ;; (matplotlib `plt.show()`/`savefig`) re-read to inline
+                        ;; bytes and stamped with the block's tool-call-id, so
+                        ;; the figure PNG is OWNED by the DB and survives a
+                        ;; restart / replay (V1 only kept the temp-file path).
+                        iteration-attachments
+                        (into []
+                              (mapcat (fn [b]
+                                        (map #(assoc % :tool-call-id (:svar/tool-call-id b))
+                                             (mpl-capture/collect-stdout-images (:stdout b)))))
+                              blocks)
                         iteration-id
                         (persistance/db-store-iteration!
                           (:db-info environment)
@@ -5452,6 +5465,7 @@
                             (cond-> {:session-turn-id session-turn-id
                                      :code (or block-code "")
                                      :forms forms-vec
+                                     :attachments iteration-attachments
                                      :duration-ms
                                      (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                      :llm-full-duration-ms (long (or (:duration-ms iteration-result)
