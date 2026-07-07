@@ -623,6 +623,7 @@
              [ask-code! lp/ask-code!]
              [llm-text! lp/llm-text!]
              [get-router lp/get-router]
+             [router-initialized? lp/router-initialized?]
              [rebuild-router! lp/rebuild-router!]
              [resolve-effective-model lp/resolve-effective-model]
              [model-routing-status lp/model-routing-status]

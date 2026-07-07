@@ -743,11 +743,15 @@
 (reg-event-db :set-config
               (fn [db [_ config]]
                 (vis/reload-config!)
-                (when (seq (:providers config))
-                  ;; rebuild-router! only swaps the global singleton; cached envs
-                  ;; keep the snapshot they were created with. Reseat them too,
-                  ;; otherwise the next turn runs against the previous model
-                  ;; even though the status bar already shows the new one.
+                ;; Rebuild ONLY when a router already exists — i.e. a real
+                ;; mid-session config change that must reseat cached envs
+                ;; (`rebuild-router!` swaps the global singleton; cached envs keep
+                ;; their snapshot, so the next turn would otherwise run against
+                ;; the previous model). On the INITIAL load the router is nil:
+                ;; DON'T build it here — `get-router` builds it lazily on the
+                ;; first turn, so OAuth token fetches (Copilot/Codex) never run
+                ;; at TUI boot and a failing provider can't stall/kill startup.
+                (when (and (seq (:providers config)) (vis/router-initialized?))
                   (let [r (vis/rebuild-router! config)]
                     (vis/refresh-cached-routers! r)))
                 (assoc db :config config)))
