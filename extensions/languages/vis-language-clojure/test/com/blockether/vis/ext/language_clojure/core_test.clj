@@ -123,13 +123,24 @@
 
 (defdescribe combined-format-test
              (it "format does BOTH parinfer delimiter repair AND cljfmt"
-                 (let [r (core/clj-format-fn "(defn f [x]\n  (+ x 1)")] ; missing close paren
+                 (let [src
+                       "(defn f [x]\n  (+ x 1)"
+
+                       ; missing close paren
+                       r
+                       (core/clj-format-fn src)
+
+                       out
+                       (core/clj-repair+format src)]
+
                    (expect (:success? r))
-                   (expect (true? (get-in r [:result "repaired"])))     ; a ) was added
-                   (let [t (get-in r [:result "text"])]
-                     (expect (re-find #"\(defn f \[x\]" t))
-                     ;; balanced now: repairing the output again is a no-op
-                     (expect (= t (core/clj-repair+format t)))))))
+                   (expect (true? (get-in r [:result "repaired"]))) ; a ) was added
+                   ;; format_code returns NO formatted text — only changed? + a char-delta ack
+                   (expect (true? (get-in r [:result "changed"])))
+                   (expect (number? (get-in r [:result "chars"])))
+                   (expect (not (contains? (:result r) "text")))
+                   ;; the repaired output is stable: re-running the formatter is a no-op
+                   (expect (= out (core/clj-repair+format out))))))
 
 (defdescribe multi-file-format-test
              (it "formats every file in {\"paths\": [...]} IN PLACE and rolls up per-file changes"

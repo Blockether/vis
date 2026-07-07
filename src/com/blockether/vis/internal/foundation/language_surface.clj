@@ -102,7 +102,7 @@
                 (for [[lang tools] data]
                   (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
+      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns a lean changed? + char-delta ack) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -317,11 +317,15 @@
                                      " "
                                      (if (get f "changed") "(changed)" "(no change)")))))})
     (let [changed (get r "changed")
-          note (if changed "(changed)" "(no change)")]
+          note (if changed "(changed)" "(no change)")
+          delta (get r "chars")
+          mag (when (and changed (number? delta) (not (zero? delta)))
+                (str " (" (if (pos? (long delta)) "+" "-") (Math/abs (long delta)) " chars)"))
+          label (str note mag)]
 
       (if-let [path (get r "path")]
-        {:summary (str "`" path "` " note)}
-        {:summary note :body (fence nil (get r "text"))}))))
+        {:summary (str "`" path "` " label)}
+        {:summary label}))))
 
 (defn- render-lint-result
   "lint_code → `N files — E errors, W warnings` headline (the LINT_CODE badge
@@ -585,7 +589,7 @@
 
 (defn format-code
   "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
-   `arg` is either a raw code string / {\"code\": ...} (returns the formatted text), a {\"path\": file} map (formats that ONE file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back), or a {\"paths\": [file-or-dir …]} map (formats MANY paths IN PLACE — a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up). Omit all of code/path/paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
+   `arg` is either a raw code string / {\"code\": ...} (returns a lean changed? + char-delta ack, not the text), a {\"path\": file} map (formats that ONE file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back), or a {\"paths\": [file-or-dir …]} map (formats MANY paths IN PLACE — a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up). Omit all of code/path/paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
@@ -639,7 +643,9 @@
       {"language" {:type "string"
                    :description
                    "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
-       "code" {:type "string" :description "Source to format (returns the formatted text)."}
+       "code" {:type "string"
+               :description
+               "Source to format (returns a lean changed? + char-delta ack, not the text)."}
        "path"
        {:type "string"
         :description
