@@ -449,6 +449,36 @@
                     "</pre></details>"))
              "\n\n")))))
 
+(defn- attachment->figure
+  "One persisted iteration attachment (`db-list-iteration-attachments` shape:
+   `{:kind :media-type :filename :size :base64}`) → hiccup, INLINED from the DB
+   bytes (base64 data-URI). Image kinds paint as a `<figure><img>`; any other
+   kind degrades to a labelled download link so a non-image artifact (csv/json/…)
+   still surfaces. This is the restart-durable twin of the live `vis-image` fence:
+   the temp PNG is gone after a restart, the `session_iteration_attachment` bytes
+   are not — so history re-renders from the DB, never the disk temp."
+  [{:keys [kind media-type filename size base64]}]
+  (when (not-empty (str base64))
+    (let [mt
+          (or (not-empty (str media-type)) "application/octet-stream")
+
+          data-uri
+          (str "data:" mt ";base64," base64)
+
+          nm
+          (or (not-empty (str filename)) "artifact")
+
+          cap
+          (html-text-escape nm)
+
+          sz
+          (when (and size (pos? (long size))) (str " · " (long size) " B"))]
+
+      (if (or (= "image" kind) (str/starts-with? mt "image/"))
+        [:figure.mpl-fig [:img {:src data-uri :alt cap :loading "lazy"}] [:figcaption cap sz]]
+        [:a.artifact-link {:href data-uri :download nm} (str "⬇ " nm) sz]))))
+
+
 (defn- resolve-image-fences
   "Replace every ````vis-image```` fence in a tool-result markdown string with an
    inline base64 `<img>` (+ ASCII `<details>` fallback) so the web paints
@@ -1318,14 +1348,22 @@
    the engine DB - the same blocks the live stream showed. Returns the
    `.trace-body` div (so an hx-get outerHTML swap drops it straight over
    the lazy placeholder). A turn that was a DIRECT answer (no code/tools)
-   renders a short note instead of a blank body. nil only on read failure."
+   renders a short note instead of a blank body. nil only on read failure.
+
+   Generated artifacts (matplotlib figures / other produced files) re-render
+   from the persisted `session_iteration_attachment` BYTES, not the live
+   `$TMPDIR/vis-mpl` temp file — so an image still paints after a restart
+   that wiped the temp dir (batch-loaded once for the whole turn to avoid an
+   N+1 per iteration)."
   [turn]
   (try
     (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
                                (not-empty (str (pick turn :turn_id))))
                            parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)
-            visible-iters (trace-visible-iterations iters)]
+            visible-iters (trace-visible-iterations iters)
+            atts-by-iter (vis/db-list-iterations-attachments (vis/db-info)
+                                                             (keep :id visible-iters))]
 
         (cond (empty? iters) nil
               (empty? visible-iters) [:div.trace-body
@@ -1356,7 +1394,10 @@
                                                      (vis/hide-tool-code? form))
                                          (block-code src)))
                                      (block-result (:result form) form)
-                                     (when (:error form) (block-error (:error form)))))))])))
+                                     (when (:error form) (block-error (:error form)))))
+                             ;; Produced artifacts (figures/files) restored from DB
+                             ;; bytes — durable across a restart, unlike the temp fence.
+                             (keep attachment->figure (get atts-by-iter (str (:id it))))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy

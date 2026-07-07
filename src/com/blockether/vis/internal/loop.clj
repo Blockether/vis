@@ -2601,10 +2601,13 @@
                     (conj img)))]
 
             (cond
-              ;; Cross-turn seed: opted out of replay; its evidence lives in
-              ;; the frozen prior-turn context, so emitting here would
-              ;; double-render it.
-              (false? (:preserved-thinking/replay? iter-rec)) []
+              ;; Cross-turn seed: opted out of THINKING/results replay (its
+              ;; evidence lives in the frozen prior-turn context, so emitting
+              ;; text here would double-render it). Produced IMAGE artifacts are
+              ;; the exception: their bytes were NEVER wired to any prior turn,
+              ;; so a vision model can only see a prior figure if we emit it now
+              ;; — the standalone `img` message (no thinking, no results).
+              (false? (:preserved-thinking/replay? iter-rec)) (if img [img] [])
               ;; summarize/drop collapsed this iteration: drop its
               ;; assistant + tool_result PAIR entirely and emit only the
               ;; one-line gist (plain text) — real compaction.
@@ -4963,7 +4966,13 @@
                                               (catch Throwable _ []))))
                                (filter #(= :done (:status %)))
                                (sort-by :created-at)
-                               vec)]
+                               vec)
+                    iters-atts
+                    ;; Batch-load OUTBOUND artifacts (figures/files) once for the
+                    ;; whole carry so a later-turn vision model can SEE prior
+                    ;; generated images — the bytes were persisted, never wired.
+                    (try (persistance/db-list-iterations-attachments d (keep :id iters))
+                         (catch Throwable _ {}))]
 
                 (mapv (fn [it]
                         [(or (:position it) 1)
@@ -4985,6 +4994,10 @@
                           ;; but `compatible-preserved-thinking-trailer-iters`
                           ;; rejects this entry before replay.
                           :assistant-message (force (:llm-assistant-message it))
+                          ;; Its produced artifacts still ride to a vision model
+                          ;; (see the `replay? false` branch of `conversation-suffix`),
+                          ;; even though the assistant/thinking chain is dropped.
+                          :attachments (get iters-atts (str (:id it)))
                           :preserved-thinking/replay? false}])
                       iters)))
             (catch Throwable t
