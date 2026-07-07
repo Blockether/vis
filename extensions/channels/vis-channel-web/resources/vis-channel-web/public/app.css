@@ -394,6 +394,13 @@ white-space:nowrap;letter-spacing:-.01em}
 background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-lg);
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--primary)}
+/* Shell-sugar affordance: a `!`/`!&` composer runs in your shell, not the model.
+   Tint the frame + drop a corner pill in the shell tool color (the SAME palette
+   token the TUI paints the `!` marker with). position:relative + an absolutely
+   positioned ::after keep the layout perfectly still — no jump. */
+.composer.shell-run,.composer.shell-bg{position:relative;border-color:var(--tool-shell)}
+.composer.shell-run::after,.composer.shell-bg::after{content:"shell";position:absolute;top:-.62rem;right:.9rem;font-family:var(--mono);font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--tool-shell);background:var(--bg);padding:0 .32rem;border-radius:var(--r-xs);pointer-events:none}
+.composer.shell-bg::after{content:"shell \0026"}
 /* Keep composer text compact and predictable; the button height, not a tall
    textarea line box, owns the dock's single-line height. */
 .composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;
