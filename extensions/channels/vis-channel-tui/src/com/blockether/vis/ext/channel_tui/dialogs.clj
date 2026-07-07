@@ -197,24 +197,13 @@
   [key]
   (when-let [delta (modal-wheel-delta key)]
     (* (long delta) (max 1 (long (.getButton ^MouseAction key))))))
-(defn- key-type
-  [key]
-  (when (instance? KeyStroke key)
-    (.getKeyType ^KeyStroke key)))
+(defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 
-(defn- key-character
-  [key]
-  (when (instance? KeyStroke key)
-    (.getCharacter ^KeyStroke key)))
+(defn- key-character [key] (when (instance? KeyStroke key) (.getCharacter ^KeyStroke key)))
 
-(defn- lower-character
-  [^Character c]
-  (when c
-    (Character/toLowerCase (.charValue c))))
+(defn- lower-character [^Character c] (when c (Character/toLowerCase (.charValue c))))
 
-(defn- lower-key-character
-  [key]
-  (lower-character (key-character key)))
+(defn- lower-key-character [key] (lower-character (key-character key)))
 
 (defn- iso-control-character?
   [^Character c]
@@ -3275,8 +3264,8 @@
 ;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
   [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
-   {:id :draft :label "Draft" :width 8} {:id :dir :label "Directory" :width 22}
-   {:id :status :label "Status" :width 10} {:id :modified :label "Modified" :width 12}])
+   {:id :draft :label "Draft" :width 8} {:id :dir :label "Dir" :width 22}
+   {:id :status :label "Status" :width 10}])
 (defn- navigator-content-w
   "Navigator is wider than the default modal footprint — five columns need
    room for the Title to breathe — but still clamps to the terminal."
