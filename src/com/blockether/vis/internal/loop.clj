@@ -6048,7 +6048,7 @@
    persisted `:result` rides later prompts' prior-turn context exactly as a
    model-issued `shell_run` / `shell_bg` does across turns. Returns the same
    shape `iteration-loop` would (so callers don't special-case bang turns)."
-  [env user-request {:keys [kind cmd id]}]
+  [env user-request {:keys [kind cmd id]} loop-opts]
   (let [db-info
         (:db-info env)
 
@@ -6082,6 +6082,22 @@
         ;; DROPPABLE plug-in (nil when the jar is absent) and avoids a compile-time
         ;; cycle; the `:shell/enabled` gate is applied HERE (the symbol's own
         ;; before-fn gate is bypassed by the direct var call).
+        on-chunk
+        (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
+
+        ;; A bang turn never enters `iteration-loop` (the only path that streams
+        ;; live `:progress` activity), so while the shell tool blocks the live
+        ;; bubble shows the zero-iterations placeholder and claims Vis is
+        ;; "calling the provider". Emit ONE shell-phase chunk BEFORE the
+        ;; blocking call so the tracker renders `Vis is running: <cmd>` instead.
+        _
+        (when (and enabled? (fn? on-chunk))
+          (try (on-chunk {:phase (if (= kind :bg) :shell-bg :shell-run) :iteration 1 :cmd cmd})
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::bang-progress-emit-failed
+                            :data {:cmd cmd :error (ex-message t)}}))))
+
         envelope
         (when enabled?
           (try
@@ -6290,7 +6306,7 @@
                {:handled? false}))]
 
     (if-let [bang (parse-bang user-request)]
-      (run-bang-turn! env user-request bang)
+      (run-bang-turn! env user-request bang loop-opts)
       (if (:handled? slash-result)
         (if-let [expansion (when (= :unknown (:reason slash-result))
                              (try (prompt-templates/expand env user-request)

@@ -368,7 +368,7 @@
           {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
 
           :iteration-error
-          {:error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
+          {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
            :thinking (normalize-thinking-text thinking)}
 
           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
@@ -441,16 +441,42 @@
   (and (vector? answer) (= :ir (first answer))))
 
 (defn- ir-ast->text
-  "Depth-first concatenation of every string in an IR AST - the plain-text
-   shadow of an IR answer, for `:answer_md` (the DB column + clients that
-   only read markdown). Skips the `[tag attrs]` prefix of each canonical
-   node. Never a pr-str'd vector."
+  "Depth-first flatten of a canonical IR AST to READABLE plain text for
+   `:answer_md` (the DB column + clients that only read markdown). Block-level
+   children (`:h`/`:p`/`:ul`/`:ol`) are separated by blank lines and list items
+   by newlines, so a provider-error IR — title / WHAT HAPPENED / NEXT STEP /
+   a facts list — flattens to scannable multi-line text instead of one run-on
+   line (the form a refreshed page renders, since `:answer_ir`/its marker is not
+   persisted). Skips the `[tag attrs]` prefix of each canonical node. Never a
+   pr-str'd vector."
   [ast]
-  (letfn [(walk [x]
-            (cond (string? x) x
-                  (vector? x) (apply str (map walk (drop 2 x)))
-                  (sequential? x) (apply str (map walk x))
-                  :else ""))]
+  (letfn
+    [(inline [x]
+       ;; Inline content: strings concatenated; every [tag attrs & kids]
+       ;; node (span/code/strong/c/…) is unwrapped to its kids.
+       (cond (string? x) x
+             (vector? x) (str/join "" (map inline (drop 2 x)))
+             (seq? x) (str/join "" (map inline x))
+             :else ""))
+     (block-text [node]
+       (let [tag
+             (first node)
+
+             kids
+             (drop 2 node)]
+
+         (case tag
+           ;; List items render one per line so a facts <ul> stays scannable.
+           (:ul :ol)
+           (str/join "\n" (map #(str "- " (inline (drop 2 %))) kids))
+
+           ;; Headings / paragraphs / pre / unknown: inline text only.
+           (str/join "" (map inline kids)))))
+     (walk [x]
+       (cond (string? x) x
+             (and (vector? x) (= :ir (first x))) (str/join "\n\n" (map block-text (drop 2 x)))
+             (vector? x) (block-text x)
+             :else ""))]
     (not-empty (str/trim (walk ast)))))
 
 (defn- answer-md
@@ -600,9 +626,17 @@
         live-ids
         (into (set (map :turn_id live)) (keep :engine_turn_id live))
 
+        att-by-soul
+        (try (persistance/db-list-turns-attachments (lp/db-info) (map :id persisted-rows))
+             (catch Throwable _ {}))
+
         persisted
         (->> persisted-rows
-             (map #(persisted-turn->wire sid %))
+             (map (fn [row]
+                    (let [wire (persisted-turn->wire sid row)]
+                      (if-let [atts (seq (get att-by-soul (:turn_id wire)))]
+                        (assoc wire :attachments atts)
+                        wire))))
              (remove #(contains? live-ids (:turn_id %)))
              vec)]
 
@@ -616,17 +650,29 @@
   escape hatch for in-process renderers that need full historical trace detail
   without reaching around the gateway into persistence directly."
   [sid]
-  (try (let [db (lp/db-info)]
+  (try (let [db
+             (lp/db-info)
+
+             turns
+             (persistance/db-list-session-turns db sid)
+
+             att-by-soul
+             (try (persistance/db-list-turns-attachments db (map :id turns))
+                  (catch Throwable _ {}))]
+
          (mapv (fn [turn]
-                 (assoc turn
-                   :iterations (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
-                                         (mapv #(update % :thinking normalize-thinking-text)))
-                                    (catch Throwable t
-                                      (tel/log! :warn
-                                                ["gateway: turn-iteration hydration failed"
-                                                 (:id turn) (ex-message t)])
-                                      []))))
-               (persistance/db-list-session-turns db sid)))
+                 (cond-> (assoc turn
+                           :iterations
+                           (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
+                                     (mapv #(update % :thinking normalize-thinking-text)))
+                                (catch Throwable t
+                                  (tel/log! :warn
+                                            ["gateway: turn-iteration hydration failed" (:id turn)
+                                             (ex-message t)])
+                                  [])))
+                   (seq (get att-by-soul (str (:id turn))))
+                   (assoc :attachments (get att-by-soul (str (:id turn))))))
+               turns))
        (catch Throwable t
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))

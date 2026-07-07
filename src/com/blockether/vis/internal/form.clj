@@ -52,8 +52,13 @@
   "Native-tool WIRE name → a nicer op-card LABEL. Most tools read fine uppercased
    (RG, CAT, PATCH); a few don't — `python_execution` is the model writing/running
    code, but its card surfaces what that run produced, so it reads `RESULT`;
-   `repl_eval` reads as the terse `REPL` badge its collapsed/expanded card wants."
-  {"python_execution" "RESULT" "repl_eval" "REPL"})
+   `repl_eval` reads as the terse `REPL` badge its collapsed/expanded card wants;
+   the `!`/`!&` shell-sugar tools read as prose `SHELL RUN` / `SHELL BACKGROUND`
+   instead of the raw wire names `SHELL_RUN` / `SHELL_BG`."
+  {"python_execution" "RESULT"
+   "repl_eval" "REPL"
+   "shell_run" "SHELL RUN"
+   "shell_bg" "SHELL BACKGROUND"})
 
 (def tool-color-roles
   "The canonical set of native-tool op-card BADGE colour roles — the ONE list both
