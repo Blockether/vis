@@ -454,6 +454,23 @@
   (let [p (str/lower-case (str path))]
     (boolean (some #(str/ends-with? p %) clj-source-exts))))
 
+(def ^:private denied-dir-names
+  "Directory names we NEVER format or lint: build artifacts, vendored deps and
+   tool caches. Even when a caller points a recursive walk straight at one (or a
+   real source path happens to contain one), everything under such a dir is
+   skipped."
+  #{"target" "dist" "build" "out" "classes" ".cpcache" ".gradle" "node_modules" ".shadow-cljs"
+    ".cljs_node_repl" ".clj-kondo" ".clojure-lsp" ".lsp" ".calva" ".git" ".hg" ".svn" ".bzr" ".idea"
+    ".vscode"})
+
+(defn- under-denied-dir?
+  "True when any ancestor directory of `f` is in `denied-dir-names`."
+  [^java.io.File f]
+  (loop [p (.getParentFile f)]
+    (cond (nil? p) false
+          (contains? denied-dir-names (.getName p)) true
+          :else (recur (.getParentFile p)))))
+
 (defn- expand-clj-source-files
   "Expand `paths` (resolved against workspace `root` when relative) into concrete
    Clojure source files. A DIRECTORY is walked RECURSIVELY, collecting every
@@ -471,13 +488,89 @@
 
                    (cond (.isDirectory f) (->> (file-seq f)
                                                (filter #(.isFile ^java.io.File %))
-                                               (filter #(clj-source-file? (str %))))
+                                               (filter #(clj-source-file? (str %)))
+                                               (remove under-denied-dir?))
                          (.isFile f) [f]
                          :else nil))))
        (map str)
        (distinct)
        (sort)
        (vec)))
+
+(defn- read-edn-safe
+  "Read `f` as EDN, returning nil on any failure (missing / malformed)."
+  [f]
+  (try (edn/read-string (slurp (str f))) (catch Throwable _ nil)))
+
+(defn- deps-source-paths
+  "Source/test roots declared by a parsed deps.edn map (relative to its dir):
+   its `:paths` plus every alias `:extra-paths`."
+  [deps]
+  (when (map? deps) (concat (:paths deps) (mapcat :extra-paths (vals (:aliases deps))))))
+
+(defn- deps-local-roots
+  "Every `:local/root` module dir declared by a parsed deps.edn map: from its
+   `:deps` plus every alias `:extra-deps`."
+  [deps]
+  (when (map? deps)
+    (->> (concat (vals (:deps deps)) (mapcat (comp vals :extra-deps) (vals (:aliases deps))))
+         (keep #(when (map? %) (:local/root %))))))
+
+(defn- discover-project-source-paths
+  "Best-effort discovery of the project's OWN Clojure source roots, driven by the
+   root `deps.edn` (option B — self-maintaining allowlist, not a hardcoded layout):
+     - the root module's `:paths` + every alias `:extra-paths`
+     - every `:local/root` module reachable TRANSITIVELY (a local dep's own
+       deps.edn may point at further locals — we follow them, guarding against
+       cycles / repeats), using each module's declared paths (or `src`+`test`).
+   Returns existing directories as de-duplicated, sorted absolute strings. This
+   naturally excludes vendored code and test fixtures (nothing points at them).
+   Falls back to `src`+`test`, then the workspace root, when no deps.edn is found."
+  [^java.io.File root]
+  (let [root-deps
+        (read-edn-safe (io/file root "deps.edn"))
+
+        modules
+        (loop [queue
+               (map #(io/file root (str %)) (deps-local-roots root-deps))
+
+               seen
+               #{}
+
+               acc
+               []]
+
+          (if-let [dir (first queue)]
+            (let [canon (try (.getCanonicalPath ^java.io.File dir) (catch Throwable _ (str dir)))]
+              (if (contains? seen canon)
+                (recur (rest queue) seen acc)
+                (let [md (read-edn-safe (io/file dir "deps.edn"))
+                      subs (map #(io/file dir (str %)) (deps-local-roots md))]
+
+                  (recur (concat (rest queue) subs) (conj seen canon) (conj acc [dir md])))))
+            acc))
+
+        candidates
+        (concat (map #(io/file root (str %)) (deps-source-paths root-deps))
+                (mapcat (fn [[dir md]]
+                          (map #(io/file dir (str %))
+                               (or (seq (deps-source-paths md)) ["src" "test"])))
+                        modules))
+
+        dirs
+        (->> candidates
+             (filter #(.isDirectory ^java.io.File %))
+             (map #(try (.getCanonicalPath ^java.io.File %) (catch Throwable _ (str %))))
+             (distinct)
+             (sort)
+             (vec))]
+
+    (cond (seq dirs) dirs
+          :else (let [d (->> ["src" "test"]
+                             (map #(io/file root %))
+                             (filter #(.exists ^java.io.File %))
+                             (mapv str))]
+                  (if (seq d) d [(str root)])))))
 
 (defn- clj-format-one-file!
   "Format a single file at `path` IN PLACE (paren-repair + cljfmt), writing
@@ -502,8 +595,9 @@
      - {\"path\": \"src/foo.clj\"}              -> format that file IN PLACE
      - {\"paths\": [\"src\" \"test\" ...]}        -> format those paths IN PLACE; a
          DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx under it)
-     - nothing / {}                         -> format the workspace's src + test
-         (or the root) RECURSIVELY
+     - nothing / {}                         -> format the whole project's source
+         roots (every deps.edn module's :paths + test), skipping build/vendor
+         dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)
    Paths are resolved against the workspace root when relative."
   ([arg] (clj-format-fn nil arg))
   ([env arg]
@@ -524,12 +618,7 @@
 
          batch
          (cond (seq paths) (expand-clj-source-files root paths)
-               default? (expand-clj-source-files root
-                                                 (let [ds (->> ["src" "test"]
-                                                               (map #(io/file root %))
-                                                               (filter #(.exists ^java.io.File %))
-                                                               (mapv str))]
-                                                   (if (seq ds) ds [(str root)]))))]
+               default? (expand-clj-source-files root (discover-project-source-paths root)))]
 
      (if batch
        (let [files (mapv #(clj-format-one-file! env %) batch)]
@@ -573,7 +662,8 @@
      - a raw code string / {\"code\": ...}  -> lint it on stdin
      - {\"path\": \"src/foo.clj\"}           -> lint that file
      - {\"paths\": [\"src\", \"test\"]}        -> lint those paths
-     - nothing / {}                       -> lint the workspace's src + test (or root)
+     - nothing / {}                       -> lint the whole project's source roots
+         (every deps.edn module's :paths + test), skipping build/vendor dirs
    Paths are resolved against the workspace root when relative. Finding \"file\"
    paths are reported RELATIVE to the workspace root (absolute only when outside)."
   [env arg]
@@ -600,11 +690,7 @@
         (cond code (lint/lint-code code)
               path (lint/lint-paths [(under path)])
               (seq paths) (lint/lint-paths (mapv under paths))
-              :else (let [defaults (->> ["src" "test"]
-                                        (map #(io/file root %))
-                                        (filter #(.exists ^java.io.File %))
-                                        (mapv str))]
-                      (lint/lint-paths (if (seq defaults) defaults [(str root)]))))]
+              :else (lint/lint-paths (discover-project-source-paths root)))]
 
     (extension/success
       {:result (assoc (update base

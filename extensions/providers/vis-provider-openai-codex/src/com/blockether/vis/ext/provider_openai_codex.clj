@@ -322,9 +322,14 @@
    be replaced. The runtime's 401 recovery path calls this. Routes through
    the single-flight `refresh-and-persist!`, so a STORM of 401s collapses
    into one exchange instead of racing the rotating refresh token into
-   HTTP 400. Throws when there is no refresh token on file."
-  []
-  (refresh-and-persist!))
+   HTTP 400.
+
+   `rejected-token` (optional) is the access token the server just 401'd:
+   the single-flight reuse step will NOT hand it back, forcing a real
+   exchange when the on-file token is still the dead one. Throws when there
+   is no refresh token on file."
+  ([] (force-refresh-token! nil))
+  ([rejected-token] (refresh-and-persist! rejected-token)))
 
 ;; =============================================================================
 ;; OAuth authorization flow

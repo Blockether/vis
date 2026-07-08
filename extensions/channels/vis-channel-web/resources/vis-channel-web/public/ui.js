@@ -505,27 +505,6 @@
     }
 
     if (composer) {
-      /* per-session draft: a session switch is a full page navigation, so
-         without this whatever was typed vanishes. Keyed by the sid in the
-         URL; saved on every keystroke, restored on load, cleared on send. */
-      var sidMatch = location.pathname.match(/\/ui\/session\/([0-9a-fA-F-]{36})/);
-      var draftKey = sidMatch ? "vis.draft." + sidMatch[1] : null;
-      var saveDraft = function () {
-        if (!draftKey) { return; }
-        try {
-          if (composer.value) { localStorage.setItem(draftKey, composer.value); }
-          else { localStorage.removeItem(draftKey); }
-        } catch (e) { /* storage full/blocked - typing still works */ }
-      };
-      var clearDraft = function () {
-        if (draftKey) { try { localStorage.removeItem(draftKey); } catch (e) {} }
-      };
-      if (draftKey && !composer.value) {
-        try {
-          var saved = localStorage.getItem(draftKey);
-          if (saved) { composer.value = saved; }
-        } catch (e) { /* ignore */ }
-      }
       /* send is grayed out while the composer is empty — no more
          "request must not be blank" round trips */
       var sendBtn = document.querySelector(".composer .send");
@@ -559,7 +538,7 @@
         composerForm.classList.toggle("shell-bg", bg);
         composerForm.classList.toggle("shell-run", run);
       }
-      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); renderOverlay(); syncShellMode(); });
+      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); renderOverlay(); syncShellMode(); });
       if (composerForm) { composerForm.addEventListener("reset", function () { setTimeout(syncShellMode, 0); }); }
       composer.addEventListener("scroll", function () { if (overlay) { overlay.scrollTop = composer.scrollTop; } });
       syncSend();
@@ -583,10 +562,21 @@
       document.body.addEventListener("htmx:afterRequest", function (e) {
         if (e.detail.successful && e.target.classList.contains("composer")) {
           composer.style.height = "auto";
-          composer.focus();
+          /* On a soft-keyboard (touch) device the keyboard is already
+             gone after the send; refocusing here keeps the field focused
+             so iOS never restores the scroll it shifted to make room for
+             the keyboard, leaving a blank gap where the keyboard was.
+             Blur + reset the scroll so that area is reclaimed. On desktop
+             keep the focus so you can keep typing. */
+          var softKb = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+          if (softKb) {
+            composer.blur();
+            window.scrollTo(0, 0);
+          } else {
+            composer.focus();
+          }
           hideSuggest();
           syncSend();
-          clearDraft();
         }
       });
       composer.focus();
@@ -1144,6 +1134,38 @@
         syncInput();
         renderTray();
       });
+      /* clipboard paste: a screenshot / copied image lands in clipboardData
+         as an image File with no <input type=file> change event — so the file
+         picker's tray never sees it. Hoist those image blobs into the SAME
+         attachment tray (the web twin of pasting an attachment). Non-image
+         pastes fall through untouched to the normal text paste. */
+      var onImagePaste = function (e) {
+        var cd = e.clipboardData || window.clipboardData;
+        if (!cd) { return; }
+        var imgs = [];
+        Array.prototype.forEach.call(cd.items || [], function (it) {
+          if (it.kind === "file" && /^image\//.test(it.type)) {
+            var f = it.getAsFile();
+            if (f) { imgs.push(f); }
+          }
+        });
+        if (!imgs.length) { return; }
+        e.preventDefault();
+        var stamp = Date.now();
+        imgs.forEach(function (f, i) {
+          /* clipboard images arrive unnamed ("image.png" or ""); give each a
+             unique name so dedup and the multipart part don't collide */
+          var ext = (String(f.type).split("/")[1] || "png").replace(/[^a-z0-9]/gi, "");
+          var name = "pasted-" + stamp + (imgs.length > 1 ? "-" + i : "") + "." + ext;
+          var named = (typeof File === "function")
+            ? new File([f], name, { type: f.type, lastModified: stamp })
+            : f;
+          attachFiles.push(named);
+        });
+        syncInput();
+        renderTray();
+      };
+      if (composer) { composer.addEventListener("paste", onImagePaste); }
       /* the form resets itself after a successful send (hx-on::after-request);
          drop our mirror on the next tick so the tray clears with it */
       form.addEventListener("reset", function () {

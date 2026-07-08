@@ -6,6 +6,7 @@
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context Value]
            [java.nio.file Files]
@@ -143,9 +144,9 @@
                    (expect (empty? (:attachments out))))))
 
 (defdescribe vis-attach-discovery-test
-             (it "surfaces vis_attach / vis_attach_bytes via apropos and doc"
+             (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
                  (let [pctx (ctx-with-root (temp-root))]
-                   (expect (= ["vis_attach" "vis_attach_bytes"]
+                   (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachments"]
                               (vec (ev pctx "sorted(apropos('vis_attach'))"))))
                    (expect (true? (ev pctx "'callable' in doc('vis_attach')")))))
              (it "raises when called with no active capture sink (outside a driven block)"
@@ -266,3 +267,81 @@
         ;; all three, produced on virtual threads, reached the block's sink
         (expect (= 3 (count atts)))
         (expect (= #{"a.txt" "b.txt" "c.txt"} (set (map :filename atts)))))))
+
+(defn- fake-reader
+  "In-memory attachment reader holding ONE image artifact (id a1) — the shape
+   `run-python-code` binds around a block so `vis_attachments` /
+   `vis_read_attachment` can re-fetch prior session artifacts."
+  []
+  {:list (fn []
+           [{:id "a1"
+             :filename "chart.png"
+             :media-type "image/png"
+             :kind "image"
+             :size 7
+             :position 0
+             :tool-call-id "call-1"
+             :iteration-id "it1"}])
+   :read (fn [id]
+           (when (= id "a1")
+             {:id "a1"
+              :base64 (.encodeToString (java.util.Base64/getEncoder) (.getBytes "PNGDATA"))
+              :media-type "image/png"
+              :filename "chart.png"
+              :kind "image"
+              :size 7
+              :storage-uri nil}))})
+
+(defdescribe
+  vis-attachments-reader-test
+  "Read-back twins: with `*attachment-reader*` bound, `vis_attachments()` lists
+   the session's artifacts (snake_case keys) and `vis_read_attachment(id)` fetches
+   one back as bytes through the confined sandbox. Unbound, both raise a clear
+   RuntimeError instead of silently returning nothing."
+  (it "lists metadata and reads the bytes back"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (binding [mpl-capture/*attachment-reader* (fake-reader)]
+           (block
+             pctx
+             (str
+               "a = vis_attachments()[0]\n" "r = vis_read_attachment('a1')\n"
+               "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'])\n"
+               "print(r['bytes'].decode('utf-8'), r['media_type'], r['filename'], r['size'])\n")))
+
+         so
+         (str (:stdout out))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"a1 image/png call-1 it1" so))
+        (expect (re-find #"PNGDATA image/png chart.png 7" so))))
+  (it "raises on an unknown id"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (binding [mpl-capture/*attachment-reader* (fake-reader)]
+              (block pctx
+                     (str "try:\n"
+                          "    vis_read_attachment('zzz')\n" "    print('NO-RAISE')\n"
+                          "except Exception as e:\n"
+                          "    print('RAISED', 'no attachment' in str(e))\n")))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"RAISED True" (str (:stdout out))))))
+  (it "raises when no attachment reader is bound (outside a driven read)"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (block pctx
+                   (str "try:\n"
+                        "    vis_attachments()\n" "    print('NO-RAISE')\n"
+                        "except Exception as e:\n"
+                        "    print('RAISED', 'no active attachment reader' in str(e))\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"RAISED True" (str (:stdout out)))))))

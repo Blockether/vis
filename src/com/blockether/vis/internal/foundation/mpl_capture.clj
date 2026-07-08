@@ -39,6 +39,16 @@
    bound (an atom `#{}`) alongside `*attachment-sink*` so a file re-closed in the
    same block is not recorded twice. Nil outside a driven block."
   nil)
+(def ^:dynamic *attachment-reader*
+  "Per-block READ-BACK accessor for artifacts already persisted in THIS session,
+   bound by `run-python-code` around one block's eval (else nil). A map
+   `{:list (fn [] [{:id :filename :media-type :kind :size :position :tool-call-id
+   :iteration-id} …]) :read (fn [attachment-id] {:id :base64 :media-type …}|nil)}`
+   closing over the session's db-info + id. Lets the `vis_attachments` /
+   `vis_read_attachment` sandbox shims re-fetch an artifact a tool (or an earlier
+   turn) produced. Nil outside a driven block ⇒ the shim surfaces a clear
+   `RuntimeError` instead of silently returning nothing."
+  nil)
 
 (defn record-attachment!
   "Append ONE produced-artifact attachment map to the active per-block

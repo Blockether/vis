@@ -719,6 +719,123 @@
          (catch Throwable _ nil))
     ok?))
 
+;;; ── Clipboard IMAGE read ─────────────────────────────────────────────────────
+;;
+;; Copying an image (a screenshot, a browser "Copy Image", ⌘⇧4-to-clipboard)
+;; puts PIXELS on the pasteboard with NO text representation. When the user
+;; then hits ⌘V, the terminal fires a bracketed paste whose payload is EMPTY -
+;; the text-only paste path drops it and nothing shows in the input. The web
+;; channel accepts pasted image blobs directly; here we reach for the same
+;; pixels via OS helpers, drop them into a temp PNG, and hand the path back so
+;; the normal image-paste flow (placeholder + send-time attach) takes over.
+
+(def ^:private clipboard-image-helpers
+  ;; argv lists for clipboard-READ-IMAGE helpers that write PNG bytes to
+  ;; stdout. `pngpaste` is a Homebrew tool (macOS); macOS without it falls
+  ;; back to the osascript path in `read-clipboard-image!`.
+  [["pngpaste" "-"] ;; macOS (brew install pngpaste)
+   ["wl-paste" "--type" "image/png"] ;; Wayland
+   ["xclip" "-selection" "clipboard" "-t" "image/png" "-o"]]) ;; X11
+
+(defn- run-shell-helper-bytes!
+  "Like `run-shell-helper!` but returns the process's stdout as RAW bytes
+   (`{:success? boolean :bytes byte-array}`) instead of a UTF-8 string, so a
+   binary payload (clipboard image data) survives intact. stderr is DISCARDED
+   rather than merged - merging would corrupt the image stream. Capped at 2s;
+   marshalling a large screenshot off the pasteboard can take a moment."
+  [cmd]
+  (try (let [pb
+             (ProcessBuilder. ^java.util.List cmd)
+
+             _
+             (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD)
+
+             p
+             (.start pb)
+
+             in
+             (.getInputStream p)
+
+             buf
+             (java.io.ByteArrayOutputStream.)
+
+             tmp
+             (byte-array 8192)]
+
+         (loop []
+
+           (let [n (.read in tmp)]
+             (when (pos? n) (.write buf tmp 0 n) (recur))))
+         (.waitFor p 2 java.util.concurrent.TimeUnit/SECONDS)
+         {:success? (zero? (.exitValue p)) :bytes (.toByteArray buf)})
+       (catch Throwable _ {:success? false :bytes nil})))
+
+(defn- png-bytes?
+  "True when `b` opens with the 8-byte PNG signature (`\\x89PNG`). Guards
+   against a helper that 'succeeded' but wrote an empty/text payload."
+  [^bytes b]
+  (and b
+       (>= (alength b) 8)
+       (= 137 (bit-and 0xff (aget b 0)))
+       (= 80 (bit-and 0xff (aget b 1)))
+       (= 78 (bit-and 0xff (aget b 2)))
+       (= 71 (bit-and 0xff (aget b 3)))))
+
+(defn- write-temp-png!
+  "Write `bytes` to a fresh temp `.png` file (auto-deleted on JVM exit) and
+   return its absolute path."
+  [^bytes bytes]
+  (let [f (java.io.File/createTempFile "vis-clip-" ".png")]
+    (.deleteOnExit f)
+    (with-open [o (io/output-stream f)]
+      (.write o bytes))
+    (.getAbsolutePath f)))
+
+(defn- macos? [] (str/starts-with? (str/lower-case (or (System/getProperty "os.name") "")) "mac"))
+
+(defn- macos-osascript-clipboard-png!
+  "macOS fallback when `pngpaste` isn't installed: ask AppleScript to marshal
+   the clipboard's PNG representation straight to `path`. Returns true when the
+   command exited cleanly. No image on the pasteboard raises inside the script,
+   so the exit is non-zero and we report false."
+  [^String path]
+  (let [script (str "set outFile to (POSIX file \"" path
+                    "\")\n" "set pngData to (the clipboard as \u00abclass PNGf\u00bb)\n"
+                    "set fh to open for access outFile with write permission\n"
+                    "set eof of fh to 0\n"
+                    "write pngData to fh\n" "close access fh")]
+    (boolean (:success? (run-shell-helper-bytes! ["osascript" "-e" script])))))
+
+(defn read-clipboard-image!
+  "Best-effort read of an IMAGE sitting on the system clipboard. Writes it to a
+   temp PNG file and returns `{:path :mime}` (mime always `\"image/png\"`), or
+   nil when the clipboard holds no image / no helper is available. Lets ⌘V of a
+   screenshot or a copied image attach the pixels, matching the web channel's
+   paste behaviour. Never throws."
+  []
+  (try (or
+         ;; stdout-based helpers: pngpaste / wl-paste / xclip.
+         (loop [[cmd & rest] clipboard-image-helpers]
+           (when cmd
+             (let [{:keys [success? bytes]} (run-shell-helper-bytes! cmd)]
+               (if (and success? (png-bytes? bytes))
+                 {:path (write-temp-png! bytes) :mime "image/png"}
+                 (recur rest)))))
+         ;; macOS with no pngpaste: let AppleScript write the PNG for us.
+         (when (macos?)
+           (let [f
+                 (java.io.File/createTempFile "vis-clip-" ".png")
+
+                 path
+                 (.getAbsolutePath f)]
+
+             (.deleteOnExit f)
+             (if (and (macos-osascript-clipboard-png! path)
+                      (png-bytes? (java.nio.file.Files/readAllBytes (.toPath f))))
+               {:path path :mime "image/png"}
+               (do (.delete f) nil)))))
+       (catch Throwable _ nil)))
+
 ;;; ── Input buffer state ─────────────────────────────────────────────────────
 
 (defn empty-input [] {:lines [""] :crow 0 :ccol 0})

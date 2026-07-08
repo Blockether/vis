@@ -256,9 +256,14 @@
    to break that deadlock. Goes through the single-flight
    `refresh-and-persist!`, so a STORM of 401s (every iteration's retry, the
    usage poll) collapses into one exchange instead of racing the rotating
-   refresh token into HTTP 400. Throws when there is no refresh token."
-  []
-  (refresh-and-persist!))
+   refresh token into HTTP 400.
+
+   `rejected-token` (optional) is the access token the server just 401'd:
+   the single-flight reuse step will NOT hand it back, forcing a real
+   exchange when the on-file token is still the dead one. Throws when there
+   is no refresh token."
+  ([] (force-refresh-token! nil))
+  ([rejected-token] (refresh-and-persist! rejected-token)))
 
 (defn- parse-instant-ms
   [s]

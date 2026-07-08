@@ -476,7 +476,8 @@
 (import-vars [db-store-iteration! persistance/db-store-iteration!]
              [db-list-session-turn-iterations persistance/db-list-session-turn-iterations]
              [db-list-iteration-attachments persistance/db-list-iteration-attachments]
-             [db-list-iterations-attachments persistance/db-list-iterations-attachments])
+             [db-list-iterations-attachments persistance/db-list-iterations-attachments]
+             [db-read-attachment persistance/db-read-attachment])
 
 ;; Full-text search
 (import-vars [db-search persistance/db-search])
