@@ -473,7 +473,8 @@
              [db-list-session-turn-states persistance/db-list-session-turn-states]
              [db-list-turn-attachments persistance/db-list-turn-attachments]
              [db-list-turns-attachments persistance/db-list-turns-attachments]
-             [db-list-turn-all-attachments persistance/db-list-turn-all-attachments])
+             [db-list-turn-all-attachments persistance/db-list-turn-all-attachments]
+             [db-list-session-attachments persistance/db-list-session-attachments])
 
 ;; Iteration lifecycle
 (import-vars [db-store-iteration! persistance/db-store-iteration!]

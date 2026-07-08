@@ -515,58 +515,22 @@
 
           (when (and d sid)
             {:list (fn []
-                     (try
-                       (let [turns
-                             (persistance/db-list-session-turns d sid)
+                     (try (->> (persistance/db-list-session-attachments d sid)
+                               (mapv (fn [a]
+                                       (cond-> {:id (:id a)
+                                                :source (:source a)
+                                                :filename (:filename a)
+                                                :media-type (:media-type a)
+                                                :kind (:kind a)
+                                                :size (:size a)
+                                                :position (:position a)
+                                                :tool-call-id (:tool-call-id a)}
+                                         (= :tool (:source a))
+                                         (assoc :iteration-id (:iteration-id a))
 
-                             iters
-                             (mapcat (fn [t]
-                                       (try (persistance/db-list-session-turn-iterations d (:id t))
-                                            (catch Throwable _ [])))
-                                     turns)
-
-                             by-iter
-                             (persistance/db-list-iterations-attachments d (keep :id iters))
-
-                             by-turn
-                             (persistance/db-list-turns-attachments d (keep :id turns))
-
-                             tool-entries
-                             (for [[iter-id atts]
-                                   by-iter
-
-                                   a
-                                   atts]
-
-                               {:id (:id a)
-                                :source :tool
-                                :filename (:filename a)
-                                :media-type (:media-type a)
-                                :kind (:kind a)
-                                :size (:size a)
-                                :position (:position a)
-                                :tool-call-id (:tool-call-id a)
-                                :iteration-id iter-id})
-
-                             user-entries
-                             (for [[soul-id atts]
-                                   by-turn
-
-                                   a
-                                   atts]
-
-                               {:id (:id a)
-                                :source :user
-                                :filename (:filename a)
-                                :media-type (:media-type a)
-                                :kind (:kind a)
-                                :size (:size a)
-                                :position (:position a)
-                                :tool-call-id nil
-                                :turn-id soul-id})]
-
-                         (vec (concat tool-entries user-entries)))
-                       (catch Throwable _ [])))
+                                         (= :user (:source a))
+                                         (assoc :turn-id (:turn-soul-id a))))))
+                          (catch Throwable _ [])))
              :read (fn [id]
                      (attachment-storage/hydrate (persistance/db-read-attachment d id)))}))
 
