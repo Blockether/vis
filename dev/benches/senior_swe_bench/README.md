@@ -79,6 +79,25 @@ before Docker or Harbor starts.
    export OPENAI_CLASSIFIER_MODEL='openai/YOUR_CLASSIFIER_MODEL'
    ```
 
+   Z.AI verifier using GLM-5.2:
+
+   ```bash
+   install -m 600 /dev/null /tmp/ssb-verifier-zai.env
+   $EDITOR /tmp/ssb-verifier-zai.env
+   # ZAI_API_KEY=...
+
+   VIS_BENCH_VERIFIER_PROVIDER=zai \
+   VIS_BENCH_VERIFIER_ENV_FILE=/tmp/ssb-verifier-zai.env \
+     ./dev/benches/senior_swe_bench/run_smoke.sh
+   ```
+
+   Z.AI mode uses the OpenAI-compatible endpoint
+   `https://api.z.ai/api/paas/v4/`, defaults the judge, classifier, and
+   validation-agent model to `openai/glm-5.2`, and maps `ZAI_API_KEY` to
+   `OPENAI_API_KEY` inside the verifier container. It also defaults
+   `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT=required` and
+   `VIS_BENCH_VERIFIER_RESPONSE_FORMAT_COMPAT=json_object`.
+
    LM Studio verifier on the macOS host:
 
    ```bash
@@ -178,6 +197,19 @@ VIS_BENCH_VERIFIER_PROVIDER=openai \
 VIS_BENCH_VERIFIER_ENV_FILE=/tmp/ssb-verifier-openai.env \
 VIS_BENCH_VERIFIER_JUDGE_MODEL="$OPENAI_JUDGE_MODEL" \
 VIS_BENCH_VERIFIER_CLASSIFIER_MODEL="$OPENAI_CLASSIFIER_MODEL" \
+  ./dev/benches/senior_swe_bench/run_smoke.sh
+```
+
+Run a full smoke with Z.AI verifier credentials:
+
+```bash
+RUN_ID=full-zai-$(date -u +%Y%m%d-%H%M%S) \
+VIS_PROVIDER=zai-coding-plan \
+VIS_MODEL=glm-5.2 \
+VIS_BENCH_CONFIG=/tmp/vis-home/.vis/config.edn \
+VIS_BENCH_REMOTE_HOME=/root \
+VIS_BENCH_VERIFIER_PROVIDER=zai \
+VIS_BENCH_VERIFIER_ENV_FILE=/tmp/ssb-verifier-zai.env \
   ./dev/benches/senior_swe_bench/run_smoke.sh
 ```
 
@@ -343,6 +375,7 @@ Interpret common outcomes:
 | `preflight_failed` | `preflight-failure.json` and `preflight.json` | Repackage `target/bench/vis-agent.tar.gz`, provide a Linux ELF, or fix config path. |
 | `verifier_openai_api_key_missing` | `preflight-failure.json` | Put `OPENAI_API_KEY` in `VIS_BENCH_VERIFIER_ENV_FILE` or export it. |
 | `verifier_lmstudio_model_missing` | `preflight-failure.json` | Set `VIS_BENCH_VERIFIER_MODEL` or both verifier model overrides. |
+| `verifier_zai_api_key_missing` or z.ai `Authentication Failed` | `preflight-failure.json`, verifier `test-stdout.txt`, or direct `/models` probe | Put a valid `ZAI_API_KEY` or z.ai-compatible `OPENAI_API_KEY` in `VIS_BENCH_VERIFIER_ENV_FILE`. |
 | `remote_home_mount_invalid` | `preflight-failure.json` | Use `VIS_BENCH_REMOTE_HOME_MOUNT_MODE=rw` or switch to config upload mode. |
 | Docker unavailable | `docker-preflight.txt` | Start Docker before full or install-only runs. |
 | Python header verifier failure | `harbor.log` | Let `auto` build the python-dev image, force it with `VIS_BENCH_PREPARE_PYTHON_DEV_IMAGE=1`, or provide `VIS_BENCH_TASK_IMAGE`. |
@@ -414,13 +447,14 @@ keeps the comparison column as `pending-data` with the fair comparison params.
 | `VIS_BENCH_PREFLIGHT_ONLY` | `0` | Exit after host preflight and dataset/task preparation. |
 | `VIS_BENCH_INSTALL_ONLY` | `0` | Ask Harbor to install the agent without invoking the model. |
 | `VIS_BENCH_ALLOW_NO_CONFIG` | `0` | Allow full runs without discovered Vis config. Use only for pre-provisioned task images. |
-| `VIS_BENCH_VERIFIER_PROVIDER` | unset | `openai` or `lmstudio` verifier mode. |
+| `VIS_BENCH_VERIFIER_PROVIDER` | unset | `openai`, `lmstudio`, or `zai` verifier mode. |
 | `VIS_BENCH_VERIFIER_ENV_FILE` | unset | Env file passed to Harbor for verifier secrets. |
-| `VIS_BENCH_VERIFIER_MODEL` | unset | Shared verifier model, mostly useful for LM Studio. |
+| `VIS_BENCH_VERIFIER_MODEL` | unset, `glm-5.2` for `zai` | Shared verifier model, useful for LM Studio and Z.AI. |
 | `VIS_BENCH_VERIFIER_JUDGE_MODEL` | unset | Explicit Senior SWE-Bench judge model. |
 | `VIS_BENCH_VERIFIER_CLASSIFIER_MODEL` | unset | Explicit patch-classifier model. |
 | `VIS_BENCH_VERIFIER_OPENAI_BASE_URL` | env OpenAI base URL or unset | OpenAI-compatible verifier endpoint. |
-| `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT` | `required` for LM Studio, unset otherwise | Rewrites forced OpenAI function `tool_choice` objects to a compatible string in the copied verifier, enables request-level `response_format=json_schema` for forced single-tool emits, and enables plain-JSON fallback for missing tool-call wrappers. Use `none` to disable. |
+| `VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT` | `required` for LM Studio and Z.AI, unset otherwise | Rewrites forced OpenAI function `tool_choice` objects to a compatible form in the copied verifier and enables plain-JSON fallback for missing tool-call wrappers. Use `none` to disable. |
+| `VIS_BENCH_VERIFIER_RESPONSE_FORMAT_COMPAT` | `json_object` for Z.AI, `json_schema` when compatibility adaptation is otherwise enabled | Selects the forced single-tool response-format strategy used by `verifier_adapt.py`. |
 | `VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER` | `3` for LM Studio, unset otherwise | Passed to Harbor as `--verifier-timeout-multiplier`; increase for slow local judges. |
 | `VIS_BENCH_PREPARE_PYTHON_DEV_IMAGE` | `auto` | Build/use python-dev image for known affected tasks. |
 | `VIS_BENCH_TASK_IMAGE` | unset | Override the selected task image. |

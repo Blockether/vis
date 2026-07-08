@@ -26,6 +26,7 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
                 "vis_bench_verifier_openai_base_url": "http://host.docker.internal:1234/v1",
                 "vis_bench_verifier_judge_model": "openai/local-model",
                 "vis_bench_verifier_classifier_model": "openai/local-model",
+                "vis_bench_verifier_response_format_compat": "json_schema",
                 "selected_task_image": "paperless:python-dev",
             }
         )
@@ -135,4 +136,5 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
     assert "lmstudio" in html
     assert "http://host.docker.internal:1234/v1" in html
     assert "openai/local-model" in html
+    assert "json_schema" in html
     assert "2 files, +10 / -2 (12 changed)" in html
