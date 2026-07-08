@@ -676,8 +676,10 @@
   (oauth/refresher
     ;; REUSE: a concurrent caller may have re-exchanged while this one
     ;; waited for the lock — if the cache is valid again, return it
-    ;; (get-copilot-token! reads the cache without exchanging).
-    (fn []
+    ;; (get-copilot-token! reads the cache without exchanging). `rejected`
+    ;; is the token the server just 401'd: never reuse it — a still-cached
+    ;; but revoked token would otherwise be handed straight back and 401 again.
+    (fn [rejected]
       (let [cached
             @token-cache
 
@@ -686,6 +688,7 @@
 
         (when (and cached
                    (:token cached)
+                   (not= rejected (:token cached))
                    (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
                    (= account-type
                       (or (normalize-account-type (:account-type cached)) :individual)))

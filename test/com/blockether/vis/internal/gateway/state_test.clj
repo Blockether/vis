@@ -298,3 +298,49 @@
                                        :created-at (at 2000)}))))
                (it "still matches on the engine-turn-id primary key"
                    (expect (dup? {:engine_turn_id "eng-9" :status "completed"} {:id "eng-9"})))))
+
+(defdescribe
+  mirror-turn-row-test
+  "A turn running in a SIBLING process arrives only as bus-mirrored events. To
+   render it like a locally-started turn (user bubble + running chip, not bare
+   deltas leaking under the previous answer), `ingest-mirrored-event!` must
+   materialize a running row in :turns/:turn-order on `turn.started` and mark it
+   terminal on `turn.completed`/`turn.failed` — carrying :engine_turn_id so
+   list-turns can dedup it against the durable DB row once persisted."
+  (let [reg
+        @#'state/registry
+
+        sid
+        "mirror-test-sid"]
+
+    (it "materializes a running row on turn.started, terminal on turn.completed"
+        (try (swap! reg assoc sid {:next-seq 0})
+             (#'state/ingest-mirrored-event!
+              sid
+              false
+              {:type "turn.started" :turn_id "T1" :request "hello world"})
+             (let [started (get @reg sid)]
+               (expect (= "T1" (:current-turn started)))
+               (expect (= ["T1"] (:turn-order started)))
+               (expect (= "running" (get-in started [:turns "T1" :status])))
+               (expect (= "hello world" (get-in started [:turns "T1" :request]))))
+             (#'state/ingest-mirrored-event!
+              sid
+              false
+              {:type "turn.completed"
+               :turn_id "T1"
+               :status "completed"
+               :answer_md "the answer"
+               :engine_turn_id "E1"})
+             (let [done (get @reg sid)]
+               (expect (nil? (:current-turn done)))
+               (expect (= "completed" (get-in done [:turns "T1" :status])))
+               (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id])))
+               (expect (= "the answer" (get-in done [:turns "T1" :answer_md]))))
+             (finally (swap! reg dissoc sid))))
+    (it "ignores mirrored events for a session this process never touched"
+        (expect (nil? (#'state/ingest-mirrored-event!
+                       "never-touched-sid"
+                       false
+                       {:type "turn.started" :turn_id "X" :request "hi"})))
+        (expect (not (contains? @reg "never-touched-sid"))))))

@@ -3348,7 +3348,19 @@
                    (input/paste-end? key)
                    (let [^StringBuilder sb @paste-buffer]
                      (when sb
-                       (let [text (.toString sb)]
+                       (let [pasted (.toString sb)
+                             ;; An EMPTY bracketed paste with an image on the
+                             ;; clipboard = the user hit ⌘V on a screenshot /
+                             ;; copied image. The terminal sends no text, so
+                             ;; read the pixels ourselves into a temp PNG and
+                             ;; drive the temp path through the SAME image-paste
+                             ;; flow as a dropped image file below.
+                             text (if (.isEmpty pasted)
+                                    (or (some-> (input/read-clipboard-image!)
+                                                :path)
+                                        "")
+                                    pasted)]
+
                          (vreset! paste-buffer nil)
                          (when-not (.isEmpty text)
                            (if-let [image (timg/probe-paste-image text

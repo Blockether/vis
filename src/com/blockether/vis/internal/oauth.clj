@@ -61,19 +61,29 @@
   (locking lock (or (reuse) (refresh!))))
 
 (defn refresher
-  "Build a 0-arg single-flight refresh fn that OWNS a fresh lock. `reuse`
-   and `refresh!` are as in `single-flight!`. For stores that aren't a
-   plain rotating file — e.g. an in-memory cache (GitHub Copilot)."
+  "Build a single-flight refresh fn that OWNS a fresh lock. `refresh!` is as in
+   `single-flight!`; `reuse` takes ONE arg — the REJECTED token (the access
+   token the server just 401'd, or nil) — and returns the reusable token map or
+   nil. For stores that aren't a plain rotating file — e.g. an in-memory cache
+   (GitHub Copilot).
+
+   The returned fn is 0/1-arity: call it WITH the rejected token on 401 recovery
+   so `reuse` never hands back the very token that was just rejected; the 0-arity
+   form (nil rejected) keeps plain freshness reuse."
   [reuse refresh!]
   (let [lock (new-lock)]
-    (fn []
-      (single-flight! lock reuse refresh!))))
+    (fn ([] (single-flight! lock #(reuse nil) refresh!)) ([rejected] (single-flight! lock
+                                                                       #(reuse rejected)
+                                                                       refresh!)))))
 
 (defn make-file-refresher
-  "Build a 0-arg single-flight refresh fn for a FILE-backed credential
+  "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential
    store whose token endpoint ROTATES the refresh_token (Anthropic,
    OpenAI Codex). Owns its own lock; reuses creds persisted within the
-   reuse window instead of running a second (rotating) exchange.
+   reuse window instead of running a second (rotating) exchange — UNLESS the
+   reusable token equals the one just rejected (pass that token when calling the
+   returned fn on 401 recovery), so a server-rotated but locally-fresh token is
+   re-exchanged rather than handed back dead.
 
    opts — all required unless noted:
      :load          (fn [] -> creds-map|nil)       read persisted creds
@@ -90,9 +100,15 @@
    Returns the provider-token map produced by `:->token`."
   [{:keys [load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms]}]
   (let [window (or reuse-window-ms default-reuse-window-ms)]
-    (refresher (fn []
+    (refresher (fn [rejected]
                  (let [creds (load)]
-                   (when (and creds (fresh-within? (saved-at creds) window)) (->token creds))))
+                   (when (and creds (fresh-within? (saved-at creds) window))
+                     (let [tok (->token creds)]
+                       ;; Never hand back the exact token the server just
+                       ;; rejected (401): a locally-fresh but server-rotated
+                       ;; token would otherwise be REUSED and 401 again. When it
+                       ;; differs, reuse still collapses the 401 storm.
+                       (when-not (= rejected (:token tok)) tok)))))
                (fn []
                  (let [creds (load)
                        rt (refresh-token creds)]

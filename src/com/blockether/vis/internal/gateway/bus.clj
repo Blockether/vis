@@ -159,6 +159,40 @@
               (doseq [line (str/split-lines complete)]
                 (when-not (str/blank? line) (deliver-line! sid line)))
               (swap! offsets assoc sid (+ off consumed)))))))))
+(defn hydrate!
+  "Replay a session's CURRENT journal into this process's registry NOW, so a
+   watcher subscribing mid-turn sees the turn running in a SIBLING process from
+   its `turn.started` — not just the deltas that happen to arrive after it
+   connects.
+
+   The producer truncates the journal at each `turn.started`, so a file holds
+   exactly one turn. We replay it ONLY while that turn is still running (no
+   terminal event yet): a finished turn is already covered by the durable DB +
+   normal history, and re-streaming it would double-render a completed answer.
+
+   Rewinds this process's tail cursor to the file's current end first, so the
+   background tailer won't re-deliver what we hand over here. Never throws."
+  [sid]
+  (try (when-let [f (session-file sid)]
+         (when (.exists f)
+           (let [len (.length f)
+                 events (->> (str/split-lines (slurp f))
+                             (remove str/blank?)
+                             (keep wire/parse-json))
+                 foreign (remove #(= (:_producer %) producer-id) events)
+                 terminal? (some #(contains? #{"turn.completed" "turn.failed"} (:type %)) foreign)]
+
+             (when (and (seq foreign) (not terminal?))
+               ;; claim everything up to EOF so poll-once! won't re-deliver it
+               (swap! offsets assoc (str sid) len)
+               (when-let [f' @deliver-fn]
+                 (doseq [ev foreign]
+                   (try (f' sid (boolean (:_store ev)) (dissoc ev :_producer :_store))
+                        (catch Throwable t
+                          (tel/log! :debug
+                                    ["gateway-bus: hydrate deliver failed" (ex-message t)])))))))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
+  nil)
 
 (defn- poll-once!
   []
