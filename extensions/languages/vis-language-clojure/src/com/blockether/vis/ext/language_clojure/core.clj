@@ -830,15 +830,14 @@
                                             (clj-repl-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They keep
-     ;; Clojure source tidy after the foundation's struct_patch / patch / write
-     ;; (an :after repair+format), and make struct_patch AND patch NOT fail on
+     ;; Clojure source tidy after the foundation's WRITE only (an :after
+     ;; repair+format — patch/struct_patch are deliberately NOT reformatted),
+     ;; and make struct_patch AND patch NOT fail on
      ;; unbalanced delimiters (struct_patch: an :around that repairs the :code
      ;; + retries; patch: an :around that WHOLE-SOURCE-repairs the refusal's
      ;; candidate plans and commits the batch). :owner is set to this
      ;; extension automatically.
-     :ext/op-hooks [{:op :struct_patch :phase :after :fn clj-edit-repair-hook}
-                    {:op :patch :phase :after :fn clj-edit-repair-hook}
-                    {:op :write :phase :after :fn clj-edit-repair-hook}
+     :ext/op-hooks [{:op :write :phase :after :fn clj-edit-repair-hook}
                     {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
                     {:op :patch :phase :around :fn clj-patch-no-fail-around}]
      ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
