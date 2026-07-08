@@ -258,7 +258,7 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
-  (let [pb (ProcessBuilder. ^java.util.List [(bash-command) "-lc" (str cmd)])]
+  (let [pb (ProcessBuilder. ^java.util.List [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])]
     (.directory pb dir)
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
@@ -298,7 +298,7 @@
     ;; bridge), but shell_bg still runs/captures/stops cleanly instead of
     ;; throwing. (ConPTY could restore a real TTY here later.)
     (process->handle (spawn! cmd dir true))
-    (pty/spawn! {:command [(bash-command) "-lc" (str cmd)]
+    (pty/spawn! {:command [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
                  :dir (.getPath dir)
                  :env (doto (HashMap. ^java.util.Map (System/getenv))
                         (.put "TERM" "xterm-256color"))

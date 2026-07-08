@@ -261,7 +261,7 @@
                                       {:now-ms 2500})
 
               code-line
-              (first (filter #(str/includes? % "Thread/sleep") lines))]
+              (first (filter #(str/includes? % "sleep") lines))]
 
           (expect (not-any? #(str/includes? % "BLOCK 1") lines))
           (expect (not-any? #(str/includes? % "ITERATION 1") lines))
@@ -1533,8 +1533,8 @@
                         bot (:thumb-top-rel (g 1000 5 995))]
 
                     (expect (= 0 top))
-                    (expect (= 4 bot))))) ;; track-h(5) - thumb-h(1) = 4
-  ))
+                    (expect (= 4 bot)))))) ;; track-h(5) - thumb-h(1) = 4
+  )
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce - multi-paragraph list items render as one bullet

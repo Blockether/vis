@@ -113,9 +113,9 @@
         (with-redefs [svar/ask-code! (fn [_router opts]
                                        (case (swap! calls inc)
                                          1
-                                         (do ((:on-chunk opts
-                                                         {:reasoning "dead thinking"
-                                                          :content "```clojure\n(dead)"}))
+                                         (do ((:on-chunk opts)
+                                              {:reasoning "dead thinking"
+                                               :content "```clojure\n(dead)"})
                                              (throw (ex-info "Stream connection error: closed"
                                                              {:type :svar.core/http-error
                                                               :stream? true

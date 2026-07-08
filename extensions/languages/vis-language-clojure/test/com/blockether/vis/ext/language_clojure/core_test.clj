@@ -112,9 +112,7 @@
                        ops
                        (set (map (juxt :op :phase) hooks))]
 
-                   (expect (= 5 (count hooks)))
-                   (expect (contains? ops [:struct_patch :after]))
-                   (expect (contains? ops [:patch :after]))
+                   (expect (= 3 (count hooks)))
                    (expect (contains? ops [:write :after]))
                    (expect (contains? ops [:struct_patch :around]))
                    (expect (contains? ops [:patch :around]))

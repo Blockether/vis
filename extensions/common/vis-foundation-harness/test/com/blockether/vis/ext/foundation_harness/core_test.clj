@@ -81,7 +81,8 @@
       (expect (= :vis (:owner spec)))
       (expect (= :tools (:group spec)))))
   (it "skills-prompt is a string (lists skills when ON, blank when OFF)"
-      (expect (string? ((deref #'core/skills-prompt) {})))))
+      (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
+        (expect (string? ((deref #'core/skills-prompt) {}))))))
 
 ;; ── agents surface (slice 3) ──────────────────────────────────────────────
 
@@ -99,7 +100,13 @@
         (expect (vector? (get r "available")))))
   (it "dispatch threads the agent's BODY as the child system prompt and its MODEL as a vector"
       (let [captured (atom nil)]
-        (with-redefs [lp/sub-loop! (fn [_env opts]
+        (with-redefs [d/agent-by-name (fn [nm]
+                                        (when (= "code-reviewer" nm)
+                                          {:name "code-reviewer"
+                                           :description "Review code"
+                                           :model "review-model"
+                                           :body "review system prompt"}))
+                      lp/sub-loop! (fn [_env opts]
                                      (reset! captured opts)
                                      {:task_id (get-in opts [:subctx :focus])
                                       :status "done"
@@ -118,13 +125,22 @@
             (expect (= "review this" (:prompt @captured)))
             (expect (= "code-reviewer" (get-in @captured [:subctx :focus])))))))
   (it "a completed child with no status string reports done; an errored one failed"
-      (with-redefs [lp/sub-loop! (fn [_ _]
+      (with-redefs [d/agent-by-name (fn [nm]
+                                      (when (= "code-reviewer" nm)
+                                        {:name "code-reviewer" :body "review system prompt"}))
+                    lp/sub-loop! (fn [_ _]
                                    {:status "" :answer "OK" :changed_files []})]
         (expect (= "done" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [lp/sub-loop! (fn [_ _]
+      (with-redefs [d/agent-by-name (fn [nm]
+                                      (when (= "code-reviewer" nm)
+                                        {:name "code-reviewer" :body "review system prompt"}))
+                    lp/sub-loop! (fn [_ _]
                                    {:status "" :error "boom"})]
         (expect (= "failed" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [lp/sub-loop! (fn [_ _]
+      (with-redefs [d/agent-by-name (fn [nm]
+                                      (when (= "code-reviewer" nm)
+                                        {:name "code-reviewer" :body "review system prompt"}))
+                    lp/sub-loop! (fn [_ _]
                                    {:status "rejected"})]
         ;; an explicit child status is preserved, never overwritten
         (expect (= "rejected" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))))
