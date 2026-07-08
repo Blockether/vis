@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.provider-zai-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.svar.core :as svar]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -18,9 +19,9 @@
                    (expect (= :zai-coding-plan (:provider/id coding)))
                    (expect (= :zai (:provider/id pass)))
                    (expect (contains? ext-nses "provider-zai"))
-                   (expect (= "https://api.z.ai/api/coding/paas/v4"
+                   (expect (= (svar/provider-base-url :zai-coding-plan)
                               (get-in coding [:provider/preset :base-url])))
-                   (expect (= "https://api.z.ai/api/paas/v4"
+                   (expect (= (svar/provider-base-url :zai)
                               (get-in pass [:provider/preset :base-url])))
                    (expect (ifn? (:provider/limits-fn coding)))
                    (expect (ifn? (:provider/limits-fn pass)))
@@ -34,7 +35,7 @@
                    (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
                    (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %)
                                  lines))
-                   (expect (some #(= "  Endpoint: https://api.z.ai/api/coding/paas/v4" %) lines)))))
+                   (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %) lines)))))
 
 (defdescribe
   auth-detection-test
