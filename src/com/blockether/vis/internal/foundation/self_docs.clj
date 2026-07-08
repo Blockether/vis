@@ -27,19 +27,20 @@
 
 (defn- listing
   "Lean model-facing page index: slug/title/section only — never the
-   content, so listing stays cheap."
+   content, so listing stays cheap. Returned directly across the Python
+   boundary, so keys are strings."
   [ps]
   (mapv (fn [{:keys [slug title section]}]
-          (cond-> {:slug slug :title title}
+          (cond-> {"slug" slug "title" title}
             section
-            (assoc :section section)))
+            (assoc "section" section)))
         ps))
 
 (defn- vis-docs-tool
   "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\"}, ...]} — list vis's own embedded doc pages.
 await vis_docs(slug)  -> {\"slug\", \"title\", \"section\", \"content\"} — one page's full markdown.
 Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
-  ([] (extension/success {:result {:pages (listing (pages))}}))
+  ([] (extension/success {:result {"pages" (listing (pages))}}))
   ([slug]
    (let [ps
          (pages)
@@ -49,9 +50,11 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
 
      (if-let [page (some #(when (= slug' (:slug %)) %) ps)]
        (extension/success {:result
-                           (cond-> {:slug (:slug page) :title (:title page) :content (:md page)}
+                           (cond-> {"slug" (:slug page)
+                                    "title" (:title page)
+                                    "content" (:md page)}
                              (:section page)
-                             (assoc :section (:section page)))})
+                             (assoc "section" (:section page)))})
        (extension/failure {:result nil
                            :error {:message (str "Unknown vis docs slug " (pr-str slug') ".")
                                    :hint (str "Valid slugs: "
