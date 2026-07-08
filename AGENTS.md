@@ -20,6 +20,8 @@ rules) lives in the CORE system prompt — do not restate it here.
   serves those live and publishes them to the docs site. The root `docs/`
   folder is gitignored local scratch — never edit or add tracked docs
   there; change the canonical pages in `resources/vis-docs/` instead.
+- Commit messages follow Conventional Commits with a lowercase scope when
+  helpful, e.g. `fix(transcript): render nested markdown fences`.
 
 ## Operator workflow
 
