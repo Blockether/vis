@@ -37,6 +37,18 @@
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
 (defdescribe
+  environment-lifecycle-test
+  (it "closes the GraalPy context when disposing an environment"
+      (let [environment
+            (lp/create-environment ::router {:db :memory})
+
+            python-context
+            (:python-context environment)]
+
+        (lp/dispose-environment! environment)
+        (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true))))))
+
+(defdescribe
   prose-beyond-code-test
   ;; The model often restates its run_python code in its message prose; that
   ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
