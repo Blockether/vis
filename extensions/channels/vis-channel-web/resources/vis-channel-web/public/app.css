@@ -1010,6 +1010,8 @@ transition:background .12s,border-color .12s}
 .modal-res-logs{font-family:var(--mono);font-size:.74rem;line-height:1.45;color:var(--fg);
   background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r-sm);
   padding:.6rem .7rem;margin:0;max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.modal-res-tail{display:inline-flex;align-items:center;margin-left:auto;font-family:var(--mono);
+  font-size:.72rem;color:var(--ok,var(--dim))}
 /* mobile: cards stack, Start is a full-width tap target, and a resource row
    wraps its restart/stop actions onto their own line so the name is never
    crushed on a phone. */
