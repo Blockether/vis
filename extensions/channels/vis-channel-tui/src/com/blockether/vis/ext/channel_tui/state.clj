@@ -2262,6 +2262,59 @@
                                        :paste-counter (or (:paste-counter head) 0))))
                    :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 (reg-event-fx
+  :restore-pending-to-input
+  ;; A user cancel with a queued backlog must NOT auto-send the next message.
+  ;; Pull every queued (not-yet-started) submission back into the editor —
+  ;; appended after whatever the cancelled prompt already restored — and delete
+  ;; the matching gateway queued records so nothing drains server-side.
+  (fn [db [_ workspace-id]]
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
+
+          source-db
+          (db-for-tab db workspace-id)
+
+          pending
+          (vec (or (:pending-sends source-db) []))
+
+          sid
+          (get-in source-db [:session :id])
+
+          tids
+          (keep :turn-id pending)]
+
+      (if (empty? pending)
+        {:db db}
+        (let [cur-text
+              (input/input->text (:input source-db))
+
+              texts
+              (into (if (str/blank? cur-text) [] [cur-text]) (map :text pending))
+
+              combined
+              (str/join "\n\n" (remove str/blank? texts))
+
+              merged-pastes
+              (reduce merge (or (:pastes source-db) {}) (map :pastes pending))
+
+              merged-counter
+              (apply max 0 (:paste-counter source-db 0) (map #(:paste-counter % 0) pending))]
+
+          {:db (update-tab db
+                           workspace-id
+                           (fn [w]
+                             (assoc w
+                               :input (text->input-state combined)
+                               :pastes merged-pastes
+                               :paste-counter merged-counter
+                               :pending-sends []
+                               :input-history-index nil
+                               :input-history-draft nil)))
+           :fx (into [[:notify "Queue restored to input \u2014 not sent" :info 2000]]
+                     (mapv (fn [tid]
+                             [:gateway-delete-queued sid tid])
+                           tids))})))))
+(reg-event-fx
   :cancel-turn
   (fn [db _]
     (if-not (:loading? db)
@@ -2325,6 +2378,9 @@
           drain?
           (volatile! false)
 
+          restore-pending?
+          (volatile! false)
+
           db'
           (update-tab
             db
@@ -2348,10 +2404,9 @@
 
                 (if (and cancelled? (:submitted-input workspace) no-work?)
                   (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
-                    ;; The gateway auto-drains the next queued turn when this one ends
-                    ;; (even on cancel), so we must still attach to it — otherwise it
-                    ;; runs server-side with nobody rendering it.
-                    (when (seq (:pending-sends ws)) (vreset! drain? true))
+                    ;; A cancel must NOT auto-send the backlog — pull it back into
+                    ;; the editor instead (see :restore-pending-to-input).
+                    (when (seq (:pending-sends ws)) (vreset! restore-pending? true))
                     ws)
                   (let [start
                         (:turn-start-ms workspace)
@@ -2461,7 +2516,9 @@
                             (dissoc :submitted-input)))]
 
                     (when (and (not (:loading? ws-final)) (seq (:pending-sends ws-final)))
-                      (vreset! drain? true))
+                      ;; Normal completion drains the next queued turn; a cancel
+                      ;; restores the backlog to the editor instead of firing it.
+                      (if cancelled? (vreset! restore-pending? true) (vreset! drain? true)))
                     ws-final)))))]
 
       {:db (cond-> db'
@@ -2478,7 +2535,10 @@
                              entries))))
        :fx (cond-> []
              @drain?
-             (conj [:dispatch [:drain-pending workspace-id]]))})))
+             (conj [:dispatch [:drain-pending workspace-id]])
+
+             @restore-pending?
+             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 (defn- speak-answer-async!
   [answer]
