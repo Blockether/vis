@@ -259,7 +259,9 @@ margin:0;max-height:32rem;overflow:auto}
 .block-result-cards{display:flex;flex-direction:column;min-width:0}
 .block-result-card{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:.12rem;margin:.18rem 0;padding:.35rem .6rem .35rem .8rem;border-left:2px solid var(--primary);border-radius:0 var(--r-sm) var(--r-sm) 0;background:color-mix(in srgb,var(--primary) 5%,var(--bg));color:var(--fg)}
 .block-result-label{color:var(--dim);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
-.block-result-summary{min-width:0;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
+.block-result-summary{min-width:0;margin-left:.45rem;overflow-wrap:anywhere;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
+/* inline `code` in a summary (rg's OR needles, moved/copied paths, …) — the badge row is NOT inside .md, so give its <code> the same chip the body prose gets. */
+.block-result-summary code{font-family:var(--mono);background:var(--code-bg);border-radius:var(--r-xs);padding:.02rem .28rem;font-size:.92em;color:var(--secondary)}
 /* the whole result card is a disclosure: its summary row IS the op badge, chevron in the card's gold accent. */
 summary.block-result-label{padding-left:.1rem;padding-top:0;padding-bottom:0}
 summary.block-result-label::before{color:var(--primary)}
