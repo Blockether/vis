@@ -5087,7 +5087,9 @@
 (def symbol-rename-symbol
   (vis/symbol #'symbol-rename-tool
               {:symbol 'symbol_rename
-               :native-tool? false
+               :native-tool? true
+               :name "symbol_rename"
+               :call {:pos ["name" "new_name"]}
                :active-fn structural-supported?
                :description
                (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
@@ -5273,8 +5275,8 @@
           [lang-line
            (str
              "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / patch / move / delete / copy / file_exists / write"
-             (when struct? " / outline / struct_patch / sexpr / occurrences")
-             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (ls, symbol_rename and delete_if_exists are python_execution-ONLY, not native — call them inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
+             (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
+             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (ls and delete_if_exists are python_execution-ONLY, not native — call them inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
            ""])
         (if struct?
           ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
