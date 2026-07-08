@@ -1380,19 +1380,23 @@
 ;; =============================================================================
 
 (defn- store-turn-attachments!
-  "Insert one `session_turn_attachment` row per validated image attached to the
-   turn - INLINE web/API uploads AND terminal-drop disk images alike. Each
+  "Insert one `session_attachment` row per validated INBOUND user image attached
+   to the turn - INLINE web/API uploads AND terminal-drop disk images alike. Each
    attachment is `{:media-type :base64 :size? :filename? :kind?}`; the base64
-   payload decodes to raw bytes for the BLOB column. Skips any entry whose
-   base64 fails to decode - never aborts the enclosing turn insert."
+   payload decodes to raw bytes for the BLOB column. User rows leave
+   `session_turn_iteration_id`/`tool_call_id` NULL - that NULL iteration IS what
+   marks their `source` as `user`. Skips any entry whose base64 fails to decode -
+   never aborts the enclosing turn insert."
   [tx-info soul-id-s attachments now]
   (doseq [[position att] (map-indexed vector (or attachments []))]
     (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
                                 (catch Throwable _ nil))]
       (execute! tx-info
-                {:insert-into :session_turn_attachment
+                {:insert-into :session_attachment
                  :values [{:id (str (new-uuid))
                            :session_turn_soul_id soul-id-s
+                           :session_turn_iteration_id nil
+                           :tool_call_id nil
                            :position position
                            :kind (or (some-> (:kind att)
                                              name)
@@ -1408,8 +1412,8 @@
 
    `:attachments` - EVERY validated image attached to the turn `[{:media-type
    :base64 :size :filename}]`, both INLINE (web/API) uploads and terminal-drop
-   disk images - persist as `session_turn_attachment` BLOB rows so resume +
-   history re-render survive a restart even after the source file moves or is
+   disk images - persist as `session_attachment` BLOB rows (user rail: NULL
+   iteration) so resume + history re-render survive a restart even after the source file moves or is
    deleted.
 
    Returns the session-turn-soul UUID."
@@ -1458,157 +1462,19 @@
           (store-turn-attachments! tx-info (str soul-id) attachments now)
           soul-id)))))
 
-(defn- attachment-handle
-  "Self-describing attachment id that crosses the sandbox/model boundary:
-   `\"<source>:<uuid>\"` (source ∈ `tool`|`user`). The provenance travels IN
-   the id, so read-back is a DIRECT single-table dispatch — no source-guessing
-   fallback."
-  [source id]
-  (str (name source) ":" (->ref id)))
 
-(defn- parse-attachment-handle
-  "Split a `\"<source>:<uuid>\"` attachment handle into `[source-kw raw-uuid]`,
-   or nil when malformed / sourceless (e.g. a bare UUID). Only `:tool`/`:user`
-   sources resolve."
-  [handle]
-  (when-let [s (->ref handle)]
-    (let [i (str/index-of s ":")]
-      (when (and i (pos? i))
-        (let [src (keyword (subs s 0 i))]
-          (when (contains? #{:tool :user} src) [src (subs s (inc i))]))))))
 
-(defn db-list-turn-attachments
-  "Ordered validated image attachments persisted for one `session_turn_soul`.
-   Returns `[{:id :position :kind :media-type :filename :size :base64}]` — the
-   `:id` is the row PK (for source-agnostic read-back via `db-read-attachment`),
-   base64-encoded bytes match the shape the prompt assembler + web history
-   re-render consume — or `[]` when none / no datasource."
-  [db-info session-turn-soul-id]
-  (if-not (and (ds db-info) session-turn-soul-id)
-    []
-    (let [soul-id-s (->ref session-turn-soul-id)]
-      (mapv (fn [row]
-              (let [^bytes bs (:bytes row)]
-                {:id (attachment-handle :user (:id row))
-                 :position (:position row)
-                 :kind (:kind row)
-                 :media-type (:media_type row)
-                 :filename (:filename row)
-                 :storage-uri (:storage_uri row)
-                 :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
-                 :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
-            (query! db-info
-                    {:select [:*]
-                     :from :session_turn_attachment
-                     :where [:= :session_turn_soul_id soul-id-s]
-                     :order-by [[:position :asc]]})))))
-(defn db-list-turns-attachments
-  "Batch variant of [[db-list-turn-attachments]]: validated image attachments
-   for MANY `session_turn_soul` ids in ONE query, grouped as
-   `{soul-id-string [{:id :position :kind :media-type :filename :size :base64} …]}`
-   (each vector ordered by `:position`). Missing ids are simply absent from the
-   map. Safe: no ids / no datasource -> `{}`. Lets the gateway hydrate a whole
-   session's attachments without an N+1 per-turn query."
-  [db-info session-turn-soul-ids]
-  (let [ids (->> session-turn-soul-ids
-                 (keep #(some-> %
-                                ->ref))
-                 distinct
-                 vec)]
-    (if-not (and (ds db-info) (seq ids))
-      {}
-      (reduce (fn [m row]
-                (let [^bytes bs (:bytes row)]
-                  (update m
-                          (:session_turn_soul_id row)
-                          (fnil conj [])
-                          {:id (attachment-handle :user (:id row))
-                           :position (:position row)
-                           :kind (:kind row)
-                           :media-type (:media_type row)
-                           :filename (:filename row)
-                           :storage-uri (:storage_uri row)
-                           :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
-                           :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))})))
-              {}
-              (query! db-info
-                      {:select [:*]
-                       :from :session_turn_attachment
-                       :where [:in :session_turn_soul_id ids]
-                       :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
-(defn db-list-iteration-attachments
-  "Ordered OUTBOUND artifacts persisted for ONE `session_turn_iteration` (its
-   id, not the soul). Returns `[{:tool-call-id :position :kind :media-type
-   :filename :size :base64}]` — base64-encoded inline bytes matching the shape
-   the prompt assembler + web history re-render consume — ordered by
-   `(tool_call_id, position)`, or `[]` when none / no datasource."
-  [db-info iteration-id]
-  (if-not (and (ds db-info) iteration-id)
-    []
-    (let [iter-id-s (->ref iteration-id)]
-      (mapv (fn [row]
-              (let [^bytes bs (:bytes row)]
-                {:id (attachment-handle :tool (:id row))
-                 :tool-call-id (:tool_call_id row)
-                 :position (:position row)
-                 :kind (:kind row)
-                 :media-type (:media_type row)
-                 :filename (:filename row)
-                 :storage-uri (:storage_uri row)
-                 :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
-                 :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
-            (query! db-info
-                    {:select [:*]
-                     :from :session_iteration_attachment
-                     :where [:= :session_turn_iteration_id iter-id-s]
-                     :order-by [[:tool_call_id :asc] [:position :asc]]})))))
 
-(defn db-list-iterations-attachments
-  "Batch variant of [[db-list-iteration-attachments]]: OUTBOUND artifacts for
-   MANY `session_turn_iteration` ids in ONE query, grouped as
-   `{iteration-id-string [{:tool-call-id :position :kind :media-type :filename
-   :size :base64} …]}` (each vector ordered by `(tool_call_id, position)`).
-   Missing ids are simply absent. Safe: no ids / no datasource -> `{}`. Lets a
-   history replay hydrate a whole conversation's generated images without an
-   N+1 per-iteration query."
-  [db-info iteration-ids]
-  (let [ids (->> iteration-ids
-                 (keep #(some-> %
-                                ->ref))
-                 distinct
-                 vec)]
-    (if-not (and (ds db-info) (seq ids))
-      {}
-      (reduce (fn [m row]
-                (let [^bytes bs (:bytes row)]
-                  (update m
-                          (:session_turn_iteration_id row)
-                          (fnil conj [])
-                          {:id (attachment-handle :tool (:id row))
-                           :tool-call-id (:tool_call_id row)
-                           :position (:position row)
-                           :kind (:kind row)
-                           :media-type (:media_type row)
-                           :filename (:filename row)
-                           :storage-uri (:storage_uri row)
-                           :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
-                           :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))})))
-              {}
-              (query! db-info
-                      {:select [:*]
-                       :from :session_iteration_attachment
-                       :where [:in :session_turn_iteration_id ids]
-                       :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
-                                  [:position :asc]]})))))
 
-(defn- row->read-attachment
-  "Shape ONE attachment row (either table) into the read-back envelope, tagging
-   its `source` (`:tool` | `:user`). `session_turn_attachment` rows have no
-   `tool_call_id` column, so `:tool-call-id` is nil for user images."
-  [row source]
+(defn- row->attachment
+  "Project ONE `session_attachment` row into the returned envelope. `:source` is
+   DERIVED - a row carrying an iteration is a `tool` artifact, a NULL iteration
+   is a `user` image (no enum column to drift). `:id` is the bare row uuid;
+   read-back knocks the single table directly by it, no prefix, no dispatch."
+  [row]
   (let [^bytes bs (:bytes row)]
     {:id (:id row)
-     :source source
+     :source (if (:session_turn_iteration_id row) :tool :user)
      :tool-call-id (:tool_call_id row)
      :position (:position row)
      :kind (:kind row)
@@ -1618,28 +1484,134 @@
      :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
      :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
 
-(defn db-read-attachment
-  "Read ONE persisted attachment by its self-describing handle
-   `\"<source>:<uuid>\"` (as minted by the `db-list-*-attachments` listers). The
-   `source` prefix routes the lookup DIRECTLY to its owning table — `tool` →
-   `session_iteration_attachment`, `user` → `session_turn_attachment` — so there
-   is NO cross-table fallback / id-space guessing. Returns `{:id :source
-   :tool-call-id :position :kind :media-type :filename :size :storage-uri
-   :base64}` (`:id` echoes the handle; `:tool-call-id` nil for user images) or
-   nil when the handle is malformed / absent / no datasource. The read-back twin
-   of the listers: a tool re-fetches an artifact it (or an earlier turn, or the
-   user) produced."
-  [db-info attachment-id]
-  (when (ds db-info)
-    (when-let [[source raw] (parse-attachment-handle attachment-id)]
-      (let [table (case source
-                    :tool
-                    :session_iteration_attachment
 
-                    :user
-                    :session_turn_attachment)]
-        (when-let [row (query-one! db-info {:select [:*] :from table :where [:= :id (->ref raw)]})]
-          (assoc (row->read-attachment row source) :id attachment-id))))))
+(defn db-list-turn-attachments
+  "Ordered INBOUND user images persisted for one `session_turn_soul` (the `user`
+   rail only - `session_turn_iteration_id IS NULL`). Returns `[{:id :source
+   :position :kind :media-type :filename :size :base64}]` - `:id` is the bare row
+   uuid for read-back via `db-read-attachment`, base64-encoded bytes match the
+   shape the prompt assembler + web history re-render consume - or `[]` when
+   none / no datasource. For user+tool combined see [[db-list-turn-all-attachments]]."
+  [db-info session-turn-soul-id]
+  (if-not (and (ds db-info) session-turn-soul-id)
+    []
+    (let [soul-id-s (->ref session-turn-soul-id)]
+      (mapv row->attachment
+            (query! db-info
+                    {:select [:*]
+                     :from :session_attachment
+                     :where [:and [:= :session_turn_soul_id soul-id-s]
+                             [:= :session_turn_iteration_id nil]]
+                     :order-by [[:position :asc]]})))))
+(defn db-list-turns-attachments
+  "Batch variant of [[db-list-turn-attachments]]: INBOUND user images for MANY
+   `session_turn_soul` ids in ONE query (the `user` rail only -
+   `session_turn_iteration_id IS NULL`), grouped as `{soul-id-string [{:id
+   :source :position :kind :media-type :filename :size :base64} …]}` (each vector
+   ordered by `:position`). Missing ids are simply absent from the map. Safe: no
+   ids / no datasource -> `{}`. Lets the gateway hydrate a whole session's user
+   images without an N+1 per-turn query."
+  [db-info session-turn-soul-ids]
+  (let [ids (->> session-turn-soul-ids
+                 (keep #(some-> %
+                                ->ref))
+                 distinct
+                 vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (reduce (fn [m row]
+                (update m (:session_turn_soul_id row) (fnil conj []) (row->attachment row)))
+              {}
+              (query! db-info
+                      {:select [:*]
+                       :from :session_attachment
+                       :where [:and [:in :session_turn_soul_id ids]
+                               [:= :session_turn_iteration_id nil]]
+                       :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
+(defn db-list-iteration-attachments
+  "Ordered OUTBOUND tool artifacts persisted for ONE `session_turn_iteration`
+   (its id, not the soul - the `tool` rail only). Returns `[{:id :source
+   :tool-call-id :position :kind :media-type :filename :size :base64}]` -
+   base64-encoded inline bytes matching the shape the prompt assembler + web
+   history re-render consume - ordered by `(tool_call_id, position)`, or `[]`
+   when none / no datasource."
+  [db-info iteration-id]
+  (if-not (and (ds db-info) iteration-id)
+    []
+    (let [iter-id-s (->ref iteration-id)]
+      (mapv row->attachment
+            (query! db-info
+                    {:select [:*]
+                     :from :session_attachment
+                     :where [:= :session_turn_iteration_id iter-id-s]
+                     :order-by [[:tool_call_id :asc] [:position :asc]]})))))
+
+(defn db-list-iterations-attachments
+  "Batch variant of [[db-list-iteration-attachments]]: OUTBOUND tool artifacts
+   for MANY `session_turn_iteration` ids in ONE query, grouped as
+   `{iteration-id-string [{:id :source :tool-call-id :position :kind :media-type
+   :filename :size :base64} …]}` (each vector ordered by `(tool_call_id,
+   position)`). Missing ids are simply absent. Safe: no ids / no datasource ->
+   `{}`. Lets a history replay hydrate a whole conversation's generated images
+   without an N+1 per-iteration query."
+  [db-info iteration-ids]
+  (let [ids (->> iteration-ids
+                 (keep #(some-> %
+                                ->ref))
+                 distinct
+                 vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (reduce (fn [m row]
+                (update m (:session_turn_iteration_id row) (fnil conj []) (row->attachment row)))
+              {}
+              (query! db-info
+                      {:select [:*]
+                       :from :session_attachment
+                       :where [:in :session_turn_iteration_id ids]
+                       :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
+                                  [:position :asc]]})))))
+
+(defn db-list-turn-all-attachments
+  "EVERY attachment hanging off one TURN - user images AND tool artifacts
+   together - in ONE indexed filter (`session_turn_soul_id = ?`), the roll-up
+   that single-table unification makes trivial. Tool rows denormalize the soul,
+   so both rails answer the same `WHERE`. Returns `[{:id :source :tool-call-id
+   :position :kind :media-type :filename :size :base64}]` ordered by `(source,
+   position)` so user images lead, then tool artifacts - or `[]` when none / no
+   datasource. Callers split by `:source` (`:user` / `:tool`) as needed."
+  [db-info session-turn-soul-id]
+  (if-not (and (ds db-info) session-turn-soul-id)
+    []
+    (let [soul-id-s (->ref session-turn-soul-id)]
+      (->> (query! db-info
+                   {:select [:*]
+                    :from :session_attachment
+                    :where [:= :session_turn_soul_id soul-id-s]
+                    :order-by [[:position :asc]]})
+           (mapv row->attachment)
+           ;; user (no iteration) first, then tool, stable within each by position
+           (sort-by (juxt #(if (= :user (:source %)) 0 1) :position))
+           vec))))
+
+
+
+
+(defn db-read-attachment
+  "Read ONE persisted attachment by its bare row id (as returned by the
+   `db-list-*-attachments` listers). There is exactly ONE `session_attachment`
+   table, so this is a single indexed lookup - no source prefix, no dispatch, no
+   cross-table fallback. `:source` is derived from the row (`:tool` when it
+   carries an iteration, else `:user`). Returns `{:id :source :tool-call-id
+   :position :kind :media-type :filename :size :storage-uri :base64}` (
+   `:tool-call-id` nil for user images) or nil when the id is absent / no
+   datasource. The read-back twin of the listers: a tool re-fetches an artifact
+   it (or an earlier turn, or the user) produced."
+  [db-info attachment-id]
+  (when-let [id-s (and (ds db-info) (->ref attachment-id))]
+    (when-let [row (query-one! db-info
+                               {:select [:*] :from :session_attachment :where [:= :id id-s]})]
+      (row->attachment row))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]
@@ -1882,26 +1854,30 @@
       (assoc :at_ms (long (:at-ms event))))))
 
 (defn- store-iteration-attachments!
-  "Insert one `session_iteration_attachment` row per OUTBOUND artifact a tool
-   call produced inside this iteration (the canonical case: a `matplotlib`
-   figure emitted by `plt.show()`/`plt.savefig()` from `python_execution`).
-   Each attachment is `{:tool-call-id? :media-type :base64 :filename? :size?
-   :kind?}`; the base64 payload decodes to raw bytes for the inline BLOB.
+  "Insert one `session_attachment` row per OUTBOUND artifact a tool call produced
+   inside this iteration (the canonical case: a `matplotlib` figure emitted by
+   `plt.show()`/`plt.savefig()`, or a `vis_attach` payload, from
+   `python_execution`). Each attachment is `{:tool-call-id? :media-type :base64
+   :filename? :size? :kind?}`; the base64 payload decodes to raw bytes for the
+   inline BLOB.
 
-   Grain is `(iteration, tool_call_id, position)` — so `position` is a 0-based
-   ordinal RESET per `tool_call_id` group (one call may emit several figures,
-   even same-named), matching the table's `UNIQUE` constraint. A `nil`
-   tool-call-id (a whole-iteration artifact) forms its own group. Skips any
-   entry whose base64 fails to decode — never aborts the enclosing iteration
-   insert."
-  [tx-info iteration-id-s attachments now]
+   Every row carries BOTH the owning iteration AND its turn soul (denormalized so
+   a per-turn roll-up is one indexed filter); the set iteration IS what marks
+   their `source` as `tool`. Grain is `(iteration, tool_call_id, position)` - so
+   `position` is a 0-based ordinal RESET per `tool_call_id` group (one call may
+   emit several figures, even same-named), matching the table's `UNIQUE`
+   constraint. A `nil` tool-call-id (a whole-iteration artifact) forms its own
+   group. Skips any entry whose base64 fails to decode - never aborts the
+   enclosing iteration insert."
+  [tx-info soul-id-s iteration-id-s attachments now]
   (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
     (doseq [[position att] (map-indexed vector group)]
       (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
                                   (catch Throwable _ nil))]
         (execute! tx-info
-                  {:insert-into :session_iteration_attachment
+                  {:insert-into :session_attachment
                    :values [{:id (str (new-uuid))
+                             :session_turn_soul_id soul-id-s
                              :session_turn_iteration_id iteration-id-s
                              :tool_call_id (some-> (:tool-call-id att)
                                                    str)
@@ -2050,7 +2026,11 @@
 
                         (seq routing)
                         (merge (routing-summary-columns routing)))]})
-          (store-iteration-attachments! tx-info iteration-id-s attachments now)
+          (store-iteration-attachments! tx-info
+                                        session-turn-soul-id-s
+                                        iteration-id-s
+                                        attachments
+                                        now)
           (doseq [[idx event] (map-indexed vector (:trace routing))]
             (execute! tx-info
                       {:insert-into :llm_routing_event

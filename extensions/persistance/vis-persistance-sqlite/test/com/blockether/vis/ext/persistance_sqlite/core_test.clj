@@ -179,7 +179,7 @@
 (defdescribe
   user+tool-attachment-read-back-test
   (it
-    "db-read-attachment routes by the handle's source prefix (no fallback); user images list with a handle id"
+    "one session_attachment table: bare-id read-back derives source; a turn roll-up returns user + tool together"
     (let [s
           (h/store)
 
@@ -224,16 +224,20 @@
           (vis/db-read-attachment s uid)
 
           tool-read
-          (vis/db-read-attachment s tid)]
+          (vis/db-read-attachment s tid)
 
-      ;; User lister now projects a self-describing handle id for read-back.
+          ;; Turn roll-up: user + tool in ONE indexed filter (soul only).
+          all-atts
+          (vis/db-list-turn-all-attachments s soul)]
+
+      ;; Listers now project BARE row uuids (no source prefix) + a derived :source.
       (expect (= 1 (count user-atts)))
       (expect (string? uid))
-      (expect (str/starts-with? uid "user:"))
-      (expect (str/starts-with? tid "tool:"))
-      ;; The handle prefix routes read DIRECTLY to the owning table, tagging
-      ;; provenance — and the id echoes back for a clean round-trip.
-      ;; Each handle routes read to its OWN table, tagging provenance.
+      (expect (not (str/includes? uid ":")))
+      (expect (not (str/includes? tid ":")))
+      (expect (= :user (:source (first user-atts))))
+      (expect (= :tool (:source (first (vis/db-list-iteration-attachments s iid)))))
+      ;; Bare-id read-back hits the single table and derives provenance from the row.
       (expect (= :user (:source user-read)))
       (expect (nil? (:tool-call-id user-read)))
       (expect (= "user.png" (:filename user-read)))
@@ -243,9 +247,10 @@
       (expect (= "call_Z" (:tool-call-id tool-read)))
       (expect (= "tool.png" (:filename tool-read)))
       (expect (= tid (:id tool-read)))
-      ;; No fallback: a valid uuid under the WRONG source prefix does NOT
-      ;; silently resolve via the other table — it is simply absent.
-      (expect (nil? (vis/db-read-attachment s (str "user:" (subs tid 5)))))
+      ;; Roll-up sees BOTH rails of the same turn, user first then tool.
+      (expect (= 2 (count all-atts)))
+      (expect (= [:user :tool] (mapv :source all-atts)))
+      (expect (= #{uid tid} (set (map :id all-atts))))
       ;; Unknown id -> nil.
       (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 
