@@ -1290,6 +1290,67 @@
 
                    (expect (= "prev-sent" (input/input->text (:input result)))))))
 
+(defdescribe
+  cancel-restores-pending-to-input-test
+  (it "message-received on CANCEL routes the backlog to the editor, not a drain"
+      ;; Regression: cancelling a turn with a queued backlog used to
+      ;; auto-send (drain) the next message — and that auto-sent turn
+      ;; couldn't be cancelled. A cancel must instead restore the queue.
+      (let [message-received-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :message-received)
+                :fn)
+
+            pending-id
+            "turn-1"
+
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :loading? true
+             :messages [{:role :user :text "first" :client-turn-id pending-id}
+                        {:role :assistant :pending? true :client-turn-id pending-id}]
+             :progress {:iterations []}
+             :submitted-input {:text "first" :pastes {} :paste-counter 0}
+             :pending-sends [{:text "second" :pastes {} :paste-counter 0}]}
+
+            {:keys [db fx]}
+            (message-received-fn db
+                                 [:message-received :main
+                                  [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                                  {:status :cancelled :client-turn-id pending-id}])]
+
+        (expect (= [[:dispatch [:restore-pending-to-input :main]]] fx))
+        (expect (false? (:loading? db)))
+        ;; queue survives the commit; the follow-up fx clears + restores it.
+        (expect (= ["second"] (mapv :text (:pending-sends db))))))
+  (it "restore-pending-to-input appends queued prompts and deletes gateway records"
+      (let [restore-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :restore-pending-to-input)
+                :fn)
+
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :input (input/empty-input)
+             :pastes {}
+             :paste-counter 0
+             :pending-sends [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2"}
+                             {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3"}]}
+
+            {:keys [db fx]}
+            (restore-fn db [:restore-pending-to-input :main])]
+
+        (expect (= "second\n\nthird" (input/input->text (:input db))))
+        (expect (empty? (:pending-sends db)))
+        (expect (some #{[:gateway-delete-queued "c1" "t-2"]} fx))
+        (expect (some #{[:gateway-delete-queued "c1" "t-3"]} fx)))))
+
 (defdescribe set-title-background-tab-test
              (it "relabels a background tab live without touching the active tab"
                  ;; Regression: a background session's async auto-title must land on its

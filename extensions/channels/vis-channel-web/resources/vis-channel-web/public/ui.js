@@ -1209,6 +1209,10 @@
    /ui/session/:sid/poll?from=N — the SAME named HTML fragments the
    stream would have pushed, applied to the same [sse-swap] targets. */
 (function () {
+  function ready(fn) {
+    if (document.readyState !== "loading") { fn(); }
+    else { document.addEventListener("DOMContentLoaded", fn); }
+  }
   var app = document.querySelector(".app[data-sid]");
   if (!app) { return; }
   var sid = app.dataset.sid;

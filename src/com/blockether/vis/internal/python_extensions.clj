@@ -65,7 +65,7 @@
 ;; dict.
 ;; =============================================================================
 
-(def ^:private bootstrap-python
+(def ^:no-doc bootstrap-python
   "import sys as _vis_sys, types as _vis_types
 
 _vis_body = '''
@@ -274,7 +274,7 @@ def __vis_registration__():
 ;; Trusted extension context
 ;; =============================================================================
 
-(defn- build-context
+(defn ^:no-doc build-context
   "Build one TRUSTED extension context on the shared Engine. Permissive
    about the world (real filesystem, sockets, subprocesses, env vars,
    threads) but strict about the host: no host interop beyond the
@@ -297,7 +297,7 @@ def __vis_registration__():
 (def ^:private log-levels {"trace" :trace "debug" :debug "info" :info "warn" :warn "error" :error})
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
-(defn- bind-host!
+(defn ^:no-doc bind-host!
   "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
    module. `label` is the file's name — used only for log context; durable
    state lives in the `extension_aggregate` table, owned by the running
@@ -693,20 +693,39 @@ def __vis_registration__():
                [p (dissoc e :context :ext)]))
         @loaded))
 
-(defn- default-extension-dirs
+(defn ^:no-doc default-extension-dirs
   []
   [(io/file (System/getProperty "user.home") ".vis" "extensions")
    (io/file (System/getProperty "user.dir") ".vis" "extensions")])
 
+(defn ^:no-doc test-file?
+  "A `test_*.py` / `*_test.py` module — a Python test, never an extension entry."
+  [^File f]
+  (let [n (.getName f)]
+    (and (str/ends-with? n ".py") (or (str/starts-with? n "test_") (str/ends-with? n "_test.py")))))
+
 (defn- scan
-  "All `*.py` files across the extension dirs, global dir first then
-   project dir (name order within a dir) so a project file registering
-   the same extension name wins. Deduped on canonical path."
+  "Entry `.py` files across the extension dirs, global dir first then project
+   dir (name order within a dir) so a project file registering the same
+   extension name wins. Two authoring conventions per dir:
+     - a top-level `*.py` file is a single-file extension;
+     - an immediate subdirectory holding `extension.py` is a PACKAGE extension —
+       that `extension.py` is the entry and the rest of the package imports via
+       the `sys.path` sugar in `load-file!`; the package's own modules are NEVER
+       scanned as separate extensions.
+   Test modules (`test_*.py` / `*_test.py`) are skipped — they are run by
+   `test-python-extensions!`, not loaded. Deduped on canonical path."
   [dirs]
   (let [files (for [^File d (map io/file dirs)
                     :when (.isDirectory d)
-                    ^File f (sort-by #(.getName ^File %) (.listFiles d))
-                    :when (and (.isFile f) (str/ends-with? (.getName f) ".py"))]
+                    ^File child (sort-by #(.getName ^File %) (.listFiles d))
+                    ^File f (cond (and (.isFile child)
+                                       (str/ends-with? (.getName child) ".py")
+                                       (not (test-file? child)))
+                                  [child]
+                                  (.isDirectory child) (let [ep (io/file child "extension.py")]
+                                                         (when (.isFile ep) [ep]))
+                                  :else nil)]
 
                 f)]
     (->> files
@@ -718,11 +737,18 @@ def __vis_registration__():
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
-   extension it declares. Returns `{:path :sha :ext-name :context}`;
-   throws (with the context closed) on any failure."
+   extension it declares. The file's own directory is prepended to
+   `sys.path` first, so a sibling package/module (`my_ext.py` next to a
+   `mypkg/` package, or its own `*_impl.py` helpers) imports with a plain
+   `import mypkg` — no manual `sys.path` hack in the extension body.
+   Returns `{:path :sha :ext-name :context}`; throws (with the context
+   closed) on any failure."
   [^File f]
   (let [path
         (.getCanonicalPath f)
+
+        parent
+        (.getParent (io/file path))
 
         source
         (slurp f)
@@ -736,6 +762,16 @@ def __vis_registration__():
     (try (bind-host! ctx (.getName f))
          (locking ctx
            (.eval ctx "python" ^String bootstrap-python)
+           ;; Prepend the extension file's own dir to sys.path so sibling
+           ;; packages/modules import cleanly. Path crosses as a bound
+           ;; member (no string-escaping into a Python snippet).
+           (let [g (.getBindings ctx "python")]
+             (.putMember g "__vis_ext_dir__" ^String parent)
+             (.eval ctx
+                    "python"
+                    (str "import sys as __vis_pathsys__\n"
+                         "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                         "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
          (let [g
                (.getBindings ctx "python")
@@ -890,14 +926,36 @@ def __vis_registration__():
 (defn- register-loader-extension!
   []
   (when (compare-and-set! loader-registered? false true)
-    (extension/register-extension!
-      {:ext/name "python-extensions"
-       :ext/description
-       "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
-       :ext/kind "host"
-       :ext/source-nses ['com.blockether.vis.internal.python-extensions]
-       :ext/slash-commands
-       [{:slash/name "reload"
-         :slash/doc "Reload Python extensions, skills/agents, prompt templates, and context files."
-         :slash/run-fn reload-slash}]
-       :ext/doctor-fn doctor-fn})))
+    ;; `/test` + `vis ext test` live in the sibling `python-test-runner` ns.
+    ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
+    ;; on the runner (which itself depends on this ns's trusted-context builder
+    ;; — the one seam that would otherwise be a require cycle).
+    (let [test-slash
+          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)
+
+          test-cli!
+          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
+
+      (extension/register-extension!
+        {:ext/name "python-extensions"
+         :ext/description
+         "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
+         :ext/kind "host"
+         :ext/source-nses ['com.blockether.vis.internal.python-extensions]
+         :ext/slash-commands
+         [{:slash/name "reload"
+           :slash/doc
+           "Reload Python extensions, skills/agents, prompt templates, and context files."
+           :slash/run-fn reload-slash}
+          {:slash/name "test"
+           :slash/doc "Run Python extension tests (test_*.py / *_test.py) and report pass/fail."
+           :slash/run-fn test-slash}]
+         :ext/cli
+         [{:cmd/name "test"
+           :cmd/internal? true
+           :cmd/doc
+           "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
+           :cmd/usage "vis ext test"
+           :cmd/examples ["vis ext test"]
+           :cmd/run-fn test-cli!}]
+         :ext/doctor-fn doctor-fn}))))

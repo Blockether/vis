@@ -12,7 +12,8 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
@@ -1760,21 +1761,69 @@
 ;; can dangle across frames. The render loop reads it back via
 ;; `scroll/layout-offset` (what row to paint) and drives the animation with
 ;; `:ease-scroll`.
+;; Scroll-transition diagnostic (`:debug`, silent under the default
+;; `:info` file handler — flip min-level to investigate the "jump to
+;; bottom fighting" symptom). `scroll-pre!` snapshots the PRE-transition
+;; `:scroll`; `log-scroll!` emits the transition and flags a `:at→:follow`
+;; re-arm — the prime suspect for the bounce: a scroll-down landing in the
+;; slack band re-arms FOLLOW and snaps back to bottom, then the next ease
+;; pushes down again. Grep the log for `scroll-transition` / `rearm? true`.
+(defn- scroll-snapshot [sc] {:mode (str (:mode sc)) :offset (long (or (:offset sc) 0))})
+(defn- scroll-pre! [db] (scroll-snapshot (:scroll db)))
+(defn- log-scroll!
+  [label pre post extra]
+  (let [rearmed? (and (= "at" (:mode pre)) (= "follow" (:mode post)))]
+    (tel/log! {:level :debug
+               :id ::scroll-transition
+               :data (merge {:event label :pre pre :post post :rearm? rearmed?} extra)
+               :msg (str "scroll-transition "
+                         label
+                         " pre="
+                         (:mode pre)
+                         "@"
+                         (:offset pre)
+                         " post="
+                         (:mode post)
+                         "@"
+                         (:offset post)
+                         (when rearmed? " [re-armed FOLLOW]"))})))
+
 (reg-event-db :set-scroll
               ;; Search jump / `:scroll-to-message` resolution: snap-park at an exact
               ;; row (already clamped by the painter). No ease - the jump is the point.
               (fn [db [_ offset]]
-                (assoc db :scroll (scroll/parked offset))))
+                (let [pre
+                      (scroll-pre! db)
+
+                      sc
+                      (scroll/parked offset)]
+
+                  (log-scroll! :set-scroll pre (scroll-snapshot sc) {:offset offset})
+                  (assoc db :scroll sc))))
 (reg-event-db :scroll-to-bottom
               ;; Emacs C-l recenter: drop back to FOLLOW (stick to the newest
               ;; content). The repaint is the caller's `:bump-render-version`.
               (fn [db _]
-                (assoc db :scroll scroll/follow)))
+                (let [pre
+                      (scroll-pre! db)
+
+                      sc
+                      scroll/follow]
+
+                  (log-scroll! :scroll-to-bottom pre (scroll-snapshot sc) {})
+                  (assoc db :scroll sc))))
 (reg-event-db :scroll-to-top
               ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
               ;; clamps the offset, so row 0 is the first message.
               (fn [db _]
-                (assoc db :scroll (scroll/parked 0))))
+                (let [pre
+                      (scroll-pre! db)
+
+                      sc
+                      (scroll/parked 0)]
+
+                  (log-scroll! :scroll-to-top pre (scroll-snapshot sc) {})
+                  (assoc db :scroll sc))))
 (reg-event-db :reanchor-scroll
               ;; Scroll-anchoring write-back from the render thread. `anchored` is the
               ;; corrected absolute on-screen row; `delta` is how far content ABOVE the
@@ -1793,8 +1842,24 @@
               ;; for free, and a user parked above (mode :at) is never yanked because
               ;; their desired row is fixed.
               (fn [db [_ total-h inner-h]]
-                (let [max-s (max 0 (- (long total-h) (long inner-h)))]
-                  (assoc db :scroll (scroll/ease (:scroll db) max-s)))))
+                (let [max-s
+                      (max 0 (- (long total-h) (long inner-h)))
+
+                      pre
+                      (scroll-pre! db)
+
+                      sc
+                      (scroll/ease (:scroll db) max-s)
+
+                      post
+                      (scroll-snapshot sc)]
+
+                  ;; `:ease-scroll` fires ~per-render-frame; only log when the
+                  ;; committed mode/offset actually changed (else it spams
+                  ;; settled zeros every frame).
+                  (when (or (not= (:mode pre) (:mode post)) (not= (:offset pre) (:offset post)))
+                    (log-scroll! :ease-scroll pre post {:max-s max-s}))
+                  (assoc db :scroll sc))))
 
 ;; ── In-session search ──────────────────────────────────────────────────────
 ;; The render side already exists (paint-search-hits! highlights bubbles whose
@@ -1941,14 +2006,32 @@
               ;; ease there. Scrolling up is always a deliberate read-history intent
               ;; (mode :at), so the streaming follow hands off automatically.
               (fn [db [_ amount total-h inner-h]]
-                (let [max-s (max 0 (- (long total-h) (long inner-h)))]
-                  (assoc db :scroll (scroll/up (:scroll db) (long amount) max-s)))))
+                (let [max-s
+                      (max 0 (- (long total-h) (long inner-h)))
+
+                      pre
+                      (scroll-pre! db)
+
+                      sc
+                      (scroll/up (:scroll db) (long amount) max-s)]
+
+                  (log-scroll! :scroll-up pre (scroll-snapshot sc) {:amount amount :max-s max-s})
+                  (assoc db :scroll sc))))
 (reg-event-db :scroll-down
               ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
               ;; slack band of the bottom re-arms FOLLOW.
               (fn [db [_ amount total-h inner-h]]
-                (let [max-s (max 0 (- (long total-h) (long inner-h)))]
-                  (assoc db :scroll (scroll/down (:scroll db) (long amount) max-s)))))
+                (let [max-s
+                      (max 0 (- (long total-h) (long inner-h)))
+
+                      pre
+                      (scroll-pre! db)
+
+                      sc
+                      (scroll/down (:scroll db) (long amount) max-s)]
+
+                  (log-scroll! :scroll-down pre (scroll-snapshot sc) {:amount amount :max-s max-s})
+                  (assoc db :scroll sc))))
 (reg-event-db :scroll-to-y
               ;; Scrollbar drag / track click: map the cursor row to an offset and SNAP
               ;; (1:1, no ease - animation would lag the thumb). The very bottom
