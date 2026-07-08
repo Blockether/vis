@@ -41,6 +41,7 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 | 4 | **Non-constant-time token comparison.** The bearer token is compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj:422`; `channel_web/core.clj:1800,1851` | **open** (fix: `MessageDigest.isEqual` on the bytes) |
 | 5 | **`vis_token` cookie has no `Secure` flag.** Set HttpOnly + SameSite=Lax + path=/ but not `:secure`. Behind a TLS-terminating tunnel (Cloudflare — explicitly targeted) any plain-HTTP hop leaks the token. | `channel_web/core.clj:1841,1855` | **open** (fix: `:secure true` when non-loopback) |
 | 6 | **Unbounded request-body slurp.** `body-json` does `(slurp (:body request))` with no size cap on any JSON endpoint → heap-exhaustion DoS from a large POST. | `gateway/server.clj:83` | **open** (fix: cap Content-Length / bounded read) |
+| 11 | **UI spoofing via allowed HTML in re-rendered markdown.** The client re-render sanitised with `DOMPurify.sanitize(…, {USE_PROFILES:{html:true}})`, whose default allow-list keeps `class`/`style`/`id`. That is not script-XSS (so #1 didn't catch it), but it let attacker-influenceable markdown (user message, tool-result body, model output) inject raw `<div>`/`<span>` reusing the app's OWN chrome classes + tool color-role vars to forge an authentic-looking system badge, e.g. `<div class="block-result-label" style="color:var(--tool-shell)">SHELL BACKGROUND … running (pid …)</div>` — a phishing / trust-forgery surface. | `resources/vis-channel-web/public/ui.js` (renderProse) | **fixed** |
 
 ### LOW / INFO (mostly documented design choices)
 
@@ -71,3 +72,9 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
   `DOMPurify.sanitize(marked.parse(data-md), {USE_PROFILES:{html:true}})` before
   DOM insertion, which also strips `javascript:` / `data:` link schemes and
   `on*=` handlers — so the client half of #2 is covered by the same fix.
+- **#11 UI spoofing — fixed.** Tightened the client sanitiser: `FORBID_ATTR:
+  ["style","id"]` drops inline styling/anchors, and a DOMPurify
+  `uponSanitizeAttribute` hook keeps ONLY `language-*` classes (Prism / diff /
+  vis-paste highlighting), stripping every other class. Re-rendered markdown can
+  no longer reuse the app's structural/chrome classes to impersonate system UI,
+  while code-fence highlighting is preserved.

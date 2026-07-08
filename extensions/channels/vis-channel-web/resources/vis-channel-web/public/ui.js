@@ -233,6 +233,28 @@
       });
   }
 
+  /* DOMPurify's html profile ALLOWS `class`/`style`/`id` — enough for injected
+     raw HTML (in a user message, a tool-result body, or model output) to reuse
+     the app's OWN chrome classes (block-result-label, tool color-role vars, …)
+     and forge an authentic-looking system badge (e.g. a fake "SHELL BACKGROUND
+     … running (pid …)"). That's UI spoofing, NOT script-XSS, so #1's sanitizer
+     doesn't catch it. Lock it down: drop inline `style`/`id` outright, and keep
+     ONLY `language-*` classes (Prism / diff / vis-paste highlighting) — every
+     other class is stripped, so re-rendered markdown can't impersonate chrome. */
+  var __purifyHooked = false;
+  function ensurePurifyHook() {
+    if (__purifyHooked || typeof DOMPurify === "undefined" || !DOMPurify.addHook) { return; }
+    __purifyHooked = true;
+    DOMPurify.addHook("uponSanitizeAttribute", function (node, data) {
+      if (data.attrName !== "class") { return; }
+      var kept = String(data.attrValue).split(/\s+/).filter(function (c) {
+        return /^language-[\w-]+$/.test(c);
+      });
+      if (kept.length) { data.attrValue = kept.join(" "); }
+      else { data.keepAttr = false; }
+    });
+  }
+
   function renderProse(root) {
     if (typeof marked !== "undefined") {
       (root || document).querySelectorAll("[data-md]:not([data-md-done])")
@@ -245,7 +267,7 @@
                vendored (Apache-2.0/MPL-2.0) and loads before ui.js; fall back to
                the raw parse only if it somehow failed to load. */
             el.innerHTML = (typeof DOMPurify !== "undefined")
-              ? DOMPurify.sanitize(__md, { USE_PROFILES: { html: true } })
+              ? (ensurePurifyHook(), DOMPurify.sanitize(__md, { USE_PROFILES: { html: true }, FORBID_ATTR: ["style", "id"] }))
               : __md;
             foldPaste(el);
             foldCode(el);
