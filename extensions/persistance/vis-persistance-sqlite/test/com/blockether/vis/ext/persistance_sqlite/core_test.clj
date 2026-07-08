@@ -302,6 +302,69 @@
       (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 
 (defdescribe
+  session-attachment-rollup-test
+  (it
+    "db-list-session-attachments rolls up user + tool across a whole session, ordered by turn then source"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          png
+          (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 1 2 3]))
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) png)
+
+          ;; Turn 1: user image on the message + tool artifact on an iteration.
+          soul1
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id cid
+             :user-request "turn one"
+             :attachments
+             [{:media-type "image/png" :base64 b64 :filename "u1.png" :size (alength png)}]})
+
+          _
+          (h/store-iteration!
+            s
+            {:session-turn-id soul1
+             :status :done
+             :code "plt.show()"
+             :attachments
+             [{:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "t1.png"}]})
+
+          ;; Turn 2: tool artifact only.
+          soul2
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "turn two"})
+
+          _
+          (h/store-iteration!
+            s
+            {:session-turn-id soul2
+             :status :done
+             :code "plt.show()"
+             :attachments
+             [{:tool-call-id "call_B" :media-type "image/png" :base64 b64 :filename "t2.png"}]})
+
+          all
+          (vis/db-list-session-attachments s cid)]
+
+      (expect (= 3 (count all)))
+      ;; Ordered: turn1 user, turn1 tool, turn2 tool.
+      (expect (= [:user :tool :tool] (mapv :source all)))
+      (expect (= ["u1.png" "t1.png" "t2.png"] (mapv :filename all)))
+      ;; Provenance: user carries :turn-soul-id (no iteration); tool carries both.
+      (expect (= (str soul1) (:turn-soul-id (first all))))
+      (expect (nil? (:iteration-id (first all))))
+      (expect (some? (:iteration-id (nth all 1))))
+      (expect (= "call_A" (:tool-call-id (nth all 1))))
+      (expect (= "call_B" (:tool-call-id (nth all 2))))
+      ;; Unknown session -> [].
+      (expect (= [] (vis/db-list-session-attachments s (str (java.util.UUID/randomUUID))))))))
+
+(defdescribe
   sqlite-extension-aggregate-index-data-filter-test
   (it
     "filters extension aggregate rows by index_data JSON fields"

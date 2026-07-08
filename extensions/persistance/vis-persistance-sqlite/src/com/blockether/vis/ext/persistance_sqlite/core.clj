@@ -1607,6 +1607,38 @@
            (sort-by (juxt #(if (= :user (:source %)) 0 1) :position))
            vec))))
 
+(defn db-list-session-attachments
+  "EVERY attachment across a whole SESSION - user images AND tool artifacts -
+   scoped to the active branch's state chain (root->leaf). ONE join through
+   `session_turn_soul` scopes `session_attachment` by the session's states;
+   both rails answer because tool rows denormalize the soul. Returns [{:id
+   :source :turn-soul-id :iteration-id :tool-call-id :position :kind :media-type
+   :filename :size :storage-uri :base64}] ordered by (turn position, source
+   [user first], position) so callers split by `:source` (`:user` / `:tool`) or
+   slice per `:turn-soul-id` - or `[]` when none / no datasource. The
+   whole-session roll-up sibling of [[db-list-turn-all-attachments]] (one turn)
+   and [[db-list-iteration-attachments]] (one iteration); replaces the
+   introspection reader's hand-rolled per-turn N+1 walk."
+  [db-info session-id]
+  (let [state-ids (session-state-chain db-info session-id)]
+    (if-not (and (ds db-info) (seq state-ids))
+      []
+      (let [rank (zipmap state-ids (range))]
+        (->> (query! db-info
+                     {:select [:a.* [:ts.position :turn_position]
+                               [:ts.session_state_id :turn_state_id]]
+                      :from [[:session_attachment :a]]
+                      :join [[:session_turn_soul :ts] [:= :a.session_turn_soul_id :ts.id]]
+                      :where [:in :ts.session_state_id state-ids]})
+             (sort-by (fn [r]
+                        [(get rank (:turn_state_id r) Long/MAX_VALUE) (or (:turn_position r) 0)
+                         (if (:session_turn_iteration_id r) 1 0) (or (:position r) 0)]))
+             (mapv (fn [row]
+                     (assoc (row->attachment row)
+                       :turn-soul-id (:session_turn_soul_id row)
+                       :iteration-id (:session_turn_iteration_id row))))
+             vec)))))
+
 
 
 
