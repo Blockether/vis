@@ -342,6 +342,26 @@
             (expect (str/includes? out "set-session-title!"))
             (expect (str/includes? out "(read-file"))))
         (finally (vis/db-dispose-connection! s)))))
+  (it "uses longer Markdown fences when code contains triple-backtick fences"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let [inner "```clojure\n(dead)\n```"
+                   code (str "patch({:replace \"" inner "\"})")
+                   cid (h/store-session! s {:channel :tui :title "Nested fence"})
+                   qid (vis/db-store-session-turn!
+                         s
+                         {:parent-session-id cid :user-request "nested" :status :running})]
+
+               (h/store-iteration! s
+                                   {:session-turn-id qid
+                                    :code code
+                                    :forms
+                                    [{:scope "t1/i1/f1" :tag :mutation :src code :result :ok}]})
+               (vis/db-update-session-turn! s qid {:status :done})
+               (let [out (transcript/transcript-md s cid)]
+                 (expect (str/includes? out "````python\n"))
+                 (expect (str/includes? out inner))
+                 (expect (str/includes? out "\n````\n"))))
+             (finally (vis/db-dispose-connection! s)))))
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump" (was already `#_`-disabled). It asserted on the removed
   ;; prompt-body / LLM-message-envelope render (SYS_PROMPT_TEXT_FIXTURE,
