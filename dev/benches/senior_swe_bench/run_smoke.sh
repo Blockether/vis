@@ -24,8 +24,13 @@ verifier_env_file="${VIS_BENCH_VERIFIER_ENV_FILE:-}"
 verifier_model="${VIS_BENCH_VERIFIER_MODEL:-}"
 verifier_judge_model="${VIS_BENCH_VERIFIER_JUDGE_MODEL:-${SSB_OVERRIDE_ALL_JUDGE_MODEL:-$verifier_model}}"
 verifier_classifier_model="${VIS_BENCH_VERIFIER_CLASSIFIER_MODEL:-${SSB_OVERRIDE_CLASSIFIER_MODEL:-$verifier_model}}"
-verifier_openai_base_url="${VIS_BENCH_VERIFIER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-${OPENAI_API_BASE:-}}}"
+verifier_va_model="${VIS_BENCH_VERIFIER_VA_MODEL:-${SSB_OVERRIDE_VA_MODEL:-${FORCE_VA_MODEL:-$verifier_model}}}"
+verifier_va_harness="${VIS_BENCH_VERIFIER_VA_HARNESS:-${SSB_OVERRIDE_VA_HARNESS:-${FORCE_VA_HARNESS:-}}}"
+verifier_openai_base_url="${VIS_BENCH_VERIFIER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-${OPENAI_API_BASE:-${ZAI_API_BASE:-}}}}"
 verifier_tool_choice_compat="${VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT:-}"
+verifier_response_format_compat="${VIS_BENCH_VERIFIER_RESPONSE_FORMAT_COMPAT:-}"
+verifier_tool_choice_compat_disabled=0
+verifier_response_format_compat_disabled=0
 verifier_timeout_multiplier="${VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER:-}"
 export VIS_BENCH_REMOTE_HOME="$remote_home"
 
@@ -193,25 +198,38 @@ fi
 if [[ -z "$verifier_openai_base_url" && -n "$verifier_env_file" ]]; then
   verifier_openai_base_url="$(env_file_value "$verifier_env_file" OPENAI_API_BASE || true)"
 fi
+if [[ -z "$verifier_openai_base_url" && -n "$verifier_env_file" ]]; then
+  verifier_openai_base_url="$(env_file_value "$verifier_env_file" ZAI_API_BASE || true)"
+fi
 
-if [[ -n "$verifier_provider" && "$verifier_provider" != "openai" && "$verifier_provider" != "lmstudio" ]]; then
+if [[ -n "$verifier_provider" && "$verifier_provider" != "openai" && "$verifier_provider" != "lmstudio" && "$verifier_provider" != "zai" ]]; then
   fail_pre_harbor "verifier_provider_invalid" \
-    "VIS_BENCH_VERIFIER_PROVIDER must be unset, openai, or lmstudio; got '$verifier_provider'"
+    "VIS_BENCH_VERIFIER_PROVIDER must be unset, openai, lmstudio, or zai; got '$verifier_provider'"
 fi
 if [[ "$verifier_tool_choice_compat" == "none" || "$verifier_tool_choice_compat" == "0" ]]; then
+  verifier_tool_choice_compat_disabled=1
   verifier_tool_choice_compat=""
+fi
+if [[ "$verifier_response_format_compat" == "none" || "$verifier_response_format_compat" == "0" ]]; then
+  verifier_response_format_compat_disabled=1
+  verifier_response_format_compat=""
 fi
 if [[ "$verifier_provider" == "lmstudio" ]]; then
   verifier_openai_base_url="${verifier_openai_base_url:-http://host.docker.internal:1234/v1}"
-  verifier_tool_choice_compat="${verifier_tool_choice_compat:-required}"
+  if [[ "$verifier_tool_choice_compat_disabled" != "1" ]]; then
+    verifier_tool_choice_compat="${verifier_tool_choice_compat:-required}"
+  fi
   verifier_timeout_multiplier="${verifier_timeout_multiplier:-3}"
+  verifier_va_model="${verifier_va_model:-$verifier_judge_model}"
   verifier_judge_model="$(ensure_openai_slug "$verifier_judge_model")"
   verifier_classifier_model="$(ensure_openai_slug "$verifier_classifier_model")"
-  if [[ -z "$verifier_judge_model" || -z "$verifier_classifier_model" ]]; then
+  verifier_va_model="$(ensure_openai_slug "$verifier_va_model")"
+  if [[ -z "$verifier_judge_model" || -z "$verifier_classifier_model" || -z "$verifier_va_model" ]]; then
     fail_pre_harbor "verifier_lmstudio_model_missing" \
-      "VIS_BENCH_VERIFIER_PROVIDER=lmstudio requires VIS_BENCH_VERIFIER_MODEL, or both VIS_BENCH_VERIFIER_JUDGE_MODEL and VIS_BENCH_VERIFIER_CLASSIFIER_MODEL."
+      "VIS_BENCH_VERIFIER_PROVIDER=lmstudio requires VIS_BENCH_VERIFIER_MODEL, or judge/classifier/validation-agent model overrides."
   fi
 elif [[ "$verifier_provider" == "openai" ]]; then
+  verifier_va_model="${verifier_va_model:-$verifier_judge_model}"
   if [[ -z "${OPENAI_API_KEY:-}" ]] && ! env_file_has_key "$verifier_env_file" "OPENAI_API_KEY"; then
     fail_pre_harbor "verifier_openai_api_key_missing" \
       "VIS_BENCH_VERIFIER_PROVIDER=openai requires OPENAI_API_KEY in the host environment or VIS_BENCH_VERIFIER_ENV_FILE."
@@ -224,10 +242,34 @@ elif [[ "$verifier_provider" == "openai" ]]; then
     fail_pre_harbor "verifier_openai_classifier_model_missing" \
       "VIS_BENCH_VERIFIER_PROVIDER=openai requires VIS_BENCH_VERIFIER_CLASSIFIER_MODEL or SSB_OVERRIDE_CLASSIFIER_MODEL, for example openai/<classifier-model>."
   fi
+elif [[ "$verifier_provider" == "zai" ]]; then
+  verifier_openai_base_url="${verifier_openai_base_url:-https://api.z.ai/api/paas/v4/}"
+  if [[ "$verifier_tool_choice_compat_disabled" != "1" ]]; then
+    verifier_tool_choice_compat="${verifier_tool_choice_compat:-required}"
+  fi
+  if [[ "$verifier_tool_choice_compat_disabled" != "1" && "$verifier_response_format_compat_disabled" != "1" ]]; then
+    verifier_response_format_compat="${verifier_response_format_compat:-json_object}"
+  fi
+  verifier_judge_model="${verifier_judge_model:-${verifier_model:-glm-5.2}}"
+  verifier_classifier_model="${verifier_classifier_model:-${verifier_model:-glm-5.2}}"
+  verifier_va_model="${verifier_va_model:-$verifier_judge_model}"
+  verifier_judge_model="$(ensure_openai_slug "$verifier_judge_model")"
+  verifier_classifier_model="$(ensure_openai_slug "$verifier_classifier_model")"
+  verifier_va_model="$(ensure_openai_slug "$verifier_va_model")"
+  if [[ -z "${OPENAI_API_KEY:-}" && -z "${ZAI_API_KEY:-}" ]] \
+    && ! env_file_has_key "$verifier_env_file" "OPENAI_API_KEY" \
+    && ! env_file_has_key "$verifier_env_file" "ZAI_API_KEY"; then
+    fail_pre_harbor "verifier_zai_api_key_missing" \
+      "VIS_BENCH_VERIFIER_PROVIDER=zai requires ZAI_API_KEY or OPENAI_API_KEY in the host environment or VIS_BENCH_VERIFIER_ENV_FILE."
+  fi
 fi
 if [[ -n "$verifier_tool_choice_compat" && "$verifier_tool_choice_compat" != "required" ]]; then
   fail_pre_harbor "verifier_tool_choice_compat_invalid" \
     "VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT must be unset, none, or required; got '$verifier_tool_choice_compat'"
+fi
+if [[ -n "$verifier_response_format_compat" && "$verifier_response_format_compat" != "json_schema" && "$verifier_response_format_compat" != "json_object" ]]; then
+  fail_pre_harbor "verifier_response_format_compat_invalid" \
+    "VIS_BENCH_VERIFIER_RESPONSE_FORMAT_COMPAT must be unset, none, json_schema, or json_object; got '$verifier_response_format_compat'"
 fi
 if [[ -n "$verifier_timeout_multiplier" ]]; then
   if ! python3 - <<'PY' "$verifier_timeout_multiplier"
@@ -304,7 +346,10 @@ cat > "$out/command.json" <<EOF
   "vis_bench_verifier_openai_base_url": "$verifier_openai_base_url",
   "vis_bench_verifier_judge_model": "$verifier_judge_model",
   "vis_bench_verifier_classifier_model": "$verifier_classifier_model",
+  "vis_bench_verifier_va_model": "$verifier_va_model",
+  "vis_bench_verifier_va_harness": "$verifier_va_harness",
   "vis_bench_verifier_tool_choice_compat": "$verifier_tool_choice_compat",
+  "vis_bench_verifier_response_format_compat": "$verifier_response_format_compat",
   "vis_bench_verifier_timeout_multiplier": "$verifier_timeout_multiplier",
   "vis_bench_task_image": "$task_image_override",
   "vis_bench_prepare_python_dev_image_requested": "$requested_prepare_python_dev_image",
@@ -332,10 +377,15 @@ for task in (dest/'tasks').iterdir():
 PY
 
 if [[ -n "$verifier_tool_choice_compat" ]]; then
-  if ! verifier_adaptation_output="$(python3 "$here/verifier_adapt.py" \
-    --dataset-copy "$dataset_copy" \
-    --tool-choice-compat "$verifier_tool_choice_compat" \
-    --out "$out/verifier-adaptations.json" 2>&1)"; then
+  verifier_adapt_args=(
+    --dataset-copy "$dataset_copy"
+    --tool-choice-compat "$verifier_tool_choice_compat"
+    --out "$out/verifier-adaptations.json"
+  )
+  if [[ -n "$verifier_response_format_compat" ]]; then
+    verifier_adapt_args+=(--response-format-compat "$verifier_response_format_compat")
+  fi
+  if ! verifier_adaptation_output="$(python3 "$here/verifier_adapt.py" "${verifier_adapt_args[@]}" 2>&1)"; then
     fail_pre_harbor "verifier_adaptation_failed" "$verifier_adaptation_output"
   fi
   printf '%s\n' "$verifier_adaptation_output" > "$out/verifier-adaptations.stdout.txt"
@@ -472,6 +522,13 @@ fi
 if [[ "$verifier_provider" == "lmstudio" ]] && [[ -z "${OPENAI_API_KEY:-}" ]] && ! env_file_has_key "$verifier_env_file" "OPENAI_API_KEY"; then
   harbor_args+=(--verifier-env "OPENAI_API_KEY=lmstudio")
 fi
+if [[ "$verifier_provider" == "zai" ]] && [[ -z "${OPENAI_API_KEY:-}" ]] && ! env_file_has_key "$verifier_env_file" "OPENAI_API_KEY"; then
+  if [[ -n "${ZAI_API_KEY:-}" ]]; then
+    harbor_args+=(--verifier-env "OPENAI_API_KEY=$ZAI_API_KEY")
+  elif env_file_has_key "$verifier_env_file" "ZAI_API_KEY"; then
+    harbor_args+=(--verifier-env "OPENAI_API_KEY=$(env_file_value "$verifier_env_file" ZAI_API_KEY)")
+  fi
+fi
 if [[ -n "$verifier_openai_base_url" ]]; then
   harbor_args+=(--verifier-env "OPENAI_BASE_URL=$verifier_openai_base_url")
   harbor_args+=(--verifier-env "OPENAI_API_BASE=$verifier_openai_base_url")
@@ -482,10 +539,16 @@ fi
 if [[ -n "$verifier_classifier_model" ]]; then
   harbor_args+=(--verifier-env "SSB_OVERRIDE_CLASSIFIER_MODEL=$verifier_classifier_model")
 fi
+if [[ -n "$verifier_va_model" ]]; then
+  harbor_args+=(--verifier-env "SSB_OVERRIDE_VA_MODEL=$verifier_va_model")
+fi
+if [[ -n "$verifier_va_harness" ]]; then
+  harbor_args+=(--verifier-env "SSB_OVERRIDE_VA_HARNESS=$verifier_va_harness")
+fi
 if [[ -n "$verifier_tool_choice_compat" ]]; then
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_TOOL_CHOICE=$verifier_tool_choice_compat")
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON=1")
-  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_RESPONSE_FORMAT=1")
+  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_RESPONSE_FORMAT=${verifier_response_format_compat:-1}")
 fi
 if [[ -n "$mounts_json" ]]; then
   harbor_args+=(--mounts "$mounts_json")

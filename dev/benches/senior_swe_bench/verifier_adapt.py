@@ -30,7 +30,12 @@ RESPONSE_FORMAT_ORIGINAL = '''    if thinking_budget > 0:
     call_kwargs.update(kwargs)
 
 '''
-RESPONSE_FORMAT_PATCHED = '''    if thinking_budget > 0:
+RESPONSE_FORMAT_COMPACT_ORIGINAL = '''    if thinking_budget > 0:
+        call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+    call_kwargs.update(kwargs)
+    return call_kwargs
+'''
+RESPONSE_FORMAT_LEGACY_PATCHED = '''    if thinking_budget > 0:
         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
     response_format = _vis_forced_tool_response_format(tools, tool_choice)
@@ -40,6 +45,20 @@ RESPONSE_FORMAT_PATCHED = '''    if thinking_budget > 0:
         call_kwargs.pop("tool_choice", None)
 
 '''
+RESPONSE_FORMAT_PATCHED = '''    if thinking_budget > 0:
+        call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+    call_kwargs.update(kwargs)
+    response_format = _vis_forced_tool_response_format(tools, tool_choice)
+    if response_format is not None and "response_format" not in call_kwargs:
+        instruction = _vis_forced_tool_json_instruction(tools, tool_choice)
+        if instruction:
+            call_kwargs["messages"] = [{"role": "system", "content": instruction}, *call_kwargs["messages"]]
+        call_kwargs["response_format"] = response_format
+        call_kwargs.pop("tools", None)
+        call_kwargs.pop("tool_choice", None)
+
+'''
+RESPONSE_FORMAT_COMPACT_PATCHED = RESPONSE_FORMAT_PATCHED + "    return call_kwargs\n"
 
 HELPER = f'''
 {HELPER_MARKER}
@@ -99,13 +118,18 @@ def _vis_content_json_args(response: Any, name: str | None = None) -> dict[str, 
     return parsed
 
 
-def _vis_response_format_enabled() -> bool:
-    return os.environ.get("SSB_OPENAI_COMPAT_RESPONSE_FORMAT", "").strip().lower() in {{
+def _vis_response_format_mode() -> str:
+    value = os.environ.get("SSB_OPENAI_COMPAT_RESPONSE_FORMAT", "").strip().lower()
+    if value in {{
         "1",
         "true",
         "yes",
         "json_schema",
-    }}
+    }}:
+        return "json_schema"
+    if value == "json_object":
+        return "json_object"
+    return ""
 
 
 def _vis_forced_tool_name(tool_choice: Any) -> str | None:
@@ -119,7 +143,8 @@ def _vis_forced_tool_name(tool_choice: Any) -> str | None:
 
 
 def _vis_forced_tool_response_format(tools: Any, tool_choice: Any) -> dict[str, Any] | None:
-    if not _vis_response_format_enabled():
+    mode = _vis_response_format_mode()
+    if not mode:
         return None
     forced_name = _vis_forced_tool_name(tool_choice)
     if forced_name is None or not isinstance(tools, list) or len(tools) != 1:
@@ -133,6 +158,8 @@ def _vis_forced_tool_response_format(tools: Any, tool_choice: Any) -> dict[str, 
     parameters = fn.get("parameters")
     if not isinstance(parameters, dict):
         return None
+    if mode == "json_object":
+        return {{"type": "json_object"}}
     return {{
         "type": "json_schema",
         "json_schema": {{
@@ -140,6 +167,29 @@ def _vis_forced_tool_response_format(tools: Any, tool_choice: Any) -> dict[str, 
             "schema": parameters,
         }},
     }}
+
+
+def _vis_forced_tool_json_instruction(tools: Any, tool_choice: Any) -> str | None:
+    if _vis_response_format_mode() != "json_object":
+        return None
+    forced_name = _vis_forced_tool_name(tool_choice)
+    if forced_name is None or not isinstance(tools, list) or len(tools) != 1:
+        return None
+    tool = tools[0]
+    if not isinstance(tool, dict):
+        return None
+    fn = tool.get("function")
+    if not isinstance(fn, dict) or fn.get("name") != forced_name:
+        return None
+    parameters = fn.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    return (
+        "Return only a valid JSON object containing the arguments for the forced "
+        f"tool {{forced_name!r}}. Do not include markdown, prose, or a tool-call "
+        "wrapper. The JSON object must conform to this schema:\\n"
+        + json.dumps(parameters, sort_keys=True)
+    )
 
 
 def _vis_openai_compat_tool_choice(tool_choice: Any) -> Any:
@@ -172,7 +222,11 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
     text = path.read_text()
     original = text
     if HELPER_MARKER in text:
-        if "_vis_content_json_args" not in text or "_vis_forced_tool_response_format" not in text:
+        if (
+            "_vis_content_json_args" not in text
+            or "_vis_forced_tool_response_format" not in text
+            or "_vis_forced_tool_json_instruction" not in text
+        ):
             start = text.index(HELPER_MARKER)
             line_start = text.rfind("\n", 0, start) + 1
             end = text.index(HELPER_END_MARKER, start) + len(HELPER_END_MARKER)
@@ -194,6 +248,10 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
 
     if RESPONSE_FORMAT_ORIGINAL in text:
         text = text.replace(RESPONSE_FORMAT_ORIGINAL, RESPONSE_FORMAT_PATCHED, 1)
+    elif RESPONSE_FORMAT_COMPACT_ORIGINAL in text:
+        text = text.replace(RESPONSE_FORMAT_COMPACT_ORIGINAL, RESPONSE_FORMAT_COMPACT_PATCHED, 1)
+    elif RESPONSE_FORMAT_LEGACY_PATCHED in text:
+        text = text.replace(RESPONSE_FORMAT_LEGACY_PATCHED, RESPONSE_FORMAT_PATCHED, 1)
     elif RESPONSE_FORMAT_PATCHED not in text:
         raise AdaptationError(f"{path}: cannot find response_format insertion point")
 
@@ -202,9 +260,15 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
     return AdaptedFile(path=str(path), changed=text != original)
 
 
-def adapt_dataset(dataset_copy: Path, tool_choice_compat: str) -> dict[str, object]:
+def adapt_dataset(
+    dataset_copy: Path,
+    tool_choice_compat: str,
+    response_format_compat: str = "json_schema",
+) -> dict[str, object]:
     if tool_choice_compat != "required":
         raise AdaptationError(f"unsupported tool_choice compatibility mode: {tool_choice_compat}")
+    if response_format_compat not in {"json_schema", "json_object"}:
+        raise AdaptationError(f"unsupported response_format compatibility mode: {response_format_compat}")
     paths = sorted(dataset_copy.glob("tasks/*/tests/ssb_lib/llm_utils.py"))
     if not paths:
         raise AdaptationError(f"no task verifier llm_utils.py files found under {dataset_copy}")
@@ -212,9 +276,12 @@ def adapt_dataset(dataset_copy: Path, tool_choice_compat: str) -> dict[str, obje
     return {
         "enabled": True,
         "tool_choice_compat": tool_choice_compat,
+        "response_format_compat": response_format_compat,
         "env": {
             "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON": "1",
-            "SSB_OPENAI_COMPAT_RESPONSE_FORMAT": "1",
+            "SSB_OPENAI_COMPAT_RESPONSE_FORMAT": (
+                "json_object" if response_format_compat == "json_object" else "1"
+            ),
             "SSB_OPENAI_COMPAT_TOOL_CHOICE": tool_choice_compat,
         },
         "files": [asdict(item) for item in adapted],
@@ -225,10 +292,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-copy", type=Path, required=True)
     parser.add_argument("--tool-choice-compat", required=True)
+    parser.add_argument("--response-format-compat", default="json_schema", choices=["json_schema", "json_object"])
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
-    result = adapt_dataset(args.dataset_copy, args.tool_choice_compat)
+    result = adapt_dataset(args.dataset_copy, args.tool_choice_compat, args.response_format_compat)
     text = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
