@@ -34,6 +34,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [hiccup2.core :as h]
             [ring.core.protocols :as ring-protocols]
@@ -1395,8 +1396,11 @@
                            parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)
             visible-iters (trace-visible-iterations iters)
-            atts-by-iter (vis/db-list-iterations-attachments (vis/db-info)
-                                                             (keep :id visible-iters))]
+            atts-by-iter (into {}
+                               (map (fn [[iter-id atts]]
+                                      [iter-id (attachment-storage/hydrate-all atts)]))
+                               (vis/db-list-iterations-attachments (vis/db-info)
+                                                                   (keep :id visible-iters)))]
 
         (cond (empty? iters) nil
               (empty? visible-iters) [:div.trace-body
@@ -3262,6 +3266,13 @@
                ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
                ;; can't carry.
                [:span.modal-res-actions
+                (when (pick r :can_logs)
+                  [:button.btn-sm
+                   {:type "button"
+                    :hx-post (str "/ui/session/" sid "/resources/logs")
+                    :hx-vals (json-text {:rid rid})
+                    :hx-target "#modal"
+                    :hx-swap "innerHTML"} "logs"])
                 [:button.btn-sm
                  {:type "button"
                   :hx-post (str "/ui/session/" sid "/resources/restart")
@@ -3275,6 +3286,36 @@
                   :hx-target "#modal"
                   :hx-swap "innerHTML"} "stop"]]]))]
          [:p.empty "nothing running yet — add a background above"])))))
+
+(defn- resources-logs-modal
+  "Captured output of a background resource (the web twin of the TUI logs
+   viewer): the resource's ring-buffer lines in a scrollable <pre>, with a
+   Back button that re-opens the resources modal. `rid` is the resource id."
+  [sid rid]
+  (let [label
+        (some-> (try (vis/get-resource sid rid) (catch Throwable _ nil))
+                (pick :label))
+
+        lines
+        (try (vis/resource-logs sid rid) (catch Throwable _ nil))]
+
+    (modal-shell (str "Logs — " (or label rid))
+                 {:class "modal-wide"}
+                 [:div.modal-res-actions {:style "margin-bottom:8px"}
+                  [:button.btn-sm
+                   {:type "button"
+                    :hx-get (str "/ui/session/" sid "/resources")
+                    :hx-target "#modal"
+                    :hx-swap "innerHTML"} "← back"]
+                  [:button.btn-sm
+                   {:type "button"
+                    :hx-post (str "/ui/session/" sid "/resources/logs")
+                    :hx-vals (json-text {:rid rid})
+                    :hx-target "#modal"
+                    :hx-swap "innerHTML"} "refresh"]]
+                 (if (seq lines)
+                   [:pre.modal-res-logs (str/join "\n" lines)]
+                   [:p.empty "no output captured yet"]))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -3341,6 +3382,22 @@
 
 (defn- resource-stop-handler [request] (resource-action-handler request :stop))
 (defn- resource-restart-handler [request] (resource-action-handler request :restart))
+
+(defn- resource-logs-handler
+  "POST /ui/session/:sid/resources/logs — render the selected background's
+   captured output (via `vis/resource-logs`). `rid` rides in the body because
+   resource ids can contain slashes."
+  [request]
+  (let [sid
+        (some-> (get-in request [:path-params :sid])
+                parse-uuid)
+
+        rid
+        (get-in request [:form-params "rid"])]
+
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if (and sid rid) (resources-logs-modal sid rid) "")}))
 
 (defn- resource-start-handler
   "POST /ui/session/:sid/resources/start — start the declared startable of
@@ -5254,6 +5311,7 @@
    ["/ui/session/:sid/resources" {:get #'resources-modal-handler}]
    ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
    ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
+   ["/ui/session/:sid/resources/logs" {:post #'resource-logs-handler}]
    ["/ui/session/:sid/resources/start" {:post #'resource-start-handler}]
    ["/ui/session/:sid/backgrounds/add" {:get #'backgrounds-add-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]

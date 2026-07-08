@@ -1007,6 +1007,9 @@ background:var(--panel2);color:var(--dim);border:1px solid var(--line2)}
 .btn-sm{padding:var(--ctl-sm-py) var(--ctl-sm-px);border-radius:var(--r-sm);border:1px solid var(--line2);
 font-size:.74rem;color:var(--fg);background:var(--bg);cursor:pointer;
 transition:background .12s,border-color .12s}
+.modal-res-logs{font-family:var(--mono);font-size:.74rem;line-height:1.45;color:var(--fg);
+  background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r-sm);
+  padding:.6rem .7rem;margin:0;max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word}
 /* mobile: cards stack, Start is a full-width tap target, and a resource row
    wraps its restart/stop actions onto their own line so the name is never
    crushed on a phone. */

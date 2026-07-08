@@ -646,7 +646,11 @@
                             ;; (status :exited) so its logs stay readable; only resource_stop
                             ;; (or replacing the id) lets the registry drop it.
                             :alive-fn (fn []
-                                        (some? (bg-entry session id)))})
+                                        (some? (bg-entry session id)))
+                            ;; Ring-buffer tail so TUI/web can VIEW a background's
+                            ;; output (same lines as shell_logs), not just stop it.
+                            :logs-fn (fn []
+                                       (mapv second (:lines @buffer)))})
       (extension/success
         ;; No :op / :cwd — shell_bg always runs at the workspace root and the
         ;; result rides every later prompt as a frozen <results> pin.

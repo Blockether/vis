@@ -127,7 +127,8 @@
   "Normalise a caller resource map into the canonical serializable DATA map.
    `\"can_stop\"`/`\"can_restart\"` reflect whether a thunk was supplied;
    `\"session\"` is stamped from the owning session."
-  [session {:keys [id kind label status detail pid owner language]} {:keys [stop-fn restart-fn]}]
+  [session {:keys [id kind label status detail pid owner language]}
+   {:keys [stop-fn restart-fn logs-fn]}]
   (cond-> {"id" (str id)
            "session" (skey session)
            "kind" (sval (or kind :resource))
@@ -135,6 +136,7 @@
            "status" (sval (or status :up))
            "can_stop" (boolean stop-fn)
            "can_restart" (boolean restart-fn)
+           "can_logs" (boolean logs-fn)
            "created_at" (System/currentTimeMillis)}
     detail
     (assoc "detail" detail)
@@ -156,10 +158,10 @@
   "Register (or replace) a resource UNDER `session`. `resource` is the DATA map
    (needs at least `:id`, unique within the session; `:kind` defaults to
    `:resource`). `fns` carries the live lifecycle thunks `{:stop-fn :restart-fn
-   :alive-fn}` (all optional — a resource with no `:stop-fn` reports
+   :alive-fn :logs-fn}` (all optional — a resource with no `:stop-fn` reports
    `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
-  ([session resource {:keys [stop-fn restart-fn alive-fn] :as fns}]
+  ([session resource {:keys [stop-fn restart-fn alive-fn logs-fn] :as fns}]
    (let [sid
          (skey session)
 
@@ -179,7 +181,10 @@
          (assoc :restart-fn restart-fn)
 
          alive-fn
-         (assoc :alive-fn alive-fn)))
+         (assoc :alive-fn alive-fn)
+
+         logs-fn
+         (assoc :logs-fn logs-fn)))
      (persist-snapshot!)
      data)))
 
@@ -253,6 +258,15 @@
   "DATA map for `session`+`id`, or nil."
   [session id]
   (get-in @registry [(skey session) (str id) :data]))
+
+(defn logs
+  "Captured output lines for `session`+`id`, via the resource's `:logs-fn` thunk.
+   Returns a vector of line strings (newest last), or nil when the resource has
+   no logs-fn (`can_logs false`) or is unknown. The only resource kind that
+   currently supplies logs is a `shell_bg` background (its ring buffer)."
+  [session id]
+  (when-let [f (get-in @registry [(skey session) (str id) :logs-fn])]
+    (try (vec (f)) (catch Throwable _ nil))))
 
 (defn stop!
   "Run a resource's `:stop-fn` and unregister it. THE single stop path — the
