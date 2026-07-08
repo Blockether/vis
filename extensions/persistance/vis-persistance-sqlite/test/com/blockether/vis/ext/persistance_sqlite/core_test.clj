@@ -179,7 +179,7 @@
 (defdescribe
   user+tool-attachment-read-back-test
   (it
-    "db-read-attachment is source-agnostic; user images list with an id"
+    "db-read-attachment routes by the handle's source prefix (no fallback); user images list with a handle id"
     (let [s
           (h/store)
 
@@ -226,17 +226,26 @@
           tool-read
           (vis/db-read-attachment s tid)]
 
-      ;; User lister now projects a usable id for read-back.
+      ;; User lister now projects a self-describing handle id for read-back.
       (expect (= 1 (count user-atts)))
       (expect (string? uid))
-      ;; One id, source-agnostic read resolves BOTH tables, tagging provenance.
+      (expect (str/starts-with? uid "user:"))
+      (expect (str/starts-with? tid "tool:"))
+      ;; The handle prefix routes read DIRECTLY to the owning table, tagging
+      ;; provenance — and the id echoes back for a clean round-trip.
+      ;; Each handle routes read to its OWN table, tagging provenance.
       (expect (= :user (:source user-read)))
       (expect (nil? (:tool-call-id user-read)))
       (expect (= "user.png" (:filename user-read)))
       (expect (= b64 (:base64 user-read)))
+      (expect (= uid (:id user-read)))
       (expect (= :tool (:source tool-read)))
       (expect (= "call_Z" (:tool-call-id tool-read)))
       (expect (= "tool.png" (:filename tool-read)))
+      (expect (= tid (:id tool-read)))
+      ;; No fallback: a valid uuid under the WRONG source prefix does NOT
+      ;; silently resolve via the other table — it is simply absent.
+      (expect (nil? (vis/db-read-attachment s (str "user:" (subs tid 5)))))
       ;; Unknown id -> nil.
       (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 

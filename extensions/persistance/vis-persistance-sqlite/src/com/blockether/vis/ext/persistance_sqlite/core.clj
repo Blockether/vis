@@ -1458,6 +1458,25 @@
           (store-turn-attachments! tx-info (str soul-id) attachments now)
           soul-id)))))
 
+(defn- attachment-handle
+  "Self-describing attachment id that crosses the sandbox/model boundary:
+   `\"<source>:<uuid>\"` (source ∈ `tool`|`user`). The provenance travels IN
+   the id, so read-back is a DIRECT single-table dispatch — no source-guessing
+   fallback."
+  [source id]
+  (str (name source) ":" (->ref id)))
+
+(defn- parse-attachment-handle
+  "Split a `\"<source>:<uuid>\"` attachment handle into `[source-kw raw-uuid]`,
+   or nil when malformed / sourceless (e.g. a bare UUID). Only `:tool`/`:user`
+   sources resolve."
+  [handle]
+  (when-let [s (->ref handle)]
+    (let [i (str/index-of s ":")]
+      (when (and i (pos? i))
+        (let [src (keyword (subs s 0 i))]
+          (when (contains? #{:tool :user} src) [src (subs s (inc i))]))))))
+
 (defn db-list-turn-attachments
   "Ordered validated image attachments persisted for one `session_turn_soul`.
    Returns `[{:id :position :kind :media-type :filename :size :base64}]` — the
@@ -1470,7 +1489,7 @@
     (let [soul-id-s (->ref session-turn-soul-id)]
       (mapv (fn [row]
               (let [^bytes bs (:bytes row)]
-                {:id (:id row)
+                {:id (attachment-handle :user (:id row))
                  :position (:position row)
                  :kind (:kind row)
                  :media-type (:media_type row)
@@ -1503,7 +1522,7 @@
                   (update m
                           (:session_turn_soul_id row)
                           (fnil conj [])
-                          {:id (:id row)
+                          {:id (attachment-handle :user (:id row))
                            :position (:position row)
                            :kind (:kind row)
                            :media-type (:media_type row)
@@ -1529,7 +1548,7 @@
     (let [iter-id-s (->ref iteration-id)]
       (mapv (fn [row]
               (let [^bytes bs (:bytes row)]
-                {:id (:id row)
+                {:id (attachment-handle :tool (:id row))
                  :tool-call-id (:tool_call_id row)
                  :position (:position row)
                  :kind (:kind row)
@@ -1565,7 +1584,7 @@
                   (update m
                           (:session_turn_iteration_id row)
                           (fnil conj [])
-                          {:id (:id row)
+                          {:id (attachment-handle :tool (:id row))
                            :tool-call-id (:tool_call_id row)
                            :position (:position row)
                            :kind (:kind row)
@@ -1600,26 +1619,27 @@
      :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
 
 (defn db-read-attachment
-  "Read ONE persisted attachment by id, SOURCE-AGNOSTIC. Tries the OUTBOUND
-   `session_iteration_attachment` table first (tool artifacts), then falls back
-   to `session_turn_attachment` (INBOUND user images) — the two id spaces are
-   independent random UUIDs, so a single id never collides. Returns `{:id
-   :source :tool-call-id :position :kind :media-type :filename :size
-   :storage-uri :base64}` (`:source` is `:tool`/`:user`, `:base64` inline bytes)
-   or nil when absent / no datasource. The read-back twin of the
-   `db-list-iteration(s)-attachments` + `db-list-turn(s)-attachments` listers: a
-   tool re-fetches an artifact it (or an earlier turn, or the user) produced."
+  "Read ONE persisted attachment by its self-describing handle
+   `\"<source>:<uuid>\"` (as minted by the `db-list-*-attachments` listers). The
+   `source` prefix routes the lookup DIRECTLY to its owning table — `tool` →
+   `session_iteration_attachment`, `user` → `session_turn_attachment` — so there
+   is NO cross-table fallback / id-space guessing. Returns `{:id :source
+   :tool-call-id :position :kind :media-type :filename :size :storage-uri
+   :base64}` (`:id` echoes the handle; `:tool-call-id` nil for user images) or
+   nil when the handle is malformed / absent / no datasource. The read-back twin
+   of the listers: a tool re-fetches an artifact it (or an earlier turn, or the
+   user) produced."
   [db-info attachment-id]
-  (when (and (ds db-info) attachment-id)
-    (let [id-s (->ref attachment-id)]
-      (or (when-let [row (query-one!
-                           db-info
-                           {:select [:*] :from :session_iteration_attachment :where [:= :id id-s]})]
-            (row->read-attachment row :tool))
-          (when-let [row (query-one!
-                           db-info
-                           {:select [:*] :from :session_turn_attachment :where [:= :id id-s]})]
-            (row->read-attachment row :user))))))
+  (when (ds db-info)
+    (when-let [[source raw] (parse-attachment-handle attachment-id)]
+      (let [table (case source
+                    :tool
+                    :session_iteration_attachment
+
+                    :user
+                    :session_turn_attachment)]
+        (when-let [row (query-one! db-info {:select [:*] :from table :where [:= :id (->ref raw)]})]
+          (assoc (row->read-attachment row source) :id attachment-id))))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]
