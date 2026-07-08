@@ -900,6 +900,28 @@
                               (and (vector? (:content m))
                                    (some #(= "image_url" (:type %)) (:content m))))
                             suffix))))
+    (it "skips a non-image vis_attach artifact — a csv never rides as an image block"
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              csv {:tool-call-id "tc-2"
+                   :media-type "text/csv"
+                   :base64 "YSxi"
+                   :filename "data.csv"
+                   :size 3
+                   :kind "file"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att csv]})] target)
+              img (last suffix)]
+
+          ;; the image still replays, but ONLY it — the csv artifact is
+          ;; DB/display-only, never a broken data:text/csv image block.
+          (expect (= 3 (count suffix)))
+          (expect (= "user" (:role img)))
+          (expect (= ["image_url"] (mapv :type (:content img))))
+          (expect (= "data:image/png;base64,QUJD"
+                     (-> img
+                         :content
+                         first
+                         :image_url
+                         :url)))))
     (it "emits no image message when an iteration produced no attachments"
         (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
               suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
