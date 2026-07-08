@@ -2051,7 +2051,35 @@
         ;; Second call hits an already-absent path; the map stays the same shape.
         (expect (map? absent))
         (expect (= p (get absent "path")))
-        (expect (false? (get absent "deleted"))))))
+        (expect (false? (get absent "deleted")))))
+  (it "delete recursively removes non-empty directories"
+      (let [delete-tool
+            (private-fn "delete-tool")
+
+            dir
+            (temp-dir-path "delete-shape/tree")
+
+            nested-file
+            (fs/file dir "nested" "x.txt")]
+        (fs/create-dirs (fs/parent nested-file))
+        (spit nested-file "x\n")
+        (let [r (:result (delete-tool dir))]
+          (expect (true? (get r "deleted")))
+          (expect (false? (fs/exists? dir))))))
+  (it "delete-if-exists recursively removes non-empty directories"
+      (let [delete-if
+            (private-fn "delete-if-exists-tool")
+
+            dir
+            (temp-dir-path "delete-shape/tree-if-exists")
+
+            nested-file
+            (fs/file dir "nested" "x.txt")]
+        (fs/create-dirs (fs/parent nested-file))
+        (spit nested-file "x\n")
+        (let [r (:result (delete-if dir))]
+          (expect (true? (get r "deleted")))
+          (expect (false? (fs/exists? dir)))))))
 
 (defdescribe patch-summary-shape-test
              ;; The summary IS what the model reads back as the patch result
