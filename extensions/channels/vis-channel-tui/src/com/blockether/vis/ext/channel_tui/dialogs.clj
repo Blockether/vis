@@ -1341,51 +1341,101 @@
                   ;; Fully generic: drives the declarative startable registry
                   ;; (pick type if >1, propose options, call its start-fn).
                   (do (start-resource-flow! screen session-id) (recur))
-                  (do
-                    (when (pos? total)
-                      (let [r (nth items (clamp @selected 0 (dec total)))]
-                        (cond (= c \s) (do (vis/stop-resource! session-id (get r "id"))
-                                           (vis/notify! (str "Stopped " (get r "label"))
+                  (do (when (pos? total)
+                        (let [r (nth items (clamp @selected 0 (dec total)))]
+                          (cond (= c \s) (do (vis/stop-resource! session-id (get r "id"))
+                                             (vis/notify! (str "Stopped " (get r "label"))
+                                                          :level :info
+                                                          :ttl-ms 3000))
+                                (= c \l) (when (get r "can_logs")
+                                           (let [rid (get r "id")
+                                                 fetch #(seq (vis/resource-logs session-id rid))
+                                                 lines (fetch)]
+
+                                             (if lines
+                                               (text-view-dialog! screen
+                                                                  (str "Logs — " (get r "label"))
+                                                                  lines
+                                                                  :refresh-fn fetch
+                                                                  :tail? true)
+                                               (vis/notify! "No output captured yet"
+                                                            :level :info
+                                                            :ttl-ms 3000))))
+                                (= c \r) (when (get r "can_restart")
+                                           (vis/restart-resource! session-id (get r "id"))
+                                           (vis/notify! (str "Restarted " (get r "label"))
                                                         :level :info
-                                                        :ttl-ms 3000))
-                              (= c \l)
-                              (when (get r "can_logs")
-                                (let [lines (seq (vis/resource-logs session-id (get r "id")))]
-                                  (if lines
-                                    (text-view-dialog! screen (str "Logs — " (get r "label")) lines)
-                                    (vis/notify! "No output captured yet"
-                                                 :level :info
-                                                 :ttl-ms 3000))))
-                              (= c \r) (when (get r "can_restart")
-                                         (vis/restart-resource! session-id (get r "id"))
-                                         (vis/notify! (str "Restarted " (get r "label"))
-                                                      :level :info
-                                                      :ttl-ms 3000)))))
-                    (recur))))
+                                                        :ttl-ms 3000)))))
+                      (recur))))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
-  "Show read-only lines in a scrollable modal. Returns nil after close."
-  [^TerminalScreen screen title lines]
-  (let [scroll (atom 0)]
+  "Show read-only lines in a scrollable modal. Returns nil after close.
+
+   Keys: ↑/↓ line, PgUp/PgDn page, Home/End jump, mouse-wheel scroll,
+   Enter/Esc close. Options:
+   - :refresh-fn  thunk returning fresh lines — enables [r] refresh so a live
+                  buffer (e.g. background logs) can be re-pulled in place.
+   - :tail?       start pinned to the newest line and re-follow the bottom on
+                  refresh (log-tail behaviour); scrolling up releases the pin."
+  [^TerminalScreen screen title lines & {:keys [refresh-fn tail?]}]
+  (let [lines*
+        (atom (vec lines))
+
+        scroll
+        (atom 0)
+
+        follow
+        (atom (boolean tail?))]
+
     (loop []
 
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title (max 8 (count lines)))
-            {:keys [left inner-w]} bounds
-            text-w (max 1 (- inner-w 2))
+      (let [size
+            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+            cols
+            (.getColumns size)
+
+            rows
+            (.getRows size)
+
+            g
+            (.newTextGraphics screen)
+
+            cur-lines
+            @lines*
+
+            bounds
+            (draw-dialog-chrome! g cols rows title (max 8 (count cur-lines)))
+
+            {:keys [left inner-w]}
+            bounds
+
+            text-w
+            (max 1 (- inner-w 2))
+
             wrapped
             (vec (mapcat (fn [line]
                            (if (str/blank? (str line)) [""] (render/wrap-text (str line) text-w)))
-                         (or lines [])))
-            total (count wrapped)
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
-            visible (min total content-h)
-            max-scroll (max 0 (- total visible))
-            _ (swap! scroll #(clamp % 0 max-scroll))]
+                         (or cur-lines [])))
+
+            total
+            (count wrapped)
+
+            {:keys [content-top content-h hint-row]}
+            (dialog-layout bounds total)
+
+            visible
+            (min total content-h)
+
+            max-scroll
+            (max 0 (- total visible))
+
+            _
+            (when @follow (reset! scroll max-scroll))
+
+            _
+            (swap! scroll #(clamp % 0 max-scroll))]
 
         (dotimes [i visible]
           (let [idx (+ @scroll i)
@@ -1402,17 +1452,47 @@
                           :total-h total
                           :inner-h content-h
                           :scroll @scroll})
-        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Enter/Esc" "close"]])
+        (draw-hint-bar! g
+                        left
+                        hint-row
+                        inner-w
+                        (cond-> [["↑/↓" "scroll"] ["PgUp/PgDn" "page"]]
+                          refresh-fn
+                          (conj ["r" (if @follow "tailing" "refresh")])
+
+                          :always
+                          (conj ["Enter/Esc" "close"])))
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (when key
-            (condp = (key-type key)
-              KeyType/Escape nil
-              KeyType/Enter nil
-              KeyType/ArrowUp (do (swap! scroll dec) (recur))
-              KeyType/ArrowDown (do (swap! scroll inc) (recur))
-              (recur))))))))
+        (let [key
+              (read-modal-key! screen)
+
+              wheel
+              (modal-wheel-step key)
+
+              move!
+              (fn [f]
+                (reset! follow false)
+                (swap! scroll #(clamp (f %) 0 max-scroll)))]
+
+          (cond (nil? key) (recur)
+                wheel (do (move! #(+ % wheel)) (recur))
+                :else (condp = (key-type key)
+                        KeyType/Escape nil
+                        KeyType/Enter nil
+                        KeyType/ArrowUp (do (move! dec) (recur))
+                        KeyType/ArrowDown (do (move! inc) (recur))
+                        KeyType/PageUp (do (move! #(- % (max 1 content-h))) (recur))
+                        KeyType/PageDown (do (move! #(+ % (max 1 content-h))) (recur))
+                        KeyType/Home (do (reset! follow false) (reset! scroll 0) (recur))
+                        KeyType/End
+                        (do (reset! follow (boolean tail?)) (reset! scroll max-scroll) (recur))
+                        KeyType/Character (do (when (and refresh-fn
+                                                         (= (lower-key-character key) \r))
+                                                (reset! lines* (vec (refresh-fn)))
+                                                (when tail? (reset! follow true)))
+                                              (recur))
+                        (recur))))))))
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 (defn- text-input-body-lines
   [body]
