@@ -882,7 +882,11 @@
                              (dissoc :answer_ir))
                            (assoc :turn_id tid)))
         (emit-context-updated! sid)
-        (drain-next-queued! sid))
+        ;; A user cancel means "stop", not "advance": do NOT auto-start the next
+        ;; queued turn. Leaving the backlog queued lets the channel pull it back
+        ;; into the editor (TUI) or keep it visible/editable (web) instead of
+        ;; firing an uninterruptible follow-up the instant the cancel lands.
+        (when-not (cancellation/cancelled? cancel-token) (drain-next-queued! sid)))
       (catch Throwable t
         (tel/log! :error ["gateway: turn worker failed" tid (ex-message t)])
         (finish-turn!
@@ -890,7 +894,7 @@
           tid
           {:status "failed" :error (ex-message t) :finished_at (System/currentTimeMillis)})
         (append-event! sid "turn.failed" {:turn_id tid :status "failed" :error (ex-message t)})
-        (drain-next-queued! sid)))))
+        (when-not (cancellation/cancelled? cancel-token) (drain-next-queued! sid))))))
 
 (defn- launch-turn-worker!
   [sid tid request

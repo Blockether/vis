@@ -177,6 +177,70 @@
         (expect (= 3 (count (get batch (str iid)))))))))
 
 (defdescribe
+  user+tool-attachment-read-back-test
+  (it
+    "db-read-attachment is source-agnostic; user images list with an id"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          png
+          (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 9 8 7]))
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) png)
+
+          ;; INBOUND user image attached to the turn message.
+          soul
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id cid
+             :user-request "here is a chart"
+             :attachments
+             [{:media-type "image/png" :base64 b64 :filename "user.png" :size (alength png)}]})
+
+          user-atts
+          (vis/db-list-turn-attachments s soul)
+
+          uid
+          (:id (first user-atts))
+
+          ;; OUTBOUND tool artifact on an iteration of the same turn.
+          iid
+          (h/store-iteration!
+            s
+            {:session-turn-id soul
+             :status :done
+             :code "plt.show()"
+             :attachments
+             [{:tool-call-id "call_Z" :media-type "image/png" :base64 b64 :filename "tool.png"}]})
+
+          tid
+          (:id (first (vis/db-list-iteration-attachments s iid)))
+
+          user-read
+          (vis/db-read-attachment s uid)
+
+          tool-read
+          (vis/db-read-attachment s tid)]
+
+      ;; User lister now projects a usable id for read-back.
+      (expect (= 1 (count user-atts)))
+      (expect (string? uid))
+      ;; One id, source-agnostic read resolves BOTH tables, tagging provenance.
+      (expect (= :user (:source user-read)))
+      (expect (nil? (:tool-call-id user-read)))
+      (expect (= "user.png" (:filename user-read)))
+      (expect (= b64 (:base64 user-read)))
+      (expect (= :tool (:source tool-read)))
+      (expect (= "call_Z" (:tool-call-id tool-read)))
+      (expect (= "tool.png" (:filename tool-read)))
+      ;; Unknown id -> nil.
+      (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
+
+(defdescribe
   sqlite-extension-aggregate-index-data-filter-test
   (it
     "filters extension aggregate rows by index_data JSON fields"
