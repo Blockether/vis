@@ -328,6 +328,7 @@
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
 (defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
 (defdelegate db-list-turn-all-attachments [db-info session-turn-soul-id])
+(defdelegate db-list-session-attachments [db-info session-id])
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 (defdelegate db-list-iteration-attachments [db-info iteration-id])
 (defdelegate db-list-iterations-attachments [db-info iteration-ids])
