@@ -494,6 +494,18 @@
                    (or (vis-image-fence->html body) whole)))
     md))
 
+(defn- strip-image-fences
+  "Remove every ````vis-image```` fence from a tool-result markdown string. Used
+   by the DB-restored HISTORY trace, where `attachment->figure` re-paints the
+   figure from durable `session_attachment` bytes - so the persisted stdout fence
+   is redundant (and its temp PNG is gone after a restart, leaving only path/ASCII
+   noise). Live streaming keeps `resolve-image-fences`, which paints from the temp
+   file that still exists then (no DB round-trip mid-stream)."
+  [md]
+  (if (and md (str/includes? md "````vis-image"))
+    (str/replace md #"(?s)\n?````vis-image\r?\n(.*?)\r?\n````\n?" "")
+    md))
+
 (defn- normalize-thinking-text
   "Collapse blank-line runs in reasoning before rendering the web thinking block.
    Delegates to the SHARED `vis/normalize-reasoning` so the web card and the TUI
@@ -1137,9 +1149,9 @@
    native-tool form AND each card of a print-many block, so every op-card paints
    identically however many a form carries. nil when there's neither body nor
    summary."
-  [{:keys [label color-role summary body]}]
+  [{:keys [label color-role summary body]} & [strip-fences?]]
   (let [body-md
-        (resolve-image-fences (result-markdown body))
+        ((if strip-fences? strip-image-fences resolve-image-fences) (result-markdown body))
 
         ;; A body that STARTS with a blank line is the tool's BREATHE signal
         ;; (rg emits one so the hits don't glue to `N hits in M files`). The
@@ -1181,8 +1193,9 @@
    The `.block-sum` chevron (▸ → ▾) and `details[open]` rotation are the same
    affordance `block-thinking` uses. A summary-only tool (move/delete/exists)
    has no body, so it stays a flat badge row with no chevron."
-  ([result] (block-result result nil))
-  ([result form]
+  ([result] (block-result result nil false))
+  ([result form] (block-result result form false))
+  ([result form strip-fences?]
    ;; The op-card decision — `tool?`, the badge LABEL/colour, the HEADLINE
    ;; `:summary` ("5 hits in 1 file"), the `:body`, and whether it's COLLAPSIBLE
    ;; — is made ONCE in the gateway (`vis/result-card`); we just paint it. Both the
@@ -1192,10 +1205,10 @@
    ;; a non-tool form none — then we render its raw `:result` value (never a
    ;; pr-str of the map).
    (let [nodes (if-let [cards (seq (vis/result-cards form))]
-                 (vec (keep result-card->hiccup cards))
+                 (vec (keep #(result-card->hiccup % strip-fences?) cards))
                  ;; non-tool form: synthesize a labelless card from the raw value so
                  ;; the SAME renderer paints it (collapsible "result" disclosure).
-                 (when-let [n (result-card->hiccup {:body result})]
+                 (when-let [n (result-card->hiccup {:body result} strip-fences?)]
                    [n]))]
      (cond (empty? nodes) nil
            (= 1 (count nodes)) (first nodes)
@@ -1413,7 +1426,7 @@
                                                      (engine-chrome-form? form)
                                                      (vis/hide-tool-code? form))
                                          (block-code src)))
-                                     (block-result (:result form) form)
+                                     (block-result (:result form) form true)
                                      (when (:error form) (block-error (:error form)))))
                              ;; Produced artifacts (figures/files) restored from DB
                              ;; bytes — durable across a restart, unlike the temp fence.
