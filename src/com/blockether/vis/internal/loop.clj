@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
@@ -567,7 +568,7 @@
                          (vec (concat tool-entries user-entries)))
                        (catch Throwable _ [])))
              :read (fn [id]
-                     (persistance/db-read-attachment d id))}))
+                     (attachment-storage/hydrate (persistance/db-read-attachment d id)))}))
 
         record-tool-event
         (fn [event]
@@ -5102,7 +5103,8 @@
                           ;; Its produced artifacts still ride to a vision model
                           ;; (see the `replay? false` branch of `conversation-suffix`),
                           ;; even though the assistant/thinking chain is dropped.
-                          :attachments (get iters-atts (str (:id it)))
+                          :attachments (attachment-storage/hydrate-all (get iters-atts
+                                                                            (str (:id it))))
                           :preserved-thinking/replay? false}])
                       iters)))
             (catch Throwable t
@@ -5636,7 +5638,8 @@
                             (cond-> {:session-turn-id session-turn-id
                                      :code (or block-code "")
                                      :forms forms-vec
-                                     :attachments iteration-attachments
+                                     :attachments (attachment-storage/offload-attachments
+                                                    iteration-attachments)
                                      :duration-ms
                                      (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                      :llm-full-duration-ms (long (or (:duration-ms iteration-result)
@@ -6136,7 +6139,7 @@
           (:db-info env)
           (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
             (seq turn-attachments)
-            (assoc :attachments turn-attachments)))
+            (assoc :attachments (attachment-storage/offload-attachments turn-attachments))))
 
         turn-position
         (session-turn-position env session-turn-id)

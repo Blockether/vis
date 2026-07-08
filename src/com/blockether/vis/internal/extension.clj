@@ -27,6 +27,7 @@
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.registry :as registry]
@@ -742,6 +743,10 @@
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 ;; Workspace isolation/checkpoint backends exported by this extension.
 (s/def :ext/workspace-backends (s/coll-of map? :kind vector?))
+;; Attachment storage-offload backends exported by this extension (each a
+;; descriptor map: :storage/id :storage/scheme :storage/put-fn :storage/get-fn
+;; plus optional :storage/offload? :storage/priority).
+(s/def :ext/attachment-storage (s/coll-of map? :kind vector?))
 ;; Doctor contribution from this extension: ONE function the `vis doctor`
 ;; aggregator calls with the live environment and that returns a seq of
 ;; diagnostic message maps. Replaces the previous doctor check vector
@@ -990,8 +995,9 @@
                        :ext/ctx-fn :ext/protected-paths :ext/hooks :ext/op-hooks :ext/env
                        :ext/settings :ext/theme :ext/requires :ext/version :ext/author :ext/owner
                        :ext/license :ext/cli :ext/channels :ext/providers :ext/persistance
-                       :ext/workspace-backends :ext/channel-contributions :ext/slash-commands
-                       :ext/startable-resources :ext/doctor-fn :ext/sandbox-shims])
+                       :ext/workspace-backends :ext/attachment-storage :ext/channel-contributions
+                       :ext/slash-commands :ext/startable-resources :ext/doctor-fn
+                       :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2190,6 +2196,9 @@
         (not (:ext/workspace-backends spec))
         (assoc :ext/workspace-backends [])
 
+        (not (:ext/attachment-storage spec))
+        (assoc :ext/attachment-storage [])
+
         (not (:ext/channel-contributions spec))
         (assoc :ext/channel-contributions {})
 
@@ -2437,6 +2446,10 @@
   [entries]
   (doseq [entry entries]
     (workspace/register-backend! entry)))
+(defn- dispatch-attachment-storage!
+  [entries]
+  (doseq [entry entries]
+    (attachment-storage/register-backend! entry)))
 (def ^:private EXT_PARENT ["ext"])
 (defn- mount-under-ext
   "Auto-place an `:ext/cli` entry under the `vis ext` parent.
@@ -2540,6 +2553,7 @@
     (dispatch-providers! (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
     (dispatch-workspace-backends! (:ext/workspace-backends ext))
+    (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
     (theme/register-themes! (:ext/theme ext))
     ;; Index every symbol's inline `:ext.symbol/tag` into the
@@ -2708,6 +2722,13 @@
                         :data {:ext ns-sym
                                :backend-id (:workspace.backend/id backend)
                                :error (ex-message t)}}))))
+    (doseq [backend (:ext/attachment-storage ext)]
+      (try (attachment-storage/deregister-backend! (:storage/id backend))
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::deregister-attachment-storage-failed
+                        :data
+                        {:ext ns-sym :backend-id (:storage/id backend) :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
     (tel/log! {:level :info
@@ -2989,13 +3010,15 @@
        toggle always registers and the feature is one settings flip away (the tools
        stay gated OFF behind :shell/enabled until the user enables it).
 
-     shim-yaml / shim-matplotlib — sandbox SHIMS. NOT gated by anything: each
+     shim-yaml / shim-matplotlib / shim-requests — sandbox SHIMS. NOT gated by anything: each
        registers unconditionally and its `:ext/sandbox-shims` autoloads into
-       every sandbox (`import yaml` / `import matplotlib.pyplot` just work). They
+       every sandbox (`import yaml` / `import matplotlib.pyplot` / `import requests` just work). They
        only sit in this list because it's how a built-in ns gets `require`d."
   '[com.blockether.vis.internal.foundation.core com.blockether.vis.internal.foundation.git-tool
     com.blockether.vis.internal.foundation.shell com.blockether.vis.internal.foundation.shim-yaml
     com.blockether.vis.internal.foundation.shim-matplotlib
+    com.blockether.vis.internal.foundation.shim-requests
+    com.blockether.vis.internal.foundation.shim-pytest
     com.blockether.vis.internal.foundation.shim-attach])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
