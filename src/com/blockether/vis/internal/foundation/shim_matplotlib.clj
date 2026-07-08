@@ -646,13 +646,13 @@
           ;; SINK the bytes at the source — the engine OWNS this figure (a DB
           ;; attachment) with no stdout-fence parsing. The temp file stays only
           ;; for the inline display fence. No-op when no per-block sink is bound.
-          (mpl-capture/record-image! {:kind "image"
-                                      :media-type "image/png"
-                                      :base64 b64
-                                      :size (alength bytes)
-                                      :filename (.getName f)
-                                      :dims (str w "x" h)}) [(.getAbsolutePath f) w h
-                                                             (alength bytes)])))})
+          (mpl-capture/record-attachment! {:kind "image"
+                                           :media-type "image/png"
+                                           :base64 b64
+                                           :size (alength bytes)
+                                           :filename (.getName f)
+                                           :dims (str w "x" h)}) [(.getAbsolutePath f) w h
+                                                                  (alength bytes)])))})
 
 (def ^:private matplotlib-shim-src
   "Pure-Python preamble publishing a minimal `matplotlib` package with a
