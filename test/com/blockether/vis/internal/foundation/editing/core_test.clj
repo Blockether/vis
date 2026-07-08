@@ -81,7 +81,13 @@
           (extension/native-tools-for [ext])
 
           names
-          (set (map :name tools))]
+          (set (map :name tools))
+
+          rg-tool
+          (first (filter #(= "rg" (:name %)) tools))
+
+          include-schema
+          (get-in rg-tool [:schema :properties "include"])]
 
       (expect (<= 8 (count ents)))                          ;; cat ls find rg patch move delete file_exists
       (expect (contains? names "cat"))
@@ -89,6 +95,8 @@
       (expect (contains? names "file_exists"))              ;; file-exists → file_exists
       (expect (every? (comp map? :ext.symbol/schema) ents)) ;; schema tight on the symbol
       (expect (every? :schema tools))                       ;; and surfaced
+      (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
+      (expect (some #(= {:type "array" :items {:type "string"}} %) (:oneOf include-schema)))
       (expect (every? :render tools))                       ;; renderer present
       (expect (every? (comp seq str :description) tools))   ;; non-blank model-facing description
       (expect (not-any? :ext.symbol/native-tool ents))))    ;; legacy map removed
@@ -133,7 +141,9 @@
     (it "defaults :paths to [\".\"] and keeps canonical :paths/:include"
         (expect (= ["."] (:paths (coerce {"query" ["x"]}))))
         (expect (= ["src"] (:paths (coerce {"query" ["x"] "paths" ["src"]}))))
-        (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" ["*.clj"]})))))
+        (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" ["*.clj"]}))))
+        (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" "*.clj"}))))
+        (expect (= [] (:include (coerce {"query" ["x"] "include" []})))))
     (it "ignores unknown keys (removed aliases are just dropped, never fatal)"
         (let [spec (coerce {"query" ["x"]
                             "path" "src"
