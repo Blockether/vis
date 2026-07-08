@@ -7,9 +7,10 @@
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]
+  (:import [org.graalvm.polyglot Context Value]
            [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent Callable Executors Future]))
 
 (defn- temp-root
   ^String []
@@ -193,3 +194,75 @@
 
         (expect (nil? (:error out)))
         (expect (empty? (:attachments out))))))
+
+(defn- conveying-gather
+  "Faithful replica of loop.clj's `gather-fn`: submit each thunk to a
+   virtual-thread executor wrapped in `bound-fn*` (which snapshots the caller's
+   thread-local binding frame — INCLUDING `*attachment-sink*` — and replays it
+   on the worker), then `.get` in submission order. This IS the conveyance
+   under test: an artifact produced inside `await gather(...)` runs on a virtual
+   thread yet must still reach the block's `:attachments`."
+  [executor]
+  (fn [& thunks]
+    (let [thunks
+          (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+            (vec (first thunks))
+            (vec thunks))
+
+          call
+          (fn [t]
+            (cond (instance? Value t) (.execute ^Value t (object-array 0))
+                  (ifn? t) (t)
+                  :else t))
+
+          futs
+          (mapv (fn [t]
+                  (.submit executor
+                           ^Callable
+                           (bound-fn* (fn []
+                                        (call t)))))
+                thunks)]
+
+      (mapv (fn [^Future f]
+              (.get f))
+            futs))))
+
+(defn- ctx-with-gather
+  "A confined sandbox context with `__vis_par__` wired to a faithful
+   virtual-thread `gather`, so `await gather(...)` runs its awaitables on
+   virtual threads exactly like the real loop."
+  [root executor]
+  (:python-context (ep/create-python-context {(symbol "__vis_par__") (conveying-gather executor)}
+                                             (fn []
+                                               [root]))))
+
+(defdescribe
+  gather-conveys-attachment-sink-test
+  "Regression (turn 28/29): an artifact produced by a tool running INSIDE
+   `await gather(...)` executes on a gather-executor virtual thread, not the
+   block thread. `bound-fn*` must convey the per-block `*attachment-sink*` to
+   that thread so `vis_attach_bytes` still lands in the block's `:attachments`
+   — no silent drop, no nil sink."
+  (it "captures every gather-produced artifact into the block's :attachments"
+      (let [ex
+            (Executors/newVirtualThreadPerTaskExecutor)
+
+            pctx
+            (ctx-with-gather (temp-root) ex)
+
+            out
+            (try (block pctx
+                        (str "async def mk(name):\n"
+                             "    return vis_attach_bytes('payload', name)\n"
+                             "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
+                             "print(len(r))\n"))
+                 (finally (.shutdownNow ex)))
+
+            atts
+            (:attachments out)]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"^3" (str (:stdout out))))
+        ;; all three, produced on virtual threads, reached the block's sink
+        (expect (= 3 (count atts)))
+        (expect (= #{"a.txt" "b.txt" "c.txt"} (set (map :filename atts)))))))
