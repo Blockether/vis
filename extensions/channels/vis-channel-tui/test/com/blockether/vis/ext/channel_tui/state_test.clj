@@ -774,7 +774,52 @@
                                   [:level :info :ttl-ms 2500]]
                                   @notified)))))))
 
+(defdescribe session-refresh-reconciles-in-flight-state-test
+             (it "clears stale cancelling state when refreshed session is terminal"
+                 (reset! state/app-db
+                   {:session {:id "s1"}
+                    :loading? true
+                    :cancelling? true
+                    :cancel-token :token
+                    :gateway-turn-id "turn-1"
+                    :progress {:iterations []}
+                    :turn-start-ms 10
+                    :render-version 0})
+                 (state/dispatch [:init-session {:id "s1" :status "idle"}
+                                  [{:role :user :text "cancelled"}
+                                   {:role :assistant :text "interrupted" :status :interrupted}]
+                                  {:root "/tmp"}])
+                 (let [db @state/app-db]
+                   (expect (false? (:loading? db)))
+                   (expect (false? (:cancelling? db)))
+                   (expect (nil? (:cancel-token db)))
+                   (expect (nil? (:gateway-turn-id db)))
+                   (expect (nil? (:progress db)))
+                   (expect (nil? (:turn-start-ms db)))))
+             (it "preserves active turn state when refreshed session is still running"
+                 (reset! state/app-db
+                   {:session {:id "s1"}
+                    :loading? true
+                    :cancelling? true
+                    :cancel-token :token
+                    :gateway-turn-id "turn-1"
+                    :progress {:iterations [{:status :running}]}
+                    :turn-start-ms 10
+                    :render-version 0})
+                 (state/dispatch [:init-session {:id "s1" :status "running" :current_turn_id "turn-1"}
+                                  [{:role :user :text "running"}
+                                   {:role :assistant :pending? true}]
+                                  {:root "/tmp"}])
+                 (let [db @state/app-db]
+                   (expect (true? (:loading? db)))
+                   (expect (true? (:cancelling? db)))
+                   (expect (= :token (:cancel-token db)))
+                   (expect (= "turn-1" (:gateway-turn-id db)))
+                   (expect (= {:iterations [{:status :running}]} (:progress db)))
+                   (expect (= 10 (:turn-start-ms db))))))
+
 (defdescribe
+
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
       (let [make-progress-render-updater
