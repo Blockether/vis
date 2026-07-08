@@ -3287,18 +3287,33 @@
                   :hx-swap "innerHTML"} "stop"]]]))]
          [:p.empty "nothing running yet — add a background above"])))))
 
+(defn- resources-logs-pre
+  "The scrollable, self-tailing <pre> for a background's ring buffer. Polls
+   its own lines endpoint every 2s and auto-follows the newest line (real
+   `tail -f`), releasing the follow only while the user has scrolled up to
+   read history — scrolling back to the bottom re-arms it."
+  [sid rid]
+  (let [lines (try (vis/resource-logs sid rid) (catch Throwable _ nil))]
+    [:pre.modal-res-logs
+     {:id "res-logs"
+      :data-follow "1"
+      :hx-post (str "/ui/session/" sid "/resources/logs/lines")
+      :hx-vals (json-text {:rid rid})
+      :hx-trigger "load, every 2s"
+      :hx-swap "innerHTML"
+      :onscroll
+      "this.dataset.follow=(this.scrollHeight-this.scrollTop-this.clientHeight<24)?'1':'0'"
+      :hx-on:htmx:after-swap "if(this.dataset.follow!=='0'){this.scrollTop=this.scrollHeight;}"}
+     (if (seq lines) (str/join "\n" lines) "no output captured yet")]))
+
 (defn- resources-logs-modal
   "Captured output of a background resource (the web twin of the TUI logs
-   viewer): the resource's ring-buffer lines in a scrollable <pre>, with a
-   Back button that re-opens the resources modal. `rid` is the resource id."
+   viewer): a live-tailing ring-buffer <pre> that auto-follows the newest
+   line, with a Back button that re-opens the resources modal. `rid` is the
+   resource id."
   [sid rid]
-  (let [label
-        (some-> (try (vis/get-resource sid rid) (catch Throwable _ nil))
-                (pick :label))
-
-        lines
-        (try (vis/resource-logs sid rid) (catch Throwable _ nil))]
-
+  (let [label (some-> (try (vis/get-resource sid rid) (catch Throwable _ nil))
+                      (pick :label))]
     (modal-shell (str "Logs — " (or label rid))
                  {:class "modal-wide"}
                  [:div.modal-res-actions {:style "margin-bottom:8px"}
@@ -3306,16 +3321,8 @@
                    {:type "button"
                     :hx-get (str "/ui/session/" sid "/resources")
                     :hx-target "#modal"
-                    :hx-swap "innerHTML"} "← back"]
-                  [:button.btn-sm
-                   {:type "button"
-                    :hx-post (str "/ui/session/" sid "/resources/logs")
-                    :hx-vals (json-text {:rid rid})
-                    :hx-target "#modal"
-                    :hx-swap "innerHTML"} "refresh"]]
-                 (if (seq lines)
-                   [:pre.modal-res-logs (str/join "\n" lines)]
-                   [:p.empty "no output captured yet"]))))
+                    :hx-swap "innerHTML"} "← back"] [:span.modal-res-tail "● tailing live"]]
+                 (resources-logs-pre sid rid))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -3398,6 +3405,24 @@
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if (and sid rid) (resources-logs-modal sid rid) "")}))
+(defn- resource-logs-lines-handler
+  "POST /ui/session/:sid/resources/logs/lines — the tail fragment polled by
+   the live <pre>: just the ring-buffer text (escaped), swapped in place so
+   the viewer's scroll position and follow state survive each refresh."
+  [request]
+  (let [sid
+        (some-> (get-in request [:path-params :sid])
+                parse-uuid)
+
+        rid
+        (get-in request [:form-params "rid"])
+
+        lines
+        (when (and sid rid) (try (vis/resource-logs sid rid) (catch Throwable _ nil)))]
+
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (html (list (if (seq lines) (str/join "\n" lines) "no output captured yet")))}))
 
 (defn- resource-start-handler
   "POST /ui/session/:sid/resources/start — start the declared startable of
@@ -5312,6 +5337,7 @@
    ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
    ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
    ["/ui/session/:sid/resources/logs" {:post #'resource-logs-handler}]
+   ["/ui/session/:sid/resources/logs/lines" {:post #'resource-logs-lines-handler}]
    ["/ui/session/:sid/resources/start" {:post #'resource-start-handler}]
    ["/ui/session/:sid/backgrounds/add" {:get #'backgrounds-add-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
