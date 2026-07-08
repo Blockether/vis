@@ -729,6 +729,51 @@
                      (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
                                 @notified))))))
 
+(defdescribe cancel-turn-stale-gateway-test
+             (it "clears stale cancelling state when gateway turn is already terminal"
+                 (let [cancelled
+                       (atom nil)
+
+                       cancelled-gateway
+                       (atom nil)
+
+                       notified
+                       (atom nil)]
+                   (with-redefs [vis/cancel!
+                                 (fn [token]
+                                   (reset! cancelled token))
+
+                                 vis/gateway-cancel-turn!
+                                 (fn [sid tid]
+                                   (reset! cancelled-gateway [sid tid])
+                                   {:error :not-running :status "interrupted"})
+
+                                 vis/notify!
+                                 (fn [text & kvs]
+                                   (reset! notified [text kvs]))]
+                     (reset! state/app-db
+                       {:session {:id "s1"}
+                        :loading? true
+                        :cancel-token :token
+                        :gateway-turn-id "turn-1"
+                        :cancelling? true
+                        :progress {:iterations []}
+                        :turn-start-ms 10
+                        :render-version 0})
+                     (state/dispatch [:cancel-turn])
+                     (let [db @state/app-db]
+                       (expect (= :token @cancelled))
+                       (expect (= ["s1" "turn-1"] @cancelled-gateway))
+                       (expect (false? (:loading? db)))
+                       (expect (false? (:cancelling? db)))
+                       (expect (nil? (:cancel-token db)))
+                       (expect (nil? (:gateway-turn-id db)))
+                       (expect (nil? (:progress db)))
+                       (expect (nil? (:turn-start-ms db)))
+                       (expect (= ["Turn is no longer running; cleared local cancelling state."
+                                  [:level :info :ttl-ms 2500]]
+                                  @notified)))))))
+
 (defdescribe
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
