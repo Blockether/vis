@@ -1163,9 +1163,12 @@
                 (assoc db :shutdown? true)))
 (reg-event-db :set-workspace
               ;; Replace the session's current workspace record (trunk or draft) after a
-              ;; turn that may have switched it (`/draft new | apply | abandon`).
+              ;; turn that may have switched it (`/root`, `/draft new | apply | abandon`).
+              ;; Keep the denormalized root in lockstep; the footer reads it first.
               (fn [db [_ ws]]
-                (assoc db :workspace ws)))
+                (assoc db
+                  :workspace ws
+                  :workspace/root (:root ws))))
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :progress :turn-start-ms :cancel-token :gateway-turn-id])
 
