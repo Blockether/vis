@@ -174,7 +174,7 @@
     ;; toast lied: the editor never changed. User experience:
     ;; \"Ctrl+B not adding text\" with no actionable feedback. See
     ;; conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a / \"why
-    ;; ctrl+b is not fucking ADDING TO THE FUCKING TEXT\".
+    ;; is ctrl+b not adding to the text\".
     ;;
     ;; Fix: when transcription is blank, skip `:input/append` and
     ;; publish exactly the terse `:warn` notify the user should see.

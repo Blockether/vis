@@ -6,6 +6,7 @@
            [java.nio.file Files]))
 
 (def ^:private resolve-image-fences @#'core/resolve-image-fences)
+(def ^:private strip-image-fences @#'core/strip-image-fences)
 
 ;; A 1x1 PNG (valid header bytes are all `mpl-confined-file` cares about — it
 ;; reads WHATEVER is at a confined path and base64s it).
@@ -61,3 +62,24 @@
              (it "is a no-op on markdown without a vis-image fence"
                  (expect (= "plain **text**" (resolve-image-fences "plain **text**")))
                  (expect (nil? (resolve-image-fences nil)))))
+
+;; History (DB-restored) trace strips the fence instead of resolving it:
+;; `attachment->figure` re-paints the figure from durable session_attachment
+;; bytes, so keeping the stdout fence would double-render (live temp still there)
+;; or leave path/ASCII noise (temp gone after restart).
+(defdescribe
+  strip-image-fences-test
+  (it "removes the whole vis-image fence, keeping surrounding text"
+      (let [out (strip-image-fences
+                  (str "before\n" (fence "/tmp/vis-mpl/x.png" "ascii") "\nafter"))]
+        (expect (not (str/includes? out "vis-image")))
+        (expect (not (str/includes? out "ascii")))
+        (expect (str/includes? out "before"))
+        (expect (str/includes? out "after"))))
+  (it "strips even when the PNG is missing/foreign (DB owns the image, not the temp)"
+      (expect (not (str/includes? (strip-image-fences (fence "/etc/passwd" nil)) "vis-image")))
+      (expect (not (str/includes? (strip-image-fences (fence "/tmp/vis-mpl/nope-404.png" nil))
+                                  "vis-image"))))
+  (it "is a no-op on markdown without a vis-image fence"
+      (expect (= "plain **text**" (strip-image-fences "plain **text**")))
+      (expect (nil? (strip-image-fences nil)))))
