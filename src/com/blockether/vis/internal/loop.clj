@@ -2533,17 +2533,28 @@
   (contains? (:capabilities (svar-router/infer-model-metadata {:name (str (:model target))}))
              :vision))
 
+(defn- image-attachment?
+  "True when a stored iteration attachment is an IMAGE — the only kind a vision
+   model can consume as an `image_url` block. A generic `vis_attach` artifact
+   (csv/json/pdf/wav/…) is DB- and display-only: it must never be handed to the
+   provider as an image (a broken `data:text/csv;…` image block), so replay
+   filters on the `image/` media-type (falling back to the coarse `:kind`)."
+  [{:keys [media-type kind]}]
+  (or (str/starts-with? (str media-type) "image/")
+      (and (str/blank? (str media-type)) (= "image" (str kind)))))
+
 (defn- iteration-image-message
-  "A `{:role \"user\"}` message carrying every image a prior iteration's tool
-   calls produced (matplotlib figures), as canonical `image_url` blocks — the
-   vision replay of generated artifacts, sourced from the iteration's persisted
-   `:attachments`. nil when the iteration produced none. Emitted as its OWN
-   message right AFTER the iteration's `<results>` so an image never sits
-   between an assistant `tool_use` and its answering `tool_result` (which would
-   break tool-call adjacency on the OpenAI chat wire)."
+  "A `{:role \"user\"}` message carrying every IMAGE a prior iteration's tool
+   calls produced (matplotlib figures, `vis_attach`ed images), as canonical
+   `image_url` blocks — the vision replay of generated artifacts, sourced from
+   the iteration's persisted `:attachments` (non-image artifacts are skipped —
+   see `image-attachment?`). nil when the iteration produced no images. Emitted
+   as its OWN message right AFTER the iteration's `<results>` so an image never
+   sits between an assistant `tool_use` and its answering `tool_result` (which
+   would break tool-call adjacency on the OpenAI chat wire)."
   [iter-rec]
-  (when-let [atts (seq (:attachments iter-rec))]
-    {:role "user" :content (mapv attachment->image-block atts)}))
+  (when-let [imgs (seq (filter image-attachment? (:attachments iter-rec)))]
+    {:role "user" :content (mapv attachment->image-block imgs)}))
 
 
 (defn- conversation-suffix

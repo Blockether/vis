@@ -2995,7 +2995,8 @@
        only sit in this list because it's how a built-in ns gets `require`d."
   '[com.blockether.vis.internal.foundation.core com.blockether.vis.internal.foundation.git-tool
     com.blockether.vis.internal.foundation.shell com.blockether.vis.internal.foundation.shim-yaml
-    com.blockether.vis.internal.foundation.shim-matplotlib])
+    com.blockether.vis.internal.foundation.shim-matplotlib
+    com.blockether.vis.internal.foundation.shim-attach])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
    side-effect runs. Idempotent (require won't reload; register is idempotent)."
