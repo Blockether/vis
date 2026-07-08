@@ -643,10 +643,29 @@
       [["Total cost" (format-cost-usd (:cost-usd totals)) false]
        ["Tokens (in / out)" (format-tokens (:tokens totals)) true]]]]))
 
+(defn- fence-delimiter
+  "Markdown fence delimiter longer than any backtick run in `body`.
+
+   Forensic reports can include source/diffs/results that themselves contain
+   Markdown fences (for example a Python patch string containing
+   ```clojure). A fixed triple-backtick wrapper is then ambiguous and closes
+   early, corrupting the rendered report. CommonMark permits longer fences, so
+   choose the shortest safe delimiter."
+  [body]
+  (let [max-run (->> (re-seq #"`+" (str body))
+                     (map count)
+                     (reduce max 0))]
+    (apply str (repeat (max 3 (inc max-run)) "`"))))
+
 (defn- render-fenced
   [lang body]
-  (let [s (str body)]
-    (if (str/blank? s) "" (str "```" (or lang "") "\n" s "\n```\n"))))
+  (let [s
+        (str body)
+
+        fence
+        (fence-delimiter s)]
+
+    (if (str/blank? s) "" (str fence (or lang "") "\n" s "\n" fence "\n"))))
 
 (defn- display-result
   [result]
