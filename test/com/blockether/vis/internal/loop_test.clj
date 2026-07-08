@@ -98,30 +98,31 @@
           (atom [])]
 
       (try
-        (with-redefs [svar/ask-code!
-                      (fn [_router opts]
-                        (case (swap! calls inc)
-                          1
-                          (do ((:on-chunk opts)
-                                {:reasoning "dead thinking" :content "```clojure\n(dead)"})
-                              (throw (ex-info "Stream connection error: closed"
-                                              {:type :svar.core/http-error
-                                               :stream? true
-                                               :content-acc-len 19
-                                               :reasoning-acc-len 13
-                                               :reasoning "dead thinking"
-                                               :partial-content "```clojure\n(dead)"})))
+        (with-redefs [svar/ask-code! (fn [_router opts]
+                                       (case (swap! calls inc)
+                                         1
+                                         (do ((:on-chunk opts
+                                                         {:reasoning "dead thinking"
+                                                          :content "```clojure\n(dead)"}))
+                                             (throw (ex-info "Stream connection error: closed"
+                                                             {:type :svar.core/http-error
+                                                              :stream? true
+                                                              :content-acc-len 19
+                                                              :reasoning-acc-len 13
+                                                              :reasoning "dead thinking"
+                                                              :partial-content
+                                                              "```clojure\n(dead)"})))
 
-                          2
-                          (do ((:on-chunk opts) {:reasoning "fresh thinking"})
-                              ;; Native tool calling: a reply with NO tool call
-                              ;; (`:stop-reason :end`) is the answer (`:content`)
-                              ;; — finalizes the turn.
-                              {:stop-reason :end
-                               :tool-calls []
-                               :content "ok"
-                               :reasoning "fresh thinking"
-                               :tokens {}})))]
+                                         2
+                                         (do ((:on-chunk opts) {:reasoning "fresh thinking"})
+                                             ;; Native tool calling: a reply with NO tool call
+                                             ;; (`:stop-reason :end`) is the answer (`:content`)
+                                             ;; — finalizes the turn.
+                                             {:stop-reason :end
+                                              :tool-calls []
+                                              :content "ok"
+                                              :reasoning "fresh thinking"
+                                              :tokens {}})))]
           (let [result (lp/run-iteration env
                                          []
                                          {:iteration 0
@@ -922,6 +923,40 @@
                          first
                          :image_url
                          :url)))))
+    (it "drops the image when session_fold collapsed the iteration"
+        ;; The invariant: a figure's vision visibility TRACKS its iteration's
+        ;; textual visibility. Once session_fold/session_drop collapses the
+        ;; step, its image bytes leave the wire with it — never re-billed.
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              [pos rec] (stub-tool-iter {:id 1 :attachments [att]})
+              suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
+
+          (expect (not-any? (fn [m]
+                              (and (vector? (:content m))
+                                   (some #(= "image_url" (:type %)) (:content m))))
+                            suffix))))
+    (it "drops a folded cross-turn seed's image — collapse wins over the seed branch"
+        ;; The leak this guards: a prior-turn figure carried as a seed
+        ;; (:preserved-thinking/replay? false) used to be byte-immune to
+        ;; compaction because the seed branch ran BEFORE the collapse check.
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              [pos rec] (stub-tool-iter {:id 1 :replay? false :attachments [att]})
+              suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
+
+          (expect (not-any? (fn [m]
+                              (and (vector? (:content m))
+                                   (some #(= "image_url" (:type %)) (:content m))))
+                            suffix))))
+    (it "still rides a NON-folded cross-turn seed's image to a vision target"
+        ;; The reorder must not break the one path that legitimately emits a
+        ;; seed's image: its bytes were never wired to any prior turn.
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter
+                                             {:id 1 :replay? false :attachments [att]})]
+                                          target)]
+
+          (expect (= 1 (count suffix)))
+          (expect (= ["image_url"] (mapv :type (:content (first suffix)))))))
     (it "emits no image message when an iteration produced no attachments"
         (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
               suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
