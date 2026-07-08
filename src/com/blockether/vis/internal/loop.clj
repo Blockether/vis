@@ -2682,17 +2682,24 @@
                     (conj img)))]
 
             (cond
-              ;; Cross-turn seed: opted out of THINKING/results replay (its
-              ;; evidence lives in the frozen prior-turn context, so emitting
-              ;; text here would double-render it). Produced IMAGE artifacts are
-              ;; the exception: their bytes were NEVER wired to any prior turn,
-              ;; so a vision model can only see a prior figure if we emit it now
-              ;; — the standalone `img` message (no thinking, no results).
-              (false? (:preserved-thinking/replay? iter-rec)) (if img [img] [])
-              ;; summarize/drop collapsed this iteration: drop its
-              ;; assistant + tool_result PAIR entirely and emit only the
-              ;; one-line gist (plain text) — real compaction.
+              ;; Collapse WINS over provenance: a `session_fold`/`session_drop`
+              ;; that covered this iteration removes its whole assistant +
+              ;; tool_result pair AND its generated image. The figure's vision
+              ;; visibility TRACKS its iteration's textual visibility (one
+              ;; invariant), so a folded step keeps only its one-line gist
+              ;; (plain text) — real compaction, bytes and all. Checked BEFORE
+              ;; the cross-turn seed branch so a folded seed also drops its
+              ;; image; otherwise a prior-turn figure would be byte-immune to
+              ;; compaction and re-billed to the vision model every turn.
               (:collapsed? iter-rec) (if results [results] [])
+              ;; Cross-turn seed (NOT collapsed): opted out of THINKING/results
+              ;; replay (its evidence lives in the frozen prior-turn context, so
+              ;; emitting text here would double-render it). Produced IMAGE
+              ;; artifacts are the exception: their bytes were NEVER wired to any
+              ;; prior turn, so a vision model can only see a prior figure if we
+              ;; emit it now — the standalone `img` message (no thinking, no
+              ;; results).
+              (false? (:preserved-thinking/replay? iter-rec)) (if img [img] [])
               ;; Same provider+model, valid signature → verbatim replay
               ;; with the full thinking chain.
               (contains? compatible pos)
