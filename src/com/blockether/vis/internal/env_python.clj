@@ -1638,6 +1638,24 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     "        _s.create_connection = _wrap_create(_s.create_connection)\n" "    except Exception:\n"
     "        pass\n" "__vis_install_net_guard__()\n"))
 
+(defn- make-outbox
+  "Create a fresh per-context OUTBOX directory under the system temp dir and return
+   `{:dir <abs path string> :on-close record-file!}` for
+   `sandbox-fs/confined-filesystem`. The sandbox may WRITE files there
+   (`$VIS_OUTBOX`); each file it closes is captured AT THE SOURCE as a
+   `session_iteration_attachment` — the implicit twin of `vis_attach`, for a
+   library that only knows how to write a file. Best-effort: on any failure returns
+   nil (⇒ no outbox tap, the filesystem stays plain-confined)."
+  []
+  (try (let [dir (java.nio.file.Files/createTempDirectory
+                   "vis-outbox-"
+                   (make-array java.nio.file.attribute.FileAttribute 0))]
+         {:dir (str (.toAbsolutePath dir))
+          :on-close (fn [^java.nio.file.Path p]
+                      (mpl-capture/record-file! p))})
+       (catch Throwable _ nil)))
+
+
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
@@ -1677,12 +1695,15 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         ;; on, host sockets are allowed (urllib/requests/socket work); a non-empty
         ;; `:network/allowed-domains` allowlist further confines connections (guard
         ;; installed below). Empty allowlist + enabled = unrestricted network.
+        outbox
+        (when roots-fn (make-outbox))
+
         io-access
         (if (or roots-fn net?)
           (-> (IOAccess/newBuilder)
               (cond->
                 roots-fn
-                (.fileSystem (sandbox-fs/confined-filesystem roots-fn)))
+                (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox)))
               (.allowHostSocketAccess net?)
               (.build))
           IOAccess/NONE)
@@ -1783,6 +1804,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; model-created live var). The model may still `import re` — re isn't
     ;; protected, so the redundant import is a harmless no-op.
     (.eval ctx "python" "import re")
+    ;; OUTBOX: expose the per-context capture dir to Python as a `VIS_OUTBOX`
+    ;; global and `$VIS_OUTBOX` env var. A file the sandbox WRITES there is
+    ;; captured at the source as a durable iteration attachment (see the
+    ;; `sandbox-fs` outbox tap) — the implicit twin of `vis_attach` for libraries
+    ;; that only know how to write a file. Eval'd before the snapshot so
+    ;; `VIS_OUTBOX` is a BASELINE name (not surfaced as a model-created live var).
+    (when outbox
+      (.putMember g "VIS_OUTBOX" ^String (:dir outbox))
+      (try
+        (.eval
+          ctx
+          "python"
+          "import os as __vis_os__\n__vis_os__.environ['VIS_OUTBOX'] = VIS_OUTBOX\ndel __vis_os__")
+        (catch Throwable _ nil)))
     ;; NETWORK domain allowlist: when sockets are on AND domains are specified,
     ;; patch socket DNS resolution to refuse hosts outside the allowlist. Eval'd
     ;; before the snapshot so the guard's names are BASELINE (not model-visible).
@@ -2145,9 +2180,14 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
             (when (seq p) (vec p))))
 
         sink
-        (atom [])]
+        (atom [])
 
-    (with-bindings {@current-form-idx-var 0 #'mpl-capture/*image-sink* sink}
+        outbox-seen
+        (atom #{})]
+
+    (with-bindings {@current-form-idx-var 0
+                    #'mpl-capture/*attachment-sink* sink
+                    #'mpl-capture/*outbox-seen* outbox-seen}
       (try
         ;; Run the whole-block coroutine; it stashes the program's value in
         ;; `__vis_async_result__` and prints to `baos`. (Globals it assigns
@@ -2170,10 +2210,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
               only?
               (true? (->clj (.getMember g "__vis_only_results__")))
 
-              ;; Images the block PRODUCED (matplotlib show/savefig), captured at
-              ;; the source into the per-block sink — folded in as `:images` so the
-              ;; loop OWNS the bytes with NO stdout-fence parsing.
-              images
+              ;; Artifacts the block PRODUCED (matplotlib show/savefig, vis_attach,
+              ;; or an $VIS_OUTBOX write), captured at the source into the per-block
+              ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
+              ;; NO stdout-fence parsing.
+              attachments
               (mpl-capture/drain sink)]
 
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
@@ -2181,12 +2222,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
           ;;   - printed output (`:stdout`) → the python_execution result; OR
           ;;   - the returned value (`:result`) → a native tool call (never prints).
           ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
-          ;; it is DISPLAY-only (cards), NOT a second context channel. `:images`
+          ;; it is DISPLAY-only (cards), NOT a second context channel. `:attachments`
           ;; ride alongside EITHER — a produced-artifact channel, not context.
           (if out
             (cond-> {:stdout out}
-              images
-              (assoc :images images)
+              attachments
+              (assoc :attachments attachments)
 
               printed
               (assoc :printed-results printed)
@@ -2194,27 +2235,27 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
               (and printed only?)
               (assoc :only-printed-results? true))
             (cond-> {}
-              images
-              (assoc :images images)
+              attachments
+              (assoc :attachments attachments)
 
               (some? res)
               (assoc :result res))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
-          ;; ONE place; any partial stdout (and any image produced before it)
+          ;; ONE place; any partial stdout (and any artifact produced before it)
           ;; rides along.
           (let [out
                 (read-out)
 
-                images
+                attachments
                 (mpl-capture/drain sink)]
 
             (cond-> {:error (map-polyglot-error e code)}
               out
               (assoc :stdout out)
 
-              images
-              (assoc :images images))))))))
+              attachments
+              (assoc :attachments attachments))))))))
 
 (declare protected-rebind-error)
 
