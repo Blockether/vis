@@ -1166,6 +1166,32 @@
               ;; turn that may have switched it (`/draft new | apply | abandon`).
               (fn [db [_ ws]]
                 (assoc db :workspace ws)))
+(def ^:private active-turn-state-keys
+  [:loading? :cancelling? :progress :turn-start-ms :cancel-token :gateway-turn-id])
+
+(defn- session-running?
+  [session]
+  (or (= "running" (:status session))
+      (= :running (:status session))
+      (some? (:current_turn_id session))
+      (some? (:current-turn-id session))))
+
+(defn- clear-active-turn-state
+  [db]
+  (assoc db
+    :loading? false
+    :cancelling? false
+    :progress nil
+    :turn-start-ms nil
+    :cancel-token nil
+    :gateway-turn-id nil))
+
+(defn- reconcile-in-flight-state
+  [next-db previous-db session]
+  (if (session-running? session)
+    (merge next-db (select-keys previous-db active-turn-state-keys))
+    (clear-active-turn-state next-db)))
+
 (reg-event-db :init-session
               (fn [db [_ session history workspace]]
                 (let [user-history (history-user-texts history)]
@@ -1186,11 +1212,8 @@
                              :submitted-input nil
                              :pastes {}
                              :paste-counter 0
-                             :loading? false
-                             :cancel-token nil
-                             :cancelling? false
-                             :progress nil
-                             :detail-expansions {})))))
+                             :detail-expansions {})
+                      (reconcile-in-flight-state db session)))))
 (reg-event-db :open-session-tab
               ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
               ;; WITHOUT disturbing the active tab. If a tab is already bound to this
@@ -2428,13 +2451,7 @@
         ;; the local optimistic loading state immediately: no future gateway
         ;; completion event will arrive to clear "Cancelling...".
         (if gateway-terminal?
-          {:db (assoc db
-                 :loading? false
-                 :cancelling? false
-                 :progress nil
-                 :cancel-token nil
-                 :gateway-turn-id nil
-                 :turn-start-ms nil)
+          {:db (clear-active-turn-state db)
            :fx [[:notify "Turn is no longer running; cleared local cancelling state." :info
                  cancel-notification-ttl-ms]]}
           {:db (assoc db :cancelling? true)
