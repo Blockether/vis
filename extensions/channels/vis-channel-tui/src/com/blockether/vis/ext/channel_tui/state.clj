@@ -218,13 +218,16 @@
 ;;                               ;; in-flight turn (nil when idle). Holds
 ;;                               ;; the cooperative flag + the worker
 ;;                               ;; future so :cancel-turn can hit both.
-;;  :cancelling? false           ;; true once Esc was pressed; cleared on :message-received
+;;  :cancelling? false           ;; true once Esc was pressed; cleared when the
+;;                               ;; local worker reports :message-received OR
+;;                               ;; when the gateway reports that the attached
+;;                               ;; turn is already terminal/missing (for
+;;                               ;; orphan sweeps and restart repair paths).
 ;;  :progress   nil              ;; live per-iteration timeline while loading:
 ;;                               ;;   {:iterations [{:iteration int
 ;;                               ;;                  :thinking  str-or-nil
 ;;                               ;;                  :code      [str]       ;; latest streamed forms
 ;;                               ;;                  :final?    bool}]}
-;;                               ;; Cleared on :message-received.
 ;;  :settings  {:show-thinking true :show-iterations true}
 ;;  :channel-status {}           ;; extension/channel status banners keyed by id
 ;;  :dialog-open? false}         ;; dialog singleton guard
@@ -2402,18 +2405,40 @@
   (fn [db _]
     (if-not (:loading? db)
       {:db db}
-      (do
+      (let [sid
+            (get-in db [:session :id])
+
+            tid
+            (:gateway-turn-id db)
+
+            gateway-result
+            (when (and sid tid)
+              (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
+
+            gateway-terminal?
+            (contains? #{:turn-not-found :not-running} (:error gateway-result))]
         ;; Both the cooperative flag and the hard interrupt are fired through one
         ;; channel-agnostic call. See channels.cancellation/cancel! for the
         ;; contract.
         (vis/cancel! (:cancel-token db))
         ;; An attached gateway turn runs server-side: interrupting the local
         ;; attach waiter alone would leave the engine working, so fire the
-        ;; gateway turn's own cancel token too.
-        (when-let [tid (:gateway-turn-id db)]
-          (try (vis/gateway-cancel-turn! (get-in db [:session :id]) tid) (catch Throwable _ nil)))
-        {:db (assoc db :cancelling? true)
-         :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]}))))
+        ;; gateway turn's own cancel token too. If the gateway says the turn is
+        ;; already gone/terminal (for example after an orphan sweep), reconcile
+        ;; the local optimistic loading state immediately: no future gateway
+        ;; completion event will arrive to clear "Cancelling...".
+        (if gateway-terminal?
+          {:db (assoc db
+                 :loading? false
+                 :cancelling? false
+                 :progress nil
+                 :cancel-token nil
+                 :gateway-turn-id nil
+                 :turn-start-ms nil)
+           :fx [[:notify "Turn is no longer running; cleared local cancelling state." :info
+                 cancel-notification-ttl-ms]]}
+          {:db (assoc db :cancelling? true)
+           :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]})))))
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
    tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so
