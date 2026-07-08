@@ -2,12 +2,27 @@
 set -euo pipefail
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 subset_name="${1:-public-5}"
-subset="$here/subsets/${subset_name%.json}.json"
+if [[ -f "$subset_name" ]]; then
+  subset="$(cd -P "$(dirname "$subset_name")" && pwd)/$(basename "$subset_name")"
+  subset_slug="$(python3 - <<'PY' "$subset"
+import json
+import re
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+name = str(data.get("name") or Path(sys.argv[1]).stem)
+print(re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "subset")
+PY
+)"
+else
+  subset="$here/subsets/${subset_name%.json}.json"
+  subset_slug="${subset_name%.json}"
+fi
 if [[ ! -f "$subset" ]]; then
   echo "missing subset: $subset" >&2
   exit 2
 fi
-subset_slug="${subset_name%.json}"
 subset_run_id="${SUBSET_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)}"
 aggregate_dir="$here/results/subsets"
 aggregate_out="$aggregate_dir/$subset_slug-$subset_run_id.json"
