@@ -124,9 +124,14 @@
    is safe because only the producer persists the turn; the mirror is live-only.
 
    Stored in the ring when `store?`; `:current-turn` mirrored so the session
-   list lights up while the turn runs elsewhere. Ignores sessions this process
-   has never touched (no local registry entry), so no state accrues for
-   conversations nobody here is watching."
+   list lights up while the turn runs elsewhere. A running TURN ROW is
+   materialized in `:turns`/`:turn-order` on `turn.started` (and marked terminal
+   on `turn.completed`/`turn.failed`) so `list-turns` frames the mirrored turn
+   exactly like a locally-started one — user bubble, running chip, correct live
+   placement — instead of leaking bare deltas under the previous answer.
+
+   Ignores sessions this process has never touched (no local registry entry), so
+   no state accrues for conversations nobody here is watching."
   [sid store? event]
   (when (contains? @registry sid)
     (let [type
@@ -134,6 +139,14 @@
 
           tid
           (:turn_id event)
+
+          terminal?
+          (contains? #{"turn.completed" "turn.failed"} type)
+
+          term-patch
+          (-> event
+              (dissoc :type :seq :turn_id)
+              (assoc :status (or (:status event) (if (= type "turn.failed") "failed" "completed"))))
 
           captured
           (volatile! nil)]
@@ -156,10 +169,21 @@
                 (update :events #(trim-ring (conj (or % []) ev)))
 
                 (= type "turn.started")
-                (assoc :current-turn tid)
+                (-> (assoc :current-turn tid)
+                    (assoc-in [:turns tid]
+                              {:turn_id tid
+                               :session_id (str sid)
+                               :status "running"
+                               :request (:request event)
+                               :started_at (System/currentTimeMillis)})
+                    (update :turn-order
+                            (fn [order]
+                              (if (some #{tid} order) order ((fnil conj []) order tid)))))
 
-                (and (contains? #{"turn.completed" "turn.failed"} type)
-                     (= tid (:current-turn entry)))
+                (and terminal? tid (get-in entry [:turns tid]))
+                (update-in [:turns tid] merge term-patch)
+
+                (and terminal? (= tid (:current-turn entry)))
                 (assoc :current-turn nil)))
             entry)))
       (when-let [ev @captured]
@@ -170,8 +194,24 @@
   "Register an SSE sink and return the replay vector (events with
    `:seq` > `cursor`) ATOMICALLY with the registration, so no event can
    fall between replay and live fan-out. The caller serializes replay
-   writes against live sink calls (see server.clj)."
+   writes against live sink calls (see server.clj).
+
+   Before capturing replay, HYDRATE any turn currently running in a sibling
+   process from the cross-process journal (`bus/hydrate!`) — but only when this
+   process isn't already tracking a live turn (`:current-turn` unset), so an
+   already-mirrored turn isn't re-delivered to existing subscribers. This
+   materializes the running turn's row + ring HERE, so a watcher joining a turn
+   in flight elsewhere replays it from `turn.started` (user bubble + running
+   frame) instead of catching only the bare deltas after connect."
   [sid sub-id sink cursor]
+  ;; ensure an entry exists so `ingest-mirrored-event!` (called by hydrate)
+  ;; doesn't no-op, then hydrate the in-flight foreign turn INTO the ring
+  ;; before we snapshot replay from it.
+  (swap! registry update
+    sid
+    (fn [entry]
+      (or entry {:next-seq 0})))
+  (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid))
   (let [replay (volatile! [])]
     (swap! registry update
       sid

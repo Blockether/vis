@@ -680,31 +680,51 @@
   (or (try (vis/toggle-value :vis/reasoning-level) (catch Throwable _ nil)) :balanced))
 
 (defn- reasoning-footer
-  "Reasoning-effort chip — a TWIN of `routing-footer` in the bottom dock. Opens
-  the effort picker (3 levels: quick / balanced / deep), the same values the TUI
-  footer cycles with Ctrl+R. Source of truth is the global `:vis/reasoning-level`
-  toggle, so a change here is immediately visible to the TUI/Telegram and vice
-  versa.
+  "Reasoning-effort control — a TWIN of `routing-footer` in the bottom dock. An
+  inline SLIDER across the 3 levels (quick / balanced / deep), the same values
+  the TUI footer cycles with Ctrl+R — dragging it replaces the old popup picker.
+  Source of truth is the global `:vis/reasoning-level` toggle, so a change here
+  is immediately visible to the TUI/Telegram and vice versa. On change the slider
+  POSTs /reasoning, which persists the level and OOB-refreshes `#footwrap`.
 
   Rendered only when the resolved model is reasoning-configurable — matching the
-  backend gate (`loop.clj`), so the chip never appears for models that would
+  backend gate (`loop.clj`), so the control never appears for models that would
   ignore the level. Takes only `sid` so the SSE `footer` frames re-render it."
   [sid]
   (when sid
     (let [info (session-resolved-model-info)]
-      ;; `nil? info` (router unresolvable) still shows the chip: the picker is
+      ;; `nil? info` (router unresolvable) still shows the control: the change is
       ;; harmless and the backend re-gates per turn anyway. Only a resolved,
       ;; non-configurable model hides it.
       (when (or (nil? info) (reasoning-effort-configurable? info))
-        (let [level (session-reasoning-level)]
-          [:button.foot-effort
-           {:type "button"
-            :hx-get (str "/ui/session/" sid "/reasoning")
-            :hx-target "#modal"
-            :hx-swap "innerHTML"
-            :aria-label "Change reasoning effort"
-            :title "Change reasoning effort"} (icon "activity")
-           [:span "effort: " (name level)]])))))
+        (let [level (session-reasoning-level)
+              idx (case level
+                    :quick
+                    0
+
+                    :balanced
+                    1
+
+                    :deep
+                    2
+
+                    1)]
+
+          [:label.foot-effort
+           {:title "Reasoning effort — slide quick → balanced → deep"
+            :aria-label "Reasoning effort"} (icon "activity")
+           [:span.foot-effort-label "effort: " (name level)]
+           [:input.foot-effort-slide
+            {:type "range"
+             :min 0
+             :max 2
+             :step 1
+             :value idx
+             :aria-label "Reasoning effort"
+             :hx-post (str "/ui/session/" sid "/reasoning")
+             :hx-trigger "change"
+             :hx-vals "js:{level: ['quick','balanced','deep'][Number(event.target.value)]}"
+             :hx-swap "none"}]])))))
 
 (defn- abbrev-home
   "Shorten an absolute path for DISPLAY by replacing the user's home dir with

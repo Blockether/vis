@@ -23,6 +23,7 @@
    every sandbox (main + every `sub_loop` fork)."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [charred.api :as json]
             [clojure.string :as str]))
 
 (defn- attach-envelope
@@ -61,7 +62,28 @@
                                                                  :size (long (or size 0))}
                                                           (not (str/blank? (str filename)))
                                                           (assoc :filename (str filename))))
-                        nil))))})
+                        nil))))
+   "__vis_list_attachments__"
+   (fn []
+     (attach-envelope
+       #(if-let [r mpl-capture/*attachment-reader*] (json/write-json-str (vec (or ((:list r)) [])))
+          (throw (ex-info (str "vis_attachments: no active attachment reader — call it "
+                               "inside a python_execution block")
+                          {})))))
+   "__vis_read_attachment__"
+   (fn [id]
+     (attach-envelope #(if-let [r mpl-capture/*attachment-reader*]
+                         (if-let [a ((:read r) (str id))]
+                           [(:base64 a) (:media-type a) (:filename a) (:kind a)
+                            (long (or (:size a) 0)) (str (:id a)) (:storage-uri a)]
+                           (throw (ex-info (str "vis_read_attachment: no attachment with id "
+                                                id
+                                                " in this session")
+                                           {})))
+                         (throw (ex-info
+                                  (str "vis_read_attachment: no active attachment reader — call it "
+                                       "inside a python_execution block")
+                                  {})))))})
 
 (def ^:private attach-shim-src
   "Pure-Python preamble defining `vis_attach(path)` and
@@ -151,6 +173,30 @@ def __vis_install_attach__():
         name = filename or _os.path.basename(str(path)) or 'artifact'
         return vis_attach_bytes(data, name, kind=kind, media_type=media_type)
 
+    def vis_attachments():
+        lst = globals().get('__vis_list_attachments__')
+        if lst is None:
+            raise RuntimeError('vis_attachments: reader bridge not bound in this sandbox')
+        env = lst()
+        if not env[0]:
+            raise RuntimeError('vis_attachments: ' + str(env[1]))
+        import json as _json
+        rows = _json.loads(env[1])
+        return [{str(k).replace('-', '_'): v for k, v in r.items()} for r in rows]
+
+    def vis_read_attachment(attachment_id):
+        rd = globals().get('__vis_read_attachment__')
+        if rd is None:
+            raise RuntimeError('vis_read_attachment: reader bridge not bound in this sandbox')
+        env = rd(str(attachment_id))
+        if not env[0]:
+            raise RuntimeError('vis_read_attachment: ' + str(env[1]))
+        row = env[1]
+        b64 = row[0]
+        data = _b64.b64decode(b64) if b64 else None
+        return {'bytes': data, 'media_type': row[1], 'filename': row[2],
+                'kind': row[3], 'size': row[4], 'id': row[5], 'storage_uri': row[6]}
+
     vis_attach.__doc__ = (
         'Persist a file this tool produced as a durable iteration attachment. '
         'Reads path through the sandbox-confined filesystem (a path outside the '
@@ -172,6 +218,8 @@ def __vis_install_attach__():
     g = globals()
     g['vis_attach'] = vis_attach
     g['vis_attach_bytes'] = vis_attach_bytes
+    g['vis_attachments'] = vis_attachments
+    g['vis_read_attachment'] = vis_read_attachment
     g['__vis_guess_media_type'] = __vis_guess_media_type
     g['__vis_kind_for'] = __vis_kind_for
 
@@ -184,6 +232,18 @@ def __vis_install_attach__():
     docs['vis_attach_bytes'] = (
         'vis_attach_bytes(data, filename, kind=None, media_type=None): persist '
         'in-memory bytes/str as a durable DB iteration attachment.'
+    )
+    docs['vis_attachments'] = (
+        'vis_attachments(): list artifacts already persisted in THIS session '
+        '(id, filename, media_type, kind, size, position, tool_call_id, '
+        'iteration_id) - metadata only, newest turns included. Pick an id and '
+        'read the bytes with vis_read_attachment(id).'
+    )
+    docs['vis_read_attachment'] = (
+        'vis_read_attachment(id): fetch one persisted artifact by id as '
+        '{bytes, media_type, filename, kind, size, id, storage_uri} - the '
+        'read-back twin of vis_attach, so a tool can reuse an artifact it (or '
+        'an earlier turn) produced.'
     )
 
 __vis_install_attach__()

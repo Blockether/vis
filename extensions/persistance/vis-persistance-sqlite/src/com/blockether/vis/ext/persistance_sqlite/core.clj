@@ -1473,8 +1473,9 @@
                  :kind (:kind row)
                  :media-type (:media_type row)
                  :filename (:filename row)
-                 :size (long (or (:size_bytes row) (alength bs)))
-                 :base64 (.encodeToString (java.util.Base64/getEncoder) bs)}))
+                 :storage-uri (:storage_uri row)
+                 :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+                 :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
             (query! db-info
                     {:select [:*]
                      :from :session_turn_attachment
@@ -1504,8 +1505,9 @@
                            :kind (:kind row)
                            :media-type (:media_type row)
                            :filename (:filename row)
-                           :size (long (or (:size_bytes row) (alength bs)))
-                           :base64 (.encodeToString (java.util.Base64/getEncoder) bs)})))
+                           :storage-uri (:storage_uri row)
+                           :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+                           :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))})))
               {}
               (query! db-info
                       {:select [:*]
@@ -1524,13 +1526,15 @@
     (let [iter-id-s (->ref iteration-id)]
       (mapv (fn [row]
               (let [^bytes bs (:bytes row)]
-                {:tool-call-id (:tool_call_id row)
+                {:id (:id row)
+                 :tool-call-id (:tool_call_id row)
                  :position (:position row)
                  :kind (:kind row)
                  :media-type (:media_type row)
                  :filename (:filename row)
-                 :size (long (or (:size_bytes row) (alength bs)))
-                 :base64 (.encodeToString (java.util.Base64/getEncoder) bs)}))
+                 :storage-uri (:storage_uri row)
+                 :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+                 :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
             (query! db-info
                     {:select [:*]
                      :from :session_iteration_attachment
@@ -1558,13 +1562,15 @@
                   (update m
                           (:session_turn_iteration_id row)
                           (fnil conj [])
-                          {:tool-call-id (:tool_call_id row)
+                          {:id (:id row)
+                           :tool-call-id (:tool_call_id row)
                            :position (:position row)
                            :kind (:kind row)
                            :media-type (:media_type row)
                            :filename (:filename row)
-                           :size (long (or (:size_bytes row) (alength bs)))
-                           :base64 (.encodeToString (java.util.Base64/getEncoder) bs)})))
+                           :storage-uri (:storage_uri row)
+                           :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+                           :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))})))
               {}
               (query! db-info
                       {:select [:*]
@@ -1572,6 +1578,29 @@
                        :where [:in :session_turn_iteration_id ids]
                        :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
                                   [:position :asc]]})))))
+
+(defn db-read-attachment
+  "Read ONE OUTBOUND artifact row by its `session_iteration_attachment` id.
+   Returns `{:id :tool-call-id :position :kind :media-type :filename :size
+   :storage-uri :base64}` (base64 inline bytes) or nil when absent / no
+   datasource. The read-back twin of the `db-list-iteration(s)-attachments`
+   listers: a tool re-fetches an artifact it (or an earlier turn) produced."
+  [db-info attachment-id]
+  (when (and (ds db-info) attachment-id)
+    (when-let [row (query-one! db-info
+                               {:select [:*]
+                                :from :session_iteration_attachment
+                                :where [:= :id (->ref attachment-id)]})]
+      (let [^bytes bs (:bytes row)]
+        {:id (:id row)
+         :tool-call-id (:tool_call_id row)
+         :position (:position row)
+         :kind (:kind row)
+         :media-type (:media_type row)
+         :filename (:filename row)
+         :storage-uri (:storage_uri row)
+         :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+         :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))))
 
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]

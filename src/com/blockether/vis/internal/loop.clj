@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.render :as render]
@@ -504,6 +505,46 @@
         cancel-token
         (:cancel-token env)
 
+        attachment-reader
+        (let [d
+              (:db-info env)
+
+              sid
+              (:session-id env)]
+
+          (when (and d sid)
+            {:list (fn []
+                     (try (let [turns
+                                (persistance/db-list-session-turns d sid)
+
+                                iters
+                                (mapcat (fn [t]
+                                          (try (persistance/db-list-session-turn-iterations d
+                                                                                            (:id t))
+                                               (catch Throwable _ [])))
+                                        turns)
+
+                                by-iter
+                                (persistance/db-list-iterations-attachments d (keep :id iters))]
+
+                            (vec (for [[iter-id atts]
+                                       by-iter
+
+                                       a
+                                       atts]
+
+                                   {:id (:id a)
+                                    :filename (:filename a)
+                                    :media-type (:media-type a)
+                                    :kind (:kind a)
+                                    :size (:size a)
+                                    :position (:position a)
+                                    :tool-call-id (:tool-call-id a)
+                                    :iteration-id iter-id})))
+                          (catch Throwable _ [])))
+             :read (fn [id]
+                     (persistance/db-read-attachment d id))}))
+
         record-tool-event
         (fn [event]
           (let [op
@@ -523,7 +564,12 @@
         (cancellation/worker-future
           "vis-python-eval"
           (fn []
-            (try (binding [extension/*tool-event-sink* record-tool-event]
+            (try (binding [extension/*tool-event-sink*
+                           record-tool-event
+
+                           mpl-capture/*attachment-reader*
+                           attachment-reader]
+
                    ;; One persistent interpreter per session: globals (defs,
                    ;; imports, vars) carry across calls/turns NATURALLY.
                    (assoc (env/run-python-block python-context code {:form-cap (:form-cap env)})
@@ -4224,18 +4270,34 @@
 (defn- try-refresh-provider-token!
   "Force an OAuth refresh for the failing provider, then rebuild + reseat
    routers so the fresh token is live. Returns true when a refresh actually
-   happened (caller may retry), false otherwise (caller surfaces the error)."
+   happened (caller may retry), false otherwise (caller surfaces the error).
+
+   Threads the REJECTED access token — the one the router baked in and the
+   server just 401'd — into the force-refresh hook. It's read back via
+   `:provider/get-token-fn`, which for a locally-valid token returns it WITHOUT
+   refreshing, so it's the very token that failed. The hook's single-flight
+   reuse step then refuses to hand that dead token straight back, closing the
+   timing bug where a locally-fresh but server-rotated token was re-used and
+   401'd again."
   [resolved-model]
   (let [pid
         (:provider resolved-model)
 
+        provider
+        (registry/provider-by-id pid)
+
         f
-        (some-> (registry/provider-by-id pid)
-                :provider/refresh-token-fn)]
+        (:provider/refresh-token-fn provider)
+
+        rejected
+        (try (:token ((:provider/get-token-fn provider))) (catch Throwable _ nil))]
 
     (boolean
       (when f
-        (try (f) ;; force refresh-token exchange + persist
+        ;; force refresh-token exchange + persist; pass the rejected token so
+        ;; reuse can't return it. Fall back to 0-arity for older/third-party
+        ;; hooks that don't accept it.
+        (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
              (let [r (rebuild-router! (config/resolve-config))]
                (refresh-cached-routers! r))
              (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
