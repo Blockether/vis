@@ -3738,10 +3738,11 @@
                              ;; One block = one tool call, so this is the
                              ;; call's whole stdout (no per-form split).
                              :stdout (:stdout result)
-                             ;; Images the block PRODUCED (matplotlib show/savefig),
-                             ;; captured at the SOURCE into the sandbox sink — carried
-                             ;; down so the DB attachment OWNS the bytes (no parsing).
-                             :images (:images result)
+                             ;; Artifacts the block PRODUCED (matplotlib
+                             ;; show/savefig, vis_attach, $VIS_OUTBOX write),
+                             ;; captured at the SOURCE into the sandbox sink —
+                             ;; carried down so the DB attachment OWNS the bytes.
+                             :attachments (:attachments result)
                              :error (op-error (:error result)
                                               {:code code :phase (get-in result [:envelope :op])})
                              :envelope (:envelope result)
@@ -5519,7 +5520,7 @@
                         block-code (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         ;; Outbound artifacts a tool call PRODUCED this
-                        ;; iteration: every image a block PRODUCED (matplotlib
+                        ;; iteration: every artifact a block PRODUCED (matplotlib
                         ;; `plt.show()`/`savefig`), captured at the SOURCE into the
                         ;; sandbox sink and stamped with the block's tool-call-id, so
                         ;; the figure PNG is OWNED by the DB and survives a
@@ -5528,7 +5529,7 @@
                         (into []
                               (mapcat (fn [b]
                                         (map #(assoc % :tool-call-id (:svar/tool-call-id b))
-                                             (:images b))))
+                                             (:attachments b))))
                               blocks)
                         iteration-id
                         (persistance/db-store-iteration!
