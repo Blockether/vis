@@ -1774,7 +1774,16 @@
         (vector-of-strings :paths (get spec "paths" ["."]))
 
         include
-        (when (contains? spec "include") (vector-of-strings :include (get spec "include")))
+        (when (contains? spec "include")
+          (let [v (let [raw (get spec "include")]
+                    (if (string? raw) [raw] raw))]
+            (when-not (and (vector? v) (every? string? v))
+              (throw (ex-info "rg field must be a string or vector of strings."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field :include :got v})))
+            (when-not (every? #(not (str/blank? %)) v)
+              (throw (ex-info "rg string values must be non-blank."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field :include :got v})))
+            v))
 
         nonneg-int!
         (fn [label v]
@@ -4511,9 +4520,9 @@
        "paths" {:type "array"
                 :items {:type "string"}
                 :description "Restrict to these paths (default the whole tree)."}
-       "include" {:type "array"
-                  :items {:type "string"}
-                  :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
+       "include" {:oneOf [{:type "array" :items {:type "string"}}
+                           {:type "string"}]
+                  :description "Only files matching these globs, e.g. [\"**/*.clj\"] or \"**/*.clj\"."}
        "context" {:type "integer" :description "Lines of context around each match."}
        "is_files_only" {:type "boolean"
                         :description
