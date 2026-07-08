@@ -36,7 +36,7 @@
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent CancellationException ExecutionException Executors ExecutorService
             Future]
-           [org.graalvm.polyglot Value]))
+           [org.graalvm.polyglot Context Value]))
 
 (defonce ^:private ^ExecutorService gather-executor
   ;; Virtual-thread-per-task pool backing the sandbox `gather` builtin. GraalPy
@@ -7132,6 +7132,8 @@
    A sub_loop CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
    disposing the child must NOT close it, or the parent loses its DB mid-turn."
   [environment]
+  (when-let [python-context (:python-context environment)]
+    (try (.close ^Context python-context true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
     (persistance/db-dispose-connection! (:db-info environment))))
 
