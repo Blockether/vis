@@ -1,33 +1,40 @@
 (ns com.blockether.vis.internal.foundation.self-docs-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.docs :as docs]
+            [com.blockether.vis.internal.env-python :as boundary]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.self-docs :as self-docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private vis-docs-tool @#'self-docs/vis-docs-tool)
 
+(defn- result-of
+  "The tool envelope's `:result` payload viewed through the strings-only
+   Python boundary. Throws on any stray keyword key/value."
+  [envelope]
+  (boundary/boundary-view (:result envelope)))
+
 (defdescribe vis-docs-listing-test
              (it "lists every manifest page as a lean slug/title/section entry"
                  (let [result (vis-docs-tool)]
                    (expect (extension/envelope-success? result))
-                   (let [pages (:pages (:result result))
-                         slugs (set (map :slug pages))]
+                   (let [pages (get (result-of result) "pages")
+                         slugs (set (map #(get % "slug") pages))]
 
                      ;; the pages the prompt fragment advertises must exist
                      (expect (contains? slugs "index"))
                      (expect (contains? slugs "extending"))
                      (expect (contains? slugs "configuration"))
                      ;; lean listing: never the content
-                     (expect (every? #(and (:slug %) (:title %)) pages))
-                     (expect (not-any? :content pages))
-                     (expect (not-any? :md pages))))))
+                     (expect (every? #(and (get % "slug") (get % "title")) pages))
+                     (expect (not-any? #(contains? % "content") pages))
+                     (expect (not-any? #(contains? % "md") pages))))))
 
 (defdescribe vis-docs-fetch-test
              (it "returns a page's full markdown by slug"
                  (let [result (vis-docs-tool "extending")]
                    (expect (extension/envelope-success? result))
-                   (let [{:keys [slug title content]} (:result result)]
+                   (let [{slug "slug" title "title" content "content"} (result-of result)]
                      (expect (= "extending" slug))
                      (expect (string? title))
                      ;; the extension-authoring guide teaches the real API
@@ -38,7 +45,7 @@
                  (doseq [{:keys [slug]} (:pages (docs/collect))]
                    (let [result (vis-docs-tool slug)]
                      (expect (extension/envelope-success? result))
-                     (expect (not (str/blank? (:content (:result result)))))))))
+                     (expect (not (str/blank? (get (result-of result) "content"))))))))
 
 (defdescribe vis-docs-unknown-slug-test
              (it "fails with a message + hint listing valid slugs"
