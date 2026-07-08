@@ -2977,9 +2977,26 @@
      (fs/move src-file dest-file (or opts {}))
      (rel-path dest-file))))
 
-(defn- delete-safe [path] (fs/delete (safe-path path)) true)
+(defn- delete-path!
+  "Delete a file or directory tree after `safe-path` has confined it to the workspace."
+  [path]
+  (let [f (safe-path path)]
+    (if (fs/directory? f)
+      (fs/delete-tree f)
+      (fs/delete f))
+    true))
 
-(defn- delete-if-exists-safe [path] (fs/delete-if-exists (safe-path path)))
+(defn- delete-safe [path] (delete-path! path))
+
+(defn- delete-if-exists-safe
+  [path]
+  (let [f (safe-path path)]
+    (if (fs/exists? f)
+      (do (if (fs/directory? f)
+            (fs/delete-tree f)
+            (fs/delete f))
+          true)
+      false)))
 
 (defn- exists-safe? [path] (fs/exists? (safe-path path)))
 
