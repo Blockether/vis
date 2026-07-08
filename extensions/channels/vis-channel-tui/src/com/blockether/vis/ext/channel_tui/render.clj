@@ -5032,15 +5032,18 @@
               summary summary
               :else "edit")]
 
-    {:chip chip :summary (or summary "edit") :body (:body card)}))
+    {:chip chip :path (first paths) :summary (or summary "edit") :body (:body card)}))
 
 (defn- edit-group-entries
   "Coalesce a RUN of consecutive same-edit-tool iterations (struct_patch / patch
    / write) into ONE collapsible band instead of N separately-stacked edit
    op-cards.
 
-   Collapsed (default) — a single badge row with each edit's file basename:
-     ▸ STRUCT_PATCH · 2 edits  chat.clj · chat.clj
+   Collapsed (default) — a single badge row. Edits to ONE file show its FULL
+   path ONCE (not the basename repeated N times); a run across several files
+   lists each basename:
+     ▸ STRUCT_PATCH · 5 edits  a/b/core.clj
+     ▸ STRUCT_PATCH · 2 edits  chat.clj · state.clj
    Expanded — each edit as its full `update `path`` header with its unified diff
    nested underneath, so the burst reads as one edit log. Only a run of the SAME
    edit tool folds (mixed patch+struct_patch never crosses), so the band label
@@ -5057,8 +5060,15 @@
         n
         (count parts)
 
+        edit-paths
+        (distinct (keep :path parts))
+
         chips
-        (str/join " · " (map :chip parts))
+        (if (= 1 (count edit-paths))
+          ;; Every edit hit the SAME file — show its full path ONCE instead of
+          ;; repeating the basename once per edit (`core.clj · core.clj · …`).
+          (first edit-paths)
+          (str/join " · " (map :chip parts)))
 
         head
         (str "**" label "** · " n " " noun (when (not= 1 n) "s") "  " chips)
