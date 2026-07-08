@@ -1252,6 +1252,8 @@
                                           :level :warn
                                           :ttl-ms 4000))))))))))
     nil))
+(declare text-view-dialog!)
+
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
    ↑/↓ move · s = stop · r = restart · Esc = close. Stop/restart go through
@@ -1273,7 +1275,8 @@
             ;; live screen with a shadow — exactly like select-dialog! — so the
             ;; chat shows around it instead of a blank wipe. The box's own bg fill
             ;; clears its interior each frame, so a shrinking list leaves nothing.
-            footer [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]]
+            footer [["↑/↓" "move"] ["a" "add"] ["l" "logs"] ["s" "stop"] ["r" "restart"]
+                    ["Esc" "close"]]
             bounds (draw-dialog-chrome! g
                                         cols
                                         rows
@@ -1302,7 +1305,8 @@
                              (when port (str "  :" port))
                              "  "
                              (get r "status"))
-                  actions (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop")
+                  actions (str (when (get r "can_logs") "[l] logs  ")
+                               (if (get r "can_restart") "[r] restart  [s] stop" "[s] stop"))
                   action-w (count actions)]
 
               (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -1337,18 +1341,27 @@
                   ;; Fully generic: drives the declarative startable registry
                   ;; (pick type if >1, propose options, call its start-fn).
                   (do (start-resource-flow! screen session-id) (recur))
-                  (do (when (pos? total)
-                        (let [r (nth items (clamp @selected 0 (dec total)))]
-                          (cond (= c \s) (do (vis/stop-resource! session-id (get r "id"))
-                                             (vis/notify! (str "Stopped " (get r "label"))
-                                                          :level :info
-                                                          :ttl-ms 3000))
-                                (= c \r) (when (get r "can_restart")
-                                           (vis/restart-resource! session-id (get r "id"))
-                                           (vis/notify! (str "Restarted " (get r "label"))
+                  (do
+                    (when (pos? total)
+                      (let [r (nth items (clamp @selected 0 (dec total)))]
+                        (cond (= c \s) (do (vis/stop-resource! session-id (get r "id"))
+                                           (vis/notify! (str "Stopped " (get r "label"))
                                                         :level :info
-                                                        :ttl-ms 3000)))))
-                      (recur))))
+                                                        :ttl-ms 3000))
+                              (= c \l)
+                              (when (get r "can_logs")
+                                (let [lines (seq (vis/resource-logs session-id (get r "id")))]
+                                  (if lines
+                                    (text-view-dialog! screen (str "Logs — " (get r "label")) lines)
+                                    (vis/notify! "No output captured yet"
+                                                 :level :info
+                                                 :ttl-ms 3000))))
+                              (= c \r) (when (get r "can_restart")
+                                         (vis/restart-resource! session-id (get r "id"))
+                                         (vis/notify! (str "Restarted " (get r "label"))
+                                                      :level :info
+                                                      :ttl-ms 3000)))))
+                    (recur))))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!

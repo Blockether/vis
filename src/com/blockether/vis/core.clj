@@ -66,6 +66,7 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.pyfmt :as pyfmt]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
+            [com.blockether.vis.internal.python-test-runner :as python-test-runner]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.session-model :as session-model]
@@ -532,7 +533,8 @@
              [python-extension-load-failures python-extensions/load-failures]
              [loaded-python-extensions python-extensions/loaded-python-extensions]
              [add-python-extension-change-listener! python-extensions/add-change-listener!]
-             [remove-python-extension-change-listener! python-extensions/remove-change-listener!])
+             [remove-python-extension-change-listener! python-extensions/remove-change-listener!]
+             [test-python-extensions! python-test-runner/test-python-extensions!])
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
@@ -618,6 +620,7 @@
              [unregister-resource! resources/unregister!]
              [list-resources resources/list-resources]
              [get-resource resources/get-resource]
+             [resource-logs resources/logs]
              [stop-resource! resources/stop!]
              [restart-resource! resources/restart!])
 
