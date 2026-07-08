@@ -164,29 +164,124 @@
 
 (defn up
   "Wheel/key scroll UP by `amount`: park `amount` rows above the current
-   on-screen row and ease there. Scrolling up is always a deliberate
-   \"let me read history\" intent."
+   COMMITTED offset and ease there. Scrolling up is always a deliberate
+   \"let me read history\" intent.
+
+   The target is anchored to the committed `:offset` (or the live bottom
+   while FOLLOWING) — NOT to the eased display row. An alternating momentum
+   stream (slow trackpad drags emit sign-flipping inertia tail events) would
+   otherwise re-anchor each event off a half-eased position and ratchet the
+   viewport backward, visibly fighting the user. `:pos` is seeded from the
+   display row only when no ease is already in flight, so a new ease begins
+   from where the view currently sits while a continuing ease keeps its
+   origin."
   [sc ^long amount ^long max-s]
-  (let [cur
+  (let [sc
+        (norm sc)
+
+        cur
         (displayed sc max-s)
 
-        t
-        (max 0 (- cur amount))]
+        base
+        (if (= :follow (:mode sc)) max-s (long (:offset sc)))
 
-    {:mode :at :offset t :pos cur}))
+        t
+        (max 0 (- base amount))]
+
+    {:mode :at :offset t :pos (or (:pos sc) cur)}))
 
 (defn down
   "Wheel/key scroll DOWN by `amount`. Landing within `slack-rows` of the
    bottom re-arms FOLLOW (and eases the rest of the way); otherwise parks
-   `amount` rows below the current row."
+   `amount` rows below the COMMITTED offset.
+
+   As with `up`, the target anchors to the committed `:offset` (or the live
+   bottom while FOLLOWING) so an alternating momentum stream can't walk the
+   viewport backward off a half-eased position."
   [sc ^long amount ^long max-s]
-  (let [cur
+  (let [sc
+        (norm sc)
+
+        cur
         (displayed sc max-s)
 
-        t
-        (+ cur amount)]
+        base
+        (if (= :follow (:mode sc)) max-s (long (:offset sc)))
 
-    (if (>= t (- max-s slack-rows)) (assoc follow :pos cur) {:mode :at :offset t :pos cur})))
+        t
+        (+ base amount)]
+
+    (if (>= t (- max-s slack-rows))
+      (assoc follow :pos (or (:pos sc) cur))
+      {:mode :at :offset t :pos (or (:pos sc) cur)})))
+
+(def ^:const momentum-cap
+  "Upper bound on the running wheel-momentum used by `merge-wheel-delta`.
+   Caps how much a long, continuous same-direction drag can accumulate so a
+   single stray opposing tick can't be absorbed forever (which would make the
+   scroll feel sticky / unable to reverse). Chosen well above any realistic
+   coalesced batch (`amount` is `(* 3 |wheel-delta|)`), so normal scrolling
+   never clamps, but a frantic flail can't build unbounded inertia."
+  12)
+
+(def ^:const momentum-idle-decay
+  "Fraction of wheel-momentum retained per IDLE input poll (a poll with no wheel
+   event). Halving each idle frame releases the directional lock within a few
+   frames of the user lifting their fingers — so the NEXT gesture starts clean
+   and a deliberate direction change dispatches immediately instead of being
+   absorbed as 'opposition' to stale momentum. Mirrors kitty's 150ms sample
+   window: momentum is only meaningful while events keep arriving."
+  0.5)
+
+(defn- cap-momentum
+  "Clamp `v` into `[-momentum-cap, momentum-cap]`."
+  ^long [^long v]
+  (max (- momentum-cap) (min momentum-cap v)))
+
+(defn merge-wheel-delta
+  "Smooth a single raw wheel `delta` (signed rows, +down / -up) into a running
+   `momentum`, returning `[new-momentum effective-delta]`.
+
+   This is the input-side debouncer that stops a slow macOS trackpad's
+   sign-flipping inertia tail from bouncing the viewport. It is the discrete,
+   phase-less analog of kitty's `add_velocity` (glfw/momentum-scroll.c) and
+   WebKit's kinetic-scroll velocity accumulation:
+
+   - SAME sign as the running momentum (or momentum at rest): accumulate, and
+     the raw delta dispatches verbatim. A solo tap or a clean drag is unchanged.
+   - OPPOSITE sign: the delta can only BRAKE the existing momentum toward zero,
+     never cross it. A small opposing tick is absorbed (effective-delta nil) and
+     just shaves momentum; only once the accumulated opposition exceeds the
+     remaining momentum does the leftover re-seed in the new direction.
+
+   `effective-delta` is nil when the tick was fully absorbed — the caller drops
+   it. `new-momentum` is what the caller stores back for the next poll."
+  [momentum delta]
+  (let [m
+        (long (or momentum 0))
+
+        r
+        (long delta)]
+
+    (cond (zero? r) [m nil]
+          (or (zero? m) (pos? (* r m))) [(cap-momentum (+ m r)) r]
+          :else (let [after (+ m r)]
+                  (cond (zero? (Long/signum after)) [0 nil]
+                        (pos? (* after m)) [(cap-momentum after) nil]
+                        ;; raw overwhelms: dispatch ONLY the net leftover (raw beyond what
+                        ;; cancelled the prior momentum) and re-seed momentum to that net,
+                        ;; so the viewport tracks net displacement instead of double-counting.
+                        :else [after after])))))
+
+(defn decay-wheel-momentum
+  "Step the running `momentum` toward zero for one IDLE poll (no wheel event).
+   Returns 0 once small enough that the directional lock should release."
+  [momentum]
+  (let [m (long (or momentum 0))]
+    (if (zero? m)
+      0
+      (let [next (long (Math/round (* m momentum-idle-decay)))]
+        (if (<= (Math/abs next) 1) 0 next)))))
 
 (defn to-y
   "Scrollbar drag/track click → `offset` (already mapped from cursor row).

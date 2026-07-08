@@ -49,3 +49,71 @@
     (is (false? (scroll/bottom-hidden? scroll/follow 100)))
     (is (false? (scroll/bottom-hidden? (scroll/parked 100) 100)))
     (is (false? (scroll/bottom-hidden? (scroll/parked 999) 100)))))
+
+;; ── Wheel-momentum smoother ────────────────────────────────────────────────
+;; The input-side debouncer that stops a slow trackpad's sign-flipping inertia
+;; tail from bouncing the viewport. Drives the bounce-repro stream end-to-end
+;; so a regression here would surface as a non-monotonic dispatched sequence.
+(defn- drive-stream
+  "Feed `raws` through `merge-wheel-delta` from rest momentum, returning the
+   sequence of non-nil effective deltas (what actually dispatches)."
+  [raws]
+  (loop [rs
+         raws
+
+         m
+         0
+
+         out
+         []]
+
+    (if (empty? rs)
+      out
+      (let [[nm eff] (scroll/merge-wheel-delta m (first rs))]
+        (recur (rest rs) nm (if eff (conj out eff) out))))))
+
+(deftest merge-wheel-delta-passes-clean-streams-through
+  (testing "a clean same-direction drag dispatches every tick verbatim"
+    (is (= [1 1 1 1 1] (drive-stream [1 1 1 1 1]))))
+  (testing "a solo tap from rest dispatches immediately (responsive)"
+    (is (= [3] (drive-stream [3]))))
+  (testing "a zero delta is a no-op that preserves momentum" (is (= [2] (drive-stream [2 0])))))
+
+(deftest merge-wheel-delta-absorbs-inertia-tail-reversals
+  (testing "the bounce repro: an up run with a sign-flipping tail stays monotonic"
+    (let [eff (drive-stream [3 2 1 1 1 -1 1 -1 1])]
+      ;; every dispatched tick is positive (same direction) — no reversal leaked
+      (is (every? pos? eff))
+      ;; the three stray -1 ticks are absorbed, so only the genuine ups dispatch
+      (is (= [3 2 1 1 1 1 1] eff)))))
+
+(deftest merge-wheel-delta-lets-a-strong-reversal-through
+  (testing "an opposing delta larger than remaining momentum re-seeds and dispatches the net"
+    ;; +3 +3 builds momentum +6 (down); a -8 (up) then overwhelms: 6 cancels,
+    ;; -2 net leftover re-seeds up and dispatches (not the full -8 — that would
+    ;; double-count the cancelled portion).
+    (let [eff (drive-stream [3 3 -8])]
+      (is (= [3 3 -2] eff))))
+  (testing "an exact cancellation swallows the tick and zeroes momentum"
+    (let [[m eff] (scroll/merge-wheel-delta 3 -3)]
+      (is (zero? m))
+      (is (nil? eff)))))
+
+(deftest merge-wheel-delta-caps-runaway-momentum
+  (testing "a very long continuous drag can't accumulate unbounded stickiness"
+    ;; twenty +1 ticks: dispatches all pass through, but momentum is capped
+    (let [final-mom
+          (loop [rs (repeat 20 1)
+                 m 0]
+
+            (if (empty? rs) m (recur (rest rs) (first (scroll/merge-wheel-delta m (first rs))))))]
+      (is (<= final-mom scroll/momentum-cap)))))
+
+(deftest decay-wheel-momentum-releases-the-lock-when-idle
+  (testing "zero stays zero" (is (zero? (scroll/decay-wheel-momentum 0))))
+  (testing "momentum halves each idle frame and snaps to zero once small"
+    ;; Math/round rounds half up: 10->5->3->2->0 (snap once |next|<=1)
+    (is (= 5 (scroll/decay-wheel-momentum 10)))
+    (is (= 3 (scroll/decay-wheel-momentum 5)))
+    (is (= 2 (scroll/decay-wheel-momentum 3)))
+    (is (zero? (scroll/decay-wheel-momentum 2)))))

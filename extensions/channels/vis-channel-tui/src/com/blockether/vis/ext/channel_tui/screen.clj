@@ -3014,6 +3014,12 @@
                  ;; non-wheel event, it parks it here for the next loop
                  ;; iteration instead of dropping it.
                  pending-input-key (volatile! [])
+                 ;; Running wheel-momentum for `scroll/merge-wheel-delta`. A slow
+                 ;; macOS trackpad emits a stream of sign-flipping inertia tail
+                 ;; events; smoothing here (the input layer) absorbs the spurious
+                 ;; reversals so the viewport can't bounce up/down mid-gesture.
+                 ;; Decayed toward zero on idle polls (see the `(nil? key)` branch).
+                 scroll-momentum (volatile! 0)
                  prewarm-session!
                  (fn [{:keys [id history]}]
                    (virtual/stop-rewarm!)
@@ -3325,7 +3331,28 @@
 
                  (cond
                    (:shutdown? db) nil
-                   (nil? key) (do (Thread/sleep 16) (recur))
+                   (nil? key) (do (let [old-mom (long @scroll-momentum)
+                                        decayed (scroll/decay-wheel-momentum old-mom)]
+
+                                    ;; Log the momentum decay ONLY when it was nonzero —
+                                    ;; otherwise this idle branch fires ~60x/sec and floods
+                                    ;; the log with zeros. Shows the directional lock
+                                    ;; releasing after the fingers lift.
+                                    (when (not (zero? old-mom))
+                                      (tel/log! {:level :debug
+                                                 :id ::wheel-momentum-decay
+                                                 :data {:mom old-mom
+                                                        :decayed (long decayed)
+                                                        :settled? (zero? (long decayed))}
+                                                 :msg (str "wheel-momentum decay "
+                                                           old-mom
+                                                           " -> "
+                                                           (long decayed)
+                                                           (when (zero? (long decayed))
+                                                             " (settled)"))}))
+                                    (vreset! scroll-momentum decayed))
+                                  (Thread/sleep 16)
+                                  (recur))
                    ;; ── Bracketed paste ───────────────────────────────────────────────────
                    ;; Three-state machine sitting BEFORE the regular key dispatch:
                    ;;
@@ -3626,13 +3653,56 @@
                        (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                                             (count slash-suggestions)])
                            (recur))
-                       (neg? (long (or wheel-delta 0)))
-                       (do (state/dispatch [:scroll-up (* 3 (Math/abs (long wheel-delta))) total-h
-                                            inner-h])
-                           (recur))
-                       (pos? (long (or wheel-delta 0)))
-                       (do (state/dispatch [:scroll-down (* 3 (long wheel-delta)) total-h inner-h])
-                           (recur))
+                       ;; Smooth the raw wheel-delta through the running momentum so a
+                       ;; sign-flipping inertia tail can't dispatch a reverse tick (the
+                       ;; "scroll fighting me" bounce). An absorbed tick (effective nil)
+                       ;; just updates momentum and recurs without scrolling.
+                       (not (zero? (long (or wheel-delta 0))))
+                       (let [raw (long wheel-delta)
+                             old-mom (long @scroll-momentum)
+                             [new-mom eff] (scroll/merge-wheel-delta old-mom raw)
+                             ly (:layout db)
+                             pre-offset (long (or (:eff-scroll ly) 0))
+                             pre-mode (-> (:scroll db)
+                                          :mode)]
+
+                         (vreset! scroll-momentum new-mom)
+                         ;; Wheel-momentum diagnostic. Fires on every wheel
+                         ;; dispatch: the raw delta, the momentum transition,
+                         ;; the effective delta (nil = absorbed tick), the
+                         ;; direction/amount dispatched, and the committed
+                         ;; offset BEFORE the scroll. At `:debug` the default
+                         ;; `:info`-min file handler drops it; flip min-level
+                         ;; to `:debug` to investigate scroll fighting.
+                         (tel/log!
+                           {:level :debug
+                            :id ::wheel-dispatch
+                            :data {:raw raw
+                                   :old-mom old-mom
+                                   :new-mom new-mom
+                                   :eff (some-> eff
+                                                long)
+                                   :absorbed? (nil? eff)
+                                   :pre-offset pre-offset
+                                   :pre-mode (str pre-mode)}
+                            :msg (str "wheel raw="
+                                      raw
+                                      " mom "
+                                      old-mom
+                                      "->"
+                                      new-mom
+                                      " eff="
+                                      (some-> eff
+                                              long)
+                                      (when (nil? eff) " (absorbed)")
+                                      " pre-offset=" pre-offset
+                                      " mode=" pre-mode)})
+                         (when eff
+                           (if (neg? (long eff))
+                             (state/dispatch [:scroll-up (* 3 (Math/abs (long eff))) total-h
+                                              inner-h])
+                             (state/dispatch [:scroll-down (* 3 (long eff)) total-h inner-h])))
+                         (recur))
                        ;; CLICK_DOWN on the thumb itself: arm a drag.
                        ;; Record the offset between the click row and
                        ;; the thumb's top so subsequent DRAG events can

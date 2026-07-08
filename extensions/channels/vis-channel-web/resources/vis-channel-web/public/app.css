@@ -1113,15 +1113,16 @@ animation:foot-in .2s ease both}
 .foot-effort.disabled{opacity:.45;cursor:not-allowed}
 .foot-effort.disabled:hover{border-color:var(--line2);color:var(--dim);background:transparent}
 .foot-effort-label{white-space:nowrap}
+.foot-effort-value{display:inline-block;min-width:8ch;text-transform:lowercase}
 /* Reasoning-effort slider: quick / balanced / deep as a compact 3-stop range.
    Replaces the old modal picker — dragging it POSTs /reasoning. */
-.foot-effort-slide{-webkit-appearance:none;appearance:none;width:56px;height:4px;margin:0;padding:0;
-border:0;border-radius:var(--r-pill);background:var(--line2);cursor:pointer;flex:none}
+.foot-effort-slide{-webkit-appearance:none;appearance:none;width:88px;height:6px;margin:0;padding:0;
+border:0;border-radius:var(--r-pill);background:var(--line2);cursor:pointer;flex:none;touch-action:pan-x}
 .foot-effort:hover .foot-effort-slide{background:color-mix(in srgb,var(--accent) 45%,var(--line2))}
-.foot-effort-slide::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;
+.foot-effort-slide::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;
 border-radius:var(--r-circle);background:var(--accent);border:2px solid var(--bg);cursor:pointer;
 box-shadow:0 1px 3px rgba(20,20,20,.28)}
-.foot-effort-slide::-moz-range-thumb{width:12px;height:12px;border-radius:var(--r-circle);
+.foot-effort-slide::-moz-range-thumb{width:18px;height:18px;border-radius:var(--r-circle);
 background:var(--accent);border:2px solid var(--bg);cursor:pointer;box-shadow:0 1px 3px rgba(20,20,20,.28)}
 .foot-effort-slide:focus-visible{outline:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
 
