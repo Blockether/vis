@@ -1383,18 +1383,14 @@
                           (update-tab db
                                       tab-id
                                       (fn [w]
-                                        (assoc w
-                                          :session session
-                                          :workspace workspace
-                                          :workspace/root (:root workspace)
-                                          :messages (or history [])
-                                          :input-history (history-user-texts history)
-                                          :title nil
-                                          :loading? false
-                                          :progress nil
-                                          :turn-start-ms nil
-                                          :cancel-token nil
-                                          :cancelling? false)))
+                                        (clear-active-turn-state (assoc w
+                                                                   :session session
+                                                                   :workspace workspace
+                                                                   :workspace/root (:root workspace)
+                                                                   :messages (or history [])
+                                                                   :input-history
+                                                                   (history-user-texts history)
+                                                                   :title nil))))
 
                           tab-view
                           (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
@@ -1631,6 +1627,7 @@
   [db {:keys [text pastes paste-counter]}]
   (let [visible-text (input/expand-paste-placeholders text pastes)]
     (-> db
+        clear-active-turn-state
         (assoc :messages (drop-pending-turn-messages (:messages db))
                :scroll scroll/follow
                :input (text->input-state text)
@@ -1639,11 +1636,7 @@
                :slash-command-index 0
                :slash-command-hidden? false
                :pastes (or pastes {})
-               :paste-counter (or paste-counter 0)
-               :loading? false
-               :progress nil
-               :cancel-token nil
-               :cancelling? false)
+               :paste-counter (or paste-counter 0))
         (update :input-history
                 (fn [xs]
                   (let [xs (vec (or xs []))]
@@ -2438,11 +2431,11 @@
             (:gateway-turn-id db)
 
             gateway-result
-            (when (and sid tid)
-              (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
+            (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
 
             gateway-terminal?
             (contains? #{:turn-not-found :not-running} (:error gateway-result))]
+
         ;; Both the cooperative flag and the hard interrupt are fired through one
         ;; channel-agnostic call. See channels.cancellation/cancel! for the
         ;; contract.
@@ -2624,13 +2617,7 @@
                                   :loading? still-pending?
                                   :cancelling? false)
                           (not still-pending?)
-                          (assoc :progress
-                            nil :cancel-token
-                            nil :gateway-turn-id
-                            nil)
-
-                          (not still-pending?)
-                          (dissoc :turn-start-ms))
+                          clear-active-turn-state)
 
                         ;; Cancelled-with-work: keep the bubble we just
                         ;; built AND refill the editor from the snapshot so
