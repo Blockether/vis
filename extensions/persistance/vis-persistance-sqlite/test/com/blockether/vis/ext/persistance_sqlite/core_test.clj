@@ -177,6 +177,53 @@
         (expect (= 3 (count (get batch (str iid)))))))))
 
 (defdescribe
+  iteration-attachment-external-storage-test
+  (it
+    "an attachment carrying :storage-uri (no base64) stores EXTERNAL: uri kept, bytes NULL, source derived"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "offload it"})
+
+          iid
+          (h/store-iteration!
+            s
+            {:session-turn-id tid
+             :status :done
+             :code "big.csv"
+             :forms [{:scope "t1/i1" :tag :observation :src "big.csv" :svar/tool-call-id "call_X"}]
+             ;; The offload rail parked the bytes in a storage backend; the row
+             ;; keeps only the handle (no :base64) - the CHECK is satisfied by
+             ;; storage_uri instead of bytes.
+             :attachments [{:tool-call-id "call_X"
+                            :kind "file"
+                            :media-type "text/csv"
+                            :filename "big.csv"
+                            :size 300000
+                            :storage-uri "file:///var/vis/att/abc"}]})
+
+          got
+          (vis/db-list-iteration-attachments s iid)
+
+          row
+          (first got)]
+
+      (expect (= 1 (count got)))
+      (expect (= "file:///var/vis/att/abc" (:storage-uri row)))
+      (expect (nil? (:base64 row))) ; external row carries no inline bytes
+      (expect (= 300000 (:size row)))
+      (expect (= "text/csv" (:media-type row)))
+      (expect (= :tool (:source row)))
+      ;; Bare-id read-back returns the same external envelope.
+      (let [back (vis/db-read-attachment s (:id row))]
+        (expect (= "file:///var/vis/att/abc" (:storage-uri back)))
+        (expect (nil? (:base64 back)))))))
+
+(defdescribe
   user+tool-attachment-read-back-test
   (it
     "one session_attachment table: bare-id read-back derives source; a turn roll-up returns user + tool together"
