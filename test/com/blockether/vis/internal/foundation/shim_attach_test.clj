@@ -2,7 +2,7 @@
   "The generic attachment shim (`vis_attach` / `vis_attach_bytes`) installed into
    every sandbox context via the sandbox-shim mechanism. A tool PRODUCES an
    artifact and hands it to `vis_attach`; the bytes are captured AT THE SOURCE
-   into the per-block sink (drained into the block outcome's `:images`, which the
+   into the per-block sink (drained into the block outcome's `:attachments`, which the
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [com.blockether.vis.internal.env-python :as ep]
@@ -25,7 +25,7 @@
 
 (defn- block
   "Run `code` as ONE driven block and return the flat outcome (so the per-block
-   image sink is bound and drained into `:images`)."
+   image sink is bound and drained into `:attachments`)."
   [^Context pctx code]
   (ep/run-python-block pctx code))
 
@@ -33,7 +33,7 @@
 
 (defdescribe
   vis-attach-bytes-capture-test
-  (it "records an in-memory artifact into the block's :images with sniffed type"
+  (it "records an in-memory artifact into the block's :attachments with sniffed type"
       (let [pctx
             (ctx-with-root (temp-root))
 
@@ -41,10 +41,10 @@
             (block pctx "r = vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\nprint(r['size'])")
 
             [att]
-            (:images out)]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
-        (expect (= 1 (count (:images out))))
+        (expect (= 1 (count (:attachments out))))
         (expect (= "text/csv" (:media-type att)))
         (expect (= "file" (:kind att)))
         (expect (= "data.csv" (:filename att)))
@@ -62,7 +62,7 @@
                         "vis_attach_bytes(png, 'fig.dat')\n"))
 
             [att]
-            (:images out)]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "image/png" (:media-type att)))
@@ -75,7 +75,7 @@
             (block pctx "vis_attach_bytes('just words', 'note')\n")
 
             [att]
-            (:images out)]
+            (:attachments out)]
 
         (expect (= "text/plain" (:media-type att)))
         (expect (= "file" (:kind att)))))
@@ -88,7 +88,7 @@
                    "vis_attach_bytes('x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
 
             [att]
-            (:images out)]
+            (:attachments out)]
 
         (expect (= "image/svg+xml" (:media-type att)))
         (expect (= "image" (:kind att)))))
@@ -100,7 +100,7 @@
             (block pctx
                    (str "vis_attach_bytes('1', 'a.txt')\n" "vis_attach_bytes('2', 'b.json')\n"))]
 
-        (expect (= ["a.txt" "b.json"] (mapv :filename (:images out)))))))
+        (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out)))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"
@@ -121,7 +121,7 @@
                                    "/report.json')\n"))
 
                        [att]
-                       (:images out)]
+                       (:attachments out)]
 
                    (expect (nil? (:error out)))
                    (expect (= "report.json" (:filename att)))
@@ -139,7 +139,7 @@
 
                    (expect (nil? (:error out)))
                    (expect (re-find #"RAISED" (str (:stdout out))))
-                   (expect (empty? (:images out))))))
+                   (expect (empty? (:attachments out))))))
 
 (defdescribe vis-attach-discovery-test
              (it "surfaces vis_attach / vis_attach_bytes via apropos and doc"
@@ -155,3 +155,41 @@
                                         (str "\ntry:\n" "    vis_attach_bytes('x', 'y.txt')\n"
                                              "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
                                              "    _r = str(e)\n" "_r")))))))
+
+(defdescribe
+  vis-outbox-capture-test
+  (it "captures a file WRITTEN into $VIS_OUTBOX as an attachment (no vis_attach call)"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (block pctx
+                   (str "import os\n"
+                        "with open(os.path.join(os.environ['VIS_OUTBOX'], 'm.csv'), 'w') as f:\n"
+                        "    f.write('a,b\\n1,2\\n')\n" "print('ok')\n"))
+
+            [att]
+            (:attachments out)]
+
+        (expect (nil? (:error out)))
+        (expect (= 1 (count (:attachments out))))
+        (expect (= "m.csv" (:filename att)))
+        (expect (= "text/csv" (:media-type att)))
+        (expect (= "file" (:kind att)))))
+  (it "leaves a plain workspace-root write UNcaptured (only $VIS_OUTBOX is tapped)"
+      (let [root
+            (temp-root)
+
+            pctx
+            (ctx-with-root root)
+
+            out
+            (block pctx
+                   (str "with open('"
+                        root
+                        "/plain.txt', 'w') as f:\n"
+                        "    f.write('hi')\n"
+                        "print('ok')\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (empty? (:attachments out))))))

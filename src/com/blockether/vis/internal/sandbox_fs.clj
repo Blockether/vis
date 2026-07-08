@@ -17,10 +17,17 @@
    `allowInternalResourceAccess` (read-only access to the language home and
    bundled resources) before it reaches the Context.
 
+   OUTBOX tap — an optional engine-managed capture directory (`$VIS_OUTBOX`,
+   distinct from the user `/fs` roots): the sandbox may WRITE there and every
+   file it closes is handed to `on-close` so the engine can persist it as a
+   `session_iteration_attachment` (the implicit twin of `vis_attach`). Reads,
+   and writes anywhere else, are untouched.
+
    Empty/zero roots ⇒ DENY everything (fail closed)."
   (:require [clojure.string :as str])
   (:import [org.graalvm.polyglot.io FileSystem]
-           [java.nio.file Path Paths Files LinkOption]))
+           [java.nio.channels SeekableByteChannel]
+           [java.nio.file Path Paths Files LinkOption StandardOpenOption]))
 
 (def ^:private ^"[Ljava.nio.file.LinkOption;" no-link-opts (make-array LinkOption 0))
 (def ^:private ^"[Ljava.nio.file.LinkOption;" nofollow
@@ -73,9 +80,10 @@
        vec))
 
 (defn- confine!
-  "Throw a clear SecurityException unless `p` resolves under a current root.
-   Returns `p` (a Path) on success. `cache` memoizes root canonicalization."
-  ^Path [roots-fn cache p]
+  "Throw a clear SecurityException unless `p` resolves under a current root OR the
+   engine outbox dir (`extra-roots`, always allowed). Returns `p` (a Path) on
+   success. `cache` memoizes root canonicalization."
+  ^Path [roots-fn cache extra-roots p]
   (let [^Path pp
         (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
 
@@ -83,7 +91,7 @@
         (real-path pp)
 
         roots
-        (current-real-roots roots-fn cache)]
+        (into (vec extra-roots) (current-real-roots roots-fn cache))]
 
     (when-not (some (fn [^Path root]
                       (.startsWith real root))
@@ -94,6 +102,29 @@
                     "files via the file tools (cat/rg/patch), or add the dir with `/fs add`."))))
     pp))
 
+(defn- write-opts?
+  "True when the open options request a WRITE/APPEND (⇒ the sandbox is producing
+   the file, so an outbox tap fires on close)."
+  [opts]
+  (boolean (and opts
+                (or (.contains ^java.util.Set opts StandardOpenOption/WRITE)
+                    (.contains ^java.util.Set opts StandardOpenOption/APPEND)))))
+
+(defn- tap-write-channel
+  "Wrap a write `SeekableByteChannel` so that, once the sandbox CLOSES it, `on-close`
+   is invoked with `path` (the just-written file, now flushed). Every other channel
+   method delegates straight to `inner`; `on-close` is best-effort — a failure there
+   never propagates to the sandbox."
+  ^SeekableByteChannel [^SeekableByteChannel inner ^Path path on-close]
+  (proxy [SeekableByteChannel] []
+    (read [dst] (.read inner dst))
+    (write [src] (.write inner src))
+    (position ([] (.position inner)) ([n] (.position inner (long n)) this))
+    (truncate [n] (.truncate inner (long n)) this)
+    (size [] (.size inner))
+    (isOpen [] (.isOpen inner))
+    (close [] (.close inner) (try (when on-close (on-close path)) (catch Throwable _ nil)))))
+
 (defn confined-filesystem
   "A GraalPy `FileSystem` confined to the filesystem roots returned by `roots-fn`
    (a 0-arg fn → seq of root path strings). Delegates real I/O to the default FS
@@ -102,57 +133,84 @@
    overloaded `parsePath` + varargs + void methods bind cleanly.
 
    `root-cache` lives for the FS's lifetime and memoizes the per-root `toRealPath`
-   so confinement doesn't re-stat every root on every path operation."
-  ^FileSystem [roots-fn]
-  (let [^FileSystem d
-        (FileSystem/newDefaultFileSystem)
+   so confinement doesn't re-stat every root on every path operation.
 
-        root-cache
-        (atom {})
+   `outbox` (optional) — `{:dir <existing dir path string> :on-close (fn [^Path])}`.
+   Its real path is treated as an always-allowed root (so the sandbox can write
+   there even though it is not a user `/fs` root); a WRITE channel closed under it
+   fires `on-close` with the file path. Nil ⇒ no tap."
+  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil))
+  (^FileSystem [roots-fn outbox]
+   (let [^FileSystem d
+         (FileSystem/newDefaultFileSystem)
 
-        c
-        (fn [p]
-          (confine! roots-fn root-cache p))
+         root-cache
+         (atom {})
 
-        confined
-        (proxy [FileSystem] []
-          ;; path math — no file access, no confinement
-          (parsePath [arg]
-            (if (instance? java.net.URI arg)
-              (.parsePath d ^java.net.URI arg)
-              (.parsePath d ^String arg)))
-          (toAbsolutePath [p] (.toAbsolutePath d ^Path p))
-          (getSeparator [] (.getSeparator d))
-          (getPathSeparator [] (.getPathSeparator d))
-          ;; confine the path, then delegate the real op
-          (toRealPath [p opts] (.toRealPath d (c p) opts))
-          (checkAccess [p modes opts] (.checkAccess d (c p) modes opts))
-          (readAttributes [p attrs opts] (.readAttributes d (c p) attrs opts))
-          (newByteChannel [p opts attrs] (.newByteChannel d (c p) opts attrs))
-          (newDirectoryStream [dir filt] (.newDirectoryStream d (c dir) filt))
-          (createDirectory [dir attrs] (.createDirectory d (c dir) attrs))
-          (delete [p] (.delete d (c p)))
-          (copy [src dst opts] (.copy d (c src) (c dst) opts))
-          (move [src dst opts] (.move d (c src) (c dst) opts))
-          (createLink [link existing] (.createLink d (c link) (c existing)))
-          (createSymbolicLink [link target attrs] (.createSymbolicLink d (c link) (c target) attrs))
-          (readSymbolicLink [link] (.readSymbolicLink d (c link)))
-          (setAttribute [p attr value opts] (.setAttribute d (c p) attr value opts))
-          ;; default interface methods — proxy does NOT inherit them, so delegate
-          ;; explicitly. Pure metadata delegates raw; file-touching ones confine.
-          (getMimeType [p] (.getMimeType d ^Path p))
-          (getEncoding [p] (.getEncoding d ^Path p))
-          (getTempDirectory [] (.getTempDirectory d))
-          (isSameFile [p1 p2 opts] (.isSameFile d (c p1) (c p2) opts))
-          (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c p)))
-          (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c p)))
-          (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c p)))
-          (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c p)))
-          (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c p)))
-          (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c p))))]
+         ^Path outbox-real
+         (when-let [dir (:dir outbox)]
+           (try (.toRealPath (Paths/get (str dir) (make-array String 0)) no-link-opts)
+                (catch Throwable _ (real-path (Paths/get (str dir) (make-array String 0))))))
 
-    ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
-    ;; importing the stdlib still works while user paths stay confined.
-    (-> ^FileSystem confined
-        (FileSystem/allowInternalResourceAccess)
-        (FileSystem/allowLanguageHomeAccess))))
+         on-close
+         (:on-close outbox)
+
+         extra-roots
+         (if outbox-real [outbox-real] [])
+
+         c
+         (fn [p]
+           (confine! roots-fn root-cache extra-roots p))
+
+         confined
+         (proxy [FileSystem] []
+           ;; path math — no file access, no confinement
+           (parsePath [arg]
+             (if (instance? java.net.URI arg)
+               (.parsePath d ^java.net.URI arg)
+               (.parsePath d ^String arg)))
+           (toAbsolutePath [p] (.toAbsolutePath d ^Path p))
+           (getSeparator [] (.getSeparator d))
+           (getPathSeparator [] (.getPathSeparator d))
+           ;; confine the path, then delegate the real op
+           (toRealPath [p opts] (.toRealPath d (c p) opts))
+           (checkAccess [p modes opts] (.checkAccess d (c p) modes opts))
+           (readAttributes [p attrs opts] (.readAttributes d (c p) attrs opts))
+           (newByteChannel [p opts attrs]
+             (let [^Path cp
+                   (c p)
+
+                   ch
+                   (.newByteChannel d cp opts attrs)]
+
+               (if (and outbox-real (write-opts? opts) (.startsWith (real-path cp) outbox-real))
+                 (tap-write-channel ch cp on-close)
+                 ch)))
+           (newDirectoryStream [dir filt] (.newDirectoryStream d (c dir) filt))
+           (createDirectory [dir attrs] (.createDirectory d (c dir) attrs))
+           (delete [p] (.delete d (c p)))
+           (copy [src dst opts] (.copy d (c src) (c dst) opts))
+           (move [src dst opts] (.move d (c src) (c dst) opts))
+           (createLink [link existing] (.createLink d (c link) (c existing)))
+           (createSymbolicLink [link target attrs]
+             (.createSymbolicLink d (c link) (c target) attrs))
+           (readSymbolicLink [link] (.readSymbolicLink d (c link)))
+           (setAttribute [p attr value opts] (.setAttribute d (c p) attr value opts))
+           ;; default interface methods — proxy does NOT inherit them, so delegate
+           ;; explicitly. Pure metadata delegates raw; file-touching ones confine.
+           (getMimeType [p] (.getMimeType d ^Path p))
+           (getEncoding [p] (.getEncoding d ^Path p))
+           (getTempDirectory [] (.getTempDirectory d))
+           (isSameFile [p1 p2 opts] (.isSameFile d (c p1) (c p2) opts))
+           (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c p)))
+           (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c p)))
+           (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c p)))
+           (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c p)))
+           (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c p)))
+           (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c p))))]
+
+     ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
+     ;; importing the stdlib still works while user paths stay confined.
+     (-> ^FileSystem confined
+         (FileSystem/allowInternalResourceAccess)
+         (FileSystem/allowLanguageHomeAccess)))))

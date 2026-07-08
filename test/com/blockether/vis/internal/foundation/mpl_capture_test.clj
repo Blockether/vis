@@ -2,7 +2,7 @@
   "The image SINK feeding the iteration-attachment rail: the matplotlib render fn
    calls `record-image!` right where it already holds the PNG bytes, and
    `run-python-block` binds `*image-sink*` around one block's eval then `drain`s
-   it into the outcome's `:images`. There is NO stdout-fence parsing anywhere —
+   it into the outcome's `:attachments`. There is NO stdout-fence parsing anywhere —
    these cover append-into-bound-sink (order preserved), the unbound no-op, and
    the drain shape."
   (:require [com.blockether.vis.internal.foundation.mpl-capture :as cap]
@@ -21,7 +21,7 @@
              (describe "record-image! + *image-sink*"
                        (it "appends into the bound per-block sink, in call order"
                            (let [sink (atom [])]
-                             (binding [cap/*image-sink* sink]
+                             (binding [cap/*attachment-sink* sink]
                                (cap/record-attachment! img)
                                (cap/record-attachment! (assoc img :filename "fig-2.png")))
                              (expect (= 2 (count @sink)))
@@ -29,12 +29,12 @@
                        (it "is a silent no-op (returns nil) when no sink is bound"
                            (expect (nil? (cap/record-attachment! img))))
                        (it "never throws when the bound sink is nil"
-                           (binding [cap/*image-sink* nil]
+                           (binding [cap/*attachment-sink* nil]
                              (expect (nil? (cap/record-attachment! img))))))
              (describe "drain"
                        (it "returns the collected images as a plain vector"
                            (let [sink (atom [])]
-                             (binding [cap/*image-sink* sink]
+                             (binding [cap/*attachment-sink* sink]
                                (cap/record-attachment! img))
                              (expect (= [img] (cap/drain sink)))))
                        (it "returns nil for an empty sink (the block produced nothing)"

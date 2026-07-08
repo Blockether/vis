@@ -14,7 +14,7 @@
    then extension then utf-8 probe), base64-encodes, and calls the tiny host
    bridge `__vis_record_attachment__`, which appends the attachment map to the
    per-block `*image-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
-   drains that sink into the block outcome's `:images`; the loop stamps each with
+   drains that sink into the block outcome's `:attachments`; the loop stamps each with
    the producing block's tool-call-id and hands them to `db-store-iteration!`'s
    `:attachments`.
 
@@ -49,7 +49,7 @@
        #(cond (str/blank? (str b64))
               (throw (ex-info "vis_attach: empty payload (no bytes to persist)" {}))
               (str/blank? (str media-type)) (throw (ex-info "vis_attach: missing media type" {}))
-              (nil? mpl-capture/*image-sink*)
+              (nil? mpl-capture/*attachment-sink*)
               (throw (ex-info (str "vis_attach: no active capture sink — call it inside a "
                                    "python_execution block so the produced artifact can be "
                                    "attached to that iteration")
