@@ -2080,9 +2080,7 @@
                    (synth {:name "occurrences" :input {"name" "foo"}})))
         (expect (= "outline({\"path\": \"src/x.clj\"})"
                    (synth {:name "outline" :input {"path" "src/x.clj"}})))
-        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
-        (expect (= "symbol_rename({\"name\": \"a\", \"new_name\": \"b\"})"
-                   (synth {:name "symbol_rename" :input {"name" "a" "new_name" "b"}}))))
+        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
     (it
@@ -2108,12 +2106,7 @@
                                  "target" "f"
                                  "code" "(defn f []\n  \"d\"\n  1)"}})]
         (expect (not (.contains ^String prog "\n")))
-        (expect (.startsWith ^String prog "struct_patch(")))
-      (expect
-        (=
-          "symbol_rename({\"path\": \"a.clj\", \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})"
-          (synth {:name "symbol_rename"
-                  :input {"path" "a.clj" "op" "rename" "target" "old" "code" "new"}}))))
+        (expect (.startsWith ^String prog "struct_patch("))))
     (it "positional + optional-rest-dict shapes (cat/sexpr/copy/shell_run)"
         (expect (= "cat(\"a.clj\")" (synth {:name "cat" :input {"path" "a.clj"}})))
         (expect (= "cat(\"a.clj\", {\"range\": [1, 2]})"
@@ -2134,6 +2127,8 @@
         (expect (= "shell_bg(\"x\", \"sleep 1\")"
                    (synth {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
         (expect (= "shell_logs(\"x\", 50)" (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
+        (expect (= "symbol_rename(\"a\", \"b\")"
+                   (synth {:name "symbol_rename" :input {"name" "a" "new_name" "b"}})))
         (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
         (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
