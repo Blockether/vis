@@ -232,6 +232,16 @@
         (expect (= workspace (:workspace @state/app-db)))
         (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
         (expect (= "feature/ws" (get-in @state/app-db [:tabs 1 :label])))))
+  (it "keeps active root in sync when the backend workspace changes"
+      (reset! state/app-db {:workspace {:id "ws-1" :root "/tmp/old"}
+                            :workspace/root "/tmp/old"
+                            :tabs [{:id :main :label "Main" :active? true}]
+                            :active-tab-id :main
+                            :tab-locals {}
+                            :render-version 0})
+      (state/dispatch [:set-workspace {:id "ws-1" :root "/tmp/new"}])
+      (expect (= "/tmp/new" (:workspace/root @state/app-db)))
+      (expect (= "/tmp/new" (get-in @state/app-db [:tab-locals :main :workspace/root]))))
   (it "caps workspaces at eight total entries"
       (reset! state/app-db {:title "Main" :render-version 0})
       (dotimes [_ 10]
