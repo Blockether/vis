@@ -3071,7 +3071,7 @@
         (log-file-path)]
 
     ;; File handler ALWAYS on, so post-mortem reads always have data.
-    (try (tel/add-handler! :file (tel/handler:file {:path path}) {:min-level :info})
+    (try (tel/add-handler! :file (tel/handler:file {:path path}) {:min-level :debug})  ;; TEMP: :info -> :debug to capture scroll/jump diagnostics (revert after investigation)
          (catch Throwable _ nil))
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during

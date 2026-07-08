@@ -537,13 +537,17 @@ def __vis_strip_protected_imports__(src):
     #   • `from asyncio import run, sleep as s`        ->  `run = __vis_asyncio__.run`
     #     ; `s = __vis_asyncio__.sleep`. A name that is ALREADY a protected
     #     builtin (gather) is dropped so the builtin keeps showing through.
-    #   • `import socket` / `select` / `ssl` ...       ->  dropped (no shim; a
+    #   • `import socket`                                ->  passthrough. socket is
+    #     ALSO auto-imported onto builtins (always present); the module imports
+    #     fine even with the network toggle off — only a live connect is gated by
+    #     `allowHostSocketAccess`, which raises a clean UnsupportedOperation.
+    #   • `import select` / `selectors` / `ssl` ...      ->  dropped (no shim; a
     #     later use is a clean NameError, not a native crash).
     #   • imports binding a protected builtin           ->  dropped (would shadow).
     # Everything else (json, re, ...) is untouched; the ORIGINAL src is returned
     # when nothing changed (line numbers / formatting preserved).
     prot = set(globals().get('__vis_protected_names__') or [])
-    drop = ('socket', 'select', 'selectors', 'ssl')
+    drop = ('select', 'selectors', 'ssl')
     def bind(name, attr):
         val = __vis_ast__.Name(id='__vis_asyncio__', ctx=__vis_ast__.Load())
         if attr is not None:
@@ -1468,6 +1472,7 @@ import pathlib as __vis_pathlib__
 import textwrap as __vis_textwrap__
 import base64 as __vis_base64__
 import math as __vis_math__
+import socket as __vis_socket__
 __vis_builtins__.json = __vis_json__
 __vis_builtins__.shlex = __vis_shlex__
 __vis_builtins__.re = __vis_re__
@@ -1481,8 +1486,9 @@ __vis_builtins__.Path = __vis_pathlib__.Path
 __vis_builtins__.textwrap = __vis_textwrap__
 __vis_builtins__.base64 = __vis_base64__
 __vis_builtins__.math = __vis_math__
+__vis_builtins__.socket = __vis_socket__
 __vis_builtins__.builtins = __vis_builtins__
-del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__, __vis_math__
+del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__, __vis_math__, __vis_socket__
 ")
 
 (defn- install-auto-imports!

@@ -721,12 +721,17 @@
                     :deep
                     2
 
-                    1)]
-
+                    1)
+              live-label-js
+              "var levels=['quick','balanced','deep']; var next=levels[Number(this.value)]||levels[1]; var root=this.closest('.foot-effort'); if(root){ root.dataset.level=next; } var out=root&&root.querySelector('.foot-effort-value'); if(out){ out.textContent=next; }"]
           [:label.foot-effort
            {:title "Reasoning effort — slide quick → balanced → deep"
-            :aria-label "Reasoning effort"} (icon "activity")
-           [:span.foot-effort-label "effort: " (name level)]
+            :aria-label "Reasoning effort"
+            :data-level (name level)}
+           (icon "activity")
+           [:span.foot-effort-label
+            "effort: "
+            [:strong.foot-effort-value (name level)]]
            [:input.foot-effort-slide
             {:type "range"
              :min 0
@@ -734,6 +739,7 @@
              :step 1
              :value idx
              :aria-label "Reasoning effort"
+             :oninput live-label-js
              :hx-post (str "/ui/session/" sid "/reasoning")
              :hx-trigger "change"
              :hx-vals "js:{level: ['quick','balanced','deep'][Number(event.target.value)]}"

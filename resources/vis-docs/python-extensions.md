@@ -232,6 +232,85 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
 - `vis doctor` lists every loaded file and every load failure with its
   Python error.
 
+## Multiple files and packages
+
+A single `.py` file is the simplest extension. For anything larger, drop a
+**package directory** whose `extension.py` is the entry point:
+
+```
+~/.vis/extensions/
+  my_ext/
+    extension.py      # the entry — calls vis.extension(...)
+    mypkg/
+      __init__.py
+      core.py
+    test_core.py      # tests (see below)
+```
+
+- The directory is prepended to `sys.path` before `extension.py` runs, so
+  `import mypkg` / `from mypkg.core import add` just work — no manual
+  `sys.path.insert(...)`.
+- Only `extension.py` is an entry point; the package's other modules are
+  imported by it, never scanned as separate extensions.
+- A plain top-level `.py` file gets the same sugar for a sibling module or
+  package placed next to it.
+
+So an ordinary Python project becomes a Vis extension by adding one
+`extension.py` on top that imports it.
+
+## Testing your extension
+
+Ship real Python tests next to the code and run them with Vis's built-in
+`pytest`-compatible runner — no pip, no wheels, pure stdlib.
+
+- Test files are `test_*.py` or `*_test.py`, at any depth under an extension
+  directory. They are **never loaded as extensions** (excluded from the scan).
+- Each test file runs in its own trusted GraalPy context and imports the
+  extension's package through the same `sys.path` sugar the entry file gets.
+
+```python
+# ~/.vis/extensions/my_ext/test_core.py
+from mypkg.core import add
+
+def test_add():
+    assert add(2, 3) == 5
+```
+
+Run them:
+
+```
+/test            # in a session — inline pass/fail report
+vis ext test     # from the shell — prints a report, exits non-zero on failure
+```
+
+The report is **per test**: each `test_*` shows ✓/✗ with the failing
+assertion's detail, grouped by file, under a one-line summary
+(`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual
+per-test outcomes — never a separate tally, never scraped from output. `vis ext
+test` exits non-zero when anything fails (it signals failure to the CLI, it
+does not kill the process), so it drops straight into CI.
+
+The runner supports the pytest surface the shim implements: plain `assert` with
+real introspection, `pytest.raises`, `@pytest.fixture`, `@pytest.mark`
+parametrize, `monkeypatch` / `capsys` / `tmp_path`. It is a stdlib
+reimplementation of a subset — not upstream pytest (no `conftest.py`, plugins,
+or CLI).
+
+## Batteries in the model's sandbox
+
+The model's sandbox ships a few pure-Python, stdlib-only module shims so common
+imports work without pip:
+
+- `requests` — an HTTP client over `urllib` (`requests.get/post/...`,
+  `Session`, `Response.json()`, …).
+- `pytest` — the assertion/fixture/mark surface above (the same shim the test
+  runner installs).
+- `yaml`, `matplotlib` — YAML round-trip and headless plotting.
+- `socket` is imported and ready.
+
+These are compatibility subsets, not the full PyPI packages — enough for
+scripting and tests, not a substitute for the real library's every corner.
+
 ## Python vs Clojure extensions
 
 | | Python (`.vis/extensions/*.py`) | Clojure (classpath) |

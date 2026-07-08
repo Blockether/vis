@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.python-test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -22,8 +23,10 @@
 (defn- write-ext!
   [^java.io.File dir fname source]
   (let [f (io/file dir fname)]
+    (io/make-parents f)
     (spit f source)
     f))
+
 
 (defn- with-loaded
   "Load `.py` sources (map of filename -> source) from a temp dir with
@@ -443,3 +446,249 @@ vis.extension(
                  (expect (= "Project counter." (:ext/description (registered "counter")))))
                (finally (pyx/reload-python-extensions! {:dirs []})
                         (ps/db-dispose-connection! store)))))))
+
+;; =============================================================================
+;; Multi-file project — an extension imports a sibling package (sys.path sugar)
+;; =============================================================================
+
+(def ^:private pkgext-py
+  "\"\"\"Package-backed fixture: imports a sibling package next to it.\"\"\"
+import vis
+from mypkg.core import add
+from mypkg import VERSION
+
+
+def pkg_add(a, b):
+    \"\"\"await pkg_add(a, b) -> {\\\"sum\\\", \\\"version\\\"} — add via the sibling package.\"\"\"
+    return {\"sum\": add(a, b), \"version\": VERSION}
+
+
+vis.extension(
+    name=\"pkgext\",
+    description=\"Package-backed fixture extension.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    alias=\"pkg\",
+    symbols=[vis.symbol(pkg_add, tag=\"observation\")],
+)
+")
+
+(defdescribe
+  package-import-test
+  (it "a flat extension file imports a sibling package placed next to it — no manual sys.path"
+      (with-loaded {"mypkg/__init__.py" "VERSION = \"1.2.3\"\n"
+                    "mypkg/core.py" "def add(a, b):\n    return a + b\n"
+                    "pkgext.py" pkgext-py}
+                   (fn [result _]
+                     ;; only the top-level pkgext.py is scanned as an extension;
+                     ;; the package files under mypkg/ are NOT loaded as extensions
+                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (let [ext (registered "pkgext")]
+                       (expect (some? ext))
+                       (let [add (symbol-fn ext 'add)
+                             res (add 2 3)]
+
+                         (expect (extension/envelope-success? res))
+                         (expect (= 5 (get-in res [:result "sum"])))
+                         (expect (= "1.2.3" (get-in res [:result "version"])))))))))
+
+;; =============================================================================
+;; Package-extension convention — a subdir holding extension.py = ONE extension
+;; =============================================================================
+
+(defdescribe
+  package-extension-convention-test
+  (it "a subdir holding extension.py loads as ONE extension; its package/test files are not scanned"
+      (with-loaded
+        {"my_ext/mypkg/__init__.py" "VERSION = \"9.9\"\n"
+         "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n"
+         "my_ext/extension.py"
+         (str "import vis\n" "from mypkg.core import add\n"
+              "def mx_add(a, b):\n"
+              "    \"\"\"await mx_add(a, b) -> {\"sum\"} — add via the sibling package.\"\"\"\n"
+              "    return {\"sum\": add(a, b)}\n"
+              "vis.extension(name=\"myext\", description=\"d\", version=\"0.1.0\",\n"
+              "              kind=\"integration\", alias=\"mx\",\n"
+              "              symbols=[vis.symbol(mx_add, tag=\"observation\")])\n")
+         "my_ext/test_core.py" "def test_ok():\n    assert 1 == 1\n"}
+        (fn [result _]
+          ;; the package dir contributes exactly ONE extension; the
+          ;; modules under mypkg/ and the test file are NOT loaded
+          (expect (= {:loaded 1 :failed 0 :changed? true} result))
+          (let [ext (registered "myext")]
+            (expect (some? ext))
+            (let [add (symbol-fn ext 'add)]
+              (expect (= 3 (get-in (add 1 2) [:result "sum"])))))))))
+
+;; =============================================================================
+;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim
+;; =============================================================================
+
+(defdescribe
+  python-self-test-test
+  (it
+    "runs test_*.py / *_test.py through the pytest shim, imports the sibling package, reports pass/fail"
+    (let [ext-dir
+          (temp-dir)
+
+          store
+          (ps/db-create-connection! :memory)]
+
+      (write-ext! ext-dir "my_ext/mypkg/__init__.py" "VERSION = \"1.0\"\n")
+      (write-ext! ext-dir "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n")
+      (write-ext! ext-dir
+                  "my_ext/extension.py"
+                  (str "import vis\n" "def noop():\n"
+                       "    \"\"\"await noop() -> {} — nothing.\"\"\"\n" "    return {}\n"
+                       "vis.extension(name=\"mx\", description=\"d\", kind=\"fun\", alias=\"mx\",\n"
+                       "              symbols=[vis.symbol(noop, tag=\"observation\")])\n"))
+      ;; a test INSIDE the package — imports mypkg via the sys.path sugar
+      (write-ext! ext-dir
+                  "my_ext/test_core.py"
+                  (str "from mypkg.core import add\n"
+                       "def test_add():\n    assert add(2, 3) == 5\n"))
+      ;; a top-level test file with one passing + one failing case
+      (write-ext! ext-dir
+                  "foo_test.py"
+                  (str "def test_pass():\n    assert 1 + 1 == 2\n"
+                       "def test_fail():\n    assert 2 + 2 == 5\n"))
+      (binding [pyx/*state-env* {:db-info store}]
+        (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
+               (expect (= 2 (:files res)))
+               (expect (= 2 (:passed res)))
+               (expect (= 1 (:failed res)))
+               (expect (false? (:ok? res)))
+               (let [by-name
+                     (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
+                 ;; the package test resolves `from mypkg.core import add`
+                 (expect (true? (get by-name "test_core.py")))
+                 (expect (false? (get by-name "foo_test.py")))))
+             (finally (ps/db-dispose-connection! store)))))))
+
+;; =============================================================================
+;; Structured counts — outcomes come from the shim, never scraped from stdout
+;; =============================================================================
+
+(defdescribe
+  structured-counts-test
+  (it "a failure whose assertion message contains '9 passed' must NOT inflate the pass count"
+      (let [ext-dir
+            (temp-dir)
+
+            store
+            (ps/db-create-connection! :memory)]
+
+        ;; the failure detail literally says \"9 passed\" — a stdout regex would
+        ;; miscount it as nine passes; the shim's structured outcomes cannot lie
+        (write-ext! ext-dir
+                    "liar_test.py"
+                    "def test_only_fail():\n    assert False, \"9 passed items were expected\"\n")
+        (binding [pyx/*state-env* {:db-info store}]
+          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
+                 (expect (= 1 (:files res)))
+                 (expect (= 1 (:failed res)))
+                 (expect (= 0 (get res :passed 0)))
+                 (expect (false? (:ok? res))))
+               (finally (ps/db-dispose-connection! store)))))))
+
+;; =============================================================================
+;; /test slash + `vis ext test` CLI — the user-facing surface for the runner
+;; =============================================================================
+
+(defdescribe cli-and-slash-wiring-test
+             (it "the loader exposes a /test slash command and a `vis ext test` CLI command"
+                 (with-loaded {"counter.py" counter-py}
+                              (fn [_ _]
+                                ;; Force a fresh registration so we read the
+                                ;; CURRENT loader spec, not a stale one left by an
+                                ;; earlier load in a reused REPL JVM (the
+                                ;; `loader-registered?` defonce guard blocks re-runs).
+                                (reset! @#'pyx/loader-registered? false)
+                                (#'pyx/register-loader-extension!)
+                                (let [loader
+                                      (registered "python-extensions")
+
+                                      slash
+                                      (some #(when (= "test" (:slash/name %)) %)
+                                            (:ext/slash-commands loader))
+
+                                      cli
+                                      (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
+
+                                  (expect (some? loader))
+                                  (expect (some? slash))
+                                  (expect (ifn? (:slash/run-fn slash)))
+                                  (expect (some? cli))
+                                  (expect (ifn? (:cmd/run-fn cli)))
+                                  (expect (true? (:cmd/internal? cli))))))))
+
+(defdescribe
+  run-and-report-test
+  (it "renders a friendly message when no tests are found"
+      (expect (str/includes? (#'runner/render-test-report {:files 0 :ok? true :results []})
+                             "No Python extension tests")))
+  (it "the shared /test + `vis ext test` code path runs tests and renders a report"
+      (let [ext-dir
+            (temp-dir)
+
+            store
+            (ps/db-create-connection! :memory)]
+
+        (write-ext! ext-dir
+                    "foo_test.py"
+                    (str "def test_pass():\n    assert 1 + 1 == 2\n"
+                         "def test_fail():\n    assert 2 + 2 == 5\n"))
+        (binding [pyx/*state-env* {:db-info store}]
+          (try (let [{:keys [result report]} (#'runner/run-and-report {:dirs [(str ext-dir)]})]
+                 (expect (= 1 (:files result)))
+                 (expect (false? (:ok? result)))
+                 (expect (str/includes? report "1 passed"))
+                 (expect (str/includes? report "1 failed"))
+                 (expect (str/includes? report "\u2717"))
+                 (expect (str/includes? report "foo_test.py")))
+               (finally (ps/db-dispose-connection! store)))))))
+
+;; =============================================================================
+;; Per-test granularity — the runner reports EACH test, not just a file verdict
+;; =============================================================================
+
+(defdescribe
+  per-test-granularity-test
+  (it "reports each test's nodeid + outcome (tagged with its file), not just a per-file aggregate"
+      (let [ext-dir
+            (temp-dir)
+
+            store
+            (ps/db-create-connection! :memory)]
+
+        (write-ext! ext-dir
+                    "foo_test.py"
+                    (str "def test_alpha():\n    assert 1 + 1 == 2\n"
+                         "def test_beta():\n    assert 2 + 2 == 5\n"))
+        (binding [pyx/*state-env* {:db-info store}]
+          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
+                     by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
+
+                 (expect (= 2 (count (:tests res))))
+                 (expect (= :passed (get by-id "test_alpha")))
+                 (expect (= :failed (get by-id "test_beta")))
+                 ;; every record carries the file it came from
+                 (expect (every? :file (:tests res)))
+                 (let [report (#'runner/render-test-report res)]
+                   (expect (str/includes? report "test_alpha"))
+                   (expect (str/includes? report "test_beta"))))
+               (finally (ps/db-dispose-connection! store)))))))
+
+;; =============================================================================
+;; `vis ext test` exit signal — a :vis/user-error ex-info, NEVER System/exit
+;; =============================================================================
+
+(defdescribe
+  cli-exit-signal-test
+  (it "signals a failed run by throwing a :vis/user-error ex-info (mapped to a non-zero exit)"
+      (let [ex (#'runner/failure-ex {:ok? false :failed 2 :errored 0})]
+        (expect (instance? clojure.lang.ExceptionInfo ex))
+        (expect (true? (:vis/user-error (ex-data ex))))
+        (expect (str/includes? (ex-message ex) "2 failed"))))
+  (it "produces no exit signal (nil) when every test passed"
+      (expect (nil? (#'runner/failure-ex {:ok? true :passed 3})))))
