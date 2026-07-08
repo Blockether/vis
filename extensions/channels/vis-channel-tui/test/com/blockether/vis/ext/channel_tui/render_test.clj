@@ -3744,6 +3744,17 @@
 
           (expect (some #(str/includes? % "STRUCT_PATCH · 2 edits") sp))
           (expect (some #(str/includes? % "WRITE · 2 writes") wr))))
+    (it "same-file edits show the FULL path ONCE, not the basename repeated N times"
+        (let [sp
+              (entry-text (edit-group-entries "struct_patch"
+                                              [(ef "struct_patch" base) (ef "struct_patch" base)
+                                               (ef "struct_patch" base)]
+                                              (assoc ctx :iteration-number 8)))]
+          (expect (some #(str/includes? % "STRUCT_PATCH · 3 edits") sp))
+          ;; full path once …
+          (expect (some #(str/includes? % "a/b/chat.clj") sp))
+          ;; … and NOT the basename repeated per edit
+          (expect (not-any? #(str/includes? % "chat.clj · chat.clj") sp))))
     (it "collapsed shows each basename; expanded restores each diff"
         (let [forms
               [(ef "struct_patch" "a/chat.clj") (ef "struct_patch" "b/state.clj")]
