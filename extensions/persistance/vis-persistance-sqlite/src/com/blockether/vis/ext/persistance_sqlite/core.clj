@@ -1379,33 +1379,46 @@
 ;; Turn - session_turn_soul + session_turn_state
 ;; =============================================================================
 
-(defn- store-turn-attachments!
-  "Insert one `session_attachment` row per validated INBOUND user image attached
-   to the turn - INLINE web/API uploads AND terminal-drop disk images alike. Each
-   attachment is `{:media-type :base64 :size? :filename? :kind?}`; the base64
-   payload decodes to raw bytes for the BLOB column. User rows leave
-   `session_turn_iteration_id`/`tool_call_id` NULL - that NULL iteration IS what
-   marks their `source` as `user`. Skips any entry whose base64 fails to decode -
-   never aborts the enclosing turn insert."
-  [tx-info soul-id-s attachments now]
-  (doseq [[position att] (map-indexed vector (or attachments []))]
+(defn- attachment-payload-cols
+  "Payload columns for ONE attachment row: EXTERNAL (`:storage_uri` set,
+   `:bytes` nil) when the map carries a `:storage-uri` (the storage-offload rail
+   already wrote the bytes to a backend), else INLINE (`:bytes` = decoded
+   base64, `:storage_uri` nil). Returns nil for an inline entry whose base64
+   fails to decode - the caller skips it (never aborts the enclosing insert).
+   Satisfies the table's exactly-one(bytes, storage_uri) CHECK either way."
+  [att]
+  (if-let [uri (:storage-uri att)]
+    {:storage_uri uri :bytes nil :size_bytes (long (or (:size att) 0))}
     (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
                                 (catch Throwable _ nil))]
+      {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))})))
+
+(defn- store-turn-attachments!
+  "Insert one `session_attachment` row per validated INBOUND user image attached
+   to the turn - INLINE web/API uploads AND terminal-drop disk images alike.
+   Each attachment is `{:media-type :base64 :size? :filename? :kind?}` (INLINE),
+   or `{:media-type :storage-uri :size? :filename? :kind?}` when the offload rail
+   parked its bytes in a storage backend. User rows leave
+   `session_turn_iteration_id`/`tool_call_id` NULL - that NULL iteration IS what
+   marks their `source` as `user`. Skips any inline entry whose base64 fails to
+   decode - never aborts the enclosing turn insert."
+  [tx-info soul-id-s attachments now]
+  (doseq [[position att] (map-indexed vector (or attachments []))]
+    (when-let [payload (attachment-payload-cols att)]
       (execute! tx-info
                 {:insert-into :session_attachment
-                 :values [{:id (str (new-uuid))
-                           :session_turn_soul_id soul-id-s
-                           :session_turn_iteration_id nil
-                           :tool_call_id nil
-                           :position position
-                           :kind (or (some-> (:kind att)
-                                             name)
-                                     "image")
-                           :media_type (str (:media-type att))
-                           :filename (:filename att)
-                           :size_bytes (long (or (:size att) (alength data)))
-                           :bytes data
-                           :created_at now}]}))))
+                 :values [(merge {:id (str (new-uuid))
+                                  :session_turn_soul_id soul-id-s
+                                  :session_turn_iteration_id nil
+                                  :tool_call_id nil
+                                  :position position
+                                  :kind (or (some-> (:kind att)
+                                                    name)
+                                            "image")
+                                  :media_type (str (:media-type att))
+                                  :filename (:filename att)
+                                  :created_at now}
+                                 payload)]}))))
 
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
@@ -1858,8 +1871,8 @@
    inside this iteration (the canonical case: a `matplotlib` figure emitted by
    `plt.show()`/`plt.savefig()`, or a `vis_attach` payload, from
    `python_execution`). Each attachment is `{:tool-call-id? :media-type :base64
-   :filename? :size? :kind?}`; the base64 payload decodes to raw bytes for the
-   inline BLOB.
+   :filename? :size? :kind?}` (INLINE), or `{... :storage-uri ...}` when the
+   offload rail parked its bytes in a storage backend.
 
    Every row carries BOTH the owning iteration AND its turn soul (denormalized so
    a per-turn roll-up is one indexed filter); the set iteration IS what marks
@@ -1867,29 +1880,27 @@
    `position` is a 0-based ordinal RESET per `tool_call_id` group (one call may
    emit several figures, even same-named), matching the table's `UNIQUE`
    constraint. A `nil` tool-call-id (a whole-iteration artifact) forms its own
-   group. Skips any entry whose base64 fails to decode - never aborts the
+   group. Skips any inline entry whose base64 fails to decode - never aborts the
    enclosing iteration insert."
   [tx-info soul-id-s iteration-id-s attachments now]
   (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
     (doseq [[position att] (map-indexed vector group)]
-      (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
-                                  (catch Throwable _ nil))]
+      (when-let [payload (attachment-payload-cols att)]
         (execute! tx-info
                   {:insert-into :session_attachment
-                   :values [{:id (str (new-uuid))
-                             :session_turn_soul_id soul-id-s
-                             :session_turn_iteration_id iteration-id-s
-                             :tool_call_id (some-> (:tool-call-id att)
-                                                   str)
-                             :position position
-                             :kind (or (some-> (:kind att)
-                                               name)
-                                       "image")
-                             :media_type (str (:media-type att))
-                             :filename (:filename att)
-                             :size_bytes (long (or (:size att) (alength data)))
-                             :bytes data
-                             :created_at now}]})))))
+                   :values [(merge {:id (str (new-uuid))
+                                    :session_turn_soul_id soul-id-s
+                                    :session_turn_iteration_id iteration-id-s
+                                    :tool_call_id (some-> (:tool-call-id att)
+                                                          str)
+                                    :position position
+                                    :kind (or (some-> (:kind att)
+                                                      name)
+                                              "image")
+                                    :media_type (str (:media-type att))
+                                    :filename (:filename att)
+                                    :created_at now}
+                                   payload)]})))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
