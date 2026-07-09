@@ -641,6 +641,16 @@
                   (mapv cm->table-row (cm-children-seq section)))
                 (cm-children-seq tbl))))
 
+(defn- html-comment-block?
+  "True when a CommonMark HTML block is only an HTML comment.
+
+  HTML comments are authoring/control markers, not answer text. CommonMark
+  exposes a standalone `<!-- -->` separator as `HtmlBlock`; rendering that
+  literal made the chat bubble show `<!-- -->`. Drop comment-only blocks while
+  keeping other raw HTML visible-as-text (the safety behavior documented below)."
+  [^String literal]
+  (boolean (re-matches #"(?s)\s*<!--.*?-->\s*" (str literal))))
+
 (defn- cm->blocks
   "Convert one commonmark Node into a vector of canonical IR block(s)."
   [^Node n]
@@ -658,10 +668,12 @@
         (instance? ThematicBreak n) [[:hr {}]]
         (instance? TableBlock n) [(cm->table n)]
         (instance? HtmlBlock n)
-        ;; Raw HTML is not answer IR structure. Keep it visible as text;
-        ;; notably, <details>/<summary> does not become a collapsible widget.
+        ;; Raw HTML is not answer IR structure. Keep non-comment HTML visible
+        ;; as text; notably, <details>/<summary> does not become a collapsible
+        ;; widget. HTML comments (`<!-- -->`) are invisible authoring/control
+        ;; markers, so they should not paint in the bubble.
         (let [literal (.getLiteral ^HtmlBlock n)]
-          [[:p {} [:span {} literal]]])
+          (if (html-comment-block? literal) [] [[:p {} [:span {} literal]]]))
         :else (mapcat cm->blocks (cm-children-seq n))))
 
 (defn- table-delimiter-line?

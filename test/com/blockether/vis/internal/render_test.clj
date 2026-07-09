@@ -126,6 +126,19 @@
                      :kind))))))
 
 (defdescribe
+  markdown-html-comment-test
+  (it "drops standalone HTML comments instead of painting them in the bubble"
+      (let [md "Confirming missing database and cleaning files\n\n<!-- -->\nFixed."
+            ir (render/markdown->ir md)
+            rendered (render/render ir :markdown {})]
+        (expect (not (str/includes? rendered "<!-- -->")))
+        (expect (= "Confirming missing database and cleaning files\n\nFixed."
+                   rendered))))
+  (it "keeps non-comment raw HTML visible as escaped/text content"
+      (let [rendered (render/render (render/markdown->ir "<details>secret</details>") :markdown {})]
+        (expect (str/includes? rendered "<details>secret</details>")))))
+
+(defdescribe
   markdown-soft-break-test
   (it "prose default collapses a bare newline to a single space (CommonMark)"
       ;; Model-authored answers / thinking are prose: soft wraps are not
