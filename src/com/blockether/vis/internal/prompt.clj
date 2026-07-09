@@ -49,17 +49,11 @@
 ;; Initial messages
 ;; =============================================================================
 
-(def ^:private prev-answer-cap
-  "Per-turn answer char cap in the resume block. The most-recent turn is
-   kept FULL (a `yes`/`do it` follow-up needs it verbatim); older turns are
-   capped so a long session's history can't dominate the prompt."
-  600)
-
 (defn previous-turn-context-block
   "Cross-process RESUME context: every prior ANSWERED turn rendered oldest→newest
    as `user asked → what you ran → you answered`, so a fresh process reconstructs
-   the conversation. The LAST turn's answer is verbatim (follow-up referent);
-   older answers are capped. nil when there are no prior turns.
+   the conversation. Every prior answer is rendered in FULL — history is
+   never truncated. nil when there are no prior turns.
 
    Takes a VEC of `{:user-request :answer :interrupted? :results}` (results =
    `[{:scope :src}]`). An `:interrupted?` turn was cut off mid-flight (e.g. a
@@ -68,31 +62,16 @@
   [turns]
   (when (seq turns)
     (let
-      [n
-       (count turns)
-
-       render-turn
+      [render-turn
        (fn [i {:keys [user-request answer interrupted? results]}]
-         (let [last?
-               (= i (dec n))
-
-               req
-               (some-> user-request
-                       str
-                       str/trim
-                       not-empty)
-
-               ans
-               (some-> answer
-                       str
-                       str/trim
-                       not-empty)
-
-               ans
-               (when ans
-                 (if (or last? (<= (count ans) prev-answer-cap))
-                   ans
-                   (str (subs ans 0 prev-answer-cap) " …")))]
+         (let [req (some-> user-request
+                           str
+                           str/trim
+                           not-empty)
+               ans (some-> answer
+                           str
+                           str/trim
+                           not-empty)]
 
            (when (or req ans (seq results))
              (str
@@ -115,7 +94,6 @@
                (when ans (str "you answered:\n" ans))
                (when (and interrupted? (not ans))
                  "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
-
       (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (defn- attached-images-block
