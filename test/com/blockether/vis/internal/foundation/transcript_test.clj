@@ -357,18 +357,23 @@
                                     :forms
                                     [{:scope "t1/i1/f1" :tag :mutation :src code :result :ok}]})
                (vis/db-update-session-turn! s qid {:status :done})
-               (let [out (transcript/transcript-md s cid)]
+               (let [data (transcript/transcript s cid)
+                     out (transcript/transcript->md data)
+                     html (transcript/transcript->html data)]
                  (expect (str/includes? out "````python\n"))
                  (expect (str/includes? out inner))
-                 (expect (str/includes? out "\n````\n"))))
-             (finally (vis/db-dispose-connection! s)))))
+                 (expect (str/includes? out "\n````\n"))
+                 (expect (= 1 (count (re-seq #"<pre><code" html))))
+                 (expect (str/includes? html "<code class=\"language-python\">"))
+                 (expect (str/includes? html "```clojure"))))
+             (finally (vis/db-dispose-connection! s))))))
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump" (was already `#_`-disabled). It asserted on the removed
   ;; prompt-body / LLM-message-envelope render (SYS_PROMPT_TEXT_FIXTURE,
   ;; "LLM messages", role snapshots) which no longer exists. Surviving
   ;; renderer output is covered by the structural data tests above and
   ;; the huge/mixed-block render tests here.
-)
+
 
 ;; ---------------------------------------------------------------------------
 ;; No UUID leaks in the turn-by-turn BODY.

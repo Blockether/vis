@@ -57,7 +57,9 @@
             [com.blockether.vis.core :as vis])
   (:import [java.util Locale]
            [java.time ZoneId]
-           [java.time.format DateTimeFormatter]))
+           [java.time.format DateTimeFormatter]
+           [org.commonmark.parser Parser]
+           [org.commonmark.renderer.html HtmlRenderer]))
 
 ;; =============================================================================
 ;; Data layer.
@@ -992,71 +994,24 @@
                  (fn [[_ idx]]
                    (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
+(def ^:private ^Parser md-parser
+  (.build (Parser/builder)))
+
+(def ^:private ^HtmlRenderer md-renderer
+  (-> (HtmlRenderer/builder)
+      ;; Transcript HTML is a standalone local artifact assembled from model,
+      ;; tool, and user text. Keep CommonMark's fence/list/header behavior, but
+      ;; do not let raw Markdown HTML pass through unescaped.
+      (.escapeHtml true)
+      (.build)))
+
 (defn- md->html
-  "Line-based converter for the CONSTRAINED Markdown the transcript renderer
-   emits: ATX headers (`#`..`######`), fenced code blocks, `- ` bullet lists,
-   blank-line-separated paragraphs, and inline `code`/**bold**/_italic_.
-   Not a general Markdown parser - it only has to handle what we produce."
+  "Render the Markdown emitted by the transcript renderer with commonmark-java.
+   This keeps fenced code block semantics (including backtick fences longer than
+   three ticks) aligned with the Markdown serializer instead of maintaining a
+   second, regex-only parser here."
   [md]
-  (let [lines (str/split-lines (str md))]
-    (letfn
-      [(flush-para [buf] (when (seq buf) [(str "<p>" (render-inline (str/join " " buf)) "</p>")]))
-       (flush-list [buf]
-         (when (seq buf)
-           [(str "<ul>" (apply str (map #(str "<li>" (render-inline %) "</li>") buf)) "</ul>")]))
-       (flush [state buf lang]
-         (case state
-           :para
-           (flush-para buf)
-
-           :list
-           (flush-list buf)
-
-           :code
-           [(str "<pre><code"
-                 (when lang (str " class=\"language-" (html-escape lang) "\""))
-                 ">"
-                 (html-escape (str/join "\n" buf))
-                 "</code></pre>")]
-
-           nil))]
-      (loop [ls lines
-             out []
-             state :none
-             buf []
-             lang nil]
-
-        (if (empty? ls)
-          (str/join "\n" (into out (flush state buf lang)))
-          (let [line (first ls)
-                rst (rest ls)]
-
-            (cond
-              (= state :code) (if (str/starts-with? line "```")
-                                (recur rst (into out (flush :code buf lang)) :none [] nil)
-                                (recur rst out :code (conj buf line) lang))
-              (str/starts-with? line "```")
-              (let [l (str/trim (subs line 3))]
-                (recur rst (into out (flush state buf lang)) :code [] (when-not (str/blank? l) l)))
-              (re-matches #"#{1,6}\s+.*" line)
-              (let [[_ hashes text] (re-matches #"(#{1,6})\s+(.*)" line)
-                    n (count hashes)]
-
-                (recur rst
-                       (conj (into out (flush state buf lang))
-                             (str "<h" n ">" (render-inline text) "</h" n ">"))
-                       :none
-                       []
-                       nil))
-              (re-matches #"-\s+.*" line)
-              (let [text (str/replace-first line #"-\s+" "")]
-                (if (= state :list)
-                  (recur rst out :list (conj buf text) nil)
-                  (recur rst (into out (flush state buf lang)) :list [text] nil)))
-              (str/blank? line) (recur rst (into out (flush state buf lang)) :none [] nil)
-              :else (if (= state :list)
-                      (recur rst (into out (flush :list buf lang)) :para [line] nil)
-                      (recur rst out :para (conj buf line) nil)))))))))
+  (.render md-renderer (.parse md-parser (str md))))
 
 (def ^:private transcript-html-styles
   "Standalone stylesheet layered AFTER `web-css-root` so it consumes the
