@@ -160,11 +160,12 @@
           (expect (str/includes? body "**RESULT**"))
           (expect (str/includes? body "2"))
           (expect (not (str/includes? body "**FORM**")))))
-    (it "shows RESULT even when the value is nil, plus a STDOUT section"
+    (it "omits RESULT when the value is nil, but still shows STDOUT"
         (let [{:keys [summary body]}
               (render {"code" "(dotimes [i 2] (println i))" "value" "nil" "out" "0\n1\n"})]
           (expect (str/includes? summary "⇒ nil"))
-          (expect (str/includes? body "**RESULT**"))
+          (expect (not (str/includes? body "**RESULT**")))
+          (expect (not (str/includes? body "```clojure\nnil\n```")))
           (expect (str/includes? body "**STDOUT**"))))
     (it "promotes a long / multi-line form to its own FORM section, clipped on the chip"
         (let [code "(->> (range 1000000)\n     (filter even?)\n     (map inc)\n     (reduce +))"
@@ -184,10 +185,11 @@
           (expect (str/includes? body "**ERROR**"))
           (expect (str/includes? body "Divide by zero"))
           (expect (not (str/includes? body "**RESULT**")))))
-    (it "treats stderr on a successful eval as STDERR, not an error"
+    (it "treats stderr on a successful nil eval as STDERR, not an error/result"
         (let [{:keys [summary body]}
               (render {"code" "(warn!)" "value" "nil" "err" "warn\n" "status" ["done"]})]
           (expect (str/includes? summary "⇒ nil"))
+          (expect (not (str/includes? body "**RESULT**")))
           (expect (str/includes? body "**STDERR**"))
           (expect (not (str/includes? body "**ERROR**")))))
     (it "separates sections by exactly one blank line"

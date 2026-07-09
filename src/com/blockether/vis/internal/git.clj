@@ -12,7 +12,8 @@
    `com.blockether.vis.internal.workspace`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.util.concurrent TimeUnit]))
 
@@ -57,13 +58,18 @@
               (when-not done
                 (.destroyForcibly p)
                 (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
-                  (try (.close s) (catch Throwable _ nil))))
+                  (try (.close s)
+                       (catch Throwable t
+                         (tel/log! :debug ["git: failed to close timed-out process stream" (ex-message t)])))))
               {:exit (when done (.exitValue p))
                :out (deref out 2000 "")
                :err (deref err 2000 "")
                :timed-out? (not done)
                :duration-ms (- (System/currentTimeMillis) t0)}))
-          (catch Throwable _
+          (catch Throwable t
+            (tel/log! :warn ["git: run-git failed" {:dir (some-> dir .getPath)
+                                                     :args (vec (map str args))
+                                                     :error (ex-message t)}])
             {:exit nil
              :out ""
              :err ""
@@ -391,7 +397,11 @@
               (let [value (if start (working-tree-status start) (working-tree-status))]
                 (reset! working-tree-status-cache
                   {:cwd cwd :expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
-              (catch Throwable _ nil)
+              (catch Throwable t
+                (tel/log! :warn ["git: async working-tree status refresh failed"
+                                 {:cwd cwd
+                                  :start (some-> start .getPath)
+                                  :error (ex-message t)}]))
               (finally (reset! status-refreshing? false))))))
 
 (defn- serve-cached-status
@@ -425,6 +435,38 @@
   ([now-ms ttl-ms] (serve-cached-status (.getPath (cwd-file)) nil now-ms ttl-ms))
   ([^File start now-ms ttl-ms]
    (serve-cached-status (.getPath (.getCanonicalFile start)) start now-ms ttl-ms)))
+(defn seed-working-tree-status!
+  "Synchronously resolve and publish the working-tree status for `start` into
+   the shared cache, so the FIRST render after a root switch shows the NEW
+   repo instead of a blank/\"No git\" frame.
+
+   `cached-working-tree-status` is stale-while-revalidate: on a cache MISS
+   (a cwd it hasn't seen) it returns nil immediately and refreshes in the
+   background — correct for the hot repaint path, but it means a `/root`
+   switch paints the wrong repo (or \"No git\") for one refresh cycle. A root
+   switch is a rare, user-initiated event (not per-frame), so paying one
+   synchronous ~2ms git walk HERE — on the dispatch thread, never the render
+   thread — is the right trade: the next footer paint is already warm.
+
+   No-op outside a git repo (publishes `{:workspace? false}`). Never throws."
+  [^File start]
+  (when start
+    (try (let [canon
+               (.getCanonicalFile start)
+
+               value
+               (working-tree-status canon)]
+
+           ;; Honor the in-flight CAS guard: if a refresh is already running for
+           ;; this cwd, our synchronous value would race it. We publish unconditionally
+           ;; because a root switch is authoritative — our value IS the new truth.
+           (reset! working-tree-status-cache {:cwd (.getPath canon)
+                                              :expires-at (+ (System/currentTimeMillis)
+                                                             (long default-cache-ms))
+                                              :value value}))
+         (catch Throwable t
+           (tel/log! :warn
+                     ["git: seed-working-tree-status! failed" (.getPath start) (ex-message t)])))))
 
 ;; =============================================================================
 ;; file-picker helper: per-path status + ignore snapshot

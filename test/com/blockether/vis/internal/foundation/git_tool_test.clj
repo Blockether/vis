@@ -37,7 +37,11 @@
                      "exit" 0})]
         ;; Collapsed headline shows WHAT was committed, no crammed `-m -m`.
         (expect (= "commit — tui: nicer git band" summary))
-        ;; Full multi-paragraph message still renders as a blockquote body.
+        ;; Expanded body now matches shell/repl: labeled details with the full
+        ;; multi-paragraph commit message preserved as a blockquote.
+        (expect (str/includes? body "**COMMAND**"))
+        (expect (str/includes? body "**STATUS**"))
+        (expect (str/includes? body "**MESSAGE**"))
         (expect (re-find #"(?m)^> tui: nicer git band" body))
         (expect (re-find #"(?m)^> explanatory body" body))))
   (it "keeps non-message flags but drops only -m/--message"

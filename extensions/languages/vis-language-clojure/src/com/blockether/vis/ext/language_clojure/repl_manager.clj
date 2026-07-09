@@ -107,6 +107,29 @@
                  (str/replace #"(^_+|_+$)" ""))]
     (io/file (System/getProperty "java.io.tmpdir") (str "vis-nrepl-" safe ".log"))))
 
+(def ^:private default-log-line-limit 500)
+
+(defn tail-log
+  "Tail a managed nREPL launcher log as line strings. Returns [] when the log
+   does not exist yet or cannot be read; resource viewers treat that as an empty
+   but still log-capable resource."
+  ([log-path] (tail-log log-path default-log-line-limit))
+  ([log-path n]
+   (let [f (when (seq (str log-path)) (io/file (str log-path)))
+         n (max 1 (long (or n default-log-line-limit)))]
+     (if (and f (.isFile f))
+       (try
+         (with-open [r (io/reader f)]
+           (loop [xs []
+                  lines (line-seq r)]
+             (if-let [line (first lines)]
+               (let [xs' (conj xs line)]
+                 (recur (if (> (count xs') n) (subvec xs' (- (count xs') n)) xs')
+                        (next lines)))
+               xs)))
+         (catch Throwable _ []))
+       []))))
+
 (defn- delete-stray-port-file!
   "The launcher may still drop a `.nrepl-port` in `dir` even though we passed the
    port explicitly. We never read it, so delete it so nothing downstream (or a
@@ -153,7 +176,10 @@
       (assoc "aliases" (mapv name aliases))
 
       (and running? pid)
-      (assoc "pid" pid))))
+      (assoc "pid" pid)
+
+      running?
+      (assoc "log" (or (:log info) (.getAbsolutePath (log-file dir)))))))
 
 (defn start!
   "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
@@ -193,6 +219,7 @@
                        :aliases (vec aliases)
                        :pid pid
                        :dir dir
+                       :log (.getAbsolutePath log)
                        :started-at (System/currentTimeMillis)}]
 
              (swap! processes assoc k info)
@@ -261,7 +288,8 @@
                   :port (:port info)
                   :tool (:tool info)
                   :aliases (:aliases info)
-                  :pid (:pid info)})))
+                  :pid (:pid info)
+                  :log (or (:log info) (.getAbsolutePath (log-file (:dir info))))})))
        (sort-by :dir)
        vec))
 

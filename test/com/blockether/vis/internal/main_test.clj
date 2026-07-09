@@ -2,6 +2,7 @@
   (:require [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.render :as render]
+            [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -38,7 +39,26 @@
                  (let [out (java.io.StringWriter.)]
                    (binding [*out* out]
                      (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
-                   (expect (.contains (str out) "vis providers")))))
+                   (expect (.contains (str out) "vis providers"))))
+             (it "loads channels before rendering channels parent help"
+                 (let [out (java.io.StringWriter.)
+                       discovered? (atom false)
+                       fake-channel {:channel/id ::fast-help-test
+                                     :channel/cmd "zzz-test"
+                                     :channel/doc "Test channel for help."
+                                     :channel/main-fn (fn [_args])}]
+                   (try (with-redefs [main/discover-all! (fn []
+                                                           (reset! discovered? true)
+                                                           (registry/register-channel! fake-channel))]
+                          (binding [*out* out]
+                            (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
+                          (expect (true? @discovered?))
+                          (expect (.contains (str out) "zzz-test"))
+                          (expect (.contains (str out) "Test channel for help.")))
+                        (finally (registry/deregister-channel! (:channel/id fake-channel))))))
+             (it "strips launcher selectors when they leak into JVM args"
+                 (expect (= ["channels" "--help"]
+                            (#'main/strip-global-args ["channels" "--jvm" "--help"])))))
 
 (defdescribe parse-run-args-test
              (it "parses --toggles as a run-scoped override list"
