@@ -72,30 +72,40 @@
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
-  [session-id {:keys [id dir port aliases]}]
-  (when (and session-id id (nil? (vis/get-resource session-id id)))
-    (vis/register-resource!
-      session-id
-      {:id id
-       :kind :nrepl
-       :language :clojure
-       :label (str "nREPL "
-                   (.getName (io/file dir))
-                   (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-       :status :up
-       ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
-       ;; so it must be boundary-safe already.
-       :detail (cond-> {"dir" dir "port" port}
-                 (seq aliases)
-                 (assoc "aliases" (mapv name aliases)))
-       :owner :ext/language-clojure}
-      {:stop-fn (fn []
-                  (repl-manager/stop! session-id dir))
-       :restart-fn (fn []
-                     (repl-manager/stop! session-id dir)
-                     (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                       (vis/unregister-resource! session-id id)
-                       r))})))
+  [session-id {:keys [id dir port aliases log]}]
+  (let [existing (when (and session-id id) (vis/get-resource session-id id))]
+    (when (and session-id
+               id
+               (or (nil? existing)
+                   (and log (not (get existing "can_logs")))))
+      (vis/register-resource!
+        session-id
+        {:id id
+         :kind :nrepl
+         :language :clojure
+         :label (str "nREPL "
+                     (.getName (io/file dir))
+                     (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
+         :status :up
+         ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
+         ;; so it must be boundary-safe already.
+         :detail (cond-> {"dir" dir "port" port}
+                   (seq aliases)
+                   (assoc "aliases" (mapv name aliases))
+
+                   log
+                   (assoc "log" log))
+         :owner :ext/language-clojure}
+        (cond-> {:stop-fn (fn []
+                            (repl-manager/stop! session-id dir))
+                 :restart-fn (fn []
+                               (repl-manager/stop! session-id dir)
+                               (let [r (repl-manager/start! session-id dir {:aliases aliases})]
+                                 (vis/unregister-resource! session-id id)
+                                 r))}
+          log
+          (assoc :logs-fn (fn []
+                            (repl-manager/tail-log log))))))))
 
 (defn- nrepl-block
   "Build the `:nrepl` map from the session's owned REPLs + liveness statuses. This

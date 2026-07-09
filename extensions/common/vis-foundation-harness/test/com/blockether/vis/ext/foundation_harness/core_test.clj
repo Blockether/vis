@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-harness.core-test
-  (:require [com.blockether.vis.ext.foundation-harness.core :as core]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.foundation-harness.core :as core]
             [com.blockether.vis.ext.foundation-harness.discovery :as d]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
@@ -7,6 +8,8 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private skill-result @#'core/skill-result)
+(def ^:private skill-template-text @#'core/skill-template-text)
+
 
 (defdescribe
   skill-result-test
@@ -27,6 +30,25 @@
           (expect (= #{"demo"} (:session/loaded-skills @ca)))
           (expect (= "already-loaded" (get r2 "status")))
           (expect (not (contains? r2 "body")))))))
+
+(defdescribe
+  skill-template-text-test
+  (it "slash skill expansion injects the body and bundled resource paths before marking loaded"
+      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
+            ca (atom {})]
+        (with-redefs [d/skill-by-name (fn [_] s)]
+          (let [text (skill-template-text {:ctx-atom ca} s "do x")]
+            (expect (str/includes? text "BODY"))
+            (expect (str/includes? text "- /x/ref.md"))
+            (expect (str/includes? text "Task: do x"))))))
+  (it "slash skill expansion points at the already-loaded body instead of reinjecting it"
+      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
+            ca (atom {:session/loaded-skills #{"demo"}})]
+        (with-redefs [d/skill-by-name (fn [_] s)]
+          (let [text (skill-template-text {:ctx-atom ca} s "again")]
+            (expect (str/includes? text "already loaded earlier"))
+            (expect (not (str/includes? text "BODY")))
+            (expect (str/includes? text "Task: again")))))))
 
 (defdescribe
   skill-native-tool-test

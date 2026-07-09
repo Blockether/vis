@@ -168,7 +168,7 @@
         task
         (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
 
-    (if (= "already-loaded" (:status r))
+    (if (= "already-loaded" (get r "status"))
       (str "Use the skill \""
            (:name s)
            "\" — it was already loaded earlier "
@@ -178,10 +178,10 @@
            (:name s)
            "\" for this task — its full SKILL.md "
            "follows. Follow these instructions.\n\n"
-           (:body r)
-           (when (seq (:resources r))
+           (get r "body")
+           (when (seq (get r "resources"))
              (str "\n\nBundled resources (read them with the file tools as needed):\n"
-                  (str/join "\n" (map #(str "- " %) (:resources r)))))
+                  (str/join "\n" (map #(str "- " %) (get r "resources")))))
            task))))
 
 (defn- skill-template-entries

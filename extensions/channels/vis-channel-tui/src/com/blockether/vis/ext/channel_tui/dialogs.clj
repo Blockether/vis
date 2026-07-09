@@ -9,8 +9,10 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.theme :as shared-theme]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna Symbols TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -299,9 +301,9 @@
     (or key
         (when scroll-delta
           (MouseAction.
-            (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
-            1
-            (TerminalPosition. 0 0))))))
+           (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
+           1
+           (TerminalPosition. 0 0))))))
 (defn drain-modal-paste!
   "After a bracketed-paste START keystroke is seen, drain `screen` until
    PASTE_END and return the pasted text (PUA markers stripped). Lets any
@@ -1071,7 +1073,7 @@
             (p/fill-rect! g (inc left) iy inner-w 1)
             (if focused?
               (reset! cursor-screen
-                (draw-text-input-field! g (inc left) iy inner-w val @(:cursor st)))
+                      (draw-text-input-field! g (inc left) iy inner-w val @(:cursor st)))
               (if (str/blank? val)
                 (do (p/set-colors! g t/dialog-hint t/dialog-bg)
                     (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
@@ -1137,10 +1139,10 @@
                                          (when (and sb cur-field (pos? (.length sb)))
                                            (let [chars (vec (.toString sb))]
                                              (swap! (:text cur-field)
-                                               (fn [t]
-                                                 (into (subvec t 0 @(:cursor cur-field))
-                                                       (concat chars
-                                                               (subvec t @(:cursor cur-field))))))
+                                                    (fn [t]
+                                                      (into (subvec t 0 @(:cursor cur-field))
+                                                            (concat chars
+                                                                    (subvec t @(:cursor cur-field))))))
                                              (swap! (:cursor cur-field) + (count chars))))
                                          (vreset! paste nil)
                                          (recur))
@@ -1156,22 +1158,22 @@
                         KeyType/Character (do (when cur-field
                                                 (let [c (key-character key)]
                                                   (swap! (:text cur-field)
-                                                    #(into (subvec % 0 @(:cursor cur-field))
-                                                           (cons c
-                                                                 (subvec % @(:cursor cur-field)))))
+                                                         #(into (subvec % 0 @(:cursor cur-field))
+                                                                (cons c
+                                                                      (subvec % @(:cursor cur-field)))))
                                                   (swap! (:cursor cur-field) inc)))
                                               (recur))
                         KeyType/Backspace (do (when (and cur-field (pos? @(:cursor cur-field)))
                                                 (swap! (:text cur-field)
-                                                  #(into (subvec % 0 (dec @(:cursor cur-field)))
-                                                         (subvec % @(:cursor cur-field))))
+                                                       #(into (subvec % 0 (dec @(:cursor cur-field)))
+                                                              (subvec % @(:cursor cur-field))))
                                                 (swap! (:cursor cur-field) dec))
                                               (recur))
                         KeyType/ArrowLeft
                         (do (when cur-field (swap! (:cursor cur-field) #(max 0 (dec %)))) (recur))
                         KeyType/ArrowRight (do (when cur-field
                                                  (swap! (:cursor cur-field)
-                                                   #(min (count @(:text cur-field)) (inc %))))
+                                                        #(min (count @(:text cur-field)) (inc %))))
                                                (recur))
                         (recur))))))))
 
@@ -1201,7 +1203,10 @@
    No resource type is hardcoded here; adding a startable elsewhere makes
    it appear in this dialog automatically. Returns nil."
   [^TerminalScreen screen session-id]
-  (let [startables (vec (try (vis/registered-startable-resources) (catch Throwable _ nil)))]
+  (let [startables (vec (try (vis/registered-startable-resources)
+                             (catch Throwable t
+                               (tel/log! :warn ["dialogs: registered-startable-resources failed" (ex-message t)])
+                               nil)))]
     (cond (empty? startables)
           (vis/notify! "No startable resources registered" :level :warn :ttl-ms 3000)
           :else
@@ -1210,22 +1215,25 @@
                      (select-dialog! screen
                                      "Start resource"
                                      (mapv #(assoc %
-                                              :label (str "Start "
-                                                          (:label %)
-                                                          (when-let [v (get-in % [:variant :label])]
-                                                            (str " · " v))))
+                                                   :label (str "Start "
+                                                               (:label %)
+                                                               (when-let [v (get-in % [:variant :label])]
+                                                                 (str " · " v))))
                                            startables)))]
             (when sr
-              (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
+              (let [env (try (vis/env-for session-id)
+                             (catch Throwable t
+                               (tel/log! :warn ["dialogs: env-for failed" session-id (ex-message t)])
+                               nil))
                     root (str (:workspace/root env))
                     dir (when (:dir? sr)
                           (let [r (startable-fields-form! screen
                                                           (assoc sr
-                                                            :label (str (:label sr) " directory")
-                                                            :fields [{:name "dir"
-                                                                      :label "Directory"
-                                                                      :default root
-                                                                      :placeholder root}]))]
+                                                                 :label (str (:label sr) " directory")
+                                                                 :fields [{:name "dir"
+                                                                           :label "Directory"
+                                                                           :default root
+                                                                           :placeholder root}]))]
                             (if (= ::cancel r)
                               ::cancel
                               (let [d (str/trim (str (:dir r)))]
@@ -1236,13 +1244,16 @@
                               dir
                               (assoc :startable/dir dir))
                         opts (when-let [f (:options-fn sr)]
-                               (try (vec (f env)) (catch Throwable _ nil)))
+                               (try (vec (f env))
+                                    (catch Throwable t
+                                      (tel/log! :warn ["dialogs: startable options-fn failed" (ex-message t)])
+                                      nil)))
                         selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
                                        (:options-fn sr)
                                        (multi-select-dialog!
-                                         screen
-                                         (str (:label sr) " — " (or (:options-label sr) "options"))
-                                         (or opts []))
+                                        screen
+                                        (str (:label sr) " — " (or (:options-label sr) "options"))
+                                        (or opts []))
                                        :else [])]
 
                     (when (and (some? selected) (not= ::cancel selected))
@@ -1265,7 +1276,10 @@
   (let [selected (atom 0)]
     (loop []
 
-      (let [items (vec (try (vis/list-resources session-id) (catch Throwable _ nil)))
+      (let [items (vec (try (vis/list-resources session-id)
+                            (catch Throwable t
+                              (tel/log! :warn ["dialogs: list-resources failed" session-id (ex-message t)])
+                              nil)))
             total (count items)
             size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols (.getColumns size)
@@ -1795,14 +1809,22 @@
               (recur))))))))
 (defn- current-model-info
   []
-  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
-    (try (vis/resolve-effective-model router) (catch Throwable _ nil))))
+  (when-let [router (try (vis/get-router)
+                         (catch Throwable t
+                           (tel/log! :warn ["dialogs: get-router failed" (ex-message t)])
+                           nil))]
+    (try (vis/resolve-effective-model router)
+         (catch Throwable t
+           (tel/log! :warn ["dialogs: resolve-effective-model failed" (ex-message t)])
+           nil))))
 (defn- current-provider-id [] (:provider (current-model-info)))
 
 (defn- theme-choice-order
   []
   (try (mapv keyword (shared-theme/available-theme-ids))
-       (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
+       (catch Throwable t
+         (tel/log! :warn ["dialogs: available-theme-ids failed" (ex-message t)])
+         [(keyword shared-theme/default-theme-id)])))
 (defn- settings-ui-options
   "Terminal-UI-owned settings in the Terminal UI section: currently just the
    theme picker. Feature toggles (mouse-selection auto-copy, etc.) live in the
@@ -1839,16 +1861,16 @@
      (when (seq specs)
        (vec (mapcat (fn [[group group-specs]]
                       (cons
-                        {:type :section :label (titleize-label (name (or group :other)))}
-                        (for [{:keys [id label description owner]} (sort-by :id group-specs)]
-                          {:key (keyword (str "toggle::" id))
-                           :type :registry-toggle
-                           :toggle-id id
-                           :label (or label
-                                      (titleize-label (str (or (namespace id) "") " " (name id))))
-                           :description (str (or description "")
-                                             (when (and owner (not= owner :vis))
-                                               (str "  [" (titleize-label (name owner)) "]")))})))
+                       {:type :section :label (titleize-label (name (or group :other)))}
+                       (for [{:keys [id label description owner]} (sort-by :id group-specs)]
+                         {:key (keyword (str "toggle::" id))
+                          :type :registry-toggle
+                          :toggle-id id
+                          :label (or label
+                                     (titleize-label (str (or (namespace id) "") " " (name id))))
+                          :description (str (or description "")
+                                            (when (and owner (not= owner :vis))
+                                              (str "  [" (titleize-label (name owner)) "]")))})))
                     (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
 (def ^:private tui-contributor-slots #{:tui.slot/header-row :tui.slot/footer-segment})
 (def ^:private undisableable-tui-contributions
@@ -1996,30 +2018,30 @@
   []
   (->> (vis/registered-extensions)
        (mapcat
-         (fn [ext]
-           (let [ext-id
-                 (:ext/name ext)
+        (fn [ext]
+          (let [ext-id
+                (:ext/name ext)
 
-                 ext-kind
-                 (extension-kind ext)
+                ext-kind
+                (extension-kind ext)
 
-                 ext-label
-                 (extension-display-label ext)
+                ext-label
+                (extension-display-label ext)
 
-                 provider-ids
-                 (set (keep :provider/id (:ext/providers ext)))]
+                provider-ids
+                (set (keep :provider/id (:ext/providers ext)))]
 
-             (keep-indexed (fn [idx decl]
-                             (when-let [k (setting-key (:key decl))]
-                               (when-not (contains? retired-extension-setting-keys k)
-                                 (assoc decl
-                                   :key k
-                                   :extension-id ext-id
-                                   :extension-kind ext-kind
-                                   :extension-label ext-label
-                                   :extension-order idx
-                                   :provider-ids provider-ids))))
-                           (:ext/settings ext)))))
+            (keep-indexed (fn [idx decl]
+                            (when-let [k (setting-key (:key decl))]
+                              (when-not (contains? retired-extension-setting-keys k)
+                                (assoc decl
+                                       :key k
+                                       :extension-id ext-id
+                                       :extension-kind ext-kind
+                                       :extension-label ext-label
+                                       :extension-order idx
+                                       :provider-ids provider-ids))))
+                          (:ext/settings ext)))))
        (sort-by (juxt :extension-kind :extension-label :extension-order :key))
        vec))
 (defn- extension-setting-rows
@@ -2041,30 +2063,30 @@
   []
   (->> (vis/registered-extensions)
        (mapcat
-         (fn [ext]
-           (let [ext-id
-                 (:ext/name ext)
+        (fn [ext]
+          (let [ext-id
+                (:ext/name ext)
 
-                 ext-kind
-                 (extension-kind ext)
+                ext-kind
+                (extension-kind ext)
 
-                 ext-label
-                 (extension-display-label ext)]
+                ext-label
+                (extension-display-label ext)]
 
-             (for [decl
-                   (:ext/env ext)
+            (for [decl
+                  (:ext/env ext)
 
-                   :let [name
-                         (some-> (:name decl)
-                                 str
-                                 str/trim)]
-                   :when (not (str/blank? name))]
+                  :let [name
+                        (some-> (:name decl)
+                                str
+                                str/trim)]
+                  :when (not (str/blank? name))]
 
-               (assoc decl
-                 :name name
-                 :extension-id ext-id
-                 :extension-kind ext-kind
-                 :extension-label ext-label)))))
+              (assoc decl
+                     :name name
+                     :extension-id ext-id
+                     :extension-kind ext-kind
+                     :extension-label ext-label)))))
        (sort-by (juxt :extension-kind :extension-label :name))
        vec))
 (defn- extension-env-rows
@@ -2485,34 +2507,34 @@
         (max 1 (long desc-w))]
 
     (vec
-      (mapcat (fn [idx {:keys [type label description]}]
-                (case type
-                  :section
-                  [{:row-idx idx :part :section}]
+     (mapcat (fn [idx {:keys [type label description]}]
+               (case type
+                 :section
+                 [{:row-idx idx :part :section}]
 
-                  :subsection
-                  [{:row-idx idx :part :subsection}]
+                 :subsection
+                 [{:row-idx idx :part :subsection}]
 
-                  :info
-                  (let [text
-                        (str label
-                             (when-not (str/blank? (str (or description "")))
-                               (str "  " description)))
+                 :info
+                 (let [text
+                       (str label
+                            (when-not (str/blank? (str (or description "")))
+                              (str "  " description)))
 
-                        lines
-                        (settings-wrap-lines text (max 1 (- option-w 2)))]
+                       lines
+                       (settings-wrap-lines text (max 1 (- option-w 2)))]
 
-                    (mapv (fn [line]
-                            {:row-idx idx :part :info-line :text line})
-                          (or (seq lines) [""])))
+                   (mapv (fn [line]
+                           {:row-idx idx :part :info-line :text line})
+                         (or (seq lines) [""])))
 
-                  (let [desc-lines (settings-wrap-lines description desc-w)]
-                    (into [{:row-idx idx :part :option}]
-                          (mapv (fn [line]
-                                  {:row-idx idx :part :option-desc :text line})
-                                desc-lines)))))
-              (range)
-              rows))))
+                 (let [desc-lines (settings-wrap-lines description desc-w)]
+                   (into [{:row-idx idx :part :option}]
+                         (mapv (fn [line]
+                                 {:row-idx idx :part :option-desc :text line})
+                               desc-lines)))))
+             (range)
+             rows))))
 (defn- settings-header-row? [{:keys [type]}] (contains? #{:section :subsection} type))
 (defn- settings-row-search-text
   "Lowercased haystack for a row's search match: its label + description."
@@ -2849,9 +2871,9 @@
                    (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
                        (p/styled
-                         g
-                         [p/BOLD]
-                         (p/put-str! g (+ lleft 2) row-y (settings-subsection-text label paint-w))))
+                        g
+                        [p/BOLD]
+                        (p/put-str! g (+ lleft 2) row-y (settings-subsection-text label paint-w))))
 
                    :info-line
                    (do (p/set-colors! g t/dialog-hint t/dialog-bg)
@@ -2997,7 +3019,7 @@
                                                                          visual-n
                                                                          visible-h
                                                                          (long
-                                                                           @scrollbar-drag-offset))
+                                                                          @scrollbar-drag-offset))
                                           0))
                        (recur))
                    (= action MouseActionType/CLICK_RELEASE) (do (vreset! scrollbar-drag-offset nil)
@@ -3018,7 +3040,7 @@
                  KeyType/Backspace (do (when (seq @query)
                                          (swap! query #(subs % 0 (dec (count %))))
                                          (reset! selected (first-selectable-index
-                                                            (filter-settings-rows all-rows @query)))
+                                                           (filter-settings-rows all-rows @query)))
                                          (reset! scroll 0))
                                        (recur))
                  ;; Any printable character types into the search query (VS Code feel);
@@ -3027,8 +3049,8 @@
                                      (if (and c (>= (int c) 32))
                                        (do (swap! query str c)
                                            (reset! selected (first-selectable-index
-                                                              (filter-settings-rows all-rows
-                                                                                    @query)))
+                                                             (filter-settings-rows all-rows
+                                                                                   @query)))
                                            (reset! scroll 0)
                                            (recur))
                                        (recur)))
@@ -3424,7 +3446,7 @@
              ;; Keep the FOCUSED session even when it is an empty
              ;; untitled shell — you must always see "you are here".
              (remove
-               #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
+              #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
              (mapv #(navigator-session-row active-session-id %)))]
 
     ;; Focused row pinned to the top; the rest keep their recency order
@@ -3460,7 +3482,10 @@
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
 (defn- dir-canon
   ^java.io.File [^java.io.File f]
-  (try (.getCanonicalFile f) (catch Throwable _ (.getAbsoluteFile f))))
+  (try (.getCanonicalFile f)
+       (catch Throwable t
+         (tel/log! :debug ["dialogs: getCanonicalFile failed" (str f) (ex-message t)])
+         (.getAbsoluteFile f))))
 
 (defn- list-subdirs
   "Case-insensitively sorted names of the visible child directories of `dir`,
@@ -3469,7 +3494,10 @@
    you're looking for lives in one.
    Unreadable dirs (permission denied → nil listing) yield an empty vec."
   [^java.io.File dir]
-  (->> (try (.listFiles dir) (catch Throwable _ nil))
+  (->> (try (.listFiles dir)
+            (catch Throwable t
+              (tel/log! :debug ["dialogs: listFiles failed" (str dir) (ex-message t)])
+              nil))
        (filter (fn [^java.io.File f]
                  (.isDirectory f)))
        (map (fn [^java.io.File f]
@@ -3555,7 +3583,10 @@
           (some-> p
                   str
                   not-empty
-                  (#(try (str (workspace/normalize-root %)) (catch Throwable _ %)))))]
+                  (#(try (str (workspace/normalize-root %))
+                         (catch Throwable t
+                           (tel/log! :debug ["dialogs: normalize-root failed" (str %) (ex-message t)])
+                           %)))))]
 
     (loop []
 
@@ -3566,13 +3597,19 @@
             (some? (.getParentFile dir))
 
             ws
-            (when manager? (try (workspace/get db-info @wid) (catch Throwable _ nil)))
+            (when manager? (try (workspace/get db-info @wid)
+                                (catch Throwable t
+                                  (tel/log! :debug ["dialogs: workspace/get failed" @wid (ex-message t)])
+                                  nil)))
 
             base
             (:root ws)
 
             extras
-            (when ws (try (workspace/filesystem-roots ws) (catch Throwable _ nil)))
+            (when ws (try (workspace/filesystem-roots ws)
+                          (catch Throwable t
+                            (tel/log! :debug ["dialogs: filesystem-roots failed" (ex-message t)])
+                            nil)))
 
             dir-canon-str
             (norm (.getPath dir))
@@ -3697,32 +3734,32 @@
             header-rows
             (if manager?
               (vec
-                (concat [{:kind :blank :text ""}
-                         {:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
-                        (if (seq roots)
-                          (concat [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
-                                  (map (fn [r]
-                                         {:kind :root :text (root-row r)})
-                                       roots)
-                                  [{:kind :box
-                                    :text (table/boxed-border-line [path-w tag-w] :bottom)}])
-                          [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                        [{:kind :rule :text (apply str (repeat list-w "─"))} {:kind :blank :text ""}
-                         {:kind :browse
-                          :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
-                        (when notice-here
-                          [{:kind :notice
-                            :text (str (case (second notice-here)
-                                         :error
-                                         "✖ "
+               (concat [{:kind :blank :text ""}
+                        {:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
+                       (if (seq roots)
+                         (concat [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
+                                 (map (fn [r]
+                                        {:kind :root :text (root-row r)})
+                                      roots)
+                                 [{:kind :box
+                                   :text (table/boxed-border-line [path-w tag-w] :bottom)}])
+                         [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
+                       [{:kind :rule :text (apply str (repeat list-w "─"))} {:kind :blank :text ""}
+                        {:kind :browse
+                         :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
+                       (when notice-here
+                         [{:kind :notice
+                           :text (str (case (second notice-here)
+                                        :error
+                                        "✖ "
 
-                                         :ok
-                                         "✔ "
+                                        :ok
+                                        "✔ "
 
-                                         "")
-                                       (nth notice-here 2))
-                            :error? (= :error (second notice-here))}])
-                        [{:kind :blank :text ""}]))
+                                        "")
+                                      (nth notice-here 2))
+                           :error? (= :error (second notice-here))}])
+                       [{:kind :blank :text ""}]))
               [{:kind :blank :text ""}
                {:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}
                {:kind :blank :text ""}])
@@ -3763,8 +3800,8 @@
               (when manager?
                 (cond target-base?
                       (reset! notice
-                        [dir-canon-str :error
-                         "This is the session's root — C-r on another folder to change it"])
+                              [dir-canon-str :error
+                               "This is the session's root — C-r on another folder to change it"])
                       :else
                       (try (if target-already?
                              (workspace/remove-filesystem-root! db-info @wid (.getPath target-dir))
@@ -3789,6 +3826,18 @@
                                                                       session-state-id
                                                                       (.getPath target-dir))]
                                    (reset! wid (:id new-ws))
+                                   ;; Synchronously warm the git status cache for the
+                                   ;; NEW root so the footer paints the new repo on
+                                   ;; the very next frame instead of "No git" for a
+                                   ;; refresh cycle (stale-while-revalidate miss on
+                                   ;; the unseen cwd). The TUI C-r path bypasses
+                                   ;; turns, so the turn-completion seed can't cover
+                                   ;; it — seed right here, at the change site.
+                                   (when-let [nr (:root new-ws)]
+                                     (try (git/seed-working-tree-status! (java.io.File. nr))
+                                          (catch Throwable t
+                                            (tel/log! :warn ["dialogs: git seed-working-tree-status! failed" nr (ex-message t)])
+                                            nil)))
                                    (reset! notice [dir-canon-str :ok
                                                    (str "Root changed — session now works in "
                                                         target-name)]))
@@ -3939,7 +3988,9 @@
                            (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
                            (reset! query "")
                            (reset-list!)
-                           (catch Throwable _ nil)))
+                           (catch Throwable t
+                             (tel/log! :warn ["dialogs: create-dir! failed" (.getPath dir) nm (ex-message t)])
+                             nil)))
                     (recur))
                   (input/paste-start? key) (do (let [pasted (drain-modal-paste! screen)]
                                                  (when (seq pasted)
@@ -4201,9 +4252,9 @@
                          (and (= action MouseActionType/CLICK_DOWN)
                               (let [pos (.getPosition ^MouseAction key)]
                                 (scrollbar/on-track?
-                                  (.getColumn pos)
-                                  (.getRow pos)
-                                  {:col scrollbar-col :top body-top :track-h body-h :x-band 2}))))))
+                                 (.getColumn pos)
+                                 (.getRow pos)
+                                 {:col scrollbar-col :top body-top :track-h body-h :x-band 2}))))))
               (let [^MouseAction ma
                     key
 
@@ -4357,7 +4408,10 @@
    :model <str>}` — or nil on Esc."
   [^TerminalScreen screen current]
   (let [providers
-        (try (vis/configured-providers) (catch Throwable _ nil))
+        (try (vis/configured-providers)
+             (catch Throwable t
+               (tel/log! :warn ["dialogs: configured-providers failed" (ex-message t)])
+               nil))
 
         cur-provider
         (some-> (:provider current)
@@ -4521,7 +4575,10 @@
         (atom 0)
 
         ir
-        (try (vis/markdown->ir (str md)) (catch Throwable _ nil))]
+        (try (vis/markdown->ir (str md))
+             (catch Throwable t
+               (tel/log! :warn ["dialogs: markdown->ir failed" (ex-message t)])
+               nil))]
 
     (if (nil? ir)
       (text-viewer-dialog! screen title (str md))
@@ -4555,7 +4612,10 @@
               (max 1 (- inner-w 3))
 
               lines
-              (try (ir-tui/ir->lines ir text-w) (catch Throwable _ []))
+              (try (ir-tui/ir->lines ir text-w)
+                   (catch Throwable t
+                     (tel/log! :warn ["dialogs: ir->lines failed" (ex-message t)])
+                     []))
 
               total
               (count lines)

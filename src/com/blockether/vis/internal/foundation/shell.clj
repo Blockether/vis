@@ -887,70 +887,214 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
 ;; :body}` IR (that part is internal).
 ;; =============================================================================
 
-(defn- fence
-  "Wrap `s` in a plain code fence, or nil when blank."
+(def ^:private shell-chip-max
+  "Display-width-ish budget for the command on the collapsed shell chip. Keep this
+   tighter than the TUI width; the op-card label already says SHELL RUN."
+  72)
+
+(defn- present-str
+  "Stringify `x`, trim only the right edge (so logs keep indentation), and return
+   nil when blank."
+  [x]
+  (let [s (str/trimr (str x))]
+    (when-not (str/blank? s) s)))
+
+(defn- shell-one-line
+  "Collapse whitespace to one trimmed line for a shell card preview."
   [s]
-  (when (seq (str s)) (str "```\n" s "\n```")))
+  (some-> (present-str s)
+          (str/replace #"\s+" " ")
+          str/trim
+          not-empty))
+
+(defn- clip-chip
+  "Clip a single-line preview with an ellipsis so shell commands cannot blow out
+   collapsed cards."
+  [s n]
+  (let [s
+        (str s)
+
+        n
+        (long n)]
+
+    (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
+
+(defn- duration-label
+  "Human duration for shell card chips/status sections."
+  [ms]
+  (when (number? ms)
+    (cond (< ms 1000) (str (long ms) "ms")
+          (< ms 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
+          :else (str/replace (format "%.1fm" (/ (double ms) 60000.0)) "," "."))))
+
+(defn- fence
+  "Wrap `s` in a code fence, or nil when blank."
+  ([s] (fence s nil))
+  ([s lang]
+   (when-let [s (present-str s)]
+     (str "```" (or lang "") "\n" s "\n```"))))
+
+(defn- shell-section
+  "One REPL-style labeled shell body section."
+  ([label s] (shell-section label s nil))
+  ([label s lang]
+   (when-let [f (fence s lang)]
+     (str "**" label "**\n" f))))
+
+(defn- kv-lines
+  "Render non-nil `[label value]` pairs as `label: value` lines."
+  [pairs]
+  (->> pairs
+       (keep (fn [[k v]]
+               (when-let [v (present-str v)]
+                 (str k ": " v))))
+       (str/join "\n")
+       not-empty))
+
+(defn- shell-run-status
+  "Status fields for a sync shell_run result. Non-zero exit is display data, not a
+   tool error, but it still gets the failed visual treatment."
+  [r]
+  (let [exit (get r "exit")]
+    (cond (get r "timed_out") {:icon "⏱"
+                               :label (str "timed out"
+                                           (when-let [s (get r "timeout_secs")]
+                                             (str " after " s "s")))
+                               :failed? true}
+          (and exit (not (zero? exit))) {:icon "✗" :label (str "exit " exit) :failed? true}
+          exit {:icon "✓" :label (str "exit " exit) :failed? false}
+          :else {:icon "✓" :label "finished" :failed? false})))
 
 (defn- render-shell-run-result
-  "shell_run → `$ <cmd>` headline (with an exit/timeout note) + stdout / stderr
-   code blocks. The `stderr:` label rides along only when the command actually
-   failed — plenty of tools (git, curl, …) write normal output to stderr on
-   success, so labelling that as an error is misleading."
+  "shell_run → REPL-style collapsed/expanded card.
+
+   Collapsed: `$ npm test (success) · 1.2s` or
+   `$ grep x missing (failure) · exit 2 · 34ms`.
+   Expanded: labeled COMMAND / STATUS / STDOUT / STDERR sections. The body is
+   always present so shell cards are collapsible even when the command produced no
+   output; the full command and metadata stay available behind the disclosure."
   [r]
-  (let [exit
-        (get r "exit")
+  (let [{:keys [label failed?]}
+        (shell-run-status r)
 
-        failed?
-        (or (get r "timed_out") (and exit (not (zero? exit))))
+        cmd
+        (or (shell-one-line (get r "cmd")) "shell")
 
-        note
-        (cond (get r "timed_out") " (timed out)"
-              (and exit (not (zero? exit))) (str " (exit " exit ")")
-              :else "")
+        duration
+        (duration-label (get r "duration_ms"))
+
+        summary
+        (str "$ "
+             (clip-chip cmd shell-chip-max)
+             " ("
+             (if failed? "failure" "success")
+             ")"
+             (when failed? (str " · " label))
+             (when duration (str " · " duration)))
+
+        status
+        (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
+                   ["timeout"
+                    (when-let [s (get r "timeout_secs")]
+                      (str s "s"))] ["stdout" (when (get r "stdout_truncated") "truncated")]
+                   ["stderr" (when (get r "stderr_truncated") "truncated")]])
 
         body
-        (->> [(fence (get r "stdout"))
-              (when-let [e (fence (get r "stderr"))]
-                (if failed? (str "stderr:\n" e) e))]
+        (->> [(shell-section "COMMAND" (get r "cmd") "bash") (shell-section "STATUS" status)
+              (shell-section "STDOUT" (get r "stdout")) (shell-section "STDERR" (get r "stderr"))]
              (remove nil?)
              (str/join "\n\n"))]
 
-    {:summary (str "$ " (get r "cmd") note) :body (when (seq body) body)}))
+    {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-bg-result
-  "shell_bg → `bg `<id>` started (pid N)` headline only."
+  "shell_bg → lifecycle card with the command, pid, and human attach hint in the
+   expandable body."
   [r]
-  {:summary (str "bg `"
-                 (get r "id")
-                 "` "
-                 (or (get r "status") "started")
-                 (when-let [pid (get r "pid")]
-                   (str " (pid " pid ")")))})
+  (let [id
+        (get r "id")
+
+        status
+        (or (get r "status") "started")
+
+        summary
+        (str "▶ bg `"
+             id
+             "` "
+             status
+             (when-let [pid (get r "pid")]
+               (str " · pid " pid)))
+
+        details
+        (kv-lines [["id" id] ["status" status] ["pid" (get r "pid")] ["attach" (get r "attach")]
+                   ["socket" (get r "socket")]])
+
+        body
+        (->> [(shell-section "COMMAND" (get r "cmd") "bash") (shell-section "STATUS" details)]
+             (remove nil?)
+             (str/join "\n\n"))]
+
+    {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-logs-result
-  "shell_logs → `<id> <status> — N lines` headline + the captured lines."
+  "shell_logs → compact process/log status plus a terminal transcript body."
   [r]
   (let [lines
-        (get r "lines")
+        (or (get r "lines") [])
 
         text
         (->> lines
              (map (fn [pair]
                     (if (sequential? pair) (second pair) pair)))
-             (str/join "\n"))]
+             (str/join "\n"))
 
-    {:summary (str "`" (get r "id")
-                   "` " (or (get r "status") "?")
-                   " — " (count lines)
-                   " lines" (when-let [d (get r "dropped")]
-                              (str " (" d " dropped)")))
-     :body (fence text)}))
+        status
+        (or (get r "status") "?")
+
+        duration
+        (duration-label (get r "uptime_ms"))
+
+        exited?
+        (= "exited" status)
+
+        summary
+        (str (if exited? "■" "◷")
+             " `"
+             (get r "id")
+             "` "
+             status
+             (when-let [exit (get r "exit")]
+               (str " · exit " exit))
+             " · "
+             (count lines)
+             " lines"
+             (when-let [total (get r "line_count")]
+               (when (not= total (count lines)) (str " / " total " total")))
+             (when-let [d (get r "dropped")]
+               (str " · " d " dropped"))
+             (when duration (str " · " duration)))
+
+        details
+        (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
+                   ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
+                   ["dropped" (get r "dropped")] ["uptime" duration]])
+
+        body
+        (->> [(shell-section "STATUS" details) (shell-section "LOGS" text)]
+             (remove nil?)
+             (str/join "\n\n"))]
+
+    {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-send-result
-  "shell_send → `→ `<id>` sent N chars` headline only."
+  "shell_send → send-keys lifecycle card."
   [r]
-  {:summary (str "→ `" (get r "id") "` sent " (get r "sent") " chars")})
+  (let [details (kv-lines [["id" (get r "id")]
+                           ["sent"
+                            (when-let [n (get r "sent")]
+                              (str n " chars"))] ["status" (get r "status")]])]
+    {:summary (str "↵ `" (get r "id") "` sent " (get r "sent") " chars")
+     :body (shell-section "STATUS" details)}))
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. Alias `shell` → `shell_run` / `shell_bg` /

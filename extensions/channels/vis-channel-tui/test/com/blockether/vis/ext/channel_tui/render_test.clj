@@ -142,6 +142,40 @@
         (expect (= "update `a.clj`" (:result-summary (first out))))
         (expect (str/includes? (:result-render (first out)) "+ one"))
         (expect (str/includes? (:result-render (first out)) "+ two"))))
+  (it "folds adjacent format_code path acks into one roll-up card"
+      (let [forms
+            [{:vis/tool-name "format_code"
+              :success? true
+              :result-summary "`src/a.clj` (no change)"
+              :result {"path" "src/a.clj" "changed" false}}
+             {:vis/tool-name "format_code"
+              :success? true
+              :result-summary "`test/a_test.clj` (no change)"
+              :result {"path" "test/a_test.clj" "changed" false}}]
+
+            out
+            (coalesce-forms forms)]
+
+        (expect (= 1 (count out)))
+        (expect (= "2 files — 0 changed" (:result-summary (first out))))
+        (expect (str/includes? (:result-render (first out)) "src/a.clj (no change)"))
+        (expect (str/includes? (:result-render (first out)) "test/a_test.clj (no change)"))))
+  (it "keeps a failed format_code ack separate from an adjacent success"
+      (let [forms
+            [{:vis/tool-name "format_code"
+              :success? false
+              :result-summary "`src/a.clj` failed"
+              :result-render "boom"
+              :result {"path" "src/a.clj"}}
+             {:vis/tool-name "format_code"
+              :success? true
+              :result-summary "`test/a_test.clj` (no change)"
+              :result {"path" "test/a_test.clj" "changed" false}}]
+
+            out
+            (coalesce-forms forms)]
+
+        (expect (= 2 (count out)))))
   (it "keeps a failed patch separate from an adjacent successful one on the same file"
       (let [forms
             [{:vis/tool-name "patch"
@@ -247,7 +281,7 @@
         ;; status footers are gone too; code blocks are source-only.
         (let [lines
               (format-iteration-entry {:iteration 0
-                                       :forms [{:code "(Thread/sleep 1000)"
+                                       :forms [{:code "(reduce + (range 1000))"
                                                 :comment nil
                                                 :render-segments nil
                                                 :stdout nil
@@ -261,8 +295,9 @@
                                       {:now-ms 2500})
 
               code-line
-              (first (filter #(str/includes? % "sleep") lines))]
+              (first (filter #(str/includes? (strip-ansi %) "reduce") lines))]
 
+          ;; A live-running block's raw :code paints verbatim with a MARKER_CODE
           (expect (not-any? #(str/includes? % "BLOCK 1") lines))
           (expect (not-any? #(str/includes? % "ITERATION 1") lines))
           (expect (not-any? #(str/includes? % "CODE 1") lines))
@@ -485,7 +520,7 @@
 
             body
             (->> lines
-                 (map (comp str/trim strip-ansi body-of))
+                 (map (comp str/trim strip-sentinels strip-ansi body-of))
                  (str/join " "))]
 
         ;; The recap rail is retired; the provider error itself still
@@ -518,7 +553,7 @@
 
        body
        (->> lines
-            (map (comp str/trim strip-ansi body-of))
+            (map (comp str/trim strip-sentinels strip-ansi body-of))
             (str/join " "))]
 
       ;; The recap rail is retired; auth errors still render as action.
@@ -544,7 +579,7 @@
 
             body
             (->> lines
-                 (map (comp str/trim strip-ansi body-of))
+                 (map (comp str/trim strip-sentinels strip-ansi body-of))
                  (str/join " "))]
 
         ;; It must get the shared provider-error treatment: the split
@@ -2975,7 +3010,10 @@
     (when (= "git" (first tf)) (second tf))))
 (def ^:private git-command-parts @#'render/git-command-parts)
 (def ^:private git-group-entries @#'render/git-group-entries)
+(def ^:private shell-run-command-parts @#'render/shell-run-command-parts)
+(def ^:private shell-run-group-entries @#'render/shell-run-group-entries)
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
+(def ^:private tool-card-entries @#'render/tool-card-entries)
 
 (defn- git-form
   [summary render]
@@ -2987,13 +3025,43 @@
    :tool-color-role :tool-color/shell
    :result {}})
 
+(defn- shell-form
+  [summary render]
+  {:vis/tool-name "shell_run"
+   :success? true
+   :code ""
+   :result-summary summary
+   :result-render render
+   :tool-color-role :tool-color/shell
+   :result {}})
+
 (defn- entry-text
   [entries]
-  ;; Drop every zero-width structural / inline-style marker so assertions match
-  ;; the human-visible text regardless of where sentinels sit in the row.
+  ;; Drop every zero-width structural / inline-style marker and ANSI colour escape
+  ;; so assertions match the human-visible text regardless of where sentinels sit
+  ;; in the row.
   (mapv (fn [e]
-          (str/replace (str (:line e)) #"[\u200B-\u200F\u2060-\u206F\uFEFF\uE000-\uF8FF]" ""))
+          (-> (str (:line e))
+              (str/replace #"\u001b\[[0-9;]*m" "")
+              (str/replace #"[\u200B-\u200F\u2060-\u206F\uFEFF\uE000-\uF8FF]" "")))
         entries))
+
+(defdescribe
+  tool-card-body-indent-test
+  (it "keeps one expanded tool-card header spacer but no empty gutter rows inside sections"
+      (let [texts
+            (entry-text
+              (tool-card-entries
+                {:label "REPL"
+                 :color-role :tool-color/shell
+                 :summary "(+ 1 1) ⇒ 2"
+                 :body "**RESULT**\n```clojure\n2\n```\n\n**STDOUT**\n```\nhi\n```"}
+                {:fill-w 76 :session-id nil :detail-expansions {}}))
+            body-texts
+            (vec (remove str/blank? (drop 2 texts)))]
+        (expect (= "" (second texts)))
+        (expect (= ["  RESULT" "  2" "  STDOUT" "  hi"] body-texts))
+        (expect (not-any? str/blank? (drop 2 texts))))))
 
 (defdescribe
   git-band-grouping-test
@@ -3056,7 +3124,7 @@
          (git-command-parts
            (git-form
              "commit -m"
-             "> wip: tidy things\n>\n> a longer body paragraph\n\n```\n[main abc] wip: tidy things\n```"))]
+             "**COMMAND**\n```bash\ngit commit -m\n```\n\n**MESSAGE**\n> wip: tidy things\n>\n> a longer body paragraph\n\n**STDOUT**\n```\n[main abc] wip: tidy things\n```"))]
         (expect (= "commit" (:subcommand c)))
         (expect (= "wip: tidy things" (:subject c))))
       ;; No blockquote / non-commit ⇒ no subject.
@@ -3066,7 +3134,7 @@
     (it "a commit's subject rides on its collapsed chip"
         (let [forms
               [(git-form "add -A" nil)
-               (git-form "commit -m" "> wip: tidy\n>\n> body\n\n```\n[main abc] wip: tidy\n```")]
+               (git-form "commit -m" "**MESSAGE**\n> wip: tidy\n>\n> body\n\n**STDOUT**\n```\n[main abc] wip: tidy\n```")]
 
               collapsed
               (entry-text (git-group-entries forms (assoc ctx :iteration-number 7)))]
@@ -3193,6 +3261,114 @@
         ;; breathe (result-marker), NOT the popped iteration-pad gap.
         (expect (= rm-ch (first before)))
         (expect (not= ip-ch (first before)))))))
+
+(defdescribe
+  shell-run-band-grouping-test
+  ;; A RUN of consecutive shell_run-only iterations coalesces into ONE collapsible
+  ;; SHELL RUN band, just like the GIT band. A lone shell command, or a run broken
+  ;; by other work, renders per iteration as before.
+  (let [ctx
+        {:fill-w 90 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+
+        sh
+        (fn [i s r]
+          [i {:forms [(shell-form s r)]}])
+
+        py
+        (fn [i]
+          [i {:forms [{:vis/tool-name "python_execution" :result-summary "x"}]}])
+
+        iter-fn
+        (fn [[idx _]]
+          [{:line (str "NORMAL#" idx) :meta nil}])
+
+        shell-band-count
+        (fn [pairs]
+          (->> (render-iteration-entries pairs iter-fn false true ctx)
+               entry-text
+               (filter #(str/includes? % "SHELL RUN"))
+               count))
+
+        normal-count
+        (fn [pairs]
+          (->> (render-iteration-entries pairs iter-fn false true ctx)
+               (filter #(str/includes? (str (:line %)) "NORMAL#"))
+               count))]
+
+    (it "groupable-iteration-forms tags a lone shell_run iteration"
+        (expect (= "shell_run"
+                   (first (@#'render/groupable-iteration-forms
+                           {:forms [(shell-form "$ echo hi" nil)]})))))
+    (it
+      "shell-run-command-parts clips the command chip but keeps the full headline"
+      (let
+        [p
+         (shell-run-command-parts
+           (shell-form
+             "$ echo \"=== channel_tui lines (screen + state) ===\"; grep channel_tui ~/.vis/vis.log"
+             nil))]
+        (expect
+          (=
+            "$ echo \"=== channel_tui lines (screen + state) ===\"; grep channel_tui ~/.vis/vis.log"
+            (:headline p)))
+        (expect (str/includes? (:chip p) "$ echo \"==="))
+        (expect (str/includes? (:chip p) "..."))))
+    (it
+      "shell-run-command-parts understands the richer shell renderer cards"
+      (let
+        [p
+         (shell-run-command-parts
+           (assoc
+             (shell-form
+               "✗ $ grep nope missing · exit 2 · 34ms"
+               "**COMMAND**\n```bash\ngrep nope missing\n```\n\n**STATUS**\n```\nstatus: exit 2\n```")
+             :result {"cmd" "grep nope missing" "exit" 2 "duration_ms" 34}))]
+        (expect (= "grep nope missing" (:cmd p)))
+        (expect (= "exit 2" (:status p)))
+        (expect (true? (:failed? p)))
+        (expect (str/includes? (:chip p) "`$ grep nope missing` (failure) · exit 2 · 34ms"))
+        (expect (str/includes? (:body p) "**COMMAND**"))))
+    (it "two consecutive shell_run iterations collapse into ONE band"
+        (let [pairs [(sh 0 "$ wc -l ~/.vis/vis.log" nil) (sh 1 "$ ps aux | grep vis" nil)]]
+          (expect (= 1 (shell-band-count pairs)))
+          (expect (= 0 (normal-count pairs)))))
+    (it "a lone shell_run iteration renders normally (no band)"
+        (let [pairs [(sh 0 "$ date" nil)]]
+          (expect (= 0 (shell-band-count pairs)))
+          (expect (= 1 (normal-count pairs)))))
+    (it "a non-shell step between two shell runs breaks the run"
+        (let [pairs [(sh 0 "$ date" nil) (py 1) (sh 2 "$ pwd" nil)]]
+          (expect (= 0 (shell-band-count pairs)))
+          (expect (= 3 (normal-count pairs)))))
+    (it
+      "collapsed shell band hides output; expanded restores each command + stdout"
+      (let [forms
+            [(shell-form "$ echo one" "\n```\nfirst-output\n```")
+             (shell-form "$ echo two" "\n```\nsecond-output\n```")]
+
+            node-id
+            (@#'render/detail-node-id
+             {:session-turn-id "t" :iteration-number 5 :section :iteration :kind :shell-run-group})
+
+            collapsed
+            (entry-text (shell-run-group-entries forms (assoc ctx :iteration-number 5)))
+
+            expanded
+            (entry-text (shell-run-group-entries forms
+                                                 (assoc ctx
+                                                   :iteration-number 5
+                                                   :detail-expansions {["s1" node-id] true})))]
+
+        (expect (some #(str/includes? % "2 commands") collapsed))
+        (expect (some #(str/includes? % "$ echo one") collapsed))
+        (expect (not-any? #(str/includes? % "first-output") collapsed))
+        (expect (some #(str/includes? % "$ echo one") expanded))
+        (expect (some #(str/includes? % "$ echo two") expanded))
+        (expect (some #(str/includes? % "first-output") expanded))
+        (expect (every? #(str/starts-with? % "  ")
+                        (filter #(and (str/includes? % "$ echo")
+                                      (not (str/includes? % "SHELL RUN")))
+                                expanded)))))))
 
 (def ^:private groupable-iteration-forms @#'render/groupable-iteration-forms)
 (def ^:private rg-command-parts @#'render/rg-command-parts)
@@ -3745,11 +3921,10 @@
           (expect (some #(str/includes? % "STRUCT_PATCH · 2 edits") sp))
           (expect (some #(str/includes? % "WRITE · 2 writes") wr))))
     (it "same-file edits show the FULL path ONCE, not the basename repeated N times"
-        (let [sp
-              (entry-text (edit-group-entries "struct_patch"
-                                              [(ef "struct_patch" base) (ef "struct_patch" base)
-                                               (ef "struct_patch" base)]
-                                              (assoc ctx :iteration-number 8)))]
+        (let [sp (entry-text (edit-group-entries "struct_patch"
+                                                 [(ef "struct_patch" base) (ef "struct_patch" base)
+                                                  (ef "struct_patch" base)]
+                                                 (assoc ctx :iteration-number 8)))]
           (expect (some #(str/includes? % "STRUCT_PATCH · 3 edits") sp))
           ;; full path once …
           (expect (some #(str/includes? % "a/b/chat.clj") sp))

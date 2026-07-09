@@ -3,7 +3,8 @@
    (`repl-manager/session-repls`) and liveness (`nrepl-client/probe!`) are stubbed
    so the assertions are deterministic and offline; the real `describe`/eval
    round-trip is covered in `nrepl-client-test`."
-  (:require [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nx]
             [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -61,6 +62,29 @@
               (expect (= "clj" (get p "dialect")))
               (expect (= ["dev" "test"] (get p "aliases")))
               (expect (= {"clojure" "1.12.4"} (get p "versions")))))))))
+
+(defdescribe resource-mirror-logs-test
+             (it "registers nREPL mirrors as log-capable resources when the manager has a log path"
+                 (let [sid (str "nrepl-ctx-logs-" (System/nanoTime))
+                       rid "nrepl:/proj"
+                       log (java.io.File/createTempFile "vis-nrepl-ctx-" ".log")]
+                   (try
+                     (spit log "starting\nready\n")
+                     (@#'nx/ensure-resource!
+                      sid
+                      {:id rid
+                       :dir "/proj"
+                       :port 7001
+                       :tool :clj
+                       :aliases [:dev]
+                       :log (.getAbsolutePath log)})
+                     (let [r (vis/get-resource sid rid)]
+                       (expect (= true (get r "can_logs")))
+                       (expect (= (.getAbsolutePath log) (get-in r ["detail" "log"])))
+                       (expect (= ["starting" "ready"] (vis/resource-logs sid rid))))
+                     (finally
+                       (vis/unregister-resource! sid rid)
+                       (.delete log))))))
 
 (defdescribe default-selection-test
              (it "no default when MORE THAN ONE REPL is owned (id must be specified)"

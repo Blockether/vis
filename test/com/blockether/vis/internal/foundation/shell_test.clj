@@ -13,6 +13,9 @@
 (def ^:private shell-bg* @#'shell/shell-bg-impl)
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 (def ^:private shell-send* @#'shell/shell-send-impl)
+(def ^:private render-shell-run-result @#'shell/render-shell-run-result)
+(def ^:private render-shell-bg-result @#'shell/render-shell-bg-result)
+(def ^:private render-shell-logs-result @#'shell/render-shell-logs-result)
 
 (defn- with-shell-on
   [f]
@@ -267,6 +270,42 @@
                                                  #(= "exited" (get % "status")))
                                            (expect (threw? #(shell-send* env "gone" "x")))
                                            (finally (resources/stop-all! sid)))))))))
+
+(defdescribe
+  shell-render-test
+  (it "renders shell_run like a REPL-style collapsible card"
+      (let [card (render-shell-run-result
+                   {"cmd" "echo hi" "exit" 0 "duration_ms" 12 "stdout" "hi"})]
+        (expect (= "$ echo hi (success) · 12ms" (:summary card)))
+        (expect (str/includes? (:body card) "**COMMAND**"))
+        (expect (str/includes? (:body card) "**STATUS**"))
+        (expect (str/includes? (:body card) "**STDOUT**"))))
+  (it "surfaces shell failures and timeouts on the collapsed chip"
+      (expect (str/includes? (:summary (render-shell-run-result
+                                         {"cmd" "grep nope missing" "exit" 2 "duration_ms" 34}))
+                             "$ grep nope missing (failure) · exit 2 · 34ms"))
+      (expect (str/includes? (:summary (render-shell-run-result {"cmd" "make test"
+                                                                 "timed_out" true
+                                                                 "timeout_secs" 5
+                                                                 "duration_ms" 5000}))
+                             "$ make test (failure) · timed out after 5s · 5.0s")))
+  (it
+    "renders background lifecycle/log cards with expandable sections"
+    (let [bg
+          (render-shell-bg-result {"id" "srv"
+                                   "cmd" "npm run dev"
+                                   "pid" 123
+                                   "status" "running"
+                                   "attach" "vis ext shell attach srv"})
+
+          logs
+          (render-shell-logs-result
+            {"id" "srv" "status" "running" "lines" [[1 "ready"]] "line_count" 1 "uptime_ms" 1500})]
+
+      (expect (str/includes? (:summary bg) "▶ bg `srv` running · pid 123"))
+      (expect (str/includes? (:body bg) "**COMMAND**"))
+      (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
+      (expect (str/includes? (:body logs) "**LOGS**")))))
 
 (defdescribe shell-prompt-test
              (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"

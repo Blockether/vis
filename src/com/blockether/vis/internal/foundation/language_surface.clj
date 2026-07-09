@@ -483,7 +483,7 @@
    ArithmeticException`. EXPANDED, the body stacks labeled sections, each fenced and
    separated by one blank line:
      - FORM   — only when the form is multi-line / too wide to sit on the chip;
-     - RESULT — the value (shown even when `nil`); ERROR replaces it on failure;
+     - RESULT — the non-nil value; ERROR replaces it on failure;
      - STDOUT — `:out` when non-blank;
      - STDERR — `:err` when non-blank (success path only; on failure the stream IS
                 the stacktrace, surfaced under ERROR).
@@ -527,10 +527,16 @@
                 one-line
                 (clip-chip repl-form-inline-max))
 
+        value-preview
+        (or (one-line value) "nil")
+
+        show-result?
+        (not= "nil" value-preview)
+
         preview
         (if error?
           (str "✗ " (if emsg (short-error emsg) "error"))
-          (str "⇒ " (clip-chip (or (one-line value) "nil") repl-form-inline-max)))
+          (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
 
         summary
         (not-empty (str (when form-chip (str form-chip "  ")) preview))
@@ -547,7 +553,8 @@
         (if error?
           [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
            (sect "ERROR" error-body)]
-          [(when long-form? (sect "FORM" code "clojure")) (sect "RESULT" value "clojure")
+          [(when long-form? (sect "FORM" code "clojure"))
+           (when show-result? (sect "RESULT" value "clojure"))
            (sect "STDOUT" out) (sect "STDERR" err)])
 
         body

@@ -156,45 +156,65 @@
                   (native-tool-form? form)
                   (not= (name (:vis/tool-name form)) "python_execution")))))
 
-(def ^:private coalescable-tools
-  "Native tools whose ADJACENT same-file op-cards fold into ONE card within an
-   iteration: repeated reads (`cat`) and repeated edits (`patch`) of the SAME
-   path read as a single multi-span / multi-diff card instead of a stack of
-   look-alike siblings. Only these two carry a stable file identity and a
-   summary whose leading `` `path` `` chip survives a DB round-trip."
+(def ^:private same-path-coalescable-tools
+  "Native tools whose ADJACENT op-cards fold only when they target the SAME file."
   #{"cat" "patch"})
+
+(def ^:private same-tool-coalescable-tools
+  "Native tools whose ADJACENT op-cards fold by tool name, even across files.
+   `format_code` often runs once per file from the agent workflow; two
+   back-to-back no-op format acks should read as ONE FORMAT_CODE roll-up, not a
+   pile of identical sibling bubbles."
+  #{"format_code"})
+
+(defn- tool-name-s
+  [form]
+  (some-> (:vis/tool-name form)
+          str))
 
 (defn- coalesce-error-form?
   "A form the gateway marked failed (`:success? false`) — never folded into a run
-   (a failed read/edit is its own event and keeps its inline error)."
+   (a failed read/edit/format is its own event and keeps its inline error)."
   [form]
   (and (some? (:success? form)) (not (:success? form))))
 
-(defn- form-file-path
-  "The file PATH a coalescable op-card (`cat`/`patch`) acted on — from the raw
-   `:result` `:path` when present, else parsed out of the first `` `path` `` chip
-   of the summary (which survives a DB round-trip that flattens `:result` to a
-   string). nil for a non-coalescable / pathless form."
+(defn- result-field
+  "Read a result field from a live Clojure map (`:path`) or a JSON/DB-restored map
+   (`\"path\"`). nil for non-map results."
+  [form k]
+  (let [r (:result form)]
+    (when (map? r)
+      (cond
+        (contains? r k) (get r k)
+        (contains? r (name k)) (get r (name k))))))
+
+(defn- same-path-form-path
+  "The file PATH a same-path coalescable op-card (`cat`/`patch`) acted on — from
+   the raw `:result` `:path` when present, else parsed out of the first
+   `` `path` `` chip of the summary (which survives a DB round-trip that flattens
+   `:result` to a string). nil for a non-coalescable / pathless form."
   [form]
-  (when (contains? coalescable-tools
-                   (some-> (:vis/tool-name form)
-                           str))
-    (or (get-in form [:result :path])
+  (when (contains? same-path-coalescable-tools (tool-name-s form))
+    (or (result-field form :path)
         (some-> (:result-summary form)
                 str
                 (->> (re-find #"`([^`]+)`"))
                 second))))
 
-(defn- merge-summaries
-  "Fold N op-card summaries for the SAME path into ONE. Splits each on ` · `,
-   keeps the shared leading chip (`` `path` `` for cat, `` update `path` `` for
-   patch), then appends every DISTINCT tail — for cat the read's LINE SPANS plus
-   the SUMMED line count (only when every merged read carried one). So two reads
-   render `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` ``
-   instead of two look-alike cards."
+(defn- split-summary-parts
+  [summary]
+  (str/split (str summary) #" · "))
+
+(defn- merge-same-path-summaries
+  "Fold N same-file op-card summaries into ONE. Splits each on ` · `, keeps the
+   shared leading chip (`` `path` `` for cat, `` update `path` `` for patch), then
+   appends every DISTINCT tail — for cat the read's LINE SPANS plus the SUMMED
+   line count (only when every merged read carried one). So two reads render
+   `` `a.clj` · L1-10 · L40-50 `` and two edits stay `` update `a.clj` `` instead
+   of two look-alike cards."
   [summaries]
   (let [parts
-        (map #(str/split (str %) #" · ") summaries)
+        (map split-summary-parts summaries)
 
         chip
         (ffirst parts)
@@ -226,32 +246,66 @@
 
         tail
         (str/join " · " (remove str/blank? [span-str count-str]))]
-
     (if (str/blank? tail) chip (str chip " · " tail))))
 
+(defn- format-summary-entry
+  "Parse a single-path format_code summary like `` `src/x.clj` (no change) ``.
+   Falls back to the raw summary so already-aggregated/restored cards still remain
+   visible instead of disappearing."
+  [form]
+  (let [summary (str (:result-summary form))]
+    (if-let [[_ path status] (re-matches #"`([^`]+)`\s+(.*)" summary)]
+      {:path path :status status}
+      {:path (or (result-field form :path) summary)
+       :status (if (result-field form :changed) "(changed)" "")})))
+
+(defn- merge-format-forms
+  "Turn adjacent per-file `format_code` acks into the same shape as one
+   `format_code {\"paths\": [...]}` call: one headline plus a collapsible per-file
+   body."
+  [forms]
+  (let [entries
+        (map format-summary-entry forms)
+
+        n
+        (count entries)
+
+        changed
+        (count (filter #(str/includes? (str (:status %)) "(changed") entries))
+
+        body
+        (str/join "\n"
+                  (for [{:keys [path status]} entries]
+                    (str path (when (seq status) (str " " status)))))]
+    {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
+     :body (when (seq body) (str "```\n" body "\n```"))}))
+
 (defn- merge-run
-  "Collapse a RUN of adjacent op-cards on the same file into one synthesized form:
-   the combined multi-span/multi-diff summary plus every card's body slice stacked
-   under the single headline, so a channel renders it as ONE collapsible card."
+  "Collapse a RUN of adjacent op-cards into one synthesized form: for same-file
+   read/edit tools, the combined multi-span/multi-diff summary plus every card's
+   body slice; for per-file format acks, one format roll-up body. Channels render
+   the synthesized form as ONE card/bubble."
   [forms]
   (let [f0
         (first forms)
 
-        summary
-        (merge-summaries (map :result-summary forms))
+        tool
+        (tool-name-s f0)
 
-        body
-        (str/join "\n" (keep (comp not-empty str :result-render) forms))
+        merged
+        (if (= "format_code" tool)
+          (merge-format-forms forms)
+          {:summary (merge-same-path-summaries (map :result-summary forms))
+           :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
 
         anchors
-        (reduce merge {} (map #(get-in % [:result :anchors]) forms))
+        (reduce merge {} (map #(result-field % :anchors) forms))
 
         r0
         (:result f0)]
-
     (cond-> (assoc f0
-              :result-summary summary
-              :result-render body)
+              :result-summary (:summary merged)
+              :result-render (:body merged))
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the
       ;; path/spans already live in the merged summary, so a non-map result
@@ -259,19 +313,28 @@
       (map? r0)
       (assoc :result (assoc r0 :anchors anchors)))))
 
+(defn- coalesce-key
+  [form]
+  (when-not (coalesce-error-form? form)
+    (let [tool (tool-name-s form)]
+      (cond
+        (contains? same-path-coalescable-tools tool)
+        (when-let [p (same-path-form-path form)]
+          [::same-path tool p])
+
+        (contains? same-tool-coalescable-tools tool)
+        [::same-tool tool]))))
+
 (defn coalesce-forms
-  "Merge each maximal run of ADJACENT, successful op-cards of the SAME coalescable
-   tool reading/editing the SAME path into a single card; every other form passes
-   through untouched. The ONE projection both channels apply before rendering an
-   iteration's forms, so two `cat`s or two `patch`es of one file never render as
-   look-alike siblings. Always returns a vector."
+  "Merge each maximal run of ADJACENT, successful coalescable native op-cards into
+   a single card. `cat`/`patch` coalesce only for the SAME file; `format_code`
+   coalesces adjacent per-file acks into one roll-up across files. Every other
+   form passes through untouched. The ONE projection both channels apply before
+   rendering an iteration's forms, so repeated tool acks never render as a stack
+   of look-alike sibling bubbles. Always returns a vector."
   [forms]
   (let [key-fn (fn [f]
-                 (if-let [p (and (not (coalesce-error-form? f)) (form-file-path f))]
-                   [::run
-                    (some-> (:vis/tool-name f)
-                            str) p]
-                   [::solo (gensym)]))]
+                 (or (coalesce-key f) [::solo (gensym)]))]
     (into []
           (map (fn [grp]
                  (if (next grp) (merge-run grp) (first grp))))

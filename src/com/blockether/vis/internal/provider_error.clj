@@ -433,15 +433,68 @@
      :attempts (not-empty (provider-error-attempts err))
      :body (provider-error-raw-body err)}))
 
+(defn split-error-label
+  "Split a provider-error prose line into `[label body]` at the first `: `.
+
+   `provider-error-explanation` / `provider-error-next-step` always lead with
+   an ALL-CAPS label (`WHAT HAPPENED: ` / `NEXT STEP: `). This returns
+   `[\"<LABEL>: \" \"<body sentence>\"]` so a surface can render the label
+   distinctly (BOLD in the answer IR, SGR/BOLD sentinels in the TUI trace)
+   while the body stays plain — ONE convention, shared by every surface, so
+   the label/body split never diverges between the IR and the TUI recap.
+
+   Returns `[nil s]` (whole string as the body, no label) when `s` does not
+   follow the `ALL-CAPS:` convention, so callers can treat the label as
+   optional without a separate nil-check."
+  [s]
+  (if-let [[_ label body] (re-matches #"(?s)^([A-Z ]+):\s*(.*)$" (str s))]
+    [(str label ": ") body]
+    [nil (str s)]))
+
 (defn provider-error-ir
   "Canonical answer-IR for a provider failure. Rendered verbatim by the Web
    channel and the TUI final-answer bubble; the TUI trace rows mirror its
    wording via the helpers above. Blocks in reading order: TITLE → what happened
    → the actionable NEXT STEP → the bare facts → (optional) raw provider body.
    The root attrs carry `:vis/provider-error` + the full `:vis/provider-error-data`
-   so a surface can paint a styled CARD instead of walking the generic nodes."
+   so a surface can paint a styled CARD instead of walking the generic nodes.
+
+   The `WHAT HAPPENED:` / `NEXT STEP:` LABELS are split out of the prose and
+   wrapped in `[:strong]`, so a surface renders the label BOLD while the body
+   sentence stays plain — instead of the whole line being one undifferentiated
+   bold/plain span. The helpers still return the label-led prose string (used by
+   the TUI trace + tests), so the split happens here at the IR boundary."
   [err]
-  (let [facts
+  (let [;; Split each prose line into `[label body]` via the SHARED
+        ;; `split-error-label` (one convention for every surface — the TUI
+        ;; trace recap uses the same helper, so the label/body split never
+        ;; diverges between the answer IR and the TUI rows).
+        [expl-label expl-body]
+        (split-error-label (provider-error-explanation err))
+
+        [step-label step-body]
+        (split-error-label (provider-error-next-step err))
+
+        label-run
+        (fn [text]
+          [:strong {} [:span {} text]])
+
+        ;; A paragraph whose optional ALL-CAPS `label` (e.g. "WHAT HAPPENED: ")
+        ;; renders BOLD, followed by the plain `body` sentence. When there is no
+        ;; label, the paragraph is just the body span.
+        labeled-para
+        (fn [label body]
+          ;; Return `[:p {} child1 child2 ...]` with the strong LABEL run and
+          ;; the plain body span as DIRECT children (not wrapped in an extra
+          ;; vector — `render/->ast` would treat a nested vector as a single
+          ;; child node and drop the label). `apply vector` splices children
+          ;; at the top level of the form.
+          (apply vector
+            :p
+            {}
+            (if (seq label) [(label-run label) [:span {} body]] [[:span {} body]])))
+
+        facts
         (->> (provider-error-facts err)
              (mapv (fn [[label value]]
                      [:li {} [:p {} [:span {} (str label ": ")] [:c {} value]]])))
@@ -453,24 +506,23 @@
         (provider-error-raw-body err)
 
         ir
-        (render/->ast (cond-> [:ir {} [:h {:level 2} [:span {} (provider-error-title err)]]
-                               [:p {} [:span {} (provider-error-explanation err)]]
-                               [:p {} [:strong {} [:span {} (provider-error-next-step err)]]]]
-                        ;; Per-provider breakdown — WHY each provider bowed out — as
-                        ;; its own list, so "all providers exhausted" is specific.
-                        (seq attempts)
-                        (conj [:p {} [:span {} "Providers tried:"]]
-                              (into [:ul {}]
-                                    (mapv (fn [a]
-                                            [:li {} [:c {} (attempt->line a)]])
-                                          attempts)))
+        (render/->ast
+          (cond-> [:ir {} [:h {:level 2} [:span {} (provider-error-title err)]]
+                   (labeled-para expl-label expl-body) (labeled-para step-label step-body)]
+            ;; Per-provider breakdown — WHY each provider bowed out — as
+            ;; its own list, so "all providers exhausted" is specific.
+            (seq attempts)
+            (conj [:p {} [:span {} "Providers tried:"]]
+                  (into [:ul {}]
+                        (mapv (fn [a]
+                                [:li {} [:c {} (attempt->line a)]])
+                              attempts)))
 
-                        :always
-                        (conj (into [:ul {}] facts))
+            :always
+            (conj (into [:ul {}] facts))
 
-                        raw-body
-                        (conj [:p {} [:span {} "Provider response:"]]
-                              [:code {:lang "json"} raw-body])))]
+            raw-body
+            (conj [:p {} [:span {} "Provider response:"]] [:code {:lang "json"} raw-body])))]
 
     (assoc ir
       1 (assoc (second ir)

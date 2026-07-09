@@ -83,6 +83,13 @@
       (expect (some (fn [[tool _ & parts]]
                       (and (= :agents tool) (= [".agents" "skills"] parts)))
                     d/skill-sources)))
+  (it "opencode sources include SPEL/generated plural agents and skills layouts"
+      (expect (some (fn [[tool _ & parts]]
+                      (and (= :opencode tool) (= [".opencode" "agents"] parts)))
+                    d/agent-sources))
+      (expect (some (fn [[tool _ & parts]]
+                      (and (= :opencode tool) (= [".opencode" "skills"] parts)))
+                    d/skill-sources)))
   (it "resolve-source tags an existing dir with its tool and drops a missing one"
       (let [home (System/getProperty "user.home")]
         (expect (= [:opencode] (map first ((deref #'d/resolve-source) [:opencode :rel home]))))
@@ -108,6 +115,24 @@
                (expect (= ["scripts/run.sh" "template.json"] rs))
                (expect (not-any? #(= "SKILL.md" %) rs)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+
+(defdescribe
+  opencode-spel-layout-discovery-test
+  (it "discovers SPEL skills from .opencode/skills/<name>/SKILL.md"
+      (let [root (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
+            skill-md (io/file root ".opencode" "skills" "spel" "SKILL.md")]
+        (try
+          (io/make-parents skill-md)
+          (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
+          (with-redefs-fn {#'d/project-root (fn [] root)
+                           #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
+            (fn []
+              (let [skills (d/discover-skills)
+                    spel (first (filter #(= "spel" (:name %)) skills))]
+                (expect (= "spel" (:name spel)))
+                (expect (= :opencode (:tool spel)))
+                (expect (re-find #"BODY" (:body spel))))))
+          (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe discovery-smoke-test
              ;; Environment-agnostic: the scan must NEVER throw and always returns a
