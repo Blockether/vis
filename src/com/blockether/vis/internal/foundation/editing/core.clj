@@ -413,7 +413,8 @@
               (contains? spec "path") (get spec "path")
               :else nil)]
 
-    (cond (nil? paths) ["."]
+    (cond (or (nil? paths)
+              (and (sequential? paths) (empty? paths))) ["."]
           (sequential? paths) paths
           :else [paths])))
 
@@ -424,7 +425,8 @@
       (let [paths (cond (contains? spec "paths") (get spec "paths")
                         (contains? spec "files") (get spec "files")
                         :else nil)]
-        (cond (nil? paths) ["."]
+        (cond (or (nil? paths)
+                  (and (sequential? paths) (empty? paths))) ["."]
               (sequential? paths) paths
               :else [paths])))))
 
@@ -1422,13 +1424,15 @@
                 :else ["."])
 
           paths
-          (cond (string? raw-paths) [raw-paths]
+          (cond (or (nil? raw-paths)
+                    (and (sequential? raw-paths) (empty? raw-paths))) ["."]
+                (string? raw-paths) [raw-paths]
                 (sequential? raw-paths) (vec raw-paths)
                 :else raw-paths)
 
           _
           (when-not (and (vector? paths) (seq paths) (every? string? paths))
-            (throw (ex-info "find \"paths\" must be a non-empty vector of strings"
+            (throw (ex-info "find \"paths\" must be a string or vector of strings (empty defaults to current directory)"
                             {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
 
           limit
@@ -1770,20 +1774,23 @@
                             {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
           ns)
 
+        raw-paths
+        (get spec "paths" ["."])
+
         paths
-        (vector-of-strings :paths (get spec "paths" ["."]))
+        (if (or (nil? raw-paths)
+                (and (sequential? raw-paths) (empty? raw-paths)))
+          ["."]
+          (vector-of-strings :paths raw-paths))
+
+        raw-include
+        (get spec "include")
 
         include
-        (when (contains? spec "include")
-          (let [v (let [raw (get spec "include")]
-                    (if (string? raw) [raw] raw))]
-            (when-not (and (vector? v) (every? string? v))
-              (throw (ex-info "rg field must be a string or vector of strings."
-                              {:type :ext.foundation.editing/invalid-rg-spec :field :include :got v})))
-            (when-not (every? #(not (str/blank? %)) v)
-              (throw (ex-info "rg string values must be non-blank."
-                              {:type :ext.foundation.editing/invalid-rg-spec :field :include :got v})))
-            v))
+        (if (or (nil? raw-include)
+                (and (sequential? raw-include) (empty? raw-include)))
+          []
+          (vector-of-strings :include raw-include))
 
         nonneg-int!
         (fn [label v]
@@ -4121,11 +4128,12 @@
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
    `{:paths [path…] :item_count :query}`.
 
-   A SINGLE match carries nothing worth folding — the one path IS the whole
-   result — so it rides the summary chip and emits NO body. With no body the
-   shared `result-card` marks the card non-collapsible, so both the TUI (no `▸`)
-   and web (no `<details>`) paint a plain headline instead of a pointless
-   one-line disclosure."
+   Even a SINGLE match keeps the path in the body instead of riding the headline:
+   a lone path can be long (`resources/META-INF/.../resource-config.json`) and the
+   shared `result-card` only renders a collapsible disclosure when a body exists.
+   Keeping all ranked paths in `:body` lets the TUI/Web show a compact collapsed
+   FIND_FILES row by default, with the path(s) available on expansion. 0 results
+   keep the steer/hint body so the user sees WHY nothing matched."
   [r]
   (let [n
         (or (get r "item_count") (count (get r "paths")) 0)
@@ -4161,17 +4169,13 @@
              (when q (str " for \"" q "\""))
              (when terms (str " · terms: " (str/join ", " terms))))]
 
-    (if (= 1 n)
-      {:summary (str head
-                     (when-let [p (first paths)]
-                       (str " · `" (kw->str p) "`")))}
-      {:summary head
-       :body (cond (seq paths)
-                   (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
-                   ;; 0 results: show the steer (filename-vs-content) instead of a
-                   ;; blank card — the same hint the model reads, so the user sees
-                   ;; WHY it found nothing.
-                   hint (str "\n" hint))})))
+    {:summary head
+     :body (cond (seq paths)
+                 (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
+                 ;; 0 results: show the steer (filename-vs-content) instead of a
+                 ;; blank card — the same hint the model reads, so the user sees
+                 ;; WHY it found nothing.
+                 hint (str "\n" hint))}))
 
 (defn- render-outline-result
   "outline → `{:summary :body}`: a path headline (like cat) + the skeleton

@@ -13,6 +13,9 @@
   (:require [babashka.fs :as fs]
             [clojure.set]
             [clojure.string :as string]
+            ;; Loads/registers the built-in foundation extension so direct private
+            ;; tool calls below see the same op-tag registry as production.
+            [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -138,8 +141,10 @@
         (expect (= ["a" "b" "c"] (:needles (coerce {"query" ["a, b" "c"]}))))
         (expect (= ["Cycle" "cycle"] (:needles (coerce {"query" "Cycle, cycle"}))))
         (expect (= ["foo"] (:needles (coerce {"query" "foo"}))))) ;; single term untouched
-    (it "defaults :paths to [\".\"] and keeps canonical :paths/:include"
+    (it "defaults :paths/:include and keeps canonical :paths/:include"
         (expect (= ["."] (:paths (coerce {"query" ["x"]}))))
+        (expect (= [] (:include (coerce {"query" ["x"]}))))
+        (expect (= [] (:include (coerce {"query" ["x"] "include" []}))))
         (expect (= ["src"] (:paths (coerce {"query" ["x"] "paths" ["src"]}))))
         (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" ["*.clj"]}))))
         (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" "*.clj"}))))
@@ -2887,6 +2892,22 @@
       (expect (= :observation (:ext.symbol/tag editing/find-symbol)))))
 
 (defdescribe
+  empty-search-paths-default-test
+  "An explicit empty paths vector means the same thing as omitting paths: search the workspace root recursively."
+  (let [coerce-find (private-fn "coerce-find-spec")
+        coerce-rg (private-fn "coerce-rg-spec")
+        find-paths (private-fn "find-arg-paths")
+        rg-paths (private-fn "rg-arg-paths")]
+    (it "find_files defaults empty paths to current directory in validation and path protection"
+        (let [spec {"query" "resource-config" "paths" []}]
+          (expect (= ["."] (:paths (coerce-find [spec]))))
+          (expect (= ["."] (find-paths [spec])))))
+    (it "rg defaults empty paths to current directory in validation and path protection"
+        (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
+          (expect (= ["."] (:paths (coerce-rg spec))))
+          (expect (= ["."] (rg-paths [spec])))))))
+
+(defdescribe
   find-relevance-filter-test
   "Regression: fff's native matcher returns a full page of loose subsequence
    matches with no score (query \"lmstudio\" alone hit 108/489 unrelated paths).
@@ -2993,19 +3014,17 @@
 
 (defdescribe
   render-find-single-match-test
-  "A SINGLE find match has nothing worth folding — the one path IS the result —
-   so `render-find-result` rides it on the summary chip and emits NO body. With
-   no body the shared `result-card` marks the card non-collapsible, so neither
-   channel paints a pointless one-line disclosure. 2+ matches (and the 0-match
-   steer) keep their body."
+  "A SINGLE find match can still carry a long path, so the summary stays compact
+   and the ranked path rides the body. That body makes `result-card` collapsible,
+   letting the TUI/Web hide long single-result FIND_FILES output by default.
+   2+ matches (and the 0-match steer) keep their body too."
   (let [render-find-result (private-fn "render-find-result")]
-    (it "one match: path rides the summary, NO body (→ non-collapsible)"
+    (it "one match: summary stays compact and the path rides the collapsible body"
         (let [{:keys [summary body]} (render-find-result {"item_count" 1
-                                                          "query" "PERSONA.md"
-                                                          "paths" ["docs/PERSONA.md"]})]
-          (expect (nil? body))
-          (expect (string/includes? summary "1 match"))
-          (expect (string/includes? summary "`docs/PERSONA.md`"))))
+                                                          "query" "resource config"
+                                                          "paths" ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
+          (expect (= "1 match for \"resource config\"" summary))
+          (expect (string/includes? (str body) "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
     (it "two matches: summary stays plural and the ranked paths ride the body"
         (let [{:keys [summary body]} (render-find-result {"item_count" 2
                                                           "query" "render"

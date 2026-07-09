@@ -618,7 +618,6 @@
       (cond (str/starts-with? t "!&") "!&"
             (str/starts-with? t "!") "!"))))
 
-
 (defn draw-input-box!
   "Draw bordered input area with internal padding. Returns
    [cursor-col cursor-row] in screen coords.
@@ -3571,6 +3570,15 @@
 
         (recur (conj acc [i entry]) (+ i run) (subvec remaining run))))))
 
+(defn- compact-tool-card-body-entries
+  "Drop glyph-less spacer/pad rows from native op-card bodies. Sectioned tool
+   bodies (REPL/GIT/SHELL) already carry explicit labels like RESULT/STDOUT;
+   markdown fence padding between those labels reads as empty gutters in the TUI."
+  [entries]
+  (->> entries
+       (remove #(str/blank? (strip-paint-markers-line (:line %))))
+       vec))
+
 (defn- tool-card-entries
   "Render ONE op-card (`vis/result-card` descriptor) into TUI line entries: the tool
    LABEL + tool-authored SUMMARY on a headline painted in the tool's colour, the
@@ -3586,12 +3594,10 @@
                 str/trimr
                 not-empty)
 
-        ;; The op-card body always BREATHES: a single spacer row sits
-        ;; between the label headline and the body when expanded, so the
-        ;; body never glues to the label (matching the collapsed badge's
-        ;; breathing room and the web card's `gap` between summary + body).
-        ;; The markdown IR drops any leading blank in `body-text`, so we
-        ;; add exactly one spacer here regardless.
+        ;; Op-card sections are compact: keep exactly one spacer row after the
+        ;; headline so expanded cards breathe, but drop markdown/code-fence pad rows
+        ;; inside COMMAND / RESULT / STDOUT sections. The labels themselves provide
+        ;; the visual structure after that first separator.
         head-line
         (str (when (seq (str label)) (str "**" label "**")) (when summary (str "  " summary)))
 
@@ -3603,7 +3609,9 @@
                 stripped
                 (or (second (split-structural-line-marker l)) l)]
 
-            (assoc e :line (str result-marker stripped))))
+            (assoc e
+              :line (str result-marker
+                         (if (str/blank? stripped) stripped (str tool-output-indent stripped))))))
 
         ir
         (some-> body-text
@@ -3621,7 +3629,7 @@
         entries
         (when ir
           (tag-copy-block-body (vec (paste-aware-ir->entries ir
-                                                             fill-w
+                                                             (max 1 (- fill-w tool-output-indent-cols))
                                                              (assoc opts
                                                                :mode :channel
                                                                :image-default-expanded? true)))
@@ -3633,7 +3641,7 @@
             (detail-expanded? detail-expansions session-id node-id has-image?)
 
             body-entries
-            (into [(->result {:line ""})] (mapv ->result entries))
+            (compact-tool-card-body-entries (mapv ->result entries))
 
             header
             (detail-summary-entries {:marker result-marker
@@ -3647,12 +3655,12 @@
 
         ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
         ;; badge reads as its own background BAND (not a lone colored line).
-        ;; Expanded, the body opens with its own breathing blank AND earns the
-        ;; SAME trailing pad row, so the bubble always closes with exactly one
-        ;; line of `result-bg` padding below the content.
+        ;; Expanded cards keep ONE separator row after the headline — otherwise a
+        ;; nil-result REPL with only STDOUT visually glues the first label to the
+        ;; `▾ REPL ...` row — but no decorative gutters inside the labeled body.
         (vec (concat header
                      (if expanded?
-                       (conj body-entries {:line (str result-marker "") :meta nil})
+                       (into [{:line (str result-marker "") :meta nil}] body-entries)
                        [{:line (str result-marker "") :meta nil}]))))
       (let [meta
             {:kind :result-headline :color-role color-role}
@@ -3671,10 +3679,15 @@
             ;; under — e.g. a nil session-id). Never DROP that body: render it
             ;; inline, always-expanded, so the result still produces its output.
             body-rows
-            (when (seq entries) (into [(->result {:line ""})] (mapv ->result entries)))]
+            (when (seq entries) (compact-tool-card-body-entries (mapv ->result entries)))]
 
-        ;; Trailing `result-bg` pad row so the card reads as its own band too.
-        (vec (concat headline body-rows [{:line (str result-marker "") :meta nil}]))))))
+        ;; Summary-only cards still get the result-band pad. Body cards keep the
+        ;; same one-row headline separator as collapsible cards, then stay tight
+        ;; inside their labeled sections.
+        (vec (concat headline
+                     (when (seq body-rows) [{:line (str result-marker "") :meta nil}])
+                     body-rows
+                     (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
@@ -3850,22 +3863,42 @@
 
                   provider-rows
                   (when provider-error?
-                    (mapv #(line-entry (str err-result-marker %))
-                          (mapcat #(wrap-text % fill-w)
-                                  (concat
-                                    ;; Same wording + facts the shared provider-error IR
-                                    ;; renders for the final answer / Web — one source of
-                                    ;; truth so a failure reads identically everywhere.
-                                    [(perr/provider-error-explanation error)]
-                                    ;; NEXT STEP is a SEPARATE block now (split out of the
-                                    ;; explanation) — surface it here too so the recap matches
-                                    ;; the shared IR (which renders it as its own line).
-                                    [(perr/provider-error-next-step error)]
-                                    (mapv (fn [[label value]]
-                                            (str label ": " value))
-                                          (perr/provider-error-facts error))
-                                    (when-let [rb (perr/provider-error-raw-body error)]
-                                      ["Provider response:" rb])))))
+                    (let [;; Bold the leading `WHAT HAPPENED:` / `NEXT STEP:` LABEL so the
+                          ;; live trace reads like the styled answer IR (bold label, plain
+                          ;; body). The label/body split uses the SHARED `split-error-label`
+                          ;; (same helper the answer IR uses) so the convention never
+                          ;; diverges between surfaces. Sentinels go on the FIRST wrapped
+                          ;; row only — the label is short and never wraps. `paint-ansi-line!`
+                          ;; (used by the err-result band) translates these to SGR/BOLD.
+                          bold-label-on-first
+                          (fn [s]
+                            (let [[fst & rest] (wrap-text s fill-w)
+                                  [label body] (perr/split-error-label fst)]
+
+                              (when fst
+                                (if (seq label)
+                                  ;; Bold the LABEL on the first wrapped row only;
+                                  ;; `body` is that row's remainder, `rest` are the
+                                  ;; remaining wrapped rows (plain).
+                                  (into [(str p/INLINE_BOLD_ON label p/INLINE_BOLD_OFF body)]
+                                        (or rest []))
+                                  (into [fst] (or rest []))))))]
+                      ;; Same wording + facts the shared provider-error IR renders
+                      ;; for the final answer / Web — one source of truth so a
+                      ;; failure reads identically everywhere.
+                      (mapv #(line-entry (str err-result-marker %))
+                            (mapcat bold-label-on-first
+                                    (concat
+                                      ;; NEXT STEP is a SEPARATE block now (split out
+                                      ;; of the explanation) — surface it here too so
+                                      ;; the recap matches the shared IR.
+                                      [(perr/provider-error-explanation error)
+                                       (perr/provider-error-next-step error)]
+                                      (mapv (fn [[label value]]
+                                              (str label ": " value))
+                                            (perr/provider-error-facts error))
+                                      (when-let [rb (perr/provider-error-raw-body error)]
+                                        ["Provider response:" rb]))))))
 
                   err-message-rows
                   (mapv #(line-entry (str err-result-marker %)) (wrap-text err-headline fill-w))
@@ -4551,14 +4584,16 @@
                 :else (recur (conj! out e) nil (next xs))))))))
 (def ^:private groupable-tool-names
   "Native tools whose consecutive PURE single-call iterations coalesce into ONE
-   collapsible band (a GIT / RG / DELETE log) — or, for `cat`, merge into ONE
-   deduped slice — instead of N separately-stacked op-cards. Only tools whose
-   repeated back-to-back calls read as one logical activity belong here: a burst
-   of `git` commands, a burst of `rg` searches, a burst of `delete`s, a run of
-   `find_files` discoveries, a run of `occurrences` symbol traces, a run of
-   `cat` reads of the SAME file (which fold into a single ▾ CAT card), and a
-   run of edits by the SAME edit tool (`struct_patch` / `patch` / `write`)."
-  #{"git" "rg" "delete" "find_files" "occurrences" "cat" "struct_patch" "patch" "write"})
+   collapsible band (GIT / SHELL RUN / RG / DELETE logs) — or, for `cat`, merge
+   into ONE deduped slice — instead of N separately-stacked op-cards. Only tools
+   whose repeated back-to-back calls read as one logical activity belong here: a
+   burst of `git` commands, a burst of `shell_run` commands, a burst of `rg`
+   searches, a burst of `delete`s, a run of `find_files` discoveries, a run of
+   `occurrences` symbol traces, a run of `cat` reads of the SAME file (which fold
+   into a single ▾ CAT card), and a run of edits by the SAME edit tool
+   (`struct_patch` / `patch` / `write`)."
+  #{"git" "shell_run" "rg" "delete" "find_files" "occurrences" "cat" "struct_patch" "patch"
+    "write"})
 
 (defn- groupable-iteration-forms
   "Every native-tool form of an iteration when it is a PURE run of the SAME
@@ -4625,18 +4660,17 @@
         subcmd
         (or (not-empty (first (str/split args #"\s+"))) "git")
 
-        ;; A commit's body leads with the message blockquote (`> subject …`);
-        ;; lift its first line as the chip preview so the collapsed band shows
-        ;; WHAT was committed, not just that a commit happened.
+        ;; A commit's body contains the message blockquote (`> subject …`), either
+        ;; as the old leading body or under the newer MESSAGE section; lift its
+        ;; first quoted line as the chip preview so the collapsed band shows WHAT
+        ;; was committed, not just that a commit happened.
         subject
         (let [b (str (:body card))]
-          (when (and (= "commit" subcmd) (str/starts-with? b "> "))
-            (-> b
-                str/split-lines
-                first
-                (subs 2)
-                str/trim
-                not-empty)))
+          (when (= "commit" subcmd)
+            (some->> (str/split-lines b)
+                     (some #(when (str/starts-with? % "> ") (subs % 2)))
+                     str/trim
+                     not-empty)))
 
         ;; The tool summary now lifts the commit subject onto its headline
         ;; (`commit -m — subject`, possibly clipped). In the grouped band that
@@ -4764,6 +4798,124 @@
 
     (tool-band-entries {:head head :color-role :tool-color/shell :body-md body-md :kind :git-group}
                        ctx)))
+
+(defn- shell-run-command-parts
+  "Project one shell_run form into a grouped SHELL RUN band's fields: a compact
+   status chip (`$ echo hi` (success) · 12ms, `$ grep x` (failure) · exit 2 · 34ms),
+   the full shell renderer headline for the expanded row, and the REPL-style
+   COMMAND / STATUS / STDOUT / STDERR body. Prefer the raw result map when a live
+   trace has it; fall back to the DB-stable card summary/body so restored traces
+   group identically."
+  [form]
+  (let [card
+        (vis/result-card form)
+
+        result
+        (:result form)
+
+        summary
+        (some-> (:summary card)
+                str
+                str/trim)
+
+        old-note-re
+        #"\s*\((exit \d+|timed out)\)\s*$"
+
+        shell-summary
+        (-> (str summary)
+            (str/replace #"^[✓✗⏱]\s+" "")
+            (str/replace old-note-re ""))
+
+        command-head
+        (-> (str shell-summary)
+            (str/split #"\s+·\s+" 2)
+            first)
+
+        cmd
+        (or (not-empty (str/trim (str (get result "cmd"))))
+            (some-> command-head
+                    (str/replace #"^\$\s*" "")
+                    (str/replace #"\s+\((?:success|failure|failed)\)\s*$" "")
+                    str/trim
+                    not-empty)
+            "shell")
+
+        parsed-exit
+        (or (some->> (re-find #"(?:exit\s+)(\d+)" (str summary))
+                     second
+                     Long/parseLong)
+            (when-let [exit (get result "exit")]
+              (when (number? exit) exit)))
+
+        timed-out?
+        (boolean (or (get result "timed_out")
+                     (str/includes? (str summary) "timed out")
+                     (str/includes? (str summary) "⏱")))
+
+        failed?
+        (boolean (or timed-out?
+                     (str/includes? (str summary) "✗")
+                     (str/includes? (str summary) "(failure)")
+                     (str/includes? (str summary) "(failed)")
+                     (and parsed-exit (not (zero? parsed-exit)))))
+
+        status
+        (cond timed-out? "timed out"
+              (and parsed-exit (not (zero? parsed-exit))) (str "exit " parsed-exit)
+              :else "success")
+
+        status-chip
+        (if failed? "failure" "success")
+
+        duration
+        (or (some-> (get result "duration_ms")
+                    vis/format-duration)
+            (some->> (re-find #"·\s*([^·]*\d(?:ms|s|m)?)\s*$" (str summary))
+                     second))
+
+        chip
+        (str "`$ "
+             (ellipsize-cols (or (not-empty cmd) "shell") 48)
+             "`"
+             " ("
+             status-chip
+             ")"
+             (when failed? (str " · " status))
+             (when duration (str " · " duration)))]
+
+    {:chip chip :headline summary :cmd cmd :status status :failed? failed? :body (:body card)}))
+
+(defn- shell-run-group-entries
+  "Coalesce a RUN of consecutive shell_run-only iterations into ONE collapsible
+   SHELL RUN band instead of N separately-stacked op-cards.
+
+   Collapsed (default) — a single badge row with each command preview:
+     ▸ SHELL RUN · 2 commands  `$ wc -l ~/.vis/vis.log` (success) · `$ ps aux …` (success)
+   Expanded — each command as its full `$ <cmd>` row with stdout / stderr nested
+   underneath, so a diagnostic burst reads as one shell log."
+  [shell-forms ctx]
+  (let [parts
+        (mapv shell-run-command-parts shell-forms)
+
+        n
+        (count parts)
+
+        chips
+        (str/join " · " (map :chip parts))
+
+        head
+        (str "**SHELL RUN** · " n " command" (when (not= 1 n) "s") "  " chips)
+
+        body-md
+        (str/join "\n\n"
+                  (map (fn [{:keys [headline cmd body]}]
+                         (str "`" (or headline (str "$ " cmd))
+                              "`" (when (seq (str body)) (str "\n\n" body))))
+                       parts))]
+
+    (tool-band-entries
+      {:head head :color-role :tool-color/shell :body-md body-md :kind :shell-run-group}
+      ctx)))
 
 (defn- rg-command-parts
   "Project one rg form into a grouped RG band's fields: the compact collapsed
@@ -5237,6 +5389,9 @@
                           band (case tool-name
                                  "git"
                                  (git-group-entries forms ctx)
+
+                                 "shell_run"
+                                 (shell-run-group-entries forms ctx)
 
                                  "rg"
                                  (rg-group-entries forms ctx)

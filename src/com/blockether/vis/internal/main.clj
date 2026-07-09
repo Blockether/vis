@@ -3250,6 +3250,16 @@
          (contains? first-party-channel-bootstrap-nses channel)
          (boolean (some #{"--help" "-h"} more)))))
 
+(defn- channel-parent-help-request?
+  "True for `vis channels --help`. Rendering the parent has to load
+   channel-providing extensions first; otherwise the dynamic `channels`
+   subtree is empty and help cannot list the available channels."
+  [args]
+  (let [[parent & more] (vec args)
+        help? (boolean (some #{"--help" "-h"} more))
+        before-help (take-while #(not (#{"--help" "-h"} %)) more)]
+    (and (= "channels" parent) help? (empty? before-help))))
+
 (defn- ext-help-request?
   "True for any `vis ext ...` help invocation. The `vis ext` subtree is
    populated by `:ext/cli` mounts that only land after
@@ -3264,6 +3274,7 @@
   (cond (channel-help-request? args) (when-let [ns-sym (get first-party-channel-bootstrap-nses
                                                             (second (vec args)))]
                                        (require ns-sym))
+        (channel-parent-help-request? args) (discover-all!)
         (ext-help-request? args) (discover-all!)))
 
 (defn- fast-help-dispatched?
@@ -3359,7 +3370,14 @@
 
 (defn- measure-arg? [arg] (= "--measure" arg))
 
-(defn- strip-global-args [args] (vec (remove measure-arg? args)))
+(def ^:private launcher-selector-args
+  ;; `bin/vis` normally consumes these before invoking Clojure, but keep
+  ;; the JVM entry point tolerant too (e.g. `clojure -M:vis channels --jvm --help`).
+  #{"--source" "--jvm" "--jar" "--native" "--jfr"})
+
+(defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-selector-args arg)))
+
+(defn- strip-global-args [args] (vec (remove global-arg? args)))
 
 (def ^:private session-shortcut-flags
   ;; Top-level `vis --resume` / `vis --continue` (pi-parity) are

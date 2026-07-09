@@ -1425,10 +1425,10 @@
                              ;; Per form: the raw code the model wrote, then what it PRINTED
                              ;; (the single display surface), then any error. No op cards,
                              ;; no return-value blobs — bare values never reach context.
-                             ;; Adjacent same-file `cat`/`patch` cards fold into ONE (shared
-                             ;; `vis/coalesce-forms`, the SAME projection the TUI applies) so two
-                             ;; reads/edits of a file render as one multi-span/multi-diff card,
-                             ;; not look-alike siblings.
+                             ;; Adjacent coalescable native cards fold via shared
+                             ;; `vis/coalesce-forms` (the SAME projection the TUI applies):
+                             ;; same-file cat/patch become one multi-span/multi-diff card,
+                             ;; and per-file format_code acks become one roll-up card.
                              (for [form (vis/coalesce-forms (remove engine-empty-iteration-form?
                                                               (or (:forms it) [])))]
                                (list (when-let [src (:src form)]

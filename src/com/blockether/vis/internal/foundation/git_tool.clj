@@ -135,7 +135,31 @@
 ;; `stderr:` label rides along only when the command actually FAILED.
 ;; =============================================================================
 
-(defn- fence [s] (when (seq (str s)) (str "```\n" s "\n```")))
+(defn- fence
+  "Wrap `s` in a code fence, or nil when blank."
+  ([s] (fence s nil))
+  ([s lang]
+   (when (seq (str s)) (str "```" (or lang "") "\n" s "\n```"))))
+
+(defn- section
+  "One labeled git detail section, matching REPL/shell expanded cards."
+  ([label s] (section label s nil))
+  ([label s lang]
+   (when-let [f (fence s lang)]
+     (str "**" label "**\n" f))))
+
+(defn- prose-section
+  "One labeled prose detail section. Used for commit messages so blockquotes stay
+  readable instead of becoming code."
+  [label s]
+  (when (seq (str s))
+    (str "**" label "**\n" s)))
+
+(defn- kv-lines
+  "Render non-nil `[label value]` pairs as `label: value` lines."
+  [pairs]
+  (not-empty
+    (str/join "\n" (for [[k v] pairs :when (some? v)] (str k ": " v)))))
 
 (defn- commit-message
   "The commit MESSAGE this git call authored, or nil for a non-commit. Joins
@@ -245,10 +269,20 @@
           show?
           (str " \u2014 " (clip-subject subject)))
 
+        status
+        (kv-lines [["status" (cond (get r "timed_out") "timed out"
+                                    failed? "failure"
+                                    :else "success")]
+                   ["exit" exit]
+                   ["duration" (some-> (get r "duration_ms") vis/format-duration)]
+                   ["timeout" (when-let [s (get r "timeout_secs")] (str s "s"))]])
+
         body
-        (->> [(when msg (quote-block msg)) (fence (get r "stdout"))
-              (when-let [e (fence (get r "stderr"))]
-                (if failed? (str "stderr:\n" e) e))]
+        (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash")
+              (section "STATUS" status)
+              (when msg (prose-section "MESSAGE" (quote-block msg)))
+              (section "STDOUT" (get r "stdout"))
+              (section "STDERR" (get r "stderr"))]
              (remove nil?)
              (str/join "\n\n"))]
 
