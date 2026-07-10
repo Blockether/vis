@@ -45,6 +45,29 @@
   ;; in ONE run_python program) — without enabling sockets/asyncio.
   (Executors/newVirtualThreadPerTaskExecutor))
 
+(defn- settle-gather-futures!
+  "Settle every submitted gather future — `{:ok v}` or `{:err e}` per slot,
+   in order. On success paths ALL thunks run to completion (a failing slot
+   never aborts its siblings). But the moment the SETTLING thread itself is
+   interrupted (turn `cancel!` / eval-timeout `.cancel(true)` on the worker
+   future), every still-running CHILD future is hard-cancelled
+   (`.cancel(true)`) and the `InterruptedException` propagates. Without the
+   propagation+cancel, an interrupt during settle was swallowed as that
+   slot's `:err` and the loop blocked on the NEXT `.get` — so a cancelled
+   `gather(rg(...), rg(...))` left orphaned virtual threads grinding at
+   100% CPU each until process exit."
+  [futs]
+  (let [cancel-all! (fn []
+                      (doseq [^Future f futs]
+                        (try (.cancel f true) (catch Throwable _ nil))))]
+    (try (mapv (fn [^Future f]
+                 (try {:ok (.get f)}
+                      (catch ExecutionException e {:err (or (.getCause e) e)})
+                      (catch InterruptedException e (throw e))
+                      (catch Throwable e {:err e})))
+               futs)
+         (catch InterruptedException e (cancel-all!) (throw e)))))
+
 ;; =============================================================================
 ;; Single-iteration runner
 ;; =============================================================================
@@ -7688,13 +7711,10 @@
                                               (call t)))))
                       thunks)
 
-                ;; settle EVERY future — collect value OR error per slot
+                ;; settle EVERY future — value OR error per slot; child
+                ;; futures are hard-cancelled when WE get interrupted
                 outcomes
-                (mapv (fn [^Future f]
-                        (try {:ok (.get f)}
-                             (catch ExecutionException e {:err (or (.getCause e) e)})
-                             (catch Throwable e {:err e})))
-                      futs)
+                (settle-gather-futures! futs)
 
                 failures
                 (keep-indexed (fn [i o]
@@ -7751,12 +7771,11 @@
                                               (call t)))))
                       thunks)]
 
-            (mapv (fn [^Future f]
-                    (try {"__vis_ok__" true "__vis_val__" (.get f)}
-                         (catch ExecutionException e
-                           {"__vis_ok__" false "__vis_exc__" (or (.getCause e) e)})
-                         (catch Throwable e {"__vis_ok__" false "__vis_exc__" e})))
-                  futs)))
+            (mapv (fn [o]
+                    (if (contains? o :err)
+                      {"__vis_ok__" false "__vis_exc__" (:err o)}
+                      {"__vis_ok__" true "__vis_val__" (:ok o)}))
+                  (settle-gather-futures! futs))))
 
         ;; Build the ctx-loop env subset used by the engine bindings + helpers.
         ;; Just the cursor counters + the single ctx-atom. Warnings
