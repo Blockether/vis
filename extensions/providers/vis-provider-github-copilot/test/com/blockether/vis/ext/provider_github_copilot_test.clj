@@ -35,7 +35,7 @@
                  (get-in business [:provider/preset :base-url])))
       (expect (= "https://api.individual.githubcopilot.com/v1"
                  (get-in individual [:provider/preset :base-url])))
-      (expect (= "https://api.enterprise.githubcopilot.com/v1"
+      (expect (= "https://api.business.githubcopilot.com/v1"
                  (get-in enterprise [:provider/preset :base-url])))
       (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
       ;; Catalog carries both cacheable wires; Gemini/Grok (chat-only) dropped.
@@ -70,36 +70,39 @@
         (expect (= "GitHubCopilotChat/0.26.7" (get-in token [:llm-headers "User-Agent"])))
         (expect (= "vscode-chat" (get-in token [:llm-headers "Copilot-Integration-Id"]))))))
 
-(defdescribe copilot-base-url-test
-             (it "derives API base URL from Copilot token proxy endpoint"
-                 (expect (= "https://proxy.individual.githubcopilot.com"
-                            (#'sut/copilot-base-url-from-token
-                             "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"))))
-             (it "ignores token proxy endpoints for chat and uses the account API host"
-                 (expect (= "https://api.business.githubcopilot.com"
-                            (#'sut/copilot-api-base-url
-                             "tid=x;exp=1"
-                             {:proxy-ep "proxy.business.githubcopilot.com"}
-                             nil
-                             {:account-type :business}))))
-             (it "falls back to selected business Copilot API when token has no endpoint"
-                 (expect
-                   (= "https://api.business.githubcopilot.com"
-                      (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil {:account-type :business}))))
-             (it "falls back to individual Copilot API by default"
-                 (expect (= "https://api.individual.githubcopilot.com"
-                            (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))
-             (it "uses enterprise fallback when no token endpoint is present"
-                 (expect (= "https://copilot-api.ghe.example.com"
-                            (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com"))))
-             (it "ensure-api-version appends /v1 to a bare host and is idempotent"
-                 (expect (= "https://api.business.githubcopilot.com/v1"
-                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com")))
-                 (expect (= "https://api.business.githubcopilot.com/v1"
-                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com/v1")))
-                 (expect (= "https://api.business.githubcopilot.com/v1"
-                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com/")))
-                 (expect (nil? (#'sut/ensure-api-version nil)))))
+(defdescribe
+  copilot-base-url-test
+  (it "derives API base URL from Copilot token proxy endpoint"
+      (expect (= "https://proxy.individual.githubcopilot.com"
+                 (#'sut/copilot-base-url-from-token
+                  "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"))))
+  (it "ignores token proxy endpoints for chat and uses the account API host"
+      (expect (= "https://api.business.githubcopilot.com"
+                 (#'sut/copilot-api-base-url
+                  "tid=x;exp=1"
+                  {:proxy-ep "proxy.business.githubcopilot.com"}
+                  nil
+                  {:account-type :business}))))
+  (it "falls back to selected business Copilot API when token has no endpoint"
+      (expect (= "https://api.business.githubcopilot.com"
+                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil {:account-type :business}))))
+  (it "falls back to individual Copilot API by default"
+      (expect (= "https://api.individual.githubcopilot.com"
+                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))
+  (it "uses business API fallback for Enterprise Cloud when no token endpoint is present"
+      (expect (= "https://api.business.githubcopilot.com"
+                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil {:account-type :enterprise}))))
+  (it "uses GHE enterprise fallback when an enterprise domain is configured"
+      (expect (= "https://copilot-api.ghe.example.com"
+                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com"))))
+  (it "ensure-api-version appends /v1 to a bare host and is idempotent"
+      (expect (= "https://api.business.githubcopilot.com/v1"
+                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com")))
+      (expect (= "https://api.business.githubcopilot.com/v1"
+                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com/v1")))
+      (expect (= "https://api.business.githubcopilot.com/v1"
+                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com/")))
+      (expect (nil? (#'sut/ensure-api-version nil)))))
 
 (defdescribe copilot-limits-test
              (it "normalizes Copilot quota snapshots"

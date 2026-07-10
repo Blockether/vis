@@ -44,30 +44,40 @@
 ;; Package catalog
 ;; =============================================================================
 
+(def ^:private extension-package-root "extensions")
+
+(defn- extension-package-deps-file?
+  [^java.io.File f]
+  (let [path (str/replace (.getPath f) "\\" "/")]
+    (and (.isFile f)
+         (= "deps.edn" (.getName f))
+         (some? (re-matches #"extensions/[^/]+/[^/]+/deps\.edn" path)))))
+
+(defn- extension-package-dirs
+  "Every extension subproject that declares its own deps.edn. New extension
+  packages are publishable automatically — no hard-coded package list to
+  remember when adding `extensions/<kind>/<name>/deps.edn`."
+  []
+  (->> (file-seq (io/file extension-package-root))
+       (filter extension-package-deps-file?)
+       (map #(-> %
+                 .getParentFile
+                 .getPath))
+       sort))
+
+(defn- extension-dir->package
+  [dir]
+  {:lib (symbol "com.blockether" (.getName (io/file dir))) :dir dir})
+
 (def packages
   "Every publishable jar in the monorepo. Deploy builds every selected package
   with local-root deps first, then rewrites publish POMs to same-version Maven
-  coords and pushes the jars to Clojars."
-  [{:lib 'com.blockether/vis :dir "."}
-   {:lib 'com.blockether/vis-persistance-sqlite
-    :dir "extensions/persistance/vis-persistance-sqlite"}
-   {:lib 'com.blockether/vis-provider-anthropic :dir "extensions/providers/vis-provider-anthropic"}
-   {:lib 'com.blockether/vis-provider-github-copilot
-    :dir "extensions/providers/vis-provider-github-copilot"}
-   {:lib 'com.blockether/vis-provider-openai-codex :dir "extensions/providers/vis-provider-openai-codex"}
-   {:lib 'com.blockether/vis-provider-standard :dir "extensions/providers/vis-provider-standard"}
-   {:lib 'com.blockether/vis-provider-zai :dir "extensions/providers/vis-provider-zai"}
-   {:lib 'com.blockether/vis-channel-telegram :dir "extensions/channels/vis-channel-telegram"}
-   {:lib 'com.blockether/vis-channel-tui :dir "extensions/channels/vis-channel-tui"}
-   {:lib 'com.blockether/vis-channel-web :dir "extensions/channels/vis-channel-web"}
-   {:lib 'com.blockether/vis-foundation-bridge :dir "extensions/common/vis-foundation-bridge"}
-   {:lib 'com.blockether/vis-foundation-harness :dir "extensions/common/vis-foundation-harness"}
-   {:lib 'com.blockether/vis-foundation-mcp :dir "extensions/common/vis-foundation-mcp"}
-   {:lib 'com.blockether/vis-foundation-search :dir "extensions/common/vis-foundation-search"}
-   {:lib 'com.blockether/vis-foundation-voice :dir "extensions/common/vis-foundation-voice"}
-   {:lib 'com.blockether/vis-language-clojure :dir "extensions/languages/vis-language-clojure"}
-   {:lib 'com.blockether/vis-language-python :dir "extensions/languages/vis-language-python"}
-   {:lib 'com.blockether/vis-workspace-rift :dir "extensions/workspaces/vis-workspace-rift"}])
+  coords and pushes the jars to Clojars. Extension packages are discovered from
+  `extensions/**/deps.edn`, so adding a new extension package automatically
+  includes it in `jar`, `install`, and `deploy`."
+  (into [{:lib 'com.blockether/vis :dir "."}]
+        (map extension-dir->package)
+        (extension-package-dirs)))
 
 (def ^:private sibling-versions
   "Map of every monorepo lib -> mvn coord at the shared version. Passed
@@ -83,12 +93,13 @@
   "Resolve a `:package` selector (short name) to a package descriptor.
    Throws with the available list when missing."
   [pkg-name]
-  (or (some (fn [{:keys [lib] :as p}]
-              (when (= pkg-name (name lib)) p))
-            packages)
-      (throw (ex-info (str "Unknown :package '" pkg-name
-                           "'. Available: " (str/join ", " (map (comp name :lib) packages)))
-                      {:package pkg-name :available (mapv (comp name :lib) packages)}))))
+  (let [needle (name pkg-name)]
+    (or (some (fn [{:keys [lib] :as p}]
+                (when (= needle (name lib)) p))
+              packages)
+        (throw (ex-info (str "Unknown :package '" pkg-name
+                             "'. Available: " (str/join ", " (map (comp name :lib) packages)))
+                        {:package pkg-name :available (mapv (comp name :lib) packages)})))))
 
 (defn- target-paths
   "All build artifacts for a single package live under
@@ -140,9 +151,7 @@
   "Resolve a `:local/root` coord relative to its package deps.edn dir."
   [dir root]
   (let [f (io/file root)]
-    (if (.isAbsolute f)
-      (.getCanonicalPath f)
-      (.getCanonicalPath (io/file dir root)))))
+    (if (.isAbsolute f) (.getCanonicalPath f) (.getCanonicalPath (io/file dir root)))))
 
 (defn- prepare-package-deps
   "Normalize package deps for basis creation. Local roots must be absolute
@@ -155,12 +164,9 @@
                 (cond
                   (and publish? (contains? sibling-versions lib) (map? coord) (:local/root coord))
                   (get sibling-versions lib)
-
                   (and (map? coord) (:local/root coord))
                   (update coord :local/root #(absolute-local-root dir %))
-
-                  :else
-                  coord)]))
+                  :else coord)]))
         deps))
 
 (defn- read-package-deps
@@ -183,7 +189,8 @@
 
 (defn- package-basis [pkg] (b/create-basis {:project (read-package-deps (:dir pkg))}))
 
-(defn- package-publish-basis [pkg]
+(defn- package-publish-basis
+  [pkg]
   (b/create-basis {:project (read-package-deps (:dir pkg) :publish? true)}))
 
 (defn- src-dirs
@@ -222,6 +229,7 @@
 
         srcs
         (src-dirs pkg)]
+
     (b/delete {:path (str "target/" (name lib))})
     (write-package-pom! pkg class-dir basis)
     (b/copy-dir {:src-dirs srcs :target-dir class-dir})
@@ -232,6 +240,14 @@
       result)))
 
 (defn- selected-packages [{:keys [package]}] (if package [(pkg-by-name package)] packages))
+
+(defn- deploy-build-order
+  "Build extension/sibling packages before the root `com.blockether/vis` jar. The
+   root publish POM rewrites its `:local/root` extension deps to same-version
+   Maven coordinates, so a fresh tag release must have already installed those
+   sibling jars into ~/.m2 before `package-publish-basis` resolves the root POM."
+  [pkgs]
+  (sort-by #(if (= 'com.blockether/vis (:lib %)) 1 0) pkgs))
 
 ;; =============================================================================
 ;; Public tasks
@@ -264,12 +280,8 @@
   has been installed locally so a fresh release can resolve same-version sibling
   artifacts before they exist on Clojars."
   [opts]
-  (let [built
-        (doall
-          (for [pkg (selected-packages opts)]
-            (do
-              (println "[" (name (:lib pkg)) "] build")
-              (build-one! pkg))))]
+  (let [built (doall (for [pkg (deploy-build-order (selected-packages opts))]
+                       (do (println "[" (name (:lib pkg)) "] build") (build-one! pkg))))]
     (doseq [{:keys [pkg lib class-dir jar-file]} built]
       (println "[" (name lib) "] deploy")
       (write-package-pom! pkg class-dir (package-publish-basis pkg))

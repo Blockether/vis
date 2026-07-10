@@ -37,6 +37,14 @@
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
 (defdescribe
+  copilot-action-service-headers-test
+  (it "marks Copilot Enterprise requests with X-Initiator for the action service"
+      (expect (= {"X-Initiator" "agent"}
+                 (#'lp/copilot-llm-headers {:provider :github-copilot-enterprise} "agent"))))
+  (it "does not add action-service headers for non-Copilot providers"
+      (expect (nil? (#'lp/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
+
+(defdescribe
   environment-lifecycle-test
   (it "closes the GraalPy context when disposing an environment"
       (let [environment
@@ -110,31 +118,30 @@
           (atom [])]
 
       (try
-        (with-redefs [svar/ask-code! (fn [_router opts]
-                                       (case (swap! calls inc)
-                                         1
-                                         (do ((:on-chunk opts)
-                                              {:reasoning "dead thinking"
-                                               :content "```clojure\n(dead)"})
-                                             (throw (ex-info "Stream connection error: closed"
-                                                             {:type :svar.core/http-error
-                                                              :stream? true
-                                                              :content-acc-len 19
-                                                              :reasoning-acc-len 13
-                                                              :reasoning "dead thinking"
-                                                              :partial-content
-                                                              "```clojure\n(dead)"})))
+        (with-redefs [svar/ask-code!
+                      (fn [_router opts]
+                        (case (swap! calls inc)
+                          1
+                          (do ((:on-chunk opts)
+                                {:reasoning "dead thinking" :content "```clojure\n(dead)"})
+                              (throw (ex-info "Stream connection error: closed"
+                                              {:type :svar.core/http-error
+                                               :stream? true
+                                               :content-acc-len 19
+                                               :reasoning-acc-len 13
+                                               :reasoning "dead thinking"
+                                               :partial-content "```clojure\n(dead)"})))
 
-                                         2
-                                         (do ((:on-chunk opts) {:reasoning "fresh thinking"})
-                                             ;; Native tool calling: a reply with NO tool call
-                                             ;; (`:stop-reason :end`) is the answer (`:content`)
-                                             ;; — finalizes the turn.
-                                             {:stop-reason :end
-                                              :tool-calls []
-                                              :content "ok"
-                                              :reasoning "fresh thinking"
-                                              :tokens {}})))]
+                          2
+                          (do ((:on-chunk opts) {:reasoning "fresh thinking"})
+                              ;; Native tool calling: a reply with NO tool call
+                              ;; (`:stop-reason :end`) is the answer (`:content`)
+                              ;; — finalizes the turn.
+                              {:stop-reason :end
+                               :tool-calls []
+                               :content "ok"
+                               :reasoning "fresh thinking"
+                               :tokens {}})))]
           (let [result (lp/run-iteration env
                                          []
                                          {:iteration 0

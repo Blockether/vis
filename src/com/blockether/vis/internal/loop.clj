@@ -375,7 +375,9 @@
 
 (defn- copilot-provider?
   [provider-id]
-  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business} provider-id))
+  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business
+               :github-copilot-enterprise}
+             provider-id))
 
 (defn- copilot-llm-headers
   [resolved-model initiator]
