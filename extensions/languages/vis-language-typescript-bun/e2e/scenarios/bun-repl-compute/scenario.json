@@ -1,0 +1,8 @@
+{
+  "lang": "typescript",
+  "prompt": "The project has a module secret.ts exporting a function compute(). Using the PROJECT's Bun runtime (import the module and call it — do not reimplement it by hand), tell me exactly what compute() returns.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": ["338350"],
+  "want_tools": ["repl_eval"]
+}
