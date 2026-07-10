@@ -344,3 +344,40 @@
                        false
                        {:type "turn.started" :turn_id "X" :request "hi"})))
         (expect (not (contains? @reg "never-touched-sid"))))))
+
+(defdescribe
+  queue-drain-mirror-event-test
+  ;; Cross-channel queue sync: when the gateway auto-drains the queue head it
+  ;; must emit `turn.queued.drained` BEFORE the turn starts, so every mirror
+  ;; (TUI :sync-queued-turn) drops the entry and a replayed log nets to zero.
+  (it "drain-next-queued! emits turn.queued.drained for the promoted head"
+      (let [sid
+            (str "drain-test-" (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            launched
+            (atom nil)]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :turns
+                {"q1"
+                 {:turn_id "q1" :session_id sid :status "queued" :request "hello" :queued_at 1}}
+                :turn-order ["q1"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec (take 2 args))))}
+               #(#'state/drain-next-queued! sid))
+             (expect (= [sid "q1"] @launched))
+             (expect (= "running" (:status (state/get-turn sid "q1"))))
+             (let [events
+                   (state/events-since sid 0)
+
+                   drained
+                   (filterv #(= "turn.queued.drained" (:type %)) events)]
+
+               (expect (= 1 (count drained)))
+               (expect (= "q1" (:turn_id (first drained)))))
+             (finally (swap! registry dissoc sid))))))

@@ -2288,6 +2288,72 @@
                               (mapv (fn [e]
                                       (if (= client-id (:client-id e)) (assoc e :turn-id tid) e))
                                     (vec (or q [])))))))))
+(reg-event-db
+  :sync-queued-turn
+  ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
+  ;; forwarded through the gateway sync/attach subscriptions as a :queue-sync
+  ;; chunk) into this tab's local :pending-sends. The gateway is the queue of
+  ;; record, so a message queued in a sibling TUI (or the web) shows up here,
+  ;; stays editable, and drains through the same attach machinery. The gateway
+  ;; turn id is the sync key:
+  ;;   :add    — no-op when already mirrored; otherwise bind the id onto our
+  ;;             own un-bound local echo (the enqueue's :set-queued-turn-id
+  ;;             may still be in flight) matched by text, else append.
+  ;;   :update — rewrite the entry's text (queued-prompt edit elsewhere).
+  ;;   :delete — drop the entry (cleared / pulled back to input elsewhere).
+  (fn [db [_ workspace-id {:keys [op turn-id text]}]]
+    (let [workspace-id (or workspace-id (current-tab-id db))]
+      (if-not (and workspace-id turn-id)
+        db
+        (update-tab
+          db
+          workspace-id
+          (fn [w]
+            (update w
+                    :pending-sends
+                    (fn [q]
+                      (let [q (vec (or q []))
+                            mirrored? (boolean (some #(= turn-id (:turn-id %)) q))
+                            local-echo? (fn [e]
+                                          (and (nil? (:turn-id e))
+                                               (or (= text (:agent-text e)) (= text (:text e)))))]
+
+                        (case op
+                          :add
+                          (cond mirrored? q
+                                (some local-echo? q)
+                                (let [bound? (volatile! false)]
+                                  (mapv (fn [e]
+                                          (if (and (not @bound?) (local-echo? e))
+                                            (do (vreset! bound? true) (assoc e :turn-id turn-id))
+                                            e))
+                                        q))
+                                :else (conj q
+                                            {:text text
+                                             :preview-text text
+                                             :turn-id turn-id
+                                             :queued-at-ms (System/currentTimeMillis)}))
+
+                          :update
+                          (if mirrored?
+                            (mapv (fn [e]
+                                    (if (= turn-id (:turn-id e))
+                                      (assoc e
+                                        :text text
+                                        :preview-text text
+                                        :agent-text text)
+                                      e))
+                                  q)
+                            (conj q
+                                  {:text text
+                                   :preview-text text
+                                   :turn-id turn-id
+                                   :queued-at-ms (System/currentTimeMillis)}))
+
+                          :delete
+                          (vec (remove #(= turn-id (:turn-id %)) q))
+
+                          q))))))))))
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
               ;; longer wanted. Cancelling the in-flight turn must NOT auto-drop
@@ -2375,69 +2441,102 @@
                                        :pastes (or (:pastes head) {})
                                        :paste-counter (or (:paste-counter head) 0))))
                    :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
-(reg-event-fx :attach-running-turn
-              ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
-              ;; the web, or a sibling process) the moment its tab opens/resumes, so it
-              ;; STREAMS live into the tab instead of showing frozen history until it
-              ;; lands in the DB. `session` carries :id, :status/:current-turn-id and the
-              ;; in-flight turn's `:running-request` text (from `chat/resume-session`).
-              ;; No-op unless the session is genuinely running AND the target tab isn't
-              ;; already attached (guards against double-attaching an already-live tab).
-              ;; Mirrors `:drain-pending`'s busy-time attach: seed the user + pending
-              ;; assistant bubbles, arm the turn state, then hand off to `:session-attach`.
-              (fn [db [_ workspace-id session]]
-                (let [workspace-id
-                      (or workspace-id (current-tab-id db))
+(reg-event-fx
+  :attach-running-turn
+  ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
+  ;; the web, or a sibling process) the moment its tab opens/resumes, so it
+  ;; STREAMS live into the tab instead of showing frozen history until it
+  ;; lands in the DB. `session` carries :id, :status/:current-turn-id and the
+  ;; in-flight turn's `:running-request` text + its canonical gateway
+  ;; `:running-started-at` (from `chat/resume-session`). The elapsed
+  ;; clock seeds from that gateway timestamp — NOT this process's
+  ;; attach time — so every attached TUI shows the same elapsed.
+  ;; No-op unless the session is genuinely running AND the target tab isn't
+  ;; already attached (guards against double-attaching an already-live tab).
+  ;; Mirrors `:drain-pending`'s busy-time attach: seed the user + pending
+  ;; assistant bubbles, arm the turn state, then hand off to `:session-attach`.
+  (fn [db [_ workspace-id session]]
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
 
-                      sid
-                      (:id session)
+          sid
+          (:id session)
 
-                      tid
-                      (:current-turn-id session)
+          tid
+          (:current-turn-id session)
 
-                      target
-                      (db-for-tab db workspace-id)]
+          ;; FIRST mirror the gateway's queued backlog (queued from
+          ;; ANY channel — chat/resume-session :queued-turns) into
+          ;; this tab's local queue, dedup'd by gateway turn id.
+          ;; Runs even when nothing is running: a cancel leaves the
+          ;; backlog queued server-side, and resume must surface it
+          ;; instead of silently dropping it.
+          db
+          (if-let [qs (and workspace-id (seq (:queued-turns session)))]
+            (update-tab db
+                        workspace-id
+                        (fn [w]
+                          (update w
+                                  :pending-sends
+                                  (fn [q]
+                                    (let [q (vec (or q []))
+                                          known (set (keep :turn-id q))]
 
-                  (if-not (and workspace-id
-                               sid
-                               tid
-                               (session-running? session)
-                               (not (:loading? target))
-                               (not (:gateway-turn-id target)))
-                    {:db db}
-                    (let [token
-                          (vis/cancellation-token)
+                                      (into q
+                                            (keep (fn [{:keys [turn-id text queued-at-ms]}]
+                                                    (when-not (contains? known turn-id)
+                                                      {:text text
+                                                       :preview-text text
+                                                       :turn-id turn-id
+                                                       :queued-at-ms
+                                                       (or queued-at-ms
+                                                           (System/currentTimeMillis))})))
+                                            qs))))))
+            db)
 
-                          client-turn-id
-                          (str (java.util.UUID/randomUUID))
+          target
+          (db-for-tab db workspace-id)]
 
-                          request-text
-                          (or (:running-request session) "")]
+      (if-not (and workspace-id
+                   sid
+                   tid
+                   (session-running? session)
+                   (not (:loading? target))
+                   (not (:gateway-turn-id target)))
+        {:db db}
+        (let [token
+              (vis/cancellation-token)
 
-                      {:db (update-tab db
-                                       workspace-id
-                                       (fn [w]
-                                         (-> w
-                                             (update :messages
-                                                     conj
-                                                     (assoc (chat/user-message request-text)
-                                                       :client-turn-id client-turn-id))
-                                             (update :messages
-                                                     conj
-                                                     (assoc (chat/assistant-message
-                                                              pending-assistant-ir)
-                                                       :pending? true
-                                                       :client-turn-id client-turn-id))
-                                             (assoc :scroll scroll/follow
-                                                    :loading? true
-                                                    :cancel-token token
-                                                    :gateway-turn-id tid
-                                                    :cancelling? false
-                                                    :progress {:iterations []}
-                                                    :turn-start-ms (System/currentTimeMillis)
-                                                    :input-history-index nil
-                                                    :input-history-draft nil))))
-                       :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
+              client-turn-id
+              (str (java.util.UUID/randomUUID))
+
+              request-text
+              (or (:running-request session) "")]
+
+          {:db (update-tab db
+                           workspace-id
+                           (fn [w]
+                             (-> w
+                                 (update :messages
+                                         conj
+                                         (assoc (chat/user-message request-text)
+                                           :client-turn-id client-turn-id))
+                                 (update :messages
+                                         conj
+                                         (assoc (chat/assistant-message pending-assistant-ir)
+                                           :pending? true
+                                           :client-turn-id client-turn-id))
+                                 (assoc :scroll scroll/follow
+                                        :loading? true
+                                        :cancel-token token
+                                        :gateway-turn-id tid
+                                        :cancelling? false
+                                        :progress {:iterations []}
+                                        :turn-start-ms (or (:running-started-at session)
+                                                           (System/currentTimeMillis))
+                                        :input-history-index nil
+                                        :input-history-draft nil))))
+           :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 (reg-event-fx
   :restore-pending-to-input
   ;; A user cancel with a queued backlog must NOT auto-send the next message.
@@ -2800,13 +2899,20 @@
                       ;; overlay repaints with the fresh snapshot.
                       sid (:id session)
                       on-chunk (fn [chunk]
-                                 (when (and sid
-                                            (= :iteration-final (:phase chunk))
-                                            (or (:tasks chunk) (:facts chunk)))
-                                   (try (dispatch [:set-ctx-panel sid
-                                                   {:tasks (:tasks chunk) :facts (:facts chunk)}])
-                                        (catch Throwable _ nil)))
-                                 (track-chunk chunk))
+                                 (if (= :queue-sync (:phase chunk))
+                                   ;; A sibling queued/edited/deleted a message
+                                   ;; on this session — mirror it into the local
+                                   ;; queue; never a progress chunk.
+                                   (try (dispatch [:sync-queued-turn workspace-id chunk])
+                                        (catch Throwable _ nil))
+                                   (do (when (and sid
+                                                  (= :iteration-final (:phase chunk))
+                                                  (or (:tasks chunk) (:facts chunk)))
+                                         (try (dispatch [:set-ctx-panel sid
+                                                         {:tasks (:tasks chunk)
+                                                          :facts (:facts chunk)}])
+                                              (catch Throwable _ nil)))
+                                       (track-chunk chunk))))
                       result (chat/turn! session
                                          text
                                          {:on-chunk on-chunk
@@ -2900,13 +3006,20 @@
                                                                           progress-update!})
                       sid (:id session)
                       on-chunk (fn [chunk]
-                                 (when (and sid
-                                            (= :iteration-final (:phase chunk))
-                                            (or (:tasks chunk) (:facts chunk)))
-                                   (try (dispatch [:set-ctx-panel sid
-                                                   {:tasks (:tasks chunk) :facts (:facts chunk)}])
-                                        (catch Throwable _ nil)))
-                                 (track-chunk chunk))
+                                 (if (= :queue-sync (:phase chunk))
+                                   ;; A sibling queued/edited/deleted a message
+                                   ;; on this session — mirror it into the local
+                                   ;; queue; never a progress chunk.
+                                   (try (dispatch [:sync-queued-turn workspace-id chunk])
+                                        (catch Throwable _ nil))
+                                   (do (when (and sid
+                                                  (= :iteration-final (:phase chunk))
+                                                  (or (:tasks chunk) (:facts chunk)))
+                                         (try (dispatch [:set-ctx-panel sid
+                                                         {:tasks (:tasks chunk)
+                                                          :facts (:facts chunk)}])
+                                              (catch Throwable _ nil)))
+                                       (track-chunk chunk))))
                       result (chat/attach! session tid {:on-chunk on-chunk})]
 
                   (if (:error result)

@@ -830,6 +830,46 @@
                    (expect (= 10 (:turn-start-ms db))))))
 
 (defdescribe
+  attach-running-turn-canonical-clock-test
+  (it "seeds turn-start-ms from the gateway's started_at, not local attach time"
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
+
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
+
+        (reset! state/app-db {:session {:id "s1"} :render-version 0})
+        (state/dispatch [:attach-running-turn nil
+                         {:id "s1"
+                          :status "running"
+                          :current-turn-id "turn-1"
+                          :running-request "hello"
+                          :running-started-at 12345}])
+        (let [db @state/app-db]
+          (expect (true? (:loading? db)))
+          (expect (= "turn-1" (:gateway-turn-id db)))
+          ;; The canonical gateway clock — NOT this process's now — so two
+          ;; TUIs attached to the same running turn show the SAME elapsed.
+          (expect (= 12345 (:turn-start-ms db))))))
+  (it "falls back to the local clock when the gateway timestamp is missing"
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
+
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
+
+        (reset! state/app-db {:session {:id "s1"} :render-version 0})
+        (let [before (System/currentTimeMillis)]
+          (state/dispatch
+            [:attach-running-turn nil
+             {:id "s1" :status "running" :current-turn-id "turn-1" :running-request "hello"}])
+          (expect (<= before (long (:turn-start-ms @state/app-db))))))))
+
+(defdescribe
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
       (let [make-progress-render-updater
@@ -1608,3 +1648,31 @@
                    ;; the pending assistant bubble was resolved, not left dangling
                    (expect (not (some #(and (= :assistant (:role %)) (true? (:pending? %)))
                                       (:messages db)))))))
+
+(defdescribe sync-queued-turn-test
+             ;; The gateway is the queue of record; :sync-queued-turn mirrors ONE queue
+             ;; event (queued/updated/deleted/drained) into this tab's :pending-sends.
+             (it "mirrors a sibling's queue add / update / delete into pending-sends"
+                 (reset! state/app-db {:session {:id "s1"} :render-version 0})
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+                 (let [q (:pending-sends @state/app-db)]
+                   (expect (= 1 (count q)))
+                   (expect (= "q1" (:turn-id (first q))))
+                   (expect (= "hello" (:text (first q)))))
+                 ;; :add is idempotent on the same gateway turn id
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+                 (expect (= 1 (count (:pending-sends @state/app-db))))
+                 ;; a queued-prompt edit elsewhere rewrites the text
+                 (state/dispatch [:sync-queued-turn nil {:op :update :turn-id "q1" :text "edited"}])
+                 (expect (= "edited" (:text (first (:pending-sends @state/app-db)))))
+                 ;; the gateway drained (auto-started) or a sibling deleted it: entry drops
+                 (state/dispatch [:sync-queued-turn nil {:op :delete :turn-id "q1"}])
+                 (expect (= [] (:pending-sends @state/app-db))))
+             (it "binds an unbound local echo by text instead of duplicating"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :render-version 0
+                                       :pending-sends [{:text "hello" :client-id "c1"}]})
+                 (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
+                 (let [q (:pending-sends @state/app-db)]
+                   (expect (= 1 (count q)))
+                   (expect (= "q1" (:turn-id (first q)))))))
