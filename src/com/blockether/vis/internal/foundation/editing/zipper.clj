@@ -18,6 +18,7 @@
    only plain Clojure data escapes."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.outline :as outline]
+            [com.blockether.vis.internal.foundation.editing.patch :as patch]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack Parser Tree Node Point]
@@ -547,3 +548,66 @@
      "prev" (boolean (seq path))
      "index" (when i (long i))
      "siblings" (when pc (long pc))}))
+
+;; ── ANCHOR → PATH — enter the zipper straight from a `lineno:hash` row ──────────
+;; The `lineno:hash` anchor every outline / occurrences / cat row carries IS the
+;; zipper entry handle (vis's `@eXXXX`): validate it against live source (the same
+;; staleness guard `patch` uses — the hash must still agree with the stated line),
+;; then resolve to the NAMED-child index path of the node that begins there. One
+;; hop from a listed row to its structural cursor, no `nav [{find …}]` text-probe.
+
+(defn- named-path-at-line
+  "Pre-order DFS for the OUTERMOST named node whose 1-based START line == `line`.
+   Returns its named-child index path (a vector), or nil. The file `root` itself
+   (empty `path`) is never a match — we want a node WITHIN the file. Outermost:
+   a node is checked BEFORE its children, so an anchor on `(defn foo …` resolves
+   to the whole def form, not an inner symbol that happens to share the line."
+  [^Node node ^long line path]
+  (if (and (seq path) (= line (inc (long (.row (.startPosition node))))))
+    path
+    (let [n (.namedChildCount node)]
+      (loop [i 0]
+        (when (< i n)
+          (let [child (.orElse (.namedChild node (int i)) nil)]
+            (if child
+              (let [res (try (named-path-at-line child line (conj path (int i)))
+                             (finally (.close child)))]
+                (or res (recur (inc i))))
+              (recur (inc i)))))))))
+
+(defn path-at-anchor
+  "Resolve a `lineno:hash` `anchor` (an outline / occurrences / cat row's SOLE
+   position) to a named-child index PATH — the zipper entry point for that row.
+   The hash is verified against `source` with the SAME machinery `patch` uses
+   (`patch/resolve-anchor-range`): a stale / misplaced anchor is refused, not
+   silently mis-resolved. On success the OUTERMOST named node beginning on the
+   anchored line is located. Returns `{:ok? true :path [...] :line L}` or
+   `{:error {:reason KW :message S}}`. Language-neutral (every tree-sitter lang)."
+  [lang source anchor]
+  (if-not lang
+    {:error {:reason :unknown-language :message "unknown language for this file — use patch(...)"}}
+    (let [res (patch/resolve-anchor-range source anchor nil)]
+      (if (:error res)
+        (let [reason (get-in res [:error :reason])]
+          {:error {:reason reason
+                   :message (str "anchor " (pr-str anchor)
+                                 " did not resolve (" (name reason)
+                                 ") — re-read with cat(path) for a " "fresh lineno:hash anchor.")}})
+        (let [line (long (:from-line res))
+              ^Tree tree (parse-tree lang source)]
+
+          (if-not tree
+            {:error {:reason :parse-failed :message (str "could not parse as " lang)}}
+            (try (let [^Node root (.rootNode tree)]
+                   (try (if-let [p (named-path-at-line root line [])]
+                          {:ok? true :path p :line line}
+                          {:error {:reason :anchor-no-node
+                                   :message (str "no structural node begins at line "
+                                                 line
+                                                 " (anchor "
+                                                 (pr-str anchor)
+                                                 ") — the anchor "
+                                                 "points INSIDE a form, not at its start; use "
+                                                 "sexpr(path) and nav to the node instead.")}})
+                        (finally (.close root))))
+                 (finally (.close tree)))))))))

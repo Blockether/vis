@@ -2427,13 +2427,14 @@
                   (let [now-ms (System/currentTimeMillis)
                         provider-id (active-provider-id)
                         changed? (not= provider-id last-provider-id)
+                        forced? (:provider-limits-force? @state/app-db)
                         stale? (>= (- now-ms (long last-refresh-ms)) provider-limits-refresh-ms)]
 
                     (try (cond (nil? provider-id) (when last-provider-id
                                                     (state/dispatch [:clear-provider-limits]))
-                               (or changed? stale?) (state/dispatch
-                                                      [:set-provider-limits provider-id
-                                                       (vis/provider-limits provider-id)]))
+                               (or changed? stale? forced?) (state/dispatch
+                                                              [:set-provider-limits provider-id
+                                                               (vis/provider-limits provider-id)]))
                          (catch Throwable t
                            (tel/log! {:level :warn
                                       :id ::provider-limits-refresh-failed
@@ -2441,7 +2442,7 @@
                                              :error (or (ex-message t) (str t))}
                                       :msg "Provider limits refresh failed"})))
                     (try (Thread/sleep 1000) (catch InterruptedException _ nil))
-                    (recur provider-id (if (or changed? stale?) now-ms last-refresh-ms))))))
+                    (recur provider-id (if (or changed? stale? forced?) now-ms last-refresh-ms))))))
             "vis-channel-tui-provider-limits")]
     (.setDaemon t true)
     (.start t)
@@ -2592,7 +2593,7 @@
        (sort-by #(or (date->millis %) 0))
        last))
 (defn- session-summary
-  [_db-info session]
+  [session]
   (let [turns
         (try (vec (vis/gateway-list-turns (:id session))) (catch Throwable _ []))
 
@@ -2624,11 +2625,10 @@
            sessions))
 (defn- tui-session-summaries
   []
-  (try (let [db-info (vis/db-info)]
-         (->> (vis/gateway-list-sessions :all)
-              (map #(session-summary db-info %))
-              latest-modified-first
-              vec))
+  (try (->> (vis/gateway-list-sessions :all)
+            (map session-summary)
+            latest-modified-first
+            vec)
        (catch Throwable _ [])))
 (defn- session-db-title
   [session-id]
@@ -2739,16 +2739,9 @@
    (no cleanup thunk to run)."
   [^TerminalScreen _screen]
   nil)
-(defn- sweep-orphaned-running-turns!
-  []
-  (try (vis/gateway-reconcile-running-turns!) (catch Throwable _ nil)))
 (defn- pre-resolve-session-id!
-  "Sweep interrupted turns before any resume history rebuild. The
-   `--session-id` path validates before Lanterna starts; if the sweep
-   happens later, the precomputed history still contains stale `:running`
-   turns with blank answers, which render as empty assistant bubbles."
+  "Resolve an optional session id through the gateway before Lanterna starts."
   [opts]
-  (sweep-orphaned-running-turns!)
   (when-let [cid (:session-id opts)]
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
@@ -2853,7 +2846,8 @@
                               #(if (vis/first-run?)
                                  (provider/show-welcome! screen)
                                  (provider/show-provider-dialog! screen (:config @state/app-db))))]
-                 (state/dispatch [:set-config c]))))
+                 (state/dispatch [:set-config c])
+                 (state/dispatch [:force-provider-limits-refresh]))))
            ;; Init session: resume if --session-id given, else fresh. The --session-id case was
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
@@ -3208,25 +3202,22 @@
                  ;; Mint a trunk workspace rooted at `d`, create a session
                  ;; pinned to it, and open it in a new tab — a session in
                  ;; another project, focused, alongside the current ones.
-                 open-dir-tab!
-                 (fn [d]
-                   (let [f (java.io.File. ^String d)]
-                     (if (and (.exists f) (.isDirectory f))
-                       (when-let [config (:config @state/app-db)]
-                         (let [ws (try (vis/workspace-create-trunk-at! (vis/db-info)
-                                                                       (.getCanonicalPath f))
-                                       (catch Throwable _ nil))
-                               session-result
-                               (when ws (chat/make-session config {:workspace-id (:id ws)}))]
-
-                           (if session-result
-                             (open-session-tab! session-result true)
-                             (vis/notify! "Could not open a session there"
-                                          :level :warn
-                                          :ttl-ms copy-success-ttl-ms))))
-                       (vis/notify! (str "Not a directory: " d)
-                                    :level :warn
-                                    :ttl-ms copy-success-ttl-ms))))
+                 open-dir-tab! (fn [d]
+                                 (let [f (java.io.File. ^String d)]
+                                   (if (and (.exists f) (.isDirectory f))
+                                     (when-let [config (:config @state/app-db)]
+                                       (let [session-result (try (chat/make-session
+                                                                   config
+                                                                   {:root (.getCanonicalPath f)})
+                                                                 (catch Throwable _ nil))]
+                                         (if session-result
+                                           (open-session-tab! session-result true)
+                                           (vis/notify! "Could not open a session there"
+                                                        :level :warn
+                                                        :ttl-ms copy-success-ttl-ms))))
+                                     (vis/notify! (str "Not a directory: " d)
+                                                  :level :warn
+                                                  :ttl-ms copy-success-ttl-ms))))
                  ;; `/fs` (a `:slash/ui {:kind :dir-picker}` slash): browse to
                  ;; a directory in the modal picker, then open a focused session
                  ;; tab there. Starts at the active tab's working dir.
@@ -4319,13 +4310,15 @@
                                   (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
                                                                     screen
                                                                     (:config @state/app-db)))]
-                                    (state/dispatch [:set-config c]))
+                                    (state/dispatch [:set-config c])
+                                    (state/dispatch [:force-provider-limits-refresh]))
 
                                   :model
                                   (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
                                                                     screen
                                                                     (:config @state/app-db)))]
-                                    (state/dispatch [:set-config c]))
+                                    (state/dispatch [:set-config c])
+                                    (state/dispatch [:force-provider-limits-refresh]))
 
                                   :settings
                                   (when-let [s (with-dialog-lock
@@ -4652,7 +4645,8 @@
                                (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
                                                                  screen
                                                                  (:config @state/app-db)))]
-                                 (state/dispatch [:set-config c])))
+                                 (state/dispatch [:set-config c])
+                                 (state/dispatch [:force-provider-limits-refresh])))
                              (recur))
 
                          ;; Ctrl+G: filesystem / directory picker (also the `/fs`

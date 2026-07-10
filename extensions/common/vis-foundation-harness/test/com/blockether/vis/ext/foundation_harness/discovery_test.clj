@@ -119,20 +119,28 @@
 (defdescribe
   opencode-spel-layout-discovery-test
   (it "discovers SPEL skills from .opencode/skills/<name>/SKILL.md"
-      (let [root (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
-            skill-md (io/file root ".opencode" "skills" "spel" "SKILL.md")]
-        (try
-          (io/make-parents skill-md)
-          (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
-          (with-redefs-fn {#'d/project-root (fn [] root)
-                           #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
-            (fn []
-              (let [skills (d/discover-skills)
-                    spel (first (filter #(= "spel" (:name %)) skills))]
-                (expect (= "spel" (:name spel)))
-                (expect (= :opencode (:tool spel)))
-                (expect (re-find #"BODY" (:body spel))))))
-          (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
+
+            skill-md
+            (io/file root ".opencode" "skills" "spel" "SKILL.md")]
+
+        (try (io/make-parents skill-md)
+             (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
+             (with-redefs-fn {#'d/project-root (fn []
+                                                 root)
+                              #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
+               (fn []
+                 (let [skills
+                       (d/discover-skills)
+
+                       spel
+                       (first (filter #(= "spel" (:name %)) skills))]
+
+                   (expect (= "spel" (:name spel)))
+                   (expect (= :opencode (:tool spel)))
+                   (expect (re-find #"BODY" (:body spel))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe discovery-smoke-test
              ;; Environment-agnostic: the scan must NEVER throw and always returns a

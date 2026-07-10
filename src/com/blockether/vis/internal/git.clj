@@ -45,36 +45,41 @@
   ([^File dir args] (run-git dir args nil))
   ([^File dir args {:keys [timeout-secs]}]
    (let [t0 (System/currentTimeMillis)]
-     (try (let [cmd (into ["git"] (map str) args)
-                pb (ProcessBuilder. ^java.util.List cmd)]
+     (try
+       (let [cmd (into ["git"] (map str) args)
+             pb (ProcessBuilder. ^java.util.List cmd)]
 
-            (.directory pb (or dir (cwd-file)))
-            (let [p (.start pb)
-                  out (future (slurp (io/reader (.getInputStream p))))
-                  err (future (slurp (io/reader (.getErrorStream p))))
-                  done
-                  (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
+         (.directory pb (or dir (cwd-file)))
+         (let [p (.start pb)
+               out (future (slurp (io/reader (.getInputStream p))))
+               err (future (slurp (io/reader (.getErrorStream p))))
+               done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
 
-              (when-not done
-                (.destroyForcibly p)
-                (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
-                  (try (.close s)
-                       (catch Throwable t
-                         (tel/log! :debug ["git: failed to close timed-out process stream" (ex-message t)])))))
-              {:exit (when done (.exitValue p))
-               :out (deref out 2000 "")
-               :err (deref err 2000 "")
-               :timed-out? (not done)
-               :duration-ms (- (System/currentTimeMillis) t0)}))
-          (catch Throwable t
-            (tel/log! :warn ["git: run-git failed" {:dir (some-> dir .getPath)
-                                                     :args (vec (map str args))
-                                                     :error (ex-message t)}])
-            {:exit nil
-             :out ""
-             :err ""
-             :timed-out? false
-             :duration-ms (- (System/currentTimeMillis) t0)})))))
+           (when-not done
+             (.destroyForcibly p)
+             (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
+               (try (.close s)
+                    (catch Throwable t
+                      (tel/log! :debug
+                                ["git: failed to close timed-out process stream"
+                                 (ex-message t)])))))
+           {:exit (when done (.exitValue p))
+            :out (deref out 2000 "")
+            :err (deref err 2000 "")
+            :timed-out? (not done)
+            :duration-ms (- (System/currentTimeMillis) t0)}))
+       (catch Throwable t
+         (tel/log! :warn
+                   ["git: run-git failed"
+                    {:dir (some-> dir
+                                  .getPath)
+                     :args (vec (map str args))
+                     :error (ex-message t)}])
+         {:exit nil
+          :out ""
+          :err ""
+          :timed-out? false
+          :duration-ms (- (System/currentTimeMillis) t0)})))))
 
 (defn- git-ok
   "stdout of `git <args>` when it exits 0, else nil."
@@ -398,10 +403,12 @@
                 (reset! working-tree-status-cache
                   {:cwd cwd :expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
               (catch Throwable t
-                (tel/log! :warn ["git: async working-tree status refresh failed"
-                                 {:cwd cwd
-                                  :start (some-> start .getPath)
-                                  :error (ex-message t)}]))
+                (tel/log! :warn
+                          ["git: async working-tree status refresh failed"
+                           {:cwd cwd
+                            :start (some-> start
+                                           .getPath)
+                            :error (ex-message t)}]))
               (finally (reset! status-refreshing? false))))))
 
 (defn- serve-cached-status

@@ -115,19 +115,22 @@
    but still log-capable resource."
   ([log-path] (tail-log log-path default-log-line-limit))
   ([log-path n]
-   (let [f (when (seq (str log-path)) (io/file (str log-path)))
-         n (max 1 (long (or n default-log-line-limit)))]
+   (let [f
+         (when (seq (str log-path)) (io/file (str log-path)))
+
+         n
+         (max 1 (long (or n default-log-line-limit)))]
+
      (if (and f (.isFile f))
-       (try
-         (with-open [r (io/reader f)]
-           (loop [xs []
-                  lines (line-seq r)]
-             (if-let [line (first lines)]
-               (let [xs' (conj xs line)]
-                 (recur (if (> (count xs') n) (subvec xs' (- (count xs') n)) xs')
-                        (next lines)))
-               xs)))
-         (catch Throwable _ []))
+       (try (with-open [r (io/reader f)]
+              (loop [xs []
+                     lines (line-seq r)]
+
+                (if-let [line (first lines)]
+                  (let [xs' (conj xs line)]
+                    (recur (if (> (count xs') n) (subvec xs' (- (count xs') n)) xs') (next lines)))
+                  xs)))
+            (catch Throwable _ []))
        []))))
 
 (defn- delete-stray-port-file!
@@ -189,6 +192,7 @@
 
    - Already ours + alive for `[session-id dir]` → :already-running.
    - No known build file → :no-launcher.
+   - Launcher exits before binding → :failed with exit code + log tail.
    - Else :started (port up) or :starting (still coming up; ctx will show it).
 
    Model-facing: STRING keys + STRING enum values (crosses as a tool `:result`)."
@@ -204,42 +208,86 @@
        (assoc (status session-id dir) "result" "already-running")
        (let [port (free-port!)]
          (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
-           (let [log (log-file dir)
-                 pb (doto (ProcessBuilder. ^java.util.List cmd)
-                      (.directory (io/file dir))
-                      (.redirectErrorStream true)
-                      (.redirectOutput log))
-                 proc (.start pb)
-                 pid (try (.pid proc) (catch Throwable _ nil))
-                 info {:id (id-of dir)
-                       :process proc
-                       :port port
-                       :cmd cmd
-                       :tool tool
-                       :aliases (vec aliases)
-                       :pid pid
-                       :dir dir
-                       :log (.getAbsolutePath log)
-                       :started-at (System/currentTimeMillis)}]
+           (try
+             (let [log (log-file dir)
+                   pb (doto (ProcessBuilder. ^java.util.List cmd)
+                        (.directory (io/file dir))
+                        (.redirectErrorStream true)
+                        (.redirectOutput log))
+                   proc (.start pb)
+                   pid (try (.pid proc) (catch Throwable _ nil))
+                   info {:id (id-of dir)
+                         :process proc
+                         :port port
+                         :cmd cmd
+                         :tool tool
+                         :aliases (vec aliases)
+                         :pid pid
+                         :dir dir
+                         :log (.getAbsolutePath log)
+                         :started-at (System/currentTimeMillis)}]
 
-             (swap! processes assoc k info)
-             (let [st (wait-until-up port 20000)]
-               ;; We passed --port explicitly; never depend on the file the tool
-               ;; may still write. Remove it so it can't mislead anything.
-               (delete-stray-port-file! dir)
-               (cond-> {"result" (if (= :up st) "started" "starting")
-                        "id" (id-of dir)
-                        "dir" dir
-                        "port" port
-                        "tool" (name tool)
-                        "aliases" (mapv name aliases)
-                        "pid" pid
-                        "cmd" cmd
-                        "log" (.getAbsolutePath log)
-                        "status" (name st)}
-                 (not= :up st)
-                 (assoc "message" "nREPL launching; it will report :up in ctx shortly."))))
+               (swap! processes assoc k info)
+               (let [st (wait-until-up port 20000)]
+                 ;; We passed --port explicitly; never depend on the file the tool
+                 ;; may still write. Remove it so it can't mislead anything.
+                 (delete-stray-port-file! dir)
+                 (when-not (= :up st)
+                   ;; If the launcher died quickly, give the OS one beat to publish
+                   ;; the exit code before deciding whether this is "still starting"
+                   ;; or a real startup failure.
+                   (try (.waitFor proc 100 TimeUnit/MILLISECONDS) (catch Throwable _ nil)))
+                 (let [alive? (alive? proc)
+                       exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
+                       log-path (.getAbsolutePath log)
+                       tail (tail-log log-path 80)
+                       base {"id" (id-of dir)
+                             "dir" dir
+                             "port" port
+                             "tool" (name tool)
+                             "aliases" (mapv name aliases)
+                             "pid" pid
+                             "cmd" cmd
+                             "log" log-path}]
+
+                   (cond
+                     (= :up st) (assoc base
+                                  "result" "started"
+                                  "status" "up")
+                     (not alive?) (do (swap! processes dissoc k)
+                                      (cond->
+                                        (assoc base
+                                          "result" "failed"
+                                          "status" "failed"
+                                          "message"
+                                          (str "nREPL launcher exited before accepting connections"
+                                               (when exit (str " (exit " exit ")"))
+                                               ". See log for details.")
+                                          "exit" exit)
+                                        (seq tail)
+                                        (assoc "log_tail" tail)))
+                     :else
+                     (cond->
+                       (assoc base
+                         "result" "starting"
+                         "status" "starting"
+                         "message"
+                         "nREPL launching; not accepting connections yet. Check the log if it stays in this state.")
+                       (seq tail)
+                       (assoc "log_tail" tail))))))
+             (catch java.io.IOException e
+               {"result" "failed"
+                "status" "failed"
+                "id" (id-of dir)
+                "dir" dir
+                "port" port
+                "tool" (name tool)
+                "aliases" (mapv name aliases)
+                "cmd" cmd
+                "log" (.getAbsolutePath (log-file dir))
+                "message" (str "Could not start nREPL launcher: " (.getMessage e))}))
            {"result" "no-launcher"
+            "status" "down"
             "dir" dir
             "message"
             "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."}))))))
@@ -332,7 +380,11 @@
      - explicit `id` → that REPL (throws if no such live REPL in this session);
      - 0 REPLs       → autostart `default-dir` with [:dev :test], use it;
      - 1 REPL        → use it (it's the implicit default);
-     - >1 REPLs      → throw, listing the ids (the model MUST pass one)."
+     - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
+                       workspace root) when present, else the first (dir-sorted).
+                       Never throws on ambiguity — eval always resolves and the
+                       result reports which REPL ran it, so the model can pass an
+                       explicit `id` to override."
   [session-id id default-dir]
   (let [id (some-> id
                    str
@@ -346,18 +398,13 @@
                             "' in this session — check ctx / session_resources for live REPL ids")
                           {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
-        (case (count repls)
-          0
+        (if (zero? (count repls))
           (let [r (ensure-repl-for-dir! session-id default-dir)]
             (when-not r
               (throw (ex-info (str "no Clojure build file in " default-dir " to autostart an nREPL")
                               {:type :clj/no-launcher :dir default-dir})))
             (select-keys r [:id :dir :port]))
-
-          1
-          (select-keys (first repls) [:id :dir :port])
-
-          (throw (ex-info (str (count repls)
-                               " nREPLs are live in this session — pass an id to pick one: "
-                               (str/join ", " (map :id repls)))
-                          {:type :clj/ambiguous-repl :ids (mapv :id repls)})))))))
+          ;; 1+ REPLs: the implicit default is the one owning `default-dir`
+          ;; (the workspace root) when live, else the first (dir-sorted).
+          (-> (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))
+              (select-keys [:id :dir :port])))))))

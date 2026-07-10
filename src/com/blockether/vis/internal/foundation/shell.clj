@@ -258,7 +258,8 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
-  (let [pb (ProcessBuilder. ^java.util.List [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])]
+  (let [pb (ProcessBuilder. ^java.util.List
+                            [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])]
     (.directory pb dir)
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
@@ -1018,7 +1019,7 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
         (or (get r "status") "started")
 
         summary
-        (str "▶ bg `"
+        (str "⚙ bg `"
              id
              "` "
              status

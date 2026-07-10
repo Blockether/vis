@@ -570,6 +570,201 @@
       [s]
       (vec (TerminalTextUtils/foldColumns max-cols s)))))
 
+(defn ansi-fold-cols
+  "Like `fold-cols`, but ANSI-SGR aware: char-fold `s` into a vector of
+   segments each at most `max-cols` display columns wide, never splitting a
+   grapheme cluster and never counting an `\\u001b[..m` escape toward the
+   width. The SGR sequence active at a cut is RE-OPENED at the head of the
+   next segment (and the cut segment is closed with `\\u001b[0m`), so a
+   syntax-highlighted line that folds keeps each token's color across the
+   break instead of being clipped at the bubble edge.
+
+   This is what lets a colorized fence (a wide `javascript:` bookmarklet, a
+   long JSON row) wrap into the bubble the way a plain fence already does,
+   with no ANSI leaking past a row. ESC-free input delegates to `fold-cols`
+   (lanterna's grapheme/EAW-aware `foldColumns`); a segment always makes
+   progress so a pathological width can't loop. nil/empty returns `[\"\"]`."
+  [s ^long max-cols]
+  (let [^String s
+        (str (or s ""))
+
+        budget
+        (max 1 max-cols)]
+
+    (if (neg? (.indexOf s (int 27))) ; no ESC: plain fold is enough
+      (fold-cols s budget)
+      (loop [rest
+             s
+
+             active
+             ""
+
+             ; SGR prefix to re-open on the next segment
+             col
+             0
+
+             ^StringBuilder seg
+             (StringBuilder.)
+
+             out
+             (transient [])]
+
+        (cond (zero? (.length ^String rest)) (persistent! (conj! out (.toString seg)))
+              (.startsWith ^String rest "\u001b[")
+              (let [m (.indexOf ^String rest (int \m))]
+                (if (neg? m)
+                  ;; malformed trailing escape: keep it verbatim and stop
+                  (persistent! (conj! out (.toString (.append seg ^String rest))))
+                  (let [esc (subs rest 0 (inc m))
+                        body (subs rest 2 m)
+                        active' (if (contains? #{"" "0" "00"} body) "" (str active esc))]
+
+                    (recur (subs rest (inc m)) active' col (.append seg esc) out))))
+              :else
+              (let [esc-idx
+                    (.indexOf ^String rest "\u001b[")
+
+                    run
+                    (if (neg? esc-idx) rest (subs rest 0 esc-idx))
+
+                    after
+                    (if (neg? esc-idx) "" (subs rest esc-idx))
+
+                    avail
+                    (- budget col)
+
+                    k
+                    (col-prefix-end run avail)]
+
+                (cond
+                  ;; whole run fits on the current row
+                  (>= k (.length ^String run))
+                  (recur after active (+ col (display-width run)) (.append seg run) out)
+                  ;; nothing more fits on a partial row: close it, restart fresh
+                  (and (zero? k) (pos? col)) (recur (str run after)
+                                                    active
+                                                    0
+                                                    (StringBuilder. ^String active)
+                                                    (conj! out (str (.toString seg) "\u001b[0m")))
+                  ;; overflow at a fresh row: emit what fits (force >=1 grapheme so
+                  ;; a double-width glyph under a tiny budget still progresses),
+                  ;; close the row, and continue on a new row carrying `active`.
+                  :else (let [k
+                              (if (zero? k)
+                                (long (.length (.getCharacterString
+                                                 ^TextCharacter
+                                                 (aget (TextCharacter/fromString ^String run) 0))))
+                                k)
+
+                              head
+                              (subs run 0 k)
+
+                              tail
+                              (subs run k)]
+
+                          (recur (str tail after)
+                                 active
+                                 0
+                                 (StringBuilder. ^String active)
+                                 (conj! out
+                                        (str (.toString (.append seg head)) "\u001b[0m")))))))))))
+(defn ansi-slice-cols
+  "Return the display-column WINDOW `[start, start+width)` of `s` as a string —
+   the horizontal `less -S` clip the code pager paints each row with (CHOP, not
+   fold). ANSI-SGR aware: `\u001b[..m` escapes never count toward a column, the
+   SGR active at the window's LEFT edge is RE-OPENED at the head of the result,
+   escapes that fall INSIDE the window are kept inline, and the result is closed
+   with `\u001b[0m` whenever any SGR was emitted — so a syntax-highlighted row
+   keeps its colors when scrolled sideways.
+
+   ESC-free input is a plain grapheme-safe column slice (never splits a
+   cluster). Negative `start` clamps to 0; non-positive `width` yields \"\"."
+  [s ^long start ^long width]
+  (let [^String s
+        (str (or s ""))
+
+        start
+        (max 0 start)
+
+        end
+        (+ start (max 0 width))]
+
+    (cond (<= width 0) ""
+          ;; Plain text: two grapheme-safe prefix cuts bound the window exactly.
+          (neg? (.indexOf s (int 27))) (subs s (col-prefix-end s start) (col-prefix-end s end))
+          :else
+          (loop [^String rest
+                 s
+
+                 active
+                 ""
+
+                 ; SGR prefix active at the cursor
+                 col
+                 0
+
+                 ; display column of the next glyph
+                 ^StringBuilder out
+                 (StringBuilder.)
+
+                 opened?
+                 false
+
+                 ; emitted the active-SGR head yet?
+                 sgr?
+                 false]
+
+            ; emitted ANY escape (⇒ needs a reset)?
+            (cond (or (zero? (.length rest)) (>= col end)) (do (when sgr? (.append out "\u001b[0m"))
+                                                               (.toString out))
+                  (.startsWith rest "\u001b[")
+                  (let [m (.indexOf rest (int \m))]
+                    (if (neg? m)
+                      (do (when sgr? (.append out "\u001b[0m")) (.toString out))
+                      (let [esc (subs rest 0 (inc m))
+                            body (subs rest 2 m)
+                            active' (if (contains? #{"" "0" "00"} body) "" (str active esc))]
+
+                        ;; Escapes past the window's left edge paint inline; earlier
+                        ;; ones only update `active` (re-opened when emitting starts).
+                        (if opened?
+                          (recur (subs rest (inc m)) active' col (.append out esc) opened? true)
+                          (recur (subs rest (inc m)) active' col out opened? sgr?)))))
+                  :else (let [esc-idx
+                              (.indexOf rest "\u001b[")
+
+                              run
+                              (if (neg? esc-idx) rest (subs rest 0 esc-idx))
+
+                              after
+                              (if (neg? esc-idx) "" (subs rest esc-idx))
+
+                              w
+                              (display-width run)
+
+                              run-end
+                              (+ col w)
+
+                              lo
+                              (- (max start col) col)
+
+                              ; cols to skip from run head
+                              hi
+                              (- (min end run-end) col)]
+
+                          ; cols to keep to
+                          (if (< lo hi)
+                            (let [piece
+                                  (subs run (col-prefix-end run lo) (col-prefix-end run hi))
+
+                                  open
+                                  (and (not opened?) (pos? (.length ^String active)))]
+
+                              (when open (.append out ^String active))
+                              (.append out ^String piece)
+                              (recur after active run-end out true (or sgr? open)))
+                            (recur after active run-end out opened? sgr?))))))))
+
 ;;; ── Inline-styled line painter ─────────────────────────────────────────────
 
 (defn paint-styled-line!

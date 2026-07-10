@@ -125,7 +125,9 @@
   ;; map handed to `vis/register-resource!` is the CENTRAL resources.clj DATA
   ;; shape (keyword keys/values) — that projection is what crosses to the model,
   ;; and its strings-only migration lives in resources.clj (flagged hand-off).
-  (when (and session-id (or (get result "pid") (get result "port")))
+  (when (and session-id
+             (#{"started" "starting" "already-running"} (get result "result"))
+             (or (get result "pid") (get result "port")))
     (let [;; Prefer the aliases start! actually booted with (STRING names) so the
           ;; label/detail reflect the real [:dev :test] classpath even when the
           ;; caller passed none.
@@ -136,7 +138,10 @@
           (repl-resource-id dir)
 
           log-path
-          (get result "log")]
+          (get result "log")
+
+          status
+          (or (get result "status") :up)]
 
       (vis/register-resource!
         session-id
@@ -145,7 +150,7 @@
          :label (str "nREPL "
                      (.getName (io/file dir))
                      (when (seq aliases) (apply str (map #(str " :" %) aliases))))
-         :status (or (get result "status") :up)
+         :status status
          ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
          ;; stringifies its own keys + the kind/status/owner/language enums), so it
          ;; must already be STRING-keyed to survive the strings-only boundary.
@@ -169,15 +174,18 @@
                                  (register-repl-resource! session-id dir aliases r)
                                  r))}
           log-path
-          (assoc :logs-fn (fn []
-                            (repl-manager/tail-log log-path)))))
+          (assoc :logs-fn
+            (fn []
+              (repl-manager/tail-log log-path)))))
       ;; Surface the registration in the TUI (header toast) so a spawned REPL is
       ;; visible the moment it lands, not just as a silent ● bump in the footer.
-      (vis/notify! (str "● nREPL up — "
+      (vis/notify! (str "● nREPL "
+                        (if (= "starting" status) "starting" "up")
+                        " — "
                         (.getName (io/file dir))
                         (when-let [p (get result "port")]
                           (str " :" p)))
-                   :level :success
+                   :level (if (= "starting" status) :info :success)
                    :ttl-ms 4000))))
 
 (defn clj-repl-fn
@@ -383,11 +391,13 @@
          (:session-id env)
 
          run
-         (fn [p]
+         (fn [p repl-label]
            ;; Carry the evaluated FORM back on the result (string key, crosses the
            ;; strings-only boundary) so the repl_eval op-card can show it in the
            ;; collapsed chip / expanded FORM section — the render fn sees only the
-           ;; result map, never the call args.
+           ;; result map, never the call args. `repl` names WHICH nREPL actually
+           ;; ran it, so a multi-REPL session always reports the target that was
+           ;; auto-picked (or explicitly named).
            (-> (nrepl-client/eval! {:host host
                                     :port p
                                     :code code
@@ -395,12 +405,13 @@
                                     :pretty? true
                                     :timeout-ms (or timeout_ms 30000)})
                strip-blank-repl-fields
-               (assoc "code" code)))]
+               (assoc "code" code
+                      "repl" repl-label)))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked, with no
        ;; autostart and no auto-recovery.
-       (extension/success {:result (run port)})
+       (extension/success {:result (run port (str host ":" port))})
        (let [target
              (repl-manager/resolve-target! sid rid root)
 
@@ -413,7 +424,7 @@
                "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
                {:type :clj/no-port :workspace-root root})))
          (extension/success
-           {:result (try (run tport)
+           {:result (try (run tport (:id target))
                          (catch clojure.lang.ExceptionInfo e
                            (if (and (= :clj/nrepl-connect-failed (:type (ex-data e))) (:dir target))
                              ;; Managed target's process is alive but not serving nREPL:
@@ -423,7 +434,7 @@
                                ;; Drop the stale resource mirror so ctx re-adds it with the
                                ;; fresh port on the next render.
                                (vis/unregister-resource! sid (repl-resource-id (:dir target)))
-                               (run (:port fresh)))
+                               (run (:port fresh) (:id target)))
                              (throw e))))}))))))
 
 (defn clj-repair+format
@@ -810,59 +821,60 @@
    is surfaced (we never bury a real structural failure). Non-clj / non-code
    calls pass straight through to `next`."
   [_env _op-kw args next]
-  (try (next args)
-       (catch clojure.lang.ExceptionInfo e
-         (let [m
-               (first args)
+  (try
+    (next args)
+    (catch clojure.lang.ExceptionInfo e
+      (let [m
+            (first args)
 
-               path
-               (and (map? m) (get m "path"))
+            path
+            (and (map? m) (get m "path"))
 
-               code
-               (and (map? m) (get m "code"))
+            code
+            (and (map? m) (get m "code"))
 
-               fixed
-               (when (and (clj-source-file? path) (string? code)) (repair/fix-delimiters code))]
+            fixed
+            (when (and (clj-source-file? path) (string? code)) (repair/fix-delimiters code))]
 
-           (if (and fixed (not= fixed code))
-             (try
-               (next (assoc-in (vec args) [0 "code"] fixed))
-               (catch Throwable retry-t
-                 (tel/log! {:level :warn
-                            :id :clojure-struct-patch-repair-retry-failed
-                            :data {:path path
-                                   :error (.getMessage retry-t)}}
-                           "Clojure struct_patch delimiter repair retry failed; surfacing original editor error")
-                 (throw e))) ; repaired retry failed → original
-             (throw e))))))
+        (if (and fixed (not= fixed code))
+          (try
+            (next (assoc-in (vec args) [0 "code"] fixed))
+            (catch Throwable retry-t
+              (tel/log!
+                {:level :warn
+                 :id :clojure-struct-patch-repair-retry-failed
+                 :data {:path path :error (.getMessage retry-t)}}
+                "Clojure struct_patch delimiter repair retry failed; surfacing original editor error")
+              (throw e))) ; repaired retry failed → original
+          (throw e))))))
 
 (defn- lint-error-frequencies
   [code]
-  (try
-    (->> (get (lint/lint-code (str code)) "findings")
-         (filter #(= "error" (get % "level")))
-         (map #(select-keys % ["type" "message"]))
-         frequencies)
-    (catch Throwable t
-      (tel/log! {:level :warn
-                 :id :clojure-patch-repair-lint-failed
-                 :data {:error (.getMessage t)}}
-                "Clojure patch repair lint check failed; treating repair as unsafe")
-      ::lint-failed)))
+  (try (->> (get (lint/lint-code (str code)) "findings")
+            (filter #(= "error" (get % "level")))
+            (map #(select-keys % ["type" "message"]))
+            frequencies)
+       (catch Throwable t
+         (tel/log!
+           {:level :warn :id :clojure-patch-repair-lint-failed :data {:error (.getMessage t)}}
+           "Clojure patch repair lint check failed; treating repair as unsafe")
+         ::lint-failed)))
 
 (defn- new-lint-errors-after-repair
   [before after]
-  (let [before-errors (lint-error-frequencies (or before ""))
-        after-errors (lint-error-frequencies after)]
+  (let [before-errors
+        (lint-error-frequencies (or before ""))
+
+        after-errors
+        (lint-error-frequencies after)]
+
     (if (or (= ::lint-failed before-errors) (= ::lint-failed after-errors))
       [{"type" "lint-check-failed"
         "message" "clj-kondo lint check failed while validating parinfer repair"}]
       (->> (set/union (set (keys before-errors)) (set (keys after-errors)))
            (keep (fn [finding]
-                   (let [extra (- (get after-errors finding 0)
-                                  (get before-errors finding 0))]
-                     (when (pos? extra)
-                       (assoc finding "count" extra)))))
+                   (let [extra (- (get after-errors finding 0) (get before-errors finding 0))]
+                     (when (pos? extra) (assoc finding "count" extra)))))
            vec))))
 
 (defn clj-patch-no-fail-around
@@ -891,81 +903,83 @@
              (false? (:success? result))
              (= :syntax-error (get-in result [:error :reason]))
              (seq (get-in result [:metadata :candidate-plans])))
-      (let [plans (get-in result [:metadata :candidate-plans])
-            broken (set (get-in result [:metadata :broken-paths]))
-            repaired-plans (reduce (fn [acc {:keys [path before after] :as plan}]
-                                     (if-not (contains? broken path)
-                                       (conj acc plan)
-                                       (let [fixed (when (clj-source-file? path)
-                                                     (try
-                                                       (repair/fix-delimiters (str after))
-                                                       (catch Throwable repair-t
-                                                         (tel/log! {:level :warn
-                                                                    :id :clojure-patch-candidate-repair-failed
-                                                                    :data {:path path
-                                                                           :error (.getMessage repair-t)}}
-                                                                   "Clojure patch candidate delimiter repair failed; preserving original syntax refusal")
-                                                         nil)))
-                                             lint-errors (when (and (string? fixed)
-                                                                    (not= fixed (str after)))
-                                                           (new-lint-errors-after-repair before fixed))]
-                                         ;; unchanged output means the brokenness was not a
-                                         ;; delimiter problem — nothing we can fix here. If
-                                         ;; the repair introduces new lint errors, it likely
-                                         ;; absorbed orphan forms (e.g. duplicate requires)
-                                         ;; instead of preserving the user's intended edit.
-                                         (cond
-                                           (not (and (string? fixed) (not= fixed (str after))))
-                                           (reduced nil)
+      (let
+        [plans (get-in result [:metadata :candidate-plans])
+         broken (set (get-in result [:metadata :broken-paths]))
+         repaired-plans
+         (reduce
+           (fn [acc {:keys [path before after] :as plan}]
+             (if-not (contains? broken path)
+               (conj acc plan)
+               (let
+                 [fixed
+                  (when (clj-source-file? path)
+                    (try
+                      (repair/fix-delimiters (str after))
+                      (catch Throwable repair-t
+                        (tel/log!
+                          {:level :warn
+                           :id :clojure-patch-candidate-repair-failed
+                           :data {:path path :error (.getMessage repair-t)}}
+                          "Clojure patch candidate delimiter repair failed; preserving original syntax refusal")
+                        nil)))
+                  lint-errors (when (and (string? fixed) (not= fixed (str after)))
+                                (new-lint-errors-after-repair before fixed))]
 
-                                           (seq lint-errors)
-                                           (do
-                                             (tel/log! {:level :warn
-                                                        :id :clojure-patch-repair-introduced-lint-errors
-                                                        :data {:path path
-                                                               :findings (vec (take 5 lint-errors))}}
-                                                       "Clojure patch delimiter repair introduced lint errors; preserving original syntax refusal")
-                                             (reduced nil))
-
-                                           :else
-                                           (conj acc
-                                                 (assoc plan
-                                                   :after fixed
-                                                   :repaired? true))))))
-                                   []
-                                   plans)]
+                 ;; unchanged output means the brokenness was not a
+                 ;; delimiter problem — nothing we can fix here. If
+                 ;; the repair introduces new lint errors, it likely
+                 ;; absorbed orphan forms (e.g. duplicate requires)
+                 ;; instead of preserving the user's intended edit.
+                 (cond
+                   (not (and (string? fixed) (not= fixed (str after)))) (reduced nil)
+                   (seq lint-errors)
+                   (do
+                     (tel/log!
+                       {:level :warn
+                        :id :clojure-patch-repair-introduced-lint-errors
+                        :data {:path path :findings (vec (take 5 lint-errors))}}
+                       "Clojure patch delimiter repair introduced lint errors; preserving original syntax refusal")
+                     (reduced nil))
+                   :else (conj acc
+                               (assoc plan
+                                 :after fixed
+                                 :repaired? true))))))
+           []
+           plans)]
 
         (if (nil? repaired-plans)
           result
-          (do
-            (doseq [{:keys [path after]} repaired-plans]
-              (let [f (resolve-under-root env path)]
-                (io/make-parents f)
-                (spit f after)))
-            (extension/success
-              ;; `:op`/`:metadata` are ENVELOPE fields (op-tag + internal
-              ;; timing/aux) — keyword. The `:result` VALUE is the model-facing
-              ;; per-file summary that crosses the strings-only boundary → STRING
-              ;; keys + STRING enum values.
-              {:op :patch
-               :path (or (:path (first repaired-plans)) ".")
-               :kind :file
-               :result (mapv (fn [{:keys [path before after repaired?]}]
-                                (let [summary (editing/refresh-file-summary
-                                                {"path" path "op" "update" "changed" true}
-                                                before
-                                                after)]
-                                  (cond-> summary
-                                    repaired?
-                                    (assoc "repaired"
-                                      true "note"
-                                      "unbalanced delimiters auto-repaired (parinfer) before write"))))
-                              repaired-plans)
-               :metadata {:mode :exact-replace
-                          :file-count (count repaired-plans)
-                          :changed-count (count repaired-plans)
-                          :auto-repaired-paths (mapv :path (filter :repaired? repaired-plans))
-                          :file-befores (mapv #(select-keys % [:path :before]) repaired-plans)}}))))
+          (do (doseq [{:keys [path after]} repaired-plans]
+                (let [f (resolve-under-root env path)]
+                  (io/make-parents f)
+                  (spit f after)))
+              (extension/success
+                ;; `:op`/`:metadata` are ENVELOPE fields (op-tag + internal
+                ;; timing/aux) — keyword. The `:result` VALUE is the model-facing
+                ;; per-file summary that crosses the strings-only boundary → STRING
+                ;; keys + STRING enum values.
+                {:op :patch
+                 :path (or (:path (first repaired-plans)) ".")
+                 :kind :file
+                 :result (mapv
+                           (fn [{:keys [path before after repaired?]}]
+                             (let [summary (editing/refresh-file-summary
+                                             {"path" path "op" "update" "changed" true}
+                                             before
+                                             after)]
+                               (cond-> summary
+                                 repaired?
+                                 (assoc "repaired"
+                                   true "note"
+                                   "unbalanced delimiters auto-repaired (parinfer) before write"))))
+                           repaired-plans)
+                 :metadata {:mode :exact-replace
+                            :file-count (count repaired-plans)
+                            :changed-count (count repaired-plans)
+                            :auto-repaired-paths (mapv :path (filter :repaired? repaired-plans))
+                            :file-befores (mapv #(select-keys % [:path :before])
+                                                repaired-plans)}}))))
       result)))
 
 ;; =============================================================================

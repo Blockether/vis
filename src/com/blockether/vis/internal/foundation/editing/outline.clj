@@ -195,7 +195,7 @@
           items))
 
 (defn- item->def
-  [lines ^StructureItem it]
+  [lines ^StructureItem it depth]
   (let [^Span span
         (.span it)
 
@@ -224,12 +224,16 @@
      ;; hop `outline` DATA → `patch`; same anchors the skeleton (`@from..to`) + `cat`
      ;; emit; `patch/anchor->line` recovers the number when arithmetic is needed.
      :anchor (patch/line-anchor start (line-text lines start))
-     :end-anchor (patch/line-anchor end (line-text lines end))}))
+     :end-anchor (patch/line-anchor end (line-text lines end))
+     ;; Nesting depth (0 = top-level). The flat list drops parent linkage; depth
+     ;; lets a consumer rebuild the tree. occurrences rows are flat (no depth);
+     ;; every other def field is name-for-name the SAME as an occurrences def row.
+     :depth depth}))
 
 (defn definitions
   "The DATA behind `file-skeleton`: every definition in `source` (parsed as
    `language`), flattened across nesting, as
-   `[{:name :kind :visibility :signature :doc :anchor :end-anchor} …]`
+   `[{:name :kind :visibility :signature :doc :anchor :end-anchor :depth} …]`
    where the def's span is patch-ready `lineno:hash` anchors — the SOLE position
    (no redundant start/end line; `patch/anchor->line` recovers the number). So
    `outline` → `patch` needs no re-cat. With `name`, only the definitions with that
@@ -238,11 +242,12 @@
   ([source language] (definitions source language nil))
   ([source language name]
    (let [lines (str/split-lines source)]
-     (letfn [(walk [items]
+     (letfn [(walk [items depth]
                (mapcat (fn [^StructureItem it]
-                         (cons (item->def lines it) (walk (or (.children it) []))))
+                         (cons (item->def lines it depth)
+                               (walk (or (.children it) []) (inc depth))))
                        items))]
-       (cond->> (walk (structure-items source language))
+       (cond->> (walk (structure-items source language) 0)
          (some? name)
          (filterv #(= name (:name %))))))))
 

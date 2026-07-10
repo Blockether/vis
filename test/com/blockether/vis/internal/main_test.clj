@@ -32,33 +32,39 @@
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "COMMANDS")))))
 
-(defdescribe fast-help-test
-             (it "does not swallow unknown root commands that also ask for help"
-                 (expect (nil? (#'main/fast-help-dispatched? false ["missing" "--help"]))))
-             (it "still handles known built-in help without full extension discovery"
-                 (let [out (java.io.StringWriter.)]
-                   (binding [*out* out]
-                     (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
-                   (expect (.contains (str out) "vis providers"))))
-             (it "loads channels before rendering channels parent help"
-                 (let [out (java.io.StringWriter.)
-                       discovered? (atom false)
-                       fake-channel {:channel/id ::fast-help-test
-                                     :channel/cmd "zzz-test"
-                                     :channel/doc "Test channel for help."
-                                     :channel/main-fn (fn [_args])}]
-                   (try (with-redefs [main/discover-all! (fn []
-                                                           (reset! discovered? true)
-                                                           (registry/register-channel! fake-channel))]
-                          (binding [*out* out]
-                            (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
-                          (expect (true? @discovered?))
-                          (expect (.contains (str out) "zzz-test"))
-                          (expect (.contains (str out) "Test channel for help.")))
-                        (finally (registry/deregister-channel! (:channel/id fake-channel))))))
-             (it "strips launcher selectors when they leak into JVM args"
-                 (expect (= ["channels" "--help"]
-                            (#'main/strip-global-args ["channels" "--jvm" "--help"])))))
+(defdescribe
+  fast-help-test
+  (it "does not swallow unknown root commands that also ask for help"
+      (expect (nil? (#'main/fast-help-dispatched? false ["missing" "--help"]))))
+  (it "still handles known built-in help without full extension discovery"
+      (let [out (java.io.StringWriter.)]
+        (binding [*out* out]
+          (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
+        (expect (.contains (str out) "vis providers"))))
+  (it "loads channels before rendering channels parent help"
+      (let [out
+            (java.io.StringWriter.)
+
+            discovered?
+            (atom false)
+
+            fake-channel
+            {:channel/id ::fast-help-test
+             :channel/cmd "zzz-test"
+             :channel/doc "Test channel for help."
+             :channel/main-fn (fn [_args])}]
+
+        (try (with-redefs [main/discover-all! (fn []
+                                                (reset! discovered? true)
+                                                (registry/register-channel! fake-channel))]
+               (binding [*out* out]
+                 (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
+               (expect (true? @discovered?))
+               (expect (.contains (str out) "zzz-test"))
+               (expect (.contains (str out) "Test channel for help.")))
+             (finally (registry/deregister-channel! (:channel/id fake-channel))))))
+  (it "strips launcher selectors when they leak into JVM args"
+      (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jvm" "--help"])))))
 
 (defdescribe parse-run-args-test
              (it "parses --toggles as a run-scoped override list"
