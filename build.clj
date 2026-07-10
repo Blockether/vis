@@ -45,17 +45,29 @@
 ;; =============================================================================
 
 (def packages
-  "Every publishable jar in the monorepo, in dependency-friendly order.
-   The repo-root `vis` package goes first; every classpath plug-in
-   depends on `com.blockether/vis` and ships in its own jar."
+  "Every publishable jar in the monorepo. Deploy builds every selected package
+  with local-root deps first, then rewrites publish POMs to same-version Maven
+  coords and pushes the jars to Clojars."
   [{:lib 'com.blockether/vis :dir "."}
    {:lib 'com.blockether/vis-persistance-sqlite
     :dir "extensions/persistance/vis-persistance-sqlite"}
+   {:lib 'com.blockether/vis-provider-anthropic :dir "extensions/providers/vis-provider-anthropic"}
    {:lib 'com.blockether/vis-provider-github-copilot
     :dir "extensions/providers/vis-provider-github-copilot"}
+   {:lib 'com.blockether/vis-provider-openai-codex :dir "extensions/providers/vis-provider-openai-codex"}
+   {:lib 'com.blockether/vis-provider-standard :dir "extensions/providers/vis-provider-standard"}
+   {:lib 'com.blockether/vis-provider-zai :dir "extensions/providers/vis-provider-zai"}
    {:lib 'com.blockether/vis-channel-telegram :dir "extensions/channels/vis-channel-telegram"}
    {:lib 'com.blockether/vis-channel-tui :dir "extensions/channels/vis-channel-tui"}
-   {:lib 'com.blockether/vis-foundation-exa :dir "extensions/common/vis-foundation-exa"}])
+   {:lib 'com.blockether/vis-channel-web :dir "extensions/channels/vis-channel-web"}
+   {:lib 'com.blockether/vis-foundation-bridge :dir "extensions/common/vis-foundation-bridge"}
+   {:lib 'com.blockether/vis-foundation-harness :dir "extensions/common/vis-foundation-harness"}
+   {:lib 'com.blockether/vis-foundation-mcp :dir "extensions/common/vis-foundation-mcp"}
+   {:lib 'com.blockether/vis-foundation-search :dir "extensions/common/vis-foundation-search"}
+   {:lib 'com.blockether/vis-foundation-voice :dir "extensions/common/vis-foundation-voice"}
+   {:lib 'com.blockether/vis-language-clojure :dir "extensions/languages/vis-language-clojure"}
+   {:lib 'com.blockether/vis-language-python :dir "extensions/languages/vis-language-python"}
+   {:lib 'com.blockether/vis-workspace-rift :dir "extensions/workspaces/vis-workspace-rift"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib -> mvn coord at the shared version. Passed
@@ -124,25 +136,41 @@
 ;; Per-package build
 ;; =============================================================================
 
-(defn- override-siblings
-  "Walk one `:deps` (or `:extra-deps`) map and replace every sibling
-   `:local/root` coord with the matching `:mvn/version` coord."
-  [deps]
+(defn- absolute-local-root
+  "Resolve a `:local/root` coord relative to its package deps.edn dir."
+  [dir root]
+  (let [f (io/file root)]
+    (if (.isAbsolute f)
+      (.getCanonicalPath f)
+      (.getCanonicalPath (io/file dir root)))))
+
+(defn- prepare-package-deps
+  "Normalize package deps for basis creation. Local roots must be absolute
+  because release builds pass an in-memory deps map to tools.deps; publish POMs
+  additionally rewrite listed sibling packages to same-version Maven coords."
+  [dir publish? deps]
   (into {}
         (map (fn [[lib coord]]
-               (if (and (contains? sibling-versions lib) (map? coord) (:local/root coord))
-                 [lib (get sibling-versions lib)]
-                 [lib coord])))
+               [lib
+                (cond
+                  (and publish? (contains? sibling-versions lib) (map? coord) (:local/root coord))
+                  (get sibling-versions lib)
+
+                  (and (map? coord) (:local/root coord))
+                  (update coord :local/root #(absolute-local-root dir %))
+
+                  :else
+                  coord)]))
         deps))
 
 (defn- read-package-deps
-  [dir]
+  [dir & {:keys [publish?] :or {publish? false}}]
   (let [edn (-> (str dir "/deps.edn")
                 slurp
                 read-string)]
     (cond-> edn
       (:deps edn)
-      (update :deps override-siblings)
+      (update :deps #(prepare-package-deps dir publish? %))
 
       (:aliases edn)
       (update :aliases
@@ -151,9 +179,12 @@
                              (fn [a]
                                (cond-> a
                                  (:extra-deps a)
-                                 (update :extra-deps override-siblings)))))))))
+                                 (update :extra-deps #(prepare-package-deps dir publish? %))))))))))
 
 (defn- package-basis [pkg] (b/create-basis {:project (read-package-deps (:dir pkg))}))
+
+(defn- package-publish-basis [pkg]
+  (b/create-basis {:project (read-package-deps (:dir pkg) :publish? true)}))
 
 (defn- src-dirs
   [{:keys [dir]}]
@@ -172,8 +203,17 @@
   (dd/deploy
     {:installer :local :artifact jar-file :pom-file (b/pom-path {:lib lib :class-dir class-dir})}))
 
+(defn- write-package-pom!
+  [{:keys [lib dir]} class-dir basis]
+  (b/write-pom {:class-dir class-dir
+                :lib lib
+                :version version
+                :basis basis
+                :src-dirs [(str dir "/src")]
+                :pom-data (build-pom-data lib)}))
+
 (defn- build-one!
-  [{:keys [lib dir] :as pkg}]
+  [{:keys [lib] :as pkg}]
   (let [{:keys [class-dir jar-file]}
         (target-paths pkg)
 
@@ -182,17 +222,11 @@
 
         srcs
         (src-dirs pkg)]
-
     (b/delete {:path (str "target/" (name lib))})
-    (b/write-pom {:class-dir class-dir
-                  :lib lib
-                  :version version
-                  :basis basis
-                  :src-dirs [(str dir "/src")]
-                  :pom-data (build-pom-data lib)})
+    (write-package-pom! pkg class-dir basis)
     (b/copy-dir {:src-dirs srcs :target-dir class-dir})
     (b/jar {:class-dir class-dir :jar-file jar-file})
-    (let [result {:lib lib :class-dir class-dir :jar-file jar-file}]
+    (let [result {:pkg pkg :lib lib :class-dir class-dir :jar-file jar-file}]
       (install-local! result)
       (println "  ->" jar-file "(installed to ~/.m2)")
       result)))
@@ -223,11 +257,22 @@
   (jar opts))
 
 (defn deploy
-  "Build, install locally, then deploy every package to Clojars."
+  "Build and install every selected package locally, then deploy them to Clojars.
+
+  The publish POMs rewrite in-repo `:local/root` sibling deps to same-version
+  Maven coords. We generate those publish POMs only after the full selected set
+  has been installed locally so a fresh release can resolve same-version sibling
+  artifacts before they exist on Clojars."
   [opts]
-  (doseq [pkg (selected-packages opts)]
-    (println "[" (name (:lib pkg)) "] deploy")
-    (let [{:keys [lib class-dir jar-file]} (build-one! pkg)]
+  (let [built
+        (doall
+          (for [pkg (selected-packages opts)]
+            (do
+              (println "[" (name (:lib pkg)) "] build")
+              (build-one! pkg))))]
+    (doseq [{:keys [pkg lib class-dir jar-file]} built]
+      (println "[" (name lib) "] deploy")
+      (write-package-pom! pkg class-dir (package-publish-basis pkg))
       (dd/deploy {:installer :remote
                   :artifact jar-file
                   :pom-file (b/pom-path {:lib lib :class-dir class-dir})})
