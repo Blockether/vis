@@ -474,10 +474,36 @@
                     {:runs (runs-of seg)})
                   (p/fold-cols line budget))))
 
+        ansi-fold-line
+        (fn [line]
+          (if (= "" line)
+            [{:runs []}]
+            (mapv (fn [seg]
+                    {:runs (runs-of seg)})
+                  (p/ansi-fold-cols line budget))))
+
         body
-        (vec (cond fold? (mapcat fold-line (str/split-lines content))
-                   wrap? (mapcat wrap-line (str/split-lines content))
-                   :else (mapv verbatim-line (or hl-lines (str/split-lines content)))))
+        (vec
+          (cond fold? (mapcat fold-line (str/split-lines content))
+                wrap? (mapcat wrap-line (str/split-lines content))
+                ;; A diff fence stays verbatim: its `+`/`-`/hunk column
+                ;; alignment is a contract folding would break, and its rows
+                ;; are rarely wider than the bubble.
+                diff? (mapv verbatim-line (or hl-lines (str/split-lines content)))
+                ;; Highlighted source (real grammar) ANSI-CHAR-FOLDS any
+                ;; over-wide row to the bubble width, re-opening the SGR
+                ;; active at each cut so token color survives the fold.
+                ;; Rows that already fit are one segment, untouched. Without
+                ;; this a pathologically wide colorized line (a `javascript:`
+                ;; bookmarklet fenced ```js, a long JSON row) overflowed off
+                ;; the right edge with no wrap and no horizontal scroll,
+                ;; hiding its tail (the "can't see the full bookmarklet"
+                ;; thread).
+                colorize? (mapcat ansi-fold-line (or hl-lines (str/split-lines content)))
+                ;; A plain fence (no grammar: no `:lang`, or an unknown/unset
+                ;; one — e.g. a pasted URL / token blob) has no alignment
+                ;; contract, so CHAR-FOLD any over-wide row too.
+                :else (mapcat fold-line (str/split-lines content))))
 
         body
         (if (str/ends-with? content "\n") (conj body {:runs []}) body)

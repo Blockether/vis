@@ -65,17 +65,17 @@
                       :error "boom"}]}})
 
 (defdescribe single-provider-exhausted-test
-  (it "one attempt does NOT claim the whole fleet was tried"
-      (expect (= "Provider unavailable" (perr/provider-error-title single-attempt-err)))
-      (let [ex (perr/provider-error-explanation single-attempt-err)]
-        (expect (str/includes? ex "selected provider"))
-        (expect (not (str/includes? ex "every provider"))))
-      (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
-                             "switch provider/model")))
-  (it "two+ attempts still read as the fleet-wide exhaustion"
-      (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
-      (expect (str/includes? (perr/provider-error-explanation exhausted-err)
-                             "every provider"))))
+             (it "one attempt does NOT claim the whole fleet was tried"
+                 (expect (= "Provider unavailable" (perr/provider-error-title single-attempt-err)))
+                 (let [ex (perr/provider-error-explanation single-attempt-err)]
+                   (expect (str/includes? ex "selected provider"))
+                   (expect (not (str/includes? ex "every provider"))))
+                 (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
+                                        "switch provider/model")))
+             (it "two+ attempts still read as the fleet-wide exhaustion"
+                 (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
+                 (expect (str/includes? (perr/provider-error-explanation exhausted-err)
+                                        "every provider"))))
 
 (def ^:private provider-unavailable-err
   "svar >= 0.7.55 no longer wraps a one-provider turn as `all-providers-exhausted`:
@@ -91,39 +91,39 @@
                       :error "boom"}]}})
 
 (defdescribe provider-unavailable-message-test
-  (it "the native single-provider message reads as one provider, not the fleet"
-      (expect (= "Provider unavailable"
-                 (perr/provider-error-title provider-unavailable-err)))
-      (let [ex (perr/provider-error-explanation provider-unavailable-err)]
-        (expect (str/includes? ex "selected provider"))
-        (expect (not (str/includes? ex "every provider"))))
-      (expect (str/includes? (perr/provider-error-next-step provider-unavailable-err)
-                             "switch provider/model")))
-  (it "the bare `Provider unavailable` wrapper is NOT repeated as a fact row"
-      (expect (not-any? #(= "Wrapper" (first %))
-                        (perr/provider-error-facts provider-unavailable-err)))))
+             (it "the native single-provider message reads as one provider, not the fleet"
+                 (expect (= "Provider unavailable"
+                            (perr/provider-error-title provider-unavailable-err)))
+                 (let [ex (perr/provider-error-explanation provider-unavailable-err)]
+                   (expect (str/includes? ex "selected provider"))
+                   (expect (not (str/includes? ex "every provider"))))
+                 (expect (str/includes? (perr/provider-error-next-step provider-unavailable-err)
+                                        "switch provider/model")))
+             (it "the bare `Provider unavailable` wrapper is NOT repeated as a fact row"
+                 (expect (not-any? #(= "Wrapper" (first %))
+                                   (perr/provider-error-facts provider-unavailable-err)))))
 
 (defdescribe transport-error-test
-  ;; A socket that dies before any response byte arrives ("HTTP/1.1 header
-  ;; parser received no bytes") is a network/transport failure, NOT a rejection
-  ;; — nothing answered, so there is no HTTP status and the model never ran.
-  (let [err {:message "HTTP/1.1 header parser received no bytes" :data {}}]
-    (it "classifies a no-bytes wrapper failure as :transport, not :generic"
-        (expect (= :transport (perr/provider-error-kind err))))
-    (it "titles it as an unreachable provider"
-        (expect (= "Could not reach provider" (perr/provider-error-title err))))
-    (it "the explanation does NOT falsely claim the provider rejected the request"
-        (let [ex (perr/provider-error-explanation err)]
-          (expect (str/includes? ex "connection dropped"))
-          (expect (not (str/includes? ex "rejected the request")))))
-    (it "the next step tells the user to just retry"
-        (expect (str/includes? (perr/provider-error-next-step err) "retry")))
-    (it "a real HTTP status is NOT mistaken for a transport failure"
-        (expect (= :generic
-                   (perr/provider-error-kind
-                    {:message "Exceptional status code: 400"
-                     :data {:status 400
-                            :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
+             ;; A socket that dies before any response byte arrives ("HTTP/1.1 header
+             ;; parser received no bytes") is a network/transport failure, NOT a rejection
+             ;; — nothing answered, so there is no HTTP status and the model never ran.
+             (let [err {:message "HTTP/1.1 header parser received no bytes" :data {}}]
+               (it "classifies a no-bytes wrapper failure as :transport, not :generic"
+                   (expect (= :transport (perr/provider-error-kind err))))
+               (it "titles it as an unreachable provider"
+                   (expect (= "Could not reach provider" (perr/provider-error-title err))))
+               (it "the explanation does NOT falsely claim the provider rejected the request"
+                   (let [ex (perr/provider-error-explanation err)]
+                     (expect (str/includes? ex "connection dropped"))
+                     (expect (not (str/includes? ex "rejected the request")))))
+               (it "the next step tells the user to just retry"
+                   (expect (str/includes? (perr/provider-error-next-step err) "retry")))
+               (it "a real HTTP status is NOT mistaken for a transport failure"
+                   (expect (= :generic
+                              (perr/provider-error-kind
+                                {:message "Exceptional status code: 400"
+                                 :data {:status 400
+                                        :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
 (defdescribe
   transport-throwable-test

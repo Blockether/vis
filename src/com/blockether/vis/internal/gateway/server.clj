@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.docs :as docs]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.file-picker :as file-picker]
+            [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
@@ -41,6 +42,48 @@
 (def ^:private HEARTBEAT_MS 15000)
 
 (defonce ^:private server-state (atom nil))
+
+(defn- live-client-ids
+  "Client leases that still count for daemon refcount. A lease with a recorded pid
+   is ignored once that pid is dead, so a killed TUI does not pin the daemon
+   forever. Browser/SSE-only clients have no pid and are counted by the stream
+   connection itself."
+  []
+  (let [clients (:clients @server-state)]
+    (->> clients
+         (filter (fn [[_ {:keys [pid]}]]
+                   (or (nil? pid) (discovery/pid-alive? pid))))
+         (map key)
+         set)))
+
+(defn- client-count [] (+ (count (live-client-ids)) (count (:sse-clients @server-state))))
+
+(defn- running-turn-count [] (state/running-turn-count))
+
+(defn- status-map
+  []
+  (let [{:keys [port host db require-token?]} @server-state]
+    {:status (if @server-state "running" "stopped")
+     :pid (discovery/current-pid)
+     :host host
+     :port port
+     :db (when db (str (discovery/db-target db)))
+     :require_token (boolean require-token?)
+     :clients (client-count)
+     :running_turns (running-turn-count)}))
+
+(declare stop!)
+
+(defn- maybe-stop-when-idle!
+  "Refcount shutdown (Q1): no timer/idle timeout. The daemon exits only when no
+   live client lease/SSE stream remains AND no turn is running."
+  []
+  (when (and @server-state (zero? (client-count)) (zero? (running-turn-count)))
+    (future (try (Thread/sleep 25) ; let the HTTP response that released the last client flush
+                 (when (and @server-state (zero? (client-count)) (zero? (running-turn-count)))
+                   (stop!))
+                 (catch Throwable t
+                   (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
 
 ;; =============================================================================
 ;; Bearer token (§3)
@@ -135,6 +178,7 @@
                     (.flush out)
                     (reset! last-seq (long (:seq event))))))]
 
+          (swap! server-state update :sse-clients (fnil conj #{}) sub-id)
           (try (locking out
                  ;; 8KB SSE comment pad (clients ignore comments): proxy edges
                  ;; (Cloudflare tunnel) buffer a streaming body until a byte
@@ -157,6 +201,8 @@
                  (recur))
                (catch Throwable _ nil)
                (finally (state/unsubscribe! sid sub-id)
+                        (swap! server-state update :sse-clients disj sub-id)
+                        (maybe-stop-when-idle!)
                         (try (.close out) (catch Throwable _ nil))))))))
 
 (defn- events-handler
@@ -225,7 +271,47 @@
 ;; Route handlers (§5-§6)
 ;; =============================================================================
 
-(defn- health-handler [_] (json-response {:status "ok"}))
+(defn- health-handler
+  [request]
+  (let [{:keys [token]}
+        @server-state
+
+        supplied
+        (get-in request [:headers "x-vis-gateway-secret"])]
+
+    (json-response (assoc (status-map)
+                     :status "ok"
+                     :secret_match (= token supplied)))))
+
+(defn- client-register-handler
+  [request]
+  (let [{:keys [pid kind]}
+        (body-json request)
+
+        client-id
+        (str (java.util.UUID/randomUUID))]
+
+    (swap! server-state assoc-in
+      [:clients client-id]
+      {:pid pid :kind kind :connected-at (System/currentTimeMillis)})
+    (json-response {:client_id client-id :status (status-map)})))
+
+(defn- client-release-handler
+  [request]
+  (let [client-id (get-in request [:path-params :cid])]
+    (swap! server-state update :clients dissoc client-id)
+    (maybe-stop-when-idle!)
+    (json-response {:released true :status (status-map)})))
+
+(defn- status-handler [_] (json-response (status-map)))
+
+(defn- stop-handler
+  [_]
+  (future (try (Thread/sleep 25)
+               (stop!)
+               (catch Throwable t
+                 (tel/log! :warn ["gateway: explicit stop failed" (ex-message t)]))))
+  (json-response {:stopping true :status (status-map)}))
 
 (defn- models-handler
   [_]
@@ -286,6 +372,9 @@
                                         :model (:model body)
                                         :reasoning-default (some-> (:reasoning_default body)
                                                                    keyword)
+                                        :extra-body (:extra_body body)
+                                        :turn-features (:turn_features body)
+                                        :workspace (:workspace body)
                                         :attachments (:attachments body)})]
         (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
@@ -316,6 +405,48 @@
       (json-response turn)
       (error-response 404 :turn-not-found "unknown turn" :turn_id tid))))
 
+(defn- update-queued-turn-handler
+  [request]
+  (let [sid
+        (path-sid request)
+
+        tid
+        (path-tid request)
+
+        result
+        (if sid
+          (state/update-queued-turn! sid tid (:request (body-json request)))
+          {:error :turn-not-found})]
+
+    (cond (:turn result) (json-response (:turn result))
+          (= :turn-not-found (:error result))
+          (error-response 404 :turn-not-found "unknown turn" :turn_id tid)
+          :else (error-response 409
+                                (or (:error result) :not-queued)
+                                (or (:message result) "turn is not queued")
+                                :turn_id tid
+                                :turn_status (:status result)))))
+
+(defn- delete-queued-turn-handler
+  [request]
+  (let [sid
+        (path-sid request)
+
+        tid
+        (path-tid request)
+
+        result
+        (if sid (state/delete-queued-turn! sid tid) {:error :turn-not-found})]
+
+    (cond (= "deleted" (:status result)) (json-response 200 result)
+          (= :turn-not-found (:error result))
+          (error-response 404 :turn-not-found "unknown turn" :turn_id tid)
+          :else (error-response 409
+                                (or (:error result) :not-queued)
+                                "turn is not queued"
+                                :turn_id tid
+                                :turn_status (:status result)))))
+
 (defn- cancel-turn-handler
   [request]
   (let [sid
@@ -340,6 +471,44 @@
   (if-let [snapshot (some-> (path-sid request)
                             state/context-snapshot)]
     (json-response snapshot)
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- transcript-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:turns (state/transcript sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- session-model-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:model (state/session-model sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- set-session-model-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:keys [provider model]} (body-json request)]
+      (state/set-session-model! sid provider model)
+      (json-response {:model (state/session-model sid)}))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- workspace-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:workspace (state/session-workspace-info sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- seq-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:seq (state/current-seq sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- events-since-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:events (state/events-since sid (sse-cursor request))})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- suggest-handler
@@ -505,36 +674,46 @@
 (defn- router
   [^String token contribs]
   (rr/router
-    (into [["/healthz" {:get health-handler}] ["/readyz" {:get health-handler}]
-           ["/metrics" {:get metrics-handler}]
-           ;; Embedded docs site (resources/vis-docs/*.md). `docs/handle` owns
-           ;; /docs, /docs/<slug>, /docs/assets/**, and re-reads the markdown per
-           ;; request (live-reload) so editing a doc during development shows on a
-           ;; browser refresh — no gateway restart. Wrapped to 404 a /docs path the
-           ;; handler doesn't own (it returns nil there). #'var → live on :reload.
-           ["/docs"
-            {:get (fn [req]
-                    (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
-           ["/docs/*path"
-            {:get (fn [req]
-                    (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
-           ["/v1" ["/models" {:get models-handler}]
-            ["/sessions" {:get list-sessions-handler :post create-session-handler}]
-            ["/sessions/:sid"
-             {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
-            ["/sessions/:sid/events" {:get events-handler}]
-            ["/sessions/:sid/context" {:get context-handler}]
-            ["/sessions/:sid/suggest" {:get suggest-handler}]
-            ["/sessions/:sid/turns" {:get list-turns-handler :post submit-turn-handler}]
-            ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
-            ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
-          (keep (fn [{:keys [routes]}]
-                  (when routes
-                    (try (routes token)
-                         (catch Throwable t
-                           (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
-                           nil))))
-                contribs))))
+    (into
+      [["/healthz" {:get health-handler}] ["/readyz" {:get health-handler}]
+       ["/metrics" {:get metrics-handler}]
+       ;; Embedded docs site (resources/vis-docs/*.md). `docs/handle` owns
+       ;; /docs, /docs/<slug>, /docs/assets/**, and re-reads the markdown per
+       ;; request (live-reload) so editing a doc during development shows on a
+       ;; browser refresh — no gateway restart. Wrapped to 404 a /docs path the
+       ;; handler doesn't own (it returns nil there). #'var → live on :reload.
+       ["/docs"
+        {:get (fn [req]
+                (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
+       ["/docs/*path"
+        {:get (fn [req]
+                (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
+       ["/v1" ["/models" {:get models-handler}] ["/clients" {:post client-register-handler}]
+        ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
+        ["/admin/stop" {:post stop-handler}]
+        ["/sessions" {:get list-sessions-handler :post create-session-handler}]
+        ["/sessions/:sid"
+         {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
+        ["/sessions/:sid/events" {:get events-handler}]
+        ["/sessions/:sid/events-since" {:get events-since-handler}]
+        ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
+        ["/sessions/:sid/transcript" {:get transcript-handler}]
+        ["/sessions/:sid/model" {:get session-model-handler :patch set-session-model-handler}]
+        ["/sessions/:sid/workspace" {:get workspace-handler}]
+        ["/sessions/:sid/suggest" {:get suggest-handler}]
+        ["/sessions/:sid/turns" {:get list-turns-handler :post submit-turn-handler}]
+        ["/sessions/:sid/turns/:tid"
+         {:get get-turn-handler
+          :patch update-queued-turn-handler
+          :delete delete-queued-turn-handler}]
+        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
+      (keep (fn [{:keys [routes]}]
+              (when routes
+                (try (routes token)
+                     (catch Throwable t
+                       (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
+                       nil))))
+            contribs))))
 
 (defn- wrap-scoped-params
   "Param parsing with a hard boundary: uris under a contribution prefix
@@ -663,7 +842,7 @@
    Safe to call from any host process - the daemon (`vis serve`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
-  ([{:keys [port host token-file require-token?]}]
+  ([{:keys [port host token-file require-token? db]}]
    (when @server-state (throw (ex-info "gateway already running" {:type :gateway/already-running})))
    (let [port
          (int (or port DEFAULT_PORT))
@@ -685,6 +864,13 @@
 
          token
          (ensure-token! path)
+
+         db
+         (or db (config/resolve-db-spec))
+
+         _
+         (when-let [db-path (and (map? db) (:path db))]
+           (System/setProperty "vis.db.path" (str db-path)))
 
          ;; :token must be visible to rebuild-app! before Jetty serves the
          ;; first request; a failed boot must roll the state back so a
@@ -731,7 +917,13 @@
                            :host host
                            :token token
                            :token-path (str path)
+                           :db db
+                           :clients {}
+                           :sse-clients #{}
                            :require-token? require-token?})
+     (try (discovery/register-self! db {:port port :host host :secret token})
+          (catch Throwable t
+            (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
                 (if require-token? "auth: bearer token" "auth: disabled (loopback)")])
@@ -740,10 +932,11 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server]} @server-state]
-    (.stop server)
+  (when-let [{:keys [^Server server db]} @server-state]
+    (try (discovery/deregister-self! db) (catch Throwable _ nil))
     (reset! server-state nil)
-    (reset! live-app nil))
+    (reset! live-app nil)
+    (try (.stop server) (catch Throwable _ nil)))
   nil)
 
 (defn running? [] (some? @server-state))
@@ -751,12 +944,13 @@
 (defn serve-main!
   "Blocking entry for the `vis serve` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
-  [{:keys [port host token-file require-token?]}]
+  [{:keys [port host token-file require-token? db]}]
   (let [{:keys [port host token-file require-token?]} (start! {:port (some-> port
                                                                              parse-long)
                                                                :host host
                                                                :token-file token-file
-                                                               :require-token? require-token?})]
+                                                               :require-token? require-token?
+                                                               :db db})]
     (println (str "vis gateway listening on http://" host ":" port))
     (if require-token?
       (println (str "bearer token: " token-file))

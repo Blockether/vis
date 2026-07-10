@@ -63,28 +63,28 @@
               (expect (= ["dev" "test"] (get p "aliases")))
               (expect (= {"clojure" "1.12.4"} (get p "versions")))))))))
 
-(defdescribe resource-mirror-logs-test
-             (it "registers nREPL mirrors as log-capable resources when the manager has a log path"
-                 (let [sid (str "nrepl-ctx-logs-" (System/nanoTime))
-                       rid "nrepl:/proj"
-                       log (java.io.File/createTempFile "vis-nrepl-ctx-" ".log")]
-                   (try
-                     (spit log "starting\nready\n")
-                     (@#'nx/ensure-resource!
-                      sid
-                      {:id rid
-                       :dir "/proj"
-                       :port 7001
-                       :tool :clj
-                       :aliases [:dev]
-                       :log (.getAbsolutePath log)})
-                     (let [r (vis/get-resource sid rid)]
-                       (expect (= true (get r "can_logs")))
-                       (expect (= (.getAbsolutePath log) (get-in r ["detail" "log"])))
-                       (expect (= ["starting" "ready"] (vis/resource-logs sid rid))))
-                     (finally
-                       (vis/unregister-resource! sid rid)
-                       (.delete log))))))
+(defdescribe
+  resource-mirror-logs-test
+  (it "registers nREPL mirrors as log-capable resources when the manager has a log path"
+      (let [sid
+            (str "nrepl-ctx-logs-" (System/nanoTime))
+
+            rid
+            "nrepl:/proj"
+
+            log
+            (java.io.File/createTempFile "vis-nrepl-ctx-" ".log")]
+
+        (try
+          (spit log "starting\nready\n")
+          (@#'nx/ensure-resource!
+           sid
+           {:id rid :dir "/proj" :port 7001 :tool :clj :aliases [:dev] :log (.getAbsolutePath log)})
+          (let [r (vis/get-resource sid rid)]
+            (expect (= true (get r "can_logs")))
+            (expect (= (.getAbsolutePath log) (get-in r ["detail" "log"])))
+            (expect (= ["starting" "ready"] (vis/resource-logs sid rid))))
+          (finally (vis/unregister-resource! sid rid) (.delete log))))))
 
 (defdescribe default-selection-test
              (it "no default when MORE THAN ONE REPL is owned (id must be specified)"

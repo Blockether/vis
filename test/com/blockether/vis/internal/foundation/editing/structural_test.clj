@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.foundation.editing.outline :as outline]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.foundation.editing.structural :as structural]
+            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [lazytest.core :refer [defdescribe expect it describe]]))
 
 (def ^:private clj-src "(ns demo)\n(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
@@ -18,30 +19,67 @@
 
 (defn- throws? [f] (try (f) false (catch Exception _ true)))
 
-(defdescribe outline-test
-             (it "Clojure outline lists defs with anchors"
-                 (let [s (outline/file-skeleton "demo.clj" clj-src)]
-                   ;; Clojure defs now carry a structured visibility (public/private) and a
-                   ;; clean name — no `^:private` glued on (pack >= .25).
-                   (expect (str/includes? s "function public add"))
-                   (expect (str/includes? s "function public sub"))
-                   (expect (re-find #"@\d+:\w+\.\.\d+:\w+" s))))
-             (it "Clojure outline shows clean names, visibility, and docstrings"
-                 (let [s (outline/file-skeleton
-                           "demo.clj"
-                           "(def ^:private lim \"the cap\" 10)\n(defn pub \"hi there\" [x] x)\n")]
-                   ;; clean name (metadata stripped), explicit visibility, arglist + docstring
-                   (expect (str/includes? s "constant private lim"))
-                   (expect (not (str/includes? s "^:private")))
-                   (expect (str/includes? s "\"the cap\""))
-                   (expect (str/includes? s "function public pub  [x]"))
-                   (expect (str/includes? s "\"hi there\""))))
-             (it "Python outline lists the function"
-                 (expect (str/includes? (outline/file-skeleton "m.py" py-src) "function add")))
-             (it "Rust outline lists the function"
-                 (expect (str/includes? (outline/file-skeleton "m.rs" rs-src) "function add")))
-             (it "unknown language yields no skeleton"
-                 (expect (nil? (outline/file-skeleton "x.unknownext" "blah")))))
+(defdescribe
+  outline-test
+  (it "Clojure outline lists defs with anchors"
+      (let [s (outline/file-skeleton "demo.clj" clj-src)]
+        ;; Clojure defs now carry a structured visibility (public/private) and a
+        ;; clean name — no `^:private` glued on (pack >= .25).
+        (expect (str/includes? s "function public add"))
+        (expect (str/includes? s "function public sub"))
+        (expect (re-find #"@\d+:\w+\.\.\d+:\w+" s))))
+  (it "Clojure outline shows clean names, visibility, and docstrings"
+      (let [s (outline/file-skeleton
+                "demo.clj"
+                "(def ^:private lim \"the cap\" 10)\n(defn pub \"hi there\" [x] x)\n")]
+        ;; clean name (metadata stripped), explicit visibility, arglist + docstring
+        (expect (str/includes? s "constant private lim"))
+        (expect (not (str/includes? s "^:private")))
+        (expect (str/includes? s "\"the cap\""))
+        (expect (str/includes? s "function public pub  [x]"))
+        (expect (str/includes? s "\"hi there\""))))
+  (it "Python outline lists the function"
+      (expect (str/includes? (outline/file-skeleton "m.py" py-src) "function add")))
+  (it "Rust outline lists the function"
+      (expect (str/includes? (outline/file-skeleton "m.rs" rs-src) "function add")))
+  (it "unknown language yields no skeleton"
+      (expect (nil? (outline/file-skeleton "x.unknownext" "blah"))))
+  (it
+    "definitions returns STRUCTURED rows — same fields as an occurrences def (name/kind/visibility/signature/doc/anchor/end-anchor) plus nesting depth"
+    (let [defs
+          (outline/definitions clj-src "clojure")
+
+          add-def
+          (first (filter #(= "add" (:name %)) defs))]
+
+      (expect (= 3 (count defs))) ;; ns + add + sub
+      (expect (= "function" (:kind add-def)))
+      (expect (= "public" (:visibility add-def)))
+      (expect (= "[a b]" (:signature add-def)))
+      (expect (= 0 (:depth add-def)))
+      (expect (some? (:anchor add-def)))
+      (expect (some? (:end-anchor add-def))))
+    ;; NESTING: a Python class's methods report depth 1 under the depth-0 class
+    (let [defs (outline/definitions "class C:\n    def m(self):\n        return 1\n" "python")]
+      (expect (= 0 (:depth (first (filter #(= "C" (:name %)) defs)))))
+      (expect (= 1 (:depth (first (filter #(= "m" (:name %)) defs))))))))
+
+(defdescribe zipper-anchor-path-test
+             (let [src "(ns demo)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"]
+               (it "resolves a fresh lineno:hash anchor to the node path for that row"
+                   (let [anchor (patch/line-anchor 6 "(defn bar [y]")
+                         r (zipper/path-at-anchor "clojure" src anchor)]
+
+                     (expect (:ok? r))
+                     ;; root named children: ns, foo, bar
+                     (expect (= [2] (:path r)))
+                     (expect (= 6 (:line r)))))
+               (it "refuses a stale anchor instead of silently landing on the line"
+                   (let [stale (patch/line-anchor 6 "(defn bar [y]")
+                         changed (str/replace src "(defn bar [y]" "(defn bar [z]")
+                         r (zipper/path-at-anchor "clojure" changed stale)]
+
+                     (expect (= :hashline-not-found (get-in r [:error :reason])))))))
 
 (defdescribe
   code-language-allowlist-test

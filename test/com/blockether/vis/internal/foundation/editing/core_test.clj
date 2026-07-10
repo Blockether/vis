@@ -2586,11 +2586,75 @@
               r (outline-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
 
           (expect (:success? r))
-          (expect (clojure.string/includes? (str (get-in r [:result "skeleton"])) "bar"))))
+          (expect (clojure.string/includes? (str (get-in r [:result "skeleton"])) "bar"))
+          ;; the STRUCTURED sibling: machine-addressable definitions (no skeleton parsing),
+          ;; each row the same shape as an occurrences def — name/kind/anchor/end_anchor.
+          (let [defs (get-in r [:result "definitions"])
+                bar (first (filter #(= "bar" (get % "name")) defs))]
+
+            (expect (vector? defs))
+            (expect (= "function" (get bar "kind")))
+            (expect (= "[x]" (get bar "signature")))
+            (expect (string? (get bar "anchor")))
+            (expect (string? (get bar "end_anchor")))
+            (expect (= 0 (get bar "depth"))))))
     (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
         (expect (true? (try (outline-tool "/etc/hosts")
                             false
                             (catch clojure.lang.ExceptionInfo _ true)))))))
+
+(defdescribe
+  anchor-zipper-tool-test
+  "A row anchor from outline/occurrences/cat is now a first-class zipper handle:
+   sexpr can enter at it, and struct_patch can edit the corresponding node."
+  (let [sexpr-tool
+        (private-fn "sexpr-tool")
+
+        struct-patch
+        (private-fn "struct-patch-tool")]
+
+    (it "sexpr enters the zipper at a lineno:hash anchor"
+        (let [path
+              (write-temp!
+                "anchor-zipper/read.clj"
+                "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
+
+              anchor
+              (patch/line-anchor 6 "(defn bar [y]")
+
+              r
+              (sexpr-tool path {"anchor" anchor})]
+
+          (expect (:success? r))
+          (expect (= [2] (get-in r [:result "path"])))
+          (expect (clojure.string/includes? (get-in r [:result "text"]) "defn bar"))))
+    (it "struct_patch edits the node addressed by a lineno:hash anchor"
+        (let [path
+              (write-temp!
+                "anchor-zipper/write.clj"
+                "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
+
+              anchor
+              (patch/line-anchor 6 "(defn bar [y]")
+
+              r
+              (struct-patch
+                {"path" path "op" "replace" "anchor" anchor "code" "(defn bar [y]\n  (- y 2))"})]
+
+          (expect (:success? r))
+          (expect (clojure.string/includes? (slurp (fs/file path)) "(- y 2)"))))
+    (it "stale anchors are refused before zipper navigation"
+        (let [path
+              (write-temp! "anchor-zipper/stale.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+
+              stale
+              (patch/line-anchor 3 "(defn bar [y]")]
+
+          (spit (fs/file path) "(ns my.app)\n\n(defn bar [z]\n  (* z 2))\n")
+          (let [r (sexpr-tool path {"anchor" stale})]
+            (expect (false? (:success? r)))
+            (expect (= :hashline-not-found (get-in r [:error :reason]))))))))
+
 
 (defdescribe
   project-rename-test
@@ -2706,6 +2770,7 @@
               (expect (= 3 (get res "count"))) ;; 1 def + 2 uses
               (expect (= 1 (get res "definition_count")))
               (expect (= 1 (count defs)))
+              (expect (= "widget" (get (first defs) "name")))
               (expect (= "function" (get (first defs) "kind")))
               (expect (= "[x]" (get (first defs) "signature")))
               ;; every non-def occurrence still carries a patch anchor

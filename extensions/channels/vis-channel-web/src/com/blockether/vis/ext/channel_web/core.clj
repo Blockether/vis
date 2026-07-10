@@ -710,28 +710,27 @@
       ;; harmless and the backend re-gates per turn anyway. Only a resolved,
       ;; non-configurable model hides it.
       (when (or (nil? info) (reasoning-effort-configurable? info))
-        (let [level (session-reasoning-level)
-              idx (case level
-                    :quick
-                    0
+        (let
+          [level (session-reasoning-level)
+           idx (case level
+                 :quick
+                 0
 
-                    :balanced
-                    1
+                 :balanced
+                 1
 
-                    :deep
-                    2
+                 :deep
+                 2
 
-                    1)
-              live-label-js
-              "var levels=['quick','balanced','deep']; var next=levels[Number(this.value)]||levels[1]; var root=this.closest('.foot-effort'); if(root){ root.dataset.level=next; } var out=root&&root.querySelector('.foot-effort-value'); if(out){ out.textContent=next; }"]
+                 1)
+           live-label-js
+           "var levels=['quick','balanced','deep']; var next=levels[Number(this.value)]||levels[1]; var root=this.closest('.foot-effort'); if(root){ root.dataset.level=next; } var out=root&&root.querySelector('.foot-effort-value'); if(out){ out.textContent=next; }"]
+
           [:label.foot-effort
            {:title "Reasoning effort — slide quick → balanced → deep"
             :aria-label "Reasoning effort"
-            :data-level (name level)}
-           (icon "activity")
-           [:span.foot-effort-label
-            "effort: "
-            [:strong.foot-effort-value (name level)]]
+            :data-level (name level)} (icon "activity")
+           [:span.foot-effort-label "effort: " [:strong.foot-effort-value (name level)]]
            [:input.foot-effort-slide
             {:type "range"
              :min 0
@@ -1282,6 +1281,17 @@
      [:div.block.block-error (live-key-attr live-key) [:span.block-tag.bad "error"]
       [:pre.ir-pre.act-error [:code (error-text error)]]])))
 
+(defn- live-error-frame
+  "The live error fragment for an `iteration.error` / `block.output` event. When
+   the gateway attached the canonical `:provider-error-data` (a genuine provider
+   failure), paint the SAME styled CARD the final settled turn bubble renders
+   — one source of truth, so live and settled never diverge. Otherwise the
+   plain lean error row."
+  [event live-key]
+  (if-let [ped (:provider-error-data event)]
+    [:div.pe-live (live-key-attr live-key) (provider-error-card ped)]
+    (block-error (:error event) live-key)))
+
 (defn- think-md->hiccup
   "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
   bare newline to a HARD break so the server-side IR matches ui.js `marked`
@@ -1714,15 +1724,16 @@
             error-frame
             (when (:error event)
               {:event "message"
-               :html (html (block-error (:error event)
-                                        (turn-live-key (str "error:" (:iteration event)) event)))})]
+               :html (html (live-error-frame event
+                                             (turn-live-key (str "error:" (:iteration event))
+                                                            event)))})]
 
         (into [] (keep identity [code-frame result-frame error-frame]))))
 
     "iteration.error"
     [{:event "message"
-      :html (html (block-error (:error event)
-                               (turn-live-key (str "error:" (:iteration event)) event)))}]
+      :html (html (live-error-frame event
+                                    (turn-live-key (str "error:" (:iteration event)) event)))}]
 
     "iteration.completed"
     (let [thought (block-thinking (:thinking event)
@@ -5413,11 +5424,6 @@
    :form-params? true
    :multipart? true})
 
-(defn- parse-flag
-  [args flag]
-  (some (fn [[a b]]
-          (when (= a flag) b))
-        (partition 2 1 args)))
 
 (defn- start-cloudflared!
   "Spawn `cloudflared tunnel --url <local-url>` (a Cloudflare quick tunnel)
@@ -5466,32 +5472,29 @@
     {:process process :url (deref url-promise 30000 nil)}))
 
 (defn channel-main
-  "`vis channels web` - start the gateway (UI auto-mounted because this
-   namespace is loaded), print the /ui address, park until SIGTERM.
-   `--cloudflared` additionally exposes the UI through a Cloudflare quick
-   tunnel (requires the `cloudflared` binary on PATH) and FORCES
-   `--require-token` - a public tunnel never runs without auth."
+  "`vis channels web` ensures the detached gateway daemon is running (UI routes
+   are auto-mounted in that daemon because this namespace is on the extension
+   classpath), prints the /ui address, and parks as a thin client. The command no
+   longer starts/stops an in-process engine; killing this wrapper only releases
+   its client lease."
   [args]
   (let [cloudflared?
         (boolean (some #{"--cloudflared"} args))
 
-        {:keys [port host token-file require-token?]}
-        (vis/gateway-start! {:port (some-> (parse-flag args "--port")
-                                           parse-long)
-                             :host (parse-flag args "--host")
-                             :token-file (parse-flag args "--token-file")
-                             ;; a Cloudflare tunnel is PUBLIC internet - the
-                             ;; bearer token is non-negotiable there.
-                             :require-token? (or cloudflared?
-                                                 (boolean (some #{"--require-token"} args)))})]
+        {:keys [host port secret]}
+        (vis/gateway-ensure!)
+
+        {:keys [require_token]}
+        (vis/gateway-daemon-status)]
 
     (println (str "vis web companion: http://" host ":" port "/ui"))
-    (if require-token?
-      (println (str "bearer token: " token-file))
-      (println "auth: disabled (loopback default; pass --require-token to enable)"))
+    (if require_token
+      (println (str "bearer token: " (or secret "<registry secret unavailable>")))
+      (println "auth: disabled (loopback daemon default)"))
     (when cloudflared?
-      (println
-        "cloudflared: token auth FORCED on (public tunnel) - paste the bearer token from the file above into the connect page")
+      (when-not require_token
+        (println
+          "cloudflared: WARNING gateway auth is disabled; restart the daemon with --require-token before exposing it publicly."))
       (try
         (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
           (.addShutdownHook (Runtime/getRuntime)
@@ -5506,7 +5509,6 @@
           (if (:cloudflared/missing? (ex-data e))
             (println (str "cloudflared: " (ex-message e)))
             (throw e)))))
-    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable vis/gateway-stop!))
     @(promise)))
 
 (vis/register-extension!

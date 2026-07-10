@@ -1769,9 +1769,11 @@
         (fn [k raw]
           (let [raw
                 (parse-stringish-vector raw)
- ;; tolerate a stringified list literal
+
+                ;; tolerate a stringified list literal
                 v
                 (if (string? raw) [raw] raw)]
+
             ;; scalar-tolerant
             (when-not (and (vector? v) (seq v) (every? string? v))
               (throw (ex-info "rg field must be a string or non-empty vector of strings."
@@ -3835,6 +3837,27 @@
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
+(defn- def->wire
+  "One `outline/definitions` entry → snake_case wire map. Deliberately the SAME
+   shape as a DEFINITION row from `occurrences` (`kind`/`visibility`/`signature`/
+   `doc`/`anchor`/`end_anchor`) so the two structural lenses read alike — plus the
+   def's `name` (outline lists many) and nesting `depth` (0 = top-level). Nil
+   fields are dropped to keep the row lean."
+  [d]
+  (cond-> {"name" (:name d)
+           "kind" (:kind d)
+           "anchor" (:anchor d)
+           "end_anchor" (:end-anchor d)
+           "depth" (:depth d 0)}
+    (:visibility d)
+    (assoc "visibility" (:visibility d))
+
+    (:signature d)
+    (assoc "signature" (:signature d))
+
+    (:doc d)
+    (assoc "doc" (:doc d))))
+
 (defn- outline-tool
   "Structural outline of a source file — a high-level, line-ranged skeleton via
    tree-sitter. Read this BEFORE cat: it maps each definition, nested by
@@ -3848,8 +3871,12 @@
    clean — no `^:private`/type-hint noise), and pair it with <kind> when two defs
    share a name.
      await outline(path)
-   Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
-   structural outline yet, returns a note — fall back to cat(path)."
+   Returns {\"skeleton\": \"...\", \"definitions\": [{\"name\",\"kind\",\"visibility\",
+   \"signature\",\"doc\",\"anchor\",\"end_anchor\",\"depth\"} …], \"language\": \"...\"}.
+   `definitions` is the machine-addressable data — each row the SAME shape as an
+   `occurrences` definition (read `anchor`/`end_anchor` as fields, no parsing the
+   skeleton blob). When a language has no structural outline yet, returns a note —
+   fall back to cat(path)."
   [& args]
   ;; Accept outline("x") (positional) AND outline({"path":"x"}) — the native
   ;; tool-call path synthesizes the dict form.
@@ -3874,19 +3901,25 @@
         language
         (outline/detect-language abs)
 
-        skeleton
-        (when language (outline/file-skeleton abs (slurp f)))]
+        src
+        (slurp f)
 
-    (tool-success {:op :outline
-                   :path path
-                   :kind :file
-                   :result (cond skeleton {"skeleton" skeleton "language" language "path" path}
-                                 language
-                                 {"language" language
-                                  "path" path
-                                  "note"
-                                  "No structural outline for this language yet — use cat(path)."}
-                                 :else {"path" path "note" "Unknown language — use cat(path)."})})))
+        skeleton
+        (when language (outline/file-skeleton abs src))
+
+        defs
+        (when language (mapv def->wire (outline/definitions src language)))]
+
+    (tool-success
+      {:op :outline
+       :path path
+       :kind :file
+       :result
+       (cond skeleton {"skeleton" skeleton "definitions" defs "language" language "path" path}
+             language {"language" language
+                       "path" path
+                       "note" "No structural outline for this language yet — use cat(path)."}
+             :else {"path" path "note" "Unknown language — use cat(path)."})})))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -4413,7 +4446,9 @@
                     "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
                     "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
                     "jump straight to the range you need (then `cat` that range), and to patch a "
-                    "whole def straight from its anchors.")
+                    "whole def straight from its anchors. Returns a structured `definitions` list "
+                    "(each row the SAME shape as an `occurrences` definition: name/kind/visibility/"
+                    "signature/doc/anchor/end_anchor + nesting depth) beside the human `skeleton`.")
                :render render-outline-result
                :color-role :tool-color/read
                :schema {:type "object"
@@ -4713,7 +4748,10 @@
         (if delete? "" (get args "code"))
 
         new-content
-        (if (contains? args "at")
+        (if (or (contains? args "at")
+                ;; anchor entry: a `lineno:hash` row handle → node path. Excludes
+                ;; move_before/move_after, whose `anchor` is a def NAME, not a hashline.
+                (and (contains? args "anchor") (not (#{:move-before :move-after} op))))
           ;; PATH-based (the zipper): locate by named-child index path + moves.
           (let [lang
                 (or (zipper/detect-language path)
@@ -4724,8 +4762,20 @@
                 source
                 (slurp (safe-path path))
 
+                base
+                (if (contains? args "at")
+                  (get args "at")
+                  ;; `lineno:hash` anchor → the path of the node starting there
+                  ;; (staleness-guarded); `nav` then composes on top.
+                  (let [ra (zipper/path-at-anchor lang source (get args "anchor"))]
+                    (if (:ok? ra)
+                      (:path ra)
+                      (throw (ex-info (get-in ra [:error :message] "anchor did not resolve")
+                                      {:type :ext.foundation.editing/struct-anchor-error
+                                       :reason (get-in ra [:error :reason])})))))
+
                 nav
-                (zipper/navigate lang source (get args "at") (get args "nav"))
+                (zipper/navigate lang source base (get args "nav"))
 
                 at
                 (if (:ok? nav)
@@ -4812,11 +4862,15 @@
        "kind" {:type "string"
                :description "function/class/method/… — disambiguates same-named defs."}
        "match" {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
-       "anchor" {:type "string"
-                 :description "For move_before/move_after: the def to relocate next to."}
-       "at" {:type "array"
-             :items {:type "integer"}
-             :description "Named-child index path from sexpr(path) (path-based ops)."}
+       "anchor"
+       {:type "string"
+        :description
+        "Dual use: for move_before/move_after the def NAME to relocate next to; otherwise a `lineno:hash` anchor (from outline/occurrences/cat) that enters the zipper at the node starting on that line (compose with `nav`)."}
+       "at"
+       {:type "array"
+        :items {:type "integer"}
+        :description
+        "Named-child index path from sexpr(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
        "nav" {:type "array"
               :description "Relative zipper moves applied after `at` (strings or maps)."}}
       :required ["path"]}
@@ -4878,8 +4932,16 @@
         source
         (slurp (safe-path path))
 
+        ;; anchor entry: a `lineno:hash` from an outline/occurrences/cat row
+        ;; resolves straight to the node's path, then `nav` composes on top.
+        base
+        (when-let [a (get opts "anchor")]
+          (zipper/path-at-anchor lang source a))
+
         nav
-        (zipper/navigate lang source (get opts "at") (get opts "nav"))]
+        (if (and base (:error base))
+          base
+          (zipper/navigate lang source (if base (:path base) (get opts "at")) (get opts "nav")))]
 
     (if (:error nav)
       (extension/failure {:result nil
@@ -4908,34 +4970,39 @@
                                    "can" (zipper/moves-available lang source at))}))))))
 
 (def sexpr-symbol
-  (vis/symbol #'sexpr-tool
-              {:symbol 'sexpr
-               :native-tool? true
-               ;; sexpr(path, {opts}) — path positional, the rest a Python options dict.
-               :call {:pos ["path"] :rest :opt}
-               :active-fn structural-supported?
-               :description
-               (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
+  (vis/symbol
+    #'sexpr-tool
+    {:symbol 'sexpr
+     :native-tool? true
+     ;; sexpr(path, {opts}) — path positional, the rest a Python options dict.
+     :call {:pos ["path"] :rest :opt}
+     :active-fn structural-supported?
+     :description (str
+                    "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
                     "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
                     "`end_line`,`text`,`sexp`,`children`,`can`} — `can` shows which moves remain. "
                     "nav moves: down|d|b up|u|t left|l right|r first last next|n prev|p {child:i} "
                     "{find:\"text\"} {find_kind:\"if_statement\"}. Get a PATH here, then edit it "
                     "with struct_patch({path, op, at}).")
-               :render render-sexpr-result
-               :color-role :tool-color/read
-               :schema {:type "object"
-                        :properties
-                        {"path" {:type "string" :description "Source file to navigate."}
-                         "at" {:type "array"
-                               :items {:type "integer"}
-                               :description "Absolute named-child index path to jump to."}
-                         "nav" {:type "array"
-                                :description
-                                "Relative cursor moves (strings or {find/child/find_kind} maps)."}}
-                        :required ["path"]}
-               :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
-               :tag :observation
-               :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
+     :render render-sexpr-result
+     :color-role :tool-color/read
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string" :description "Source file to navigate."}
+       "at" {:type "array"
+             :items {:type "integer"}
+             :description "Absolute named-child index path to jump to."}
+       "nav" {:type "array"
+              :description "Relative cursor moves (strings or {find/child/find_kind} maps)."}
+       "anchor"
+       {:type "string"
+        :description
+        "A `lineno:hash` anchor (from outline/occurrences/cat) to enter the zipper at the node starting on that line — one hop from a listed row to its cursor; `nav` composes on top. Alternative to `at`."}}
+      :required ["path"]}
+     :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
 
 ;; sexpr_edit was FOLDED INTO struct_patch — which now takes a zipper `at`/`nav`
 ;; path as an alternative to a `target` name. ONE structural editor (locate by
@@ -4943,21 +5010,21 @@
 ;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
 
 (defn- occurrence->wire
-  "One `structural/occurrences` entry → snake_case wire map. The `anchor` is the
-   SOLE position (a `lineno:hash` patch handle — the line number lives in it, so no
-   redundant `line`/`column`/byte fields, which unbounded would bloat the wire until
-   it clips). A DEFINITION additionally carries its metadata + span (`end_anchor`)."
-  [o]
+  "One `structural/occurrences` entry → snake_case wire map. Plain USE rows stay
+   anchors-only (the `lineno:hash` is the sole position). DEFINITION rows mirror
+   outline `definitions` rows where possible: `name`/`kind`/`visibility`/`signature`/
+   `doc`/`anchor`/`end_anchor`, with nil metadata dropped."
+  [name o]
   ;; Model-facing occurrence row — string keys, no keyword values.
-  (cond-> {"anchor" (:anchor o)}
-    (:is-definition o)
-    (assoc "is_definition"
-      true "kind"
-      (:kind o) "visibility"
-      (:visibility o) "signature"
-      (:signature o) "doc"
-      (:doc o) "end_anchor"
-      (:end-anchor o))))
+  (let [base {"anchor" (:anchor o)}]
+    (if-not (:is-definition o)
+      base
+      (cond-> (assoc base "is_definition" true "name" name)
+        (:kind o) (assoc "kind" (:kind o))
+        (:visibility o) (assoc "visibility" (:visibility o))
+        (:signature o) (assoc "signature" (:signature o))
+        (:doc o) (assoc "doc" (:doc o))
+        (:end-anchor o) (assoc "end_anchor" (:end-anchor o))))))
 
 (defn- occurrences-tool
   "Every OCCURRENCE of an identifier across the project (or within `paths`), via
@@ -4968,8 +5035,8 @@
      await occurrences(\"foo\", paths=[\"src/api\"]) # scoped
    Result: {\"name\", \"files\": [{\"path\", \"occurrences\": [{\"anchor\"  # a use:
    the sole position, a `lineno:hash` patch handle
-   , \"is_definition\": true, \"kind\", \"visibility\", \"signature\", \"doc\",
-   \"end_anchor\"  # a DEFINITION: span = anchor..end_anchor, patch it directly
+   , \"is_definition\": true, \"name\", \"kind\", \"visibility\", \"signature\", \"doc\",
+   \"end_anchor\"  # a DEFINITION: named span = anchor..end_anchor, patch it directly
    }]}], \"count\", \"definition_count\", \"scanned\", \"failed\"}.
    ONE call answers both 'where is it defined' (filter is_definition in Python)
    AND 'where is it used'. Not truncated — loop/filter the structure in Python and
@@ -5014,7 +5081,7 @@
                     (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
                       (cond-> acc
                         (seq occ)
-                        (update :per conj {"path" path "occurrences" (mapv occurrence->wire occ)})))
+                        (update :per conj {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
                     (catch Exception e
                       (update acc
                               :failed
