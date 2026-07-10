@@ -160,10 +160,19 @@
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
 (defn release-session!
-  "Release the process-level client lease when the owning channel exits. This is
-   NOT a per-session delete and never sends daemon shutdown; the daemon stops
-   itself only when refcount AND running-turn-count hit zero."
-  [_sid]
+  "Release a session VIEW when the owning channel exits: tell the daemon to
+   stop the session's background resources (shell_bg children, REPLs) and drop
+   its live runtime, then release the process-level client lease. This is NOT
+   a per-session delete (the transcript stays resumable) and never sends daemon
+   shutdown; the daemon stops itself only when refcount AND running-turn-count
+   hit zero. Best-effort and never daemon-spawning — if no fresh daemon is
+   registered there is nothing to release against."
+  [sid]
+  (when sid
+    (try (let [entry (or @cached-entry (discovery/read-registry (db-target)))]
+           (when (discovery/registry-fresh? entry probe-entry?)
+             (send-json-with-entry! entry "POST" (str "/v1/sessions/" (enc sid) "/release"))))
+         (catch Throwable _ nil)))
   (release-client!))
 
 (defn get-turn
