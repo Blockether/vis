@@ -30,6 +30,7 @@
    Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -413,8 +414,7 @@
               (contains? spec "path") (get spec "path")
               :else nil)]
 
-    (cond (or (nil? paths)
-              (and (sequential? paths) (empty? paths))) ["."]
+    (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
           (sequential? paths) paths
           :else [paths])))
 
@@ -425,8 +425,7 @@
       (let [paths (cond (contains? spec "paths") (get spec "paths")
                         (contains? spec "files") (get spec "files")
                         :else nil)]
-        (cond (or (nil? paths)
-                  (and (sequential? paths) (empty? paths))) ["."]
+        (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
               (sequential? paths) paths
               :else [paths])))))
 
@@ -1405,43 +1404,45 @@
                       {:type :ext.foundation.editing/invalid-find-args
                        :unknown (vec unknown-keys)
                        :allowed (vec (sort allowed-keys))})))
-    (let [query
-          (get spec "query")
+    (let
+      [query
+       (get spec "query")
 
-          _
-          (when-not (and (string? query) (not (str/blank? query)))
-            (throw (ex-info "find \"query\" must be a non-blank string"
-                            {:type :ext.foundation.editing/invalid-find-args :query query})))
+       _
+       (when-not (and (string? query) (not (str/blank? query)))
+         (throw (ex-info "find \"query\" must be a non-blank string"
+                         {:type :ext.foundation.editing/invalid-find-args :query query})))
 
-          _
-          (when (and (contains? spec "paths") (contains? spec "path"))
-            (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
-                            {:type :ext.foundation.editing/invalid-find-args :spec spec})))
+       _
+       (when (and (contains? spec "paths") (contains? spec "path"))
+         (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
+                         {:type :ext.foundation.editing/invalid-find-args :spec spec})))
 
-          raw-paths
-          (cond (contains? spec "paths") (get spec "paths")
-                (contains? spec "path") (get spec "path")
-                :else ["."])
+       raw-paths
+       (cond (contains? spec "paths") (get spec "paths")
+             (contains? spec "path") (get spec "path")
+             :else ["."])
 
-          paths
-          (cond (or (nil? raw-paths)
-                    (and (sequential? raw-paths) (empty? raw-paths))) ["."]
-                (string? raw-paths) [raw-paths]
-                (sequential? raw-paths) (vec raw-paths)
-                :else raw-paths)
+       paths
+       (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
+             (string? raw-paths) [raw-paths]
+             (sequential? raw-paths) (vec raw-paths)
+             :else raw-paths)
 
-          _
-          (when-not (and (vector? paths) (seq paths) (every? string? paths))
-            (throw (ex-info "find \"paths\" must be a string or vector of strings (empty defaults to current directory)"
-                            {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
+       _
+       (when-not (and (vector? paths) (seq paths) (every? string? paths))
+         (throw
+           (ex-info
+             "find \"paths\" must be a string or vector of strings (empty defaults to current directory)"
+             {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
 
-          limit
-          (or (get spec "limit") default-find-limit)
+       limit
+       (or (get spec "limit") default-find-limit)
 
-          _
-          (when-not (and (integer? limit) (pos? limit))
-            (throw (ex-info "find \"limit\" must be a positive integer"
-                            {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
+       _
+       (when-not (and (integer? limit) (pos? limit))
+         (throw (ex-info "find \"limit\" must be a positive integer"
+                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
 
       {:query query
        :paths paths
@@ -1720,6 +1721,23 @@
 ;; rg
 ;; =============================================================================
 
+(defn- parse-stringish-vector
+  "Tolerate a value that arrives as a STRINGIFIED list literal — e.g.
+   `\"[\\\"a\\\", \\\"b\\\"]\"` — a common JSON/LLM mistake where a real array
+   gets quoted into one string. When `raw` is a string whose trimmed form is
+   bracketed like a JSON/EDN array, parse it (commas are EDN whitespace); if
+   every element reads as a string, return the parsed vector. A plain glob
+   string, an already-real vector, or unparseable junk is returned unchanged
+   for the normal scalar-tolerant path."
+  [raw]
+  (if (and (string? raw)
+           (let [t (str/trim raw)]
+             (and (str/starts-with? t "[") (str/ends-with? t "]"))))
+    (let [parsed (try (edn/read-string (str/trim raw)) (catch Exception _ ::fail))]
+      (if (and (vector? parsed) (seq parsed) (every? string? parsed)) parsed raw))
+    raw))
+
+
 (defn- coerce-rg-spec
   "Coerce the public rg spec map into the search engine's shape.
 
@@ -1739,7 +1757,12 @@
                     {:type :ext.foundation.editing/invalid-rg-spec :got (type spec)})))
   (let [vector-of-strings
         (fn [k raw]
-          (let [v (if (string? raw) [raw] raw)] ;; scalar-tolerant
+          (let [raw
+                (parse-stringish-vector raw)
+ ;; tolerate a stringified list literal
+                v
+                (if (string? raw) [raw] raw)]
+            ;; scalar-tolerant
             (when-not (and (vector? v) (seq v) (every? string? v))
               (throw (ex-info "rg field must be a string or non-empty vector of strings."
                               {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
@@ -1778,8 +1801,7 @@
         (get spec "paths" ["."])
 
         paths
-        (if (or (nil? raw-paths)
-                (and (sequential? raw-paths) (empty? raw-paths)))
+        (if (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths)))
           ["."]
           (vector-of-strings :paths raw-paths))
 
@@ -1787,8 +1809,7 @@
         (get spec "include")
 
         include
-        (if (or (nil? raw-include)
-                (and (sequential? raw-include) (empty? raw-include)))
+        (if (or (nil? raw-include) (and (sequential? raw-include) (empty? raw-include)))
           []
           (vector-of-strings :include raw-include))
 
@@ -2997,9 +3018,7 @@
   "Delete a file or directory tree after `safe-path` has confined it to the workspace."
   [path]
   (let [f (safe-path path)]
-    (if (fs/directory? f)
-      (fs/delete-tree f)
-      (fs/delete f))
+    (if (fs/directory? f) (fs/delete-tree f) (fs/delete f))
     true))
 
 (defn- delete-safe [path] (delete-path! path))
@@ -3007,12 +3026,7 @@
 (defn- delete-if-exists-safe
   [path]
   (let [f (safe-path path)]
-    (if (fs/exists? f)
-      (do (if (fs/directory? f)
-            (fs/delete-tree f)
-            (fs/delete f))
-          true)
-      false)))
+    (if (fs/exists? f) (do (if (fs/directory? f) (fs/delete-tree f) (fs/delete f)) true) false)))
 
 (defn- exists-safe? [path] (fs/exists? (safe-path path)))
 
@@ -4524,9 +4538,9 @@
        "paths" {:type "array"
                 :items {:type "string"}
                 :description "Restrict to these paths (default the whole tree)."}
-       "include" {:oneOf [{:type "array" :items {:type "string"}}
-                           {:type "string"}]
-                  :description "Only files matching these globs, e.g. [\"**/*.clj\"] or \"**/*.clj\"."}
+       "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
+                  :description
+                  "Only files matching these globs, e.g. [\"**/*.clj\"] or \"**/*.clj\"."}
        "context" {:type "integer" :description "Lines of context around each match."}
        "is_files_only" {:type "boolean"
                         :description
