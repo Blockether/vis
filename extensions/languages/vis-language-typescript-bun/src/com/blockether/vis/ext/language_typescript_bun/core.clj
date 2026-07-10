@@ -8,7 +8,8 @@
    shows in ctx + the footer and is stoppable by id. The point is the Clojure
    reloaded workflow for TS: the app STARTS from the repl, lives in the repl,
    and its state is printable — no debugger needed."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-typescript-bun.repl-manager :as repl]
@@ -92,6 +93,57 @@
 ;; Language-facade handlers
 ;; =============================================================================
 
+(defn- monorepo-root-hint
+  "When `dir` IS the workspace root and its package.json declares `workspaces`,
+   a REPL there is almost always a mistake: it reads the ROOT tsconfig /
+   package.json, so app code misbehaves (e.g. NestJS decorators crash without
+   `experimentalDecorators`). Returns an actionable hint string listing the
+   workspace app dirs, else nil."
+  [root dir]
+  (when (= (str dir) (.getCanonicalPath (io/file root)))
+    (let [pj
+          (io/file root "package.json")
+
+          m
+          (when (.exists pj) (try (json/read-json (slurp pj)) (catch Throwable _ nil)))
+
+          ws
+          (get m "workspaces")
+
+          globs
+          (cond (sequential? ws) ws
+                (map? ws) (get ws "packages")
+                :else nil)]
+
+      (when (seq globs)
+        (let [candidates
+              (->> globs
+                   (mapcat (fn [g]
+                             (let [g (str g)]
+                               (if (str/ends-with? g "/*")
+                                 (let [d (io/file root (subs g 0 (- (count g) 2)))]
+                                   (when (.isDirectory d) (.listFiles d)))
+                                 [(io/file root g)]))))
+                   (filter (fn [^java.io.File f]
+                             (and f (.isDirectory f) (.exists (io/file f "package.json")))))
+                   (map (fn [^java.io.File f]
+                          (str (.getName (.getParentFile f)) "/" (.getName f))))
+                   sort
+                   (take 8))
+
+              suggestion
+              (or (first (filter #(str/ends-with? % "/api") candidates))
+                  (first candidates)
+                  "apps/<app>")]
+
+          (str "This is a Bun MONOREPO ROOT (package.json has \"workspaces\") — a REPL "
+               "here picks up the ROOT tsconfig/package.json, so app code misbehaves "
+               "(e.g. NestJS decorators crash). Pass the app dir explicitly: "
+               "repl_eval(\"typescript\", code, {\"dir\": \""
+               suggestion
+               "\"})."
+               (when (seq candidates) (str " Workspace dirs: " (str/join ", " candidates) "."))
+               " To force a root REPL anyway: repl_start(\"typescript\", {\"dir\": \".\"})."))))))
 (defn ts-start-repl-fn
   "repl_start handler for TypeScript/Bun. Positional `op` (default \"start\") +
    opts `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as
@@ -121,6 +173,12 @@
 
       ("start" "restart")
       (do (when (= op "restart") (repl/stop! dir))
+          ;; Starting at a monorepo ROOT without an explicit dir is (almost)
+          ;; always a mistake — refuse with the app-dir hint. Explicit
+          ;; {"dir": "."} still forces a root REPL.
+          (when (nil? (get opts "dir"))
+            (when-let [hint (monorepo-root-hint root dir)]
+              (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
           (let [r (repl/start! dir (or opts {}))]
             (register-repl-resource! (:session-id env) dir r id)
             (extension/success {:result r})))
@@ -150,6 +208,11 @@
         (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
+      ;; AUTO-START guard: no explicit dir + monorepo root -> actionable error
+      ;; instead of a misconfigured root REPL (wrong tsconfig/cwd).
+      (when-not (and (map? arg) (get arg "dir"))
+        (when-let [hint (monorepo-root-hint root dir)]
+          (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
       (let [r (repl/start! dir {})]
         (register-repl-resource! (:session-id env) dir r nil)))
     ;; Carry the evaluated code back on the result (string key) so the shared
