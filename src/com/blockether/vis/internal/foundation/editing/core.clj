@@ -5019,12 +5019,23 @@
   (let [base {"anchor" (:anchor o)}]
     (if-not (:is-definition o)
       base
-      (cond-> (assoc base "is_definition" true "name" name)
-        (:kind o) (assoc "kind" (:kind o))
-        (:visibility o) (assoc "visibility" (:visibility o))
-        (:signature o) (assoc "signature" (:signature o))
-        (:doc o) (assoc "doc" (:doc o))
-        (:end-anchor o) (assoc "end_anchor" (:end-anchor o))))))
+      (cond-> (assoc base
+                "is_definition" true
+                "name" name)
+        (:kind o)
+        (assoc "kind" (:kind o))
+
+        (:visibility o)
+        (assoc "visibility" (:visibility o))
+
+        (:signature o)
+        (assoc "signature" (:signature o))
+
+        (:doc o)
+        (assoc "doc" (:doc o))
+
+        (:end-anchor o)
+        (assoc "end_anchor" (:end-anchor o))))))
 
 (defn- occurrences-tool
   "Every OCCURRENCE of an identifier across the project (or within `paths`), via
@@ -5077,16 +5088,18 @@
         ;; `per`/`failed` entries are the model-facing result payload — string keys.
         {:keys [per failed]}
         (reduce (fn [acc path]
-                  (try
-                    (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
-                      (cond-> acc
-                        (seq occ)
-                        (update :per conj {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
-                    (catch Exception e
-                      (update acc
-                              :failed
-                              conj
-                              {"path" path "error" (or (ex-message e) (str (class e)))}))))
+                  (try (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
+                         (cond-> acc
+                           (seq occ)
+                           (update :per
+                                   conj
+                                   {"path" path
+                                    "occurrences" (mapv #(occurrence->wire name %) occ)})))
+                       (catch Exception e
+                         (update acc
+                                 :failed
+                                 conj
+                                 {"path" path "error" (or (ex-message e) (str (class e)))}))))
                 {:per [] :failed []}
                 files)
 
