@@ -1133,16 +1133,16 @@
               [event]
               fx]
 
-          (expect (= [:rlm-turn :main {:id "c1"} "hello" :token nil nil {}] (subvec event 0 8)))
+          (expect (= [:session-turn :main {:id "c1"} "hello" :token nil nil {}] (subvec event 0 8)))
           (expect (nil? (nth event 8)))
           (expect (string? (nth event 9)))))))
   (it
     "forwards routing trace from turn result to message metadata"
-    (let [rlm-turn-fx
+    (let [session-turn-fx
           (-> #'state/fx-registry
               deref
               deref
-              (get :rlm-turn))
+              (get :session-turn))
 
           received
           (atom [])
@@ -1172,7 +1172,7 @@
                        :llm-fallback? true
                        :llm-routing-trace trace})]
 
-        (rlm-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
+        (session-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
         ;; refreshes after the answer commits, so don't assume
         ;; :message-received is the *last* event — select it explicitly.

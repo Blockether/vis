@@ -2,12 +2,18 @@
   "Wire encoding for the HTTP gateway.
 
    One dumb, deterministic boundary: engine EDN -> JSON. Keyword/symbol
-   keys become snake_case strings (namespace dropped), keyword values
-   become their name, non-JSON leaves fall back to `str`. The walker
-   makes ZERO semantic decisions - no flattening, no rendering. Canonical
-   IR vectors pass through structurally (`[:ir {...} ...]` ->
-   `[\"ir\", {...}, ...]`), which is exactly the ALWAYS-IR contract:
-   the client walks IR; the gateway never renders."
+   keys become snake_case strings (namespace dropped), keyword VALUES keep
+   their full `ns/name` (a badge role like `:tool-color/search` must survive
+   the hop — dropping the namespace made the remote TUI see `:search` while
+   the in-process web saw the full keyword), non-JSON leaves fall back to
+   `str`. The walker makes ZERO semantic decisions - no flattening, no
+   rendering. Canonical IR vectors pass through structurally
+   (`[:ir {...} ...]` -> `[\"ir\", {...}, ...]`), which is exactly the
+   ALWAYS-IR contract: the client walks IR; the gateway never renders.
+
+   `canonical` is the SAME shape on the Clojure side: by definition what
+   `parse-json` ∘ `json-str` yields — serve it from a facade and in-process
+   readers see exactly what a remote client sees."
   (:require [charred.api :as json]
             [clojure.string :as str]))
 
@@ -30,7 +36,9 @@
                                          (transient {})
                                          x))
         (coll? x) (mapv ->wire x)
-        (keyword? x) (name x)
+        (keyword? x) (if-let [kns (namespace x)]
+                       (str kns "/" (name x))
+                       (name x))
         (symbol? x) (str x)
         (uuid? x) (str x)
         (ratio? x) (double x)
@@ -38,6 +46,26 @@
         (instance? java.time.Instant x) (.toEpochMilli ^java.time.Instant x)
         (instance? java.util.Date x) (.getTime ^java.util.Date x)
         :else (str x)))
+
+(defn canonical
+  "THE canonical gateway value shape — BY CONSTRUCTION identical to what a
+   remote client holds after `parse-json` ∘ `json-str`: snake_case KEYWORD
+   map keys (namespaces dropped), keyword/symbol values stringified, dates
+   as epoch millis. Serve `(canonical x)` from a facade and the HTTP hop
+   becomes an IDENTITY — in-process and remote consumers read the SAME
+   shape, so a channel written against one transport can never break on
+   the other. Invariant (guarded by the wire round-trip test):
+   `(canonical x)` == `(parse-json (json-str x))` for every engine value."
+  [x]
+  (let [keywordize (fn keywordize [v]
+                     (cond (map? v) (persistent! (reduce-kv
+                                                   (fn [m k v']
+                                                     (assoc! m (keyword k) (keywordize v')))
+                                                   (transient {})
+                                                   v))
+                           (coll? v) (mapv keywordize v)
+                           :else v))]
+    (keywordize (->wire x))))
 
 (defn json-str
   "Encode any engine value as a JSON string via [[->wire]]."

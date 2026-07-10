@@ -2827,6 +2827,34 @@
           (let [r (rg "model, cycle" {"paths" [d]})]
             (expect (:success? r))
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
+    (it "content value is a UNIFORM `{\"text\" line}` map with AND without context"
+        (let [d (temp-dir-path "rguni")
+              f (str (temp-root) "/rguni/a.clj")]
+
+          (spit (fs/file f) "L1\nMATCH\nL3\n")
+          (let [plain (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
+                ctx (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
+                plain-v (-> plain
+                            vals
+                            first
+                            vals
+                            first)
+                ctx-v (-> ctx
+                          vals
+                          first
+                          vals
+                          first)]
+
+            ;; ONE shape regardless of context: always a map carrying "text".
+            (expect (map? plain-v))
+            (expect (= "MATCH" (get plain-v "text")))
+            ;; context:0 hit is JUST {"text"} — no before/after keys.
+            (expect (= #{"text"} (set (keys plain-v))))
+            ;; context hit is the SAME map, plus before/after.
+            (expect (map? ctx-v))
+            (expect (= "MATCH" (get ctx-v "text")))
+            (expect (contains? ctx-v "before"))
+            (expect (contains? ctx-v "after")))))
     (it "smart-case: a lowercase query matches any case, on disk"
         (let [d (temp-dir-path "rgc")
               f (str (temp-root) "/rgc/a.clj")]

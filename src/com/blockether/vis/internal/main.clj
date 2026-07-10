@@ -2789,7 +2789,7 @@
       (stdout! "Vis update complete.")))
   (shutdown-agents))
 
-(defn- cli-serve!
+(defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
    Ring/Jetty class loading off every other command's startup path."
   [parsed _residual]
@@ -2843,40 +2843,46 @@
 ;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
 ;; not an extension contributing to `vis ext`.
 
+(doseq [spec [{:cmd/name "providers"
+               :cmd/doc "Inspect, authenticate, and introspect LLM providers."
+               :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
+               :cmd/subcommands #(registry/registered-under ["providers"])}
+              {:cmd/name "sessions"
+               :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
+               :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
+               :cmd/examples ["vis sessions" "vis sessions list" "vis sessions show 3a7b2c1d"
+                              "vis sessions fork 3a7b2c1d --title \"Branch A\""
+                              "vis sessions export 3a7b2c1d --md"
+                              "vis sessions export 3a7b2c1d --html out.html"
+                              "vis sessions search \"foo bar\""]
+               :cmd/subcommands #(registry/registered-under ["sessions"])
+               :cmd/run-fn cli-sessions!}
+              {:cmd/name "doctor"
+               :cmd/doc "Run cross-extension diagnostics."
+               :cmd/usage "vis doctor"
+               :cmd/run-fn cli-doctor!}
+              {:cmd/name "ext"
+               :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
+               :cmd/usage "vis ext <list|scaffold|...> [args...]"
+               :cmd/subcommands #(registry/registered-under ["ext"])}
+              {:cmd/name "update"
+               :cmd/doc "Update the source checkout used by this Vis installation."
+               :cmd/usage "vis update"
+               :cmd/run-fn cli-update!}
+              {:cmd/name "gateway"
+               :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
+               :cmd/usage "vis gateway <start|status|stop> [--db PATH]"
+               :cmd/subcommands #(registry/registered-under ["gateway"])}]]
+  (registry/register-cmd! spec))
+
+;;; ── `vis gateway` subcommands ──────────────────────────────────────────
+
 (doseq
   [spec
-   [{:cmd/name "providers"
-     :cmd/doc "Inspect, authenticate, and introspect LLM providers."
-     :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
-     :cmd/subcommands #(registry/registered-under ["providers"])}
-    {:cmd/name "sessions"
-     :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
-     :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
-     :cmd/examples
-     ["vis sessions" "vis sessions list" "vis sessions show 3a7b2c1d"
-      "vis sessions fork 3a7b2c1d --title \"Branch A\"" "vis sessions export 3a7b2c1d --md"
-      "vis sessions export 3a7b2c1d --html out.html" "vis sessions search \"foo bar\""]
-     :cmd/subcommands #(registry/registered-under ["sessions"])
-     :cmd/run-fn cli-sessions!}
-    {:cmd/name "doctor"
-     :cmd/doc "Run cross-extension diagnostics."
-     :cmd/usage "vis doctor"
-     :cmd/run-fn cli-doctor!}
-    {:cmd/name "ext"
-     :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-     :cmd/usage "vis ext <list|scaffold|...> [args...]"
-     :cmd/subcommands #(registry/registered-under ["ext"])}
-    {:cmd/name "update"
-     :cmd/doc "Update the source checkout used by this Vis installation."
-     :cmd/usage "vis update"
-     :cmd/run-fn cli-update!}
-    {:cmd/name "gateway"
-     :cmd/doc "Inspect or stop the long-lived gateway daemon."
-     :cmd/usage "vis gateway <status|stop> [--db PATH]"
-     :cmd/subcommands #(registry/registered-under ["gateway"])}
-    {:cmd/name "serve"
-     :cmd/doc "Serve the session/turn runtime over HTTP + SSE (the gateway daemon)."
-     :cmd/usage "vis serve [--port 7890] [--host 127.0.0.1] [--token-file PATH]"
+   [{:cmd/name "start"
+     :cmd/parent ["gateway"]
+     :cmd/doc "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground."
+     :cmd/usage "vis gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH]"
      :cmd/args
      [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
       {:name "host"
@@ -2896,30 +2902,24 @@
        :type :boolean
        :doc
        "Require the bearer token on loopback too (auth is OFF by default on 127.0.0.1; a non-loopback bind always requires it)."}]
-     :cmd/examples ["vis serve" "vis serve --port 8080"]
-     :cmd/run-fn cli-serve!}]]
-  (registry/register-cmd! spec))
-
-;;; ── `vis gateway` subcommands ──────────────────────────────────────────
-
-(doseq [spec [{:cmd/name "status"
-               :cmd/parent ["gateway"]
-               :cmd/doc "Show the gateway daemon registered for the current DB without starting it."
-               :cmd/usage "vis gateway status [--db PATH]"
-               :cmd/args [{:name "db"
-                           :kind :flag
-                           :type :string
-                           :doc "SQLite DB path whose gateway registry should be inspected."}]
-               :cmd/run-fn cli-gateway-status!}
-              {:cmd/name "stop"
-               :cmd/parent ["gateway"]
-               :cmd/doc "Stop the gateway daemon registered for the current DB."
-               :cmd/usage "vis gateway stop [--db PATH]"
-               :cmd/args [{:name "db"
-                           :kind :flag
-                           :type :string
-                           :doc "SQLite DB path whose gateway should be stopped."}]
-               :cmd/run-fn cli-gateway-stop!}]]
+     :cmd/examples ["vis gateway start" "vis gateway start --port 8080"]
+     :cmd/run-fn cli-gateway-start!}
+    {:cmd/name "status"
+     :cmd/parent ["gateway"]
+     :cmd/doc "Show the gateway daemon registered for the current DB without starting it."
+     :cmd/usage "vis gateway status [--db PATH]"
+     :cmd/args [{:name "db"
+                 :kind :flag
+                 :type :string
+                 :doc "SQLite DB path whose gateway registry should be inspected."}]
+     :cmd/run-fn cli-gateway-status!}
+    {:cmd/name "stop"
+     :cmd/parent ["gateway"]
+     :cmd/doc "Stop the gateway daemon registered for the current DB."
+     :cmd/usage "vis gateway stop [--db PATH]"
+     :cmd/args
+     [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}]
+     :cmd/run-fn cli-gateway-stop!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis providers` subcommands ─────────────────────────────────────────

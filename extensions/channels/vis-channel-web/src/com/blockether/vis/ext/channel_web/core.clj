@@ -34,7 +34,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [hiccup2.core :as h]
             [ring.core.protocols :as ring-protocols]
@@ -451,17 +450,18 @@
              "\n\n")))))
 
 (defn- attachment->figure
-  "One persisted iteration attachment (`db-list-iteration-attachments` shape:
-   `{:kind :media-type :filename :size :base64}`) → hiccup, INLINED from the DB
-   bytes (base64 data-URI). Image kinds paint as a `<figure><img>`; any other
-   kind degrades to a labelled download link so a non-image artifact (csv/json/…)
-   still surfaces. This is the restart-durable twin of the live `vis-image` fence:
-   the temp PNG is gone after a restart, the `session_iteration_attachment` bytes
-   are not — so history re-renders from the DB, never the disk temp."
-  [{:keys [kind media-type filename size base64]}]
+  "One persisted iteration attachment riding the CANONICAL turn-trace wire
+   (`{:kind :media_type :filename :size :base64}`, gateway-hydrated from the
+   attachment store) → hiccup, INLINED from the DB bytes (base64 data-URI).
+   Image kinds paint as a `<figure><img>`; any other kind degrades to a
+   labelled download link so a non-image artifact (csv/json/…) still surfaces.
+   This is the restart-durable twin of the live `vis-image` fence: the temp
+   PNG is gone after a restart, the persisted bytes are not — so history
+   re-renders from the wire, never the disk temp."
+  [{:keys [kind media_type filename size base64]}]
   (when (not-empty (str base64))
     (let [mt
-          (or (not-empty (str media-type)) "application/octet-stream")
+          (or (not-empty (str media_type)) "application/octet-stream")
 
           data-uri
           (str "data:" mt ";base64," base64)
@@ -1393,64 +1393,83 @@
 
 (defn- trace-visible-iterations [iters] (filterv iter-has-trace? iters))
 
+(defn- wire-env->form
+  "One canonical wire form envelope (a `:forms` entry off `gateway-turn-trace`)
+   → the kebab display contract the SHARED projections consume
+   (`vis/coalesce-forms`, `vis/hide-tool-code?`, `vis/result-cards`): the
+   display-key set via `vis/form<-wire` (tolerant of snake_case keys +
+   stringified keyword values), plus the raw trace surfaces
+   (`:src`/`:stdout`/`:result`/`:error`) and the `:success?` flag layered
+   verbatim — the web twin of the TUI's restored-envelope projection."
+  [env]
+  (cond-> (merge
+            (vis/form<-wire env)
+            {:src (or (:src env) (:code env)) :stdout (:stdout env) :success? (nil? (:error env))})
+    (contains? env :result)
+    (assoc :result (:result env))
+
+    (contains? env :error)
+    (assoc :error (:error env))))
+
 (defn- trace-body
-  "The code/results/tools body of one finished turn's trace, read from
-   the engine DB - the same blocks the live stream showed. Returns the
-   `.trace-body` div (so an hx-get outerHTML swap drops it straight over
-   the lazy placeholder). A turn that was a DIRECT answer (no code/tools)
-   renders a short note instead of a blank body. nil only on read failure.
+  "The code/results/tools body of one finished turn's trace, read from the
+   gateway's CANONICAL turn-trace wire (`vis/gateway-turn-trace`) — the same
+   shape a remote client (TUI / mobile) receives, so the web holds no
+   in-process shape privilege and live == replay == every-channel by
+   construction. Returns the `.trace-body` div (so an hx-get outerHTML swap
+   drops it straight over the lazy placeholder). A turn that was a DIRECT
+   answer (no code/tools) renders a short note instead of a blank body. nil
+   only on read failure / no rows visible yet.
 
    Generated artifacts (matplotlib figures / other produced files) re-render
-   from the persisted `session_iteration_attachment` BYTES, not the live
-   `$TMPDIR/vis-mpl` temp file — so an image still paints after a restart
-   that wiped the temp dir (batch-loaded once for the whole turn to avoid an
-   N+1 per iteration)."
+   from the persisted attachment BYTES the gateway hydrates onto each
+   iteration's `:attachments`, not the live `$TMPDIR/vis-mpl` temp file — so
+   an image still paints after a restart that wiped the temp dir."
   [turn]
   (try
-    (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
-                               (not-empty (str (pick turn :turn_id))))
-                           parse-uuid)]
-      (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)
-            visible-iters (trace-visible-iterations iters)
-            atts-by-iter (into {}
-                               (map (fn [[iter-id atts]]
-                                      [iter-id (attachment-storage/hydrate-all atts)]))
-                               (vis/db-list-iterations-attachments (vis/db-info)
-                                                                   (keep :id visible-iters)))]
+    (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
+                       (not-empty (str (pick turn :turn_id))))]
+      (let [iters (vis/gateway-turn-trace (pick turn :session_id) tid)
+            visible-iters (trace-visible-iterations (vec iters))]
 
         (cond (empty? iters) nil
               (empty? visible-iters) [:div.trace-body
                                       [:p.empty "Direct answer — no tool calls or code this turn."]]
-              :else [:div.trace-body
-                     (for [it visible-iters]
-                       (list (block-thinking (:thinking it))
-                             (when (:error it) (block-error (:error it)))
-                             ;; The model's markdown prose returned ALONGSIDE its tool call —
-                             ;; its commentary, rendered as MARKDOWN ABOVE the code+result
-                             ;; ("here's what I did"), distinct from the dim thinking trace.
-                             ;; Placed BETWEEN thinking and code to match the live stream
-                             ;; (loop emits `:assistant-prose` before the code runs) — else a
-                             ;; refresh moved it below the code and it read as missing.
-                             (block-prose (:assistant-prose it))
-                             ;; Per form: the raw code the model wrote, then what it PRINTED
-                             ;; (the single display surface), then any error. No op cards,
-                             ;; no return-value blobs — bare values never reach context.
-                             ;; Adjacent coalescable native cards fold via shared
-                             ;; `vis/coalesce-forms` (the SAME projection the TUI applies):
-                             ;; same-file cat/patch become one multi-span/multi-diff card,
-                             ;; and per-file format_code acks become one roll-up card.
-                             (for [form (vis/coalesce-forms (remove engine-empty-iteration-form?
-                                                              (or (:forms it) [])))]
-                               (list (when-let [src (:src form)]
-                                       (when-not (or (str/blank? (str src))
-                                                     (engine-chrome-form? form)
-                                                     (vis/hide-tool-code? form))
-                                         (block-code src)))
-                                     (block-result (:result form) form true)
-                                     (when (:error form) (block-error (:error form)))))
-                             ;; Produced artifacts (figures/files) restored from DB
-                             ;; bytes — durable across a restart, unlike the temp fence.
-                             (keep attachment->figure (get atts-by-iter (str (:id it))))))])))
+              :else
+              [:div.trace-body
+               (for [it visible-iters]
+                 (list (block-thinking (:thinking it))
+                       (when (:error it) (block-error (:error it)))
+                       ;; The model's markdown prose returned ALONGSIDE its tool call —
+                       ;; its commentary, rendered as MARKDOWN ABOVE the code+result
+                       ;; ("here's what I did"), distinct from the dim thinking trace.
+                       ;; Placed BETWEEN thinking and code to match the live stream
+                       ;; (loop emits `:assistant-prose` before the code runs) — else a
+                       ;; refresh moved it below the code and it read as missing.
+                       (block-prose (:assistant_prose it))
+                       ;; Per form: the raw code the model wrote, then what it PRINTED
+                       ;; (the single display surface), then any error. Each wire
+                       ;; envelope is projected through `wire-env->form` so the shared
+                       ;; projections below see the canonical display contract.
+                       ;; Adjacent coalescable native cards fold via shared
+                       ;; `vis/coalesce-forms` (the SAME projection the TUI applies):
+                       ;; same-file cat/patch become one multi-span/multi-diff card,
+                       ;; and per-file format_code acks become one roll-up card.
+                       (for [form (vis/coalesce-forms (into []
+                                                            (comp (remove
+                                                                    engine-empty-iteration-form?)
+                                                                  (map wire-env->form))
+                                                            (or (:forms it) [])))]
+                         (list (when-let [src (:src form)]
+                                 (when-not (or (str/blank? (str src))
+                                               (engine-chrome-form? form)
+                                               (vis/hide-tool-code? form))
+                                   (block-code src)))
+                               (block-result (:result form) form true)
+                               (when (:error form) (block-error (:error form)))))
+                       ;; Produced artifacts (figures/files) restored from the gateway-
+                       ;; hydrated bytes — durable across a restart, unlike the temp fence.
+                       (keep attachment->figure (:attachments it))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy
@@ -1475,10 +1494,9 @@
     (let [sid (pick turn :session_id)
           status (str (pick turn :status))
           raw (pick turn :iteration_count)
-          visible-count (some-> (parse-uuid tid)
-                                (->> (vis/db-list-session-turn-iterations (vis/db-info)))
-                                trace-visible-iterations
-                                count)
+          visible-count (try (when-let [iters (vis/gateway-turn-trace sid tid)]
+                               (count (trace-visible-iterations (vec iters))))
+                             (catch Throwable _ nil))
           n (cond (some? visible-count) visible-count
                   (= 1 raw) 1
                   (number? raw) raw
@@ -4244,7 +4262,12 @@
    placeholder via hx-swap=outerHTML, so collapsed trace costs ~0 bytes
    on the initial page until the user expands it."
   [request]
-  (let [tid (get-in request [:path-params :tid])]
+  (let [sid
+        (get-in request [:path-params :sid])
+
+        tid
+        (get-in request [:path-params :tid])]
+
     (html-ok
       (html (or
               ;; The completion event can reach Safari before the gateway has made
@@ -4254,7 +4277,7 @@
               (let [deadline (+ (System/currentTimeMillis) 3000)]
                 (loop []
 
-                  (or (trace-body {:turn_id tid})
+                  (or (trace-body {:session_id sid :turn_id tid})
                       (when (< (System/currentTimeMillis) deadline) (Thread/sleep 100) (recur)))))
               ;; Empty/failed read (e.g. starved by a concurrent live-stream
               ;; write). Keep the lazy trigger so re-opening retries instead
@@ -5472,17 +5495,19 @@
     {:process process :url (deref url-promise 30000 nil)}))
 
 (defn channel-main
-  "`vis channels web` ensures the detached gateway daemon is running (UI routes
-   are auto-mounted in that daemon because this namespace is on the extension
-   classpath), prints the /ui address, and parks as a thin client. The command no
-   longer starts/stops an in-process engine; killing this wrapper only releases
-   its client lease."
+  "`vis channels web` ensures the detached gateway daemon is running AND
+   actually serving `/ui` (the routes are auto-mounted in that daemon
+   because this namespace is on the extension classpath; if it attached to a
+   stale daemon that lacks them, `gateway-ensure-serving!` respawns a fresh
+   one from this process). Prints the /ui address, then parks as a thin
+   client. The command no longer starts/stops an in-process engine; killing
+   this wrapper only releases its client lease."
   [args]
   (let [cloudflared?
         (boolean (some #{"--cloudflared"} args))
 
         {:keys [host port secret]}
-        (vis/gateway-ensure!)
+        (vis/gateway-ensure-serving! "/ui")
 
         {:keys [require_token]}
         (vis/gateway-daemon-status)]

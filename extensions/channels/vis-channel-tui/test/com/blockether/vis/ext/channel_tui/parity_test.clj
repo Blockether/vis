@@ -10,6 +10,7 @@
    the two paths ever diverge in scope / merged code / status / duration /
    error, this fails and BLOCKS any UX change."
   (:require [com.blockether.vis.ext.channel-tui.chat]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.iteration :as iteration]
             [com.blockether.vis.internal.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -49,18 +50,21 @@
 
 (defn- resume-entry
   "Project a persisted iteration row with one proof envelope carrying the
-   shared printed output — the resume counterpart of the live fence."
+   shared printed output — the resume counterpart of the live fence. The row
+   passes through `wire/canonical` exactly like the real gateway transcript
+   facade, so parity is asserted against the ONE shape a channel actually
+   receives (in-process or over HTTP alike)."
   []
   (it->iteration-entry {:produced-answer? false :last-iteration-id :other}
-                       {:id :it-1
-                        :position 1
-                        :code fence-code
-                        :duration-ms 812
-                        :forms [{:scope "t7/i3/f1"
-                                 :tag :observation
-                                 :src fence-code
-                                 :stdout fence-stdout
-                                 :duration-ms 812}]}))
+                       (wire/canonical {:id :it-1
+                                        :position 1
+                                        :code fence-code
+                                        :duration-ms 812
+                                        :forms [{:scope "t7/i3/f1"
+                                                 :tag :observation
+                                                 :src fence-code
+                                                 :stdout fence-stdout
+                                                 :duration-ms 812}]})))
 
 (defdescribe iteration-entry-parity-test
              (it "live and resume produce an equal canonical iteration-entry for the same fixture"

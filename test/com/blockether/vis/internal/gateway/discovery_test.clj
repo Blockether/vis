@@ -79,17 +79,19 @@
         argv
         (disco/spawn-argv {:db "/x/vis.db" :port 7890 :host "127.0.0.1" :base base})]
 
-    (testing "--db is a serve flag"
-      (is (< (.indexOf argv "serve") (.indexOf argv "--db")))
+    (testing "--db is a start flag"
+      (is (< (.indexOf argv "start") (.indexOf argv "--db")))
       (is (= "/x/vis.db" (nth argv (inc (.indexOf argv "--db"))))))
-    (testing "serve flags follow the subcommand"
-      (is (< (.indexOf argv "serve") (.indexOf argv "--port")))
+    (testing "start flags follow the `gateway start` subcommand"
+      (is (< (.indexOf argv "gateway") (.indexOf argv "start")))
+      (is (< (.indexOf argv "start") (.indexOf argv "--port")))
       (is (= "7890" (nth argv (inc (.indexOf argv "--port"))))))
     (is (= "/opt/vis" (first argv))))
   (testing "memory db omits --db"
     (let [argv (disco/spawn-argv {:db :memory :port 1 :base ["v"]})]
       (is (= -1 (.indexOf argv "--db")))
-      (is (some #{"serve"} argv))))
+      (is (some #{"gateway"} argv))
+      (is (some #{"start"} argv))))
   (testing "require-token? adds the boolean flag"
     (is (some #{"--require-token"}
               (disco/spawn-argv {:db "/x.db" :require-token? true :base ["v"]})))))

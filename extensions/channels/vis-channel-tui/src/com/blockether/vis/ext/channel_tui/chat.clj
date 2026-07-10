@@ -6,7 +6,6 @@
    Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -56,6 +55,17 @@
   [b]
   (boolean (or (:vis/structurally-silent? b) (= "vis_silent" (:result b)))))
 
+(defn- restored-tool-envelope?
+  "True when a restored form's `:result` is a tool-result ENVELOPE after the
+   canonical wire hop (`wire/canonical` at the gateway transcript facade):
+   keyword identity values arrive as strings, so the spec-strict
+   `extension/tool-result?` can no longer match — recognize the envelope
+   STRUCTURALLY instead, by the `:success?` flag plus the `:symbol`/`:metadata`
+   identity `envelope-of` always stamps. Also true for a raw in-process
+   envelope, which carries the same keys."
+  [x]
+  (and (map? x) (contains? x :success?) (or (contains? x :symbol) (contains? x :metadata))))
+
 (defn- form-result-kind
   "Mirror of `progress/form-result-kind` for restored sessions: a
    form is `:tool`-kind whenever it touched the tool surface, even
@@ -65,7 +75,7 @@
    is plain data."
   [{:keys [result error channel]}]
   (cond error :error
-        (extension/tool-result? result) :tool
+        (restored-tool-envelope? result) :tool
         (seq channel) :tool
         :else :value))
 
@@ -73,20 +83,22 @@
   "Project tool-result envelope to the small detail map the TUI labels
    consume. Returns nil for non-tool results.
 
-   Restored forms persisted via `(def x (tool …))` shape have their
-   `:result` deref'd to the inner value before persistence (Python
-   binding semantics), so `tool-result?` returns false and the envelope path
-   below would never fire. Fall back to the channel slice: every
-   sink entry now carries `:symbol` / `:tag` (`write-sink-entries!`
-   stamps them from the originating `sym-entry`). Use the FIRST
-   successful entry's tag/symbol to label the bubble — same shape
-   the live path produces, just sourced from persistance."
+   The transcript arrives in the canonical wire shape (`wire/canonical`
+   at the gateway facade): envelope metadata keys read as snake keywords
+   and keyword identities as strings. Restored forms persisted via
+   `(def x (tool …))` shape have their `:result` deref'd to the inner
+   value before persistence (Python binding semantics), so the envelope
+   check returns false and the path below would never fire. Fall back to
+   the channel slice: every sink entry carries `:symbol` / `:tag`
+   (`write-sink-entries!` stamps them from the originating `sym-entry`).
+   Use the FIRST successful entry's tag/symbol to label the bubble —
+   same shape the live path produces, just sourced from persistance."
   [{:keys [result channel]}]
-  (cond (extension/tool-result? result) (let [metadata (:metadata result)]
-                                          (merge (select-keys result [:symbol :tag])
-                                                 (select-keys metadata
-                                                              [:spec :paths :hit-count :truncated-by
-                                                               :command :cwd :target])))
+  (cond (restored-tool-envelope? result)
+        (let [metadata (:metadata result)]
+          (merge (select-keys result [:symbol :tag])
+                 (select-keys metadata
+                              [:spec :paths :hit_count :truncated_by :command :cwd :target])))
         (seq channel) (let [first-ok (or (first (filter :success? channel)) (first channel))]
                         (cond-> {}
                           (:symbol first-ok)
@@ -109,9 +121,9 @@
    the derived `:duration-ms`/`:channel`, the computed op projections
    (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
-  (merge (vis/form->display block)
+  (merge (vis/form<-wire block)
          {:started-at-ms nil
-          :duration-ms (or (:duration-ms block) 0)
+          :duration-ms (or (:duration_ms block) 0)
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
           ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
           :channel (vec (:channel block))
@@ -131,7 +143,7 @@
           ;; (set_session_title) — `structurally-silent-block?`. Parity with the
           ;; live path; `done`'s vis_answer block is elided via answer-position.
           :silent? (and (nil? (:error block))
-                        (or (:vis/silent block) (structurally-silent-block? block)))}))
+                        (or (:silent block) (structurally-silent-block? block)))}))
 
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
@@ -161,11 +173,11 @@
         ;; nothing on restore.
         fallback-blocks
         [(cond-> {:position 0 :code iter-code}
-           (some? (:render-segments it))
-           (assoc :render-segments (:render-segments it))
+           (some? (:render_segments it))
+           (assoc :render-segments (:render_segments it))
 
-           (some? (:duration-ms it))
-           (assoc :duration-ms (:duration-ms it))
+           (some? (:duration_ms it))
+           (assoc :duration-ms (:duration_ms it))
 
            (some? (:result it))
            (assoc :result (:result it))
@@ -190,7 +202,7 @@
             ;; them on resume; the canonical projection can't drift. `:code` (env
             ;; stores source under `:src`), `:scope`/`:tag`, and the computed
             ;; `:render-segments` are layered on top.
-            (cond-> (merge (vis/form->display env)
+            (cond-> (merge (vis/form<-wire env)
                            {:position idx
                             :code src
                             ;; `:scope` ("tN/iM/fK") preserves the per-form
@@ -206,8 +218,8 @@
               (seq segments)
               (assoc :render-segments segments)
 
-              (some? (:duration-ms env))
-              (assoc :duration-ms (:duration-ms env)))))
+              (some? (:duration_ms env))
+              (assoc :duration-ms (:duration_ms env)))))
 
         all-blocks
         (if (seq envelopes) (vec (map-indexed envelope->block envelopes)) fallback-blocks)
@@ -225,13 +237,13 @@
         preflight-idxs
         (into #{}
               (keep-indexed (fn [i b]
-                              (when (or (:vis/preflight? b) (preflight-source? b)) i)))
+                              (when (or (:preflight? b) (preflight-source? b)) i)))
               all-blocks)
 
         answer-idx
         (when answer-here?
           (let [idx
-                (or (:answer-position it) (dec (count all-blocks)))
+                (or (:answer_position it) (dec (count all-blocks)))
 
                 block
                 (when (and (integer? idx) (not (neg? idx)) (< idx (count all-blocks)))
@@ -259,7 +271,7 @@
         ;; non-answer form remains visible after `(done ...)` elision so
         ;; restored green footers still match live bubbles.
         duration-fallback-idxs
-        (when (some? (:duration-ms it))
+        (when (some? (:duration_ms it))
           (into []
                 (keep-indexed (fn [idx b]
                                 (let [src (some-> (:code b)
@@ -273,7 +285,7 @@
 
         visible
         (if (= 1 (count duration-fallback-idxs))
-          (update visible (first duration-fallback-idxs) assoc :duration-ms (:duration-ms it))
+          (update visible (first duration-fallback-idxs) assoc :duration-ms (:duration_ms it))
           visible)
 
         ;; One restored block PER persisted form envelope - parity with the
@@ -293,7 +305,7 @@
     (iteration/canonicalize {:position (when-let [p (:position it)]
                                          (dec (long p)))
                              :thinking (visible-thinking (:thinking it))
-                             :provider-fallbacks (:llm-routing-trace it)
+                             :provider-fallbacks (:llm_routing_trace it)
                              :forms forms})))
 
 (defn user-message
@@ -412,13 +424,21 @@
    Assistant messages include the code execution trace from all iterations."
   [session-id]
   (try
-    (let [turns (vis/gateway-transcript session-id)]
+    (let [turns (->> (vis/gateway-transcript session-id)
+                     ;; Drop the turn currently IN FLIGHT — the caller ATTACHES to it
+                     ;; and streams it live (see resume-session / :attach-running-turn),
+                     ;; so rebuilding its half-written `:running` row here would double
+                     ;; the bubble (once frozen from the DB, once live).
+                     (remove #(contains? #{:running "running"} (:status %))))]
       (into
         []
         (mapcat
           (fn [q]
-            (let [user-message (assoc (user-message (or (:user-request q) "")
-                                                    (or (:created-at q) (java.util.Date.)))
+            (let [user-message (assoc (user-message (or (:user_request q) "")
+                                                    (or (some-> (:created_at q)
+                                                                long
+                                                                (java.util.Date.))
+                                                        (java.util.Date.)))
                                  ;; Reloaded/persisted turns carry no :client-turn-id, so without this
                                  ;; `turn-identity` returns nil and every `[Pasted #N]` disclosure collapses
                                  ;; to the same unscoped node-id (`user:paste:dN`) — clicking one paste would
@@ -429,7 +449,7 @@
                   ;; `:prior-outcome :cancelled` is how the
                   ;; persistance layer marks an aborted turn (the
                   ;; sweep + cancel paths both write that value).
-                  cancelled? (= :cancelled (:prior-outcome q))
+                  cancelled? (= "cancelled" (str (:prior_outcome q)))
                   ;; Persistence stores the raw Markdown source
                   ;; the model wrote in `(done {:answer ...})`.
                   ;; Channels derive IR via `vis/markdown->ir` at
@@ -438,7 +458,7 @@
                   ;; persist with no answer when the user aborts
                   ;; before the first iteration; show an explicit
                   ;; status line instead of a blank gray Vis bubble.
-                  answer-md (let [stored (or (:answer-markdown q) "")]
+                  answer-md (let [stored (or (:answer_markdown q) "")]
                               (if (and cancelled? (str/blank? stored)) "Cancelled by user." stored))
                   answer-ir (if (str/blank? answer-md) empty-ir (vis/markdown->ir answer-md))
                   model (:model q)
@@ -448,26 +468,26 @@
                   ;; are subsets. Render layer formats whichever it needs;
                   ;; absent keys stay absent.
                   tokens (cond-> {}
-                           (:input-tokens q)
-                           (assoc :input (:input-tokens q))
+                           (:input_tokens q)
+                           (assoc :input (:input_tokens q))
 
-                           (:input-regular-tokens q)
-                           (assoc :input-regular (:input-regular-tokens q))
+                           (:input_regular_tokens q)
+                           (assoc :input-regular (:input_regular_tokens q))
 
-                           (:input-cache-read-tokens q)
-                           (assoc :cached (:input-cache-read-tokens q))
+                           (:input_cache_read_tokens q)
+                           (assoc :cached (:input_cache_read_tokens q))
 
-                           (:input-cache-write-tokens q)
-                           (assoc :cache-created (:input-cache-write-tokens q))
+                           (:input_cache_write_tokens q)
+                           (assoc :cache-created (:input_cache_write_tokens q))
 
-                           (:output-tokens q)
-                           (assoc :output (:output-tokens q))
+                           (:output_tokens q)
+                           (assoc :output (:output_tokens q))
 
-                           (:output-reasoning-tokens q)
-                           (assoc :reasoning (:output-reasoning-tokens q)))
-                  iteration-count (:iteration-count q)
-                  duration-ms (:duration-ms q)
-                  cost (when-let [total-cost (or (:total-cost q) (:cost q))]
+                           (:output_reasoning_tokens q)
+                           (assoc :reasoning (:output_reasoning_tokens q)))
+                  iteration-count (:iteration_count q)
+                  duration-ms (:duration_ms q)
+                  cost (when-let [total-cost (or (:total_cost q) (:cost q))]
                          (cond-> {:total-cost total-cost}
                            (:provider q)
                            (assoc :provider (:provider q))
@@ -486,17 +506,17 @@
                   last-it (last turn-iterations)
                   last-iteration-id (:id last-it)
                   llm-routing (cond-> {}
-                                (:llm-selected last-it)
-                                (assoc :selected (:llm-selected last-it))
+                                (:llm_selected last-it)
+                                (assoc :selected (:llm_selected last-it))
 
-                                (:llm-actual last-it)
-                                (assoc :actual (:llm-actual last-it))
+                                (:llm_actual last-it)
+                                (assoc :actual (:llm_actual last-it))
 
-                                (contains? last-it :llm-fallback?)
-                                (assoc :fallback? (:llm-fallback? last-it))
+                                (contains? last-it :llm_fallback?)
+                                (assoc :fallback? (:llm_fallback? last-it))
 
-                                (seq (:llm-routing-trace last-it))
-                                (assoc :trace (:llm-routing-trace last-it)))
+                                (seq (:llm_routing_trace last-it))
+                                (assoc :trace (:llm_routing_trace last-it)))
                   ;; A non-blank Markdown source signals a real
                   ;; final answer; empty / nil-only turns keep
                   ;; their assistant message but elide the
@@ -509,7 +529,8 @@
                   ;; trace made resumed sessions look different from live.
                   ;; Suppress it so resume matches live: just the answer.
                   slash-turn? (some (fn [it]
-                                      (some #(#{:user-slash :user-shell} (:tag %)) (:forms it)))
+                                      (some #(#{"user-slash" "user-shell"} (str (:tag %)))
+                                            (:forms it)))
                                     turn-iterations)
                   trace (if slash-turn?
                           []
@@ -518,48 +539,51 @@
                                               {:produced-answer? produced-answer?
                                                :last-iteration-id last-iteration-id}))
                                 turn-iterations))
-                  assistant-message
-                  (cond-> (assistant-message answer-ir (or (:created-at q) (java.util.Date.)))
-                    true
-                    (assoc :session-turn-id (:id q))
+                  assistant-message (cond-> (assistant-message answer-ir
+                                                               (or (some-> (:created_at q)
+                                                                           long
+                                                                           (java.util.Date.))
+                                                                   (java.util.Date.)))
+                                      true
+                                      (assoc :session-turn-id (:id q))
 
-                    (seq trace)
-                    (assoc :traces
-                      trace :ir
-                      answer-ir)
+                                      (seq trace)
+                                      (assoc :traces
+                                        trace :ir
+                                        answer-ir)
 
-                    model
-                    (assoc :model model)
+                                      model
+                                      (assoc :model model)
 
-                    (:selected llm-routing)
-                    (assoc :llm-selected (:selected llm-routing))
+                                      (:selected llm-routing)
+                                      (assoc :llm-selected (:selected llm-routing))
 
-                    (:actual llm-routing)
-                    (assoc :llm-actual (:actual llm-routing))
+                                      (:actual llm-routing)
+                                      (assoc :llm-actual (:actual llm-routing))
 
-                    (contains? llm-routing :fallback?)
-                    (assoc :llm-fallback? (:fallback? llm-routing))
+                                      (contains? llm-routing :fallback?)
+                                      (assoc :llm-fallback? (:fallback? llm-routing))
 
-                    (seq (:trace llm-routing))
-                    (assoc :llm-routing-trace (:trace llm-routing))
+                                      (seq (:trace llm-routing))
+                                      (assoc :llm-routing-trace (:trace llm-routing))
 
-                    iteration-count
-                    (assoc :iteration-count iteration-count)
+                                      iteration-count
+                                      (assoc :iteration-count iteration-count)
 
-                    duration-ms
-                    (assoc :duration-ms duration-ms)
+                                      duration-ms
+                                      (assoc :duration-ms duration-ms)
 
-                    cost
-                    (assoc :cost cost)
+                                      cost
+                                      (assoc :cost cost)
 
-                    (seq tokens)
-                    (assoc :tokens tokens)
+                                      (seq tokens)
+                                      (assoc :tokens tokens)
 
-                    cancelled?
-                    (assoc :status :cancelled)
+                                      cancelled?
+                                      (assoc :status :cancelled)
 
-                    slash-turn?
-                    (assoc :slash? true))]
+                                      slash-turn?
+                                      (assoc :slash? true))]
 
               [user-message assistant-message])))
         turns))
@@ -681,13 +705,21 @@
       nil)))
 
 (defn- create-session*
-  [_provider-config {:keys [workspace-id root]}]
+  [_provider-config {:keys [workspace-id root prewarm?]}]
   (let [{:keys [id]} (vis/gateway-create-session! (cond-> {:channel :tui}
                                                     workspace-id
                                                     (assoc :workspace-id workspace-id)
 
                                                     root
-                                                    (assoc :root root)))]
+                                                    (assoc :root root)
+
+                                                    ;; Warm-pool builds are UNCLAIMED: they must
+                                                    ;; not surface in the cross-channel session
+                                                    ;; list until a tab actually uses one (the
+                                                    ;; first turn claims the soul). Real new-tab
+                                                    ;; builds (pool miss) omit this and are claimed.
+                                                    prewarm?
+                                                    (assoc :prewarm true)))]
     {:id (java.util.UUID/fromString id) :history []}))
 
 (defn- pop-prewarmed!
@@ -726,7 +758,7 @@
         (vis/worker-future
           "tui-session-prewarm"
           (fn []
-            (try (let [session (create-session* provider-config nil)]
+            (try (let [session (create-session* provider-config {:prewarm? true})]
                    (swap! prewarmed-sessions conj session))
                  (catch Throwable e
                    (t/log! {:level :warn
@@ -834,10 +866,28 @@
   "Resume an existing gateway-managed session by id — ANY channel, so a
    conversation started in the web (or CLI) resumes here too.
    Accepts full UUID or unambiguous short UUID prefix.
-   Returns `{:id UUID :history [...]}` with persisted messages."
+   Returns `{:id UUID :history [...]}` with persisted messages. When a turn is
+   IN FLIGHT (started here, in the web, or a sibling process) the map ALSO
+   carries `:status`, `:current-turn-id`, and the running turn's
+   `:running-request` text, so the caller can ATTACH and stream it live (see
+   state/:attach-running-turn) instead of showing frozen history."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
-    (when (vis/gateway-soul resolved-id) {:id resolved-id :history (rebuild-history resolved-id)})))
+    (when-let [soul (vis/gateway-soul resolved-id)]
+      (let [tid (:current_turn_id soul)
+            running-request
+            (when tid
+              (some (fn [t]
+                      (when (and (= "running" (str (:status t))) (= (str tid) (str (:turn_id t))))
+                        (:request t)))
+                    (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))))]
+
+        (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (:status soul)}
+          tid
+          (assoc :current-turn-id tid)
+
+          (some? running-request)
+          (assoc :running-request running-request))))))
 
 (defn turn!
   "Submit a user request through the canonical in-process gateway. Blocking.
