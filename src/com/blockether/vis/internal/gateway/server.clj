@@ -33,6 +33,7 @@
             [ring.middleware.multipart-params.byte-array :as multipart-ba]
             [taoensso.telemere :as tel])
   (:import [java.io OutputStream]
+           [java.net BindException]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
@@ -43,6 +44,11 @@
 (def ^:private HEARTBEAT_MS 15000)
 
 (defonce ^:private server-state (atom nil))
+
+;; Delivered by `stop!`; `serve-main!` parks on it so a stopped daemon process
+;; EXITS instead of idling forever. In-process callers (tests, REPL) deliver
+;; harmlessly — nothing is parked on the latch there.
+(defonce ^:private serve-exit (promise))
 
 (defn- live-client-ids
   "Client leases that still count for daemon refcount. A lease with a recorded pid
@@ -848,6 +854,33 @@
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))
 
+(defn- bind-failure?
+  "True when `t`'s cause chain carries a port-already-bound `BindException` —
+   the signature of a successor daemon racing a predecessor that has not yet
+   released the port during a close-then-reopen handoff."
+  [^Throwable t]
+  (loop [c t]
+    (cond (nil? c) false
+          (instance? BindException c) true
+          :else (recur (.getCause c)))))
+
+(defn- start-jetty!
+  "Run Jetty, tolerating a TRANSIENT bind failure until `deadline-ms`. A daemon
+   spawned right after its predecessor stopped can find the port still held while
+   the old Jetty finishes draining the exiting client's parked SSE connection;
+   dying here would leave the client's `await-registry!` to time out with
+   \"gateway daemon did not become ready\". Instead we back off and retry until
+   the port frees or the deadline passes, then let the original failure surface."
+  [handler opts deadline-ms]
+  (loop []
+
+    (let [outcome (try {:server (jetty/run-jetty handler opts)}
+                       (catch Throwable t
+                         (if (and (bind-failure? t) (< (System/currentTimeMillis) deadline-ms))
+                           ::retry
+                           (throw t))))]
+      (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
+
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -914,13 +947,12 @@
          (install-toggle-persistence!)
 
          server
-         (try (jetty/run-jetty serving-handler
-                               {:port port
-                                :host host
-                                :join? false
-                                :virtual-threads? true
-                                :send-server-version? false})
-              (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
+         (try
+           (start-jetty!
+             serving-handler
+             {:port port :host host :join? false :virtual-threads? true :send-server-version? false}
+             (+ (System/currentTimeMillis) 6000))
+           (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
@@ -945,6 +977,16 @@
   "Stop the gateway server if running. Idempotent."
   []
   (when-let [{:keys [^Server server db]} @server-state]
+    ;; Release the listening socket FIRST so a successor daemon racing this
+    ;; close-then-reopen handoff can bind the port immediately. The slow reap
+    ;; below (killing every session's shell_bg children + REPLs) can eat
+    ;; seconds; when `.stop` ran AFTER it, the old process kept the port in
+    ;; LISTEN through the whole reap, the successor's bind-retry AND the
+    ;; client's `await-registry!` both timed out, and the first reopen died
+    ;; with "gateway daemon did not become ready". SO_REUSEADDR can't rescue
+    ;; this — it never lets a bind win over an ACTIVE listener, only a closed
+    ;; one, so the fix is to close the socket before the reap, not to retry.
+    (try (.stop server) (catch Throwable _ nil))
     ;; Kill every session's background resources (shell_bg children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
     ;; process; once it exits the children reparent to init and leak.
@@ -952,7 +994,11 @@
     (try (discovery/deregister-self! db) (catch Throwable _ nil))
     (reset! server-state nil)
     (reset! live-app nil)
-    (try (.stop server) (catch Throwable _ nil)))
+    ;; Unpark `serve-main!` so the daemon process ends after a refcount/admin
+    ;; stop. Without this the JVM stayed parked on a dead promise: every TUI
+    ;; close-then-reopen leaked one idle daemon process (port + registry were
+    ;; released, but nothing terminated the process).
+    (deliver serve-exit true))
   nil)
 
 (defn running? [] (some? @server-state))
@@ -972,4 +1018,5 @@
       (println (str "bearer token: " token-file))
       (println "auth: disabled (loopback default; pass --require-token to enable)"))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
-    @(promise)))
+    @serve-exit
+    (System/exit 0)))
