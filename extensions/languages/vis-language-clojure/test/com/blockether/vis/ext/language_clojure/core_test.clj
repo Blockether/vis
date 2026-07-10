@@ -122,31 +122,35 @@
 
 (defdescribe repl-resource-logs-test
              (it "registers managed nREPL resources with tail-able launcher logs"
-                 (let [dir (tmp-dir)
-                       sid (str "test-nrepl-logs-" (System/nanoTime))
-                       rid (repl-manager/id-of (.getAbsolutePath dir))
-                       log (io/file dir "nrepl.log")]
-                   (try
-                     (spit log "booting\nready\n")
-                     (core/register-repl-resource!
+                 (let [dir
+                       (tmp-dir)
+
                        sid
-                       (.getAbsolutePath dir)
-                       ["dev"]
-                       {"result" "started"
-                        "id" rid
-                        "dir" (.getAbsolutePath dir)
-                        "status" "up"
-                        "port" 5555
-                        "pid" 12345
-                        "aliases" ["dev"]
-                        "log" (.getAbsolutePath log)})
-                     (let [r (vis/get-resource sid rid)]
-                       (expect (= true (get r "can_logs")))
-                       (expect (= (.getAbsolutePath log) (get-in r ["detail" "log"])))
-                       (expect (= ["booting" "ready"] (vis/resource-logs sid rid))))
-                     (finally
-                       (vis/unregister-resource! sid rid)
-                       (cleanup dir))))))
+                       (str "test-nrepl-logs-" (System/nanoTime))
+
+                       rid
+                       (repl-manager/id-of (.getAbsolutePath dir))
+
+                       log
+                       (io/file dir "nrepl.log")]
+
+                   (try (spit log "booting\nready\n")
+                        (core/register-repl-resource! sid
+                                                      (.getAbsolutePath dir)
+                                                      ["dev"]
+                                                      {"result" "started"
+                                                       "id" rid
+                                                       "dir" (.getAbsolutePath dir)
+                                                       "status" "up"
+                                                       "port" 5555
+                                                       "pid" 12345
+                                                       "aliases" ["dev"]
+                                                       "log" (.getAbsolutePath log)})
+                        (let [r (vis/get-resource sid rid)]
+                          (expect (= true (get r "can_logs")))
+                          (expect (= (.getAbsolutePath log) (get-in r ["detail" "log"])))
+                          (expect (= ["booting" "ready"] (vis/resource-logs sid rid))))
+                        (finally (vis/unregister-resource! sid rid) (cleanup dir))))))
 
 (defdescribe combined-format-test
              (it "format does BOTH parinfer delimiter repair AND cljfmt"
@@ -477,16 +481,16 @@
         ;; the failing class from session 9c829d10: the replacement line is
         ;; locally balanced but carries a stray `]` — only the FULL file
         ;; shows the imbalance, so fragment repair is a no-op on it.
-        (let [before-a
-              "(def entries\n  [])\n"
+        (let [before-a "(def entries\n  [])\n"
               before-b "(def other 0)\n"
               broken-candidate
               "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
               clean-candidate "(def other 1)\n"
               refusal {:success? false
                        :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
-                       :metadata {:candidate-plans [{:path "a.clj" :before before-a :after broken-candidate}
-                                                    {:path "b.clj" :before before-b :after clean-candidate}]
+                       :metadata {:candidate-plans
+                                  [{:path "a.clj" :before before-a :after broken-candidate}
+                                   {:path "b.clj" :before before-b :after clean-candidate}]
                                   :broken-paths ["a.clj"]}}
               calls (atom 0)
               out (core/clj-patch-no-fail-around
@@ -511,32 +515,35 @@
           (expect (= [{:path "a.clj" :before before-a} {:path "b.clj" :before before-b}]
                      (get-in out [:metadata :file-befores]))))
         (finally (cleanup root)))))
-  (it "surfaces the ORIGINAL refusal when repair would introduce lint errors"
-      (let [root (tmp-dir)]
-        (try
-          ;; This is the git.clj failure mode: the model's replacement closed
-          ;; `:require` early, leaving old require vectors as orphan forms.
-          ;; Parinfer can make that parse by absorbing the orphan vectors back
-          ;; into `:require`, but that produces duplicate requires/conflicting
-          ;; aliases — a semantic regression, not a safe delimiter repair.
-          (let [before "(ns demo.core\n  (:require [clojure.string :as str]))\n\n(defn blank? [s]\n  (str/blank? s))\n"
-                broken-candidate "(ns demo.core\n  (:require [clojure.string :as str]\n            [clojure.set :as set])\n            [clojure.string :as str])\n\n(defn blank? [s]\n  (str/blank? s))\n"
-                refusal {:success? false
-                         :error {:reason :syntax-error :message "orig"}
-                         :metadata {:candidate-plans [{:path "x.clj"
-                                                       :before before
-                                                       :after broken-candidate}]
-                                    :broken-paths ["x.clj"]}}
-                out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                                   :patch
-                                                   [[{:path "x.clj"}]]
-                                                   (fn [_]
-                                                     refusal))]
+  (it
+    "surfaces the ORIGINAL refusal when repair would introduce lint errors"
+    (let [root (tmp-dir)]
+      (try
+        ;; This is the git.clj failure mode: the model's replacement closed
+        ;; `:require` early, leaving old require vectors as orphan forms.
+        ;; Parinfer can make that parse by absorbing the orphan vectors back
+        ;; into `:require`, but that produces duplicate requires/conflicting
+        ;; aliases — a semantic regression, not a safe delimiter repair.
+        (let
+          [before
+           "(ns demo.core\n  (:require [clojure.string :as str]))\n\n(defn blank? [s]\n  (str/blank? s))\n"
+           broken-candidate
+           "(ns demo.core\n  (:require [clojure.string :as str]\n            [clojure.set :as set])\n            [clojure.string :as str])\n\n(defn blank? [s]\n  (str/blank? s))\n"
+           refusal {:success? false
+                    :error {:reason :syntax-error :message "orig"}
+                    :metadata {:candidate-plans
+                               [{:path "x.clj" :before before :after broken-candidate}]
+                               :broken-paths ["x.clj"]}}
+           out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
+                                              :patch
+                                              [[{:path "x.clj"}]]
+                                              (fn [_]
+                                                refusal))]
 
-            (expect (false? (:success? out)))
-            (expect (= "orig" (get-in out [:error :message])))
-            (expect (not (.exists (io/file root "x.clj")))))
-          (finally (cleanup root)))))
+          (expect (false? (:success? out)))
+          (expect (= "orig" (get-in out [:error :message])))
+          (expect (not (.exists (io/file root "x.clj")))))
+        (finally (cleanup root)))))
   (it "surfaces the ORIGINAL refusal when a broken candidate is NOT delimiter-repairable"
       (let [root (tmp-dir)]
         (try

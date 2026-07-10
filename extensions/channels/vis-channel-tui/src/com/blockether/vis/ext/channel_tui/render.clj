@@ -1303,7 +1303,7 @@
           current-fg
           codes))
 
-(defn- paint-ansi-line!
+(defn paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
    ANSI foreground codes are translated to Lanterna foreground colors;
    `bg` is always controlled by Vis so success/running/error code
@@ -3570,14 +3570,42 @@
 
         (recur (conj acc [i entry]) (+ i run) (subvec remaining run))))))
 
+(defn- section-label-entry?
+  "A body row that is a whole-line **LABEL** heading (COMMAND / STATUS / STDOUT /
+   RESULT …): after its structural marker + indent the first visible glyph is the
+   bold sentinel. Used to reinstate exactly ONE separator row before each section."
+  [entry]
+  (let [line
+        (str (:line entry))
+
+        body
+        (or (second (split-structural-line-marker line)) line)]
+
+    (str/starts-with? (str/replace body #"^\s+" "") p/INLINE_BOLD_ON)))
+
 (defn- compact-tool-card-body-entries
-  "Drop glyph-less spacer/pad rows from native op-card bodies. Sectioned tool
-   bodies (REPL/GIT/SHELL) already carry explicit labels like RESULT/STDOUT;
-   markdown fence padding between those labels reads as empty gutters in the TUI."
+  "Reflow a native op-card body (REPL/GIT/SHELL sections) for the TUI. The shared
+   markdown->entries pass emits DOUBLED blank rows around every code fence, so the
+   labelled sections collapse into one un-separated wall. Drop that fence padding,
+   then reinstate exactly ONE blank row before each **LABEL** section — gluing each
+   label to its own content — plus ONE trailing pad row so the card breathes."
   [entries]
-  (->> entries
-       (remove #(str/blank? (strip-paint-markers-line (:line %))))
-       vec))
+  (let [blank?
+        #(str/blank? (strip-paint-markers-line (:line %)))
+
+        pad
+        (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})
+
+        content
+        (into [] (remove blank?) entries)]
+
+    (if (empty? content)
+      []
+      (-> (reduce (fn [acc e]
+                    (if (and (seq acc) (section-label-entry? e)) (conj acc pad e) (conj acc e)))
+                  []
+                  content)
+          (conj pad)))))
 
 (defn- tool-card-entries
   "Render ONE op-card (`vis/result-card` descriptor) into TUI line entries: the tool
@@ -3628,11 +3656,12 @@
 
         entries
         (when ir
-          (tag-copy-block-body (vec (paste-aware-ir->entries ir
-                                                             (max 1 (- fill-w tool-output-indent-cols))
-                                                             (assoc opts
-                                                               :mode :channel
-                                                               :image-default-expanded? true)))
+          (tag-copy-block-body (vec (paste-aware-ir->entries
+                                      ir
+                                      (max 1 (- fill-w tool-output-indent-cols))
+                                      (assoc opts
+                                        :mode :channel
+                                        :image-default-expanded? true)))
                                node-id
                                body-text))]
 
@@ -4582,768 +4611,53 @@
                                (recur out prev-family (next xs))
                                (recur (conj! out e) f (next xs))))
                 :else (recur (conj! out e) nil (next xs))))))))
-(def ^:private groupable-tool-names
-  "Native tools whose consecutive PURE single-call iterations coalesce into ONE
-   collapsible band (GIT / SHELL RUN / RG / DELETE logs) — or, for `cat`, merge
-   into ONE deduped slice — instead of N separately-stacked op-cards. Only tools
-   whose repeated back-to-back calls read as one logical activity belong here: a
-   burst of `git` commands, a burst of `shell_run` commands, a burst of `rg`
-   searches, a burst of `delete`s, a run of `find_files` discoveries, a run of
-   `occurrences` symbol traces, a run of `cat` reads of the SAME file (which fold
-   into a single ▾ CAT card), and a run of edits by the SAME edit tool
-   (`struct_patch` / `patch` / `write`)."
-  #{"git" "shell_run" "rg" "delete" "find_files" "occurrences" "cat" "struct_patch" "patch"
-    "write"})
+(defn- mergeable-iteration-forms
+  "Forms of an iteration when it is a PLAIN tool iteration — has forms, carries no
+   iteration-level error / recap / provider-fallback, and no `:cards` block on any
+   form. Returns the forms vector, else nil.
 
-(defn- groupable-iteration-forms
-  "Every native-tool form of an iteration when it is a PURE run of the SAME
-   groupable tool (`groupable-tool-names`) — returns `[tool-name [forms…]]`, else
-   nil. A lone call yields a one-element vector; a parallel GATHER of N same-tool
-   calls fired in ONE iteration (e.g. two `rg` searches launched together) yields
-   an N-form vector, so they band exactly like N consecutive single-call
-   iterations would. NARRATION (a thinking badge / streamed prose) does NOT
-   disqualify: a narrated git/rg call still groups and its narration renders ABOVE
-   the band (see `render-iteration-entries`). `cat` is
-   excluded from the multi-form case (a multi-file gather is merged per-file by
-   `form/coalesce-forms`, never banded) — a lone cat still groups by file across
-   iterations. An iter-level error / recap / provider-fallback, a print-many
-   `:cards` block, a MIXED-tool iteration, or any non-tool form disqualifies it."
+   No tool-name whitelist and no same-tool requirement: ANY maximal run of
+   consecutive plain tool iterations (see `render-iteration-entries`) merges into
+   ONE flush-stacked bubble. NARRATION does not disqualify a run's HEAD — its
+   thinking / prose renders above the merged forms — but breaks the run on an
+   INTERIOR iteration so mid-burst commentary never floats out of place."
   [entry]
   (let [{:keys [forms recaps provider-fallbacks error]} entry]
-    (when (and (nil? error) (empty? recaps) (empty? provider-fallbacks) (seq forms))
-      (let [tns (mapv #(some-> (:vis/tool-name %)
-                               str)
-                      forms)
-            tn (first tns)]
+    (when (and (nil? error)
+               (empty? recaps)
+               (empty? provider-fallbacks)
+               (seq forms)
+               (every? #(empty? (:cards %)) forms))
+      (vec forms))))
 
-        (when (and tn
-                   (contains? groupable-tool-names tn)
-                   (apply = tns)
-                   (every? #(empty? (:cards %)) forms)
-                   (or (= 1 (count forms)) (not= "cat" tn)))
-          [tn (vec forms)])))))
 (defn- iteration-narration?
   "True when an iteration carries visible NARRATION that must render on its own —
    a thinking badge (only when `show-thinking?`, since hidden thinking paints
-   nothing) or an assistant-prose block. A narrated call may still OPEN a tool band
-   (its narration renders above the band); narration on an INTERIOR call breaks the
-   run so mid-burst commentary never floats out of place."
+   nothing) or an assistant-prose block. A narrated call may still OPEN a merged
+   run (its narration renders above the flush-stacked forms); narration on an
+   INTERIOR call breaks the run so mid-burst commentary never floats out of place."
   [entry show-thinking?]
   (boolean (or (and show-thinking? (not (str/blank? (str (:thinking entry)))))
                (not (str/blank? (str (:assistant-prose entry)))))))
 
-(defn- git-command-parts
-  "Project one git form into the fields a grouped GIT band needs: the chip
-   `:subcommand` (first arg token), a `:failed?` flag recovered from the
-   `(exit N)` / `(timed out)` note the git renderer appends, the full
-   `:headline` (args + note) for the expanded `$ …` row, and the fenced
-   `:body` (stdout / stderr). Reads only the DB-stable card summary/body, so
-   a restored trace groups identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim)
-
-        note-re
-        #"\s*\((?:exit \d+|timed out)\)\s*$"
-
-        failed?
-        (boolean (re-find note-re (str summary)))
-
-        args
-        (str/trim (str/replace (str summary) note-re ""))
-
-        subcmd
-        (or (not-empty (first (str/split args #"\s+"))) "git")
-
-        ;; A commit's body contains the message blockquote (`> subject …`), either
-        ;; as the old leading body or under the newer MESSAGE section; lift its
-        ;; first quoted line as the chip preview so the collapsed band shows WHAT
-        ;; was committed, not just that a commit happened.
-        subject
-        (let [b (str (:body card))]
-          (when (= "commit" subcmd)
-            (some->> (str/split-lines b)
-                     (some #(when (str/starts-with? % "> ") (subs % 2)))
-                     str/trim
-                     not-empty)))
-
-        ;; The tool summary now lifts the commit subject onto its headline
-        ;; (`commit -m — subject`, possibly clipped). In the grouped band that
-        ;; subject already rides the collapsed chip AND the expanded blockquote
-        ;; body, so strip it from the `$ …` row — from the em-dash marker to end,
-        ;; so a CLIPPED headline subject strips just as cleanly as a full one.
-        headline
-        (if-let [dash (and subject (str/index-of (str summary) " \u2014 "))]
-          (str/trimr (subs (str summary) 0 (long dash)))
-          summary)]
-
-    {:subcommand subcmd :failed? failed? :subject subject :headline headline :body (:body card)}))
-
-(defn- tool-band-entries
-  "Shared scaffolding for a collapsible tool BAND (GIT, RG, …): fold a markdown
-   `body-md` under ONE `head` summary row, toggled by a single triangle. `kind`
-   scopes the disclosure node per band type; `color-role` paints the badge. Body
-   rows get a left pad so they read as CHILDREN of the band. With no session (nil
-   id) the band renders inline, always expanded, so it still shows its items
-   rather than vanishing."
-  [{:keys [head color-role body-md kind]}
-   {:keys [fill-w session-id session-turn-id iteration-number detail-expansions]}]
-  (let [node-id
-        (when session-id
-          (detail-node-id {:session-turn-id session-turn-id
-                           :iteration-number iteration-number
-                           :section :iteration
-                           :kind kind}))
-
-        ->result
-        (fn [e]
-          (let [l
-                (str (:line e))
-
-                stripped
-                (or (second (split-structural-line-marker l)) l)]
-
-            (assoc e
-              :line (str result-marker
-                         (if (str/blank? stripped) stripped (str tool-output-indent stripped))))))
-
-        entries
-        (when (seq body-md)
-          (tag-copy-block-body (vec (ir-tui/ir->entries (vis/markdown->ir body-md)
-                                                        (max 1 (- fill-w tool-output-indent-cols))
-                                                        {:mode :channel}))
-                               node-id
-                               body-md))]
-
-    (if (and node-id (seq entries))
-      (let [expanded?
-            (detail-expanded? detail-expansions session-id node-id false)
-
-            body-entries
-            (into [(->result {:line ""})] (mapv ->result entries))
-
-            header
-            (detail-summary-entries {:marker result-marker
-                                     :max-w fill-w
-                                     :summary head
-                                     :collapsed? (not expanded?)
-                                     :session-id session-id
-                                     :node-id node-id
-                                     :color-role color-role})]
-
-        (vec (concat [{:line (str result-marker "") :meta nil}]
-                     header
-                     (if expanded?
-                       (conj body-entries {:line (str result-marker "") :meta nil})
-                       [{:line (str result-marker "") :meta nil}]))))
-      ;; No node-id (nil session-id) — render inline, always expanded, so the
-      ;; band still shows its items rather than vanishing.
-      (let [headline
-            (mapv (fn [line]
-                    {:line (str result-marker " " line)
-                     :meta {:kind :result-headline :color-role color-role}})
-                  (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head))
-                             (max 1 (- fill-w 1))))
-
-            body-rows
-            (when (seq entries) (into [(->result {:line ""})] (mapv ->result entries)))]
-
-        (vec (concat [{:line (str result-marker "") :meta nil}]
-                     headline
-                     body-rows
-                     [{:line (str result-marker "") :meta nil}]))))))
-
-(defn- git-group-entries
-  "Coalesce a RUN of consecutive git-only iterations into ONE collapsible GIT
-   band instead of N separately-stacked GIT op-cards.
-
-   Collapsed (default) — a single badge row:
-     ▸ GIT · 3 commands  `add` (success) · `commit` (success) — tui: nicer git band · `push` (success)
-   Expanded — each command as a `$ <args>` row with its stdout / stderr
-   nested underneath, so the run reads as one shell log. A failed command keeps
-   its `(exit N)` note on both its chip and its `$` row."
-  [git-forms ctx]
-  (let [parts
-        (mapv git-command-parts git-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · "
-                  (map (fn [{:keys [subcommand failed? subject]}]
-                         (str "`"
-                              subcommand
-                              "`"
-                              (if failed? " (failed)" " (success)")
-                              ;; Only a commit carries a subject — show it (clipped)
-                              ;; so the message is visible without expanding.
-                              (when (and subject (not failed?))
-                                (str " — " (ellipsize-cols subject 56)))))
-                       parts))
-
-        head
-        (str "**GIT** · " n " command" (when (not= 1 n) "s") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [headline body]}]
-                         (str "`$ " headline "`" (when (seq (str body)) (str "\n\n" body))))
-                       parts))]
-
-    (tool-band-entries {:head head :color-role :tool-color/shell :body-md body-md :kind :git-group}
-                       ctx)))
-
-(defn- shell-run-command-parts
-  "Project one shell_run form into a grouped SHELL RUN band's fields: a compact
-   status chip (`$ echo hi` (success) · 12ms, `$ grep x` (failure) · exit 2 · 34ms),
-   the full shell renderer headline for the expanded row, and the REPL-style
-   COMMAND / STATUS / STDOUT / STDERR body. Prefer the raw result map when a live
-   trace has it; fall back to the DB-stable card summary/body so restored traces
-   group identically."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        result
-        (:result form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim)
-
-        old-note-re
-        #"\s*\((exit \d+|timed out)\)\s*$"
-
-        shell-summary
-        (-> (str summary)
-            (str/replace #"^[✓✗⏱]\s+" "")
-            (str/replace old-note-re ""))
-
-        command-head
-        (-> (str shell-summary)
-            (str/split #"\s+·\s+" 2)
-            first)
-
-        cmd
-        (or (not-empty (str/trim (str (get result "cmd"))))
-            (some-> command-head
-                    (str/replace #"^\$\s*" "")
-                    (str/replace #"\s+\((?:success|failure|failed)\)\s*$" "")
-                    str/trim
-                    not-empty)
-            "shell")
-
-        parsed-exit
-        (or (some->> (re-find #"(?:exit\s+)(\d+)" (str summary))
-                     second
-                     Long/parseLong)
-            (when-let [exit (get result "exit")]
-              (when (number? exit) exit)))
-
-        timed-out?
-        (boolean (or (get result "timed_out")
-                     (str/includes? (str summary) "timed out")
-                     (str/includes? (str summary) "⏱")))
-
-        failed?
-        (boolean (or timed-out?
-                     (str/includes? (str summary) "✗")
-                     (str/includes? (str summary) "(failure)")
-                     (str/includes? (str summary) "(failed)")
-                     (and parsed-exit (not (zero? parsed-exit)))))
-
-        status
-        (cond timed-out? "timed out"
-              (and parsed-exit (not (zero? parsed-exit))) (str "exit " parsed-exit)
-              :else "success")
-
-        status-chip
-        (if failed? "failure" "success")
-
-        duration
-        (or (some-> (get result "duration_ms")
-                    vis/format-duration)
-            (some->> (re-find #"·\s*([^·]*\d(?:ms|s|m)?)\s*$" (str summary))
-                     second))
-
-        chip
-        (str "`$ "
-             (ellipsize-cols (or (not-empty cmd) "shell") 48)
-             "`"
-             " ("
-             status-chip
-             ")"
-             (when failed? (str " · " status))
-             (when duration (str " · " duration)))]
-
-    {:chip chip :headline summary :cmd cmd :status status :failed? failed? :body (:body card)}))
-
-(defn- shell-run-group-entries
-  "Coalesce a RUN of consecutive shell_run-only iterations into ONE collapsible
-   SHELL RUN band instead of N separately-stacked op-cards.
-
-   Collapsed (default) — a single badge row with each command preview:
-     ▸ SHELL RUN · 2 commands  `$ wc -l ~/.vis/vis.log` (success) · `$ ps aux …` (success)
-   Expanded — each command as its full `$ <cmd>` row with stdout / stderr nested
-   underneath, so a diagnostic burst reads as one shell log."
-  [shell-forms ctx]
-  (let [parts
-        (mapv shell-run-command-parts shell-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · " (map :chip parts))
-
-        head
-        (str "**SHELL RUN** · " n " command" (when (not= 1 n) "s") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [headline cmd body]}]
-                         (str "`" (or headline (str "$ " cmd))
-                              "`" (when (seq (str body)) (str "\n\n" body))))
-                       parts))]
-
-    (tool-band-entries
-      {:head head :color-role :tool-color/shell :body-md body-md :kind :shell-run-group}
-      ctx)))
-
-(defn- rg-command-parts
-  "Project one rg form into a grouped RG band's fields: the compact collapsed
-   `:chip` (the count tail — `4 files` / `6 hits in 1 file`, dropping the long
-   query prefix that would blow out the collapsed row), the FULL `:summary`
-   (query chips + count) as the expanded headline, and the matching-files
-   `:body`. Reads only the DB-stable card, so a restored trace groups
-   identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim
-                not-empty)
-
-        ;; The rg summary is `<query chips> · <count>`; the count is the LAST
-        ;; ` · `-delimited segment (needles are OR-joined, never ` · `-joined),
-        ;; so a run of searches collapses to just their counts.
-        chip
-        (if summary (str/trim (last (str/split summary #" · "))) "rg")]
-
-    {:chip chip :summary summary :body (:body card)}))
-
-(defn- rg-group-entries
-  "Coalesce a RUN of consecutive rg-only iterations into ONE collapsible RG band
-   instead of N separately-stacked search op-cards.
-
-   Collapsed (default) — a single badge row with each search's count:
-     ▸ RG · 2 searches  4 files · 6 hits in 1 file
-   Expanded — each search as its full `<query> · <count>` headline with the
-   matching files nested underneath, so the burst reads as one search log."
-  [rg-forms ctx]
-  (let [parts
-        (mapv rg-command-parts rg-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · " (map :chip parts))
-
-        head
-        (str "**RG** · " n " search" (when (not= 1 n) "es") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [summary body]}]
-                         (str (or summary "rg") (when (seq (str body)) (str "\n" body))))
-                       parts))]
-
-    (tool-band-entries {:head head :color-role :tool-color/search :body-md body-md :kind :rg-group}
-                       ctx)))
-(defn- delete-command-parts
-  "Project one delete form into a grouped DELETE band's fields: the compact
-   collapsed `:chip` (the deleted path's basename — full paths would blow out
-   the collapsed row) and the FULL `:summary` (`deleted `<path>`` or the no-op
-   note) for the expanded `deleted …` row. Reads only the DB-stable card
-   summary, so a restored trace groups identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim
-                not-empty)
-
-        ;; The delete summary is `deleted `<path>`` (or a no-op note); pull the
-        ;; backticked path and show just its basename on the collapsed chip.
-        path
-        (some-> summary
-                (->> (re-find #"`([^`]+)`"))
-                second)
-
-        chip
-        (if path (or (not-empty (last (str/split path #"/"))) path) (or summary "delete"))]
-
-    {:chip chip :summary (or summary "deleted")}))
-
-(defn- delete-group-entries
-  "Coalesce a RUN of consecutive delete-only iterations into ONE collapsible
-   DELETE band instead of N separately-stacked delete op-cards.
-
-   Collapsed (default) — a single badge row with each deleted basename:
-     ▸ DELETE · 2 deletes  ports.clj · ports_test.clj
-   Expanded — each delete's full `deleted `<path>`` summary as its own row, so
-   the burst reads as one deletion log."
-  [delete-forms ctx]
-  (let [parts
-        (mapv delete-command-parts delete-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · " (map :chip parts))
-
-        head
-        (str "**DELETE** · " n " delete" (when (not= 1 n) "s") "  " chips)
-
-        body-md
-        (str/join "\n\n" (map :summary parts))]
-
-    (tool-band-entries
-      {:head head :color-role :tool-color/delete :body-md body-md :kind :delete-group}
-      ctx)))
-(defn- find-command-parts
-  "Project one find_files form into a grouped FIND_FILES band's fields: the
-   compact collapsed `:chip` (the quoted query — what differs between searches),
-   the FULL `:summary` (match count + query + fuzzy terms) as the expanded
-   headline, and the ranked-paths `:body`. Reads only the DB-stable card, so a
-   restored trace groups identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim
-                not-empty)
-
-        ;; The find summary leads with `N matches for "<query>" · terms: …`; the
-        ;; quoted query is what differs between consecutive searches, so it rides
-        ;; the collapsed chip. Fall back to the count segment when unquoted.
-        query
-        (some-> summary
-                (->> (re-find #"for \"([^\"]+)\""))
-                second)
-
-        chip
-        (cond query (str "\"" query "\"")
-              summary (str/trim (first (str/split summary #" · ")))
-              :else "find")]
-
-    {:chip chip :summary summary :body (:body card)}))
-
-(defn- find-group-entries
-  "Coalesce a RUN of consecutive find_files-only iterations into ONE collapsible
-   FIND_FILES band instead of N separately-stacked find op-cards.
-
-   Collapsed (default) — a single badge row with each search's query:
-     ▸ FIND_FILES · 2 searches  \"tui render tool\" · \"web tool call render\"
-   Expanded — each search as its full `N matches for \"…\"` headline with the
-   ranked paths nested underneath, so the burst reads as one discovery log."
-  [find-forms ctx]
-  (let [parts
-        (mapv find-command-parts find-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · " (map :chip parts))
-
-        head
-        (str "**FIND_FILES** · " n " search" (when (not= 1 n) "es") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [summary body]}]
-                         (str (or summary "find") (when (seq (str body)) (str "\n" body))))
-                       parts))]
-
-    (tool-band-entries
-      {:head head :color-role :tool-color/search :body-md body-md :kind :find-group}
-      ctx)))
-
-(defn- occurrences-command-parts
-  "Project one occurrences form into a grouped OCCURRENCES band's fields: the
-   compact collapsed `:chip` (the traced symbol name — what differs between
-   consecutive lookups), the FULL `:summary` (`N · K defs in M files of `name``)
-   as the expanded headline, and the per-file defs/uses `:body`. Reads only the
-   DB-stable card, so a restored trace groups identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim
-                not-empty)
-
-        ;; The occurrences summary ends with `… of `<name>``; the traced symbol
-        ;; is what differs between consecutive lookups, so it rides the chip.
-        nm
-        (some-> summary
-                (->> (re-find #"of `([^`]+)`\s*$"))
-                second)
-
-        chip
-        (cond nm (str "`" nm "`")
-              summary (str/trim (first (str/split summary #" · ")))
-              :else "occurrences")]
-
-    {:chip chip :summary summary :body (:body card)}))
-
-(defn- occurrences-group-entries
-  "Coalesce a RUN of consecutive occurrences-only iterations into ONE
-   collapsible OCCURRENCES band instead of N separately-stacked op-cards.
-
-   Collapsed (default) — a single badge row with each traced symbol:
-     ▸ OCCURRENCES · 2 lookups  `ensure-repl-for-dir!` · `resolve-target!`
-   Expanded — each lookup as its full `N · K defs in M files of `…`` headline
-   with the per-file defs/uses nested underneath, so the burst reads as one
-   symbol-trace log."
-  [occ-forms ctx]
-  (let [parts
-        (mapv occurrences-command-parts occ-forms)
-
-        n
-        (count parts)
-
-        chips
-        (str/join " · " (map :chip parts))
-
-        head
-        (str "**OCCURRENCES** · " n " lookup" (when (not= 1 n) "s") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [summary body]}]
-                         (str (or summary "occurrences") (when (seq (str body)) (str "\n" body))))
-                       parts))]
-
-    (tool-band-entries
-      {:head head :color-role :tool-color/search :body-md body-md :kind :occurrences-group}
-      ctx)))
-
-(def ^:private edit-tool-band
-  "Per edit-tool band presentation: uppercase LABEL, badge color, and the noun
-   for the count. `write` reads as a CREATE (green), the rest as edits."
-  {"struct_patch" {:label "STRUCT_PATCH" :color :tool-color/edit :noun "edit"}
-   "patch" {:label "PATCH" :color :tool-color/edit :noun "edit"}
-   "write" {:label "WRITE" :color :tool-color/create :noun "write"}})
-
-(defn- edit-command-parts
-  "Project one patch/struct_patch/write form into a grouped edit band's fields:
-   the compact collapsed `:chip` (the edited file's basename — full paths blow
-   out the row), the FULL `:summary` (`update `path` · …`) as the expanded
-   header row, and the unified-diff `:body`. Reads only the DB-stable card, so a
-   restored trace groups identically to the live one."
-  [form]
-  (let [card
-        (vis/result-card form)
-
-        summary
-        (some-> (:summary card)
-                str
-                str/trim
-                not-empty)
-
-        paths
-        (map second (re-seq #"`([^`]+)`" (str summary)))
-
-        bases
-        (map #(or (not-empty (last (str/split % #"/"))) %) paths)
-
-        chip
-        (cond (seq bases) (str/join ", " bases)
-              summary summary
-              :else "edit")]
-
-    {:chip chip :path (first paths) :summary (or summary "edit") :body (:body card)}))
-
-(defn- edit-group-entries
-  "Coalesce a RUN of consecutive same-edit-tool iterations (struct_patch / patch
-   / write) into ONE collapsible band instead of N separately-stacked edit
-   op-cards.
-
-   Collapsed (default) — a single badge row. Edits to ONE file show its FULL
-   path ONCE (not the basename repeated N times); a run across several files
-   lists each basename:
-     ▸ STRUCT_PATCH · 5 edits  a/b/core.clj
-     ▸ STRUCT_PATCH · 2 edits  chat.clj · state.clj
-   Expanded — each edit as its full `update `path`` header with its unified diff
-   nested underneath, so the burst reads as one edit log. Only a run of the SAME
-   edit tool folds (mixed patch+struct_patch never crosses), so the band label
-   is always honest about what ran."
-  [tool-name edit-forms ctx]
-  (let [{:keys [label color noun]}
-        (get edit-tool-band
-             tool-name
-             {:label (str/upper-case (str tool-name)) :color :tool-color/edit :noun "edit"})
-
-        parts
-        (mapv edit-command-parts edit-forms)
-
-        n
-        (count parts)
-
-        edit-paths
-        (distinct (keep :path parts))
-
-        chips
-        (if (= 1 (count edit-paths))
-          ;; Every edit hit the SAME file — show its full path ONCE instead of
-          ;; repeating the basename once per edit (`core.clj · core.clj · …`).
-          (first edit-paths)
-          (str/join " · " (map :chip parts)))
-
-        head
-        (str "**" label "** · " n " " noun (when (not= 1 n) "s") "  " chips)
-
-        body-md
-        (str/join "\n\n"
-                  (map (fn [{:keys [summary body]}]
-                         (str (or summary "edit") (when (seq (str body)) (str "\n" body))))
-                       parts))]
-
-    (tool-band-entries {:head head :color-role color :body-md body-md :kind :edit-group} ctx)))
-
-(defn- cat-form-path
-  "The file a cat read acted on — the raw `:result` `:path` when live, else the
-   leading `` `path` `` chip of the summary (which survives a DB round-trip)."
-  [form]
-  (or (get-in form [:result :path])
-      (some-> (vis/result-card form)
-              :summary
-              str
-              (->> (re-find #"`([^`]+)`"))
-              second)))
-
-(defn- band-run-key
-  "Grouping key for a band run. Most tools group by NAME alone (a burst of git /
-   rg / delete calls is one activity). Cat additionally keys on the FILE, so only
-   consecutive reads of the SAME path fold — a run of reads across different
-   files stays as separate cards."
-  [tool-name form]
-  (if (= "cat" tool-name) ["cat" (cat-form-path form)] tool-name))
-
-(defn- cat-body-rows
-  "The numbered rows of a cat card body as `[line-number raw-row]` tuples. Reads
-   the RENDERED body (`   57  text`), so it works on a live OR DB-restored card."
-  [body]
-  (keep (fn [row]
-          (when-let [ln (some-> (re-find #"^\s*(\d+)  " row)
-                                second
-                                parse-long)]
-            [ln row]))
-        (str/split-lines (str body))))
-
-(defn- cat-line-spans
-  "Sorted contiguous line-number runs from a set of line numbers — `[[57 62]]`."
-  [line-nos]
-  (reduce (fn [acc ^long x]
-            (let [[a ^long b] (peek acc)]
-              (if (and b (= x (inc b))) (conj (pop acc) [a x]) (conj acc [x x]))))
-          []
-          (sort line-nos)))
-
-(defn- merge-cat-forms
-  "Merge a RUN of consecutive SAME-FILE cat reads into ONE synthetic cat form.
-   Duplicate/overlapping line rows dedupe by line number and the span label
-   recomputes off the merged line set, so `cat L57-60` then `cat L58-62` renders
-   as one `L57-62` slice (the 58-60 overlap shown once) rather than two
-   look-alike cards. Reads only the DB-stable summary/body, so a restored trace
-   merges identically to the live one."
-  [forms]
-  (let [cards
-        (mapv vis/result-card forms)
-
-        path
-        (cat-form-path (first forms))
-
-        by-ln
-        (reduce (fn [m [ln row]]
-                  (if (contains? m ln) m (assoc m ln row)))
-                (sorted-map)
-                (mapcat (comp cat-body-rows :body) cards))
-
-        rows
-        (vals by-ln)
-
-        n
-        (count rows)
-
-        spans
-        (cat-line-spans (keys by-ln))
-
-        span-str
-        (fn [[a b]]
-          (if (= a b) (str "L" a) (str "L" a "-" b)))
-
-        loc
-        (cond (empty? spans) nil
-              (= 1 (count spans)) (span-str (first spans))
-              :else
-              (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
-
-        counted
-        (str n " line" (when (not= 1 n) "s"))
-
-        summary
-        (str "`" path
-             "` · " (cond (nil? loc) counted
-                          (= 1 (count spans)) loc
-                          :else (str loc " · " counted)))
-
-        body
-        (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))]
-
-    (assoc (first forms)
-      :result-summary summary
-      :result-render body
-      :cards nil)))
-
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
-   run (>= 2) of consecutive single-call iterations to the SAME groupable tool
-   collapses into ONE band (`git-group-entries` / `rg-group-entries`); every other
-   iteration — a lone groupable call, a run broken by other work, or a switch to a
-   DIFFERENT groupable tool — renders through `iter-entry-fn` as before, so grouping
-   never crosses causally-distinct work.
+   run of consecutive PLAIN tool iterations (`mergeable-iteration-forms`) — any
+   tools, mixed — MERGES into ONE synthetic iteration rendered once through
+   `iter-entry-fn`, so their op-cards flush-stack into a single bubble with no
+   inter-iteration gap (the within-iteration flush in `format-iteration-entry-…`
+   already paints adjacent native cards without a blank between them). Prose /
+   thinking is the ONLY separator: a narrated iteration may OPEN a run (its
+   narration renders ABOVE the merged forms) but an INTERIOR narrated call breaks
+   it. A non-tool iteration (narration only, an iteration-level error / recap /
+   provider-fallback, a `:cards` block) renders on its own through `iter-entry-fn`.
 
-   The run's HEAD may carry narration (a thinking badge / prose): it renders ABOVE
-   the band while the call itself still joins it, so a `<narrate> then add / commit
-   / push` burst folds whole. An INTERIOR narrated call breaks the run instead, so
-   mid-burst commentary never floats out of its place."
-  [visible-iterations iter-entry-fn show-silent? show-thinking? group-ctx]
+   This is the uniform-compaction contract: EVERY consecutive tool run collapses
+   the same way — there is no tool-name whitelist and no per-tool summary band."
+  [visible-iterations iter-entry-fn show-silent? show-thinking? _group-ctx]
   (let [tagged (mapv (fn [pair]
                        (let [e (visible-iteration-entry (second pair) show-silent?)]
-                         [pair (groupable-iteration-forms e)
+                         [pair (mergeable-iteration-forms e)
                           (iteration-narration? e show-thinking?)]))
                      visible-iterations)]
     (loop [out (transient [])
@@ -5351,85 +4665,28 @@
 
       (if (nil? xs)
         (persistent! out)
-        (let [[_pair tf] (first xs)]
-          (if tf
-            (let [tool-name (first tf)
-                  head-form (first (second tf))
-                  ;; A run is the head plus consecutive same-tool calls; a nil
-                  ;; tag, a DIFFERENT tool, OR interior narration ends it. For
-                  ;; cat the run ALSO requires the SAME file (via `band-run-key`),
-                  ;; so only reads that merge into one slice fold together.
-                  head-key (band-run-key tool-name head-form)
-                  run (cons (first xs)
-                            (take-while (fn [[_ g narr]]
-                                          (and (some? g)
-                                               (not narr)
-                                               (= head-key
-                                                  (band-run-key (first g) (first (second g))))))
+        (let [[_pair mf _narr?] (first xs)]
+          (if mf
+            ;; Head is a plain tool iteration (its narration, if any, renders
+            ;; above the merged forms). Extend the run over following plain tool
+            ;; iterations that are NOT narrated, then merge every form into ONE
+            ;; synthetic iteration rendered once — the within-iteration flush
+            ;; stacks the op-cards into a single gap-less bubble.
+            (let [run (cons (first xs)
+                            (take-while (fn [[_ f narr?]]
+                                          (and (some? f) (not narr?)))
                                         (rest xs)))
                   cnt (count run)
                   forms (into []
-                              (mapcat (fn [[_ g]]
-                                        (second g)))
+                              (mapcat (fn [[_ f]]
+                                        f))
                               run)]
 
-              (if (>= (count forms) 2)
-                (let [[[first-idx head-entry] _ head-narr?] (first run)]
-                  (if (= "cat" tool-name)
-                    ;; Same-file cat run: merge the reads into ONE deduped slice
-                    ;; and render it as a normal ▾ CAT card via `iter-entry-fn`,
-                    ;; so `cat L57-60` then `cat L58-62` reads as one `L57-62`
-                    ;; card (overlap shown once) instead of two look-alikes. The
-                    ;; head entry keeps its narration + collapse behaviour.
-                    (let [merged (iter-entry-fn
-                                   [first-idx (assoc head-entry :forms [(merge-cat-forms forms)])])]
-                      (recur (reduce conj! out merged) (seq (drop cnt xs))))
-                    (let [iter-num (inc (long first-idx))
-                          ctx (assoc group-ctx :iteration-number iter-num)
-                          band (case tool-name
-                                 "git"
-                                 (git-group-entries forms ctx)
+              (if (>= cnt 2)
+                (let [[[first-idx head-entry] _ _] (first run)
+                      merged (iter-entry-fn [first-idx (assoc head-entry :forms forms)])]
 
-                                 "shell_run"
-                                 (shell-run-group-entries forms ctx)
-
-                                 "rg"
-                                 (rg-group-entries forms ctx)
-
-                                 "delete"
-                                 (delete-group-entries forms ctx)
-
-                                 "find_files"
-                                 (find-group-entries forms ctx)
-
-                                 "occurrences"
-                                 (occurrences-group-entries forms ctx)
-
-                                 ("struct_patch" "patch" "write")
-                                 (edit-group-entries tool-name forms ctx))
-                          ;; The narrated head renders its thinking badge / prose ABOVE
-                          ;; the band — strip its tool form (and the re-emitted call
-                          ;; `:content-stream`, which `:forms []` would otherwise resurface
-                          ;; as a thinking bubble) so the action rides the band, not a
-                          ;; duplicate op-card.
-                          lead (when head-narr?
-                                 (vec (iter-entry-fn [first-idx
-                                                      (assoc head-entry
-                                                        :forms []
-                                                        :content-stream nil)])))
-                          ;; With no leading narration, drop a prior terminal-bg gap so the
-                          ;; band's OWN colored breathe row is the single boundary. A
-                          ;; narrated head brings its own spacing (coalesced upstream), so
-                          ;; leave the seam alone there.
-                          out* (if (and (not head-narr?)
-                                        (pos? (count out))
-                                        (= (str iteration-pad-marker "")
-                                           (str (:line (nth out (dec (count out)))))))
-                                 (pop! out)
-                                 out)
-                          entries (if (seq lead) (into lead band) band)]
-
-                      (recur (reduce conj! out* entries) (seq (drop cnt xs))))))
+                  (recur (reduce conj! out merged) (seq (drop cnt xs))))
                 (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
             (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
@@ -5806,7 +5063,14 @@
                 (into ans-entries))))
 
         trailer
-        (if cancelled? cancel-block answer-block)
+        ;; A cancelled turn that produced NO real answer shows the flat
+        ;; italic "Cancelled by user." placeholder. But a turn cancelled
+        ;; AFTER the model already wrote a genuine markdown answer must
+        ;; render that answer through the NORMAL markdown block (headings /
+        ;; lists / bold intact) — the cancel-block flattens it via
+        ;; `extract-text` + italic, which is what made real answers read as
+        ;; "italics shit" instead of markdown. Bubble-level dim still applies.
+        (if (and cancelled? (not (ir-non-empty? answer))) cancel-block answer-block)
 
         entries
         (if has-trace? (vec (concat trace-entries trailer)) (vec trailer))

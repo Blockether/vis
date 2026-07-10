@@ -791,11 +791,13 @@
     (extension-env-status name')))
 
 (defn resolve-db-spec
-  "Resolve DB spec: explicit -> VIS_DB_PATH env -> `:db-spec` from
-   config.edn -> default sqlite at `~/.vis/vis.mdb`."
+  "Resolve DB spec: explicit -> `vis.db.path` JVM property -> VIS_DB_PATH env ->
+   `:db-spec` from config.edn -> default sqlite at `~/.vis/vis.mdb`."
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec
+       (when-let [prop-path (System/getProperty "vis.db.path")]
+         {:backend :sqlite :path prop-path})
        (when-let [env-path (System/getenv "VIS_DB_PATH")]
          {:backend :sqlite :path env-path})
        (:db-spec (load-config-raw))

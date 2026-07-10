@@ -651,11 +651,37 @@
   [^String literal]
   (boolean (re-matches #"(?s)\s*<!--.*?-->\s*" (str literal))))
 
+(def ^:private lone-code-span-block-min
+  "A whole-paragraph inline code span (single backticks) at least this many
+   characters wide is promoted to a `:code` block instead of staying an inline
+   `:c` chip. Models routinely author a long copy-me payload — a bookmarklet, a
+   shell command, a URL — as a lone `` `…` `` span; kept inline it wraps across
+   rows and a select-copy yanks the wrapped (corrupted) text with no code-block
+   copy affordance. Short inline chips (identifiers, paths) stay inline."
+  40)
+
+(defn- lone-code-span-literal
+  "When paragraph `n`'s only inline content is a single CommonMark `Code` span
+   whose literal is at least `lone-code-span-block-min` chars, return that
+   literal (so the caller can promote it to a `:code` block); else nil."
+  [^Node n]
+  (let [children
+        (cm-children-seq n)
+
+        c
+        (first children)]
+
+    (when (and c (instance? Code c) (nil? (next children)))
+      (let [lit (.getLiteral ^Code c)]
+        (when (>= (count lit) lone-code-span-block-min) lit)))))
+
 (defn- cm->blocks
   "Convert one commonmark Node into a vector of canonical IR block(s)."
   [^Node n]
   (cond (instance? Heading n) [(into [:h {:level (.getLevel ^Heading n)}] (cm->inlines n))]
-        (instance? Paragraph n) [(into [:p {}] (cm->inlines n))]
+        (instance? Paragraph n) (if-let [lit (lone-code-span-literal n)]
+                                  [[:code {} lit]]
+                                  [(into [:p {}] (cm->inlines n))])
         (instance? FencedCodeBlock n) [[:code
                                         {:lang (let [info (.getInfo ^FencedCodeBlock n)]
                                                  (when (seq info) info))}
@@ -1127,6 +1153,23 @@
 
         (str (row-md header) "\n| " sep " |\n" (str/join "\n" (map row-md body)) "\n\n")))))
 
+(defn- emph-md
+  "Wrap `inner` markdown in an emphasis `marker` (`**`, `*`, `==`), HOISTING any
+   leading/trailing whitespace OUTSIDE the delimiters. CommonMark refuses to
+   open or close emphasis flush against whitespace, so a label span that ends in
+   a space — `WHAT HAPPENED: ` — serialized naively becomes `**WHAT HAPPENED: **`
+   and round-trips as LITERAL asterisks. Moving the space out
+   (`**WHAT HAPPENED:** `) keeps the bold intact."
+  [marker inner]
+  (if (str/blank? inner)
+    inner
+    (str (subs inner 0 (- (count inner) (count (str/triml inner))))
+         marker
+         (str/trim inner)
+         marker
+         (subs inner (count (str/trimr inner))))))
+
+
 (defn- render-md
   [node opts]
   (cond (string? node) (escape-md node)
@@ -1200,10 +1243,10 @@
 
             ; GFM hard-break = two trailing spaces + newline
             :strong
-            (str "**" (render-md-children children opts) "**")
+            (emph-md "**" (render-md-children children opts))
 
             :em
-            (str "*" (render-md-children children opts) "*")
+            (emph-md "*" (render-md-children children opts))
 
             :c
             (str "`" (raw-body node) "`")
@@ -1218,7 +1261,7 @@
             (str "<kbd>" (escape-md (raw-body node)) "</kbd>")
 
             :mark
-            (str "==" (render-md-children children opts) "==")
+            (emph-md "==" (render-md-children children opts))
 
             :sup
             (str "<sup>" (render-md-children children opts) "</sup>")

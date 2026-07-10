@@ -31,7 +31,8 @@
 
 (defn- tmp-sock
   []
-  (str (System/getProperty "java.io.tmpdir") "vis-bridge-test-" (System/nanoTime) ".sock"))
+  (str (File. (System/getProperty "java.io.tmpdir")
+              (str "vis-bridge-test-" (System/nanoTime) ".sock"))))
 
 (defn- connect
   ^SocketChannel [path]
@@ -99,7 +100,7 @@
                    (try (expect (= sp (str (pb/find-socket {:socket sp})))) (finally (stop)))))
              (it "attach! returns exit code 2 for a missing socket"
                  (expect (= 2
-                            (pb/attach! {:socket (str (System/getProperty "java.io.tmpdir")
-                                                      "vis-nope-"
-                                                      (System/nanoTime)
-                                                      ".sock")})))))
+                            (pb/attach! {:socket (str (File. (System/getProperty "java.io.tmpdir")
+                                                             (str "vis-nope-"
+                                                                  (System/nanoTime)
+                                                                  ".sock")))})))))

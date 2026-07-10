@@ -330,6 +330,19 @@
    turn never finished). Never feed `nil` or `\"\"` to the TUI render
    chokepoints; lift to `empty-ir` instead."
   [:ir {}])
+(defn error-answer-ir
+  "Renderable answer-IR for a FAILED turn result. `turn!`/`attach!` fold the
+   engine's provider-error IR (`:vis/provider-error` marker) onto `:answer`
+   and dissoc `:answer-ir`, so a failed turn's styled card lives on `:answer` —
+   NOT `:answer-ir` (that key is gone by the time a channel reads the result).
+   Returns that IR when it carries real content; otherwise flattens the
+   `:error` string through `format-error` so a bare/generic failure still shows
+   a readable bubble instead of a blank one."
+  [result]
+  (let [ir (or (:answer-ir result) (:answer result))]
+    (if (and (vector? ir) (= :ir (first ir)) (seq (nnext ir)))
+      ir
+      (vis/markdown->ir (vis/format-error (:error result))))))
 
 (defn render-answer
   "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
@@ -668,10 +681,13 @@
       nil)))
 
 (defn- create-session*
-  [_provider-config {:keys [workspace-id]}]
+  [_provider-config {:keys [workspace-id root]}]
   (let [{:keys [id]} (vis/gateway-create-session! (cond-> {:channel :tui}
                                                     workspace-id
-                                                    (assoc :workspace-id workspace-id)))]
+                                                    (assoc :workspace-id workspace-id)
+
+                                                    root
+                                                    (assoc :root root)))]
     {:id (java.util.UUID/fromString id) :history []}))
 
 (defn- pop-prewarmed!

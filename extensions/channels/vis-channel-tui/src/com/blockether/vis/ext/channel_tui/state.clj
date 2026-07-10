@@ -1155,10 +1155,19 @@
                 (assoc db
                   :provider-limits {:provider-id provider-id
                                     :report report
-                                    :updated-at-ms (System/currentTimeMillis)})))
+                                    :updated-at-ms (System/currentTimeMillis)}
+                  :provider-limits-force? false)))
 (reg-event-db :clear-provider-limits
               (fn [db _]
-                (assoc db :provider-limits nil)))
+                (assoc db
+                  :provider-limits nil
+                  :provider-limits-force? false)))
+;; Ask the background limits poller to refetch on its NEXT tick instead of
+;; waiting out the 60s stale window — dispatched after an auth flow so the
+;; footer picks up a just-authenticated provider (or fresh quota) promptly.
+(reg-event-db :force-provider-limits-refresh
+              (fn [db _]
+                (assoc db :provider-limits-force? true)))
 (reg-event-db :shutdown
               (fn [db _]
                 (assoc db :shutdown? true)))
@@ -2755,8 +2764,13 @@
 
                   (if (:error result)
                     (dispatch [:message-received workspace-id
-                               (vis/markdown->ir (vis/format-error (:error result)))
-                               {:client-turn-id client-turn-id}])
+                               ;; A failed provider turn carries the SAME structured
+                               ;; provider-error IR (`:vis/provider-error` marker)
+                               ;; the Web card paints. `chat/attach!`/`turn!` fold
+                               ;; that IR onto `:answer` (dissoc'ing `:answer-ir`),
+                               ;; so `error-answer-ir` reads it back and renders the
+                               ;; styled card instead of flattening `:error`.
+                               (chat/error-answer-ir result) {:client-turn-id client-turn-id}])
                     (do (dispatch [:message-received workspace-id (:answer result)
                                    (assoc (select-keys result
                                                        [:model :provider :llm-selected :llm-actual
@@ -2835,8 +2849,13 @@
 
                   (if (:error result)
                     (dispatch [:message-received workspace-id
-                               (vis/markdown->ir (vis/format-error (:error result)))
-                               {:client-turn-id client-turn-id}])
+                               ;; A failed provider turn carries the SAME structured
+                               ;; provider-error IR (`:vis/provider-error` marker)
+                               ;; the Web card paints. `chat/attach!`/`turn!` fold
+                               ;; that IR onto `:answer` (dissoc'ing `:answer-ir`),
+                               ;; so `error-answer-ir` reads it back and renders the
+                               ;; styled card instead of flattening `:error`.
+                               (chat/error-answer-ir result) {:client-turn-id client-turn-id}])
                     (do (dispatch [:message-received workspace-id (:answer result)
                                    (assoc (select-keys result
                                                        [:model :provider :llm-selected :llm-actual

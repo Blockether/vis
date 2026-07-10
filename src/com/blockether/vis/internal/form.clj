@@ -184,9 +184,8 @@
   [form k]
   (let [r (:result form)]
     (when (map? r)
-      (cond
-        (contains? r k) (get r k)
-        (contains? r (name k)) (get r (name k))))))
+      (cond (contains? r k) (get r k)
+            (contains? r (name k)) (get r (name k))))))
 
 (defn- same-path-form-path
   "The file PATH a same-path coalescable op-card (`cat`/`patch`) acted on — from
@@ -201,9 +200,7 @@
                 (->> (re-find #"`([^`]+)`"))
                 second))))
 
-(defn- split-summary-parts
-  [summary]
-  (str/split (str summary) #" · "))
+(defn- split-summary-parts [summary] (str/split (str summary) #" · "))
 
 (defn- merge-same-path-summaries
   "Fold N same-file op-card summaries into ONE. Splits each on ` · `, keeps the
@@ -246,6 +243,7 @@
 
         tail
         (str/join " · " (remove str/blank? [span-str count-str]))]
+
     (if (str/blank? tail) chip (str chip " · " tail))))
 
 (defn- format-summary-entry
@@ -277,6 +275,7 @@
         (str/join "\n"
                   (for [{:keys [path status]} entries]
                     (str path (when (seq status) (str " " status)))))]
+
     {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
      :body (when (seq body) (str "```\n" body "\n```"))}))
 
@@ -303,6 +302,7 @@
 
         r0
         (:result f0)]
+
     (cond-> (assoc f0
               :result-summary (:summary merged)
               :result-render (:body merged))
@@ -317,13 +317,9 @@
   [form]
   (when-not (coalesce-error-form? form)
     (let [tool (tool-name-s form)]
-      (cond
-        (contains? same-path-coalescable-tools tool)
-        (when-let [p (same-path-form-path form)]
-          [::same-path tool p])
-
-        (contains? same-tool-coalescable-tools tool)
-        [::same-tool tool]))))
+      (cond (contains? same-path-coalescable-tools tool) (when-let [p (same-path-form-path form)]
+                                                           [::same-path tool p])
+            (contains? same-tool-coalescable-tools tool) [::same-tool tool]))))
 
 (defn coalesce-forms
   "Merge each maximal run of ADJACENT, successful coalescable native op-cards into

@@ -34,17 +34,27 @@
 (defdescribe
   skill-template-text-test
   (it "slash skill expansion injects the body and bundled resource paths before marking loaded"
-      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
-            ca (atom {})]
-        (with-redefs [d/skill-by-name (fn [_] s)]
+      (let [s
+            {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
+
+            ca
+            (atom {})]
+
+        (with-redefs [d/skill-by-name (fn [_]
+                                        s)]
           (let [text (skill-template-text {:ctx-atom ca} s "do x")]
             (expect (str/includes? text "BODY"))
             (expect (str/includes? text "- /x/ref.md"))
             (expect (str/includes? text "Task: do x"))))))
   (it "slash skill expansion points at the already-loaded body instead of reinjecting it"
-      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
-            ca (atom {:session/loaded-skills #{"demo"}})]
-        (with-redefs [d/skill-by-name (fn [_] s)]
+      (let [s
+            {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}
+
+            ca
+            (atom {:session/loaded-skills #{"demo"}})]
+
+        (with-redefs [d/skill-by-name (fn [_]
+                                        s)]
           (let [text (skill-template-text {:ctx-atom ca} s "again")]
             (expect (str/includes? text "already loaded earlier"))
             (expect (not (str/includes? text "BODY")))
@@ -136,6 +146,7 @@
                                       :changed_files ["f.txt"]
                                       :facts {}
                                       :evidence "ok"})]
+
           (let [r (:result (core/agent {} "code-reviewer" "review this"))]
             (expect (= "code-reviewer" (get r "agent")))
             (expect (= "done" (get r "status")))
@@ -147,23 +158,35 @@
             (expect (= "review this" (:prompt @captured)))
             (expect (= "code-reviewer" (get-in @captured [:subctx :focus])))))))
   (it "a completed child with no status string reports done; an errored one failed"
-      (with-redefs [d/agent-by-name (fn [nm]
-                                      (when (= "code-reviewer" nm)
-                                        {:name "code-reviewer" :body "review system prompt"}))
-                    lp/sub-loop! (fn [_ _]
-                                   {:status "" :answer "OK" :changed_files []})]
+      (with-redefs [d/agent-by-name
+                    (fn [nm]
+                      (when (= "code-reviewer" nm)
+                        {:name "code-reviewer" :body "review system prompt"}))
+
+                    lp/sub-loop!
+                    (fn [_ _]
+                      {:status "" :answer "OK" :changed_files []})]
+
         (expect (= "done" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [d/agent-by-name (fn [nm]
-                                      (when (= "code-reviewer" nm)
-                                        {:name "code-reviewer" :body "review system prompt"}))
-                    lp/sub-loop! (fn [_ _]
-                                   {:status "" :error "boom"})]
+      (with-redefs [d/agent-by-name
+                    (fn [nm]
+                      (when (= "code-reviewer" nm)
+                        {:name "code-reviewer" :body "review system prompt"}))
+
+                    lp/sub-loop!
+                    (fn [_ _]
+                      {:status "" :error "boom"})]
+
         (expect (= "failed" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))
-      (with-redefs [d/agent-by-name (fn [nm]
-                                      (when (= "code-reviewer" nm)
-                                        {:name "code-reviewer" :body "review system prompt"}))
-                    lp/sub-loop! (fn [_ _]
-                                   {:status "rejected"})]
+      (with-redefs [d/agent-by-name
+                    (fn [nm]
+                      (when (= "code-reviewer" nm)
+                        {:name "code-reviewer" :body "review system prompt"}))
+
+                    lp/sub-loop!
+                    (fn [_ _]
+                      {:status "rejected"})]
+
         ;; an explicit child status is preserved, never overwritten
         (expect (= "rejected" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))))
 

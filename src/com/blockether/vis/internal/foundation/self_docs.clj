@@ -50,9 +50,7 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
 
      (if-let [page (some #(when (= slug' (:slug %)) %) ps)]
        (extension/success {:result
-                           (cond-> {"slug" (:slug page)
-                                    "title" (:title page)
-                                    "content" (:md page)}
+                           (cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
                              (:section page)
                              (assoc "section" (:section page)))})
        (extension/failure {:result nil

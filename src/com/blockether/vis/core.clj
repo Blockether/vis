@@ -51,8 +51,8 @@
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.import :refer [import-vars]]
             [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.server :as gateway]
-            [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.loop :as lp]
@@ -93,39 +93,42 @@
              [gateway-auth-required? gateway/auth-required?]
              [gateway-register-routes! gateway/register-routes!]
              [gateway-deregister-routes! gateway/deregister-routes!]
-             [gateway-create-session! gateway-state/create-session!]
-             [gateway-soul gateway-state/soul]
-             [gateway-list-sessions gateway-state/list-sessions]
-             [gateway-close-session! gateway-state/close-session!])
+             [gateway-ensure! gateway-client/ensure-gateway!]
+             [gateway-daemon-status gateway-client/status]
+             [gateway-daemon-stop! gateway-client/stop-daemon!]
+             [gateway-create-session! gateway-client/create-session!]
+             [gateway-soul gateway-client/soul]
+             [gateway-list-sessions gateway-client/list-sessions]
+             [gateway-close-session! gateway-client/close-session!])
 
-(import-vars [gateway-release-session! gateway-state/release-session!]
-             [gateway-submit-turn! gateway-state/submit-turn!])
+(import-vars [gateway-release-session! gateway-client/release-session!]
+             [gateway-submit-turn! gateway-client/submit-turn!])
 
-(import-vars [gateway-submit-turn-sync! gateway-state/submit-turn-sync!]
-             [gateway-attach-turn-sync! gateway-state/attach-turn-sync!]
-             [gateway-update-queued-turn! gateway-state/update-queued-turn!]
-             [gateway-delete-queued-turn! gateway-state/delete-queued-turn!]
-             [gateway-cancel-turn! gateway-state/cancel-turn!]
-             [gateway-get-turn gateway-state/get-turn]
-             [gateway-list-turns gateway-state/list-turns]
-             [gateway-transcript gateway-state/transcript]
-             [gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!]
-             [gateway-context-snapshot gateway-state/context-snapshot]
-             [gateway-subscribe! gateway-state/subscribe!]
-             [gateway-unsubscribe! gateway-state/unsubscribe!]
-             [gateway-current-seq gateway-state/current-seq])
+(import-vars [gateway-submit-turn-sync! gateway-client/submit-turn-sync!]
+             [gateway-attach-turn-sync! gateway-client/attach-turn-sync!]
+             [gateway-update-queued-turn! gateway-client/update-queued-turn!]
+             [gateway-delete-queued-turn! gateway-client/delete-queued-turn!]
+             [gateway-cancel-turn! gateway-client/cancel-turn!]
+             [gateway-get-turn gateway-client/get-turn]
+             [gateway-list-turns gateway-client/list-turns]
+             [gateway-transcript gateway-client/transcript]
+             [gateway-reconcile-running-turns! gateway-client/reconcile-running-turns!]
+             [gateway-context-snapshot gateway-client/context-snapshot]
+             [gateway-subscribe! gateway-client/subscribe!]
+             [gateway-unsubscribe! gateway-client/unsubscribe!]
+             [gateway-current-seq gateway-client/current-seq])
 
-(import-vars [gateway-events-since gateway-state/events-since]
-             [gateway-session-model gateway-state/session-model]
-             [gateway-session-model-cached gateway-state/session-model-cached]
-             [gateway-set-session-model! gateway-state/set-session-model!])
+(import-vars [gateway-events-since gateway-client/events-since]
+             [gateway-session-model gateway-client/session-model]
+             [gateway-session-model-cached gateway-client/session-model-cached]
+             [gateway-set-session-model! gateway-client/set-session-model!])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
 (import-vars [session-model-of session-model/model-of]
              [session-model-of-cached session-model/model-of-cached]
              [set-session-model! session-model/set-model!]
-             [gateway-session-workspace gateway-state/session-workspace-info])
+             [gateway-session-workspace gateway-client/session-workspace-info])
 
 ;; =============================================================================
 ;; Cancellation

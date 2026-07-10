@@ -151,6 +151,25 @@
             (expect (str/starts-with? summary "✗"))
             (expect (seq body)))))))
 
+(defdescribe render-repl-start-result-test
+             (let [render #'language-surface/render-repl-start-result]
+               (it "surfaces failed startup details instead of a bare starting line"
+                   (let [{:keys [summary body]} (render {"result" "failed"
+                                                         "status" "failed"
+                                                         "id" "nrepl:/repo"
+                                                         "port" 5555
+                                                         "exit" 42
+                                                         "message" "launcher died"
+                                                         "log" "/tmp/vis-nrepl.log"
+                                                         "cmd" ["clojure" "-M:vis/nrepl-launch"]
+                                                         "log_tail" ["boom" "stack"]})]
+                     (expect (str/starts-with? summary "✗ REPL nrepl:/repo failed :5555"))
+                     (expect (str/includes? body "MESSAGE\nlauncher died"))
+                     (expect (str/includes? body "EXIT\n42"))
+                     (expect (str/includes? body "LOG\n/tmp/vis-nrepl.log"))
+                     (expect (str/includes? body "CMD\nclojure -M:vis/nrepl-launch"))
+                     (expect (str/includes? body "LOG TAIL\nboom\nstack"))))))
+
 (defdescribe
   render-repl-eval-result-test
   (let [render #'language-surface/render-repl-eval-result]

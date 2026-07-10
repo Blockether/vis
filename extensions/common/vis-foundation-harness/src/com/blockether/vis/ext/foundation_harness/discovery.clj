@@ -176,30 +176,28 @@
 ;; `[tool ^File dir]` pairs. Precedence = ORDER (project → user → plugins; Claude
 ;; before opencode). Supporting another harness is one more row — no code change.
 (def agent-sources
-  [[:vis :rel ".vis" "agents"]              ; vis project-local (highest precedence)
-   [:claude :rel ".claude" "agents"]        ; project
-   [:claude :home ".claude" "agents"]       ; user
-   [:claude :plugins "agents"]              ; installed plugin caches
-   [:pi :rel ".pi" "agents"]                ; pi project
-   [:pi :home ".pi" "agent" "agents"]       ; pi user
-   [:agents :rel-walk ".agents" "agents"]   ; agents-standard project (+ ancestors up to git root)
-   [:agents :home ".agents" "agents"]       ; agents-standard user
-   [:opencode :rel ".opencode" "agents"]    ; opencode project (SPEL/generated plural layout)
-   [:opencode :rel ".opencode" "agent"]     ; opencode project (legacy/singular layout)
-   [:opencode :home ".config" "opencode" "agents"]
-   [:opencode :home ".config" "opencode" "agent"]])
+  [[:vis :rel ".vis" "agents"]            ; vis project-local (highest precedence)
+   [:claude :rel ".claude" "agents"]      ; project
+   [:claude :home ".claude" "agents"]     ; user
+   [:claude :plugins "agents"]            ; installed plugin caches
+   [:pi :rel ".pi" "agents"]              ; pi project
+   [:pi :home ".pi" "agent" "agents"]     ; pi user
+   [:agents :rel-walk ".agents" "agents"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :home ".agents" "agents"]     ; agents-standard user
+   [:opencode :rel ".opencode" "agents"]  ; opencode project (SPEL/generated plural layout)
+   [:opencode :rel ".opencode" "agent"]   ; opencode project (legacy/singular layout)
+   [:opencode :home ".config" "opencode" "agents"] [:opencode :home ".config" "opencode" "agent"]])
 
 (def skill-sources
-  [[:vis :rel ".vis" "skills"]              ; vis project-local (highest precedence)
+  [[:vis :rel ".vis" "skills"]            ; vis project-local (highest precedence)
    [:claude :rel ".claude" "skills"] [:claude :home ".claude" "skills"] [:claude :plugins "skills"]
-   [:pi :rel ".pi" "skills"]                ; pi project
-   [:pi :home ".pi" "agent" "skills"]       ; pi user (~/.pi/agent/skills)
-   [:agents :rel-walk ".agents" "skills"]   ; agents-standard project (+ ancestors up to git root)
-   [:agents :home ".agents" "skills"]       ; agents-standard user (~/.agents/skills)
-   [:opencode :rel ".opencode" "skills"]    ; opencode project (SPEL/generated plural layout)
-   [:opencode :rel ".opencode" "skill"]     ; opencode project (legacy/singular layout)
-   [:opencode :home ".config" "opencode" "skills"]
-   [:opencode :home ".config" "opencode" "skill"]])
+   [:pi :rel ".pi" "skills"]              ; pi project
+   [:pi :home ".pi" "agent" "skills"]     ; pi user (~/.pi/agent/skills)
+   [:agents :rel-walk ".agents" "skills"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :home ".agents" "skills"]     ; agents-standard user (~/.agents/skills)
+   [:opencode :rel ".opencode" "skills"]  ; opencode project (SPEL/generated plural layout)
+   [:opencode :rel ".opencode" "skill"]   ; opencode project (legacy/singular layout)
+   [:opencode :home ".config" "opencode" "skills"] [:opencode :home ".config" "opencode" "skill"]])
 
 (def known-tools
   "Every harness tag a source row can carry — the closed set discovery emits."

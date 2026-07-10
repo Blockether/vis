@@ -76,40 +76,63 @@
                    (expect (= "not-managed" (get r "result")))
                    (expect (= (rm/id-of dir) (get r "id"))))))
 
+(defdescribe failed-start-test
+             (it "returns failed with exit code and log tail when the launcher dies before binding"
+                 (let [dir (tmp-dir)]
+                   (with-redefs [rm/free-port! (fn []
+                                                 61235)
+                                 rm/wait-until-up (fn [_ _]
+                                                    :starting)
+                                 rm/launcher-for
+                                 (fn [_ _ port]
+                                   {:tool :fake
+                                    :cmd ["sh" "-c" (str "echo repl boom on " port "; exit 42")]})]
+
+                     (let [r (rm/start! "sess-fail" dir)]
+                       (expect (= "failed" (get r "result")))
+                       (expect (= "failed" (get r "status")))
+                       (expect (= 42 (get r "exit")))
+                       (expect (str/includes? (get r "message")
+                                              "exited before accepting connections"))
+                       (expect (some #(str/includes? % "repl boom on 61235") (get r "log_tail")))
+                       (expect (= "down" (get (rm/status "sess-fail" dir) "status"))))))))
+
 (defdescribe id-of-test
              (it "derives a stable nrepl:<dir> id" (expect (= "nrepl:/x/y" (rm/id-of "/x/y")))))
 
-(defdescribe resolve-target-ownership-test
-             ;; The ownership contract: an explicit id names a REPL; one owned REPL is the
-             ;; implicit default; several demand an id. session-repls is stubbed so no
-             ;; subprocess is spawned.
-             (it "uses the single owned REPL as the implicit default (no id needed)"
-                 (with-redefs [rm/session-repls (fn [_]
-                                                  [{:id "nrepl:/p" :dir "/p" :port 7001}])]
-                   (expect (= {:id "nrepl:/p" :dir "/p" :port 7001}
-                              (rm/resolve-target! "sess" nil "/p")))))
-             (it "resolves an explicit id to that owned REPL"
-                 (with-redefs [rm/session-repls (fn [_]
-                                                  [{:id "nrepl:/a" :dir "/a" :port 1}
-                                                   {:id "nrepl:/b" :dir "/b" :port 2}])]
-                   (expect (= {:id "nrepl:/b" :dir "/b" :port 2}
-                              (rm/resolve-target! "sess" "nrepl:/b" "/a")))))
-             (it "throws :clj/unknown-repl-id for an id with no live REPL"
-                 (with-redefs [rm/session-repls (fn [_]
-                                                  [])]
-                   (let [t (try (rm/resolve-target! "sess" "nrepl:/nope" "/p")
-                                :no-throw
-                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
-                     (expect (= :clj/unknown-repl-id t)))))
-             (it "throws :clj/ambiguous-repl when >1 REPLs live and no id is given"
-                 (with-redefs [rm/session-repls (fn [_]
-                                                  [{:id "nrepl:/a" :dir "/a" :port 1}
-                                                   {:id "nrepl:/b" :dir "/b" :port 2}])]
-                   (let [t (try (rm/resolve-target! "sess" nil "/a")
-                                :no-throw
-                                (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-                     (expect (= :clj/ambiguous-repl (:type t)))
-                     (expect (= ["nrepl:/a" "nrepl:/b"] (:ids t)))))))
+(defdescribe
+  resolve-target-ownership-test
+  ;; The ownership contract: an explicit id names a REPL; one owned REPL is the
+  ;; implicit default; with several, the default is the one owning default-dir
+  ;; (else the first) — never a throw. session-repls is stubbed so no
+  ;; subprocess is spawned.
+  (it "uses the single owned REPL as the implicit default (no id needed)"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [{:id "nrepl:/p" :dir "/p" :port 7001}])]
+        (expect (= {:id "nrepl:/p" :dir "/p" :port 7001} (rm/resolve-target! "sess" nil "/p")))))
+  (it "resolves an explicit id to that owned REPL"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [{:id "nrepl:/a" :dir "/a" :port 1}
+                                        {:id "nrepl:/b" :dir "/b" :port 2}])]
+        (expect (= {:id "nrepl:/b" :dir "/b" :port 2}
+                   (rm/resolve-target! "sess" "nrepl:/b" "/a")))))
+  (it "throws :clj/unknown-repl-id for an id with no live REPL"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [])]
+        (let [t (try (rm/resolve-target! "sess" "nrepl:/nope" "/p")
+                     :no-throw
+                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+          (expect (= :clj/unknown-repl-id t)))))
+  (it "defaults to the REPL owning default-dir when >1 live and no id"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [{:id "nrepl:/a" :dir "/a" :port 1}
+                                        {:id "nrepl:/b" :dir "/b" :port 2}])]
+        (expect (= {:id "nrepl:/b" :dir "/b" :port 2} (rm/resolve-target! "sess" nil "/b")))))
+  (it "falls back to the first REPL when default-dir owns none"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [{:id "nrepl:/a" :dir "/a" :port 1}
+                                        {:id "nrepl:/b" :dir "/b" :port 2}])]
+        (expect (= {:id "nrepl:/a" :dir "/a" :port 1} (rm/resolve-target! "sess" nil "/other"))))))
 
 (defdescribe
   clj-repl-tool-gating-test

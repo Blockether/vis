@@ -16,8 +16,11 @@
    `.nrepl-port` scanning — a REPL vis did not start is not vis's to show or stop.
 
    The `default` is the id of the SINGLE owned REPL (nil when zero or many): with
-   one REPL that id is the implicit eval target; with several the model MUST name
-   the id. Each REPL is mirrored into the session resource registry (footer badge
+   one REPL that id is the implicit eval target; with several, eval still resolves
+   WITHOUT the model naming an id — it defaults to the workspace-root REPL (else the
+   first) and the eval result reports which REPL ran under its `repl` field, so the
+   model can pass an explicit `id` to override. Each REPL is mirrored into the
+   session resource registry (footer badge
    + F4 stop/restart) and carries a liveness `status` from a per-turn probe.
 
    All best-effort: any failure degrades to an empty contribution and never
@@ -74,10 +77,7 @@
    Managed REPLs get stop + restart thunks driving repl-manager."
   [session-id {:keys [id dir port aliases log]}]
   (let [existing (when (and session-id id) (vis/get-resource session-id id))]
-    (when (and session-id
-               id
-               (or (nil? existing)
-                   (and log (not (get existing "can_logs")))))
+    (when (and session-id id (or (nil? existing) (and log (not (get existing "can_logs")))))
       (vis/register-resource!
         session-id
         {:id id
@@ -104,8 +104,9 @@
                                  (vis/unregister-resource! session-id id)
                                  r))}
           log
-          (assoc :logs-fn (fn []
-                            (repl-manager/tail-log log))))))))
+          (assoc :logs-fn
+            (fn []
+              (repl-manager/tail-log log))))))))
 
 (defn- nrepl-block
   "Build the `:nrepl` map from the session's owned REPLs + liveness statuses. This

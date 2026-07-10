@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.provider-error :as provider-error]
             [com.blockether.vis.internal.render :as ir]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
@@ -237,6 +238,15 @@
   [sid cursor]
   (filterv #(> (:seq %) (or cursor 0)) (get-in @registry [sid :events] [])))
 
+(defn running-turn-count
+  "Number of live turns currently owned by this gateway process. Used by the
+   daemon lifecycle gate: the server may only self-stop when this is zero AND
+   the client refcount is zero."
+  []
+  (->> (vals @registry)
+       (keep :current-turn)
+       count))
+
 ;; =============================================================================
 ;; Per-session model preference
 ;; =============================================================================
@@ -408,8 +418,19 @@
           {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
 
           :iteration-error
-          {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-           :thinking (normalize-thinking-text thinking)}
+          ;; Carry the SAME canonical provider-error map the final settled turn
+          ;; bubble paints the styled CARD from (`provider-error-info` →
+          ;; `:vis/provider-error-data`), so the LIVE `iteration.error` fragment
+          ;; renders identically instead of dumping the flattened error string.
+          ;; An iteration-error is always a provider-call failure (user-code
+          ;; errors surface as `block.output`), so — exactly like the loop's final
+          ;; `provider-error-ir` fallback — every one carries the structured data
+          ;; (`:kind` may be `:generic`; the card renders it just the same).
+          (cond-> {:error (when (some? error)
+                            (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                   :thinking (normalize-thinking-text thinking)}
+            (some? error)
+            (assoc :provider-error-data (provider-error/provider-error-info error)))
 
           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
     [(case phase
@@ -1346,9 +1367,12 @@
   "Create a fresh gateway-managed session. Defaults to `:api`, but in-process
   clients such as the TUI can pass `:channel :tui` and still use the same
   gateway turn/event machinery without pretending to be an HTTP client."
-  [{:keys [channel title external-id workspace-id]}]
+  [{:keys [channel title external-id workspace-id root]}]
   (let [channel
         (or channel :api)
+
+        workspace-id
+        (or workspace-id (when root (:id (workspace/create-trunk-at! (lp/db-info) root))))
 
         created
         (lp/create! channel

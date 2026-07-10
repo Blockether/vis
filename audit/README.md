@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-05.
+> Generated 2026-07-10.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -41,8 +41,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 57 unique, across 15 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~218 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 60 unique, across 15 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~221 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -179,8 +179,8 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.9.6-8` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.1.2` | MIT | 9 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.46` | Apache-2.0 | 369 KB | Blockether (in-house) |
-| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.4` | MIT | 148 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.56` | Apache-2.0 | 448 KB | Blockether (in-house) |
+| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.7` | MIT | 164 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.039` | MIT | 48 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
@@ -225,7 +225,9 @@ _Terminal UI (Lanterna)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.20` | LGPL-3.0 | 584 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.23` | LGPL-3.0 | 592 KB | Blockether (in-house) |
+| `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
+| `org.jcodec/jcodec-javase` | `0.2.5` | BSD | 14 KB | 3rd-party |
 
 ### `vis-channel-web` extension
 
@@ -265,6 +267,7 @@ _Clojure language pack (format/lint/structural edits)._
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.21.1` | Apache-2.0 | 95 KB | 3rd-party |
 | `dev.weavejester/cljfmt` | `0.16.4` | EPL-1.0 | 19 KB | 3rd-party |
 | `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
+| `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
 
 ### `vis-persistance-sqlite` extension
 
@@ -297,12 +300,13 @@ _Rift workspace/FFM integration._
 | License | Count |
 |---|---|
 | EPL-1.0 | 19 |
-| MIT | 13 |
+| MIT | 14 |
 | Apache-2.0 | 12 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | UPL-1.0 | 2 |
 | UPL-1.0 + MIT + PSF | 2 |
+| BSD | 2 |
 | (floating) | 1 |
 | Public-Domain | 1 |
 | LGPL-3.0 | 1 |
@@ -311,7 +315,7 @@ All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
 under **Apache-2.0** — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.20`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.23`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
@@ -394,6 +398,7 @@ Heaviest direct artifacts (>= 1 MB):
 | `org.xerial/sqlite-jdbc` | `3.53.2.0` | 11.4 MB |
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | 7.7 MB |
 | `org.clojure/clojure` | `1.12.5` | 4.0 MB |
+| `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |
 
 Notes:

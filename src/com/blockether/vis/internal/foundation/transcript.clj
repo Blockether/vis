@@ -994,8 +994,7 @@
                  (fn [[_ idx]]
                    (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
-(def ^:private ^Parser md-parser
-  (.build (Parser/builder)))
+(def ^:private ^Parser md-parser (.build (Parser/builder)))
 
 (def ^:private ^HtmlRenderer md-renderer
   (-> (HtmlRenderer/builder)

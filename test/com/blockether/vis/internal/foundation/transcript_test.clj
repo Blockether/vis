@@ -360,6 +360,7 @@
                (let [data (transcript/transcript s cid)
                      out (transcript/transcript->md data)
                      html (transcript/transcript->html data)]
+
                  (expect (str/includes? out "````python\n"))
                  (expect (str/includes? out inner))
                  (expect (str/includes? out "\n````\n"))

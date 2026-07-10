@@ -172,6 +172,79 @@
                            (expect (identical? CJK (p/truncate-cols CJK 6)))
                            (expect (identical? CJK (p/truncate-cols CJK 99))))))
 
+(def ^:private ESC (str \u001b))
+(defn- strip-ansi [s] (str/replace s (re-pattern (str ESC "\\[[0-9;]*m")) ""))
+(defn- sgr [code] (str ESC "[" code "m"))
+
+(defdescribe
+  ansi-fold-cols-test
+  (describe "ansi-fold-cols folds SGR-aware, never counting escapes as width"
+            (it "ESC-free input matches plain fold-cols"
+                (let [s (apply str (repeat 100 "a"))]
+                  (expect (= (p/fold-cols s 40) (p/ansi-fold-cols s 40)))))
+            (it "a wide colorized line folds to the budget, visible content preserved"
+                (let [line
+                      (str (sgr 31) (apply str (repeat 100 "x")) (sgr 0))
+
+                      segs
+                      (p/ansi-fold-cols line 40)]
+
+                  ;; every segment fits once escapes are stripped...
+                  (expect (every? #(<= (p/display-width (strip-ansi %)) 40) segs))
+                  ;; ...it folded into several rows...
+                  (expect (> (count segs) 1))
+                  ;; ...and the visible text is preserved byte-for-byte.
+                  (expect (= (strip-ansi line) (apply str (map strip-ansi segs))))))
+            (it "re-opens the SGR active at each cut on every continuation row"
+                ;; one green token spanning >1 row: each row must carry the color.
+                (let [line
+                      (str (sgr 32) (apply str (repeat 100 "x")) (sgr 0))
+
+                      segs
+                      (p/ansi-fold-cols line 40)]
+
+                  (expect (every? #(str/starts-with? % (sgr 32)) segs))))
+            (it "leaves color reset before the cut off the continuation row"
+                ;; color closes before the wide plain run, so folds don't re-open it.
+                (let [line
+                      (str (sgr 31) "pre" (sgr 0) (apply str (repeat 100 "y")))
+
+                      segs
+                      (p/ansi-fold-cols line 40)]
+
+                  (expect (not (str/starts-with? (second segs) ESC)))))))
+
+(defdescribe ansi-slice-cols-test
+             (describe
+               "ansi-slice-cols chops a horizontal display-column window (less -S)"
+               (it "plain text: window is a grapheme-safe column slice"
+                   (expect (= "cde" (p/ansi-slice-cols "abcdefgh" 2 3))))
+               (it "plain text: CJK window respects double-width columns"
+                   ;; "日本語" = 6 columns; window [2,4) is the 2nd glyph.
+                   (expect (= "本" (p/ansi-slice-cols CJK 2 2))))
+               (it "start past the end yields empty" (expect (= "" (p/ansi-slice-cols "abc" 10 5))))
+               (it "non-positive width yields empty"
+                   (expect (= "" (p/ansi-slice-cols "abc" 0 0)))
+                   (expect (= "" (p/ansi-slice-cols "abc" 1 -2))))
+               (it "a full-width window keeps the visible text byte-for-byte"
+                   (let [line (str (sgr 31) (apply str (repeat 30 "x")) (sgr 0))]
+                     (expect (= (strip-ansi line) (strip-ansi (p/ansi-slice-cols line 0 100))))))
+               (it "a window inside a colored run RE-OPENS the color and closes it"
+                   (let [line
+                         (str (sgr 32) (apply str (repeat 40 "y")) (sgr 0))
+
+                         w
+                         (p/ansi-slice-cols line 10 5)]
+
+                     (expect (str/starts-with? w (sgr 32)))
+                     (expect (= "yyyyy" (strip-ansi w)))
+                     (expect (str/ends-with? w (sgr 0)))))
+               (it "the visible width of a window never exceeds the requested width"
+                   (let [line (str (sgr 36) "hello " (sgr 0) (sgr 31) "world-is-wide" (sgr 0))]
+                     (expect (<= (p/display-width (strip-ansi (p/ansi-slice-cols line 3 8))) 8))))
+               (it "an ESC-free plain window carries no escape sequences"
+                   (expect (not (str/includes? (p/ansi-slice-cols "plain text here" 2 6) ESC))))))
+
 (defdescribe pad-right-test
              (describe "pad-right pads to display columns"
                        (it "ASCII shorter than width is right-padded with spaces"

@@ -28,14 +28,15 @@
                    (expect (ifn? (:provider/auth-prompt-fn coding)))
                    (expect (ifn? (:provider/auth-prompt-fn pass))))))
 
-(defdescribe auth-prompt-test
-             (it "exposes static API-key guidance for the coding plan"
-                 (require 'com.blockether.vis.ext.provider-zai :reload)
-                 (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
-                   (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
-                   (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %)
-                                 lines))
-                   (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %) lines)))))
+(defdescribe
+  auth-prompt-test
+  (it "exposes static API-key guidance for the coding plan"
+      (require 'com.blockether.vis.ext.provider-zai :reload)
+      (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
+        (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
+        (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
+        (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %)
+                      lines)))))
 
 (defdescribe
   auth-detection-test

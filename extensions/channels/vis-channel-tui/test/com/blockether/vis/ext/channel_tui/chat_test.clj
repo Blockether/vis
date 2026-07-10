@@ -517,3 +517,32 @@
           (expect (= "RG" (:label card)))
           (expect (= :tool-color/search (:color-role card)))
           (expect (= "8 hits in 1 file" (:summary card)))))))
+
+;; Regression: a FAILED provider turn's styled card must survive the
+;; `turn!`/`attach!` fold. Those fold the engine's provider-error IR onto
+;; `:answer` and dissoc `:answer-ir`, so the live TUI bubble (state.clj) reads
+;; it back via `chat/error-answer-ir` — NOT `:answer-ir` (gone) which used to
+;; flatten `:error` into plain text on a fresh conversation.
+(defdescribe error-answer-ir-test
+             (it "reads the folded provider-error IR off :answer, not the flattened :error"
+                 (let [card
+                       [:ir {:vis/provider-error true}
+                        [:h {:level 2} [:span {} "Provider unavailable"]] [:p {} [:span {} "boom"]]]
+
+                       ;; shape produced by attach!/turn! fold: IR on :answer, :answer-ir gone
+                       folded
+                       {:error "ERROR: Provider unavailable ..." :answer card}
+
+                       out
+                       (chat/error-answer-ir folded)]
+
+                   (expect (= card out))
+                   (expect (true? (:vis/provider-error (second out))))))
+             (it "still legacy-reads :answer-ir when present (belt-and-suspenders)"
+                 (let [card [:ir {:vis/provider-error true} [:p {} [:span {} "x"]]]]
+                   (expect (= card (chat/error-answer-ir {:error "e" :answer-ir card})))))
+             (it "falls back to a format-error bubble when no IR content survived"
+                 (let [out (chat/error-answer-ir {:error "boom" :answer chat/empty-ir})]
+                   (expect (vector? out))
+                   (expect (= :ir (first out)))
+                   (expect (seq (nnext out))))))

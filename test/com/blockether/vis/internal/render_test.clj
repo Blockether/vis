@@ -128,12 +128,17 @@
 (defdescribe
   markdown-html-comment-test
   (it "drops standalone HTML comments instead of painting them in the bubble"
-      (let [md "Confirming missing database and cleaning files\n\n<!-- -->\nFixed."
-            ir (render/markdown->ir md)
-            rendered (render/render ir :markdown {})]
+      (let [md
+            "Confirming missing database and cleaning files\n\n<!-- -->\nFixed."
+
+            ir
+            (render/markdown->ir md)
+
+            rendered
+            (render/render ir :markdown {})]
+
         (expect (not (str/includes? rendered "<!-- -->")))
-        (expect (= "Confirming missing database and cleaning files\n\nFixed."
-                   rendered))))
+        (expect (= "Confirming missing database and cleaning files\n\nFixed." rendered))))
   (it "keeps non-comment raw HTML visible as escaped/text content"
       (let [rendered (render/render (render/markdown->ir "<details>secret</details>") :markdown {})]
         (expect (str/includes? rendered "<details>secret</details>")))))
@@ -171,3 +176,17 @@
       (let [canon [:ir {} [:p {} [:span {} "x"]]]]
         (expect (identical? canon (render/markdown->ir canon)))
         (expect (identical? canon (render/markdown->ir canon {:soft-break :hard}))))))
+
+(defdescribe
+  markdown-lone-code-span-test
+  (it "promotes a long whole-paragraph inline code span to a copyable :code block"
+      ;; A bookmarklet / long shell command authored as a lone `` `…` `` span
+      ;; must render as a code block (verbatim + copy affordance), not an
+      ;; inline chip that wraps and corrupts a select-copy.
+      (let [src "javascript:(function(){var o=\"http://127.0.0.1\";window.__spel.connect();})();"]
+        (expect (= [:ir {} [:code {} src]] (render/markdown->ir (str "`" src "`"))))))
+  (it "keeps a short lone inline code span as an inline :c chip"
+      (expect (= [:ir {} [:p {} [:c {} "foo"]]] (render/markdown->ir "`foo`"))))
+  (it "keeps an inline code span embedded in prose inline"
+      (expect (= [:ir {} [:p {} [:span {} "use "] [:c {} "some-fn"] [:span {} " here"]]]
+                 (render/markdown->ir "use `some-fn` here")))))
