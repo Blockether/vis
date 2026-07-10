@@ -491,6 +491,33 @@
     (swap! subscriptions dissoc sub-id))
   nil)
 
+(defn sse-event-action
+  "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.
+   Returns `[action event']`:
+     :terminal — the wanted turn reached a terminal event (return `event'`)
+     :forward  — hand to on-event (own-turn progress OR a sibling turn's
+                 queue-mirror event — see `wire/queue-mirror-event-types`),
+                 then keep reading
+     :skip     — another turn's non-queue event, drop it.
+   A `turn.queued.deleted` for the WANTED turn is terminal too: the queued
+   record was pulled back into an editor before it ever ran, so a cancelled
+   terminal is synthesized instead of blocking on a turn that never starts."
+  [event wanted-turn-id]
+  (let [type
+        (:type event)
+
+        own?
+        (= (str (:turn_id event)) (str wanted-turn-id))]
+
+    (cond (and own? (contains? #{"turn.completed" "turn.failed"} type)) [:terminal event]
+          (and own? (= "turn.queued.deleted" type)) [:terminal
+                                                     (assoc event
+                                                       :type "turn.completed"
+                                                       :status "cancelled")]
+          own? [:forward event]
+          (contains? wire/queue-mirror-event-types type) [:forward event]
+          :else [:skip event])))
+
 (defn- read-events-until!
   [sid cursor wanted-turn-id on-event]
   (let [response
@@ -507,11 +534,17 @@
             (let [data (str/join "\n" data-lines)
                   event (when (seq data) (wire/parse-json data))]
 
-              (if (and event (= (str (:turn_id event)) (str wanted-turn-id)))
-                (do
-                  (when on-event (on-event event))
-                  (if (contains? #{"turn.completed" "turn.failed"} (:type event)) event (recur [])))
-                (recur [])))
+              (if-not event
+                (recur [])
+                (let [[action event'] (sse-event-action event wanted-turn-id)]
+                  (case action
+                    :terminal
+                    (do (when on-event (on-event event)) event')
+
+                    :forward
+                    (do (when on-event (on-event event)) (recur []))
+
+                    (recur [])))))
             (if (str/starts-with? line "data: ")
               (recur (conj data-lines (subs line 6)))
               (recur data-lines)))

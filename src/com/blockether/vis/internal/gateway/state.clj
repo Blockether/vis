@@ -1040,6 +1040,11 @@
     (when-let [{:keys [tid request messages model reasoning-default cancel-token extra-body
                        turn-features workspace engine-opts attachments]}
                @decision]
+      ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
+      ;; attached channel drops its mirrored entry on this, and a replayed
+      ;; event log nets to zero (turn.queued … turn.queued.drained). The
+      ;; turn.started that follows carries :queued? true for attach flows.
+      (append-event! sid "turn.queued.drained" {:turn_id tid})
       (launch-turn-worker! sid
                            tid
                            request
@@ -1238,6 +1243,16 @@
       failed?
       (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
 
+(def ^:private queue-mirror-event-types
+  "Queue lifecycle events forwarded to a turn-scoped subscriber even though
+   they belong to a DIFFERENT (queued) turn of the same session: every
+   attached channel mirrors the gateway's queued backlog live from these,
+   so a message queued in one TUI shows up in every sibling attached to
+   the session (see the TUI's :sync-queued-turn). Canonical set:
+   `wire/queue-mirror-event-types` — the SSE client (`gateway.client`)
+   forwards the SAME set, so both transports stay in lockstep."
+  wire/queue-mirror-event-types)
+
 (defn submit-turn-sync!
   "Submit one turn through the gateway and block until that turn reaches a terminal event.
 
@@ -1260,9 +1275,21 @@
 
         handle-event!
         (fn [{:keys [type turn_id] :as event}]
-          (when (or (nil? @submitted-turn-id) (= turn_id @submitted-turn-id))
-            (when on-event (on-event event))
-            (when (contains? #{"turn.completed" "turn.failed"} type) (deliver terminal event))))]
+          (cond (or (nil? @submitted-turn-id) (= turn_id @submitted-turn-id))
+                (do (when on-event (on-event event))
+                    (when (contains? #{"turn.completed" "turn.failed"} type)
+                      (deliver terminal event))
+                    ;; Our own queued record deleted before it ever ran
+                    ;; (pulled back into a sibling's editor): synthesize a
+                    ;; cancelled terminal so the blocking submit never hangs.
+                    (when (and (= "turn.queued.deleted" type)
+                               (some? @submitted-turn-id)
+                               (= turn_id @submitted-turn-id))
+                      (deliver terminal
+                               {:type "turn.completed" :turn_id turn_id :status "cancelled"})))
+                ;; ANOTHER turn's queue event: forward so the channel can
+                ;; mirror the session's queued backlog; never terminal here.
+                (contains? queue-mirror-event-types type) (when on-event (on-event event))))]
 
     (try (let [replay
                (subscribe! sid sub-id handle-event! started-cursor)
@@ -1303,9 +1330,18 @@
 
         handle-event!
         (fn [{:keys [type turn_id] :as event}]
-          (when (= turn_id tid)
-            (when on-event (on-event event))
-            (when (contains? #{"turn.completed" "turn.failed"} type) (deliver terminal event))))]
+          (cond (= turn_id tid)
+                (do (when on-event (on-event event))
+                    (when (contains? #{"turn.completed" "turn.failed"} type)
+                      (deliver terminal event))
+                    ;; The queued record was deleted before it ever ran
+                    ;; (pulled back into a sibling's editor): synthesize a
+                    ;; cancelled terminal so the attach never hangs.
+                    (when (= "turn.queued.deleted" type)
+                      (deliver terminal {:type "turn.completed" :turn_id tid :status "cancelled"})))
+                ;; ANOTHER turn's queue event: forward so the channel can
+                ;; mirror the session's queued backlog; never terminal here.
+                (contains? queue-mirror-event-types type) (when on-event (on-event event))))]
 
     (try (let [replay (subscribe! sid sub-id handle-event! started-cursor)]
            (doseq [event replay]

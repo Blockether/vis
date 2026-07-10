@@ -101,6 +101,17 @@
   (let [s (str s)]
     (if (> (count s) limit) (str (subs s 0 limit) " …[truncated]") s)))
 
+(def queue-mirror-event-types
+  "Queue lifecycle event types every attached channel mirrors LIVE even when
+   they belong to a DIFFERENT (queued) turn of the same session — the ONE set
+   both transports forward (the in-process `gateway.state` subscriptions AND
+   the SSE loop in `gateway.client`), so a message queued/edited/deleted in
+   one channel shows up in every sibling. `turn.queued.drained` marks the
+   queue head leaving the queue because the gateway auto-STARTED it, so
+   mirrors drop the entry and a replayed history nets to zero
+   (`turn.queued` … `turn.queued.drained`)."
+  #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"})
+
 (defn sse-frame
   "Render one event map as an SSE frame. The event's `:seq` doubles as
    the SSE `id:` so `Last-Event-ID` reconnects resume losslessly."

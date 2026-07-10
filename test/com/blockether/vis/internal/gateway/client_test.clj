@@ -114,3 +114,23 @@
       (try (is (false? (port-free? "127.0.0.1" port)) "occupied port is not free")
            (finally (.close sock)))
       (is (true? (port-free? "127.0.0.1" port)) "released port is free"))))
+
+(deftest sse-event-action-test
+  (testing "own turn terminal returns the event"
+    (is (= [:terminal {:type "turn.completed" :turn_id "t1"}]
+           (client/sse-event-action {:type "turn.completed" :turn_id "t1"} "t1"))))
+  (testing "own turn progress forwards"
+    (is (= :forward (first (client/sse-event-action {:type "block.output" :turn_id "t1"} "t1")))))
+  (testing "own queued record deleted synthesizes a cancelled terminal (no hang)"
+    (let [[action event'] (client/sse-event-action {:type "turn.queued.deleted" :turn_id "t1"}
+                                                   "t1")]
+      (is (= :terminal action))
+      (is (= "cancelled" (:status event')))
+      (is (= "turn.completed" (:type event')))))
+  (testing "a SIBLING turn's queue lifecycle events forward (cross-TUI queue mirror)"
+    (doseq [type ["turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"]]
+      (is (= :forward (first (client/sse-event-action {:type type :turn_id "OTHER"} "t1"))) type)))
+  (testing "a sibling turn's non-queue events are dropped"
+    (is (= :skip (first (client/sse-event-action {:type "block.output" :turn_id "OTHER"} "t1"))))
+    (is (= :skip
+           (first (client/sse-event-action {:type "turn.completed" :turn_id "OTHER"} "t1"))))))
