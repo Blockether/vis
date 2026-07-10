@@ -2193,81 +2193,80 @@
           preview-text
           (input/collapse-paste-placeholders text pastes)]
 
-      (cond (transcript-dump-input? full-text)
-            {:db db
-             :fx [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]}
-            (:loading? source-db) (enqueue-message-result db workspace-id text)
-            (nil? (:session source-db)) {:db db}
-            :else
-            (let [workspace
-                  (active-workspace source-db)
+      (cond
+        (transcript-dump-input? full-text)
+        {:db db :fx [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]}
+        (:loading? source-db) (enqueue-message-result db workspace-id text)
+        (nil? (:session source-db)) {:db db}
+        :else
+        (let [workspace
+              (active-workspace source-db)
 
-                  agent-text
-                  (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
-                    (input/expand-file-mentions full-text))
+              agent-text
+              (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
+                (input/expand-file-mentions full-text))
 
-                  token
-                  (vis/cancellation-token)
+              token
+              (vis/cancellation-token)
 
-                  extra-body
-                  (turn-extra-body db)
+              extra-body
+              (turn-extra-body db)
 
-                  turn-features
-                  (cond-> {}
-                    (get-in db [:settings :voice/respond])
-                    (assoc :voice-response? true))
+              turn-features
+              (cond-> {}
+                (get-in db [:settings :voice/respond])
+                (assoc :voice-response? true))
 
-                  reasoning-level
-                  (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
+              reasoning-level
+              (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
 
-                  client-turn-id
-                  (str (java.util.UUID/randomUUID))]
+              client-turn-id
+              (str (java.util.UUID/randomUUID))]
 
-              {:db (update-tab
-                     db
-                     workspace-id
-                     (fn [w]
-                       (-> w
-                           (update :messages
-                                   conj
-                                   (assoc (chat/user-message preview-text)
-                                     :client-turn-id client-turn-id))
-                           (update :messages
-                                   conj
-                                   (assoc (chat/assistant-message pending-assistant-ir)
-                                     :pending? true
-                                     :client-turn-id client-turn-id))
-                           (update :input-history
-                                   (fn [xs]
-                                     (let [xs (vec (or xs []))]
-                                       (if (= full-text (last xs)) xs (conj xs full-text)))))
-                           ;; Sending re-pins to the bottom: one atomic FOLLOW
-                           ;; reset replaces the whole `:scroll` value, so no
-                           ;; in-flight animation target can dangle and flash the
-                           ;; view to the top of the freshly-appended message.
-                           (assoc :scroll scroll/follow
-                                  :loading? true
-                                  :cancel-token token
-                                  :cancelling? false
-                                  :progress {:iterations []}
-                                  :turn-start-ms (System/currentTimeMillis)
-                                  :submitted-input {:text text
-                                                    :pastes (:pastes source-db)
-                                                    :paste-counter (:paste-counter source-db)}
-                                  :input-history-index nil
-                                  :input-history-draft nil
-                                  :slash-command-index 0
-                                  :slash-command-hidden? false))))
-               ;; `agent-text` (LLM-facing, with `@path` expanded into a
-               ;; `[Attached File: ...]` directive) drives the model.
-               ;; `preview-text` (un-expanded `@path` token, plus a fenced
-               ;; head+tail peek of each paste) is the user's collapsed line -
-               ;; flowed in as `display-text` so it lands in the persisted
-               ;; `user_request` column. Without the split,
-               ;; reopening a session re-rendered the verbose attachment
-               ;; directive in the user bubble.
-               :fx [[:rlm-turn workspace-id (:session source-db) agent-text token reasoning-level
-                     extra-body turn-features workspace client-turn-id preview-text]]})))))
+          {:db (update-tab db
+                           workspace-id
+                           (fn [w]
+                             (-> w
+                                 (update :messages
+                                         conj
+                                         (assoc (chat/user-message preview-text)
+                                           :client-turn-id client-turn-id))
+                                 (update :messages
+                                         conj
+                                         (assoc (chat/assistant-message pending-assistant-ir)
+                                           :pending? true
+                                           :client-turn-id client-turn-id))
+                                 (update :input-history
+                                         (fn [xs]
+                                           (let [xs (vec (or xs []))]
+                                             (if (= full-text (last xs)) xs (conj xs full-text)))))
+                                 ;; Sending re-pins to the bottom: one atomic FOLLOW
+                                 ;; reset replaces the whole `:scroll` value, so no
+                                 ;; in-flight animation target can dangle and flash the
+                                 ;; view to the top of the freshly-appended message.
+                                 (assoc :scroll scroll/follow
+                                        :loading? true
+                                        :cancel-token token
+                                        :cancelling? false
+                                        :progress {:iterations []}
+                                        :turn-start-ms (System/currentTimeMillis)
+                                        :submitted-input {:text text
+                                                          :pastes (:pastes source-db)
+                                                          :paste-counter (:paste-counter source-db)}
+                                        :input-history-index nil
+                                        :input-history-draft nil
+                                        :slash-command-index 0
+                                        :slash-command-hidden? false))))
+           ;; `agent-text` (LLM-facing, with `@path` expanded into a
+           ;; `[Attached File: ...]` directive) drives the model.
+           ;; `preview-text` (un-expanded `@path` token, plus a fenced
+           ;; head+tail peek of each paste) is the user's collapsed line -
+           ;; flowed in as `display-text` so it lands in the persisted
+           ;; `user_request` column. Without the split,
+           ;; reopening a session re-rendered the verbose attachment
+           ;; directive in the user bubble.
+           :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
+                 extra-body turn-features workspace client-turn-id preview-text]]})))))
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
               ;; Queue lives on that workspace/session and drains after the
@@ -2367,7 +2366,7 @@
                                             :turn-start-ms (System/currentTimeMillis)
                                             :input-history-index nil
                                             :input-history-draft nil))))
-               :fx [[:rlm-attach workspace-id session (:turn-id head) token client-turn-id]]})
+               :fx [[:session-attach workspace-id session (:turn-id head) token client-turn-id]]})
             :else {:db (update-tab db
                                    workspace-id
                                    (fn [w]
@@ -2376,6 +2375,69 @@
                                        :pastes (or (:pastes head) {})
                                        :paste-counter (or (:paste-counter head) 0))))
                    :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
+(reg-event-fx :attach-running-turn
+              ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
+              ;; the web, or a sibling process) the moment its tab opens/resumes, so it
+              ;; STREAMS live into the tab instead of showing frozen history until it
+              ;; lands in the DB. `session` carries :id, :status/:current-turn-id and the
+              ;; in-flight turn's `:running-request` text (from `chat/resume-session`).
+              ;; No-op unless the session is genuinely running AND the target tab isn't
+              ;; already attached (guards against double-attaching an already-live tab).
+              ;; Mirrors `:drain-pending`'s busy-time attach: seed the user + pending
+              ;; assistant bubbles, arm the turn state, then hand off to `:session-attach`.
+              (fn [db [_ workspace-id session]]
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
+
+                      sid
+                      (:id session)
+
+                      tid
+                      (:current-turn-id session)
+
+                      target
+                      (db-for-tab db workspace-id)]
+
+                  (if-not (and workspace-id
+                               sid
+                               tid
+                               (session-running? session)
+                               (not (:loading? target))
+                               (not (:gateway-turn-id target)))
+                    {:db db}
+                    (let [token
+                          (vis/cancellation-token)
+
+                          client-turn-id
+                          (str (java.util.UUID/randomUUID))
+
+                          request-text
+                          (or (:running-request session) "")]
+
+                      {:db (update-tab db
+                                       workspace-id
+                                       (fn [w]
+                                         (-> w
+                                             (update :messages
+                                                     conj
+                                                     (assoc (chat/user-message request-text)
+                                                       :client-turn-id client-turn-id))
+                                             (update :messages
+                                                     conj
+                                                     (assoc (chat/assistant-message
+                                                              pending-assistant-ir)
+                                                       :pending? true
+                                                       :client-turn-id client-turn-id))
+                                             (assoc :scroll scroll/follow
+                                                    :loading? true
+                                                    :cancel-token token
+                                                    :gateway-turn-id tid
+                                                    :cancelling? false
+                                                    :progress {:iterations []}
+                                                    :turn-start-ms (System/currentTimeMillis)
+                                                    :input-history-index nil
+                                                    :input-history-draft nil))))
+                       :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 (reg-event-fx
   :restore-pending-to-input
   ;; A user cancel with a queued backlog must NOT auto-send the next message.
@@ -2712,7 +2774,7 @@
 
               (vis/refresh-cached-routers! router)))))
 (reg-fx
-  :rlm-turn
+  :session-turn
   (fn [workspace-id session text token reasoning-level extra-body turn-features workspace
        client-turn-id & [display-text]]
     (let [fut
@@ -2822,7 +2884,7 @@
                                {:client-turn-id client-turn-id}]))))))]
       (vis/cancellation-set-future! token fut))))
 (reg-fx
-  :rlm-attach
+  :session-attach
   (fn [workspace-id session tid token client-turn-id]
     (let [fut
           (vis/worker-future

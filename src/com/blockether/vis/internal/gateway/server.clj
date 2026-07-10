@@ -10,7 +10,7 @@
 
    This is internal plumbing, not a channel: it registers no channel
    descriptor and owns no renderer - it ships canonical IR and the
-   client renders (§4.1). Any host process (the `vis serve` daemon, a
+   client renders (§4.1). Any host process (the `vis gateway start` daemon, a
    TUI run, an embedded caller) can start it alongside whatever else it
    is doing via `start!`."
   (:require [clojure.string :as str]
@@ -330,9 +330,11 @@
   [request]
   (let [body (body-json request)]
     (json-response 201
-                   (state/create-session! {:title (:title body)
+                   (state/create-session! {:channel (:channel body)
+                                           :title (:title body)
                                            :external-id (:external_id body)
-                                           :workspace-id (:workspace_id body)}))))
+                                           :workspace-id (:workspace_id body)
+                                           :prewarm? (:prewarm body)}))))
 
 (defn- list-sessions-handler [_] (json-response {:sessions (state/list-sessions)}))
 
@@ -494,6 +496,12 @@
   [request]
   (if-let [sid (path-sid request)]
     (json-response {:turns (state/transcript sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- turn-trace-handler
+  [request]
+  (if (path-sid request)
+    (json-response {:iterations (state/turn-trace (get-in request [:path-params :tid]))})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- session-model-handler
@@ -724,6 +732,7 @@
          {:get get-turn-handler
           :patch update-queued-turn-handler
           :delete delete-queued-turn-handler}]
+        ["/sessions/:sid/turns/:tid/trace" {:get turn-trace-handler}]
         ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
       (keep (fn [{:keys [routes]}]
               (when routes
@@ -884,7 +893,7 @@
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
-   Safe to call from any host process - the daemon (`vis serve`), a TUI
+   Safe to call from any host process - the daemon (`vis gateway start`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
   ([{:keys [port host token-file require-token? db]}]
@@ -1004,7 +1013,7 @@
 (defn running? [] (some? @server-state))
 
 (defn serve-main!
-  "Blocking entry for the `vis serve` command: start, print the
+  "Blocking entry for the `vis gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
   [{:keys [port host token-file require-token? db]}]
   (let [{:keys [port host token-file require-token?]} (start! {:port (some-> port

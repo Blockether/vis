@@ -2685,9 +2685,14 @@
 
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
-  [{:keys [id history]}]
-  (state/dispatch [:init-session {:id id} history (session-workspace id)])
+  [{:keys [id history] :as session-result}]
+  (state/dispatch [:init-session (select-keys session-result [:id :status :current-turn-id]) history
+                   (session-workspace id)])
   (state/dispatch [:set-title (or (session-db-title id) "")])
+  ;; If a turn is IN FLIGHT for this session (e.g. started in the web or a
+  ;; sibling process), ATTACH so it streams live into the tab instead of
+  ;; showing frozen history until it lands in the DB.
+  (state/dispatch [:attach-running-turn nil session-result])
   (subscribe-title-listener! id))
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to
@@ -2857,7 +2862,7 @@
              ;; the first Ctrl+N. Idempotent; the post-open `prewarm-session!` just
              ;; tops it up toward the pool depth.
              (chat/prewarm-session! config)
-             (let [{:keys [id history]}
+             (let [{:keys [id history] :as startup-session}
                    (cond (:session-id opts) resumed-from-flag
                          ;; --continue: reopen the most-recent :tui session
                          (:continue opts) (if-let [latest (first (remove empty-untitled-session?
@@ -2878,10 +2883,7 @@
                                  (if-let [first-session (some chat/resume-session saved)]
                                    (do (vreset! restore-plan snap) first-session)
                                    (chat/make-session config))))]
-               (vswap! title-listeners
-                       assoc
-                       (str id)
-                       (init-visible-session! {:id id :history history}))
+               (vswap! title-listeners assoc (str id) (init-visible-session! startup-session))
                ;; Record this place's tab set even when there's just the one
                ;; startup tab — otherwise a single-tab session never persists
                ;; and a plain relaunch wouldn't restore it. Skip when restoring
@@ -3050,7 +3052,9 @@
                  open-session-tab!
                  (fn [{:keys [id history] :as session-result} notify?]
                    (when (and id session-result)
-                     (state/dispatch [:open-session-tab {:id id} history (session-workspace id)])
+                     (state/dispatch [:open-session-tab
+                                      (select-keys session-result [:id :status :current-turn-id])
+                                      history (session-workspace id)])
                      ;; `:open-session-tab` already reset `:title nil`. Only
                      ;; push a title when the DB actually has one — mirror
                      ;; refresh-active-tab! and NEVER overwrite with "" (a
@@ -3059,6 +3063,10 @@
                      (when-let [title (session-db-title id)]
                        (state/dispatch [:set-title title]))
                      (ensure-title-listener! id)
+                     ;; Attach + stream a turn already IN FLIGHT for this session so its
+                     ;; tab shows live progress instead of frozen history.
+                     (state/dispatch [:attach-running-turn
+                                      (state/tab-id-for-session @state/app-db id) session-result])
                      (prewarm-session! session-result)
                      (persist-tabs!)
                      (when notify?

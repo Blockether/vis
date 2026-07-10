@@ -3,16 +3,21 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; `rebuild-history` now reads `vis/gateway-transcript` (which delegates to
 ;; `persistance/db-list-*` directly, NOT the `vis/db-list-*` re-exports the
 ;; tests redef). This stub composes the same turn+`:iterations` shape from those
-;; existing mocks — each test redefs `vis/gateway-transcript` to it.
+;; existing mocks — each test redefs `vis/gateway-transcript` to it. The rows
+;; pass through `wire/canonical` exactly like the REAL facade (`state/transcript`
+;; canonicalizes at the source), so every fixture below exercises the ONE
+;; canonical transcript shape a channel actually sees — in-process AND over HTTP.
 (defn- compose-transcript
   [sid]
-  (mapv #(assoc % :iterations (vec (vis/db-list-session-turn-iterations :db (:id %))))
-        (vis/db-list-session-turns :db sid)))
+  (wire/canonical (mapv #(assoc %
+                           :iterations (vec (vis/db-list-session-turn-iterations :db (:id %))))
+                        (vis/db-list-session-turns :db sid))))
 
 (defdescribe rebuild-history-test)
 
@@ -392,7 +397,7 @@
                   first)]
 
           (expect (= :tool (:result-kind form)))
-          (expect (= {:symbol :cat :tag :observation :target {:path "x.txt"}}
+          (expect (= {:symbol "cat" :tag "observation" :target {:path "x.txt"}}
                      (:result-detail form)))))))
 
 (defdescribe turn-options-test
@@ -473,7 +478,7 @@
         restore
         (fn [env]
           (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
-                      {:id :iter-1 :code (:src env) :forms [env]})
+                      (wire/canonical {:id :iter-1 :code (:src env) :forms [env]}))
               :forms
               first))]
 
