@@ -35,25 +35,67 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: |
             deps-${{ runner.os }}-
 
       - name: Generate changelog
         id: changelog
+        shell: bash
         run: |
+          set -euo pipefail
           PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
           CURRENT_TAG=${{ github.ref_name }}
           if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" $CURRENT_TAG)
+            RANGE="$CURRENT_TAG"
           else
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..${CURRENT_TAG})
+            RANGE="${PREV_TAG}..${CURRENT_TAG}"
           fi
+
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $RANGE)
+
+          package_changes() {
+            local any=false
+            echo "### Package changes"
+            echo ""
+
+            local root_entries
+            root_entries=$(git log --pretty=format:"- %s (%h)" $RANGE -- . ':(exclude)extensions' || true)
+            if [ -n "$root_entries" ]; then
+              any=true
+              echo "#### com.blockether/vis"
+              echo "$root_entries"
+              echo ""
+            fi
+
+            while IFS= read -r deps_file; do
+              local dir short lib entries
+              dir="${deps_file%/deps.edn}"
+              short=$(basename "$dir")
+              lib="com.blockether/$short"
+              entries=$(git log --pretty=format:"- %s (%h)" $RANGE -- "$dir" || true)
+              if [ -n "$entries" ]; then
+                any=true
+                echo "#### $lib"
+                echo "$entries"
+                echo ""
+              fi
+            done < <(find extensions -mindepth 2 -maxdepth 3 -name deps.edn -print | sort)
+
+            if [ "$any" = false ]; then
+              echo "- No package-scoped changes."
+              echo ""
+            fi
+          }
+
+          package_changes > /tmp/package_changes.md
+
           {
             echo "## What's Changed"
             echo ""
             echo "$CHANGELOG"
             echo ""
+            cat /tmp/package_changes.md
             echo "**Full Changelog**: https://github.com/Blockether/vis/compare/${PREV_TAG}...${CURRENT_TAG}"
           } > /tmp/release_body.md
 
@@ -64,15 +106,15 @@ jobs:
 
       - name: Check if version exists on Clojars
         id: check-clojars
+        shell: bash
         run: |
-          # The monorepo publishes 9 artifacts - vis-loop, vis-commandline,
-          # vis-extension, vis-logging, vis-persistance, vis-persistance-sqlite,
-          # vis-provider, vis-channel-telegram, vis-channel-tui. Probe vis-loop as the
-          # bellwether - every release deploys the whole set together so
-          # vis-loop's presence implies the rest landed too.
+          set -euo pipefail
+          # The monorepo publishes com.blockether/vis plus every package discovered
+          # from extensions/**/deps.edn. Probe the root vis jar as the bellwether —
+          # every release deploys the full selected package set together.
           VERSION="${GITHUB_REF_NAME#v}"
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://repo.clojars.org/com/blockether/vis-loop/$VERSION/vis-loop-$VERSION.jar")
+            "https://repo.clojars.org/com/blockether/vis/$VERSION/vis-$VERSION.jar")
           if [ "$STATUS" = "200" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version $VERSION already exists on Clojars - skipping deploy"
@@ -80,7 +122,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build & Deploy all 9 packages to Clojars
+      - name: Build & Deploy monorepo packages to Clojars
         if: steps.check-clojars.outputs.exists != 'true'
         env:
           VERSION: ${{ github.ref_name }}
@@ -94,14 +136,22 @@ jobs:
           sed -i "s/{:mvn\/version \"[^\"]*\"}/{:mvn\/version \"$VERSION\"}/g" README.md
 
       - name: Update CHANGELOG.md
+        shell: bash
         run: |
+          set -euo pipefail
           PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
           CURRENT_TAG=${{ github.ref_name }}
           DATE=$(date +%Y-%m-%d)
           if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            COMMITS=$(git log --pretty=format:"- %s" $CURRENT_TAG)
+            RANGE="$CURRENT_TAG"
           else
-            COMMITS=$(git log --pretty=format:"- %s" ${PREV_TAG}..${CURRENT_TAG})
+            RANGE="${PREV_TAG}..${CURRENT_TAG}"
+          fi
+          COMMITS=$(git log --pretty=format:"- %s" $RANGE)
+          if [ ! -f /tmp/package_changes.md ]; then
+            echo "### Package changes" > /tmp/package_changes.md
+            echo "" >> /tmp/package_changes.md
+            echo "- Package change details were unavailable for this release run." >> /tmp/package_changes.md
           fi
           UNRELEASED_LINE=$(grep -n '^## \[Unreleased\]' CHANGELOG.md | head -1 | cut -d: -f1)
           if [ -z "$UNRELEASED_LINE" ]; then
@@ -115,6 +165,8 @@ jobs:
             echo ""
             echo "### Changed"
             echo "$COMMITS"
+            echo ""
+            cat /tmp/package_changes.md
             echo ""
             tail -n +$((UNRELEASED_LINE + 1)) CHANGELOG.md
           } > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md

@@ -41,7 +41,10 @@
 (def ^:private COPILOT_ACCOUNT_BASE_URLS
   {:individual "https://api.individual.githubcopilot.com"
    :business "https://api.business.githubcopilot.com"
-   :enterprise "https://api.enterprise.githubcopilot.com"})
+   ;; Copilot Enterprise Cloud seats report/use the business API host; there is
+   ;; no public `api.enterprise.githubcopilot.com` chat/action-service host.
+   ;; GHE installs still pass `:enterprise-domain` and derive `copilot-api.<domain>`.
+   :enterprise "https://api.business.githubcopilot.com"})
 
 (def ^:private COPILOT_ACCOUNT_TYPES #{:individual :business :enterprise})
 
