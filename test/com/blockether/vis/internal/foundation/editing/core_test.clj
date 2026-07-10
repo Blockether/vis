@@ -2750,38 +2750,50 @@
             (expect (clojure.string/includes? (get-in r1 [:result "skeleton"]) "sub"))
             (expect (= (get-in r1 [:result "skeleton"]) (get-in r2 [:result "skeleton"]))))))))
 
-(defdescribe rg-tool-e2e-test
-             "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
-             (let [rg (private-fn "rg-tool")]
-               (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
-                   (let [d (temp-dir-path "rge")
-                         f (str (temp-root) "/rge/a.clj")]
+(defdescribe
+  rg-tool-e2e-test
+  "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
+  (let [rg (private-fn "rg-tool")]
+    (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
+        (let [d (temp-dir-path "rge")
+              f (str (temp-root) "/rge/a.clj")]
 
-                     (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
-                     (let [r (rg "model, cycle" {"paths" [d]})]
-                       (expect (:success? r))
-                       (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
-               (it "smart-case: a lowercase query matches any case, on disk"
-                   (let [d (temp-dir-path "rgc")
-                         f (str (temp-root) "/rgc/a.clj")]
+          (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
+          (let [r (rg "model, cycle" {"paths" [d]})]
+            (expect (:success? r))
+            (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
+    (it "smart-case: a lowercase query matches any case, on disk"
+        (let [d (temp-dir-path "rgc")
+              f (str (temp-root) "/rgc/a.clj")]
 
-                     (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
-                     (let [r (rg "key" {"paths" [d]})]
-                       (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
-               (it "a MISSING path in the list is SKIPPED, not a hard error (vis.edn case)"
-                   (let [d (temp-dir-path "rgp")
-                         f (str (temp-root) "/rgp/a.clj")]
+          (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
+          (let [r (rg "key" {"paths" [d]})]
+            (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
+    (it "a MISSING path in the list is SKIPPED, not a hard error (vis.edn case)"
+        (let [d (temp-dir-path "rgp")
+              f (str (temp-root) "/rgp/a.clj")]
 
-                     (spit (fs/file f) "needle here\n")
-                     ;; one real dir + one path that does not exist → search the real one
-                     (let [r (rg "needle" {"paths" [d (str (temp-root) "/rgp/nope.edn")]})]
-                       (expect (:success? r))
-                       (expect (= 1 (get-in r [:result "hit_count"]))))))
-               (it "when NONE of the paths exist, it errors clearly"
-                   (expect (throws? clojure.lang.ExceptionInfo
-                                    #(rg "x"
-                                         {"paths" [(str (temp-root) "/none1.edn")
-                                                   (str (temp-root) "/none2.edn")]}))))))
+          (spit (fs/file f) "needle here\n")
+          ;; one real dir + one path that does not exist → search the real one
+          (let [r (rg "needle" {"paths" [d (str (temp-root) "/rgp/nope.edn")]})]
+            (expect (:success? r))
+            (expect (= 1 (get-in r [:result "hit_count"]))))))
+    (it
+      "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
+      (let [rsr @#'editing/resolve-search-roots
+            sweep (rsr ["."])]
+
+        ;; a lone blank / nil / whitespace resolves to the full allowed-roots sweep
+        (expect (= sweep (rsr [""])))
+        (expect (= sweep (rsr [nil])))
+        (expect (= sweep (rsr ["   "])))
+        ;; a blank mixed with a real path still means everything
+        (expect (= sweep (rsr ["src" ""])))))
+    (it "when NONE of the paths exist, it errors clearly"
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(rg "x"
+                              {"paths" [(str (temp-root) "/none1.edn")
+                                        (str (temp-root) "/none2.edn")]}))))))
 
 (defdescribe
   struct-patch-tool-e2e-test
