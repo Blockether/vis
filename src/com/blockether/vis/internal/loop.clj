@@ -7484,7 +7484,15 @@
                 (future (.acquire sem) (try (run-spec! parent-env spec) (finally (.release sem)))))
               specs)]
 
-    (mapv deref futs)))
+    ;; Settle in input order — but when the COORDINATING thread is interrupted
+    ;; (turn cancel / eval timeout), hard-cancel every child sub-loop before
+    ;; propagating. Otherwise cancelled parallel sub-loops kept running as
+    ;; orphaned full LLM turns (same leak the gather settle loop had).
+    (try (mapv deref futs)
+         (catch InterruptedException e
+           (doseq [f futs]
+             (try (future-cancel f) (catch Throwable _ nil)))
+           (throw e)))))
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and

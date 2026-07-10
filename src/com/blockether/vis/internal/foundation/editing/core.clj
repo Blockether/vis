@@ -2081,6 +2081,9 @@
 
                                   :while (not @capped?)]
 
+                            ;; the scan phase reads every candidate file —
+                            ;; poll so Esc/timeout aborts mid-sweep
+                            (check-interrupt!)
                             (when (file-has-any-hit? f matches?)
                               (swap! out conj (rel-path f))
                               (when (>= (count @out) limit) (reset! capped? true))))
@@ -2100,6 +2103,9 @@
 
                           :while (not @cap-reason)]
 
+                    ;; the scan phase reads every candidate file — poll so
+                    ;; Esc/timeout aborts mid-sweep
+                    (check-interrupt!)
                     (let [hits (search-file-content f matches? before-ctx after-ctx)]
                       (when (seq hits)
                         ;; Attach the `lineno:hash` anchor (patchable straight from the hit).

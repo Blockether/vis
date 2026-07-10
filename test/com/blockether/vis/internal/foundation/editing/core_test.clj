@@ -3258,3 +3258,52 @@
              (finally
                ;; never leak the interrupt flag into the test runner
                (Thread/interrupted)))))))
+
+(defdescribe
+  rg-scan-phase-interrupt-test
+  ;; The post-sort SCAN phase reads every candidate file. It had no
+  ;; check-interrupt! poll, so a cancelled turn kept scanning to the end
+  ;; (same class as the sort-key burn, just usually shorter-lived). Both
+  ;; output modes now poll per candidate file.
+  (let [grep
+        (private-fn "rg-search")
+
+        core-var
+        (fn [n]
+          (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
+
+        corpus!
+        (fn [dir]
+          (dotimes [i 4]
+            (write-temp! (format "%s/f%d.txt" dir i) "alpha\n"))
+          (temp-dir-path dir))
+
+        interrupt-on-first-call
+        ;; wrap a scan fn: first call interrupts the CURRENT thread (simulating
+        ;; cancel! landing mid-scan), every call delegates to a cheap stub
+        (fn [stub]
+          (let [first-call (atom true)]
+            (fn [& args]
+              (when (compare-and-set! first-call true false) (.interrupt (Thread/currentThread)))
+              (apply stub args))))]
+
+    (it "files-only scan aborts on interrupt instead of scanning to the end"
+        (let [path (corpus! "rgscanintfo")]
+          (try (let [thrown (try (with-redefs-fn {(core-var "file-has-any-hit?")
+                                                  (interrupt-on-first-call (fn [_ _]
+                                                                             false))}
+                                   #(grep {"query" ["alpha"] "paths" [path] "is_files_only" true}))
+                                 nil
+                                 (catch InterruptedException e e))]
+                 (expect (some? thrown)))
+               (finally (Thread/interrupted)))))
+    (it "content scan aborts on interrupt instead of scanning to the end"
+        (let [path (corpus! "rgscanintc")]
+          (try (let [thrown (try (with-redefs-fn {(core-var "search-file-content")
+                                                  (interrupt-on-first-call (fn [_ _ _ _]
+                                                                             []))}
+                                   #(grep {"query" ["alpha"] "paths" [path]}))
+                                 nil
+                                 (catch InterruptedException e e))]
+                 (expect (some? thrown)))
+               (finally (Thread/interrupted)))))))

@@ -2556,3 +2556,24 @@
                (expect (.isCancelled ^java.util.concurrent.Future (first futs)))
                (expect (= true (deref child-interrupted 2000 ::timeout))))
              (finally (Thread/interrupted) (.shutdownNow exec))))))
+
+(defdescribe parallel-sub-loops-cancel-test
+             ;; `(mapv deref futs)` propagated an interrupt from the COORDINATING thread
+             ;; but never cancelled the child futures — a cancelled parallel sub-loop
+             ;; batch left orphaned full LLM turns running to completion.
+             (it "hard-cancels child sub-loops and rethrows when the coordinator is interrupted"
+                 (let [child-interrupted (promise)]
+                   (with-redefs-fn {#'lp/run-spec! (fn [_ _]
+                                                     (try (Thread/sleep 60000)
+                                                          :never
+                                                          (catch InterruptedException _
+                                                            (deliver child-interrupted true)
+                                                            :interrupted)))}
+                     #(try (let [thrown (try (.interrupt (Thread/currentThread))
+                                             (lp/parallel-sub-loops! nil [{:prompt "x"}])
+                                             nil
+                                             (catch InterruptedException e e)
+                                             (finally (Thread/interrupted)))]
+                             (expect (some? thrown))
+                             (expect (= true (deref child-interrupted 2000 ::timeout))))
+                           (finally (Thread/interrupted)))))))
