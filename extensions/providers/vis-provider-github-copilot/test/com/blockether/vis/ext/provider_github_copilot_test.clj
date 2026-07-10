@@ -40,12 +40,15 @@
       (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
       ;; Catalog carries both cacheable wires; Gemini/Grok (chat-only) dropped.
       (expect (contains? models "claude-opus-4.8"))
+      (expect (contains? models "claude-fable-5"))
       (expect (contains? models "gpt-5.4"))
       ;; Enterprise serves the SAME curated Claude catalog (dotted models.dev
       ;; ids → native Anthropic /v1/messages wire) so Copilot Enterprise users
       ;; can select Opus/Sonnet/Haiku.
       (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
                          "claude-opus-4.8"))
+      (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
+                         "claude-fable-5"))
       (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
                          "claude-sonnet-4.6"))
       (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))

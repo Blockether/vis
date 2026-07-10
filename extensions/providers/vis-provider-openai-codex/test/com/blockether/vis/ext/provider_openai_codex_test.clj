@@ -177,7 +177,9 @@
                    (expect (= :openai-codex (:provider/id provider)))
                    (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
                    (expect (ifn? (:provider/get-token-fn provider)))
-                   (expect (ifn? (:provider/limits-fn provider))))))
+                   (expect (ifn? (:provider/limits-fn provider)))
+                   (expect (contains? (set (get-in provider [:provider/preset :default-models]))
+                                      "gpt-5.6-sol")))))
 
 (defdescribe codex-extension-settings-test
              (it "does not declare legacy TUI settings metadata"

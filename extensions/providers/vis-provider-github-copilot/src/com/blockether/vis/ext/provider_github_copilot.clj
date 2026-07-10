@@ -306,9 +306,9 @@
 
 (def ^:private COPILOT_POLICY_MODELS
   ["claude-haiku-4.5" "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6" "claude-sonnet-5"
-   "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7" "claude-opus-4.8" "gpt-5" "gpt-5-mini"
-   "gpt-5.1" "gpt-5.1-codex" "gpt-5.1-codex-max" "gpt-5.1-codex-mini" "gpt-5.2" "gpt-5.2-codex"
-   "gpt-5.3-codex" "gpt-5.4" "gpt-5.4-mini" "gpt-4.1" "gpt-4o" "gemini-2.5-pro"
+   "claude-fable-5" "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7" "claude-opus-4.8" "gpt-5"
+   "gpt-5-mini" "gpt-5.1" "gpt-5.1-codex" "gpt-5.1-codex-max" "gpt-5.1-codex-mini" "gpt-5.2"
+   "gpt-5.2-codex" "gpt-5.3-codex" "gpt-5.4" "gpt-5.4-mini" "gpt-4.1" "gpt-4o" "gemini-2.5-pro"
    "gemini-3-flash-preview" "gemini-3-pro-preview" "gemini-3.1-pro-preview" "grok-code-fast-1"])
 
 (defn- valid-copilot-host?
