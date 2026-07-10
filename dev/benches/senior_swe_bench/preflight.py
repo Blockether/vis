@@ -248,6 +248,9 @@ class EdnParser:
         if token.kind == "string":
             return token.value
         if token.kind == "atom":
+            if token.value == "#" and self.pos < len(self.tokens) and self.tokens[self.pos].kind == "{":
+                self._pop()
+                return self._parse_set(token)
             return self._parse_atom(token)
         if token.kind == "[":
             return self._parse_vector(token)
@@ -264,7 +267,12 @@ class EdnParser:
         if value == "false":
             return False
         if value.startswith("#"):
-            raise PreflightError(f"unsupported EDN tagged literal {value!r} at byte {token.pos}")
+            # The preflight parser only needs enough EDN to validate the
+            # top-level :providers vector. Preserve common tagged literals by
+            # consuming their following value instead of rejecting otherwise
+            # valid config files that contain e.g. sets or extension tags in
+            # unrelated keys.
+            return self._parse_value()
         if value.startswith(":"):
             return value
         try:
@@ -282,6 +290,16 @@ class EdnParser:
             if self.pos >= len(self.tokens):
                 raise PreflightError(f"unterminated vector starting at byte {start.pos}")
             if self.tokens[self.pos].kind == "]":
+                self.pos += 1
+                return out
+            out.append(self._parse_value())
+
+    def _parse_set(self, start: Token) -> list[Any]:
+        out = []
+        while True:
+            if self.pos >= len(self.tokens):
+                raise PreflightError(f"unterminated set starting at byte {start.pos}")
+            if self.tokens[self.pos].kind == "}":
                 self.pos += 1
                 return out
             out.append(self._parse_value())
