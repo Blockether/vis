@@ -321,6 +321,17 @@
   [session]
   (mapv (partial stop! session) (keys (get @registry (skey session)))))
 
+(defn shutdown!
+  "Process-wide teardown spout (daemon/engine shutdown): stop EVERY registered
+   resource across ALL sessions, so no background child (a shell_bg server, a
+   REPL) outlives the process that owns its stop-fn. Best-effort; returns
+   `{session-id [stop! results]}`."
+  []
+  (into {}
+        (map (fn [sid]
+               [sid (stop-all! sid)]))
+        (keys @registry)))
+
 ;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets two engine-builtin tools, each
 ;; CLOSED OVER the owning session, that act on a resource purely by its `:id`;
