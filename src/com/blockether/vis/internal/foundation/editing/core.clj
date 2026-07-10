@@ -332,19 +332,29 @@
    filesystem roots, not just the primary. Explicit paths resolve through
    `safe-path` (confinement + trunk↔clone remap).
 
+   A BLANK/nil entry (`\"\"`/`nil` — the model routinely tacks an empty string
+   onto a `paths` list, e.g. `[\".github\" \"\"]`) is NOT an error: a blank means
+   \"the workspace root\", i.e. search EVERYTHING. So any blank entry (or an
+   explicit `\".\"`) widens the whole search to the full allowed-roots set rather
+   than erroring on the blank.
+
    A search is FORGIVING about a MISSING path: the model routinely lists
    speculative candidates (`[\"deps.edn\" \"vis.edn\" \"src\"]`) where one may not
    exist — those are SKIPPED so the search still runs over the paths that DO
    exist. Only when NONE of the given paths exist is it an error (a confinement
    violation from `safe-path` still propagates — that's not a miss)."
   [paths]
-  (if (= paths ["."])
-    (mapv io/file (workspace/allowed-roots))
-    (let [existing (filterv #(.exists ^File %) (map safe-path paths))]
-      (when (empty? existing)
-        (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
-                        {:type :ext.foundation.editing/path-not-found :paths (vec paths)})))
-      (mapv #(.getCanonicalFile ^File %) existing))))
+  (let [paths (mapv #(let [s (str/trim (str %))]
+
+                       (if (str/blank? s) "." s))
+                    paths)]
+    (if (some #{"."} paths)
+      (mapv io/file (workspace/allowed-roots))
+      (let [existing (filterv #(.exists ^File %) (map safe-path paths))]
+        (when (empty? existing)
+          (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
+                          {:type :ext.foundation.editing/path-not-found :paths (vec paths)})))
+        (mapv #(.getCanonicalFile ^File %) existing)))))
 
 (defn- ensure-parent-dirs!
   [^File f]
