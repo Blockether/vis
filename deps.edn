@@ -17,6 +17,7 @@
   com.blockether/vis-foundation-mcp               {:local/root "extensions/common/vis-foundation-mcp"}
   com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
   com.blockether/vis-language-python              {:local/root "extensions/languages/vis-language-python"}
+  com.blockether/vis-language-typescript-bun      {:local/root "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
 
   com.blockether/svar                             {:mvn/version "0.7.56"}
@@ -100,7 +101,8 @@
                         "extensions/common/vis-foundation-voice/test"
                         "extensions/common/vis-foundation-mcp/test"
                         "extensions/languages/vis-language-clojure/test"
-                        "extensions/languages/vis-language-python/test"]
+                        "extensions/languages/vis-language-python/test"
+                        "extensions/languages/vis-language-typescript-bun/test"]
           :extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                         criterium/criterium            {:mvn/version "0.4.6"}}
           :main-opts   ["-m" "lazytest.main"
@@ -120,7 +122,8 @@
                         "--dir" "extensions/common/vis-foundation-voice/test"
                         "--dir" "extensions/common/vis-foundation-mcp/test"
                         "--dir" "extensions/languages/vis-language-clojure/test"
-                        "--dir" "extensions/languages/vis-language-python/test"]}
+                        "--dir" "extensions/languages/vis-language-python/test"
+                        "--dir" "extensions/languages/vis-language-typescript-bun/test"]}
 
   :dev   {:extra-paths ["dev" "test"]
           :extra-deps  {nrepl/nrepl                    {:mvn/version "1.7.0"}
