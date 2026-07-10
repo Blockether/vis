@@ -702,6 +702,30 @@
       "iteration.error"
       {:phase :iteration-error :iteration iteration :thinking thinking :error error}
 
+      ;; Queue lifecycle for a DIFFERENT (queued) turn on this session — the
+      ;; gateway sync/attach subscriptions forward these so every attached TUI
+      ;; mirrors the queued backlog live (see state/:sync-queued-turn).
+      "turn.queued"
+      {:phase :queue-sync
+       :op :add
+       :turn-id (event-get event :turn-id)
+       :text (event-get event :request)}
+
+      "turn.queued.updated"
+      {:phase :queue-sync
+       :op :update
+       :turn-id (event-get event :turn-id)
+       :text (event-get event :request)}
+
+      "turn.queued.deleted"
+      {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+
+      ;; The queue head left the queue because the gateway auto-STARTED it.
+      ;; Drop the mirrored entry — the drain/attach machinery renders the
+      ;; turn itself; a replayed log nets to zero (queued … drained).
+      "turn.queued.drained"
+      {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+
       nil)))
 
 (defn- create-session*
@@ -868,26 +892,46 @@
    Accepts full UUID or unambiguous short UUID prefix.
    Returns `{:id UUID :history [...]}` with persisted messages. When a turn is
    IN FLIGHT (started here, in the web, or a sibling process) the map ALSO
-   carries `:status`, `:current-turn-id`, and the running turn's
-   `:running-request` text, so the caller can ATTACH and stream it live (see
-   state/:attach-running-turn) instead of showing frozen history."
+   carries `:status`, `:current-turn-id`, the running turn's
+   `:running-request` text and its canonical gateway `:running-started-at`
+   (epoch ms — the ONE clock every attaching channel shares, so two TUIs
+   show the SAME elapsed time), so the caller can ATTACH and stream it live (see
+   state/:attach-running-turn) instead of showing frozen history. Any queued
+   backlog rides along as `:queued-turns`
+   `[{:turn-id .. :text .. :queued-at-ms ..}]` (oldest first) so the tab
+   mirrors the gateway's server-side queue on open."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
     (when-let [soul (vis/gateway-soul resolved-id)]
       (let [tid (:current_turn_id soul)
-            running-request
-            (when tid
-              (some (fn [t]
-                      (when (and (= "running" (str (:status t))) (= (str tid) (str (:turn_id t))))
-                        (:request t)))
-                    (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))))]
+            turns (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))
+            running-turn (when tid
+                           (some (fn [t]
+                                   (when (and (= "running" (str (:status t)))
+                                              (= (str tid) (str (:turn_id t))))
+                                     t))
+                                 turns))
+            queued-turns
+            (->> turns
+                 (filter (fn [t]
+                           (= "queued" (str (:status t)))))
+                 (sort-by (fn [t]
+                            (or (:queued_at t) 0)))
+                 (mapv (fn [t]
+                         {:turn-id (:turn_id t) :text (:request t) :queued-at-ms (:queued_at t)})))]
 
         (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (:status soul)}
           tid
           (assoc :current-turn-id tid)
 
-          (some? running-request)
-          (assoc :running-request running-request))))))
+          (some? (:request running-turn))
+          (assoc :running-request (:request running-turn))
+
+          (nat-int? (:started_at running-turn))
+          (assoc :running-started-at (:started_at running-turn))
+
+          (seq queued-turns)
+          (assoc :queued-turns queued-turns))))))
 
 (defn turn!
   "Submit a user request through the canonical in-process gateway. Blocking.

@@ -551,3 +551,20 @@
                    (expect (vector? out))
                    (expect (= :ir (first out)))
                    (expect (seq (nnext out))))))
+
+(defdescribe queue-sync-event-chunk-test
+             ;; Queue lifecycle events (from ANY sibling channel) project to :queue-sync
+             ;; chunks so every attached TUI mirrors the gateway's queued backlog live.
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "turn.queued projects to :add with the prompt text"
+                   (expect (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi"}
+                              (g->c {:type "turn.queued" :turn_id "q1" :request "hi"}))))
+               (it "turn.queued.updated projects to :update"
+                   (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
+                              (g->c {:type "turn.queued.updated" :turn_id "q1" :request "hi2"}))))
+               (it "turn.queued.deleted projects to :delete"
+                   (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
+                              (g->c {:type "turn.queued.deleted" :turn_id "q1"}))))
+               (it "turn.queued.drained (gateway auto-start) projects to :delete"
+                   (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
+                              (g->c {:type "turn.queued.drained" :turn_id "q1"}))))))
