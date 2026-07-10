@@ -2493,3 +2493,66 @@
                             {:expr "patch([])" :svar/tool-call-id "b" :vis/tool-name "patch"}]
                            tags))))
              (finally (lp/dispose-environment! env))))))
+
+(def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
+
+(defdescribe
+  settle-gather-futures-test
+  ;; The gather settle loop `(.get f)`-ed each child in order and swallowed
+  ;; InterruptedException as that slot's `:err` — so an eval-timeout/cancel
+  ;; `.cancel(true)` on the worker never reached the CHILD futures: cancelled
+  ;; `gather(rg(...), rg(...))` calls left orphaned virtual threads grinding
+  ;; at 100% CPU each until process exit. Now an interrupt during settle
+  ;; hard-cancels every child and propagates.
+  (it "settles every slot in order — value OR error, a failing slot never aborts siblings"
+      (let [exec (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)]
+        (try (let [futs [(.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    1))
+                         (.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    (throw (ex-info "boom" {}))))
+                         (.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    3))]
+                   outcomes (settle-gather-futures! futs)]
+
+               (expect (= {:ok 1} (nth outcomes 0)))
+               (expect (= "boom" (ex-message (:err (nth outcomes 1)))))
+               (expect (= {:ok 3} (nth outcomes 2))))
+             (finally (.shutdownNow exec)))))
+  (it "hard-cancels still-running children and rethrows when the settling thread is interrupted"
+      (let [exec
+            (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)
+
+            child-interrupted
+            (promise)]
+
+        (try (let [futs
+                   [(.submit exec
+                             ^java.util.concurrent.Callable
+                             (fn []
+                               (try (Thread/sleep 60000)
+                                    :never
+                                    (catch InterruptedException _
+                                      (deliver child-interrupted true)
+                                      :interrupted))))]
+
+                   _
+                   (.interrupt (Thread/currentThread))
+
+                   thrown
+                   (try (settle-gather-futures! futs)
+                        nil
+                        (catch InterruptedException e e)
+                        (finally
+                          ;; clear the flag before any further test plumbing
+                          (Thread/interrupted)))]
+
+               (expect (some? thrown))
+               (expect (.isCancelled ^java.util.concurrent.Future (first futs)))
+               (expect (= true (deref child-interrupted 2000 ::timeout))))
+             (finally (Thread/interrupted) (.shutdownNow exec))))))
