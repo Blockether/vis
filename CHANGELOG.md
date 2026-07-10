@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.2] - 2026-07-10
+
+### Changed
+- fix(release): auto-publish extension packages
+- fix(editing): treat blank paths entry as "search everything"
+- release: update version files for v0.1.1, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- fix(release): auto-publish extension packages (1408366a)
+- fix(editing): treat blank paths entry as "search everything" (484fa5d9)
+- release: update version files for v0.1.1, bump to next dev version (9d0764d8)
+
+#### com.blockether/vis-provider-github-copilot
+- fix(release): auto-publish extension packages (1408366a)
+
+
+
 ## [v0.1.1] - 2026-07-10
 
 ### Changed
@@ -109,5 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.2...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
+[v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
