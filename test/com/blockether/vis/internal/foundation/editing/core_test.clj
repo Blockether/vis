@@ -2076,6 +2076,7 @@
 
             nested-file
             (fs/file dir "nested" "x.txt")]
+
         (fs/create-dirs (fs/parent nested-file))
         (spit nested-file "x\n")
         (let [r (:result (delete-tool dir))]
@@ -2090,6 +2091,7 @@
 
             nested-file
             (fs/file dir "nested" "x.txt")]
+
         (fs/create-dirs (fs/parent nested-file))
         (spit nested-file "x\n")
         (let [r (:result (delete-if dir))]
@@ -2894,10 +2896,18 @@
 (defdescribe
   empty-search-paths-default-test
   "An explicit empty paths vector means the same thing as omitting paths: search the workspace root recursively."
-  (let [coerce-find (private-fn "coerce-find-spec")
-        coerce-rg (private-fn "coerce-rg-spec")
-        find-paths (private-fn "find-arg-paths")
-        rg-paths (private-fn "rg-arg-paths")]
+  (let [coerce-find
+        (private-fn "coerce-find-spec")
+
+        coerce-rg
+        (private-fn "coerce-rg-spec")
+
+        find-paths
+        (private-fn "find-arg-paths")
+
+        rg-paths
+        (private-fn "rg-arg-paths")]
+
     (it "find_files defaults empty paths to current directory in validation and path protection"
         (let [spec {"query" "resource-config" "paths" []}]
           (expect (= ["."] (:paths (coerce-find [spec]))))
@@ -2906,6 +2916,36 @@
         (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
           (expect (= ["."] (:paths (coerce-rg spec))))
           (expect (= ["."] (rg-paths [spec])))))))
+
+(defdescribe
+  rg-stringified-list-coercion-test
+  "Regression: LLMs frequently pass a real ARRAY quoted into ONE string —
+   e.g. include=\"[\\\"**/oauth.clj\\\", \\\"**/prov.clj\\\"]\". That single string
+   was fed straight to the Java NIO glob PathMatcher, where a leading `[`
+   opens a character class and the `/` inside it throws
+   `Explicit 'name separator' in class`. `parse-stringish-vector` must
+   recognize a bracketed string literal and parse it back into the real vector
+   for every string-list field (query / include / paths) — while leaving a
+   PLAIN glob string and an already-real vector untouched."
+  (let [coerce-rg (private-fn "coerce-rg-spec")]
+    (it "include as a stringified JSON/EDN array parses back to the real vector"
+        (expect (= ["**/oauth.clj" "**/prov.clj"]
+                   (:include (coerce-rg {"query" ["x"]
+                                         "include" "[\"**/oauth.clj\", \"**/prov.clj\"]"})))))
+    (it "include as an already-real vector is passed through unchanged"
+        (expect (= ["**/a.clj" "**/b.clj"]
+                   (:include (coerce-rg {"query" ["x"] "include" ["**/a.clj" "**/b.clj"]})))))
+    (it "include as a PLAIN glob string is scalar-wrapped, not glob-parsed"
+        (expect (= ["**/*.clj"] (:include (coerce-rg {"query" ["x"] "include" "**/*.clj"})))))
+    (it "query as a stringified array becomes the OR needles"
+        (expect (= ["a" "b"] (:needles (coerce-rg {"query" "[\"a\", \"b\"]"})))))
+    (it "paths as a stringified array parses back to the real vector"
+        (expect (= ["src" "test"]
+                   (:paths (coerce-rg {"query" ["x"] "paths" "[\"src\", \"test\"]"})))))
+    (it "a bracketed string of NON-strings is left alone (falls to scalar path)"
+        ;; `\"[1, 2]\"` parses to non-string elements → not a string vector, so the
+        ;; scalar-tolerant path wraps the raw string and it stays one glob.
+        (expect (= ["[1, 2]"] (:include (coerce-rg {"query" ["x"] "include" "[1, 2]"})))))))
 
 (defdescribe
   find-relevance-filter-test
@@ -3020,11 +3060,16 @@
    2+ matches (and the 0-match steer) keep their body too."
   (let [render-find-result (private-fn "render-find-result")]
     (it "one match: summary stays compact and the path rides the collapsible body"
-        (let [{:keys [summary body]} (render-find-result {"item_count" 1
-                                                          "query" "resource config"
-                                                          "paths" ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
+        (let [{:keys [summary body]}
+              (render-find-result
+                {"item_count" 1
+                 "query" "resource config"
+                 "paths"
+                 ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
           (expect (= "1 match for \"resource config\"" summary))
-          (expect (string/includes? (str body) "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
+          (expect (string/includes?
+                    (str body)
+                    "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
     (it "two matches: summary stays plural and the ranked paths ride the body"
         (let [{:keys [summary body]} (render-find-result {"item_count" 2
                                                           "query" "render"
