@@ -1,0 +1,5 @@
+{
+  "resources": [
+    {"glob": "com/blockether/vis/ext/typescript_bun/repl_server.js"}
+  ]
+}

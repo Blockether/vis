@@ -1,0 +1,12 @@
+;; vis-language-typescript-bun
+;;
+;; TypeScript/Bun language pack for Vis. Activates ONLY when the workspace looks
+;; like a Bun project (bunfig.toml / bun.lock(b) / .bun-version / package.json +
+;; *.ts). Adds a MANAGED Bun REPL behind the generic language facade
+;; (repl_start / repl_eval / repl_stop) — a `bun -e` subprocess running a tiny
+;; line-framed JSON eval server (shipped as a resource) with REAL REPL
+;; semantics: persistent globals, top-level await, cache-busted reload(). Also
+;; wires run_tests -> `bun test`. charred (JSON) rides in transitively from vis
+;; core.
+{:paths ["src" "resources"]
+ :deps  {com.blockether/vis {:local/root "../../.."}}}
