@@ -3194,3 +3194,67 @@
         (with-redefs [environment/snapshot (fn []
                                              (throw (ex-info "boom" {})))]
           (expect (true? (extension/symbol-active? editing/struct-patch-symbol nil)))))))
+
+(defdescribe
+  rg-sort-key-efficiency-test
+  ;; `(sort-by rel-path)` used to run `rel-path` (canonicalize SYSCALLS) INSIDE
+  ;; the comparator — O(n·log n) calls that pinned a full core for minutes on a
+  ;; big tree and, with no interrupt checkpoint in the sort, kept burning long
+  ;; AFTER cancellation (the 400%-CPU orphaned-gateway regression). The sort key
+  ;; is now computed ONCE per walked file with a `check-interrupt!` poll.
+  (let [grep
+        (private-fn "rg-search")
+
+        rel-path-var
+        (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" "rel-path"))
+
+        corpus!
+        (fn [dir n]
+          (dotimes [i n]
+            (write-temp! (format "%s/f%02d.txt" dir i) (if (zero? i) "alpha\n" "nothing here\n")))
+          (temp-dir-path dir))]
+
+    (it "computes the sort key O(n) — once per walked file, not once per comparison"
+        (let [n
+              40
+
+              path
+              (corpus! "rgsortcalls" n)
+
+              orig
+              @rel-path-var
+
+              calls
+              (atom 0)]
+
+          (with-redefs-fn {rel-path-var (fn [f]
+                                          (swap! calls inc)
+                                          (orig f))}
+            #(grep {"query" ["alpha"] "paths" [path]}))
+          ;; decorate-sort-undecorate: ≈ n key calls + a few for hit rendering.
+          ;; keyfn-in-comparator was ~n·log2 n ≈ 210+ for n=40.
+          (expect (<= @calls (* 2 n)))))
+    (it
+      "the sort-key sweep polls check-interrupt! so a cancelled turn aborts instead of grinding on"
+      (let [path
+            (corpus! "rgsortint" 8)
+
+            orig
+            @rel-path-var
+
+            first-call
+            (atom true)]
+
+        (try (let [thrown (try (with-redefs-fn {rel-path-var
+                                                (fn [f]
+                                                  ;; simulate cancel! landing mid-sweep
+                                                  (when (compare-and-set! first-call true false)
+                                                    (.interrupt (Thread/currentThread)))
+                                                  (orig f))}
+                                 #(grep {"query" ["alpha"] "paths" [path]}))
+                               nil
+                               (catch InterruptedException e e))]
+               (expect (some? thrown)))
+             (finally
+               ;; never leak the interrupt flag into the test runner
+               (Thread/interrupted)))))))

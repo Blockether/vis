@@ -2055,7 +2055,19 @@
              (mapcat (fn [root]
                        (let [ignore-node (when is_respect_gitignore (load-ignore-node root))]
                          (walk ignore-node root root))))
-             (sort-by rel-path)
+             ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths
+             ;; (syscalls). Handing it to `sort-by` directly ran it INSIDE the
+             ;; comparator — O(n·log n) canonicalizations that pinned a full
+             ;; core for minutes on big trees, and with no interrupt checkpoint
+             ;; in the sort the burn OUTLIVED cancellation (orphaned rg workers
+             ;; at 100% CPU each until process exit). Compute the key ONCE per
+             ;; file, polling `check-interrupt!` so Esc/timeout aborts, then
+             ;; sort the cheap precomputed string keys.
+             (mapv (fn [^File f]
+                     (check-interrupt!)
+                     [(rel-path f) f]))
+             (sort-by first)
+             (mapv second)
              (rg-fff-candidate-files roots needles))]
 
     (cond is_files_only (let [out
