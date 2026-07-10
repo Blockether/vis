@@ -23,6 +23,7 @@
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.provider-error :as provider-error]
+            [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.render :as ir]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
@@ -1432,8 +1433,13 @@
   "Release the live runtime for a session while keeping persisted data resumable.
 
    This is the gateway facade for local clients that are merely closing a view
-   (for example a TUI tab or process exit). Use `close-session!` for DELETE."
+   (for example a TUI tab or process exit). Use `close-session!` for DELETE.
+
+   Background resources (shell_bg processes, managed REPLs) are STOPPED here:
+   closing the view is the user walking away, and a bg child must not outlive
+   that — the transcript stays resumable, the processes do not."
   [sid]
+  (try (resources/stop-all! sid) (catch Throwable _ nil))
   (try (lp/close! sid) (catch Throwable _ nil))
   nil)
 
@@ -1445,6 +1451,7 @@
    merely quitting/closing a session (navigating away, no server call) keeps
    the draft intact so it can be resumed."
   [sid]
+  (try (resources/stop-all! sid) (catch Throwable _ nil))
   (try (lp/close! sid) (catch Throwable _ nil))
   ;; trash on-disk clones BEFORE the DB tree (delete) so the workspace row is
   ;; still resolvable; draft-only, so this can never delete a real directory.

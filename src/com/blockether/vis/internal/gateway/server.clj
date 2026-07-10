@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
@@ -354,6 +355,16 @@
   [request]
   (some-> (path-sid request)
           state/close-session!)
+  {:status 204 :headers {} :body nil})
+
+(defn- release-session-handler
+  "POST /v1/sessions/:sid/release — a client closed its VIEW of the session
+   (TUI tab/exit). Releases the live runtime and stops the session's background
+   resources; the persisted transcript stays resumable. Idempotent, 204 always
+   (mirrors DELETE — releasing an unknown sid is a no-op, not an error)."
+  [request]
+  (some-> (path-sid request)
+          state/release-session!)
   {:status 204 :headers {} :body nil})
 
 (defn- submit-turn-handler
@@ -694,6 +705,7 @@
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
         ["/sessions/:sid"
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
+        ["/sessions/:sid/release" {:post release-session-handler}]
         ["/sessions/:sid/events" {:get events-handler}]
         ["/sessions/:sid/events-since" {:get events-since-handler}]
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
@@ -933,6 +945,10 @@
   "Stop the gateway server if running. Idempotent."
   []
   (when-let [{:keys [^Server server db]} @server-state]
+    ;; Kill every session's background resources (shell_bg children, REPLs)
+    ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
+    ;; process; once it exits the children reparent to init and leak.
+    (try (resources/shutdown!) (catch Throwable _ nil))
     (try (discovery/deregister-self! db) (catch Throwable _ nil))
     (reset! server-state nil)
     (reset! live-app nil)
