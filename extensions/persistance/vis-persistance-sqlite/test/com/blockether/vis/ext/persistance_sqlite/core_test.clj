@@ -886,6 +886,52 @@
         (expect (= "New" (:title (vis/db-get-session s id)))))))
 
 ;; =============================================================================
+;; Adoption marker (V5 claimed_at) - warm-pool scaffolding stays out of the
+;; cross-channel list until a tab claims it (explicitly at creation, or via its
+;; first turn).
+;; =============================================================================
+
+(defdescribe
+  session-adoption-claimed-test
+  (it "defaults to CLAIMED: a normal session is list-visible immediately"
+      (let [s (h/store)]
+        (h/store-session! s {:channel :tui :title "real"})
+        (expect (= ["real"] (mapv :title (vis/db-list-sessions s :all))))))
+  (it "an UNCLAIMED (:claimed? false) session is HIDDEN from the list but resolvable by id"
+      (let [s
+            (h/store)
+
+            id
+            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+
+        ;; hidden from the cross-channel list...
+        (expect (= [] (vec (vis/db-list-sessions s :all))))
+        ;; ...yet the soul row exists and direct resume-by-id still works.
+        (expect (= 1 (raw-count s :session_soul)))
+        (expect (= "pool" (:title (vis/db-get-session s id))))))
+  (it "the FIRST turn claims an unclaimed session, surfacing it in the list"
+      (let [s
+            (h/store)
+
+            id
+            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+
+        (expect (= [] (vec (vis/db-list-sessions s :all))))
+        (vis/db-store-session-turn! s {:parent-session-id id :user-request "hi" :status :running})
+        (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))))
+  (it "claiming is idempotent: a second turn does not disturb the claimed session"
+      (let [s
+            (h/store)
+
+            id
+            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+
+        (vis/db-store-session-turn! s {:parent-session-id id :user-request "one" :status :running})
+        (vis/db-store-session-turn! s {:parent-session-id id :user-request "two" :status :running})
+        (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
+        (expect (= 1 (raw-count s :session_soul))))))
+
+;; =============================================================================
 ;; List session states (fork tree introspection)
 ;; =============================================================================
 

@@ -188,6 +188,12 @@
 
 (defn transcript [sid] (:turns (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript"))))
 
+(defn turn-trace
+  "Canonical wire iterations of ONE persisted turn (nil when the id is
+   unknown to the daemon)."
+  [sid tid]
+  (:iterations (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/trace"))))
+
 (defn context-snapshot [sid] (send-json! "GET" (str "/v1/sessions/" (enc sid) "/context")))
 
 (defn session-model [sid] (:model (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model"))))
@@ -252,6 +258,95 @@
         (reset! client-id nil)
         res)
       {:status "stopped" :stopping false})))
+(defn- port-free?
+  "True when nothing is accepting TCP connections on host:port — i.e. a previous
+   daemon has fully released it, so a respawn on the same port won't bind-race."
+  [^String host port]
+  (try (with-open [sock (java.net.Socket.)]
+         (.connect sock (java.net.InetSocketAddress. host (int port)) 200)
+         false)
+       (catch Throwable _ true)))
+
+(defn- await-daemon-down!
+  "Block (bounded) until the daemon for `db` is provably gone: its registry entry
+   cleared by the shutdown hook AND host:port released. [[stop-daemon!]] only
+   *asks* the daemon to stop (the stop handler sleeps ~25ms, then shutdown work
+   runs async), so without this the immediate re-ensure would rediscover the
+   still-fresh registry and attach to the DYING daemon — then bind-race its corpse
+   on respawn. Returns true when down, false on timeout (the caller still
+   proceeds: discover-or-start! deletes a stale registry and tolerates a race)."
+  [db host port]
+  (let [deadline (+ (System/currentTimeMillis) 3000)]
+    (loop []
+
+      (let [entry (discovery/read-registry db)]
+        (cond (and (not (discovery/registry-fresh? entry probe-entry?)) (port-free? host port)) true
+              (> (System/currentTimeMillis) deadline) false
+              :else (do (Thread/sleep 50) (recur)))))))
+
+(defn- probe-route
+  "Classify whether the daemon at `entry` serves `path`:
+     :served      — any status other than 404 (route mounted; an auth 401/303
+                    still means it exists).
+     :absent      — a real 404: the daemon's classpath lacks the extension that
+                    owns `path` (e.g. a gateway auto-started without the web
+                    channel never mounts /ui).
+     :unreachable — the probe request itself failed (connection reset, timeout).
+                    NOT a 404, so NEVER treated as license to force-kill; the
+                    caller retreats to leaving the daemon alone."
+  [entry path]
+  (try (let [builder
+             (request-builder entry path)
+
+             response
+             (.send @http-client (.build (.GET builder)) (HttpResponse$BodyHandlers/ofString))]
+
+         (if (= 404 (.statusCode response)) :absent :served))
+       (catch Throwable _ :unreachable)))
+
+(defn ensure-gateway-serving!
+  "Like [[ensure-gateway!]], but tries to GUARANTEE the returned daemon actually
+   serves `path`. When [[ensure-gateway!]] attaches to an already-running daemon
+   that 404s on `path` (started from a classpath missing the extension that owns
+   it), respawn a fresh daemon from THIS process — whose classpath, by
+   construction, carries the route. This is what lets `vis channels web`
+   self-heal instead of parking on a `/ui` that 404s.
+
+   The respawn is NON-DESTRUCTIVE. A blind POST /v1/admin/stop is refcount-blind:
+   it would abort every in-flight turn and kill every session's background
+   resources. So we force-restart the stale daemon ONLY when it is idle — no OTHER
+   clients and no running turn. Otherwise we leave it untouched and surface a clear
+   error. A transport blip on the probe (not a real 404) never triggers a restart.
+   Returns the entry."
+  [path]
+  (let [entry (ensure-gateway!)]
+    (case (probe-route entry path)
+      ;; Mounted — or a transient transport blip we must not misread as \"missing\".
+      (:served :unreachable)
+      entry
+
+      :absent
+      (let [st (status)
+            clients (or (:clients st) 0)
+            running (or (:running_turns st) 0)]
+
+        (when (or (> clients 1) (pos? running))
+          (throw (ex-info (str "gateway daemon does not serve " path
+                               " but is in use (" clients
+                               " client(s), " running
+                               " running turn(s)); refusing" " to force-restart a shared daemon")
+                          {:type :gateway/route-missing-busy
+                           :path path
+                           :clients clients
+                           :running-turns running})))
+        (stop-daemon!)
+        (await-daemon-down! (db-target) (:host entry) (:port entry))
+        (let [entry (ensure-gateway!)]
+          (when-not (= :served (probe-route entry path))
+            (throw (ex-info
+                     (str "gateway daemon is not serving " path " even after a fresh restart")
+                     {:type :gateway/route-missing :path path})))
+          entry)))))
 
 (defn current-seq [sid] (:seq (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq"))))
 

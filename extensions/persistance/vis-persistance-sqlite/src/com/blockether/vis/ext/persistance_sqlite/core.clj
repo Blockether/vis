@@ -901,7 +901,9 @@
      session_state.system_prompt / llm_root_provider / llm_root_model
      session_state.title."
   [db-info
-   {:keys [channel external-id title system-prompt provider model workspace-id parent-state-id]}]
+   {:keys [channel external-id title system-prompt provider model workspace-id parent-state-id
+           claimed?]
+    :or {claimed? true}}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
                     {:type :persistance/missing-workspace-id})))
@@ -924,7 +926,13 @@
                                        :channel (name (->kw (or channel :tui)))
                                        :external_id (some-> external-id
                                                             str)
-                                       :created_at now}
+                                       :created_at now
+                                       ;; adoption marker (V5). Unclaimed (NULL)
+                                       ;; = warm-pool scaffolding, hidden from
+                                       ;; db-list-sessions; claimed = a real
+                                       ;; conversation. Prewarm passes :claimed?
+                                       ;; false; everyone else defaults true.
+                                       :claimed_at (when claimed? now)}
                                 ;; sub_loop child → cross-soul link to the parent state;
                                 ;; keeps the child OUT of the top-level list (queryable
                                 ;; sub-tree + cascade-delete with the parent).
@@ -1026,6 +1034,10 @@
                                    ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
                                    ;; hang off their parent's sub-tree, never the session list.
                                    [:= :cs.parent_state_id nil]
+                                   ;; ADOPTION filter: hide unclaimed warm-pool
+                                   ;; scaffolding (NULL claimed_at) - only real
+                                   ;; conversations reach the cross-channel list.
+                                   [:not= :cs.claimed_at nil]
                                    [:= :s.version
                                     {:select [[[:max :s2.version]]]
                                      :from [[:session_state :s2]]
@@ -1473,6 +1485,14 @@
                                :status (normalize-status (or status :running))
                                :created_at now}]})
           (store-turn-attachments! tx-info (str soul-id) attachments now)
+          ;; A turn is intent: stamp the parent soul ADOPTED so a first-turn
+          ;; session (e.g. a warm-pool tab the user just typed into) leaves the
+          ;; unclaimed scaffolding state and becomes list-visible. Idempotent -
+          ;; only flips a still-NULL claimed_at, a no-op on every later turn.
+          (execute! tx-info
+                    {:update :session_soul
+                     :set {:claimed_at now}
+                     :where [:and [:= :id (->ref parent-session-id)] [:= :claimed_at nil]]})
           soul-id)))))
 
 

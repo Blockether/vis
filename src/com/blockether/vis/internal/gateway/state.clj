@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.session-model :as smodel]
@@ -707,10 +708,12 @@
     (vec (concat (reverse live) (reverse persisted)))))
 
 (defn transcript
-  "Rich persisted transcript rows for `sid`: turns oldest-first, each carrying
-  its persisted iteration rows under `:iterations`. This is the gateway facade
-  escape hatch for in-process renderers that need full historical trace detail
-  without reaching around the gateway into persistence directly."
+  "Rich persisted transcript rows for `sid` in THE canonical wire shape
+  (`wire/canonical`): turns oldest-first, each carrying its persisted iteration
+  rows under `:iterations`. Canonicalizing AT THE SOURCE makes the HTTP hop an
+  identity — an in-process reader and a remote gateway client (TUI / web /
+  mobile) see the SAME maps, so there is exactly ONE transcript shape and a
+  channel can never again be written against a shape only one transport sees."
   [sid]
   (try (let [db
              (lp/db-info)
@@ -722,22 +725,55 @@
              (try (persistance/db-list-turns-attachments db (map :id turns))
                   (catch Throwable _ {}))]
 
-         (mapv (fn [turn]
-                 (cond-> (assoc turn
-                           :iterations
-                           (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
-                                     (mapv #(update % :thinking normalize-thinking-text)))
-                                (catch Throwable t
-                                  (tel/log! :warn
-                                            ["gateway: turn-iteration hydration failed" (:id turn)
-                                             (ex-message t)])
-                                  [])))
-                   (seq (get att-by-soul (str (:id turn))))
-                   (assoc :attachments (get att-by-soul (str (:id turn))))))
-               turns))
+         (wire/canonical
+           (mapv (fn [turn]
+                   (cond-> (assoc turn
+                             :iterations
+                             (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
+                                       (mapv #(update % :thinking normalize-thinking-text)))
+                                  (catch Throwable t
+                                    (tel/log! :warn
+                                              ["gateway: turn-iteration hydration failed" (:id turn)
+                                               (ex-message t)])
+                                    [])))
+                     (seq (get att-by-soul (str (:id turn))))
+                     (assoc :attachments (get att-by-soul (str (:id turn))))))
+                 turns)))
        (catch Throwable t
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
+
+(defn turn-trace
+  "THE canonical wire trace of ONE persisted turn: its iteration rows (each
+  with hydrated `:attachments` re-read from the attachment store) through
+  `wire/canonical`, same as [[transcript]] — canonicalizing AT THE SOURCE
+  keeps the HTTP hop an identity, so the in-process web channel and a remote
+  client (TUI / mobile) render from the SAME maps. Returns a (possibly empty)
+  vector for a valid turn id, nil for an unparsable id or a read failure —
+  callers use nil to fall back / retry."
+  [tid]
+  (try (when-let [turn-id (some-> tid
+                                  str
+                                  parse-uuid)]
+         (let [db (lp/db-info)
+               iters (->> (persistance/db-list-session-turn-iterations db turn-id)
+                          (mapv #(update % :thinking normalize-thinking-text)))
+               atts-by-iter
+               (when (seq iters)
+                 (try (into {}
+                            (map (fn [[iter-id rows]]
+                                   [(str iter-id) (attachment-storage/hydrate-all rows)]))
+                            (persistance/db-list-iterations-attachments db (keep :id iters)))
+                      (catch Throwable _ {})))]
+
+           (wire/canonical (mapv (fn [it]
+                                   (if-let [atts (seq (get atts-by-iter (str (:id it))))]
+                                     (assoc it :attachments (vec atts))
+                                     it))
+                                 iters))))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: turn-trace hydration failed" tid (ex-message t)])
+         nil)))
 
 (defn reconcile-running-turns!
   "Gateway facade for startup/client resume reconciliation of orphaned running turns."
@@ -1368,7 +1404,7 @@
   "Create a fresh gateway-managed session. Defaults to `:api`, but in-process
   clients such as the TUI can pass `:channel :tui` and still use the same
   gateway turn/event machinery without pretending to be an HTTP client."
-  [{:keys [channel title external-id workspace-id root]}]
+  [{:keys [channel title external-id workspace-id root prewarm?]}]
   (let [channel
         (or channel :api)
 
@@ -1385,7 +1421,10 @@
                       (assoc :external-id external-id)
 
                       workspace-id
-                      (assoc :workspace-id workspace-id)))]
+                      (assoc :workspace-id workspace-id)
+
+                      prewarm?
+                      (assoc :prewarm? true)))]
 
     (swap! registry assoc (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
     {:id (str (:id created))

@@ -3278,10 +3278,10 @@
    is_files_only. No regex / no AND — filter the hits in Python for those.
 
    Result:
-     content:       {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\", \"first_hit\"}
+     content:       {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\", \"first_hit\"}
      is_files_only: {\"files\": [...], \"file_count\"}
-   With context the content value becomes
-   {\"text\": match, \"before\": {anchor: text}, \"after\": {anchor: text}}.
+   The content value is ALWAYS a `{\"text\": line}` map (ONE uniform shape); WITH
+   context it ALSO carries \"before\"/\"after\" {anchor: text} maps.
    Gotcha: each \"matches\" key is a \"lineno:hash\" anchor — pass it AS patch from_anchor."
   [& args]
   ;; Accept either a single spec map OR inline kwargs. Manual dispatch
@@ -3354,17 +3354,15 @@
                 by-path
                 (group-by :path hits)
 
-                ctx?
-                (pos? context)
-
                 ;; Grouped by file → each file is an ORDERED
                 ;; `{match-anchor → value}` map (a LinkedHashMap, so it
                 ;; serializes in line order). The path is stated ONCE (the
-                ;; key). WITHOUT a context window the value is the bare
-                ;; matched text; WITH one it is
-                ;; `{:text <match> :before {anchor→text} :after {anchor→text}}`
-                ;; so every match keeps its own before/after context and
-                ;; ALL lines (match + context) stay patchable by anchor key.
+                ;; key). The value is ALWAYS a `{"text" <match>}` map — a
+                ;; SINGLE uniform shape whether or not a context window was
+                ;; asked for. WITH context it ALSO carries `:before`/`:after`
+                ;; `{anchor→text}` maps, so every match keeps its own
+                ;; before/after context and ALL lines (match + context) stay
+                ;; patchable by anchor key.
                 matches
                 (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
                   (doseq [p ordered-paths]
@@ -3372,14 +3370,12 @@
                       (doseq [{:keys [line text before after]} (get by-path p)]
                         (.put fm
                               (patch/line-anchor line text)
-                              (if ctx?
-                                (cond-> {"text" text}
-                                  (seq before)
-                                  (assoc "before" (patch/lines->anchor-map before))
+                              (cond-> {"text" text}
+                                (seq before)
+                                (assoc "before" (patch/lines->anchor-map before))
 
-                                  (seq after)
-                                  (assoc "after" (patch/lines->anchor-map after)))
-                                text)))
+                                (seq after)
+                                (assoc "after" (patch/lines->anchor-map after)))))
                       (.put mm p fm)))
                   mm)]
 
@@ -4077,10 +4073,11 @@
   (str "  " (rg-anchor-lineno k) "  " (str/trimr (highlight-needles needles (str txt)))))
 
 (defn- rg-hit-rows
-  "Rows for ONE match anchor `k` → value `v`. Without a context window `v` is the
-   bare matched line (a string). WITH one it is `{:text <match> :before {anchor→text}
-   :after {anchor→text}}` — render the before-context, then the matched line, then
-   the after-context, each as a line-numbered gutter row (sorted by line number)."
+  "Rows for ONE match anchor `k` → value `v`. `v` is a `{:text <match> :before
+   {anchor→text} :after {anchor→text}}` map (before/after only with a context
+   window) — render the before-context, then the matched line, then the
+   after-context, each as a line-numbered gutter row (sorted by line number). A
+   bare string `v` is tolerated and rendered as the lone matched line."
   [needles k v]
   (if (map? v)
     (let [ctx-rows (fn [m]
@@ -4102,8 +4099,8 @@
      - files-only `:files [path…]` + `:file_count` (no per-line hits — that IS the
                   mode) → `M files`, the matching paths listed.
 
-   Paths/anchors are keywords; a content VALUE is the bare matched line OR a
-   `{:text :before :after}` context map (see `rg-hit-rows`)."
+   Paths/anchors are keywords; a content VALUE is a `{:text :before :after}` map
+   — before/after only when a context window ran (see `rg-hit-rows`)."
   [r]
   (let [fc
         (or (get r "file_count") 0)
@@ -5455,7 +5452,7 @@
          "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
          "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
          "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
-         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
+         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\"} — the hit VALUE is a {\"text\": line} map (WITH context it ALSO carries \"before\"/\"after\"), so read v[\"text\"] uniformly; every line patchable by its anchor; is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
          "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
          "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
         (when struct?

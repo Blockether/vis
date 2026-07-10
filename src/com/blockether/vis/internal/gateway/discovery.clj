@@ -201,12 +201,12 @@
 
 (defn spawn-argv
   "Full argv to launch a fresh gateway daemon for `db` on `port`. Serve flags
-   follow the `serve` subcommand. `:base` lets a caller override the re-exec
-   prefix (tests do)."
+   follow the `gateway start` subcommand. `:base` lets a caller override the
+   re-exec prefix (tests do)."
   [{:keys [db port host token-file require-token? base]}]
   (let [target (db-target db)]
     (-> (vec (or base (base-argv)))
-        (conj "serve")
+        (into ["gateway" "start"])
         (cond->
           (and target (not (memory-db? target)))
           (into ["--db" (str target)])

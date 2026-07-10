@@ -7517,7 +7517,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id child]}]
+  [router {:keys [db session channel external-id title workspace-id child prewarm?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; `child` (a sub_loop child env) carries:
   ;;   :parent-db-info  reuse the parent's DB connection (don't open/close one)
@@ -7650,7 +7650,12 @@
                                                     ;; to the parent's session_state (cross-
                                                     ;; soul), keeping it out of the top-level
                                                     ;; list; nil for a normal session.
-                                                    :parent-state-id (:parent-state-id child)}
+                                                    :parent-state-id (:parent-state-id child)
+                                                    ;; Unadopted TUI warm-pool sessions are
+                                                    ;; created UNCLAIMED (:claimed? false) so
+                                                    ;; they stay out of the cross-channel list
+                                                    ;; until a tab uses them (first turn claims).
+                                                    :claimed? (not prewarm?)}
                                              root-provider
                                              (assoc :provider root-provider))))
 
@@ -8148,7 +8153,7 @@
 (defn- open-env!
   ;; App session entry (create! + resume). The vis engine is the embedded
   ;; GraalPy Python sandbox — there is no other substrate.
-  [id {:keys [channel external-id title workspace-id]}]
+  [id {:keys [channel external-id title workspace-id prewarm?]}]
   (let [router
         (get-router)
 
@@ -8168,7 +8173,10 @@
                               (assoc :title title)
 
                               workspace-id
-                              (assoc :workspace-id workspace-id)))]
+                              (assoc :workspace-id workspace-id)
+
+                              prewarm?
+                              (assoc :prewarm? prewarm?)))]
 
     env))
 
@@ -8204,7 +8212,7 @@
                     When omitted, a trunk workspace is auto-minted in
                     create-environment."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id]}]
+  ([channel {:keys [title external-id workspace-id prewarm?]}]
    (let [env
          (open-env! nil
                     (cond-> {:channel channel
@@ -8212,7 +8220,10 @@
                                                   str)
                              :title title}
                       workspace-id
-                      (assoc :workspace-id workspace-id)))
+                      (assoc :workspace-id workspace-id)
+
+                      prewarm?
+                      (assoc :prewarm? prewarm?)))
 
          id
          (:session-id env)
