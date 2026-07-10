@@ -170,6 +170,20 @@ def test_validate_config_accepts_provider_vector_without_printing_secrets(tmp_pa
     assert result == {"path": str(config), "providers": 1, "provider_ids": ["openai"]}
 
 
+def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(tmp_path):
+    config = tmp_path / "config.edn"
+    config.write_text(
+        """
+        {:providers [{:id :zai :api-key "secret-value"}]
+         :disabled-tools #{}
+         :metadata {:generated-at #inst "2026-07-09T00:00:00.000-00:00"}}
+        """
+    )
+
+    result = preflight.validate_config(config)
+
+    assert result == {"path": str(config), "providers": 1, "provider_ids": ["zai"]}
+
 def test_validate_config_rejects_accidentally_nested_top_level_keys_in_providers(tmp_path):
     config = tmp_path / "config.edn"
     config.write_text('{:providers [{:id :openai} :toggles {:x true}]}')
