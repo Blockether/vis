@@ -94,7 +94,8 @@
    {:action :show-sessions :key \b :label "switch session"}
    {:action :close-tab :key \k :label "close tab"}
    {:action :recenter :key \j :label "jump to bottom"}
-   {:action :toggle-detail-labels :key \t :label "label folds"}])
+   {:action :toggle-detail-labels :key \t :label "label folds"}
+   {:action :open-magit :key \g :label "git status"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x

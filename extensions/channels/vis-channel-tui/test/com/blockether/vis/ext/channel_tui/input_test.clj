@@ -829,4 +829,28 @@
   (it "run-shell-helper! still feeds stdin and captures stdout"
       (let [r (#'input/run-shell-helper! ["cat"] (.getBytes "hello" "UTF-8"))]
         (expect (true? (:success? r)))
-        (expect (= "hello" (:stdout r))))))
+        (expect (= "hello" (:stdout r)))))
+  (it "a helper that exits but leaves a grandchild holding stdout open returns at the deadline"
+      ;; `printf abc; sleep 600 & exit 0`: the helper exits 0 immediately but
+      ;; the orphaned `sleep` inherits the stdout pipe write-end, so EOF never
+      ;; arrives — and the watchdog has nothing to kill (the helper is already
+      ;; dead). This is the xclip-daemonize shape. The deadline-bounded drain
+      ;; must return anyway, with the bytes the helper DID write.
+      (let [t0
+            (System/currentTimeMillis)
+
+            r
+            (deref (future (#'input/run-shell-helper-bytes!
+                            ["bash" "-c" "printf abc; sleep 600 & exit 0"]
+                            700))
+                   5000
+                   ::still-hung)
+
+            elapsed
+            (- (System/currentTimeMillis) t0)]
+
+        (expect (map? r) "grandchild pipe-hold must not hang the caller")
+        (expect (< elapsed 4000))
+        (expect (true? (:success? r)) "the helper itself exited 0")
+        (expect (= "abc" (String. ^bytes (:bytes r) "UTF-8"))
+                "bytes written before exit still ride through"))))
