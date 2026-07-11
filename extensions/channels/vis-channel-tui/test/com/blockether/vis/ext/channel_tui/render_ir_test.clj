@@ -207,6 +207,88 @@
                    (expect (= p/MARKER_TH_MD_TABLE_HEAD (second ms)))
                    (expect (= p/MARKER_TH_MD_TABLE_SEP (first ms)))
                    (expect (= p/MARKER_TH_MD_TABLE_ROW (nth ms 3))))))
+(defdescribe
+  table-wrap-test
+  (it
+    "long cell text WRAPS inside its column instead of being truncated"
+    (let [long-desc
+          (str "This is a very long description that absolutely cannot "
+               "fit on one physical terminal row and must wrap inside its cell")
+
+          lines
+          (ir-tui/ir->lines [:ir
+                             [:table [:tr [:th "Option"] [:th "Description"]]
+                              [:tr [:td "alpha"] [:td long-desc]] [:tr [:td "beta"] [:td "short"]]]]
+                            40)
+
+          ts
+          (texts lines)
+
+          row-lines
+          (filterv #(= :table-row (:block-tag %)) lines)]
+
+      ;; every physical line fits the requested width exactly
+      (expect (every? #(<= (p/display-width %) 40) ts)
+              (str "over-wide lines: " (vec (filter #(> (p/display-width %) 40) ts))))
+      ;; the long logical row expanded into multiple physical rows
+      (expect (> (count row-lines) 2)
+              (str "expected wrapped continuation rows, got: " (count row-lines)))
+      ;; NO content was lost to truncation — the whole sentence survives
+      (expect (= (str/replace long-desc #"\s+" " ")
+                 (-> (str/join " " (texts row-lines))
+                     (str/replace #"[│]" "")
+                     (str/replace #"\s+" " ")
+                     str/trim
+                     ;; strip the first-column cells + the short row
+                     (str/replace #"alpha ?" "")
+                     (str/replace #"beta short" "")
+                     str/trim)))
+      ;; grid chrome stays intact around the wrapped body
+      (expect (str/starts-with? (first ts) "┌"))
+      (expect (str/starts-with? (last ts) "└"))
+      (expect (every? #(and (str/starts-with? % "│") (str/ends-with? % "│")) (texts row-lines)))))
+  (it "continuation rows keep sibling short cells blank-padded"
+      (let [lines
+            (ir-tui/ir->lines [:ir
+                               [:table [:tr [:th "K"] [:th "V"]]
+                                [:tr [:td "k1"]
+                                 [:td "a long value that needs several rows to fit"]]]]
+                              24)
+
+            row-ts
+            (texts (filterv #(= :table-row (:block-tag %)) lines))]
+
+        (expect (> (count row-ts) 1))
+        ;; first physical row carries the key, continuations are blank there
+        (expect (str/includes? (first row-ts) "k1"))
+        (expect (every? #(not (str/includes? % "k1")) (rest row-ts)))))
+  (it "header cells wrap too, tagged :table-head on every physical row"
+      (let [lines
+            (ir-tui/ir->lines [:ir
+                               [:table
+                                [:tr [:th "A"] [:th "an extremely verbose header label that wraps"]]
+                                [:tr [:td "1"] [:td "x"]]]]
+                              24)
+
+            head-lines
+            (filterv #(= :table-head (:block-tag %)) lines)]
+
+        (expect (> (count head-lines) 1))
+        (expect (every? #(<= (p/display-width %) 24) (texts lines)))))
+  (it "wide graphemes in a squeezed column terminate and stay in-width"
+      ;; regression: col-prefix-end returns 0 fitting chars for an
+      ;; emoji in a width-1 column — the wrap loop must still advance.
+      (let [lines
+            (ir-tui/ir->lines [:ir
+                               [:table [:tr [:th "😀😀"] [:th "b"]]
+                                [:tr [:td "😀 zażółć gęślą jaźń"] [:td "y"]]]]
+                              8)
+
+            ts
+            (texts lines)]
+
+        (expect (pos? (count ts)))
+        (expect (every? #(<= (p/display-width %) 8) ts) (str "got: " ts)))))
 
 ;; ---------------------------------------------------------------------------
 ;; bdc79ae9 fixture — end-to-end regression

@@ -749,11 +749,61 @@
                         (str " " (pad-right-cols (nth cells i "") w) " │"))
                       widths))))
 
+(defn- wrap-cell-cols
+  "Word-wrap a table cell's flat text to `width` display columns.
+   Prefers breaking at spaces; a single token wider than the column
+   hard-breaks at the column boundary. Always returns at least one
+   line so empty cells keep their grid row.
+
+   When even the FIRST grapheme is wider than the column (an emoji in
+   a width-1 cell) `col-prefix-end` reports 0 fitting chars; advance by
+   one full code point instead so the loop always makes progress — the
+   over-wide glyph overflows its cell and the caller's `fit` clips it."
+  [s width]
+  (let [width
+        (max 1 (long width))
+
+        s
+        (str (or s ""))]
+
+    (loop [remaining
+           s
+
+           acc
+           []]
+
+      (if (<= (p/display-width remaining) width)
+        (conj acc remaining)
+        (let [cut
+              (p/col-prefix-end remaining width)
+
+              cut
+              (if (pos? cut)
+                cut
+                (min (count remaining) (Character/charCount (.codePointAt ^String remaining 0))))
+
+              chunk
+              (subs remaining 0 cut)
+
+              last-sp
+              (str/last-index-of chunk " ")]
+
+          (if (and last-sp (pos? (long last-sp)))
+            (recur (subs remaining (inc (long last-sp)))
+                   (conj acc (subs remaining 0 (long last-sp))))
+            (recur (subs remaining cut) (conj acc chunk))))))))
 (defn- table->lines
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
    projection fallback, this emits semantic header/separator/body line
    tags so the existing bubble painter can draw muted grid chrome,
-   bold headers, and answer/thinking-zone backgrounds."
+   bold headers, and answer/thinking-zone backgrounds.
+
+   Cell text WRAPS inside its column: when natural column widths exceed
+   the bubble width they are shrunk (`shrink-table-widths`) and each
+   over-wide cell word-wraps across as many physical rows as its tallest
+   sibling in the logical row needs. Nothing is silently truncated —
+   `fit` only clips the pathological case where the grid chrome alone
+   is wider than the bubble."
   [node width _opts]
   (let [rows
         (vec (node-children node))
@@ -799,10 +849,27 @@
             (fn [s tag]
               {:runs [{:text (fit s) :style #{:table} :node node}] :block-tag tag})
 
-            data-line
+            ;; One LOGICAL row -> N physical grid rows: each cell wraps to
+            ;; its column width, the row's height is its tallest cell, and
+            ;; shorter cells pad with blank continuation lines.
+            data-lines
             (fn [row tag]
-              {:runs [{:text (fit (table-data-line row widths)) :style #{:table} :node node}]
-               :block-tag tag})
+              (let [cell-lines
+                    (mapv (fn [cell w]
+                            (wrap-cell-cols cell w))
+                          row
+                          widths)
+
+                    height
+                    (long (apply max 1 (map count cell-lines)))]
+
+                (mapv (fn [j]
+                        {:runs [{:text (fit (table-data-line (mapv #(nth % j "") cell-lines)
+                                                             widths))
+                                 :style #{:table}
+                                 :node node}]
+                         :block-tag tag})
+                      (range height))))
 
             top
             (sep-line (table-border-line "┌" "┬" "┐" widths) :table-sep)
@@ -814,10 +881,12 @@
             (sep-line (table-border-line "└" "┴" "┘" widths) :table-sep)]
 
         (if header?
-          (vec (concat [top (data-line (first norm-rows) :table-head) mid]
-                       (map #(data-line % :table-row) (rest norm-rows))
+          (vec (concat [top]
+                       (data-lines (first norm-rows) :table-head)
+                       [mid]
+                       (mapcat #(data-lines % :table-row) (rest norm-rows))
                        [bottom]))
-          (vec (concat [top] (map #(data-line % :table-row) norm-rows) [bottom])))))))
+          (vec (concat [top] (mapcat #(data-lines % :table-row) norm-rows) [bottom])))))))
 
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
