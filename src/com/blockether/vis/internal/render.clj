@@ -660,10 +660,24 @@
    copy affordance. Short inline chips (identifiers, paths) stay inline."
   40)
 
+(defn- path-like-code-literal?
+  "A file-path-looking code literal (`src/foo/bar.clj`, `~/x/y.edn`): no
+   whitespace, at least one `/`, and no URL/bookmarklet scheme prefix. These
+   stay INLINE chips however long — rg/patch/outline op-cards title every
+   per-file section with one, and the chip styling is what makes the path read
+   as a header (the TUI paints it on the `result-path` accent, the web as an
+   inline `<code>`). Promoting them to `:code` blocks silently dropped that."
+  [^String lit]
+  (boolean (and (not (re-find #"\s" lit))
+                (str/includes? lit "/")
+                (not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" lit)))))
+
 (defn- lone-code-span-literal
   "When paragraph `n`'s only inline content is a single CommonMark `Code` span
    whose literal is at least `lone-code-span-block-min` chars, return that
-   literal (so the caller can promote it to a `:code` block); else nil."
+   literal (so the caller can promote it to a `:code` block); else nil.
+   Path-like literals are exempt — a long file path stays an inline chip (see
+   `path-like-code-literal?`)."
   [^Node n]
   (let [children
         (cm-children-seq n)
@@ -673,7 +687,8 @@
 
     (when (and c (instance? Code c) (nil? (next children)))
       (let [lit (.getLiteral ^Code c)]
-        (when (>= (count lit) lone-code-span-block-min) lit)))))
+        (when (and (>= (count lit) lone-code-span-block-min) (not (path-like-code-literal? lit)))
+          lit)))))
 
 (defn- cm->blocks
   "Convert one commonmark Node into a vector of canonical IR block(s)."

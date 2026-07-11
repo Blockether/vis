@@ -2543,15 +2543,19 @@
       (doseq [cleanup cleanups]
         (cleanup)))))
 (defn- subscribe-title-listener!
-  "Wire host title writes (`titling/set-title-with-broadcast!` — async
-   auto-title generation or a rename) for this session to the TUI header:
-   every change dispatches `[:set-title]`
-   into app-db so the next render frame paints the new title without
-   polling. Returns a zero-arg cleanup fn.
+  "Per-OPEN-session listener bundle. Returns a zero-arg cleanup fn.
 
-   One listener stays subscribed per OPEN session (not just the active one),
-   so a background tab's async auto-title lands live - `:set-title` carries
-   the session-id and relabels the owning tab even while it's unfocused."
+   1. Host title writes (`titling/set-title-with-broadcast!` — async
+      auto-title generation or a rename) dispatch `[:set-title]` so the next
+      render frame paints the new title without polling. One listener stays
+      subscribed per OPEN session (not just the active one), so a background
+      tab's async auto-title lands live.
+
+   2. A PERSISTENT gateway event stream (chat/subscribe-session-events!):
+      queue-sync and turn-start events land even while the tab is IDLE (no
+      blocking attach loop), so sibling TUIs/web stay in lockstep — a
+      queued/edited/deleted message mirrors instantly, and a turn started
+      elsewhere attaches this tab instead of leaving it frozen-idle."
   [session-id]
   (let [session-id
         (str session-id)
@@ -2574,9 +2578,27 @@
                                            (when (= session-id (current-session-id))
                                              (state/dispatch [:title-loading (boolean pending?)]))))
 
+        events-cleanup
+        (try (chat/subscribe-session-events!
+               session-id
+               (fn [chunk]
+                 (when-let [tab-id (state/tab-id-for-session @state/app-db session-id)]
+                   (case (:phase chunk)
+                     :queue-sync
+                     (state/dispatch [:sync-queued-turn tab-id chunk])
+
+                     :turn-start
+                     (do (state/dispatch [:sync-turn-clock tab-id chunk])
+                         (state/dispatch [:sibling-turn-started tab-id chunk]))
+
+                     nil))))
+             (catch Throwable _
+               (fn [])))
+
         cleanup
         #(do (vis/remove-title-listener! session-id listener)
-             (vis/remove-title-pending-listener! session-id pending-listener))]
+             (vis/remove-title-pending-listener! session-id pending-listener)
+             (events-cleanup))]
 
     (register-shutdown-hook! cleanup)
     cleanup))
@@ -2676,6 +2698,39 @@
     (assoc s
       :draft-label (when draft? (or (not-empty (:label ws)) "draft"))
       :work-dir (short-dir (or (:repo-root ws) (:root ws))))))
+
+(def ^:private project-session-probe-cap
+  "How many newest sessions the no-sidecar startup fallback probes for a
+   workspace match before giving up — bounds the per-session gateway
+   workspace lookups so a big cross-project history can't stall startup."
+  15)
+
+(defn- latest-project-session-id
+  "Most recent non-empty session PINNED to this launch directory — the
+   startup fallback when the per-place tab sidecar has nothing resumable
+   (first launch here after the sidecar was lost, or every saved id is
+   dead). Probes newest-first summaries, matching each session's pinned
+   workspace root (trunk `:root`, draft `:repo-root`) against the launch
+   dir, capped at `project-session-probe-cap` probes."
+  []
+  (try (let [canonical
+             #(try (.getCanonicalPath (java.io.File. (str %))) (catch Throwable _ (str %)))
+
+             place
+             (canonical (System/getProperty "user.dir"))]
+
+         (->> (tui-session-summaries)
+              (remove empty-untitled-session?)
+              (take project-session-probe-cap)
+              (some (fn [{:keys [id]}]
+                      (let [ws
+                            (session-workspace id)
+
+                            root
+                            (or (:repo-root ws) (:root ws))]
+
+                        (when (and root (= place (canonical root))) id))))))
+       (catch Throwable _ nil)))
 
 (defn- persist-tabs!
   "Snapshot the current open-tab set + active tab and persist it for this
@@ -2830,11 +2885,7 @@
            ;; one managed worker process-wide; see its ns comment for the
            ;; invalidation events that restart it.
            provider-limits-thread (volatile! nil)
-           terminal-signal-cleanup (volatile! nil)
-           ;; On a plain launch, the saved tab snapshot for this place (set
-           ;; while resolving the initial session); the extra tabs are reopened
-           ;; once the loop closures exist.
-           restore-plan (volatile! nil)]
+           terminal-signal-cleanup (volatile! nil)]
 
        (.startScreen screen)
        (let [ssh-passphrase-cleanup (volatile! nil)]
@@ -2873,23 +2924,32 @@
                          ;; --resume: start fresh; the session picker opens
                          ;; before the main loop (see below), like `pi -r`.
                          (:resume opts) (chat/make-session config)
-                         ;; Plain launch: restore this place's saved tabs. The
-                         ;; first still-existing saved session becomes tab 1; the
-                         ;; rest are reopened after the loop closures exist (see
-                         ;; `restore-plan`). No saved tabs → a fresh session.
-                         :else (let [snap (tabs/read-snapshot)
-                                     saved (filter some? (:sessions snap))]
+                         ;; Plain launch: resume ONLY the most recent saved
+                         ;; session for this place (the saved-ACTIVE one, else the
+                         ;; first saved id that still resolves) — ONE tab, ONE
+                         ;; transcript fetch. Every other session stays in the DB
+                         ;; and opens LAZILY from the session navigator/picker;
+                         ;; startup never restores a whole tab set.
+                         ;; No usable sidecar → fall back to the newest non-empty
+                         ;; session PINNED to this project (gateway session list
+                         ;; filtered by workspace root) — still one tab. Nothing
+                         ;; at all → a fresh session.
+                         :else
+                         (let [snap (tabs/read-snapshot)
+                               preferred (distinct (concat (when-let [a (:active snap)]
+                                                             [a])
+                                                           (tabs/snapshot-session-ids snap)))]
 
-                                 (if-let [first-session (some chat/resume-session saved)]
-                                   (do (vreset! restore-plan snap) first-session)
-                                   (chat/make-session config))))]
+                           (or (some chat/resume-session preferred)
+                               (some-> (latest-project-session-id)
+                                       chat/resume-session)
+                               (chat/make-session config))))]
                (vswap! title-listeners assoc (str id) (init-visible-session! startup-session))
-               ;; Record this place's tab set even when there's just the one
-               ;; startup tab — otherwise a single-tab session never persists
-               ;; and a plain relaunch wouldn't restore it. Skip when restoring
-               ;; (the restore block below persists once it reopens every tab,
-               ;; so we don't transiently truncate the saved set to tab 1).
-               (when-not @restore-plan (persist-tabs!))
+               ;; Record this place's tab set (just the single startup tab)
+               ;; — otherwise a session never persists and a plain relaunch
+               ;; wouldn't restore it. Also self-heals a stale multi-tab
+               ;; sidecar down to what is actually open.
+               (persist-tabs!)
                ;; Warm a fresh empty session in the BACKGROUND now, so the FIRST
                ;; Ctrl+N / `+` new-session is instant instead of paying the full
                ;; cold DB+env build on the input thread. The startup tab is
@@ -3108,12 +3168,12 @@
                                                  :level :error
                                                  :ttl-ms copy-success-ttl-ms)))))))))
                  refresh-active-tab! (fn [notify?]
-                                       (when-let [id (current-session-id)]
-                                         (when-let [title (session-db-title id)]
-                                           (state/dispatch [:set-title title]))
-                                         (ensure-title-listener! id)
-                                         (prewarm-session! {:id id
-                                                            :history (:messages @state/app-db)}))
+                                       (let [db @state/app-db]
+                                         (when-let [id (current-session-id)]
+                                           (when-let [title (session-db-title id)]
+                                             (state/dispatch [:set-title title]))
+                                           (ensure-title-listener! id)
+                                           (prewarm-session! {:id id :history (:messages db)})))
                                        (persist-tabs!)
                                        (when notify?
                                          (vis/notify! "Switched workspace"
@@ -3299,18 +3359,6 @@
                            (state/dispatch [:set-model nil nil])
                            (state/dispatch [:set-model (:provider choice) (:model choice)]))))))]
 
-             ;; Restore the rest of this place's saved tabs (tab 1 is already
-             ;; the first saved session). Reopen each in order, then focus the
-             ;; one that was active — `open-session-tab!` focuses an
-             ;; already-open session rather than duplicating it. Sessions that
-             ;; no longer exist are silently skipped (the next save self-heals).
-             (when-let [snap @restore-plan]
-               (doseq [sid (:sessions snap)]
-                 (when-let [sr (chat/resume-session sid)]
-                   (open-session-tab! sr false)))
-               (when-let [active (:active snap)]
-                 (when-let [sr (chat/resume-session active)]
-                   (open-session-tab! sr false))))
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))
              (loop []

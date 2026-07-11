@@ -3430,9 +3430,24 @@
      :created (navigator-stamp (:created-at session))
      :modified (navigator-stamp (:modified-at session))
      :target {:action :switch :id id}}))
+(defn- group-rows-by-dir
+  "Regroup navigator rows so sessions of the SAME project (`:dir`) sit
+   adjacent. Rows arrive newest-first, so first-appearance group order =
+   projects by their most recent session; within a group the recency order
+   is preserved."
+  [rows]
+  (let [order
+        (distinct (map :dir rows))
+
+        by-dir
+        (group-by :dir rows)]
+
+    (vec (mapcat by-dir order))))
 (defn- navigator-all-rows
-  "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
-   that order so the navigator reads top-to-bottom by recency. Empty untitled
+  "Sessions arrive newest-modified-first from `tui-session-summaries`. The
+   focused session pins to the top; the rest are grouped by PROJECT
+   (`:work-dir`), groups ordered by their most recent session, rows inside a
+   group keeping recency order. Empty untitled
    shells are hidden by default; Ctrl+U in the navigator reveals them.
 
    No synthetic `+ New Session` row — creating a session is the `N`
@@ -3456,9 +3471,9 @@
                #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %))))
              (mapv #(navigator-session-row active-session-id %)))]
 
-    ;; Focused row pinned to the top; the rest keep their recency order
-    ;; and read as the "switch to" list below it.
-    (vec (concat (filter :focused? rows) (remove :focused? rows)))))
+    ;; Focused row pinned to the top; the rest regrouped by project, each
+    ;; group ordered by its most recent session (see `group-rows-by-dir`).
+    (vec (concat (filter :focused? rows) (group-rows-by-dir (remove :focused? rows))))))
 (defn- navigator-visible-rows [rows query] (vec (filter #(table/row-matches? % query) rows)))
 (defn- navigator-cell-spans
   "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
