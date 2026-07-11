@@ -179,6 +179,43 @@
                     (expect (try (ws/apply! store {:workspace-id "nope"})
                                  false
                                  (catch clojure.lang.ExceptionInfo _ true)))))))
+(defdescribe
+  fresh-draft-roundtrip-test
+  (it
+    "create! :fresh? starts EMPTY; apply! lands only created files and never deletes trunk"
+    (let [base (temp-dir "vis-ws-fresh")]
+      (try (if-not (ws/isolated-workspaces-supported? base)
+             ;; No copy-on-write backend here (CI) — the live round-trip can't run.
+             (expect (not (ws/isolated-workspaces-supported? base)))
+             (do (spit (io/file base "keep.txt") "KEEP\n")
+                 (with-store
+                   (fn [store]
+                     (let [seed (seed-workspace! store base)
+                           draft (ws/create! store {:from seed :fresh? true})
+                           draft-id (:id draft)]
+
+                       (try
+                         ;; an isolated root that carries NOTHING from trunk (HEAD)
+                         (expect (some? (:root draft)))
+                         (expect (not= base (:root draft)))
+                         (expect (not (.exists (io/file (:root draft) "keep.txt"))))
+                         ;; still a real draft applying back into base, with the
+                         ;; zero baseline that makes deletions un-inferable
+                         (expect (ws/draft? draft))
+                         (expect (= base (:repo-root draft)))
+                         (expect (= 0 (:fork-ms draft)))
+                         ;; a file created in the fresh draft lands on apply!…
+                         (spit (io/file (:root draft) "new.txt") "NEW\n")
+                         (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                           (expect (= #{"new.txt"} (set (map :path changed))))
+                           (expect (= "NEW\n" (slurp (io/file base "new.txt"))))
+                           ;; …and trunk's pre-existing file SURVIVES: a fresh
+                           ;; draft can never report files it never saw as deleted
+                           (expect (= "KEEP\n" (slurp (io/file base "keep.txt")))))
+                         (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                       (catch Throwable _ nil)))))))))
+           (finally (delete-tree! base))))))
+
 
 (defdescribe
   linked-worktree-source-test

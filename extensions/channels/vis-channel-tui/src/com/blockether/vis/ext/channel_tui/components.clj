@@ -309,6 +309,21 @@
   (p/set-colors! g t/text-fg t/terminal-bg)
   (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
+
+(def ^{:private true} tab-group-divider-glyph
+  ;; U+2502 LIGHT VERTICAL — a SOLID bar between PROJECT groups, deliberately
+  ;; heavier than the dotted ┊ between same-project tabs so a group edge
+  ;; reads at a glance.
+  "│")
+
+(defn tab-group-divider!
+  "Paint the 1-col solid `│` divider that separates PROJECT groups in the
+   tab strip. Same-project neighbours get the softer dotted `tab-divider!`."
+  [g col row]
+  (p/clear-styles! g)
+  (p/set-colors! g t/text-fg t/terminal-bg)
+  (p/put-str! g col row tab-group-divider-glyph)
+  (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 (defn- tab-border-cols
   "Column offsets 0..width-1 to underline for a `:ready` tab — the WHOLE

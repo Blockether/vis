@@ -4323,50 +4323,37 @@
                     (boolean (and tn (not= tn "python_execution") (not err?)))))
 
                 block-code-lines
-                (into
-                  []
-                  (mapcat
-                    (fn [[idx form]]
-                      (let [;; Two adjacent code-less native op-cards
-                            ;; (cat/rg/patch/…) stack FLUSH — no margin
-                            ;; and no colored breathe/pad row between them.
-                            prev-native?
-                            (and (pos? idx)
-                                 (chrome-hidden? form)
-                                 (chrome-hidden? (nth forms-vec (dec idx))))
+                (into []
+                      (mapcat (fn [[idx form]]
+                                (let [;; Adjacent code-less native op-cards share ONE
+                                      ;; continuous result-bg BAND: every card keeps its
+                                      ;; own leading breathe + trailing pad row — the
+                                      ;; pre-allocated background under each op headline,
+                                      ;; so a grouped tool call is always TWO rows
+                                      ;; (headline + band row), and an EXPANDED body
+                                      ;; keeps a band row before the next headline
+                                      ;; instead of gluing to it. The blank-coalesce
+                                      ;; pass folds the seam (this card's trailing pad +
+                                      ;; the next card's leading breathe) into a single
+                                      ;; band row. Only the terminal-bg inter-form gap
+                                      ;; is skipped inside such a run, so the band never
+                                      ;; tears back to terminal bg mid-run.
+                                      prev-native?
+                                      (and (pos? idx)
+                                           (chrome-hidden? form)
+                                           (chrome-hidden? (nth forms-vec (dec idx))))
 
-                            next-native?
-                            (and (< (inc idx) (count forms-vec))
-                                 (chrome-hidden? form)
-                                 (chrome-hidden? (nth forms-vec (inc idx))))
+                                      fl
+                                      (form-lines form (inc idx))]
 
-                            fl
-                            (form-lines form (inc idx))
-
-                            ;; Drop THIS card's LEADING result-bg breathe
-                            ;; blank when it follows another native card.
-                            fl
-                            (if (and prev-native? (= (str result-marker "") (:line (first fl))))
-                              (rest fl)
-                              fl)
-
-                            ;; Drop THIS card's TRAILING result-bg pad
-                            ;; blank when another native card follows, so
-                            ;; the run stacks flush — only the LAST card in
-                            ;; the run keeps its closing pad.
-                            fl
-                            (if (and next-native? (= (str result-marker "") (:line (last fl))))
-                              (butlast fl)
-                              fl)]
-
-                        ;; ONE terminal-bg blank between consecutive
-                        ;; forms inside the same iteration — skipped when
-                        ;; both are chrome-hidden native cards (they
-                        ;; already stack flush above).
-                        (concat (when (and (pos? idx) (not prev-native?))
-                                  [(line-entry (str iteration-pad-marker ""))])
-                                fl)))
-                    (map-indexed vector forms-vec)))]
+                                  ;; ONE terminal-bg blank between consecutive
+                                  ;; forms inside the same iteration — skipped when
+                                  ;; both are chrome-hidden native cards (their shared
+                                  ;; result-bg band already separates them).
+                                  (concat (when (and (pos? idx) (not prev-native?))
+                                            [(line-entry (str iteration-pad-marker ""))])
+                                          fl)))
+                              (map-indexed vector forms-vec)))]
 
             ;; TRAILING iter-pad only. It separates this iteration's
             ;; body from the NEXT iteration below by a single

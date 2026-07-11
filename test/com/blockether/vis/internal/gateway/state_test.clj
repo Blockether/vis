@@ -318,12 +318,15 @@
              (#'state/ingest-mirrored-event!
               sid
               false
-              {:type "turn.started" :turn_id "T1" :request "hello world"})
+              {:type "turn.started" :turn_id "T1" :request "hello world" :started_at 777})
              (let [started (get @reg sid)]
                (expect (= "T1" (:current-turn started)))
                (expect (= ["T1"] (:turn-order started)))
                (expect (= "running" (get-in started [:turns "T1" :status])))
-               (expect (= "hello world" (get-in started [:turns "T1" :request]))))
+               (expect (= "hello world" (get-in started [:turns "T1" :request])))
+               ;; the mirror adopts the PRODUCER's canonical run-start clock —
+               ;; stamping mirror-local time desynced elapsed across processes
+               (expect (= 777 (get-in started [:turns "T1" :started_at]))))
              (#'state/ingest-mirrored-event!
               sid
               false
@@ -381,3 +384,32 @@
                (expect (= 1 (count drained)))
                (expect (= "q1" (:turn_id (first drained)))))
              (finally (swap! registry dissoc sid))))))
+
+(defdescribe
+  delta-coalesce-test
+  ;; reasoning/content wire deltas are CUMULATIVE frames, so intermediates
+  ;; inside the window are safely skipped; :done? frames and every non-delta
+  ;; phase must always pass.
+  (let [coalesce? @#'state/coalesce-delta?]
+    (it "skips a reasoning delta inside the window"
+        (expect (true? (coalesce? {:reasoning 1000} {:phase :reasoning} 1050))))
+    (it "passes a reasoning delta once the window elapsed"
+        (expect (false? (coalesce? {:reasoning 1000} {:phase :reasoning} 1101))))
+    (it "a :done? frame always passes"
+        (expect (false? (coalesce? {:reasoning 1000} {:phase :reasoning :done? true} 1050))))
+    (it "phases track independent clocks"
+        (expect (false? (coalesce? {:reasoning 1000} {:phase :content} 1050))))
+    (it "non-delta phases always pass"
+        (expect (false? (coalesce? {:reasoning 1000} {:phase :form-result} 1050)))
+        (expect (false? (coalesce? {} {:phase :assistant-prose} 0))))
+    (it "the window grows with the cumulative text size"
+        ;; ~60KB of thinking -> ~234ms window: a frame at +150ms is
+        ;; still coalesced, where a small frame (100ms floor) passes.
+        (let [big (apply str (repeat 60000 "x"))]
+          (expect (true? (coalesce? {:reasoning 1000} {:phase :reasoning :thinking big} 1150)))
+          (expect (false?
+                    (coalesce? {:reasoning 1000} {:phase :reasoning :thinking "tiny"} 1150)))))
+    (it "the adaptive window caps at 1s so huge streams still tick"
+        (let [huge (apply str (repeat 1000000 "x"))]
+          (expect (false?
+                    (coalesce? {:reasoning 1000} {:phase :reasoning :thinking huge} 2001)))))))

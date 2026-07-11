@@ -205,3 +205,15 @@
   (let [id (some-> id
                    str)]
     (when (seq id) (subs id 0 (min (long id-display-chars) (count id))))))
+
+(defn tab-group-root
+  "The PROJECT grouping key for a tab entry: the root of the workspace its
+   session edits in — for a rift draft the trunk it was cloned from
+   (`:repo-root`), for trunk the root itself — falling back to the entry's
+   denormalised `:workspace/root`. nil (synthetic/building tabs) means
+   ungrouped; channels treat nil as its own group. ONE definition so the tab
+   ORDER (state layer), the strip's group separators (channel headers) and
+   tab persistence all agree on what a 'project' is."
+  [entry]
+  (let [ws (:workspace entry)]
+    (or (:repo-root ws) (:root ws) (:workspace/root entry))))

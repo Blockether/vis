@@ -658,7 +658,12 @@
 
     (case type
       "reasoning.delta"
-      {:phase :reasoning :iteration iteration :text text}
+      ;; The progress tracker accumulates live reasoning from `:thinking`
+      ;; (the loop's chunk contract, progress.clj `:reasoning`) — NOT `:text`.
+      ;; Project the wire's cumulative `:text` onto `:thinking`, or thinking
+      ;; never streams in an attached TUI and only appears when the iteration
+      ;; completes (iteration.completed carries `:thinking`).
+      {:phase :reasoning :iteration iteration :thinking text}
 
       ;; Model prose streaming alongside the tool call — progress.clj accumulates
       ;; it as :content-stream so the live bubble paints the markdown. The gateway
@@ -726,7 +731,52 @@
       "turn.queued.drained"
       {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
 
+      ;; The turn actually STARTED running. Carries the gateway's canonical
+      ;; `started_at` (epoch ms) — the ONE clock every channel shares — so the
+      ;; TUI re-seeds its elapsed timer from it (see state/:sync-turn-clock):
+      ;; local submit/drain/attach stamps drift from the real run start.
+      "turn.started"
+      {:phase :turn-start
+       :turn-id (event-get event :turn-id)
+       ;; The request text rides along so an IDLE tab can attach to a
+       ;; sibling-started turn (state/:sibling-turn-started) with the real
+       ;; user bubble, not a blank one.
+       :request (event-get event :request)
+       :started-at-ms (event-get event :started-at)}
+
       nil)))
+
+(defn subscribe-session-events!
+  "PERSISTENT live event subscription for one open session tab.
+
+   The blocking submit/attach SSE loops exist only WHILE a turn runs in this
+   process, so an idle tab is deaf: a sibling TUI/web queueing, editing or
+   deleting a message — or starting a whole turn — never reached it (the
+   queue-desync + frozen-idle-tab bugs). This subscribes to the session's
+   live event stream (from the CURRENT cursor — no replay churn) for the
+   tab's whole lifetime and forwards every projectable event as a chunk to
+   `on-chunk` (`:queue-sync`, `:turn-start`, …). The caller filters phases
+   and dispatches; the TUI handlers are idempotent, so overlap with an
+   active attach subscription is harmless. Returns a zero-arg cleanup fn."
+  [session-id on-chunk]
+  (let [sid
+        (str session-id)
+
+        sub-id
+        (str "tui-events-" (java.util.UUID/randomUUID))
+
+        cursor
+        (try (vis/gateway-current-seq sid) (catch Throwable _ 0))]
+
+    (vis/gateway-subscribe! sid
+                            sub-id
+                            (fn [event]
+                              (try (when-let [chunk (gateway-event->chunk event)]
+                                     (on-chunk chunk))
+                                   (catch Throwable _ nil)))
+                            cursor)
+    (fn []
+      (try (vis/gateway-unsubscribe! sid sub-id) (catch Throwable _ nil)))))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root prewarm?]}]
