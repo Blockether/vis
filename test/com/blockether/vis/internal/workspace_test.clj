@@ -55,11 +55,13 @@
 
 (defn- seed-workspace!
   "Insert a lightweight 'current' workspace row rooted at `base` (no
-   clone), to serve as the fork parent for `create!`."
+   clone), to serve as the fork parent for `create!`. fork-ms is 1, NOT 0:
+   a ZERO baseline marks a FRESH lineage (inherited by `:from` children),
+   and these seeds stand in for ordinary drafts."
   [store base]
   (ps/db-workspace-insert!
     store
-    {:id (str (random-uuid)) :repo-id "rt" :repo-root base :root base :state :active :fork-ms 0}))
+    {:id (str (random-uuid)) :repo-id "rt" :repo-root base :root base :state :active :fork-ms 1}))
 
 (defn- pin-session!
   "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
@@ -184,37 +186,45 @@
   (it
     "create! :fresh? starts EMPTY; apply! lands only created files and never deletes trunk"
     (let [base (temp-dir "vis-ws-fresh")]
-      (try (if-not (ws/isolated-workspaces-supported? base)
-             ;; No copy-on-write backend here (CI) — the live round-trip can't run.
-             (expect (not (ws/isolated-workspaces-supported? base)))
-             (do (spit (io/file base "keep.txt") "KEEP\n")
-                 (with-store
-                   (fn [store]
-                     (let [seed (seed-workspace! store base)
-                           draft (ws/create! store {:from seed :fresh? true})
-                           draft-id (:id draft)]
+      (try
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No copy-on-write backend here (CI) — the live round-trip can't run.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do
+            (spit (io/file base "keep.txt") "KEEP\n")
+            (with-store
+              (fn [store]
+                (let [seed (seed-workspace! store base)
+                      draft (ws/create! store {:from seed :fresh? true})
+                      draft-id (:id draft)]
 
-                       (try
-                         ;; an isolated root that carries NOTHING from trunk (HEAD)
-                         (expect (some? (:root draft)))
-                         (expect (not= base (:root draft)))
-                         (expect (not (.exists (io/file (:root draft) "keep.txt"))))
-                         ;; still a real draft applying back into base, with the
-                         ;; zero baseline that makes deletions un-inferable
-                         (expect (ws/draft? draft))
-                         (expect (= base (:repo-root draft)))
-                         (expect (= 0 (:fork-ms draft)))
-                         ;; a file created in the fresh draft lands on apply!…
-                         (spit (io/file (:root draft) "new.txt") "NEW\n")
-                         (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
-                           (expect (= #{"new.txt"} (set (map :path changed))))
-                           (expect (= "NEW\n" (slurp (io/file base "new.txt"))))
-                           ;; …and trunk's pre-existing file SURVIVES: a fresh
-                           ;; draft can never report files it never saw as deleted
-                           (expect (= "KEEP\n" (slurp (io/file base "keep.txt")))))
-                         (finally (try (ws/abandon! store {:workspace-id draft-id})
-                                       (catch Throwable _ nil)))))))))
-           (finally (delete-tree! base))))))
+                  (try
+                    ;; an isolated root that carries NOTHING from trunk (HEAD)
+                    (expect (some? (:root draft)))
+                    (expect (not= base (:root draft)))
+                    (expect (not (.exists (io/file (:root draft) "keep.txt"))))
+                    ;; still a real draft applying back into base, with the
+                    ;; zero baseline that makes deletions un-inferable
+                    (expect (ws/draft? draft))
+                    (expect (= base (:repo-root draft)))
+                    (expect (= 0 (:fork-ms draft)))
+                    ;; a file created in the fresh draft lands on apply!…
+                    (spit (io/file (:root draft) "new.txt") "NEW\n")
+                    ;; adversarial: recreate a trunk-named file inside the
+                    ;; draft, then delete it again — the deletion must NOT
+                    ;; travel to trunk (the draft never owned that file)
+                    (spit (io/file (:root draft) "keep.txt") "SCRATCH\n")
+                    (io/delete-file (io/file (:root draft) "keep.txt"))
+                    (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                      (expect (= #{"new.txt"} (set (map :path changed))))
+                      (expect (not (some #(= :delete (:status %)) changed)))
+                      (expect (= "NEW\n" (slurp (io/file base "new.txt"))))
+                      ;; …and trunk's pre-existing file SURVIVES: a fresh
+                      ;; draft can never report files it never saw as deleted
+                      (expect (= "KEEP\n" (slurp (io/file base "keep.txt")))))
+                    (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                  (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base))))))
 
 
 (defdescribe
@@ -554,7 +564,7 @@
 
         (try (with-store
                (fn [store]
-                 ;; seed-workspace! stamps fork-ms 0 → draft? true
+                 ;; seed-workspace! stamps fork-ms 1 → draft? true
                  (let [seed
                        (seed-workspace! store a)
 
@@ -580,3 +590,73 @@
                              (expect (some? thrown))
                              (expect (= :workspace/not-a-directory (:type (ex-data thrown)))))))
              (finally (delete-tree! a))))))
+
+(defdescribe
+  deleted-paths-guard-test
+  (it "a positive baseline reports trunk files missing from the clone as deletions"
+      (let [trunk
+            (temp-dir "vis-delguard-t")
+
+            clone
+            (temp-dir "vis-delguard-c")]
+
+        (try (spit (io/file trunk "gone.txt") "x\n")
+             (Thread/sleep 8)
+             ;; sanity: the mechanism itself works when the baseline is real
+             (expect (= ["gone.txt"] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
+             (finally (delete-tree! trunk) (delete-tree! clone)))))
+  (it "a non-positive (FRESH) baseline can NEVER infer a deletion, whatever the trees hold"
+      (let [trunk
+            (temp-dir "vis-freshguard-t")
+
+            clone
+            (temp-dir "vis-freshguard-c")]
+
+        (try (spit (io/file trunk "head.txt") "REAL WORK\n")
+             ;; pathological pre-baseline mtime (epoch, e.g. from a tarball):
+             ;; the `<` comparison alone would NOT save this file under a 0
+             ;; baseline — only the hard non-positive early-exit does
+             (java.nio.file.Files/setLastModifiedTime (.toPath (io/file trunk "head.txt"))
+                                                      (java.nio.file.attribute.FileTime/fromMillis
+                                                        0))
+             (expect (= [] (ws/deleted-paths clone trunk 0)))
+             (expect (= [] (ws/deleted-paths clone trunk -5)))
+             (finally (delete-tree! trunk) (delete-tree! clone))))))
+
+(defdescribe
+  fresh-lineage-inheritance-test
+  (it
+    "a draft forked :from a FRESH draft (sub-loop/revision) inherits baseline 0, so its apply! can never delete trunk (HEAD) files"
+    (let [base (temp-dir "vis-ws-fresh-lineage")]
+      (try (if-not (ws/isolated-workspaces-supported? base)
+             ;; No copy-on-write backend here (CI) — the live round-trip can't run.
+             (expect (not (ws/isolated-workspaces-supported? base)))
+             (do (spit (io/file base "head.txt") "REAL WORK\n")
+                 (with-store
+                   (fn [store]
+                     (let [seed (seed-workspace! store base)
+                           fresh (ws/create! store {:from seed :fresh? true})
+                           ;; exactly what loop/child-workspace! does for a
+                           ;; sub-loop spawned INSIDE the fresh draft
+                           child (ws/create! store {:from fresh :label "subloop"})]
+
+                       (try
+                         ;; the child clones the (near-empty) fresh clone and
+                         ;; MUST inherit the zero baseline: a wall-clock
+                         ;; baseline here would make apply! read every trunk
+                         ;; file (older + absent from the clone) as DELETED
+                         ;; and wipe the repo
+                         (expect (= 0 (:fork-ms child)))
+                         (expect (not (.exists (io/file (:root child) "head.txt"))))
+                         (spit (io/file (:root child) "made.txt") "BY CHILD\n")
+                         (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id child)})]
+                           ;; a fresh lineage NEVER deletes…
+                           (expect (not (some #(= :delete (:status %)) changed)))
+                           (expect (some #(= "made.txt" (:path %)) changed))
+                           ;; …and trunk's real HEAD work survives the merge
+                           (expect (= "REAL WORK\n" (slurp (io/file base "head.txt"))))
+                           (expect (= "BY CHILD\n" (slurp (io/file base "made.txt")))))
+                         (finally (doseq [wid [(:id child) (:id fresh)]]
+                                    (try (ws/abandon! store {:workspace-id wid})
+                                         (catch Throwable _ nil))))))))))
+           (finally (delete-tree! base))))))
