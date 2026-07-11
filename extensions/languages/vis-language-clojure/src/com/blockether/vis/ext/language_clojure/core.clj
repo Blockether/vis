@@ -172,7 +172,18 @@
                                (repl-manager/stop! session-id dir)
                                (let [r (repl-manager/start! session-id dir {:aliases aliases})]
                                  (register-repl-resource! session-id dir aliases r)
-                                 r))}
+                                 r))
+                 ;; Keep a FAILED REPL visible (alive while a failure is on
+                 ;; record) instead of letting the registry prune it the moment
+                 ;; the pid dies — the failure + its log tail stay inspectable
+                 ;; in F4 until an explicit stop/restart.
+                 :alive-fn (fn []
+                             (boolean (or (repl-manager/repl-by-id session-id id)
+                                          (repl-manager/last-failure session-id dir))))
+                 ;; "alive, but is it WORKING?" — the registry probes this on
+                 ;; every list/render and flips `status` to reality.
+                 :health-fn (fn []
+                              (repl-manager/health session-id dir))}
           log-path
           (assoc :logs-fn
             (fn []
