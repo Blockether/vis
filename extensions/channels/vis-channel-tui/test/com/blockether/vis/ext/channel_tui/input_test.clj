@@ -795,3 +795,38 @@
         (expect (= :scroll-to-top (act \< false true))))
     (it "C-v scrolls a screen forward (:scroll-down)" (expect (= :scroll-down (act \v true false))))
     (it "M-v scrolls a screen backward (:scroll-up)" (expect (= :scroll-up (act \v false true))))))
+
+(defdescribe
+  shell-helper-deadline-test
+  ;; Regression: the clipboard-helper drain loop read stdout to EOF with NO
+  ;; bound — the `waitFor` "cap" only ran AFTER EOF — so a helper that never
+  ;; exits (osascript stuck on a macOS automation prompt, xclip without an X
+  ;; server) blocked the TUI input thread FOREVER: one ⌘V of an image froze
+  ;; the whole vis session. `run-helper-process!` now kills the child at a
+  ;; hard deadline and closes its stdin so stdin-readers see EOF.
+  (it "a never-exiting helper is killed at the deadline instead of hanging"
+      (let [t0
+            (System/currentTimeMillis)
+
+            r
+            (deref (future (#'input/run-shell-helper-bytes! ["sleep" "30"] 500)) 5000 ::still-hung)
+
+            elapsed
+            (- (System/currentTimeMillis) t0)]
+
+        (expect (map? r) "still blocked after 5s — the deadline never fired")
+        (expect (false? (:success? r)) "a killed helper must not report success")
+        (expect (< elapsed 4000))))
+  (it "a helper that reads stdin sees EOF instead of waiting forever"
+      ;; `cat` blocks on its inherited stdin pipe unless the parent closes it.
+      (let [r (deref (future (#'input/run-shell-helper-bytes! ["cat"] 2000)) 5000 ::still-hung)]
+        (expect (map? r) "cat never saw stdin EOF")
+        (expect (true? (:success? r)))))
+  (it "a fast helper's stdout bytes ride through intact"
+      (let [r (#'input/run-shell-helper-bytes! ["printf" "abc"] 2000)]
+        (expect (true? (:success? r)))
+        (expect (= "abc" (String. ^bytes (:bytes r) "UTF-8")))))
+  (it "run-shell-helper! still feeds stdin and captures stdout"
+      (let [r (#'input/run-shell-helper! ["cat"] (.getBytes "hello" "UTF-8"))]
+        (expect (true? (:success? r)))
+        (expect (= "hello" (:stdout r))))))

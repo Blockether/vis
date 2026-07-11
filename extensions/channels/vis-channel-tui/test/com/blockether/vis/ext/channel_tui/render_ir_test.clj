@@ -468,3 +468,14 @@
                    (expect (str/includes? body "intro"))
                    (expect (str/includes? body "togglebody"))
                    (expect (not-any? #(= :toggle-details (get-in % [:meta :kind])) entries)))))
+
+(defdescribe wrap-cell-cols-delegation-test
+             (it "table-cell wrap IS the shared lanterna word-wrap (one implementation)"
+                 ;; `wrap-cell-cols` must produce exactly `p/word-wrap`'s lines
+                 ;; (`TerminalTextUtils/wordWrap` in the lanterna fork) so table cells
+                 ;; break at the same points as every other wrapped surface — a
+                 ;; hand-rolled divergent wrapper is the regression this pins against.
+                 (doseq [[s w] [["a quick brown fox jumps over it" 7] ["zażółć gęślą jaźń ✅ done" 6]
+                                ["one-unbreakable-supertoken" 5] ["" 5] [nil 4] ["🎉🎉" 1]]]
+                   (expect (= (p/word-wrap (str s) (max 1 (long w))) (#'ir-tui/wrap-cell-cols s w))
+                           (str "diverged from p/word-wrap for " (pr-str [s w]))))))
