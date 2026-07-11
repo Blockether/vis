@@ -107,13 +107,13 @@
       (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
     (if (discovery/registry-fresh? @cached-entry probe-entry?)
       @cached-entry
-      ;; A native-image daemon is listening well inside the 8s default; a
+      ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
       ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
       ;; it self-registers, so give it a much longer runway.
       (let [{:keys [entry] :as result} (discovery/discover-or-start!
                                          {:db db :port DEFAULT_PORT :host DEFAULT_HOST}
                                          :probe probe-entry?
-                                         :timeout-ms (if (discovery/native-image?) 8000 60000))]
+                                         :timeout-ms (if (discovery/native-image?) 15000 60000))]
         (if entry
           (do (reset! cached-entry entry) entry)
           (throw (ex-info "gateway daemon did not become ready"

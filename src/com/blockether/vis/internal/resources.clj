@@ -88,8 +88,8 @@
   [pid]
   (if (nil? pid)
     true
-    (boolean (some-> (.orElse (ProcessHandle/of (long pid)) nil)
-                     .isAlive))))
+    (let [^ProcessHandle ph (.orElse (ProcessHandle/of (long pid)) nil)]
+      (boolean (and ph (.isAlive ph))))))
 
 (defn- record-alive?
   [{:keys [data alive-fn]}]
