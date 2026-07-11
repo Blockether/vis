@@ -579,3 +579,25 @@
     (it "turn.started projects to :turn-start with the canonical run-start clock"
         (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234}
                    (g->c {:type "turn.started" :turn_id "t1" :request "hi" :started_at 1234}))))))
+(defdescribe
+  title-sync-event-chunk-test
+  ;; `session.title_updated` (auto-title or rename — possibly produced in a
+  ;; SIBLING process: another TUI, the web, the serve daemon) must project to a
+  ;; :title-sync chunk. Before this projection existed the TUI dropped the
+  ;; event entirely, so a foreign-generated title only appeared after closing
+  ;; and reopening the tab (which re-reads the DB title).
+  (let [g->c @#'chat/gateway-event->chunk]
+    (it "projects the titled session's id and the new title"
+        (expect (= {:phase :title-sync :session-id "aaa" :title "Tab Sync Fix"}
+                   (g->c {:type "session.title_updated" :session_id "aaa" :title "Tab Sync Fix"}))))
+    (it "reads string-keyed wire events too (SSE JSON)"
+        (expect (= {:phase :title-sync :session-id "bbb" :title "T"}
+                   (g->c {"type" "session.title_updated" "session_id" "bbb" "title" "T"}))))
+    (it "a foreign copy keeps the TITLED session's id from the payload"
+        ;; gateway state/broadcast-title-event! stores a copy on every OTHER
+        ;; registered session with the titled session's id in the payload —
+        ;; the chunk must carry THAT id, not the subscribed session's.
+        (expect (= "other-session"
+                   (:session-id (g->c {:type "session.title_updated"
+                                       :session_id "other-session"
+                                       :title "X"})))))))
