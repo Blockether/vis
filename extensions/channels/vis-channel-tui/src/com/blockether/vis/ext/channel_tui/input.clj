@@ -636,7 +636,7 @@
    deadline. Returns `{:success? boolean :bytes byte-array}` — `:success?`
    only when the process exited 0 within the deadline. Never throws.
 
-   Two hang traps the old per-helper loops fell into are closed here:
+   Three hang traps the old per-helper loops fell into are closed here:
 
    1. The child's stdin is CLOSED right after start (after writing
       `stdin-bytes` when given), so a helper that reads stdin sees EOF
@@ -648,6 +648,12 @@
       one ⌘V froze the whole session. A watchdog now `destroyForcibly`s the
       process at the deadline, which closes its stdout pipe and unblocks
       the drain, so the caller always returns in ~timeout-ms.
+   3. EOF itself is not trusted: it only arrives once EVERY write-end of
+      the pipe is closed, and a helper that exits after spawning a lingering
+      grandchild (xclip-style daemonize, `foo & exit 0`) leaves the pipe held
+      open with NOTHING for the watchdog to kill — the helper already
+      exited. The drain is therefore deadline-bounded (`.available`
+      polling), never a bare blocking `.read`-to-EOF.
 
    `merge-stderr?` folds stderr into stdout (text helpers); otherwise stderr
    is DISCARDED so a binary payload can't be corrupted by warnings."
@@ -684,10 +690,25 @@
           tmp
           (byte-array 8192)]
 
-      (loop []
+      ;; Deadline-bounded drain — trap 3 in the docstring. A bare blocking
+      ;; `.read`-to-EOF needs every pipe write-end closed; a lingering
+      ;; grandchild keeps it open after the helper exits, and then the
+      ;; watchdog has nothing left to kill. Poll instead: consume whatever
+      ;; is buffered, stop at the deadline or once the helper died with the
+      ;; pipe drained.
+      (let [deadline (+ (System/nanoTime) (* (long timeout-ms) 1000000))]
+        (loop []
 
-        (let [n (try (.read in tmp) (catch Throwable _ -1))]
-          (when (pos? n) (.write buf tmp 0 n) (recur))))
+          (let [avail (try (.available in) (catch Throwable _ -1))]
+            (cond (pos? avail) (let [n (try (.read in tmp 0 (int (min (long avail) 8192)))
+                                            (catch Throwable _ -1))]
+                                 (when (pos? n) (.write buf tmp 0 n) (recur)))
+                  ;; stream closed / broken — nothing more will arrive
+                  (neg? avail) nil
+                  (>= (System/nanoTime) deadline) nil
+                  ;; helper exited and the pipe is drained
+                  (not (.isAlive p)) nil
+                  :else (do (Thread/sleep 5) (recur))))))
       (let [exited? (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)]
         @watchdog
         {:success? (boolean (and exited? (zero? (.exitValue p)))) :bytes (.toByteArray buf)}))

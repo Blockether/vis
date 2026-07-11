@@ -186,20 +186,35 @@
         ;; `cut` is the CHAR index that bounds the longest prefix fitting
         ;; in `max-width` COLUMNS without splitting a grapheme. Char-index,
         ;; not column, because we still need to slice `remaining`.
-        (let [cut
-              (p/col-prefix-end remaining max-width)
+        (let [cut (p/col-prefix-end remaining max-width)]
+          (if (zero? cut)
+            ;; A single glyph wider than `max-width` (emoji in a 1-column
+            ;; bubble): force one full code point onto its own line so the
+            ;; loop always makes progress. The old code re-queued the SAME
+            ;; string here (`(subs remaining 0)` = `remaining`) and spun
+            ;; the render thread forever.
+            (let [end (Character/charCount (.codePointAt ^String remaining 0))]
+              (recur (subs remaining end) (conj acc (subs remaining 0 end))))
+            (let [chunk (subs remaining 0 cut)
+                  ;; The cut landing exactly ON a word boundary means the
+                  ;; whole chunk is already a clean line — do NOT retreat to
+                  ;; the previous space inside it. Matches the lanterna
+                  ;; fork's `TerminalTextUtils/wordWrap` packing ("launch
+                  ;; pad rocket" @10 → ["launch pad" "rocket"], not
+                  ;; ["launch" "pad rocket"]), keeping bubble wrap in step
+                  ;; with every lanterna-wrapped surface.
+                  boundary? (and (< cut (.length ^String remaining))
+                                 (= \space (.charAt ^String remaining cut)))
+                  last-sp (when-not boundary? (str/last-index-of chunk " "))]
 
-              chunk
-              (subs remaining 0 cut)
-
-              last-sp
-              (str/last-index-of chunk " ")]
-
-          (if (and last-sp (pos? last-sp))
-            ;; Break at word boundary
-            (recur (subs remaining (inc (int last-sp))) (conj acc (subs remaining 0 (int last-sp))))
-            ;; No space found - hard break at column boundary
-            (recur (subs remaining cut) (conj acc chunk))))))))
+              (cond boundary? (recur (subs remaining (inc cut)) (conj acc chunk))
+                    (and last-sp (pos? (long last-sp)))
+                    ;; Break at word boundary
+                    (recur (subs remaining (inc (long last-sp)))
+                           (conj acc (subs remaining 0 (long last-sp))))
+                    :else
+                    ;; No space found - hard break at column boundary
+                    (recur (subs remaining cut) (conj acc chunk))))))))))
 (defn- wrap-unmarked-line
   [^String line ^long max-width]
   (let [lines (wrap-unmarked-line-chunks line max-width)]

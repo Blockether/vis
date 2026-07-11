@@ -3088,3 +3088,68 @@
                            [1
                             {:forms [(native-form "rg" "x" nil)]
                              :error {:type :svar.core/http-error}}] (tool 2 "rg" "c")]))))))
+
+;; ---------------------------------------------------------------------------
+;; wrap-text* — the plain-text wrap path
+;;
+;; `wrap-text*` deliberately does NOT delegate to the lanterna fork's
+;; `TerminalTextUtils/wordWrap`: it must preserve whitespace verbatim (runs of
+;; spaces, leading indentation — raw tool output and the cat hash-gutter rely
+;; on it) and re-balance inline style sentinels per physical line, both of
+;; which lanterna's wordWrap destroys (it collapses whitespace, counts
+;; sentinels as width 1, and leaves ON/OFF toggles straddling wrapped lines,
+;; which the per-line painter cannot honour). What MUST agree with lanterna is
+;; (a) width measurement — already shared via `p/display-width` /
+;; `p/col-prefix-end`, both TextCharacter-backed — and (b) greedy packing on
+;; plain single-spaced prose, pinned below against `p/word-wrap` itself.
+;; ---------------------------------------------------------------------------
+
+(defdescribe wrap-text-lanterna-parity-test
+             (it "packs plain single-spaced prose exactly like the lanterna fork's wordWrap"
+                 (doseq [[s w] [["launch pad rocket" 10]
+                                ["the quick brown fox jumps over the lazy dog" 16]
+                                ["zażółć gęślą jaźń i jeszcze trochę tekstu na próbę" 14]
+                                ["abcdefghijklmnopqrstuvwxyz0123456789" 10] ["日本語のテキストは切れ目なく続く" 8]
+                                ["🚀🚀🚀 rocket launch pad 🚀🚀🚀" 10]]]
+                   (expect (= (vec (p/word-wrap s w)) (render/wrap-text* s w))
+                           (str "diverged from TerminalTextUtils/wordWrap on " (pr-str s) " @" w))))
+             (it "does not retreat a word when the cut lands exactly on a word boundary"
+                 (expect (= ["launch pad" "rocket"] (render/wrap-text* "launch pad rocket" 10)))))
+
+(defdescribe wrap-text-whitespace-fidelity-test
+             (it "preserves leading indentation (lanterna's wordWrap strips it)"
+                 (expect (= ["    indented line" "that should wrap" "somewhere"]
+                            (render/wrap-text* "    indented line that should wrap somewhere" 18))))
+             (it "preserves runs of spaces mid-line (lanterna's wordWrap collapses them)"
+                 (let [lines (render/wrap-text* "a  b   c    dddd eeee" 8)]
+                   (expect (str/includes? (first lines) "a  b")
+                           "mid-line multi-space must survive wrapping"))))
+
+(defdescribe
+  wrap-text-termination-test
+  (it "terminates when a glyph is wider than the wrap width (used to hang the render thread)"
+      (let [r (deref (future (render/wrap-text* "🚀🚀🚀" 1)) 3000 ::hung)]
+        (expect (not= ::hung r) "wide glyph at width 1 must not loop forever")
+        (expect (= "🚀🚀🚀" (apply str r)) "no content lost"))))
+
+(defdescribe wrap-text-sentinel-rebalance-test
+             (it "re-opens and re-closes inline style sentinels on every wrapped line"
+                 (let [s
+                       (str "aaa " p/INLINE_BOLD_ON "bold words here" p/INLINE_BOLD_OFF " tail")
+
+                       lines
+                       (render/wrap-text* s 8)
+
+                       visible
+                       (fn [l]
+                         (apply str (remove #(p/inline-sentinel? (str %)) l)))]
+
+                   ;; content survives the wrap
+                   (expect (= (visible s) (str/join " " (map (comp str/trim visible) lines))))
+                   ;; a raw lanterna wordWrap would leave BOLD_ON on one line and
+                   ;; BOLD_OFF lines later; the painter resets style per line, so
+                   ;; every line must carry balanced toggles
+                   (doseq [l lines]
+                     (expect (= (str/includes? l p/INLINE_BOLD_ON)
+                                (str/includes? l p/INLINE_BOLD_OFF))
+                             (str "unbalanced sentinels on line " (pr-str l)))))))
