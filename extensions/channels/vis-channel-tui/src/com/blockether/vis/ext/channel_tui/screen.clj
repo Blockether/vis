@@ -2591,6 +2591,16 @@
                      (do (state/dispatch [:sync-turn-clock tab-id chunk])
                          (state/dispatch [:sibling-turn-started tab-id chunk]))
 
+                     :title-sync
+                     ;; Title generated/renamed in a SIBLING process (another
+                     ;; TUI / web / the serve daemon) — the in-process value
+                     ;; listener above never fires for those. :set-title
+                     ;; resolves the OWNING tab from the titled session's id
+                     ;; (a foreign copy may concern a different session; an
+                     ;; unresolvable id is a no-op).
+                     (state/dispatch [:set-title (or (:title chunk) "")
+                                      (or (:session-id chunk) session-id)])
+
                      nil))))
              (catch Throwable _
                (fn [])))

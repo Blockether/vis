@@ -744,6 +744,20 @@
        :request (event-get event :request)
        :started-at-ms (event-get event :started-at)}
 
+      ;; A session's title changed — auto-title or a rename, possibly produced
+      ;; in a SIBLING process (another TUI, the web, the serve daemon), where
+      ;; THIS process's in-process titling listeners never fire. Project it so
+      ;; the persistent tab subscription relabels live instead of waiting for a
+      ;; tab reopen to re-read the DB title. `:session_id` is the TITLED
+      ;; session's id (a foreign copy stamps it in the payload — see gateway
+      ;; state/broadcast-title-event!), which may differ from the subscribed
+      ;; session.
+      "session.title_updated"
+      {:phase :title-sync
+       :session-id (some-> (event-get event :session-id)
+                           str)
+       :title (event-get event :title)}
+
       nil)))
 
 (defn subscribe-session-events!
