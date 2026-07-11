@@ -651,7 +651,15 @@
                             ;; Ring-buffer tail so TUI/web can VIEW a background's
                             ;; output (same lines as shell_logs), not just stop it.
                             :logs-fn (fn []
-                                       (mapv second (:lines @buffer)))})
+                                       (mapv second (:lines @buffer)))
+                            ;; "alive, but is it WORKING?" for the registry's
+                            ;; per-render health probe: running / exited-clean /
+                            ;; failed (non-zero exit).
+                            :health-fn (fn []
+                                         (cond (nil? (bg-entry session id)) :down
+                                               (nil? @exit-atom) :running
+                                               (zero? (long @exit-atom)) :exited
+                                               :else :failed))})
       (extension/success
         ;; No :op / :cwd — shell_bg always runs at the workspace root and the
         ;; result rides every later prompt as a frozen <results> pin.

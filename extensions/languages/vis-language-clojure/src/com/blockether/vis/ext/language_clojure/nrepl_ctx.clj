@@ -77,7 +77,11 @@
    Managed REPLs get stop + restart thunks driving repl-manager."
   [session-id {:keys [id dir port aliases log]}]
   (let [existing (when (and session-id id) (vis/get-resource session-id id))]
-    (when (and session-id id (or (nil? existing) (and log (not (get existing "can_logs")))))
+    (when (and session-id
+               id
+               (or (nil? existing)
+                   (and log (not (get existing "can_logs")))
+                   (not (get existing "can_health"))))
       (vis/register-resource!
         session-id
         {:id id
@@ -102,7 +106,17 @@
                                (repl-manager/stop! session-id dir)
                                (let [r (repl-manager/start! session-id dir {:aliases aliases})]
                                  (vis/unregister-resource! session-id id)
-                                 r))}
+                                 r))
+                 ;; Keep a FAILED REPL visible (alive while a failure is on
+                 ;; record) so the crash + its log tail stay inspectable in F4
+                 ;; instead of being pruned the moment the pid dies.
+                 :alive-fn (fn []
+                             (boolean (or (repl-manager/repl-by-id session-id id)
+                                          (repl-manager/last-failure session-id dir))))
+                 ;; "alive, but is it WORKING?" — probed on every list/render,
+                 ;; flips the stored `status` to :up/:starting/:failed/:down.
+                 :health-fn (fn []
+                              (repl-manager/health session-id dir))}
           log
           (assoc :logs-fn
             (fn []

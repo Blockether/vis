@@ -16,6 +16,18 @@
 
 (defn- with-file [^String dir name content] (spit (io/file dir name) content) dir)
 
+(defn- await-until
+  "Poll `pred` (a nullary fn) until truthy or `timeout-ms` passes. Returns the
+   final truthiness — lets tests wait on the async .onExit watcher without
+   sleeping a fixed amount."
+  [pred timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (cond (pred) true
+            (< (System/currentTimeMillis) deadline) (do (Thread/sleep 50) (recur))
+            :else false))))
+
 (defdescribe
   launcher-for-test
   ;; launcher-for is now 3-arity: [dir aliases port]. We always know our port.
@@ -76,26 +88,38 @@
                    (expect (= "not-managed" (get r "result")))
                    (expect (= (rm/id-of dir) (get r "id"))))))
 
-(defdescribe failed-start-test
-             (it "returns failed with exit code and log tail when the launcher dies before binding"
-                 (let [dir (tmp-dir)]
-                   (with-redefs [rm/free-port! (fn []
-                                                 61235)
-                                 rm/wait-until-up (fn [_ _]
-                                                    :starting)
-                                 rm/launcher-for
-                                 (fn [_ _ port]
-                                   {:tool :fake
-                                    :cmd ["sh" "-c" (str "echo repl boom on " port "; exit 42")]})]
+(defdescribe
+  failed-start-test
+  (it "returns failed with exit code and log tail the MOMENT the launcher dies (no deadline burn)"
+      (let [dir (tmp-dir)]
+        (with-redefs [rm/launcher-for
+                      (fn [_ _ port]
+                        {:tool :fake :cmd ["sh" "-c" (str "echo repl boom on " port "; exit 42")]})]
+          (let [t0 (System/currentTimeMillis)
+                r (rm/start! "sess-fail" dir)
+                elapsed (- (System/currentTimeMillis) t0)]
 
-                     (let [r (rm/start! "sess-fail" dir)]
-                       (expect (= "failed" (get r "result")))
-                       (expect (= "failed" (get r "status")))
-                       (expect (= 42 (get r "exit")))
-                       (expect (str/includes? (get r "message")
-                                              "exited before accepting connections"))
-                       (expect (some #(str/includes? % "repl boom on 61235") (get r "log_tail")))
-                       (expect (= "down" (get (rm/status "sess-fail" dir) "status"))))))))
+            (expect (= "failed" (get r "result")))
+            (expect (= "failed" (get r "status")))
+            (expect (= 42 (get r "exit")))
+            ;; the full deadline is 120s — a dead launcher must surface in seconds
+            (expect (< elapsed 15000))
+            (expect (str/includes? (get r "message") "exited before accepting connections"))
+            (expect (some #(str/includes? % "repl boom on") (get r "log_tail")))
+            (expect (= "down" (get (rm/status "sess-fail" dir) "status")))))))
+  (it "records the failure so health reports :failed until an explicit stop clears it"
+      (let [dir (tmp-dir)]
+        (with-redefs [rm/launcher-for (fn [_ _ _]
+                                        {:tool :fake :cmd ["sh" "-c" "exit 7"]})]
+          (rm/start! "sess-fail-2" dir)
+          (let [f (rm/last-failure "sess-fail-2" dir)]
+            (expect (some? f))
+            (expect (= 7 (get f "exit"))))
+          (expect (= :failed (rm/health "sess-fail-2" dir)))
+          ;; an intentional stop clears the remembered failure -> :down
+          (rm/stop! "sess-fail-2" dir)
+          (expect (nil? (rm/last-failure "sess-fail-2" dir)))
+          (expect (= :down (rm/health "sess-fail-2" dir)))))))
 
 (defdescribe id-of-test
              (it "derives a stable nrepl:<dir> id" (expect (= "nrepl:/x/y" (rm/id-of "/x/y")))))
@@ -185,3 +209,122 @@
                      (expect (= (canon (io/file home "foo" "bar")) (resolve root "~/foo/bar")))
                      ;; the same home target resolves to ONE id regardless of spelling
                      (expect (= (resolve root "~") (resolve root home)))))))
+
+(defdescribe
+  wait-until-up-test
+  (it "returns :died immediately when the process exits before binding — never burns the deadline"
+      (let [p (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "exit 3"]))]
+        (.waitFor p)
+        (let [t0 (System/currentTimeMillis)
+              st (#'rm/wait-until-up p 59871 60000)]
+
+          (expect (= :died st))
+          (expect (< (- (System/currentTimeMillis) t0) 5000)))))
+  (it "returns :starting when the deadline passes with the process still alive"
+      (let [p (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "sleep 30"]))]
+        (try (expect (= :starting (#'rm/wait-until-up p 59872 600)))
+             (finally (.destroyForcibly p)))))
+  (it "tolerates a nil process (pure port probe)"
+      (expect (= :starting (#'rm/wait-until-up nil 59873 300)))))
+
+(defdescribe
+  slow-start-watcher-test
+  (it "reports :starting for a slow boot, then the .onExit watcher flips a later death to :failed"
+      (let [dir (tmp-dir)]
+        (with-redefs [rm/launcher-for (fn [_ _ _]
+                                        {:tool :fake :cmd ["sh" "-c" "sleep 30"]})
+                      rm/start-deadline-ms 600]
+
+          (let [r (rm/start! "sess-slow" dir)]
+            (expect (= "starting" (get r "result")))
+            (expect (= "starting" (get r "status")))
+            (expect (= :starting (rm/health "sess-slow" dir)))
+            ;; kill it behind the manager's back — the watcher must record a failure
+            (let [p (:process (get @@#'rm/processes ["sess-slow" dir]))]
+              (.destroyForcibly ^Process p))
+            (expect (await-until #(some? (rm/last-failure "sess-slow" dir)) 5000))
+            (expect (= :failed (rm/health "sess-slow" dir)))
+            (expect (= "down" (get (rm/status "sess-slow" dir) "status")))
+            ;; an explicit stop acknowledges the failure -> back to plain :down
+            (rm/stop! "sess-slow" dir)
+            (expect (= :down (rm/health "sess-slow" dir))))))))
+
+(defdescribe ensure-repl-failure-test
+             (it "returns start!'s failed lifecycle map instead of swallowing it"
+                 (let [dir (tmp-dir)]
+                   (with-redefs [rm/launcher-for (fn [_ _ _]
+                                                   {:tool :fake
+                                                    :cmd ["sh" "-c" "echo bad classpath; exit 1"]})]
+                     (let [r (rm/ensure-repl-for-dir! "sess-ens" dir)]
+                       (expect (= "failed" (get r "result")))
+                       (expect (= 1 (get r "exit")))
+                       (expect (some #(str/includes? % "bad classpath") (get r "log_tail")))))))
+             (it "returns the no-launcher lifecycle map when the dir has no build file"
+                 (let [r (rm/ensure-repl-for-dir! "sess-ens-2" (tmp-dir))]
+                   (expect (= "no-launcher" (get r "result"))))))
+
+(defdescribe
+  resolve-target-start-failure-test
+  (it "throws :clj/start-failed carrying the launcher's REAL story (exit + message + log tail)"
+      (with-redefs [rm/session-repls
+                    (fn [_]
+                      [])
+
+                    rm/ensure-repl-for-dir!
+                    (fn [_ _]
+                      {"result" "failed"
+                       "exit" 1
+                       "message" "Error building classpath. boom"
+                       "log_tail" ["Error building classpath." "boom"]})]
+
+        (let [e
+              (try (rm/resolve-target! "sess" nil "/p") nil (catch clojure.lang.ExceptionInfo e e))]
+          (expect (some? e))
+          (expect (= :clj/start-failed (:type (ex-data e))))
+          (expect (= 1 (:exit (ex-data e))))
+          (expect (str/includes? (ex-message e) "Error building classpath"))
+          (expect (str/includes? (ex-message e) "(exit 1)")))))
+  (it "still throws :clj/no-launcher when there is truly no build file"
+      (with-redefs [rm/session-repls
+                    (fn [_]
+                      [])
+
+                    rm/ensure-repl-for-dir!
+                    (fn [_ _]
+                      {"result" "no-launcher" "status" "down"})]
+
+        (let [t (try (rm/resolve-target! "sess" nil "/p")
+                     :no-throw
+                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+          (expect (= :clj/no-launcher t))))))
+
+(defdescribe tail-log-test
+             (it "returns [] for a missing / blank path and an empty file"
+                 (expect (= [] (rm/tail-log nil)))
+                 (expect (= [] (rm/tail-log "")))
+                 (expect (= [] (rm/tail-log (str (io/file (tmp-dir) "nope.log")))))
+                 (let [f (io/file (tmp-dir) "empty.log")]
+                   (spit f "")
+                   (expect (= [] (rm/tail-log (str f))))))
+             (it "tails the LAST n lines"
+                 (let [f (io/file (tmp-dir) "a.log")]
+                   (spit f (str/join "\n" (map #(str "line-" %) (range 100))))
+                   (expect (= ["line-97" "line-98" "line-99"] (rm/tail-log (str f) 3)))
+                   (expect (= 100 (count (rm/tail-log (str f) 500))))))
+             (it "reads O(tail) — only the end of a log far bigger than the 256KB tail window"
+                 (let [f
+                       (io/file (tmp-dir) "big.log")
+
+                       line
+                       (apply str (repeat 120 "x"))]
+
+                   ;; ~1.2MB, well past the tail window
+                   (spit f (str/join "\n" (map #(str line "-" %) (range 10000))))
+                   (let [tail (rm/tail-log (str f) 5)]
+                     (expect (= 5 (count tail)))
+                     (expect (= (str line "-9999") (last tail)))
+                     (expect (= (str line "-9995") (first tail))))))
+             (it "handles a trailing newline without a phantom empty line"
+                 (let [f (io/file (tmp-dir) "t.log")]
+                   (spit f "a\nb\n")
+                   (expect (= ["a" "b"] (rm/tail-log (str f)))))))
