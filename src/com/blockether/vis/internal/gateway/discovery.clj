@@ -91,11 +91,10 @@
   "Best-effort: is OS process `pid` still running? A nil pid is NOT alive (an
    entry with no pid can't own a live daemon)."
   [pid]
-  (boolean (some-> pid
-                   long
-                   ProcessHandle/of
-                   (.orElse nil)
-                   .isAlive)))
+  (if (nil? pid)
+    false
+    (let [^ProcessHandle ph (.orElse (ProcessHandle/of (long pid)) nil)]
+      (boolean (and ph (.isAlive ph))))))
 
 ;; =============================================================================
 ;; Registry read / write / delete
