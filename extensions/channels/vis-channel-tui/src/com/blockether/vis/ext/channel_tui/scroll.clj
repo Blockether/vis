@@ -105,6 +105,19 @@
    empty session is still 'at the bottom', so the chip must stay hidden."
   [sc ^long max-s]
   (and (pos? max-s) (< (displayed sc max-s) max-s)))
+(defn jump-chip-visible?
+  "True when the \"↓ latest\" jump-to-bottom chip should paint: the user is
+   PARKED above the live bottom (`:at` intent) AND the bottom actually sits
+   off-screen below. It takes BOTH predicates:
+
+   - `bottom-hidden?` alone FLASHES the chip during plain FOLLOW easing —
+     while a turn streams, `ease` holds the eased `:pos` a few rows above the
+     growing bottom every frame, so the bottom is technically 'hidden' even
+     though the user never left it.
+   - `scrolled-up?` alone pops the chip in an empty/short session where a
+     PageUp parked `:at` offset 0 — nothing below to jump to."
+  [sc ^long max-s]
+  (and (scrolled-up? sc) (bottom-hidden? sc max-s)))
 
 (defn layout-offset
   "The offset to feed `virtual/layout` and the scrollbar geometry.
@@ -224,14 +237,16 @@
    never clamps, but a frantic flail can't build unbounded inertia."
   12)
 
-(def ^:const momentum-idle-decay
-  "Fraction of wheel-momentum retained per IDLE input poll (a poll with no wheel
-   event). Halving each idle frame releases the directional lock within a few
-   frames of the user lifting their fingers — so the NEXT gesture starts clean
-   and a deliberate direction change dispatches immediately instead of being
-   absorbed as 'opposition' to stale momentum. Mirrors kitty's 150ms sample
-   window: momentum is only meaningful while events keep arriving."
-  0.5)
+(def ^:const momentum-hold-ms
+  "How long (ms of wall-clock) the wheel-momentum directional lock survives
+   after the LAST wheel event. TIME-based, not poll-based: the old per-poll
+   halving ran at the input loop's ~16ms cadence and released the lock in
+   ~60ms — SHORTER than the 50-100ms gap between two events of a slow macOS
+   trackpad inertia tail — so the tail's sign-flipped final ticks always met
+   zero momentum and dispatched as real reversals. Parked within the
+   slack band that re-armed FOLLOW mid-stream: the 'scrolling in place'
+   bounce. Mirrors kitty's 150ms momentum sample window."
+  150)
 
 (defn- cap-momentum
   "Clamp `v` into `[-momentum-cap, momentum-cap]`."
@@ -274,14 +289,31 @@
                         :else [after after])))))
 
 (defn decay-wheel-momentum
-  "Step the running `momentum` toward zero for one IDLE poll (no wheel event).
-   Returns 0 once small enough that the directional lock should release."
-  [momentum]
-  (let [m (long (or momentum 0))]
-    (if (zero? m)
-      0
-      (let [next (long (Math/round (* m momentum-idle-decay)))]
-        (if (<= (Math/abs next) 1) 0 next)))))
+  "Momentum remaining `idle-ms` after the LAST wheel event. Linearly ramped
+   toward zero across `momentum-hold-ms` — but the DIRECTIONAL LOCK (at least
+   ±1) is kept alive for the whole window, and exactly zero once it expires.
+
+   The sign floor is the point: a slow trackpad tail leaves only ~1-2 rows of
+   momentum, and rounding that to zero mid-window would let the very
+   sign-flipped tick this smoother exists to absorb through. The ramp (rather
+   than holding verbatim) keeps a DELIBERATE quick reversal responsive: pegged
+   momentum shrinks ~50% per 80ms gap, so an opposing gesture crosses it in a
+   couple of ticks instead of grinding down the full `momentum-cap`.
+
+   Callers compute this at USE time (raw stored momentum + elapsed wall-clock
+   ms), never store the decayed value back per poll — that would compound."
+  [momentum idle-ms]
+  (let [m
+        (long (or momentum 0))
+
+        idle
+        (max 0 (long idle-ms))]
+
+    (cond (zero? m) 0
+          (>= idle momentum-hold-ms) 0
+          :else (let [scaled (long (Math/round
+                                     (* m (- 1.0 (/ (double idle) (double momentum-hold-ms))))))]
+                  (if (zero? scaled) (Long/signum m) scaled)))))
 
 (defn to-y
   "Scrollbar drag/track click → `offset` (already mapped from cursor row).
