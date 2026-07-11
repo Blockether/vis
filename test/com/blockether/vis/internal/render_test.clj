@@ -185,6 +185,21 @@
       ;; inline chip that wraps and corrupts a select-copy.
       (let [src "javascript:(function(){var o=\"http://127.0.0.1\";window.__spel.connect();})();"]
         (expect (= [:ir {} [:code {} src]] (render/markdown->ir (str "`" src "`"))))))
+  (it "keeps a long lone file-path code span as an inline :c chip"
+      ;; rg/patch/outline op-cards title every per-file section with a lone
+      ;; `` `path` `` paragraph. Real repo paths routinely exceed the
+      ;; promotion threshold; promoting them to :code blocks silently drops
+      ;; the path-chip styling in every channel. Path-like literals (no
+      ;; whitespace, has `/`, no URL scheme) stay inline however long.
+      (let [path
+            "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/screen.clj"]
+        (expect (= [:ir {} [:p {} [:c {} path]]] (render/markdown->ir (str "`" path "`"))))))
+  (it "still promotes a long URL code span (scheme prefix = not a path)"
+      (let [url "https://example.com/some/very/long/path/that/exceeds/the/threshold"]
+        (expect (= [:ir {} [:code {} url]] (render/markdown->ir (str "`" url "`"))))))
+  (it "still promotes a long shell command code span (whitespace = not a path)"
+      (let [cmd "git log --oneline --graph --decorate --all -20 | head -40"]
+        (expect (= [:ir {} [:code {} cmd]] (render/markdown->ir (str "`" cmd "`"))))))
   (it "keeps a short lone inline code span as an inline :c chip"
       (expect (= [:ir {} [:p {} [:c {} "foo"]]] (render/markdown->ir "`foo`"))))
   (it "keeps an inline code span embedded in prose inline"

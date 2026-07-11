@@ -132,10 +132,13 @@
     (assoc-in db [:tab-locals id] (tab-snapshot db))
     db))
 (defn tab-session-snapshot
-  "Ordered open-tab session ids + the active one, for per-place persistence.
-   Returns {:active <session-id-str|nil> :sessions [<session-id-str> …]} in
-   left-to-right tab order. The active tab's session lives at the db root;
-   every other tab's lives in `:tab-locals`."
+  "Ordered open-tab sessions + the active one, for per-place persistence.
+   Returns {:active <session-id-str|nil>
+            :sessions [{:id <sid> :root <project-root, absent when unknown>} …]}
+   in left-to-right tab order. Each entry carries the tab's PROJECT root
+   (`vh/tab-group-root`) so a restore — or any future project-level UI — can
+   group tabs without resuming every session first. The active tab's session
+   lives at the db root; every other tab's lives in `:tab-locals`."
   [db]
   (let [entries
         (vec (:tabs db))
@@ -153,7 +156,13 @@
             (some-> (get-in db [:tab-locals tab-id :session :id])
                     str)))]
 
-    {:active (sid active-id) :sessions (vec (keep #(sid (:id %)) entries))}))
+    {:active (sid active-id)
+     :sessions (vec (keep (fn [entry]
+                            (when-let [s (sid (:id entry))]
+                              (if-let [root (vh/tab-group-root entry)]
+                                {:id s :root root}
+                                {:id s})))
+                          entries))}))
 (defn- finalize-db
   [db]
   (cond-> db
@@ -615,6 +624,31 @@
                             (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
 (defn- next-tab-number [entries] (inc (reduce max 0 (keep tab-number entries))))
+(defn- insert-tab-grouped
+  "Insert a freshly minted tab entry ADJACENT to its project group: right
+   after the LAST existing tab sharing its `vh/tab-group-root`. No root, or
+   no open tab of that project yet → append at the end (a new group starts
+   on the right). Keeping same-project tabs contiguous in `:tabs` is what
+   makes the header strip, the numeric jumps (C-x N) and the cycle order all
+   read as project groups — no render-time reordering anywhere."
+  [entries entry]
+  (let [entries
+        (vec entries)
+
+        root
+        (vh/tab-group-root entry)
+
+        last-idx
+        (when root
+          (->> entries
+               (keep-indexed #(when (= root (vh/tab-group-root %2)) %1))
+               last))]
+
+    (if last-idx
+      (vec (concat (subvec entries 0 (inc (long last-idx)))
+                   [entry]
+                   (subvec entries (inc (long last-idx)))))
+      (conj entries entry))))
 (defn- base-tab-entry
   [db]
   {:id (or (:active-tab-id db) :main)
@@ -1036,7 +1070,7 @@
       (if (>= (count entries) max-tabs)
         db
         (cond-> (-> db
-                    (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+                    (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
                            :active-tab-id id)
                     (merge (empty-tab-state)))
           workspace
@@ -1275,6 +1309,8 @@
                           (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
 
                   (if existing
+                    ;; Already open — just focus that tab; its view state
+                    ;; (messages, scroll, in-flight turn) lives in :tab-locals.
                     (seed-ctx (activate-tab db (:id existing)))
                     (let [n
                           (next-tab-number entries)
@@ -1298,7 +1334,8 @@
 
                           db'
                           (-> db
-                              (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+                              (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries)
+                                                               entry)
                                      :active-tab-id id)
                               ;; Make the new tab the live root state (a fresh session view);
                               ;; finalize-db snapshots this back into the tab's locals.
@@ -1385,6 +1422,18 @@
                                       (assoc :workspace/root (:root workspace)))
                                     e))
                                 entries)
+
+                          ;; The tab was minted at the END (no workspace known
+                          ;; yet). Now that its project root is bound, RELOCATE
+                          ;; it next to its group so the strip stays grouped.
+                          entries'
+                          (let [entry'
+                                (some #(when (= (:id %) tab-id) %) entries')
+
+                                without
+                                (vec (remove #(= (:id %) tab-id) entries'))]
+
+                            (insert-tab-grouped without entry'))
 
                           db
                           (assoc db :tabs entries')
@@ -2288,6 +2337,21 @@
                               (mapv (fn [e]
                                       (if (= client-id (:client-id e)) (assoc e :turn-id tid) e))
                                     (vec (or q [])))))))))
+(reg-event-db :sync-turn-clock
+              ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
+              ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares.
+              ;; Re-seed this tab's elapsed timer from it: the local stamps
+              ;; (:send-message's submit time, :drain-pending's drain time) drift from the
+              ;; gateway's actual run start, so two terminals attached to the same work
+              ;; showed different elapsed. No-op unless the tab is mid-turn (:loading?).
+              (fn [db [_ workspace-id {:keys [started-at-ms]}]]
+                (let [workspace-id (or workspace-id (current-tab-id db))]
+                  (if-not (and workspace-id (nat-int? started-at-ms))
+                    db
+                    (update-tab db
+                                workspace-id
+                                (fn [w]
+                                  (if (:loading? w) (assoc w :turn-start-ms started-at-ms) w)))))))
 (reg-event-db
   :sync-queued-turn
   ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
@@ -2395,7 +2459,13 @@
           head
           (first q)]
 
-      (cond (nil? head) {:db db}
+      (cond (or (nil? head)
+                ;; A turn is ALREADY streaming into this tab (e.g. the
+                ;; persistent event listener attached a sibling-started turn
+                ;; first): draining now would double-attach the same turn.
+                ;; The queue pops again on the NEXT terminal.
+                (:loading? source-db))
+            {:db db}
             (:turn-id head)
             (let [token
                   (vis/cancellation-token)
@@ -2538,6 +2608,36 @@
                                         :input-history-draft nil))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 (reg-event-fx
+  :sibling-turn-started
+  ;; A turn STARTED on this session from a SIBLING channel (another TUI, the
+  ;; web) while this tab sat idle — delivered by the tab's persistent event
+  ;; subscription (chat/subscribe-session-events!), which is the only way an
+  ;; idle tab hears about it. Synthesize the running-session shape
+  ;; :attach-running-turn expects and hand off; its guards plus ours (already
+  ;; loading / already attached) make this a no-op for the tab that started
+  ;; or drained onto the turn itself.
+  (fn [db [_ workspace-id {:keys [turn-id request started-at-ms]}]]
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
+
+          target
+          (db-for-tab db workspace-id)
+
+          session
+          (:session target)]
+
+      (if-not
+        (and workspace-id session turn-id (not (:loading? target)) (not (:gateway-turn-id target)))
+        {:db db}
+        {:db db
+         :fx [[:dispatch
+               [:attach-running-turn workspace-id
+                (assoc session
+                  :status "running"
+                  :current-turn-id turn-id
+                  :running-request request
+                  :running-started-at started-at-ms)]]]}))))
+(reg-event-fx
   :restore-pending-to-input
   ;; A user cancel with a queued backlog must NOT auto-send the next message.
   ;; Pull every queued (not-yet-started) submission back into the editor —
@@ -2553,28 +2653,42 @@
           pending
           (vec (or (:pending-sends source-db) []))
 
+          ;; OWNERSHIP: only entries THIS tab authored (stamped :client-id at
+          ;; enqueue time) come back to the editor and get their gateway
+          ;; records deleted. MIRRORED entries (no :client-id — queued by a
+          ;; sibling TUI/web and mirrored here by :sync-queued-turn) are the
+          ;; sibling's property: deleting them fired `turn.queued.deleted` at
+          ;; a client still blocked on its own queued turn, which synthesized
+          ;; a spurious CANCELLED terminal there (the "session cancelled
+          ;; itself" bug). They stay queued server-side and mirrored locally.
+          mine
+          (vec (filter :client-id pending))
+
+          mirrors
+          (vec (remove :client-id pending))
+
           sid
           (get-in source-db [:session :id])
 
           tids
-          (keep :turn-id pending)]
+          (keep :turn-id mine)]
 
-      (if (empty? pending)
+      (if (empty? mine)
         {:db db}
         (let [cur-text
               (input/input->text (:input source-db))
 
               texts
-              (into (if (str/blank? cur-text) [] [cur-text]) (map :text pending))
+              (into (if (str/blank? cur-text) [] [cur-text]) (map :text mine))
 
               combined
               (str/join "\n\n" (remove str/blank? texts))
 
               merged-pastes
-              (reduce merge (or (:pastes source-db) {}) (map :pastes pending))
+              (reduce merge (or (:pastes source-db) {}) (map :pastes mine))
 
               merged-counter
-              (apply max 0 (:paste-counter source-db 0) (map #(:paste-counter % 0) pending))]
+              (apply max 0 (:paste-counter source-db 0) (map #(:paste-counter % 0) mine))]
 
           {:db (update-tab db
                            workspace-id
@@ -2583,7 +2697,7 @@
                                :input (text->input-state combined)
                                :pastes merged-pastes
                                :paste-counter merged-counter
-                               :pending-sends []
+                               :pending-sends mirrors
                                :input-history-index nil
                                :input-history-draft nil)))
            :fx (into [[:notify "Queue restored to input \u2014 not sent" :info 2000]]
@@ -2698,7 +2812,7 @@
                   (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
                     ;; A cancel must NOT auto-send the backlog — pull it back into
                     ;; the editor instead (see :restore-pending-to-input).
-                    (when (seq (:pending-sends ws)) (vreset! restore-pending? true))
+                    (when (some :client-id (:pending-sends ws)) (vreset! restore-pending? true))
                     ws)
                   (let [start
                         (:turn-start-ms workspace)
@@ -2803,8 +2917,13 @@
 
                     (when (and (not (:loading? ws-final)) (seq (:pending-sends ws-final)))
                       ;; Normal completion drains the next queued turn; a cancel
-                      ;; restores the backlog to the editor instead of firing it.
-                      (if cancelled? (vreset! restore-pending? true) (vreset! drain? true)))
+                      ;; restores the AUTHORED backlog to the editor instead of
+                      ;; firing it. Mirrored sibling entries are never restored
+                      ;; (or deleted) here — see :restore-pending-to-input.
+                      (if cancelled?
+                        (when (some :client-id (:pending-sends ws-final))
+                          (vreset! restore-pending? true))
+                        (vreset! drain? true)))
                     ws-final)))))]
 
       {:db (cond-> db'
@@ -2899,12 +3018,21 @@
                       ;; overlay repaints with the fresh snapshot.
                       sid (:id session)
                       on-chunk (fn [chunk]
-                                 (if (= :queue-sync (:phase chunk))
+                                 (case (:phase chunk)
                                    ;; A sibling queued/edited/deleted a message
                                    ;; on this session — mirror it into the local
                                    ;; queue; never a progress chunk.
+                                   :queue-sync
                                    (try (dispatch [:sync-queued-turn workspace-id chunk])
                                         (catch Throwable _ nil))
+
+                                   ;; The turn actually STARTED running — re-seed
+                                   ;; this tab's elapsed clock from the gateway's
+                                   ;; canonical started_at; never a progress chunk.
+                                   :turn-start
+                                   (try (dispatch [:sync-turn-clock workspace-id chunk])
+                                        (catch Throwable _ nil))
+
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))
                                                   (or (:tasks chunk) (:facts chunk)))
@@ -3006,12 +3134,21 @@
                                                                           progress-update!})
                       sid (:id session)
                       on-chunk (fn [chunk]
-                                 (if (= :queue-sync (:phase chunk))
+                                 (case (:phase chunk)
                                    ;; A sibling queued/edited/deleted a message
                                    ;; on this session — mirror it into the local
                                    ;; queue; never a progress chunk.
+                                   :queue-sync
                                    (try (dispatch [:sync-queued-turn workspace-id chunk])
                                         (catch Throwable _ nil))
+
+                                   ;; The turn actually STARTED running — re-seed
+                                   ;; this tab's elapsed clock from the gateway's
+                                   ;; canonical started_at; never a progress chunk.
+                                   :turn-start
+                                   (try (dispatch [:sync-turn-clock workspace-id chunk])
+                                        (catch Throwable _ nil))
+
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))
                                                   (or (:tasks chunk) (:facts chunk)))

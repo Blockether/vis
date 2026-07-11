@@ -103,8 +103,8 @@
 ;; =============================================================================
 (defdescribe
   specs-shape-test
-  (it "exposes the full slash spec set (/draft tree, /root, /fs tree)"
-      (expect (= 11 (count ws-slashes/specs))))
+  (it "exposes the full slash spec set (/draft tree, /draft-fresh, /root, /fs tree)"
+      (expect (= 12 (count ws-slashes/specs))))
   (it "exposes /fs root/add/remove/list/create subcommands under `:slash/parent [\"fs\"]`"
       (let [fssubs (filter #(= ["fs"] (:slash/parent %)) ws-slashes/specs)]
         (expect (= #{"root" "add" "remove" "list" "create"} (set (map :slash/name fssubs))))))
@@ -121,9 +121,10 @@
         (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
       (let [env (env-with nil)]
-        ;; 11 specs: /draft + new/apply/abandon + /root + /fs + root/add/remove/list/create.
+        ;; 12 specs: /draft + new/apply/abandon + /draft-fresh + /root + /fs +
+        ;; root/add/remove/list/create.
         ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-        (expect (= 11 (count (slash/active-slashes env))))
+        (expect (= 12 (count (slash/active-slashes env))))
         (expect (some? (slash/slash-by-path env ["draft" "apply"])))
         (expect (some? (slash/slash-by-path env ["fs" "root"])))
         (expect (some? (slash/slash-by-path env ["root"]))))))
@@ -214,11 +215,55 @@
                                        (catch Throwable _ nil)))))))))))
            (finally (delete-tree! base))))))
 (defdescribe
+  dispatch-draft-fresh-test
+  (it "/draft-fresh mints an EMPTY draft — trunk's files are NOT carried in"
+      (let [base (temp-dir "vis-draft-fresh")]
+        (try (if-not (workspace/isolated-workspaces-supported? base)
+               ;; No CoW workspace backend here (CI) — skip the live round-trip.
+               (expect (not (workspace/isolated-workspaces-supported? base)))
+               (do (spit (io/file base "seed.txt") "seed\n")
+                   (with-cwd base
+                             (fn []
+                               (with-store
+                                 (fn [store]
+                                   (let [seed (seed-workspace! store base)
+                                         state-id (pin-session! store (:id seed))
+                                         env (env-with store)
+                                         out (dispatch! env store state-id "/draft-fresh scratch")
+                                         draft (workspace/for-session store state-id)]
+
+                                     (try
+                                       (expect (= :ok (get-in out [:result :slash/status])))
+                                       (expect (true? (get-in out [:result :slash/data :fresh?])))
+                                       ;; a real isolated draft is pinned to the session…
+                                       (expect (workspace/draft? draft))
+                                       (expect (not= base (:root draft)))
+                                       ;; …that does NOT contain the file sitting on HEAD
+                                       (expect (not (.exists (io/file (:root draft) "seed.txt"))))
+                                       (finally
+                                         (try (workspace/abandon! store {:workspace-id (:id draft)})
+                                              (catch Throwable _ nil)))))))))))
+             (finally (delete-tree! base)))))
+  (it "/draft-fresh requires a label, like /draft new"
+      (with-store (fn [store]
+                    (let [base (temp-dir "vis-draft-fresh-nolabel")]
+                      (try (let [seed (seed-workspace! store base)
+                                 state-id (pin-session! store (:id seed))
+                                 env (env-with store)
+                                 out (dispatch! env store state-id "/draft-fresh")]
+
+                             (expect (= :error (get-in out [:result :slash/status])))
+                             (expect (str/includes? (get-in out [:result :slash/title])
+                                                    "/draft-fresh <label>")))
+                           (finally (delete-tree! base))))))))
+
+(defdescribe
   capability-gating-test
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "root" "fs" "add" "remove" "list" "create"}
+          (expect (= #{"draft" "new" "apply" "abandon" "draft-fresh" "root" "fs" "add" "remove"
+                       "list" "create"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"
       (with-store

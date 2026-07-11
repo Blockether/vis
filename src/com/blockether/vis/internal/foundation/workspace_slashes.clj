@@ -12,6 +12,8 @@
      /draft new <label>    clone cwd into a draft named <label>, enter it
      /draft apply          land the draft's changes into cwd, leave the draft
      /draft abandon [why]  discard the draft, leave it
+     /draft-fresh <label>  like /draft new, but the draft starts EMPTY —
+                           no files from the current HEAD are carried in
 
    Filesystem permissions (`/fs`, `/root`) — session-scoped, every channel:
 
@@ -58,9 +60,10 @@
 ;; =============================================================================
 ;; Handlers
 ;; =============================================================================
-(defn- handle-new
-  "`/draft new <label>` — clone cwd into a draft named <label> and enter it."
-  [ctx]
+(defn- handle-create
+  "Shared `/draft new` + `/draft-fresh` implementation. `fresh?` forks an
+   EMPTY draft — nothing from the current HEAD is carried into it."
+  [ctx fresh?]
   (let [db
         (ctx-db ctx)
 
@@ -73,10 +76,13 @@
                 not-empty)
 
         current
-        (session-workspace ctx)]
+        (session-workspace ctx)
+
+        usage
+        (if fresh? "/draft-fresh <label>" "/draft new <label>")]
 
     (cond
-      (nil? state-id) (err "Send a message first, then /draft new <label> (session not ready yet)")
+      (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
       (workspace/draft? current) (err (str "Already in draft '"
                                            (workspace/display-label current)
                                            "' — /draft apply or /draft abandon it first"))
@@ -84,19 +90,35 @@
       ;; indistinguishable in the tab strip / draft list. The TUI prompts for
       ;; the label (see the `:slash/prompt-arg` on this spec); other channels
       ;; get this explicit nudge instead of a silent "draft" default.
-      (nil? label) (err "Name the draft: /draft new <label>")
+      (nil? label) (err (str "Name the draft: " usage))
       (not (workspace/isolated-workspaces-supported? (or (:root current) (workspace/trunk-root))))
       (err "No workspace backend can create an isolated draft here"
            :slash/body "Drafts require isolation, rollback, merge-back, and retained revisions."
            :slash/data {:capability-matrix (workspace/workspace-capability-matrix
                                              (or (:root current) (workspace/trunk-root)))})
       :else
-      (let [draft (workspace/create! db {:session-state-id state-id :label label})]
+      (let [draft (workspace/create! db {:session-state-id state-id :label label :fresh? fresh?})]
         {:slash/status :ok
-         :slash/title (str "Draft '" (workspace/display-label draft) "' — you're in it now")
+         :slash/title (str (if fresh? "Fresh draft '" "Draft '")
+                           (workspace/display-label draft)
+                           "' — you're in it now")
          :slash/body
-         "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards."
-         :slash/data {:workspace-id (:id draft) :label (:label draft)}}))))
+         (if fresh?
+           "Started EMPTY — nothing from your repo was carried in. /draft apply lands created files into your repo · /draft abandon discards."
+           "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
+         :slash/data {:workspace-id (:id draft) :label (:label draft) :fresh? fresh?}}))))
+
+(defn- handle-new
+  "`/draft new <label>` — clone cwd into a draft named <label> and enter it."
+  [ctx]
+  (handle-create ctx false))
+
+(defn- handle-new-fresh
+  "`/draft-fresh <label>` — like /draft new, but the draft starts EMPTY: no
+   files from the current HEAD are carried into it."
+  [ctx]
+  (handle-create ctx true))
+
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
   [ctx]
@@ -401,73 +423,81 @@
   "Slash specs vec. Commands are always discoverable; handlers report runtime
    capability availability for the active workspace."
   []
-  (into [{:slash/name "draft"
-          :slash/doc "Drafts — isolated workspace copies of your repo (opt-in)."
-          :slash/usage "/draft <new <label> | apply | abandon>"
-          :slash/ui {:kind :navigator}
-          :slash/run-fn handle-status}
-         {:slash/name "new"
-          :slash/parent ["draft"]
-          :slash/doc "Clone cwd into an isolated draft named <label> and enter it."
-          :slash/usage "/draft new <label>"
-          :slash/prompt-arg "Draft label (e.g. feature-x)"
-          :slash/requires #{:session}
-          :slash/run-fn handle-new}
-         {:slash/name "apply"
-          :slash/parent ["draft"]
-          :slash/doc "Land the draft's changes into your repo and leave the draft."
-          :slash/usage "/draft apply"
-          :slash/requires #{:session}
-          :slash/run-fn handle-apply}
-         {:slash/name "abandon"
-          :slash/parent ["draft"]
-          :slash/doc "Discard the draft and leave it."
-          :slash/usage "/draft abandon [reason]"
-          :slash/requires #{:session}
-          :slash/run-fn handle-abandon}]
-        ;; Filesystem permissions — available on EVERY channel: rich channels keep
-        ;; their pickers (TUI directory dialog, web rail), but /root and /fs work
-        ;; typed anywhere, which is how a web session moves to a different project.
-        [{:slash/name "root"
-          :slash/doc "Show or change the session's filesystem root (the directory vis works in)."
-          :slash/usage "/root [path]"
-          :slash/run-fn handle-fs-root}
-         {:slash/name "fs"
-          :slash/doc "Filesystem permissions — the directories this session may read and edit."
-          :slash/usage "/fs"
-          ;; Rich channels realize bare `/fs` as their directory picker UI
-          ;; (the TUI's Ctrl+G dialog); text channels run the list handler.
-          :slash/ui {:kind :dir-picker}
-          :slash/run-fn handle-fs}
-         {:slash/name "root"
-          :slash/parent ["fs"]
-          :slash/doc "Change the session's filesystem root to <path>."
-          :slash/usage "/fs root <path>"
-          :slash/requires #{:session}
-          :slash/run-fn handle-fs-root}
-         {:slash/name "add"
-          :slash/parent ["fs"]
-          :slash/doc "Let the session also operate on files under <path>."
-          :slash/usage "/fs add <path>"
-          :slash/requires #{:session}
-          :slash/run-fn handle-fs-add}
-         {:slash/name "create"
-          :slash/parent ["fs"]
-          :slash/doc "Create a new directory and let the session operate under it."
-          :slash/usage "/fs create <path>"
-          :slash/requires #{:session}
-          :slash/run-fn handle-fs-create}
-         {:slash/name "remove"
-          :slash/parent ["fs"]
-          :slash/doc "Stop letting the session operate under <path>."
-          :slash/usage "/fs remove <path>"
-          :slash/requires #{:session}
-          :slash/run-fn handle-fs-remove}
-         {:slash/name "list"
-          :slash/parent ["fs"]
-          :slash/doc "Show the session's filesystem permissions."
-          :slash/usage "/fs list"
-          :slash/run-fn handle-fs-list}]))
+  (into
+    [{:slash/name "draft"
+      :slash/doc "Drafts — isolated workspace copies of your repo (opt-in)."
+      :slash/usage "/draft <new <label> | apply | abandon>"
+      :slash/ui {:kind :navigator}
+      :slash/run-fn handle-status}
+     {:slash/name "new"
+      :slash/parent ["draft"]
+      :slash/doc "Clone cwd into an isolated draft named <label> and enter it."
+      :slash/usage "/draft new <label>"
+      :slash/prompt-arg "Draft label (e.g. feature-x)"
+      :slash/requires #{:session}
+      :slash/run-fn handle-new}
+     {:slash/name "apply"
+      :slash/parent ["draft"]
+      :slash/doc "Land the draft's changes into your repo and leave the draft."
+      :slash/usage "/draft apply"
+      :slash/requires #{:session}
+      :slash/run-fn handle-apply}
+     {:slash/name "abandon"
+      :slash/parent ["draft"]
+      :slash/doc "Discard the draft and leave it."
+      :slash/usage "/draft abandon [reason]"
+      :slash/requires #{:session}
+      :slash/run-fn handle-abandon}
+     {:slash/name "draft-fresh"
+      :slash/doc
+      "Like /draft new, but the draft starts EMPTY — no files from your current repo (HEAD) are carried in."
+      :slash/usage "/draft-fresh <label>"
+      :slash/prompt-arg "Draft label (e.g. feature-x)"
+      :slash/requires #{:session}
+      :slash/run-fn handle-new-fresh}]
+    ;; Filesystem permissions — available on EVERY channel: rich channels keep
+    ;; their pickers (TUI directory dialog, web rail), but /root and /fs work
+    ;; typed anywhere, which is how a web session moves to a different project.
+    [{:slash/name "root"
+      :slash/doc "Show or change the session's filesystem root (the directory vis works in)."
+      :slash/usage "/root [path]"
+      :slash/run-fn handle-fs-root}
+     {:slash/name "fs"
+      :slash/doc "Filesystem permissions — the directories this session may read and edit."
+      :slash/usage "/fs"
+      ;; Rich channels realize bare `/fs` as their directory picker UI
+      ;; (the TUI's Ctrl+G dialog); text channels run the list handler.
+      :slash/ui {:kind :dir-picker}
+      :slash/run-fn handle-fs}
+     {:slash/name "root"
+      :slash/parent ["fs"]
+      :slash/doc "Change the session's filesystem root to <path>."
+      :slash/usage "/fs root <path>"
+      :slash/requires #{:session}
+      :slash/run-fn handle-fs-root}
+     {:slash/name "add"
+      :slash/parent ["fs"]
+      :slash/doc "Let the session also operate on files under <path>."
+      :slash/usage "/fs add <path>"
+      :slash/requires #{:session}
+      :slash/run-fn handle-fs-add}
+     {:slash/name "create"
+      :slash/parent ["fs"]
+      :slash/doc "Create a new directory and let the session operate under it."
+      :slash/usage "/fs create <path>"
+      :slash/requires #{:session}
+      :slash/run-fn handle-fs-create}
+     {:slash/name "remove"
+      :slash/parent ["fs"]
+      :slash/doc "Stop letting the session operate under <path>."
+      :slash/usage "/fs remove <path>"
+      :slash/requires #{:session}
+      :slash/run-fn handle-fs-remove}
+     {:slash/name "list"
+      :slash/parent ["fs"]
+      :slash/doc "Show the session's filesystem permissions."
+      :slash/usage "/fs list"
+      :slash/run-fn handle-fs-list}]))
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."
   (build-specs))

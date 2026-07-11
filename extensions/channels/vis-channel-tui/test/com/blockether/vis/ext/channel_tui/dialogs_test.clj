@@ -782,3 +782,44 @@
 
         (expect (some #{"Cycle Model"} (match "model")))
         (expect (= [] (match "zzz-no-such-command"))))))
+
+;; Navigator PROJECT grouping: non-focused rows regroup by `:dir`
+;; (first-appearance order = projects by their most recent session),
+;; recency preserved inside a group; the focused row stays pinned on top.
+(defdescribe
+  navigator-project-grouping-test
+  (it
+    "groups non-focused rows by project dir, groups ordered by recency"
+    (let [all-rows
+          (var-get #'dlg/navigator-all-rows)
+
+          sessions
+          [{:id "s1" :title "A1" :turn-count 1 :created-at 0 :modified-at 4000 :work-dir "~/proj-a"}
+           {:id "s2" :title "B1" :turn-count 1 :created-at 0 :modified-at 3000 :work-dir "~/proj-b"}
+           {:id "s3" :title "A2" :turn-count 1 :created-at 0 :modified-at 2000 :work-dir "~/proj-a"}
+           {:id "s4"
+            :title "B2"
+            :turn-count 1
+            :created-at 0
+            :modified-at 1000
+            :work-dir "~/proj-b"}]
+
+          rows
+          (all-rows {:active-session-id "s1" :sessions sessions})]
+
+      ;; s1 pinned (focused); remaining [s2 s3 s4] regroup to
+      ;; proj-b [s2 s4] (newest group first) then proj-a [s3].
+      (expect (= ["s1" "s2" "s4" "s3"] (mapv (comp str :id :target) rows)))))
+  (it "sessions without a work-dir share one group and keep recency order"
+      (let [all-rows
+            (var-get #'dlg/navigator-all-rows)
+
+            sessions
+            [{:id "s1" :title "A" :turn-count 1 :created-at 0 :modified-at 3000}
+             {:id "s2" :title "B" :turn-count 1 :created-at 0 :modified-at 2000}
+             {:id "s3" :title "C" :turn-count 1 :created-at 0 :modified-at 1000}]
+
+            rows
+            (all-rows {:active-session-id "s1" :sessions sessions})]
+
+        (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))

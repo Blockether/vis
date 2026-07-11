@@ -37,6 +37,56 @@
 (def ^:private RESULT_PR_LIMIT 4000)
 (def ^:private ERROR_PR_LIMIT 2000)
 
+;; Live reasoning/content deltas arrive per provider token, and every wire
+;; event carries the FULL cumulative text (self-contained frames — consumers
+;; REPLACE, never append). Serializing + fanning out + journaling that growing
+;; text once per token is O(n²) over a long stream; coalesce the transient
+;; delta phases to at most one wire event per window. Lossless: a skipped
+;; frame is subsumed by the next cumulative one, and `:done?` frames always
+;; pass so the final state lands immediately.
+(def ^:private DELTA_COALESCE_MS 100)
+
+(def ^:private DELTA_COALESCE_MAX_MS
+  "Ceiling for the ADAPTIVE coalescing window: even a huge cumulative
+   reasoning stream still ticks at least once per second."
+  1000)
+
+(def ^:private DELTA_CHARS_PER_MS
+  "Adaptive scale for the coalescing window: +1ms of window per this many
+   chars of cumulative delta text. Up to ~25KB stays at the 100ms floor
+   (~10 frames/s); the window then grows linearly and caps at 1s around
+   ~256KB — bounding the wire / journal / client re-render cost of the
+   ever-growing replace-style frames instead of shipping megabytes per
+   second to every subscriber."
+  256)
+
+(def ^:private transient-delta-phases
+  "Per-token streaming phases whose wire events are cumulative and therefore
+   safely coalescible (see `DELTA_COALESCE_MS`). `:assistant-prose` is a
+   one-shot boundary frame, never a token stream — it always passes."
+  #{:reasoning :content})
+
+(defn- delta-window-ms
+  "The coalescing window for ONE transient delta chunk. Every frame carries
+   the FULL cumulative text, so the per-frame cost (serialize + SSE fan-out +
+   cross-process journal append + each client's re-render) GROWS with the
+   text; scale the window with that size so long streams degrade smoothly to
+   ~1 frame/s instead of hammering every client at 10Hz with a growing wall."
+  ^long [{:keys [text thinking content]}]
+  (let [len (count (str (or text thinking content)))]
+    (-> (quot len DELTA_CHARS_PER_MS)
+        (max DELTA_COALESCE_MS)
+        (min DELTA_COALESCE_MAX_MS))))
+
+(defn- coalesce-delta?
+  "True when this transient reasoning/content delta should be SKIPPED on the
+   wire: a fresher cumulative frame will follow within the (size-adaptive)
+   window. `:done?` frames and every non-delta phase always pass."
+  [last-delta-ms {:keys [phase done?] :as chunk} now]
+  (and (contains? transient-delta-phases phase)
+       (not done?)
+       (< (- (long now) (long (get last-delta-ms phase 0))) (delta-window-ms chunk))))
+
 ;; sid (UUID) -> {:next-seq long
 ;;                :events [event ...]          ; ring, ascending :seq
 ;;                :subscribers {sub-id fn}     ; SSE sinks
@@ -178,7 +228,11 @@
                                :session_id (str sid)
                                :status "running"
                                :request (:request event)
-                               :started_at (System/currentTimeMillis)})
+                               ;; Adopt the PRODUCER's canonical run-start
+                               ;; clock — stamping mirror-local time here made
+                               ;; a watcher in another process show a
+                               ;; different elapsed than the producer.
+                               :started_at (or (:started_at event) (System/currentTimeMillis))})
                     (update :turn-order
                             (fn [order]
                               (if (some #{tid} order) order ((fnil conj []) order tid)))))
@@ -841,14 +895,27 @@
   (let [caller-on-chunk
         (get-in engine-opts [:hooks :on-chunk])
 
+        ;; phase -> epoch-ms of the last transient delta emitted on the wire
+        last-delta-ms
+        (volatile! {})
+
         on-chunk
         (fn [chunk]
           (try (when caller-on-chunk
                  (try (caller-on-chunk chunk)
                       (catch Throwable t
                         (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
-               (let [[type store? payload] (chunk->event chunk)]
-                 (append-event! sid type (assoc payload :turn_id tid) {:store? store?}))
+               (let [phase
+                     (:phase chunk)
+
+                     now
+                     (System/currentTimeMillis)]
+
+                 (when-not (coalesce-delta? @last-delta-ms chunk now)
+                   (when (contains? transient-delta-phases phase)
+                     (vswap! last-delta-ms assoc phase now))
+                   (let [[type store? payload] (chunk->event chunk)]
+                     (append-event! sid type (assoc payload :turn_id tid) {:store? store?}))))
                (catch Throwable t
                  (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
 
@@ -960,7 +1027,14 @@
            engine-opts attachments]}]
   (append-event! sid
                  "turn.started"
-                 (cond-> {:turn_id tid :request request}
+                 ;; Carry the CANONICAL run-start clock (stamped into the registry
+                 ;; row by submit/drain) so every attached channel seeds its
+                 ;; elapsed timer from the ONE shared timestamp — a TUI's local
+                 ;; submit/drain/attach stamp drifts from the actual run start.
+                 (cond-> {:turn_id tid
+                          :request request
+                          :started_at (or (get-in @registry [sid :turns tid :started_at])
+                                          (System/currentTimeMillis))}
                    queued?
                    (assoc :queued? true)))
   (cancellation/cancellation-set-future! cancel-token

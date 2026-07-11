@@ -302,7 +302,7 @@
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
                       [{:id :iter-1
-                        :code (str "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")")
+                        :code "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")"
                         :forms [{:scope "t1/i1/f1"
                                  :tag :observation
                                  :src "(cat \"src/foo.clj\")"
@@ -461,7 +461,14 @@
                 {:type "block.output" :iteration 1 :block_id 0 :code "git_status()" :stdout "ok"})]
           (expect (= :form-result (:phase chunk)))
           (expect (= "git_status()" (:code chunk)))
-          (expect (= "ok" (:stdout chunk)))))))
+          (expect (= "ok" (:stdout chunk)))))
+    (it "reasoning.delta projects onto :thinking (the tracker's chunk contract)"
+        ;; progress.clj `:reasoning` reads `(:thinking chunk)` — a `:text`-keyed
+        ;; projection made live thinking invisible until iteration.completed.
+        (let [chunk (g->c {:type "reasoning.delta" :iteration 2 :text "pondering"})]
+          (expect (= :reasoning (:phase chunk)))
+          (expect (= 2 (:iteration chunk)))
+          (expect (= "pondering" (:thinking chunk)))))))
 
 (defdescribe
   restore-block-record-test
@@ -552,19 +559,23 @@
                    (expect (= :ir (first out)))
                    (expect (seq (nnext out))))))
 
-(defdescribe queue-sync-event-chunk-test
-             ;; Queue lifecycle events (from ANY sibling channel) project to :queue-sync
-             ;; chunks so every attached TUI mirrors the gateway's queued backlog live.
-             (let [g->c @#'chat/gateway-event->chunk]
-               (it "turn.queued projects to :add with the prompt text"
-                   (expect (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi"}
-                              (g->c {:type "turn.queued" :turn_id "q1" :request "hi"}))))
-               (it "turn.queued.updated projects to :update"
-                   (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
-                              (g->c {:type "turn.queued.updated" :turn_id "q1" :request "hi2"}))))
-               (it "turn.queued.deleted projects to :delete"
-                   (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
-                              (g->c {:type "turn.queued.deleted" :turn_id "q1"}))))
-               (it "turn.queued.drained (gateway auto-start) projects to :delete"
-                   (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
-                              (g->c {:type "turn.queued.drained" :turn_id "q1"}))))))
+(defdescribe
+  queue-sync-event-chunk-test
+  ;; Queue lifecycle events (from ANY sibling channel) project to :queue-sync
+  ;; chunks so every attached TUI mirrors the gateway's queued backlog live.
+  (let [g->c @#'chat/gateway-event->chunk]
+    (it "turn.queued projects to :add with the prompt text"
+        (expect (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi"}
+                   (g->c {:type "turn.queued" :turn_id "q1" :request "hi"}))))
+    (it "turn.queued.updated projects to :update"
+        (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
+                   (g->c {:type "turn.queued.updated" :turn_id "q1" :request "hi2"}))))
+    (it "turn.queued.deleted projects to :delete"
+        (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
+                   (g->c {:type "turn.queued.deleted" :turn_id "q1"}))))
+    (it "turn.queued.drained (gateway auto-start) projects to :delete"
+        (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
+                   (g->c {:type "turn.queued.drained" :turn_id "q1"}))))
+    (it "turn.started projects to :turn-start with the canonical run-start clock"
+        (expect (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234}
+                   (g->c {:type "turn.started" :turn_id "t1" :request "hi" :started_at 1234}))))))

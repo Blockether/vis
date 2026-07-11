@@ -1676,3 +1676,131 @@
                  (let [q (:pending-sends @state/app-db)]
                    (expect (= 1 (count q)))
                    (expect (= "q1" (:turn-id (first q)))))))
+
+(defdescribe sync-turn-clock-test
+             ;; `turn.started` carries the gateway's CANONICAL started_at (epoch ms).
+             ;; The tab's elapsed clock re-seeds from it, so every terminal attached
+             ;; to the same work shows the SAME elapsed — local submit/drain/attach
+             ;; stamps drift from the actual run start.
+             (it "re-seeds :turn-start-ms from the canonical clock while loading"
+                 (reset! state/app-db
+                   {:session {:id "s1"} :render-version 0 :loading? true :turn-start-ms 999999})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t1" :started-at-ms 1234}])
+                 (expect (= 1234 (:turn-start-ms @state/app-db))))
+             (it "no-ops when the tab is not mid-turn"
+                 (reset! state/app-db
+                   {:session {:id "s1"} :render-version 0 :loading? false :turn-start-ms 42})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t1" :started-at-ms 1234}])
+                 (expect (= 42 (:turn-start-ms @state/app-db))))
+             (it "no-ops when the event carries no clock"
+                 (reset! state/app-db
+                   {:session {:id "s1"} :render-version 0 :loading? true :turn-start-ms 42})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t1"}])
+                 (expect (= 42 (:turn-start-ms @state/app-db)))))
+
+(defdescribe sibling-turn-started-test
+             ;; The persistent per-session event stream (chat/subscribe-session-events!)
+             ;; reports a turn STARTED by a SIBLING channel. An idle tab attaches (via
+             ;; :attach-running-turn); a tab already mid-turn (its own submit, or an
+             ;; earlier drain/attach) no-ops so nothing double-attaches.
+             (it "attaches an idle tab to a sibling-started turn"
+                 (with-redefs [vis/worker-future
+                               (fn [_ _]
+                                 (future nil))
+
+                               vis/cancellation-set-future!
+                               (fn [_ _]
+                                 nil)]
+
+                   (reset! state/app-db {:session {:id "s1"} :render-version 0})
+                   (state/dispatch [:sibling-turn-started nil
+                                    {:turn-id "t9" :request "from web" :started-at-ms 777}])
+                   (let [db @state/app-db]
+                     (expect (true? (:loading? db)))
+                     (expect (= "t9" (:gateway-turn-id db)))
+                     (expect (= 777 (:turn-start-ms db))))))
+             (it "no-ops when the tab is already mid-turn"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id "t1"
+                                       :turn-start-ms 42})
+                 (state/dispatch [:sibling-turn-started nil
+                                  {:turn-id "t9" :request "x" :started-at-ms 777}])
+                 (let [db @state/app-db]
+                   (expect (= "t1" (:gateway-turn-id db)))
+                   (expect (= 42 (:turn-start-ms db))))))
+
+(defdescribe restore-pending-ownership-test
+             ;; A cancel pulls back ONLY the entries this tab authored (:client-id from
+             ;; enqueue). Mirrored sibling entries (no :client-id) must survive: deleting
+             ;; them fired turn.queued.deleted at the sibling still blocked on its own
+             ;; queued turn, which synthesized a spurious CANCELLED terminal there.
+             (it "restores authored entries, keeps sibling mirrors queued"
+                 (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
+                                                                 nil)]
+                   (reset! state/app-db {:session {:id "s1"}
+                                         :render-version 0
+                                         :pending-sends
+                                         [{:text "mine" :client-id "c1" :turn-id "q1"}
+                                          {:text "theirs" :turn-id "q2"}]})
+                   (state/dispatch [:restore-pending-to-input nil])
+                   (let [db @state/app-db]
+                     (expect (= ["q2"] (mapv :turn-id (:pending-sends db))))
+                     (expect (= ["mine"] (get-in db [:input :lines]))))))
+             (it "no-ops when only mirrored entries are pending"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :render-version 0
+                                       :pending-sends [{:text "theirs" :turn-id "q2"}]})
+                 (state/dispatch [:restore-pending-to-input nil])
+                 (expect (= 1 (count (:pending-sends @state/app-db))))))
+
+;; Project-grouped tabs: `:tabs` keeps same-project tabs CONTIGUOUS (the
+;; strip, C-x N jumps and cycle order all read that one vector), and the
+;; per-place snapshot carries each tab's project root.
+(defdescribe
+  project-grouped-tabs-test
+  (it "a new tab opens ADJACENT to its project group, not at the end"
+      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
+                            :active-tab-id :main
+                            :tab-locals {}
+                            :render-version 0})
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-a"}}])
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-b"}}])
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-a"}}])
+      ;; tab-3 (proj-a) slots in right after tab-1 (proj-a), before tab-2.
+      (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db))))
+      (expect (= :tab-3 (:active-tab-id @state/app-db))))
+  (it "a rift draft groups under its trunk via :repo-root"
+      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
+                            :active-tab-id :main
+                            :tab-locals {}
+                            :render-version 0})
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/trunk"}}])
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/other"}}])
+      (state/dispatch [:create-tab {:workspace {:root "/tmp/clones/x" :repo-root "/tmp/trunk"}}])
+      (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db)))))
+  (it "a tab with no workspace root still appends at the end"
+      (reset! state/app-db
+        {:tabs [{:id :main :label "Main" :active? true :workspace {:root "/tmp/proj-a"}}]
+         :active-tab-id :main
+         :tab-locals {}
+         :render-version 0})
+      (state/dispatch [:create-tab])
+      (expect (= [:main :tab-1] (mapv :id (:tabs @state/app-db)))))
+  (it "tab-session-snapshot carries each tab's project root"
+      (reset! state/app-db
+        {:tabs [{:id :main :label "Main" :active? true :workspace {:root "/tmp/proj-a"}}
+                {:id :tab-1 :label "T1" :workspace {:root "/tmp/clones/x" :repo-root "/tmp/proj-b"}}
+                {:id :tab-2 :label "T2"}]
+         :active-tab-id :main
+         :session {:id "sid-main"}
+         :tab-locals {:tab-1 {:session {:id "sid-b"}} :tab-2 {:session {:id "sid-c"}}}
+         :render-version 0})
+      (expect (= {:active "sid-main"
+                  :sessions [{:id "sid-main" :root "/tmp/proj-a"}
+                             ;; draft → grouped under its trunk (:repo-root)
+                             {:id "sid-b" :root "/tmp/proj-b"}
+                             ;; no workspace → root absent, id-only entry
+                             {:id "sid-c"}]}
+                 (state/tab-session-snapshot @state/app-db)))))

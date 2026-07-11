@@ -530,7 +530,16 @@
                         :else nil)
 
                       label
-                      (p/tab-display-label entry)]
+                      (p/tab-display-label entry)
+
+                      ;; TRUE when the NEXT visible tab belongs to a different
+                      ;; PROJECT (`vh/tab-group-root`) — the divider after this
+                      ;; cell then paints as the solid group separator instead
+                      ;; of the soft dotted in-group one.
+                      group-end?
+                      (and (< idx (dec n))
+                           (not= (vh/tab-group-root entry)
+                                 (vh/tab-group-root (nth entries (inc idx)))))]
 
                   (recur (inc idx)
                          (+ x cell-w (if (< idx (dec n)) 1 0))
@@ -542,9 +551,11 @@
                                  :status status
                                  :tab-no tab-no
                                  :active? active?
-                                 :last? (= idx (dec n))))))))]
+                                 :last? (= idx (dec n))
+                                 :group-end? group-end?))))))]
 
-        (doseq [{:keys [left width active? label status id last? tab-no] idx :header/original-index}
+        (doseq [{:keys [left width active? label status id last? tab-no group-end?]
+                 idx :header/original-index}
                 cells
 
                 :when (pos? (long width))]
@@ -561,8 +572,13 @@
                                  :index idx
                                  :register? *register-click-regions?*
                                  :closable? multi?})
-          ;; `│` divider after every tab but the last.
-          (when-not last? (components/tab-divider! g row (+ (long left) (long width)))))
+          ;; Divider after every tab but the last: dotted `┊` inside a project
+          ;; group, solid `│` where the NEXT tab starts a different project.
+          (when-not last?
+            (let [divider-col (+ (long left) (long width))]
+              (if group-end?
+                (components/tab-group-divider! g row divider-col)
+                (components/tab-divider! g row divider-col)))))
         cells))))
 
 (defn draw-header!

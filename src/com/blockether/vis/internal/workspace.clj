@@ -795,6 +795,15 @@
             (or (p/db-workspace-set-filesystem-roots! db-info (:id ws) carried) ws)
             ws))))))
 
+(defn- fresh-seed-root
+  "Empty, reusable fork SOURCE for FRESH drafts of `trunk`: cloning it yields
+   a draft that starts with NO files. Lives inside the trunk's draft store so
+   the backend's availability probe/fork see the same filesystem, and stays
+   around (a tiny empty dir) so backend bookkeeping never dangles on a
+   deleted source."
+  ^File [trunk]
+  (doto (io/file (draft-store-root trunk) ".fresh-seed") (.mkdirs)))
+
 (defn create!
   "Create an isolated DRAFT using the strongest available backend and pin it
    to `:session-state-id`. The backend must provide the full draft capability
@@ -803,13 +812,21 @@
    The fork PARENT is chosen so `apply!` lands back where it forked from:
    pass `:from <parent-workspace>` to clone that workspace's `:root` and
    inherit its `:repo-root` (apply target); otherwise the parent is the
-   user's real cwd (trunk)."
-  [db-info {:keys [session-state-id label from required-capabilities]}]
-  (let [parent
-        (or (:root from) (trunk-root))
+   user's real cwd (trunk).
 
-        trunk
+   `:fresh? true` forks from an EMPTY seed instead: the draft starts with
+   NONE of the files currently in trunk (HEAD). Its baseline `:fork-ms` is 0,
+   so every file created inside the draft counts as a since-fork edit and
+   lands on `apply!`, while `deleted-paths` (trunk files OLDER than the
+   baseline yet absent from the clone) can never match — a fresh draft only
+   ever ADDS/OVERWRITES into trunk, it cannot infer deletions of files it
+   never saw."
+  [db-info {:keys [session-state-id label from required-capabilities fresh?]}]
+  (let [trunk
         (or (:repo-root from) (trunk-root))
+
+        parent
+        (if fresh? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
 
         rid
         (repo-id-for trunk)
@@ -821,9 +838,12 @@
         (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
 
         ;; Capture AFTER the clone returns: cloned files keep their (older)
-        ;; source mtime, so only post-fork agent edits exceed this.
+        ;; source mtime, so only post-fork agent edits exceed this. A FRESH
+        ;; draft instead anchors at 0 — the clone is empty, so everything
+        ;; that ever appears in it is an agent edit, and no trunk file can
+        ;; predate the baseline into a spurious deletion.
         fork-ms
-        (System/currentTimeMillis)
+        (if fresh? 0 (System/currentTimeMillis))
 
         ws
         (p/db-workspace-insert! db-info
@@ -846,6 +866,7 @@
     (when session-state-id (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
     (fire-hook! :on-spawn ws)
     ws))
+
 
 (defn exit-to-trunk!
   "Repoint `session-state-id` back to a TRUNK workspace (the real cwd),
