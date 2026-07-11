@@ -24,7 +24,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client])
-  (:import (java.net ServerSocket)
+  (:import (java.io RandomAccessFile)
+           (java.net ServerSocket)
+           (java.nio.charset StandardCharsets)
            (java.util.concurrent TimeUnit)))
 
 ;; { [session-id dir] -> {:id :process ^Process :port int :cmd [..] :tool kw
@@ -37,10 +39,32 @@
 
 (defn- proc-alive? [info] (alive? (:process info)))
 
+;; { [session-id dir] -> {"exit" int? "at" ms "log" path "log_tail" [lines]} }
+;; Written when a managed launcher dies UNEXPECTEDLY (a startup failure or a
+;; later crash) — never by an intentional `stop!` (it deregisters first). Read
+;; by `health` (→ :failed) and `last-failure` so status/eval can surface the
+;; REAL boot error. Cleared on a successful start and on `stop!`.
+(defonce ^:private last-failures (atom {}))
+
+(defn last-failure
+  "The last UNEXPECTED launcher death recorded for `[session-id dir]`, or nil.
+   STRING-keyed (\"exit\" \"at\" \"log\" \"log_tail\") — safe to splice into
+   model-facing results."
+  [session-id dir]
+  (get @last-failures [session-id dir]))
+
+(defn- clear-failure! [session-id dir] (swap! last-failures dissoc [session-id dir]))
+
 ;; Kept in sync with the nrepl/nrepl version pinned in this extension's deps.edn.
 ;; Injected via `-Sdeps` so the launcher works even in target projects that don't
 ;; declare nREPL themselves.
 (def nrepl-version "1.3.0")
+
+;; How long `start!` waits for OUR port to answer. The deadline only matters
+;; while the launcher is STILL ALIVE — a dead launcher short-circuits to a
+;; :failed result in ≤ ~250ms via `wait-until-up` — so it can be generous
+;; enough for a cold-cache deps resolve without making real failures slow.
+(def ^:private start-deadline-ms 120000)
 
 (def ^:private default-aliases
   "Every managed REPL boots with the project's dev + test deps/paths. Unknown
@@ -109,10 +133,16 @@
 
 (def ^:private default-log-line-limit 500)
 
+;; Read at most this many bytes off the END of a launcher log per tail. The log
+;; captures the subprocess's FULL stdout and can grow to hundreds of MB over a
+;; session — a tail must be O(tail), never O(file), or every log view hangs.
+(def ^:private tail-read-bytes (* 256 1024))
+
 (defn tail-log
-  "Tail a managed nREPL launcher log as line strings. Returns [] when the log
-   does not exist yet or cannot be read; resource viewers treat that as an empty
-   but still log-capable resource."
+  "Tail a managed nREPL launcher log as line strings, reading ONLY the last
+   `tail-read-bytes` of the file (never the whole thing). Returns [] when the
+   log does not exist yet or cannot be read; resource viewers treat that as an
+   empty but still log-capable resource."
   ([log-path] (tail-log log-path default-log-line-limit))
   ([log-path n]
    (let [f
@@ -122,16 +152,65 @@
          (max 1 (long (or n default-log-line-limit)))]
 
      (if (and f (.isFile f))
-       (try (with-open [r (io/reader f)]
-              (loop [xs []
-                     lines (line-seq r)]
+       (try (with-open [raf (RandomAccessFile. f "r")]
+              (let [len (.length raf)
+                    start (max 0 (- len (long tail-read-bytes)))
+                    size (int (- len start))]
 
-                (if-let [line (first lines)]
-                  (let [xs' (conj xs line)]
-                    (recur (if (> (count xs') n) (subvec xs' (- (count xs') n)) xs') (next lines)))
-                  xs)))
+                (if (zero? size)
+                  []
+                  (let [buf (byte-array size)]
+                    (.seek raf start)
+                    (.readFully raf buf)
+                    (let [lines (vec (str/split-lines (String. buf StandardCharsets/UTF_8)))
+                          ;; a mid-file start means the first line is partial — drop it
+                          lines (if (and (pos? start) (seq lines)) (subvec lines 1) lines)
+                          c (count lines)]
+
+                      (if (> c n) (subvec lines (- c n)) lines))))))
             (catch Throwable _ []))
        []))))
+
+(defn- record-failure!
+  "Stamp the UNEXPECTED death of a managed launcher (exit code + log tail) so
+   `health` keeps answering :failed and `last-failure` can explain WHY after
+   the process is gone."
+  [session-id dir ^Process proc log-path]
+  (let [exit
+        (try (.exitValue proc) (catch Throwable _ nil))
+
+        tail
+        (tail-log log-path 80)]
+
+    (swap! last-failures assoc
+      [session-id dir]
+      (cond-> {"at" (System/currentTimeMillis)}
+        exit
+        (assoc "exit" exit)
+
+        log-path
+        (assoc "log" log-path)
+
+        (seq tail)
+        (assoc "log_tail" tail)))))
+
+(defn- watch-process!
+  "Attach an `.onExit` watcher to a freshly-launched REPL process. If it dies
+   while STILL the registered process for `[session-id dir]` — i.e. not
+   replaced and not intentionally stopped (`stop!` deregisters BEFORE
+   destroying) — drop the entry and record the failure, so a boot that limps
+   past `start!`'s deadline and THEN dies still flips to :failed instead of
+   hanging in \"starting\" forever."
+  [session-id dir ^Process proc log-path]
+  (let [k [session-id dir]]
+    (.thenAccept (.onExit proc)
+                 (reify
+                   java.util.function.Consumer
+                     (accept [_ _]
+                       (try (when (identical? proc (:process (get @processes k)))
+                              (swap! processes dissoc k)
+                              (record-failure! session-id dir proc log-path))
+                            (catch Throwable _ nil)))))))
 
 (defn- delete-stray-port-file!
   "The launcher may still drop a `.nrepl-port` in `dir` even though we passed the
@@ -141,14 +220,19 @@
   (try (io/delete-file (io/file dir ".nrepl-port") true) (catch Throwable _ nil)))
 
 (defn- wait-until-up
-  "Poll our OWN chosen `port` until the nREPL accepts a describe round-trip, up to
-   `deadline-ms`. Returns :up or :starting (timed out)."
-  [port deadline-ms]
+  "Poll our OWN chosen `port` until the nREPL accepts a describe round-trip, up
+   to `deadline-ms`, while ALSO watching the launcher process itself. Returns
+   :up (port answers), :died the moment `proc` exits before binding (a fast
+   startup failure never burns the deadline), or :starting (deadline passed
+   with the process still alive — a slow cold boot). `proc` may be nil (pure
+   port probe)."
+  [^Process proc port deadline-ms]
   (let [deadline (+ (System/currentTimeMillis) (long deadline-ms))]
     (loop []
 
       (let [st (:status (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 500}))]
         (cond (= :up st) :up
+              (and proc (not (.isAlive proc))) :died
               (< (System/currentTimeMillis) deadline) (do (Thread/sleep 250) (recur))
               :else :starting)))))
 
@@ -184,11 +268,33 @@
       running?
       (assoc "log" (or (:log info) (.getAbsolutePath (log-file dir)))))))
 
+(defn health
+  "Coarse LIVE health of THIS session's managed REPL for `dir`:
+     :up       — process alive AND the port answers an nREPL describe
+     :starting — process alive, port not answering yet
+     :failed   — no live process but an UNEXPECTED death is on record
+     :down     — nothing managed (or an intentional stop)
+   Used as the resource registry's `:health-fn`, so footer/F4/ctx status tracks
+   reality instead of the status frozen at registration time."
+  [session-id dir]
+  (let [info (get @processes [session-id dir])]
+    (cond (proc-alive? info) (if (= :up
+                                    (:status (nrepl-client/probe! {:host "localhost"
+                                                                   :port (:port info)
+                                                                   :timeout-ms 250})))
+                               :up
+                               :starting)
+          (last-failure session-id dir) :failed
+          :else :down)))
+
 (defn start!
   "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
    Always allowed — never flag-gated. Default `:aliases` are [:dev :test] (merged
    with any explicitly passed). We pick a FREE port, pass it to the launcher, drop
-   any stray `.nrepl-port`, and wait briefly for OUR port to come up.
+   any stray `.nrepl-port`, and wait for OUR port — SYNCHRONOUSLY: the wait ends
+   the moment the launcher dies (fast :failed with exit + log tail), and only a
+   still-alive-but-slow boot can outlive `start-deadline-ms` (then :starting,
+   with an `.onExit` watcher recording any later death as a failure).
 
    - Already ours + alive for `[session-id dir]` → :already-running.
    - No known build file → :no-launcher.
@@ -228,7 +334,8 @@
                          :started-at (System/currentTimeMillis)}]
 
                (swap! processes assoc k info)
-               (let [st (wait-until-up port 20000)]
+               (watch-process! session-id dir proc (.getAbsolutePath log))
+               (let [st (wait-until-up proc port start-deadline-ms)]
                  ;; We passed --port explicitly; never depend on the file the tool
                  ;; may still write. Remove it so it can't mislead anything.
                  (delete-stray-port-file! dir)
@@ -251,10 +358,12 @@
                              "log" log-path}]
 
                    (cond
-                     (= :up st) (assoc base
-                                  "result" "started"
-                                  "status" "up")
+                     (= :up st) (do (clear-failure! session-id dir)
+                                    (assoc base
+                                      "result" "started"
+                                      "status" "up"))
                      (not alive?) (do (swap! processes dissoc k)
+                                      (record-failure! session-id dir proc log-path)
                                       (cond->
                                         (assoc base
                                           "result" "failed"
@@ -293,8 +402,10 @@
             "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."}))))))
 
 (defn stop!
-  "Stop THIS session's managed nREPL for `dir` (graceful, then forced). Clears the
-   in-memory cache. No-op-safe. Model-facing STRING-keyed result."
+  "Stop THIS session's managed nREPL for `dir` (graceful, then forced). The
+   entry is DEREGISTERED FIRST so the `.onExit` watcher reads the death as an
+   intentional stop, never a failure; any remembered failure for `dir` is
+   cleared too. No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
   (let [k
         [session-id dir]
@@ -302,10 +413,11 @@
         {:keys [^Process process]}
         (get @processes k)]
 
+    (clear-failure! session-id dir)
     (if process
-      (do (.destroy process)
+      (do (swap! processes dissoc k)
+          (.destroy process)
           (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
-          (swap! processes dissoc k)
           {"result" "stopped" "id" (id-of dir) "dir" dir})
       {"result" "not-managed"
        "id" (id-of dir)
@@ -348,14 +460,17 @@
 
 (defn ensure-repl-for-dir!
   "Return the live REPL info for `[session-id dir]`, AUTOSTARTING one (with the
-   default :dev :test aliases) when the session owns none for `dir`. Returns nil
-   only when there is no launchable Clojure build file in `dir`. Used by eval /
-   test to guarantee a REPL is up for the target dir."
+   default :dev :test aliases) when the session owns none for `dir`. When the
+   start does NOT yield a live process, returns start!'s STRING-keyed lifecycle
+   result (\"failed\"/\"no-launcher\"… with exit + log_tail) instead of
+   swallowing it — callers tell the cases apart by `:port` (live keyword-keyed
+   info) vs `\"result\"` (string-keyed lifecycle map)."
   [session-id dir]
   (let [k [session-id dir]]
     (if (proc-alive? (get @processes k))
       (get @processes k)
-      (do (start! session-id dir nil) (get @processes k)))))
+      (let [r (start! session-id dir nil)]
+        (or (get @processes k) r)))))
 
 (defn restart-for-dir!
   "Recover THIS session's REPL for `dir` when its recorded process is dead OR
@@ -367,7 +482,9 @@
    `dir` has no launchable Clojure build file."
   [session-id dir]
   (let [info (get @processes [session-id dir])]
-    (if (and (proc-alive? info) (:port info) (= :up (wait-until-up (:port info) 5000)))
+    (if (and (proc-alive? info)
+             (:port info)
+             (= :up (wait-until-up (:process info) (:port info) 5000)))
       info
       (do (stop! session-id dir) (start! session-id dir nil) (get @processes [session-id dir])))))
 
@@ -400,10 +517,28 @@
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (let [r (ensure-repl-for-dir! session-id default-dir)]
-            (when-not r
-              (throw (ex-info (str "no Clojure build file in " default-dir " to autostart an nREPL")
-                              {:type :clj/no-launcher :dir default-dir})))
-            (select-keys r [:id :dir :port]))
+            (cond (:port r) (select-keys r [:id :dir :port])
+                  (= "no-launcher" (get r "result"))
+                  (throw (ex-info
+                           (str "no Clojure build file in " default-dir " to autostart an nREPL")
+                           {:type :clj/no-launcher :dir default-dir}))
+                  :else
+                  ;; The start RAN and failed — surface the launcher's own story
+                  ;; (exit + log tail), never a bogus \"no build file\" guess, so
+                  ;; the model sees WHY instead of blindly restarting forever.
+                  (throw (ex-info (str "nREPL autostart failed for "
+                                       default-dir
+                                       (when-let [e (get r "exit")]
+                                         (str " (exit " e ")"))
+                                       (when-let [m (get r "message")]
+                                         (str ": " m))
+                                       (when-let [tail (seq (get r "log_tail"))]
+                                         (str "\nlauncher log tail:\n  "
+                                              (str/join "\n  " (take-last 15 tail)))))
+                                  {:type :clj/start-failed
+                                   :dir default-dir
+                                   :exit (get r "exit")
+                                   :log (get r "log")}))))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
           ;; (the workspace root) when live, else the first (dir-sorted).
           (-> (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))

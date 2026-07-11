@@ -21,10 +21,13 @@
        what ctx carries (crossing the Python boundary as session[resources]),
        what the footer renders, and what persists to `~/.vis/resources.edn` so a
        resource survives a vis restart (display + pid re-attach).
-     - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :restart-fn :alive-fn`.
-       Never serialized. Across a restart the OWNER re-registers them (e.g. the
-       Clojure pack re-attaches its nREPLs by pid on init) — exactly the pattern
-       `repl-manager` already uses, lifted here so EVERY kind gets it.
+     - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :restart-fn :alive-fn
+       :logs-fn :health-fn`. Never serialized. Across a restart the OWNER
+       re-registers them (e.g. the Clojure pack re-attaches its nREPLs by pid on
+       init) — exactly the pattern `repl-manager` already uses, lifted here so
+       EVERY kind gets it. `:health-fn` answers \"alive, but is it WORKING?\"
+       (:up :starting :failed :down …) and is probed — parallel, hard timeout —
+       on every `list-resources`, flipping the stored `status` to reality.
 
    `:kind` is OPEN-ENDED — a bare keyword, no closed enum. The registry never
    switches on it; only owners do.
@@ -128,7 +131,7 @@
    `\"can_stop\"`/`\"can_restart\"` reflect whether a thunk was supplied;
    `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]}
-   {:keys [stop-fn restart-fn logs-fn]}]
+   {:keys [stop-fn restart-fn logs-fn health-fn]}]
   (cond-> {"id" (str id)
            "session" (skey session)
            "kind" (sval (or kind :resource))
@@ -137,6 +140,7 @@
            "can_stop" (boolean stop-fn)
            "can_restart" (boolean restart-fn)
            "can_logs" (boolean logs-fn)
+           "can_health" (boolean health-fn)
            "created_at" (System/currentTimeMillis)}
     detail
     (assoc "detail" detail)
@@ -158,10 +162,10 @@
   "Register (or replace) a resource UNDER `session`. `resource` is the DATA map
    (needs at least `:id`, unique within the session; `:kind` defaults to
    `:resource`). `fns` carries the live lifecycle thunks `{:stop-fn :restart-fn
-   :alive-fn :logs-fn}` (all optional — a resource with no `:stop-fn` reports
-   `can_stop false`). Returns the stored DATA map."
+   :alive-fn :logs-fn :health-fn}` (all optional — a resource with no `:stop-fn`
+   reports `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
-  ([session resource {:keys [stop-fn restart-fn alive-fn logs-fn] :as fns}]
+  ([session resource {:keys [stop-fn restart-fn alive-fn logs-fn health-fn] :as fns}]
    (let [sid
          (skey session)
 
@@ -184,7 +188,10 @@
          (assoc :alive-fn alive-fn)
 
          logs-fn
-         (assoc :logs-fn logs-fn)))
+         (assoc :logs-fn logs-fn)
+
+         health-fn
+         (assoc :health-fn health-fn)))
      (persist-snapshot!)
      data)))
 
@@ -246,12 +253,48 @@
       (persist-snapshot!))
     dead))
 
+;; Hard per-probe deadline for a `:health-fn`. One wedged health thunk (a hung
+;; server, a blocking connect) must NEVER stall a footer render or a ctx build.
+(def ^:private health-timeout-ms 300)
+
+(defn- refresh-health!
+  "Probe every health-capable resource of `session` IN PARALLEL, each under a
+   hard `health-timeout-ms` deadline, and flip the stored `status` where it
+   changed. A `:health-fn` returns a keyword status (:up :starting :failed
+   :down …); nil / a throw / a timeout means UNKNOWN and leaves the stored
+   status alone. Best-effort; persists once when anything flipped."
+  [session]
+  (let [sid
+        (skey session)
+
+        probes
+        (into []
+              (keep (fn [[id {:keys [health-fn]}]]
+                      (when health-fn [id (future (try (health-fn) (catch Throwable _ nil)))])))
+              (get @registry sid))
+
+        changed?
+        (volatile! false)]
+
+    (doseq [[id fut] probes]
+      (let [st (deref fut health-timeout-ms nil)]
+        (when-not (realized? fut) (future-cancel fut))
+        (when (keyword? st)
+          (let [s (name st)]
+            (when (and (get-in @registry [sid id])
+                       (not= s (get-in @registry [sid id :data "status"])))
+              (swap! registry assoc-in [sid id :data "status"] s)
+              (vreset! changed? true))))))
+    (when @changed? (persist-snapshot!))))
+
 (defn list-resources
-  "Vector of live resource DATA maps for `session`, dead ones pruned first. This
-   is what the footer renders and what `:session/resources` carries into ctx —
-   ONLY the calling session's resources."
+  "Vector of live resource DATA maps for `session`, dead ones pruned and every
+   health-capable `status` refreshed first (parallel, hard-timeout probes).
+   This is what the footer renders and what `:session/resources` carries into
+   ctx — ONLY the calling session's resources."
   [session]
   (prune! session)
+  (refresh-health! session)
   (mapv :data (vals (get @registry (skey session)))))
 
 (defn get-resource
