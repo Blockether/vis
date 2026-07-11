@@ -21,7 +21,9 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
@@ -3337,6 +3339,30 @@
                                    (try (state/dispatch [:set-workspace (session-workspace sid)])
                                         (catch Throwable _ nil))))))
                  ;; Managed-resources dialog (C-x s + the footer's `res N`
+                 ;; Magit-style status buffer (C-x g + the footer's git button).
+                 ;; Same one-dialog-at-a-time discipline as the resources modal;
+                 ;; on close, re-seed the footer's cached git status so a
+                 ;; stage/commit/push done inside is reflected immediately.
+                 open-magit! (fn open-magit! []
+                               (when-not (:dialog-open? @state/app-db)
+                                 (state/dispatch [:close-overlays])
+                                 (when (get-in @state/app-db [:search :active?])
+                                   (state/dispatch [:search-clear]))
+                                 (let [db @state/app-db
+                                       fallback (or (:workspace/root db)
+                                                    (System/getProperty "user.dir"))
+                                       ;; Every root the session edits in: the
+                                       ;; primary workspace root PLUS each extra
+                                       ;; filesystem root (/fs, the dir picker).
+                                       ;; For a DRAFT these entries already point
+                                       ;; at the clones, so the buffer shows the
+                                       ;; draft's git state, never the trunk's.
+                                       repos (magit/workspace-roots (:workspace db) fallback)]
+
+                                   (with-dialog-lock #(dlg/magit-dialog! screen repos))
+                                   (try (git/seed-working-tree-status!
+                                          (java.io.File. (str (or (:root (first repos)) fallback))))
+                                        (catch Throwable _ nil)))))
                  ;; button). One dialog at a time: drop the F2/help overlays and
                  ;; any active search before the modal so nothing bleeds around it.
                  open-resources! (fn open-resources! []
@@ -3694,6 +3720,9 @@
                                      :footer-resources
                                      (open-resources!)
 
+                                     :footer-git
+                                     (open-magit!)
+
                                      :footer-model
                                      (show-model-picker!)
 
@@ -3978,6 +4007,9 @@
                                  :footer-resources
                                  (open-resources!)
 
+                                 :footer-git
+                                 (open-magit!)
+
                                  :footer-model
                                  (show-model-picker!)
 
@@ -4086,6 +4118,9 @@
 
                                :footer-resources
                                (open-resources!)
+
+                               :footer-git
+                               (open-magit!)
 
                                :footer-model
                                (show-model-picker!)
@@ -4443,6 +4478,9 @@
                                   :open-resources
                                   (open-resources!)
 
+                                  :open-magit
+                                  (open-magit!)
+
                                   :show-sessions
                                   (show-sessions!)
 
@@ -4576,6 +4614,9 @@
 
                          :open-resources
                          (do (open-resources!) (recur))
+
+                         :open-magit
+                         (do (open-magit!) (recur))
 
                          :show-palette
                          (do (when-not (:dialog-open? @state/app-db)

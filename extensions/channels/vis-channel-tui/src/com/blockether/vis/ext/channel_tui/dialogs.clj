@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
@@ -319,6 +320,33 @@
               :else (do (when-let [ch (input/keystroke->paste-char k)]
                           (.append sb ^String ch))
                         (recur)))))))
+(defn fit-hint-pairs
+  "Longest prefix of `[key action]` hint pairs whose rendered width (with
+   '  \u00b7  ' separators) fits in `text-w` columns. `put-str!` clips to the
+   SCREEN, not the dialog box, so a footer wider than the content area must
+   drop whole trailing chords instead of painting across the border."
+  [hint text-w]
+  (let [sep-w
+        (p/display-width "  \u00b7  ")
+
+        seg-w
+        (fn [[k a]]
+          (+ (p/display-width k) 1 (p/display-width a)))
+
+        pairs
+        (vec hint)]
+
+    (loop [i
+           0
+
+           used
+           0]
+
+      (if (>= i (count pairs))
+        pairs
+        (let [w (+ (seg-w (nth pairs i)) (if (pos? i) sep-w 0))]
+          (if (> (+ used w) (long text-w)) (subvec pairs 0 i) (recur (inc i) (+ used w))))))))
+
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
    - a string: rendered as-is, left-aligned
@@ -351,16 +379,20 @@
       ;; Plain string
       (string? hint) (p/put-str! g text-x row (ellipsize hint text-w))
       ;; Vec of [key action] pairs - key bold, action dim italic, centered.
+      ;; Clipped to whole pairs that fit `text-w` (see `fit-hint-pairs`).
       (and (vector? hint) (seq hint) (vector? (first hint)))
-      (let [n
-            (count hint)
+      (let [pairs
+            (fit-hint-pairs hint text-w)
+
+            n
+            (count pairs)
 
             seg-w
             (fn [[k a]]
               (+ (p/display-width k) 1 (p/display-width a)))
 
             total
-            (+ (reduce + (map seg-w hint)) (* sep-w (max 0 (dec n))))
+            (+ (reduce + (map seg-w pairs)) (* sep-w (max 0 (dec n))))
 
             start
             (+ text-x (max 0 (quot (- text-w total) 2)))]
@@ -373,10 +405,10 @@
 
           (when (< i n)
             (let [[k a]
-                  (nth hint i)
+                  (nth pairs i)
 
                   next-col
-                  (+ col (seg-w (nth hint i)))]
+                  (+ col (seg-w (nth pairs i)))]
 
               ;; Key part - bold, stronger color
               (p/set-fg! g t/dialog-hint-key)
@@ -387,9 +419,9 @@
               ;; Separator between pairs
               (when (< i (dec n)) (p/set-fg! g t/dialog-hint) (p/put-str! g next-col row sep))
               (recur (inc i) (+ next-col sep-w))))))
-      ;; Vec of strings - centered, dim italic, dot-joined.
+      ;; Vec of strings - centered, dim italic, dot-joined, clipped to fit.
       (vector? hint) (let [joined
-                           (apply str (interpose sep hint))
+                           (ellipsize (apply str (interpose sep hint)) text-w)
 
                            start
                            (+ text-x (max 0 (quot (- text-w (p/display-width joined)) 2)))]
@@ -1362,32 +1394,42 @@
                   ;; Fully generic: drives the declarative startable registry
                   ;; (pick type if >1, propose options, call its start-fn).
                   (do (start-resource-flow! screen session-id) (recur))
-                  (do (when (pos? total)
-                        (let [r (nth items (clamp @selected 0 (dec total)))]
-                          (cond (= c \s) (do (vis/stop-resource! session-id (get r "id"))
-                                             (vis/notify! (str "Stopped " (get r "label"))
-                                                          :level :info
-                                                          :ttl-ms 3000))
-                                (= c \l) (when (get r "can_logs")
-                                           (let [rid (get r "id")
-                                                 fetch #(seq (vis/resource-logs session-id rid))
-                                                 lines (fetch)]
+                  (do
+                    (when (pos? total)
+                      (let [r (nth items (clamp @selected 0 (dec total)))]
+                        (cond
+                          (= c \s) (do (vis/stop-resource! session-id (get r "id"))
+                                       (vis/notify! (str "Stopped " (get r "label"))
+                                                    :level :info
+                                                    :ttl-ms 3000))
+                          (= c \l)
+                          (when (get r "can_logs")
+                            (let
+                              [rid (get r "id")
+                               ;; logs-fn runs OFF the UI thread under a hard
+                               ;; deadline — a wedged resource can never hang F4.
+                               fetch
+                               #(let [f (future (vis/resource-logs session-id rid))
+                                      v (deref f 3000 ::log-fetch-timeout)]
 
-                                             (if lines
-                                               (text-view-dialog! screen
-                                                                  (str "Logs — " (get r "label"))
-                                                                  lines
-                                                                  :refresh-fn fetch
-                                                                  :tail? true)
-                                               (vis/notify! "No output captured yet"
-                                                            :level :info
-                                                            :ttl-ms 3000))))
-                                (= c \r) (when (get r "can_restart")
-                                           (vis/restart-resource! session-id (get r "id"))
-                                           (vis/notify! (str "Restarted " (get r "label"))
-                                                        :level :info
-                                                        :ttl-ms 3000)))))
-                      (recur))))
+                                  (if (= ::log-fetch-timeout v)
+                                    ["… log fetch timed out (3s) — the resource's logs-fn is stuck …"]
+                                    (seq v)))
+                               lines (fetch)]
+
+                              (if lines
+                                (text-view-dialog! screen
+                                                   (str "Logs — " (get r "label"))
+                                                   lines
+                                                   :refresh-fn fetch
+                                                   :tail? true)
+                                (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
+                          (= c \r) (when (get r "can_restart")
+                                     (vis/restart-resource! session-id (get r "id"))
+                                     (vis/notify! (str "Restarted " (get r "label"))
+                                                  :level :info
+                                                  :ttl-ms 3000)))))
+                    (recur))))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
@@ -1814,6 +1856,445 @@
                                         (= c \n) false
                                         :else (recur)))
               (recur))))))))
+
+;;; ── Magit status dialog (C-x g / footer git button) ─────────────────────────
+
+(def ^:private magit-hints
+  "Hint-bar chords for the magit status buffer — the most important magit
+   verbs, one key each, faithful to magit's own bindings."
+  [["↑/↓" "move"] ["TAB" "diff"] ["s/u" "±stage"] ["S/U" "all"] ["x" "discard"] ["c" "commit"]
+   ["P" "push"] ["F" "pull"] ["f" "fetch"] ["b" "branch"] ["z" "stash"] ["g" "refresh"]
+   ["Esc" "close"]])
+
+(defn- magit-row-style
+  "`[fg bold?]` for one status-buffer row."
+  [{:keys [kind text]}]
+  (case kind
+    :repo
+    [t/dialog-fg true]
+
+    :section
+    [t/dialog-hint-key true]
+
+    :diff
+    (let [t (str/triml (str text))]
+      (cond (str/starts-with? t "+") [t/code-success-fg false]
+            (str/starts-with? t "-") [t/code-error-fg false]
+            (str/starts-with? t "@@") [t/dialog-hint-key false]
+            :else [t/dialog-hint false]))
+
+    :commit
+    [t/dialog-hint false]
+
+    [t/dialog-fg false]))
+
+(defn- magit-section-action!
+  "Apply `f` (a `path → result` action) to every file row under the `:section`
+   header at `idx`. Returns the first failure, or a rolled-up success."
+  [rows idx f]
+  (let [files (magit/section-of rows idx)]
+    (if (empty? files)
+      {:ok? false :msg "Nothing here"}
+      (let [results (mapv #(f (:path %)) files)]
+        (or (first (remove :ok? results))
+            {:ok? true :msg (str "Done — " (count files) " file(s)")})))))
+
+(defn- magit-stage-action!
+  [root rows idx {:keys [kind area path]}]
+  (cond (and (= :file kind) (= :staged area)) {:ok? false :msg "Already staged"}
+        (= :file kind) (magit/stage-file! root path)
+        (and (= :section kind) (contains? #{:untracked :unstaged :unmerged} area))
+        (magit-section-action! rows idx #(magit/stage-file! root %))
+        :else nil))
+
+(defn- magit-unstage-action!
+  [root rows idx {:keys [kind area path]}]
+  (cond (and (= :file kind) (= :staged area)) (magit/unstage-file! root path)
+        (and (= :section kind) (= :staged area))
+        (magit-section-action! rows idx #(magit/unstage-file! root %))
+        (= :file kind) {:ok? false :msg "Not staged"}
+        :else nil))
+
+(defn- magit-discard-flow!
+  [^TerminalScreen screen root {:keys [kind area path] :as row}]
+  (when (= :file kind)
+    (when (confirm-dialog! screen
+                           "Discard"
+                           (if (= :untracked area)
+                             (str "Delete untracked file " path "?")
+                             (str "Discard changes in " path "?")))
+      (magit/discard-file! root row))))
+
+(defn- magit-commit-flow!
+  [^TerminalScreen screen root model]
+  (when-let [choice (select-dialog! screen
+                                    "Commit"
+                                    [{:label "Commit staged changes" :id :commit}
+                                     {:label "Amend last commit" :id :amend}])]
+    (let [amend? (= :amend (:id choice))]
+      (if (and (not amend?) (empty? (:staged model)))
+        {:ok? false :msg "Nothing staged — stage with s/S first"}
+        (when-let [msg (text-input-dialog! screen
+                                           (if amend? "Amend commit" "Commit")
+                                           "Message"
+                                           :initial
+                                           (if amend? (or (magit/last-commit-message root) "") ""))]
+          (magit/commit! root msg {:amend? amend?}))))))
+
+(defn- magit-push-flow!
+  [^TerminalScreen screen root]
+  (when-let [c (select-dialog! screen
+                               "Push"
+                               [{:label "Push" :id :push}
+                                {:label "Push, set upstream (-u origin)" :id :upstream}
+                                {:label "Force push (--force-with-lease)" :id :force}])]
+    (magit/push! root {:set-upstream? (= :upstream (:id c)) :force? (= :force (:id c))})))
+
+(defn- magit-branch-flow!
+  [^TerminalScreen screen root]
+  (when-let [c (select-dialog! screen
+                               "Branch"
+                               [{:label "Checkout…" :id :checkout}
+                                {:label "Create & checkout…" :id :create}
+                                {:label "Delete…" :id :delete}])]
+    (case (:id c)
+      :checkout
+      (when-let [b (select-dialog! screen
+                                   "Checkout branch"
+                                   (mapv (fn [{:keys [name current?]}]
+                                           {:label (str name (when current? "  (current)"))
+                                            :name name})
+                                         (magit/local-branches root)))]
+        (magit/checkout-branch! root (:name b)))
+
+      :create
+      (when-let [nm (text-input-dialog! screen "Create branch" "Name")]
+        (when-not (str/blank? nm) (magit/create-branch! root (str/trim nm))))
+
+      :delete
+      (when-let [b (select-dialog! screen
+                                   "Delete branch"
+                                   (into []
+                                         (keep (fn [{:keys [name current?]}]
+                                                 (when-not current? {:label name :name name})))
+                                         (magit/local-branches root)))]
+        (when (confirm-dialog! screen "Delete branch" (str "Delete " (:name b) "?"))
+          (let [r (magit/delete-branch! root (:name b) {})]
+            (if (:ok? r)
+              r
+              (if (confirm-dialog! screen
+                                   "Force delete?"
+                                   [(str (:msg r)) (str "Force delete " (:name b) "?")])
+                (magit/delete-branch! root (:name b) {:force? true})
+                r))))))))
+
+(defn- magit-stash-flow!
+  "`selected-ref` is the stash under the cursor (when the cursor sits on a
+   stash row), else the newest stash is the target of pop/apply/drop."
+  [^TerminalScreen screen root selected-ref model]
+  (let [ref (or selected-ref (:ref (first (:stashes model))))]
+    (when-let [c (select-dialog! screen
+                                 "Stash"
+                                 (cond-> [{:label "Stash working tree…" :id :push}]
+                                   ref
+                                   (into [{:label (str "Pop " ref) :id :pop}
+                                          {:label (str "Apply " ref) :id :apply}
+                                          {:label (str "Drop " ref) :id :drop}])))]
+      (case (:id c)
+        :push
+        (when-some [m (text-input-dialog! screen "Stash" "Message (optional)")]
+          (magit/stash-push! root m))
+
+        :pop
+        (magit/stash-pop! root ref)
+
+        :apply
+        (magit/stash-apply! root ref)
+
+        :drop
+        (when (confirm-dialog! screen "Drop stash" (str "Drop " ref "?"))
+          (magit/stash-drop! root ref))))))
+
+(defn- magit-char-action!
+  "Run the magit verb for character `c` against the row under the cursor.
+   Returns an action result `{:ok? :msg}`, or nil when the key did nothing.
+   Case-SENSITIVE — `s`≠`S`, `u`≠`U`, `f`≠`F`, exactly like magit."
+  [^TerminalScreen screen root model rows idx row c]
+  (case c
+    \s
+    (magit-stage-action! root rows idx row)
+
+    \S
+    (magit/stage-all! root)
+
+    \u
+    (magit-unstage-action! root rows idx row)
+
+    \U
+    (magit/unstage-all! root)
+
+    (\x \k)
+    (magit-discard-flow! screen root row)
+
+    \c
+    (magit-commit-flow! screen root model)
+
+    \P
+    (magit-push-flow! screen root)
+
+    \F
+    (magit/pull! root)
+
+    \f
+    (magit/fetch! root)
+
+    \b
+    (magit-branch-flow! screen root)
+
+    \z
+    (magit-stash-flow! screen root (when (= :stash (:kind row)) (:ref row)) model)
+
+    (\g \r)
+    {:ok? true :msg "Refreshed"}
+
+    nil))
+
+(defn magit-dialog!
+  "Magit-style status buffer over the git CLI — the C-x g / footer-git modal.
+
+   `root-or-repos` is either ONE root (string/File — the classic single-repo
+   buffer) or a vector of repo entries `{:root :label :draft?}` from
+   `magit/workspace-roots` — the session's primary workspace root plus every
+   extra filesystem root (`/fs`, the dir picker). With several roots each repo
+   gets a `Repository <label> — <path>` header and its own full section stack;
+   for a DRAFT session the entries already point at the CLONES the session
+   edits, so the buffer shows the draft's git state, not the trunk's.
+
+   Sections: head/upstream facts, untracked, unmerged, unstaged, staged,
+   stashes and recent commits. TAB (or Enter) folds a file's diff open under
+   its row. Verbs mirror magit and route to the repo UNDER THE CURSOR:
+   `s`/`u` stage/unstage the file or the whole section, `S`/`U` all, `x` (or
+   `k`) discard with a confirm, `c` commit/amend (message prompt), `P` push
+   (plain / -u / --force-with-lease), `F` pull, `f` fetch, `b` branch
+   (checkout / create / delete), `z` stash (push / pop / apply / drop), `g`
+   refresh, `q`/Esc close. Every verb shells to the real `git` binary via
+   `internal.git`, and the buffer re-reads every repo after each action, so
+   what you see is always `git status` truth. Returns nil."
+  [^TerminalScreen screen root-or-repos]
+  (let [repo-entries
+        (if (sequential? root-or-repos)
+          (vec root-or-repos)
+          (magit/workspace-roots nil root-or-repos))
+
+        primary-root
+        (:root (first repo-entries))
+
+        multi?
+        (> (count repo-entries) 1)
+
+        repos*
+        (atom (magit/load-repos repo-entries))
+
+        expanded
+        (atom #{})
+
+        diff-cache
+        (atom {})
+
+        sel
+        (atom 0)
+
+        scroll
+        (atom 0)
+
+        echo
+        (atom nil)
+
+        refresh!
+        (fn []
+          (reset! diff-cache {})
+          (reset! repos* (magit/load-repos repo-entries)))
+
+        run-action!
+        (fn [result]
+          (when result (reset! echo result) (refresh!))
+          nil)
+
+        model-for
+        (fn [root]
+          (or (some #(when (= (:root %) root) (:model %)) @repos*) (:model (first @repos*))))
+
+        diff-fn
+        (fn [row]
+          (let [root
+                (or (:root row) primary-root)
+
+                k
+                [root (:area row) (:path row)]]
+
+            (or (get @diff-cache k)
+                (let [lines (or (not-empty (magit/file-diff-lines root row)) ["(no diff)"])]
+                  (swap! diff-cache assoc k lines)
+                  lines))))]
+
+    (loop []
+
+      (let [repos
+            @repos*
+
+            size
+            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+            cols
+            (.getColumns size)
+
+            term-rows
+            (.getRows size)
+
+            g
+            (.newTextGraphics screen)
+
+            buf-rows
+            (magit/multi-status-rows repos @expanded diff-fn)
+
+            total
+            (count buf-rows)
+
+            title
+            (if multi?
+              (str "Git — " (count repos) " roots")
+              (let [model (:model (first repos))]
+                (str "Git — "
+                     (cond (nil? model) "?"
+                           (:detached? model) "detached HEAD"
+                           :else (:branch model)))))
+
+            content-w
+            (max (footer-content-width cols magit-hints)
+                 (default-content-width cols)
+                 (min 110 (max 40 (- cols 10))))
+
+            bounds
+            (draw-dialog-chrome! g
+                                 cols
+                                 term-rows
+                                 title
+                                 content-w
+                                 (default-content-height term-rows))
+
+            {:keys [left inner-w]}
+            bounds
+
+            {:keys [content-top content-h hint-row]}
+            (dialog-layout bounds)
+
+            echo-h
+            (if @echo 1 0)
+
+            list-h
+            (max 1 (- content-h echo-h))
+
+            _
+            (reset! sel (or (magit/first-selectable buf-rows (min @sel (max 0 (dec total)))) 0))
+
+            visible
+            (min total list-h)
+
+            start
+            (visible-window-start @sel @scroll visible total)
+
+            _
+            (reset! scroll start)
+
+            text-w
+            (max 1 (- inner-w 3))]
+
+        (dotimes [i visible]
+          (let [idx (+ start i)
+                row-y (+ content-top i)]
+
+            (when (< idx total)
+              (let [row (nth buf-rows idx)
+                    [fg bold?] (magit-row-style row)
+                    selected? (and (= idx @sel) (magit/selectable? row))]
+
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) row-y inner-w 1)
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/draw-selection-marker! g (inc left) row-y selected?)
+                (p/set-colors! g fg t/dialog-bg)
+                (let [txt (ellipsize (:text row) text-w)]
+                  (if (or bold? selected?)
+                    (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row-y txt))
+                    (p/put-str! g (+ left 3) row-y txt)))))))
+        (scrollbar/draw! g
+                         {:col (+ left inner-w)
+                          :top content-top
+                          :track-h list-h
+                          :total-h total
+                          :inner-h list-h
+                          :scroll start})
+        (when-let [{:keys [ok? msg]} @echo]
+          (let [row-y (+ content-top list-h)]
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/fill-rect! g (inc left) row-y inner-w 1)
+            (p/set-colors! g (if ok? t/code-success-fg t/code-error-fg) t/dialog-bg)
+            (p/put-str! g (+ left 2) row-y (ellipsize (str msg) text-w))))
+        (draw-hint-bar! g left hint-row inner-w magit-hints)
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key
+              (read-modal-key! screen)
+
+              wheel
+              (modal-wheel-step key)
+
+              row
+              (when (and (pos? total) (< (long @sel) total)) (nth buf-rows @sel))
+
+              row-root
+              (or (:root row) primary-root)
+
+              move!
+              (fn [dir]
+                (swap! sel #(magit/next-selectable buf-rows % dir)))
+
+              toggle-diff!
+              (fn []
+                (when (= :file (:kind row))
+                  (let [k [(or (:root row) primary-root) (:area row) (:path row)]]
+                    (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
+
+          (cond
+            (nil? key) (recur)
+            wheel (do (dotimes [_ (Math/abs (long wheel))]
+                        (move! (if (neg? (long wheel)) -1 1)))
+                      (recur))
+            :else
+            (condp = (key-type key)
+              KeyType/Escape nil
+              KeyType/ArrowUp (do (move! -1) (recur))
+              KeyType/ArrowDown (do (move! 1) (recur))
+              KeyType/PageUp (do (dotimes [_ (max 1 (dec list-h))]
+                                   (move! -1))
+                                 (recur))
+              KeyType/PageDown (do (dotimes [_ (max 1 (dec list-h))]
+                                     (move! 1))
+                                   (recur))
+              KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0)) (recur))
+              KeyType/Tab (do (toggle-diff!) (recur))
+              KeyType/Enter (do (toggle-diff!) (recur))
+              KeyType/Character
+              (let [c (key-character key)]
+                (if (= c \q)
+                  nil
+                  (do
+                    (reset! echo nil)
+                    (run-action!
+                      (magit-char-action! screen row-root (model-for row-root) buf-rows @sel row c))
+                    (recur))))
+              (recur))))))))
+
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router)
@@ -4393,11 +4874,11 @@
    {:id :cycle-reasoning :label "Cycle Reasoning Effort"}
    {:id :cycle-verbosity :label "Cycle Answer Length"} {:id :search-open :label "Search in Session"}
    {:id :open-resources :label "Backgrounds"} {:id :show-sessions :label "Switch Session"}
-   {:id :open-dirs :label "Filesystem Permissions"} {:id :pick-file :label "Attach File"}
-   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
-   {:id :fork-session :label "Fork Session"} {:id :close-tab :label "Close Tab"}
-   {:id :providers :label "Configure Providers"} {:id :settings :label "Settings"}
-   {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :open-magit :label "Git Status (Magit)"} {:id :open-dirs :label "Filesystem Permissions"}
+   {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
+   {:id :new-session :label "New Session"} {:id :fork-session :label "Fork Session"}
+   {:id :close-tab :label "Close Tab"} {:id :providers :label "Configure Providers"}
+   {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 (defn searchable-select!

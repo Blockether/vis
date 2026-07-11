@@ -158,12 +158,14 @@
              :fg t/footer-warning-fg
              :bold? true
              :region :right
-             :priority 2}]
+             :priority 2
+             :kind :footer-git}]
     workspace? [{:text (str git-label " " (git-repo-label status))
                  :fg t/footer-fg-strong
                  :bold? true
                  :region :right
-                 :priority 2}]
+                 :priority 2
+                 :kind :footer-git}]
     :else
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 (def ^:private session-cost-keys

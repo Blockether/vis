@@ -823,3 +823,35 @@
             (all-rows {:active-session-id "s1" :sessions sessions})]
 
         (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))
+
+(defdescribe
+  fit-hint-pairs-test
+  "The hint bar must CLIP to the dialog's content width by dropping whole
+   trailing chords — `put-str!` clips to the screen, not the box, so an
+   unfitted footer (e.g. magit's 162-col one) would paint across the border."
+  (it "returns all pairs when they fit exactly"
+      (let [hints
+            (var-get #'dlg/magit-hints)
+
+            w
+            (dlg/hint-bar-width hints)]
+
+        (expect (= hints (dlg/fit-hint-pairs hints w)))))
+  (it "drops whole trailing pairs when the bar is too wide"
+      (let [hints
+            (var-get #'dlg/magit-hints)
+
+            fitted
+            (dlg/fit-hint-pairs hints 112)]
+
+        (expect (< (count fitted) (count hints)))
+        (expect (= fitted (subvec (vec hints) 0 (count fitted))))
+        (expect (<= (dlg/hint-bar-width (vec fitted)) 112))))
+  (it "never exceeds text-w at any width (whole-pair invariant)"
+      (let [hints (var-get #'dlg/magit-hints)]
+        (expect (every? (fn [tw]
+                          (<= (dlg/hint-bar-width (vec (dlg/fit-hint-pairs hints tw))) (max tw 0)))
+                        (range 0 200)))))
+  (it "fits nothing into a sliver without blowing up"
+      (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 3)))
+      (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 0)))))
