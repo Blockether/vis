@@ -750,48 +750,18 @@
                       widths))))
 
 (defn- wrap-cell-cols
-  "Word-wrap a table cell's flat text to `width` display columns.
-   Prefers breaking at spaces; a single token wider than the column
-   hard-breaks at the column boundary. Always returns at least one
-   line so empty cells keep their grid row.
+  "Word-wrap a table cell's flat text to `width` display columns via the ONE
+   shared, grapheme/EAW-aware word-wrap in the lanterna fork (`p/word-wrap`
+   -> `TerminalTextUtils/wordWrap`) — the same text-flow family the screen
+   paints with, so table-cell wrap points match every other wrapped surface.
 
-   When even the FIRST grapheme is wider than the column (an emoji in
-   a width-1 cell) `col-prefix-end` reports 0 fitting chars; advance by
-   one full code point instead so the loop always makes progress — the
-   over-wide glyph overflows its cell and the caller's `fit` clips it."
+   Always returns at least one line (blank input -> [\"\"]) so empty cells
+   keep their grid row. A token wider than the column hard-breaks at grapheme
+   boundaries; a single glyph wider than the column (emoji in a width-1
+   column) lands alone on its own line, so the wrap always makes progress
+   and the caller's `fit` clips the overflow."
   [s width]
-  (let [width
-        (max 1 (long width))
-
-        s
-        (str (or s ""))]
-
-    (loop [remaining
-           s
-
-           acc
-           []]
-
-      (if (<= (p/display-width remaining) width)
-        (conj acc remaining)
-        (let [cut
-              (p/col-prefix-end remaining width)
-
-              cut
-              (if (pos? cut)
-                cut
-                (min (count remaining) (Character/charCount (.codePointAt ^String remaining 0))))
-
-              chunk
-              (subs remaining 0 cut)
-
-              last-sp
-              (str/last-index-of chunk " ")]
-
-          (if (and last-sp (pos? (long last-sp)))
-            (recur (subs remaining (inc (long last-sp)))
-                   (conj acc (subs remaining 0 (long last-sp))))
-            (recur (subs remaining cut) (conj acc chunk))))))))
+  (p/word-wrap (str (or s "")) (max 1 (long width))))
 (defn- table->lines
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
    projection fallback, this emits semantic header/separator/body line

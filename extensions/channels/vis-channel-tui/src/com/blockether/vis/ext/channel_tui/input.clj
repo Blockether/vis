@@ -631,45 +631,78 @@
    ["xclip" "-selection" "clipboard" "-o"] ;; X11
    ["xsel" "--clipboard" "--output"]])   ;; X11 alt
 
+(defn- run-helper-process!
+  "Spawn `cmd` (an argv vector) and drain its stdout under a HARD `timeout-ms`
+   deadline. Returns `{:success? boolean :bytes byte-array}` — `:success?`
+   only when the process exited 0 within the deadline. Never throws.
+
+   Two hang traps the old per-helper loops fell into are closed here:
+
+   1. The child's stdin is CLOSED right after start (after writing
+      `stdin-bytes` when given), so a helper that reads stdin sees EOF
+      instead of waiting forever on a pipe nobody writes.
+   2. The drain used to `.read` to EOF with NO bound — the `waitFor` cap
+      only ran AFTER EOF, so a helper that never exits (osascript stuck on
+      a macOS automation prompt, xclip without an X server, a wedged
+      pngpaste) blocked the CALLING thread — the TUI input loop — forever:
+      one ⌘V froze the whole session. A watchdog now `destroyForcibly`s the
+      process at the deadline, which closes its stdout pipe and unblocks
+      the drain, so the caller always returns in ~timeout-ms.
+
+   `merge-stderr?` folds stderr into stdout (text helpers); otherwise stderr
+   is DISCARDED so a binary payload can't be corrupted by warnings."
+  [cmd {:keys [^bytes stdin-bytes merge-stderr? timeout-ms] :or {timeout-ms 2000}}]
+  (try
+    (let [pb
+          (ProcessBuilder. ^java.util.List cmd)
+
+          _
+          (if merge-stderr?
+            (.redirectErrorStream pb true)
+            (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD))
+
+          p
+          (.start pb)
+
+          _
+          (try (let [out (.getOutputStream p)]
+                 (when stdin-bytes (.write out ^bytes stdin-bytes))
+                 (.close out))
+               (catch Throwable _ nil))
+
+          watchdog
+          (future
+            (when-not (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
+              (.destroyForcibly p)))
+
+          in
+          (.getInputStream p)
+
+          buf
+          (java.io.ByteArrayOutputStream.)
+
+          tmp
+          (byte-array 8192)]
+
+      (loop []
+
+        (let [n (try (.read in tmp) (catch Throwable _ -1))]
+          (when (pos? n) (.write buf tmp 0 n) (recur))))
+      (let [exited? (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)]
+        @watchdog
+        {:success? (boolean (and exited? (zero? (.exitValue p)))) :bytes (.toByteArray buf)}))
+    (catch Throwable _ {:success? false :bytes nil})))
+
 (defn- run-shell-helper!
-  "Spawn `cmd` (an argv vector), feed `stdin-bytes` to its stdin
-   when non-nil, drain stdout, return `{:success? boolean :stdout String}`.
-   Capped at 1 second; a missing helper or unreadable PATH entry
-   raises in the `try` block and we report `{:success? false}` so the
-   caller falls through to the next candidate."
+  "Spawn `cmd` (an argv vector), feed `stdin-bytes` to its stdin when
+   non-nil, drain stdout (stderr merged in), return
+   `{:success? boolean :stdout String}`. Bounded by
+   `run-helper-process!`'s hard deadline — a wedged helper can no longer
+   freeze the input loop."
   [cmd ^bytes stdin-bytes]
-  (try (let [pb
-             (ProcessBuilder. ^java.util.List cmd)
-
-             _
-             (.redirectErrorStream pb true)
-
-             p
-             (.start pb)]
-
-         (when stdin-bytes
-           (let [out (.getOutputStream p)]
-             (.write out stdin-bytes)
-             (.close out)))
-         (let [in
-               (.getInputStream p)
-
-               buf
-               (java.io.ByteArrayOutputStream.)
-
-               tmp
-               (byte-array 4096)]
-
-           ;; Drain stdout BEFORE waitFor: bigger paste payloads can
-           ;; exceed the OS pipe buffer and deadlock the helper if its
-           ;; output isn't being read.
-           (loop []
-
-             (let [n (.read in tmp)]
-               (when (pos? n) (.write buf tmp 0 n) (recur))))
-           (.waitFor p 1 java.util.concurrent.TimeUnit/SECONDS)
-           {:success? (zero? (.exitValue p)) :stdout (.toString buf "UTF-8")}))
-       (catch Throwable _ {:success? false :stdout nil})))
+  (let [{:keys [success? ^bytes bytes]}
+        (run-helper-process! cmd {:stdin-bytes stdin-bytes :merge-stderr? true})]
+    {:success? success? :stdout (when bytes (String. bytes "UTF-8"))}))
 
 (defn- shell-clipboard-copy!
   "Try every helper in `copy-helpers` until one succeeds. Returns
@@ -741,34 +774,13 @@
   "Like `run-shell-helper!` but returns the process's stdout as RAW bytes
    (`{:success? boolean :bytes byte-array}`) instead of a UTF-8 string, so a
    binary payload (clipboard image data) survives intact. stderr is DISCARDED
-   rather than merged - merging would corrupt the image stream. Capped at 2s;
-   marshalling a large screenshot off the pasteboard can take a moment."
-  [cmd]
-  (try (let [pb
-             (ProcessBuilder. ^java.util.List cmd)
-
-             _
-             (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD)
-
-             p
-             (.start pb)
-
-             in
-             (.getInputStream p)
-
-             buf
-             (java.io.ByteArrayOutputStream.)
-
-             tmp
-             (byte-array 8192)]
-
-         (loop []
-
-           (let [n (.read in tmp)]
-             (when (pos? n) (.write buf tmp 0 n) (recur))))
-         (.waitFor p 2 java.util.concurrent.TimeUnit/SECONDS)
-         {:success? (zero? (.exitValue p)) :bytes (.toByteArray buf)})
-       (catch Throwable _ {:success? false :bytes nil})))
+   rather than merged - merging would corrupt the image stream. Hard-capped
+   by `run-helper-process!` (default 2s; marshalling a large screenshot off
+   the pasteboard can take a moment) — a helper that never exits is killed
+   at the deadline instead of freezing the input loop. The `timeout-ms`
+   arity exists for tests."
+  ([cmd] (run-shell-helper-bytes! cmd 2000))
+  ([cmd timeout-ms] (run-helper-process! cmd {:timeout-ms timeout-ms})))
 
 (defn- png-bytes?
   "True when `b` opens with the 8-byte PNG signature (`\\x89PNG`). Guards
