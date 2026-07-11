@@ -400,36 +400,45 @@
    post-fork additions — yet absent from `clone`. The mtime guard means
    `apply!` never reverts a file the user added to cwd after forking, and
    the prune keeps cache churn (e.g. `.clj-kondo/.cache` rewritten in the
-   clone) from being reported as spurious deletions."
+   clone) from being reported as spurious deletions.
+
+   A non-positive `fork-ms` is the FRESH-lineage baseline: the clone never
+   saw trunk's files, so a deletion is semantically impossible — return []
+   unconditionally, whatever the trees contain. The hard exit (rather than
+   relying on the `<` comparison alone) also keeps pathological trunk
+   mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
+   comparing below the baseline into a real `.delete` of the user's files."
   [clone trunk fork-ms]
-  (let [troot
-        (.toPath (io/file trunk))
+  (if-not (pos? (long fork-ms))
+    []
+    (let [troot
+          (.toPath (io/file trunk))
 
-        croot
-        (.toPath (io/file clone))
+          croot
+          (.toPath (io/file clone))
 
-        nofollow
-        (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
+          nofollow
+          (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
 
-        acc
-        (java.util.ArrayList.)]
+          acc
+          (java.util.ArrayList.)]
 
-    (Files/walkFileTree troot
-                        (proxy [SimpleFileVisitor] []
-                          (preVisitDirectory [dir ^BasicFileAttributes _a]
-                            (if (prune-dir? (.relativize troot ^Path dir))
-                              FileVisitResult/SKIP_SUBTREE
-                              FileVisitResult/CONTINUE))
-                          (visitFile [file ^BasicFileAttributes attrs]
-                            (let [rel (.relativize troot ^Path file)]
-                              (when (and (not (prune-dir? rel))
-                                         (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
-                                         (not (Files/exists (.resolve croot rel) nofollow)))
-                                ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
-                                (.add acc (paths/unixify rel))))
-                            FileVisitResult/CONTINUE)
-                          (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
-    (vec acc)))
+      (Files/walkFileTree troot
+                          (proxy [SimpleFileVisitor] []
+                            (preVisitDirectory [dir ^BasicFileAttributes _a]
+                              (if (prune-dir? (.relativize troot ^Path dir))
+                                FileVisitResult/SKIP_SUBTREE
+                                FileVisitResult/CONTINUE))
+                            (visitFile [file ^BasicFileAttributes attrs]
+                              (let [rel (.relativize troot ^Path file)]
+                                (when (and (not (prune-dir? rel))
+                                           (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
+                                           (not (Files/exists (.resolve croot rel) nofollow)))
+                                  ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
+                                  (.add acc (paths/unixify rel))))
+                              FileVisitResult/CONTINUE)
+                            (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
+      (vec acc))))
 
 ;; =============================================================================
 ;; Hooks
@@ -820,7 +829,11 @@
    lands on `apply!`, while `deleted-paths` (trunk files OLDER than the
    baseline yet absent from the clone) can never match — a fresh draft only
    ever ADDS/OVERWRITES into trunk, it cannot infer deletions of files it
-   never saw."
+   never saw. The ZERO baseline is HEREDITARY: a draft forked `:from` a
+   fresh-lineage workspace (a sub-loop child, a revision) keeps baseline 0
+   too — its clone still lacks the trunk files the lineage never saw, so
+   applying it with a real fork timestamp would mass-report trunk's files
+   as deletions and wipe the repo."
   [db-info {:keys [session-state-id label from required-capabilities fresh?]}]
   (let [trunk
         (or (:repo-root from) (trunk-root))
@@ -839,11 +852,17 @@
 
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this. A FRESH
-        ;; draft instead anchors at 0 — the clone is empty, so everything
-        ;; that ever appears in it is an agent edit, and no trunk file can
-        ;; predate the baseline into a spurious deletion.
+        ;; LINEAGE (this draft, or any ancestor the clone descends from)
+        ;; instead anchors at 0 — the lineage never saw trunk's files, so
+        ;; everything that ever appears in the clone is an agent edit and no
+        ;; trunk file can predate the baseline into a spurious deletion.
         fork-ms
-        (if fresh? 0 (System/currentTimeMillis))
+        (if (or fresh?
+                (some-> (apply-fork-ms-of from)
+                        long
+                        zero?))
+          0
+          (System/currentTimeMillis))
 
         ws
         (p/db-workspace-insert! db-info
