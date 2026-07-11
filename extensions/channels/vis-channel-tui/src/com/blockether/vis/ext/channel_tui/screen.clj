@@ -1201,11 +1201,14 @@
    Hidden while following, exactly like the web. Reuses `components/button!`
    so its look / hover / click region can't drift from the other TUI chips.
 
-   Gated on `scroll/bottom-hidden?` (live bottom is OFF-SCREEN below), NOT on
-   `scrolled-up?` — an empty/short session has nothing below, so a PageUp that
-   parks `:at` offset 0 must NOT pop a chip pointing at nowhere."
+   Gated on `scroll/jump-chip-visible?` — the user must be PARKED above the
+   live bottom (`scrolled-up?`) AND the bottom must actually sit off-screen
+   below (`bottom-hidden?`). Either alone misfires: `bottom-hidden?` flashes
+   the chip during plain FOLLOW easing while a turn streams (the eased `:pos`
+   trails the growing bottom every frame); `scrolled-up?` pops it in an
+   empty/short session where a PageUp parked `:at` offset 0."
   [g cols messages-bottom max-scroll db]
-  (when (scroll/bottom-hidden? (:scroll db) max-scroll)
+  (when (scroll/jump-chip-visible? (:scroll db) max-scroll)
     (let [label
           " ↓ latest (C-x j) "
 
@@ -1563,8 +1566,9 @@
       ;; to exactly where it sat in the input box.
       (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
         (when-not (overlay-locked? db) (.setCursorPosition screen (TerminalPosition. sx sy))))
-      ;; "↓ latest" jump-to-bottom chip (bottom-right) — only when the live bottom
-      ;; is actually off-screen below (never in an empty/short session).
+      ;; "↓ latest" jump-to-bottom chip — only when the user PARKED above the
+      ;; live bottom AND content actually sits below (jump-chip-visible?): a
+      ;; FOLLOW ease trailing a growing stream must not flash it.
       (paint-jump-bottom! g cols messages-bottom (max 0 (- (long total-h) (long inner-h))) db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
@@ -3086,6 +3090,11 @@
                  ;; reversals so the viewport can't bounce up/down mid-gesture.
                  ;; Decayed toward zero on idle polls (see the `(nil? key)` branch).
                  scroll-momentum (volatile! 0)
+                 ;; Wall-clock ms of the LAST wheel event. `scroll-momentum`'s
+                 ;; decay is TIME-based (scroll/momentum-hold-ms) and computed
+                 ;; at USE time from this timestamp — a poll-based decay died
+                 ;; between two events of a slow trackpad inertia tail.
+                 last-wheel-at-ms (volatile! 0)
                  prewarm-session!
                  (fn [{:keys [id history]}]
                    (virtual/stop-rewarm!)
@@ -3388,28 +3397,27 @@
 
                  (cond
                    (:shutdown? db) nil
-                   (nil? key) (do (let [old-mom (long @scroll-momentum)
-                                        decayed (scroll/decay-wheel-momentum old-mom)]
+                   (nil? key)
+                   (do (let [old-mom (long @scroll-momentum)
+                             idle-ms (- (System/currentTimeMillis) (long @last-wheel-at-ms))]
 
-                                    ;; Log the momentum decay ONLY when it was nonzero —
-                                    ;; otherwise this idle branch fires ~60x/sec and floods
-                                    ;; the log with zeros. Shows the directional lock
-                                    ;; releasing after the fingers lift.
-                                    (when (not (zero? old-mom))
-                                      (tel/log! {:level :debug
-                                                 :id ::wheel-momentum-decay
-                                                 :data {:mom old-mom
-                                                        :decayed (long decayed)
-                                                        :settled? (zero? (long decayed))}
-                                                 :msg (str "wheel-momentum decay "
-                                                           old-mom
-                                                           " -> "
-                                                           (long decayed)
-                                                           (when (zero? (long decayed))
-                                                             " (settled)"))}))
-                                    (vreset! scroll-momentum decayed))
-                                  (Thread/sleep 16)
-                                  (recur))
+                         ;; Decay is TIME-based and computed at USE time in
+                         ;; the wheel branch (scroll/decay-wheel-momentum);
+                         ;; this idle branch only RELEASES the directional
+                         ;; lock once the hold window has fully expired, so
+                         ;; stale momentum can't linger across gestures.
+                         (when (and (not (zero? old-mom)) (>= idle-ms scroll/momentum-hold-ms))
+                           (tel/log! {:level :debug
+                                      :id ::wheel-momentum-decay
+                                      :data {:mom old-mom :idle-ms idle-ms}
+                                      :msg (str "wheel-momentum released "
+                                                old-mom
+                                                " -> 0 after "
+                                                idle-ms
+                                                "ms idle")})
+                           (vreset! scroll-momentum 0)))
+                       (Thread/sleep 16)
+                       (recur))
                    ;; ── Bracketed paste ───────────────────────────────────────────────────
                    ;; Three-state machine sitting BEFORE the regular key dispatch:
                    ;;
@@ -3716,7 +3724,19 @@
                        ;; just updates momentum and recurs without scrolling.
                        (not (zero? (long (or wheel-delta 0))))
                        (let [raw (long wheel-delta)
-                             old-mom (long @scroll-momentum)
+                             now-ms (System/currentTimeMillis)
+                             ;; Momentum decays by WALL-CLOCK time since the previous
+                             ;; wheel event, computed HERE at use time. The old
+                             ;; poll-based decay (halving per 16ms idle poll) died
+                             ;; between two events of a slow macOS trackpad inertia
+                             ;; tail (50-100ms apart), so the tail's sign-flipped
+                             ;; ticks always met zero momentum and dispatched as real
+                             ;; reversals — re-arming FOLLOW mid-stream whenever the
+                             ;; user sat within the slack band (the 'scrolling in
+                             ;; place' bounce).
+                             old-mom (long (scroll/decay-wheel-momentum
+                                             (long @scroll-momentum)
+                                             (- now-ms (long @last-wheel-at-ms))))
                              [new-mom eff] (scroll/merge-wheel-delta old-mom raw)
                              ly (:layout db)
                              pre-offset (long (or (:eff-scroll ly) 0))
@@ -3724,6 +3744,7 @@
                                           :mode)]
 
                          (vreset! scroll-momentum new-mom)
+                         (vreset! last-wheel-at-ms now-ms)
                          ;; Wheel-momentum diagnostic. Fires on every wheel
                          ;; dispatch: the raw delta, the momentum transition,
                          ;; the effective delta (nil = absorbed tick), the

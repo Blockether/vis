@@ -109,11 +109,81 @@
             (if (empty? rs) m (recur (rest rs) (first (scroll/merge-wheel-delta m (first rs))))))]
       (is (<= final-mom scroll/momentum-cap)))))
 
-(deftest decay-wheel-momentum-releases-the-lock-when-idle
-  (testing "zero stays zero" (is (zero? (scroll/decay-wheel-momentum 0))))
-  (testing "momentum halves each idle frame and snaps to zero once small"
-    ;; Math/round rounds half up: 10->5->3->2->0 (snap once |next|<=1)
-    (is (= 5 (scroll/decay-wheel-momentum 10)))
-    (is (= 3 (scroll/decay-wheel-momentum 5)))
-    (is (= 2 (scroll/decay-wheel-momentum 3)))
-    (is (zero? (scroll/decay-wheel-momentum 2)))))
+(deftest decay-wheel-momentum-is-time-based
+  (testing "zero momentum stays zero at any idle time"
+    (is (zero? (scroll/decay-wheel-momentum 0 0)))
+    (is (zero? (scroll/decay-wheel-momentum 0 999))))
+  (testing "momentum is held (verbatim) immediately after a wheel event"
+    (is (= 10 (scroll/decay-wheel-momentum 10 0)))
+    (is (= -10 (scroll/decay-wheel-momentum -10 0))))
+  (testing "inside the hold window the lock NEVER fully releases (sign floor)"
+    ;; the whole point: a slow trackpad tail leaves only ±1-2 of momentum and
+    ;; events arrive 50-100ms apart — the directional lock must survive that
+    ;; gap or the tail's sign-flipped tick dispatches as a real reversal.
+    (is (= -1 (scroll/decay-wheel-momentum -1 100)))
+    (is (= 1 (scroll/decay-wheel-momentum 1 149)))
+    (is (neg? (scroll/decay-wheel-momentum -12 100))))
+  (testing "momentum shrinks with idle time (deliberate reversals stay responsive)"
+    (is (< (Math/abs (long (scroll/decay-wheel-momentum 12 100)))
+           (Math/abs (long (scroll/decay-wheel-momentum 12 20))))))
+  (testing "the window's expiry releases the lock exactly to zero"
+    (is (zero? (scroll/decay-wheel-momentum 12 scroll/momentum-hold-ms)))
+    (is (zero? (scroll/decay-wheel-momentum -12 99999)))))
+
+(defn- drive-timed-stream
+  "Feed `[raw gap-ms]` wheel events through USE-time decay + merge exactly as
+   the input loop does: momentum decays by the wall-clock gap since the
+   previous event BEFORE each merge. Returns the dispatched effective deltas."
+  [events]
+  (loop [es
+         events
+
+         m
+         0
+
+         out
+         []]
+
+    (if (empty? es)
+      out
+      (let [[raw gap]
+            (first es)
+
+            [nm eff]
+            (scroll/merge-wheel-delta (scroll/decay-wheel-momentum m gap) raw)]
+
+        (recur (rest es) nm (if eff (conj out eff) out))))))
+
+(deftest slow-trackpad-inertia-tail-cannot-bounce
+  (testing
+    "the streaming bounce repro: SPARSE up ticks (50-90ms apart, slower than
+            any poll-based decay window) ending in a sign-flipped tick — the flip is
+            absorbed, so no :scroll-down can re-arm FOLLOW under the user"
+    (let [eff (drive-timed-stream [[-1 0] [-1 80] [-1 80] [-1 90] [1 60]])]
+      (is (every? neg? eff))
+      (is (= [-1 -1 -1 -1] eff))))
+  (testing "a deliberate reversal AFTER the hold window dispatches immediately"
+    (is (= [-1 -1 1] (drive-timed-stream [[-1 0] [-1 80] [1 200]]))))
+  (testing "a strong reversal INSIDE the window still crosses (only the net leaks)"
+    (let [eff (drive-timed-stream [[-1 0] [-1 40] [4 40]])]
+      (is (= [-1 -1] (subvec eff 0 2)))
+      (is (pos? (long (peek eff)))))))
+
+;; ── Jump-to-bottom chip visibility ────────────────────────────────────
+(deftest jump-chip-visible?-requires-a-real-park
+  (testing "parked above the bottom with content below ⇒ chip shows"
+    (is (true? (scroll/jump-chip-visible? (scroll/parked 40) 100)))
+    (is (true? (scroll/jump-chip-visible? {:mode :at :offset 12 :pos 30} 100))))
+  (testing
+    "FOLLOW easing during streaming (eased :pos trails the growing bottom)
+            must NOT flash the chip — the user never left the bottom"
+    ;; regression: gating on bottom-hidden? alone painted the chip every frame
+    ;; a stream grew content while the follow ease trailed a few rows behind.
+    (is (false? (scroll/jump-chip-visible? {:mode :follow :pos 90} 100)))
+    (is (false? (scroll/jump-chip-visible? scroll/follow 100))))
+  (testing "empty/short session parked :at offset 0 ⇒ nothing below, no chip"
+    (is (false? (scroll/jump-chip-visible? (scroll/up scroll/follow 10 0) 0)))
+    (is (false? (scroll/jump-chip-visible? {:mode :at :offset 0} 0))))
+  (testing "parked AT (or past) the live bottom ⇒ no chip"
+    (is (false? (scroll/jump-chip-visible? (scroll/parked 100) 100)))
+    (is (false? (scroll/jump-chip-visible? (scroll/parked 999) 100)))))
