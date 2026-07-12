@@ -23,8 +23,10 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import (java.lang ProcessBuilder$Redirect ProcessHandle)
+  (:import (java.io RandomAccessFile)
+           (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)
+           (java.nio.channels FileChannel FileLock)
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest)))
 
@@ -258,49 +260,130 @@
     nil))
 
 ;; =============================================================================
+;; Cross-process spawn lock (thundering-herd guard)
+;; =============================================================================
+
+(defn lock-file
+  "OS advisory-lock file guarding daemon SPAWN for `db`. Sits beside the registry
+   file so it shares the per-DB key; a stale lockfile is harmless (the OS lock,
+   not the file's existence, is what's held)."
+  ^java.io.File [db]
+  (io/file (registry-dir) (str (registry-key db) ".lock")))
+
+(defn acquire-spawn-lock!
+  "Try to grab the EXCLUSIVE cross-process spawn lock for `db` WITHOUT blocking.
+   Returns a `{:channel :lock}` holder when THIS process won the right to spawn,
+   or nil when another process already holds it (that process is the designated
+   spawner — the caller should just await the registry instead of launching a
+   competing daemon). Never throws."
+  [db]
+  (try (.mkdirs (registry-dir))
+       (let [ch (.getChannel (RandomAccessFile. (lock-file db) "rw"))]
+         (if-let [^FileLock lk (try (.tryLock ch) (catch Throwable _ nil))]
+           {:channel ch :lock lk}
+           (do (.close ch) nil)))
+       (catch Throwable _ nil)))
+
+(defn release-spawn-lock!
+  "Release a holder from [[acquire-spawn-lock!]]. Never throws."
+  [{:keys [^FileLock lock ^FileChannel channel]}]
+  (when lock (try (.release lock) (catch Throwable _ nil)))
+  (when channel (try (.close channel) (catch Throwable _ nil))))
+
+
 ;; Orchestration
 ;; =============================================================================
 
 (defn await-registry!
   "Poll for a FRESH registry entry for `db` up to `timeout-ms`, checking every
-   `poll-ms`. Returns the entry or nil on timeout."
+   `poll-ms`. `:on-tick` (optional) is called before each sleep with the elapsed
+   millis so a caller can render live 'still waiting…' feedback; it never breaks
+   the poll loop. Returns the entry or nil on timeout."
   ([db probe] (await-registry! db probe {}))
-  ([db probe {:keys [timeout-ms poll-ms] :or {timeout-ms 8000 poll-ms 100}}]
-   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+  ([db probe {:keys [timeout-ms poll-ms on-tick] :or {timeout-ms 8000 poll-ms 100}}]
+   (let [start
+         (System/currentTimeMillis)
+
+         deadline
+         (+ start timeout-ms)]
+
      (loop []
 
        (let [entry (read-registry db)]
          (cond (registry-fresh? entry probe) entry
-               (< (System/currentTimeMillis) deadline) (do (Thread/sleep (long poll-ms)) (recur))
+               (< (System/currentTimeMillis) deadline)
+               (do (when on-tick
+                     (try (on-tick (- (System/currentTimeMillis) start)) (catch Throwable _ nil)))
+                   (Thread/sleep (long poll-ms))
+                   (recur))
                :else nil))))))
 
 (defn discover-or-start!
   "Resolve a gateway for `db`. Returns:
    - `{:mode :none}`                          for a `:memory` DB (Q5, never spawns);
    - `{:mode :attach  :entry {…}}`            a fresh daemon already runs — connect;
-   - `{:mode :spawned :entry {…}}`            we spawned one and it self-registered;
-   - `{:mode :timeout}`                       we spawned but it never came up in time.
+   - `{:mode :spawned :entry {…}}`            WE spawned one and it self-registered;
+   - `{:mode :awaited :entry {…}}`            ANOTHER process was spawning — we waited
+                                              on its daemon instead of piling on;
+   - `{:mode :timeout}`                       nobody came up in time.
 
    `probe` is the port+secret liveness check (defaults to pid-liveness alone).
-   `spawn` (default [[spawn-detached!]]) and `now` are injectable for tests. A
-   stale registry is deleted before spawning; a bind-race loser naturally attaches
-   because the winner's self-registration is what [[await-registry!]] observes."
-  [{:keys [db] :as opts} &
-   {:keys [probe spawn timeout-ms poll-ms] :or {probe (constantly true) spawn spawn-detached!}}]
-  (if (memory-db? db)
-    {:mode :none}
-    (let [existing (read-registry db)]
-      (if (registry-fresh? existing probe)
-        {:mode :attach :entry existing}
-        (do (when existing (delete-registry! db))
-            (spawn opts)
-            (if-let [entry (await-registry! db
-                                            probe
-                                            (cond-> {}
-                                              timeout-ms
-                                              (assoc :timeout-ms timeout-ms)
+   `spawn` (default [[spawn-detached!]]) and `now` are injectable for tests.
 
-                                              poll-ms
-                                              (assoc :poll-ms poll-ms)))]
-              {:mode :spawned :entry entry}
-              {:mode :timeout}))))))
+   `:on-event` (optional) is a side-effecting callback the caller uses to surface
+   live progress so waiters are NEVER left staring at a frozen screen. It fires
+   only on the SLOW path (never on a plain `:attach`) with maps:
+   `{:phase :spawning}`           WE won the lock and are launching the daemon;
+   `{:phase :awaiting}`           another vis is starting it — we wait, not spawn;
+   `{:phase :tick :elapsed-ms n}` a poll heartbeat while awaiting either of those;
+   `{:phase :ready :mode m :entry e}` the daemon came up;
+   `{:phase :timeout}`            nobody came up in time. It never throws upward.
+
+   THUNDERING-HERD GUARD (see [[acquire-spawn-lock!]]): when the registry is not
+   fresh, only the ONE process that wins the cross-process spawn lock actually
+   launches a daemon; every other concurrent starter finds the lock held, learns
+   'someone is already spawning', and just awaits the winner's self-registration.
+   That replaces the old blind-port-bind race (N daemons launched, N-1 crashing)
+   with a single spawn + N-1 cheap waiters. A stale registry is deleted before
+   spawning; the lock is re-checked against a double-read so a daemon that came up
+   between our read and the lock is attached, not re-spawned."
+  [{:keys [db] :as opts} &
+   {:keys [probe spawn timeout-ms poll-ms on-event]
+    :or {probe (constantly true) spawn spawn-detached!}}]
+  (let [emit (fn [ev]
+               (when on-event (try (on-event ev) (catch Throwable _ nil))))]
+    (if (memory-db? db)
+      {:mode :none}
+      (let [existing (read-registry db)]
+        (if (registry-fresh? existing probe)
+          {:mode :attach :entry existing}
+          (let [await-opts (cond-> {:on-tick (fn [elapsed-ms]
+                                               (emit {:phase :tick :elapsed-ms elapsed-ms}))}
+                             timeout-ms
+                             (assoc :timeout-ms timeout-ms)
+
+                             poll-ms
+                             (assoc :poll-ms poll-ms))]
+            (if-let [holder (acquire-spawn-lock! db)]
+              ;; We are the designated spawner for this DB.
+              (try
+                ;; Double-check under the lock: another spawner may have finished
+                ;; between our read above and winning the lock.
+                (let [again (read-registry db)]
+                  (if (registry-fresh? again probe)
+                    {:mode :attach :entry again}
+                    (do (when again (delete-registry! db))
+                        (emit {:phase :spawning})
+                        (spawn opts)
+                        (if-let [entry (await-registry! db probe await-opts)]
+                          (do (emit {:phase :ready :mode :spawned :entry entry})
+                              {:mode :spawned :entry entry})
+                          (do (emit {:phase :timeout}) {:mode :timeout})))))
+                (finally (release-spawn-lock! holder)))
+              ;; Lock is held by another process that's already spawning — don't
+              ;; pile on a competing daemon, just wait for it to self-register.
+              (do (emit {:phase :awaiting})
+                  (if-let [entry (await-registry! db probe await-opts)]
+                    (do (emit {:phase :ready :mode :awaited :entry entry})
+                        {:mode :awaited :entry entry})
+                    (do (emit {:phase :timeout}) {:mode :timeout}))))))))))

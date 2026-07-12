@@ -2705,12 +2705,12 @@
   (let [render @#'editing/render-rg-result]
     (it "files-only: summary counts FILES (not 0 hits) and lists the matching paths"
         (let [card (render {"files" ["src/a.clj" "src/b.clj" "src/c.clj"] "file_count" 3})]
-          (expect (= "3 files" (:summary card)))
+          (expect (= "3 matching files" (:summary card)))
           (expect (clojure.string/includes? (:body card) "src/a.clj"))
           (expect (clojure.string/includes? (:body card) "src/c.clj"))
           (expect (not (clojure.string/includes? (:summary card) "hit")))))
-    (it "files-only: a single matching file reads `1 file`"
-        (expect (= "1 file" (:summary (render {"files" ["only.clj"] "file_count" 1})))))
+    (it "files-only: a single matching file reads `1 matching file`"
+        (expect (= "1 matching file" (:summary (render {"files" ["only.clj"] "file_count" 1})))))
     (it "content mode is unchanged: `N hits in M files`"
         (let [card (render {"matches" {"x.clj" {"1:abc" "line one"}} "hit_count" 1 "file_count" 1})]
           (expect (= "1 hit in 1 file" (:summary card)))))))

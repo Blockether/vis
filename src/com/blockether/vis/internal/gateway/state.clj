@@ -352,6 +352,44 @@
               :filesystem-roots (workspace/filesystem-roots ws)})))
        (catch Throwable _ nil)))
 
+(defn- session-state-id
+  "Latest persisted state id for soul `sid`, or nil."
+  [db sid]
+  (persistance/db-latest-session-state-id db (str sid)))
+
+(defn add-filesystem-root!
+  "Add `path` as an extra filesystem root for the session pinned to `sid`, then
+   return the refreshed `session-workspace-info`. Runs SERVER-SIDE in the daemon
+   so the draft backend-fork and DB write land where the session actually lives;
+   every channel (web footer, TUI picker/footer) then reads the same roots back
+   over the gateway. Channel-agnostic twin of `set-session-model!`."
+  [sid path]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (session-state-id db sid)]
+      (when-let [ws (workspace/for-session db state-id)]
+        (workspace/add-filesystem-root! db (:id ws) path))))
+  (session-workspace-info sid))
+
+(defn remove-filesystem-root!
+  "Remove `path` from the session's extra filesystem roots and return the
+   refreshed `session-workspace-info`. Server-side twin of `add-filesystem-root!`."
+  [sid path]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (session-state-id db sid)]
+      (when-let [ws (workspace/for-session db state-id)]
+        (workspace/remove-filesystem-root! db (:id ws) path))))
+  (session-workspace-info sid))
+
+(defn change-root!
+  "Repoint the session pinned to `sid` at `path` as its PRIMARY root, then return
+   the refreshed `session-workspace-info` (whose `:id` is the newly pinned
+   workspace). Server-side so the change lands in the daemon that runs the turns."
+  [sid path]
+  (when-let [db (lp/db-info)]
+    (when-let [state-id (session-state-id db sid)]
+      (workspace/change-root! db state-id path)))
+  (session-workspace-info sid))
+
 ;; =============================================================================
 ;; Chunk -> event translation (§8)
 ;; =============================================================================

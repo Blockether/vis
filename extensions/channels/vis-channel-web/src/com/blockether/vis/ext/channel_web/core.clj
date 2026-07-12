@@ -5240,15 +5240,12 @@
       (let [env
             (vis/env-for sid)
 
-            db
-            (:db-info env)
-
             workspace-id
             (:workspace/id env)]
 
         (cond (str/blank? path) (throw (ex-info "Choose a directory to add." {}))
               (nil? workspace-id) (throw (ex-info "No active workspace for this session yet." {}))
-              :else (vis/workspace-add-filesystem-root! db workspace-id path))
+              :else (vis/gateway-add-filesystem-root! sid path))
         (if frag
           ;; From the picker: keep it OPEN, re-render the browser in place
           ;; (the added folder now shows as a root), OOB-refresh rail + footer.
@@ -5290,13 +5287,10 @@
         env
         (vis/env-for sid)
 
-        db
-        (:db-info env)
-
         wid
         (:workspace/id env)]
 
-    (when (and (seq path) wid) (vis/workspace-remove-filesystem-root! db wid path))
+    (when (and (seq path) wid) (vis/gateway-remove-filesystem-root! sid path))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body
@@ -5329,15 +5323,12 @@
         env
         (vis/env-for sid)
 
-        db
-        (:db-info env)
-
         state-id
         (:session/state-id env)]
 
     (try (when (str/blank? path) (throw (ex-info "No directory given." {})))
          (when-not state-id (throw (ex-info "Session not ready yet — send a message first." {})))
-         (vis/workspace-change-root! db state-id path)
+         (vis/gateway-change-root! sid path)
          {:status 200
           :headers {"Content-Type" "text/html; charset=utf-8"}
           :body (str (html (dir-browser sid path :notice "This folder is now the session's root"))

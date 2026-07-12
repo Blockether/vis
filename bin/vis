@@ -144,10 +144,10 @@ run_measured_or_exec() {
 #   --jar      force the AOT uberjar (target/vis.jar)
 #   --native   force the native binary (target/vis[.exe])
 #   --jvm      back-compat alias for --source
-#   --jfr      record a JFR "profile" session to ~/.vis/vis-<ts>.jfr, dumped on
-#              exit (source/jar only; the native binary would need to be built
-#              with --enable-monitoring=jfr). Snapshot mid-run with
-#              `jcmd <pid> JFR.dump name=vis`.
+#   --jfr      profile with JFR: exports VIS_JFR=1 so the client (TUI/web) AND
+#              the detached gateway daemon it spawns EACH record their own
+#              ~/.vis/vis-<role>-<pid>-<ts>.jfr (works on source, jar, AND the
+#              native binary — built with --enable-monitoring=jfr), dumped on exit.
 dist=""   # "" = auto; else "source" | "jar" | "native"
 jfr=0
 args=()
@@ -167,24 +167,22 @@ else
   set --
 fi
 
-# ── --jfr: Java Flight Recorder profiling ────────────────────────────────────
-# Populate two forms of the StartFlightRecording opt — `-J`-prefixed for the
-# clojure launcher (source), bare for `java -jar`. Empty arrays otherwise, so
-# the launch sites can splice them unconditionally. The native binary can't take
-# it (it rejects unknown -XX options unless built with --enable-monitoring=jfr),
-# so we warn and skip it there.
-jfr_clj_opts=()
-jfr_java_opts=()
+# ── --jfr: Java Flight Recorder profiling ─────────────────────────────
+# Export VIS_JFR=1 so EVERY vis process this launch spawns records itself: the
+# client (TUI / web / one-shot) AND the detached gateway daemon (which inherits
+# the env) each start their OWN role-tagged recording IN-PROCESS (see
+# internal.jfr/maybe-start!). That yields two SEPARATE readings to compare when
+# a client seems to wait on the gateway:
+#   ~/.vis/vis-client-<pid>-<ts>.jfr   and   ~/.vis/vis-gateway-<pid>-<ts>.jfr
+# Unlike a JVM-launch -XX:StartFlightRecording (client-only, dies on native),
+# this covers the daemon too and works identically on source, jar, and the
+# native binary (built with --enable-monitoring=jfr — see native-image.properties).
 if (( jfr )); then
-  jfr_dir="$HOME/.vis"
-  mkdir -p "$jfr_dir" 2>/dev/null || true
-  jfr_file="$jfr_dir/vis-$(date +%Y%m%d-%H%M%S).jfr"
-  jfr_spec="name=vis,settings=profile,filename=$jfr_file,dumponexit=true,maxsize=500m"
-  jfr_clj_opts=("-J-XX:StartFlightRecording=$jfr_spec")
-  jfr_java_opts=("-XX:StartFlightRecording=$jfr_spec")
-  echo "vis: JFR profiling → $jfr_file (settings=profile, dumped on exit)." >&2
-  echo "vis:   snapshot mid-run: jcmd \$(pgrep -f vis) JFR.dump name=vis" >&2
-  echo "vis:   analyze: jfr print --events jdk.ExecutionSample $jfr_file" >&2
+  export VIS_JFR=1
+  mkdir -p "$HOME/.vis" 2>/dev/null || true
+  echo "vis: JFR profiling on (VIS_JFR=1) → ~/.vis/vis-{client,gateway}-<pid>-<ts>.jfr, dumped on exit." >&2
+  echo "vis:   snapshot mid-run: jcmd <pid> JFR.dump name=vis-<role>" >&2
+  echo "vis:   analyze:  jfr print --events jdk.ExecutionSample ~/.vis/vis-gateway-*.jfr" >&2
 fi
 
 # ── Managed install + self-update ───────────────────────────────────────────
@@ -339,7 +337,6 @@ case "$dist" in
   native)
     nb="$native_bin"; [[ -x "$nb" ]] || nb="$vis_install_dir/native"
     if [[ -x "$nb" ]]; then
-      (( jfr )) && echo "vis: --jfr ignored — the native binary needs to be built with --enable-monitoring=jfr." >&2
       measure_log "--native → $nb"; cd "$invocation_cwd"
       run_measured_or_exec "process native binary" "$nb" "$@"
     else
@@ -363,7 +360,6 @@ if [[ -z "$dist" ]]; then
       case "$(cat "$vis_install_dir/mode" 2>/dev/null)" in
         native)
           if [[ -x "$vis_install_dir/native" ]]; then
-            (( jfr )) && echo "vis: --jfr ignored — the native binary needs --enable-monitoring=jfr; use 'vis --jfr --source'." >&2
             measure_log "exec managed native $vis_install_dir/native"; cd "$invocation_cwd"
             run_measured_or_exec "managed native" "$vis_install_dir/native" "$@"
           fi ;;
@@ -375,7 +371,6 @@ if [[ -z "$dist" ]]; then
       esac
     fi
     if [[ -x "$native_bin" ]]; then
-      (( jfr )) && echo "vis: --jfr ignored — the native binary needs --enable-monitoring=jfr; use 'vis --jfr --source'." >&2
       measure_log "exec native binary $native_bin"; cd "$invocation_cwd"
       run_measured_or_exec "process native binary" "$native_bin" "$@"
     fi

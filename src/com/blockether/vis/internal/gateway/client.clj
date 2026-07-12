@@ -47,7 +47,7 @@
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
-(declare ensure-gateway! ensure-client!)
+(declare ensure-gateway! ensure-client! ensure-gateway-serving!)
 
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
@@ -97,6 +97,80 @@
          (and (= 200 (.statusCode response)) (= "ok" (:status body)) (true? (:secret_match body))))
        (catch Throwable _ false)))
 
+(def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(defn- interactive-tty? [] (some? (System/console)))
+
+(defn- progress-reporter
+  "Build an `:on-event` callback for [[discovery/discover-or-start!]] that surfaces
+   cold-start progress on stderr so a user is never left wondering whether vis
+   hung. It is SILENT on the fast attach path (no event fires there), and clearly
+   DISTINGUISHES 'this process is starting the gateway' from 'another vis is
+   already starting it — we're waiting' so a herd of clients reads as one boot,
+   not N frozen screens. On a TTY it renders a single spinner line that rewrites
+   in place with the elapsed seconds; off a TTY it logs one line per milestone.
+   Never throws."
+  []
+  (let [tty
+        (interactive-tty?)
+
+        err
+        ^java.io.PrintStream System/err
+
+        state
+        (atom {:label nil :frame 0 :active false})
+
+        clear
+        (fn []
+          (when tty (.print err "\r\u001b[K")))
+
+        start
+        (fn [label plain]
+          (swap! state assoc :label label :active true)
+          (if tty (.print err (str "\r\u001b[K⟳ " label "…")) (.println err (str "vis: " plain)))
+          (.flush err))
+
+        finish
+        (fn [line]
+          (when (:active @state)
+            (clear)
+            (.println err line)
+            (.flush err)
+            (swap! state assoc :active false)))]
+
+    (fn [{:keys [phase mode elapsed-ms]}]
+      (try (case phase
+             :spawning
+             (start "starting gateway daemon" "starting gateway daemon…")
+
+             :awaiting
+             (start "another vis is starting the gateway — waiting"
+                    "another vis is starting the gateway — waiting…")
+
+             :tick
+             (when (and tty (:active @state))
+               (let [{:keys [label frame]}
+                     @state
+
+                     f
+                     (nth spinner-frames (mod frame (count spinner-frames)))
+
+                     secs
+                     (format "%.1f" (/ (double (or elapsed-ms 0)) 1000.0))]
+
+                 (swap! state update :frame inc)
+                 (.print err (str "\r\u001b[K" f " " label "… " secs "s"))
+                 (.flush err)))
+
+             :ready
+             (finish (str "✓ gateway ready" (when (= mode :awaited) " (started by another vis)")))
+
+             :timeout
+             (finish "✗ gateway did not become ready in time")
+
+             nil)
+           (catch Throwable _ nil)))))
+
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
@@ -113,6 +187,7 @@
       (let [{:keys [entry] :as result} (discovery/discover-or-start!
                                          {:db db :port DEFAULT_PORT :host DEFAULT_HOST}
                                          :probe probe-entry?
+                                         :on-event (progress-reporter)
                                          :timeout-ms (if (discovery/native-image?) 15000 60000))]
         (if entry
           (do (reset! cached-entry entry) entry)
@@ -209,6 +284,27 @@
 (defn session-workspace-info
   [sid]
   (:workspace (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace"))))
+
+(defn add-filesystem-root!
+  "Add `path` as an extra filesystem root for `sid` IN THE DAEMON, returning the
+   refreshed `session-workspace-info`. The daemon owns the session's DB, so the
+   new root is what every channel reads back (fixing the local-only mutation that
+   never reached the running session)."
+  [sid path]
+  (:workspace (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})))
+
+(defn remove-filesystem-root!
+  "Remove `path` from `sid`'s extra filesystem roots IN THE DAEMON, returning the
+   refreshed `session-workspace-info`."
+  [sid path]
+  (:workspace
+    (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})))
+
+(defn change-root!
+  "Repoint `sid`'s PRIMARY filesystem root to `path` IN THE DAEMON, returning the
+   refreshed `session-workspace-info` (whose `:id` is the newly pinned workspace)."
+  [sid path]
+  (:workspace (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/workspace/root") {:path path})))
 
 (defn submit-turn!
   [sid opts]
@@ -347,6 +443,28 @@
                      (str "gateway daemon is not serving " path " even after a fresh restart")
                      {:type :gateway/route-missing :path path})))
           entry)))))
+
+(defn provider-status
+  [provider-id]
+  (let [path
+        (str "/v1/providers/" (enc (name provider-id)) "/status")
+
+        entry
+        (ensure-gateway-serving! path)]
+
+    (ensure-client! entry)
+    (:status (send-json-with-entry! entry "GET" path))))
+
+(defn provider-limits
+  [provider-id]
+  (let [path
+        (str "/v1/providers/" (enc (name provider-id)) "/limits")
+
+        entry
+        (ensure-gateway-serving! path)]
+
+    (ensure-client! entry)
+    (:report (send-json-with-entry! entry "GET" path))))
 
 (defn current-seq [sid] (:seq (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq"))))
 

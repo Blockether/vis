@@ -10,6 +10,7 @@
   com.blockether/vis-channel-telegram             {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-channel-web                  {:local/root "extensions/channels/vis-channel-web"}
+  com.blockether/vis-react-native-companion       {:local/root "extensions/common/vis-react-native-companion"}
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
