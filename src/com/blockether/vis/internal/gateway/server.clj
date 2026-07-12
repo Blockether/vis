@@ -44,6 +44,8 @@
 (def ^:private DEFAULT_PORT 7890)
 (def ^:private DEFAULT_HOST "127.0.0.1")
 (def ^:private HEARTBEAT_MS 15000)
+(def ^:private IDLE_REAP_MS 1000)
+(def ^:private STARTUP_IDLE_GRACE_MS 30000)
 
 (defonce ^:private server-state (atom nil))
 
@@ -51,6 +53,7 @@
 ;; EXITS instead of idling forever. In-process callers (tests, REPL) deliver
 ;; harmlessly — nothing is parked on the latch there.
 (defonce ^:private serve-exit (promise))
+(defonce ^:private idle-reaper (atom nil))
 
 (defn- live-client-ids
   "Client leases that still count for daemon refcount. A lease with a recorded pid
@@ -71,28 +74,64 @@
 
 (defn- status-map
   []
-  (let [{:keys [port host db require-token?]} @server-state]
+  (let [{:keys [port host db require-token? managed?]} @server-state]
     {:status (if @server-state "running" "stopped")
      :pid (discovery/current-pid)
      :host host
      :port port
      :db (when db (str (discovery/db-target db)))
      :require_token (boolean require-token?)
+     :managed (boolean managed?)
      :clients (client-count)
      :running_turns (running-turn-count)}))
 
 (declare stop!)
 
-(defn- maybe-stop-when-idle!
-  "Refcount shutdown (Q1): no timer/idle timeout. The daemon exits only when no
-   live client lease/SSE stream remains AND no turn is running."
+(defn- idle-shutdown-eligible?
+  "True when this daemon is allowed to stop itself. Foreground `vis gateway start`
+   is user-owned and lives until Ctrl-C/admin stop; auto-spawned gateway daemons are
+   managed by client refcounts. A fresh auto-spawn gets a startup grace period so it
+   does not exit before the spawning TUI has had a chance to register its lease."
   []
-  (when (and @server-state (zero? (client-count)) (zero? (running-turn-count)))
+  (let [{:keys [managed? saw-client? started-at-ms]} @server-state]
+    (and managed?
+         (or saw-client?
+             (>= (- (System/currentTimeMillis) (long (or started-at-ms 0)))
+                 STARTUP_IDLE_GRACE_MS)))))
+
+(defn- maybe-stop-when-idle!
+  "Refcount shutdown (Q1): no timer/idle timeout for foreground daemons. A managed
+   daemon exits only when no live client lease/SSE stream remains AND no turn is
+   running. Dead-pid leases do not count, so a killed TUI cannot pin the daemon
+   forever."
+  []
+  (when (and @server-state
+             (idle-shutdown-eligible?)
+             (zero? (client-count))
+             (zero? (running-turn-count)))
     (future (try (Thread/sleep 25) ; let the HTTP response that released the last client flush
-                 (when (and @server-state (zero? (client-count)) (zero? (running-turn-count)))
+                 (when (and @server-state
+                            (idle-shutdown-eligible?)
+                            (zero? (client-count))
+                            (zero? (running-turn-count)))
                    (stop!))
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
+
+(defn- ensure-idle-reaper!
+  "Managed daemons also need to reap clients that were SIGKILLed and therefore never
+   sent DELETE /v1/clients/:id. Polling is deliberately daemon-local; clients do
+   not sweep each other."
+  []
+  (when (compare-and-set! idle-reaper nil ::starting)
+    (reset! idle-reaper (future (try (loop []
+
+                                       (Thread/sleep (long IDLE_REAP_MS))
+                                       (when @server-state (maybe-stop-when-idle!) (recur)))
+                                     (catch Throwable t
+                                       (tel/log! :warn
+                                                 ["gateway: idle reaper failed" (ex-message t)]))
+                                     (finally (reset! idle-reaper nil)))))))
 
 ;; =============================================================================
 ;; Bearer token (§3)
@@ -187,7 +226,10 @@
                     (.flush out)
                     (reset! last-seq (long (:seq event))))))]
 
-          (swap! server-state update :sse-clients (fnil conj #{}) sub-id)
+          (swap! server-state (fn [st]
+                                (-> st
+                                    (assoc :saw-client? true)
+                                    (update :sse-clients (fnil conj #{}) sub-id))))
           (try (locking out
                  ;; 8KB SSE comment pad (clients ignore comments): proxy edges
                  ;; (Cloudflare tunnel) buffer a streaming body until a byte
@@ -300,9 +342,12 @@
         client-id
         (str (java.util.UUID/randomUUID))]
 
-    (swap! server-state assoc-in
-      [:clients client-id]
-      {:pid pid :kind kind :connected-at (System/currentTimeMillis)})
+    (swap! server-state (fn [st]
+                          (-> st
+                              (assoc :saw-client? true)
+                              (assoc-in
+                                [:clients client-id]
+                                {:pid pid :kind kind :connected-at (System/currentTimeMillis)}))))
     (json-response {:client_id client-id :status (status-map)})))
 
 (defn- client-release-handler
@@ -324,9 +369,19 @@
 
 (defn- models-handler
   [_]
-  (json-response {:providers (mapv (fn [{:provider/keys [id doc]}]
-                                     {:id (name id) :doc doc})
-                                   (registry/registered-providers))}))
+  (json-response
+    {:providers (mapv (fn [{:provider/keys [id doc]}]
+                        {:id (name id) :doc doc})
+                      (registry/registered-providers))
+     ;; Configured fleet with per-provider model names — the same source every
+     ;; channel's model picker renders (`configured-providers`), so no channel
+     ;; needs its own catalog route.
+     :catalog (into []
+                    (keep (fn [{:keys [id models]}]
+                            (let [names (into [] (keep :name) models)]
+                              (when (seq names)
+                                {:id (name id) :label (config/display-label id) :models names}))))
+                    (providers/configured-providers))}))
 
 (defn- configured-provider
   [provider-id]
@@ -346,6 +401,96 @@
   (let [provider-id (some-> (get-in request [:path-params :provider-id])
                             keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
+(defn- toggle-wire-id [id] (str (namespace id) "/" (name id)))
+
+(defn- toggle-json
+  "One settings row as JSON — the wire twin of the web channel's
+   `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
+   `value` + `choices`."
+  [{:keys [id label description type]}]
+  (let [choices
+        (try (toggles/choices-of id) (catch Throwable _ nil))
+
+        value
+        (try (toggles/value-of id) (catch Throwable _ nil))
+
+        pretty
+        (fn [v]
+          (if (keyword? v) (name v) (str v)))
+
+        base
+        {:id (toggle-wire-id id)
+         :label (str (or label id))
+         :type (name (or type (if (seq choices) :enum :boolean)))}]
+
+    (cond-> base
+      description
+      (assoc :description (str description))
+
+      (seq choices)
+      (assoc :value
+        (pretty value) :choices
+        (mapv pretty choices))
+
+      (empty? choices)
+      (assoc :enabled (boolean (try (toggles/enabled? id) (catch Throwable _ false)))))))
+
+(defn- list-settings-handler
+  "GET /v1/settings[?channel=web|all] — the feature-toggle registry every
+   channel renders (web dialog, TUI pane, mobile app) as grouped JSON.
+   `channel` scopes rows exactly like `toggles-for-channel`; `all` (or
+   `*`, or omitting the param) ships every visible toggle regardless of
+   channel — the cross-channel view a remote companion wants."
+  [request]
+  (let [raw
+        (get-in request [:query-params "channel"])
+
+        channel
+        (when (and raw (not (contains? #{"all" "*"} (str/lower-case raw)))) (keyword raw))
+
+        specs
+        (if channel (toggles/toggles-for-channel channel) (toggles/visible-toggles))
+
+        grouped
+        (sort-by (comp str key) (group-by #(or (:group %) :other) specs))]
+
+    (json-response {:groups (into []
+                                  (map (fn [[group group-specs]]
+                                         {:id (name group)
+                                          :title (str/capitalize
+                                                   (str/replace (name group) #"[-_]+" " "))
+                                          :toggles (mapv toggle-json group-specs)}))
+                                  grouped)})))
+
+(defn- set-setting-handler
+  "POST /v1/settings {id, action} — flip (`toggle`, the default) or
+   `cycle` one registered toggle; answers with the refreshed row. JSON
+   body or query params both work."
+  [request]
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
+
+        id-str
+        (or (:id body) (get-in request [:query-params "id"]))
+
+        action
+        (str (or (:action body) (get-in request [:query-params "action"]) "toggle"))
+
+        [ns* n]
+        (when id-str (str/split (str id-str) #"/" 2))
+
+        id
+        (when (and ns* (seq (str n))) (keyword ns* n))
+
+        spec
+        (when id (toggles/toggle-spec id))]
+
+    (cond (nil? id) (error-response 400 :bad-setting-id "settings id must be <ns>/<name>")
+          (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
+          :else (do (if (= action "cycle")
+                      (toggles/cycle-value! id)
+                      (toggles/set-enabled! id (not (toggles/enabled? id))))
+                    (json-response (toggle-json (toggles/toggle-spec id)))))))
 
 (defn- create-session-handler
   [request]
@@ -756,6 +901,7 @@
         {:get (fn [req]
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
        ["/v1" ["/models" {:get models-handler}]
+        ["/settings" {:get list-settings-handler :post set-setting-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
         ["/clients" {:post client-register-handler}]
@@ -944,7 +1090,7 @@
    Safe to call from any host process - the daemon (`vis gateway start`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
-  ([{:keys [port host token-file require-token? db]}]
+  ([{:keys [port host token-file require-token? db managed?]}]
    (when @server-state (throw (ex-info "gateway already running" {:type :gateway/already-running})))
    (let [port
          (int (or port DEFAULT_PORT))
@@ -978,7 +1124,10 @@
          ;; first request; a failed boot must roll the state back so a
          ;; retry isn't refused as "already running".
          _
-         (reset! server-state {:token token :require-token? require-token?})
+         (reset! server-state {:token token
+                               :require-token? require-token?
+                               :managed? (boolean managed?)
+                               :started-at-ms (System/currentTimeMillis)})
 
          _
          (rebuild-app!)
@@ -1021,14 +1170,23 @@
                            :db db
                            :clients {}
                            :sse-clients #{}
-                           :require-token? require-token?})
+                           :require-token? require-token?
+                           :managed? (boolean managed?)
+                           :started-at-ms (System/currentTimeMillis)
+                           :saw-client? false})
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
+     (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
-                (if require-token? "auth: bearer token" "auth: disabled (loopback)")])
-     {:port port :host host :token-file (str path) :require-token? require-token?})))
+                (if require-token? "auth: bearer token" "auth: disabled (loopback)")
+                (if managed? "lifecycle: managed" "lifecycle: foreground")])
+     {:port port
+      :host host
+      :token-file (str path)
+      :require-token? require-token?
+      :managed? (boolean managed?)})))
 
 (defn stop!
   "Stop the gateway server if running. Idempotent."
@@ -1063,7 +1221,7 @@
 (defn serve-main!
   "Blocking entry for the `vis gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
-  [{:keys [port host token-file require-token? db]}]
+  [{:keys [port host token-file require-token? db managed?]}]
   ;; Profile the daemon into its own JFR file when VIS_JFR is inherited from the
   ;; client that spawned us (idempotent with the -main call for direct callers).
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
@@ -1073,7 +1231,8 @@
                                                                :host host
                                                                :token-file token-file
                                                                :require-token? require-token?
-                                                               :db db})]
+                                                               :db db
+                                                               :managed? managed?})]
     (println (str "vis gateway listening on http://" host ":" port))
     (if require-token?
       (println (str "bearer token: " token-file))

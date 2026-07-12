@@ -256,6 +256,10 @@
     (doto pb
       (.redirectOutput ProcessBuilder$Redirect/DISCARD)
       (.redirectError ProcessBuilder$Redirect/DISCARD))
+    ;; Marks this `vis gateway start` as client-managed rather than a user-owned
+    ;; foreground daemon. The daemon should self-reap when the last client dies;
+    ;; a manually-run `vis gateway start` must not.
+    (.put (.environment pb) "VIS_GATEWAY_MANAGED" "1")
     (.start pb)
     nil))
 

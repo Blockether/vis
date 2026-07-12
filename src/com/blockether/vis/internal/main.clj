@@ -2255,9 +2255,7 @@
        (filter #(= provider-id (:id %)))
        first))
 
-(defn- configured-provider-status
-  [provider]
-  (gateway-provider-status-safe (:provider/id provider)))
+(defn- configured-provider-status [provider] (gateway-provider-status-safe (:provider/id provider)))
 
 (defn- configured-provider-base-url
   [provider-id]
@@ -2800,6 +2798,7 @@
      :host (get parsed "host")
      :token-file (get parsed "token-file")
      :require-token? (boolean (get parsed "require-token"))
+     :managed? (= "1" (System/getenv "VIS_GATEWAY_MANAGED"))
      :db (config/resolve-db-spec (when-let [db (get parsed "db")]
                                    (if (= db ":memory") :memory {:backend :sqlite :path db})))}))
 
@@ -3551,7 +3550,7 @@
     ;; spawned gateway daemon (`vis gateway start`) records to its OWN file,
     ;; separate from this client's — see internal.jfr.
     (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!)
-          (if (= "gateway" (first args)) "gateway" "client"))
+           (if (= "gateway" (first args)) "gateway" "client"))
          (catch Throwable _ nil))
     (try
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
