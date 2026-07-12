@@ -22,7 +22,19 @@ const splitBlocks = (src: string): Block[] => {
     blocks.push({ kind: "code", lang: (match[1] ?? "").trim(), body: (match[2] ?? "").replace(/\n$/, "") });
     last = match.index + match[0].length;
   }
-  if (last < src.length) blocks.push({ kind: "text", body: src.slice(last) });
+  if (last < src.length) {
+    /* A still-streaming answer often has an OPEN fence whose closing ``` has
+       not arrived yet — render it as a code block now instead of leaking raw
+       backticks into the prose until the turn settles. */
+    const tail = src.slice(last);
+    const open = /```([^\n`]*)\n?([\s\S]*)$/.exec(tail);
+    if (open) {
+      if (open.index > 0) blocks.push({ kind: "text", body: tail.slice(0, open.index) });
+      blocks.push({ kind: "code", lang: (open[1] ?? "").trim(), body: (open[2] ?? "").replace(/\n$/, "") });
+    } else {
+      blocks.push({ kind: "text", body: tail });
+    }
+  }
   return blocks;
 };
 
@@ -52,7 +64,22 @@ const renderInline = (line: string, keyBase: string): React.ReactNode[] => {
     last = match.index + tok.length;
     i += 1;
   }
-  if (last < line.length) out.push(line.slice(last));
+  if (last < line.length) {
+    /* A trailing, not-yet-closed inline `code span (streaming) — style the tail
+       as code rather than surfacing a lone literal backtick. */
+    const rest = line.slice(last);
+    const tick = rest.indexOf("`");
+    if (tick >= 0 && rest.indexOf("`", tick + 1) === -1) {
+      if (tick > 0) out.push(rest.slice(0, tick));
+      out.push(
+        <Text key={`${keyBase}-c${i}`} style={styles.inlineCode}>
+          {rest.slice(tick + 1)}
+        </Text>
+      );
+    } else {
+      out.push(rest);
+    }
+  }
   return out;
 };
 
