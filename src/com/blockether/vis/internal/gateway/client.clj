@@ -237,6 +237,44 @@
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
+;; --- Session groups (folders) + ownership (V6) ---
+
+(defn list-groups
+  "GET /v1/groups. `opts`: :channel (keyword/string, :all ⇒ every group),
+   :owner (string), :archived? (bool). Returns the :groups vector."
+  ([] (list-groups nil))
+  ([{:keys [channel owner archived?]}]
+   (let [qs
+         (->> [(when (and channel (not= :all channel) (not= "all" channel))
+                 (str "channel=" (enc (name channel)))) (when owner (str "owner=" (enc owner)))
+               (when archived? "archived=true")]
+              (remove nil?)
+              (str/join "&"))
+
+         path
+         (cond-> "/v1/groups"
+           (seq qs)
+           (str "?" qs))]
+
+     (:groups (send-json! "GET" path)))))
+
+(defn create-group! [opts] (send-json! "POST" "/v1/groups" opts))
+
+(defn get-group
+  [gid]
+  (try (send-json! "GET" (str "/v1/groups/" (enc gid)))
+       (catch clojure.lang.ExceptionInfo e
+         (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
+
+(defn update-group! [gid opts] (send-json! "PATCH" (str "/v1/groups/" (enc gid)) opts))
+
+(defn delete-group! [gid] (send-json! "DELETE" (str "/v1/groups/" (enc gid))))
+
+(defn assign-group!
+  "Assign a session to a group (nil clears / ungroups). Returns the soul."
+  [sid gid]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:group_id (when gid (str gid))}))
+
 (defn release-session!
   "Release a session VIEW when the owning channel exits: tell the daemon to
    stop the session's background resources (shell_bg children, REPLs) and drop
@@ -281,9 +319,31 @@
                       (str "/v1/sessions/" (enc sid) "/model")
                       {:provider provider :model model})))
 
+(defn- decode-workspace
+  "Re-hydrate a gateway workspace response into the engine's HYPHENATED
+   workspace-record shape the channels read (`:repo-root`, `:fork-ms`,
+   `:filesystem-roots` with `:trunk`/`:clone`/`:fork-ms`/`:backend`).
+
+   The wire munges keyword keys `-`->`_` on the way out (`wire/->wire`) while
+   `parse-json` keywordizes VERBATIM, so every hyphenated key comes back snake
+   (`:filesystem-roots` -> `:filesystem_roots`) and a channel reading the kebab
+   key sees nil — the TUI picker/footer never showed the added root. Invert the
+   munge GENERICALLY with `wire/kebab-keys` (recursively, ALL keys) so a
+   newly-added hyphenated workspace key can never silently reintroduce this bug,
+   then keyword-coerce the `:backend` VALUE (a keyword the wire stringified).
+   nil-safe; idempotent on already-kebab in-process input."
+  [w]
+  (when w
+    (let [w (wire/kebab-keys w)]
+      (cond-> w
+        (contains? w :filesystem-roots)
+        (update :filesystem-roots
+                (fn [rs]
+                  (when (seq rs) (mapv #(cond-> % (:backend %) (update :backend keyword)) rs))))))))
+
 (defn session-workspace-info
   [sid]
-  (:workspace (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace"))))
+  (decode-workspace (:workspace (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace")))))
 
 (defn add-filesystem-root!
   "Add `path` as an extra filesystem root for `sid` IN THE DAEMON, returning the
@@ -291,20 +351,25 @@
    new root is what every channel reads back (fixing the local-only mutation that
    never reached the running session)."
   [sid path]
-  (:workspace (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})))
+  (decode-workspace (:workspace (send-json! "POST"
+                                            (str "/v1/sessions/" (enc sid) "/workspace/roots")
+                                            {:path path}))))
 
 (defn remove-filesystem-root!
   "Remove `path` from `sid`'s extra filesystem roots IN THE DAEMON, returning the
    refreshed `session-workspace-info`."
   [sid path]
-  (:workspace
-    (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})))
+  (decode-workspace (:workspace (send-json! "DELETE"
+                                            (str "/v1/sessions/" (enc sid) "/workspace/roots")
+                                            {:path path}))))
 
 (defn change-root!
   "Repoint `sid`'s PRIMARY filesystem root to `path` IN THE DAEMON, returning the
    refreshed `session-workspace-info` (whose `:id` is the newly pinned workspace)."
   [sid path]
-  (:workspace (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/workspace/root") {:path path})))
+  (decode-workspace (:workspace (send-json! "PATCH"
+                                            (str "/v1/sessions/" (enc sid) "/workspace/root")
+                                            {:path path}))))
 
 (defn submit-turn!
   [sid opts]
