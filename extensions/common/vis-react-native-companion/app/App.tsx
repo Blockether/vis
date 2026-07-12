@@ -420,9 +420,17 @@ function Root() {
 
   const refreshSessions = useCallback(async () => {
     try {
-      const [ss, gs] = await Promise.all([client.listSessions(), client.listGroups()]);
+      const ss = await client.listSessions();
       setSessions(ss);
-      setGroups(gs);
+      /* Session groups are a newer gateway feature — an older/stale gateway 404s
+         /v1/groups. Never let that blank the sessions list; fall back to no
+         folders so the drawer still shows every session. */
+      try {
+        setGroups(await client.listGroups());
+      } catch (groupErr) {
+        if (__DEV__) console.warn("[vis] listGroups failed", groupErr);
+        setGroups([]);
+      }
     } catch (err) {
       fail(err);
     }

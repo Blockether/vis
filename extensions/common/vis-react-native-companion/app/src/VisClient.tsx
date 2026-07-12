@@ -179,7 +179,15 @@ export class VisGatewayClient {
     const body = text ? JSON.parse(text) : null;
 
     if (!response.ok) {
-      const message = body?.message ?? body?.error ?? `${response.status} ${response.statusText}`;
+      /* The gateway wraps errors as {error: {type, message, …}} (server.clj
+         error-response). Reach the nested string — reading body.error raw would
+         stringify the whole object to the infamous "[object Object]". Tolerate a
+         plain-string error too, and a bare {message}. */
+      const errObj = body?.error;
+      const message =
+        (typeof errObj === "string" ? errObj : errObj?.message) ??
+        body?.message ??
+        `${response.status} ${response.statusText}`;
       throw new Error(String(message));
     }
 
