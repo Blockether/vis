@@ -1,0 +1,5 @@
+;; React Native mobile companion extension.
+;; Loading this namespace contributes the tiny /rn gateway helper routes; it does
+;; not register a channel command.
+{react-native-companion
+ {:nses [com.blockether.vis.ext.react-native-companion.core]}}

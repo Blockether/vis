@@ -9,7 +9,6 @@
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -108,42 +107,49 @@
 
 (defdescribe
   configured-provider-status-test
-  (it "treats persisted api-key providers as authenticated from config"
-      (expect (= {:authenticated? true :source :config :config-path vis/config-path}
-                 (select-keys (@#'provider/configured-provider-status
-                               {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                              [:authenticated? :source :config-path]))))
-  (it "routes local no-auth providers through the liveness probe (source :local)"
-      ;; Local providers (Ollama / LM Studio) have no api-key and their
-      ;; registered status-fn is a hardcoded stub, so `configured-provider-status`
-      ;; now probes the endpoint for real instead of delegating. The probe lives
-      ;; in the channel-neutral core service (`internal.providers`); stub the
-      ;; CORE var so this stays hermetic.
-      (with-redefs-fn {#'providers/probe-local-reachable
-                       (constantly {:authenticated? true :source :local :provider-id :ollama})}
-        (fn []
-          (expect (= {:authenticated? true :source :local :provider-id :ollama}
+  (it "routes configured provider status through the gateway"
+      (with-redefs [vis/gateway-provider-status
+                    (fn [provider-id]
+                      {:authenticated? true
+                       :source :gateway
+                       :provider-id provider-id
+                       :config-path vis/config-path})]
+        (expect (= {:authenticated? true
+                    :source :gateway
+                    :provider-id :openai
+                    :config-path vis/config-path}
+                   (select-keys (@#'provider/configured-provider-status
+                                 {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
+                                [:authenticated? :source :provider-id :config-path])))))
+  (it "routes local no-auth provider status through the gateway instead of probing locally"
+      (let [local-probed? (atom false)]
+        (with-redefs [providers/probe-local-reachable
+                      (fn [_]
+                        (reset! local-probed? true)
+                        {:authenticated? true :source :local :provider-id :ollama})
+                      vis/gateway-provider-status
+                      (fn [provider-id]
+                        {:authenticated? true :source :gateway :provider-id provider-id})]
+          (expect (= {:authenticated? true :source :gateway :provider-id :ollama}
                      (select-keys (@#'provider/configured-provider-status {:id :ollama})
-                                  [:authenticated? :source :provider-id])))))))
+                                  [:authenticated? :source :provider-id])))
+          (expect (= false @local-probed?))))))
 
 (defdescribe
   provider-dialog-async-diagnostics-test
   (it "seeds provider diagnostics without running blocking provider probes"
-      ;; Redefs target the INTERNAL vars the core provider service calls
-      ;; (`internal.registry` / `internal.provider-limits`) — the
-      ;; `vis.core` re-exports are separate var objects.
       (let [status-called?
             (atom false)
 
             limits-called?
             (atom false)]
 
-        (with-redefs [registry/provider-by-id
-                      (constantly {:provider/status-fn (fn []
-                                                         (reset! status-called? true)
-                                                         {:authenticated? true})})
+        (with-redefs [vis/gateway-provider-status
+                      (fn [_]
+                        (reset! status-called? true)
+                        {:authenticated? true})
 
-                      provider-limits/provider-limits
+                      vis/gateway-provider-limits
                       (fn [_]
                         (reset! limits-called? true)
                         {:status :ok})]
@@ -171,13 +177,13 @@
           limits
           (atom {})]
 
-      (with-redefs [registry/provider-by-id
-                    (constantly {:provider/status-fn (fn []
-                                                       (deliver status-entered true)
-                                                       @release
-                                                       {:authenticated? true :source :test})})
+      (with-redefs [vis/gateway-provider-status
+                    (fn [provider-id]
+                      (deliver status-entered provider-id)
+                      @release
+                      {:authenticated? true :source :gateway})
 
-                    provider-limits/provider-limits
+                    vis/gateway-provider-limits
                     (fn [provider-id]
                       (deliver limits-entered provider-id)
                       @release
@@ -189,7 +195,7 @@
         (@#'provider/refresh-provider-diagnostics! {:id :slow} statuses limits)
         (expect (= true (get-in @statuses [:slow :loading?])))
         (expect (= :loading (get-in @limits [:slow :status])))
-        (expect (= true (deref status-entered 500 false)))
+        (expect (= :slow (deref status-entered 500 nil)))
         (expect (= :slow (deref limits-entered 500 nil)))
         (expect (= true (@#'provider/provider-diagnostics-loading? @statuses @limits)))
         (deliver release true)

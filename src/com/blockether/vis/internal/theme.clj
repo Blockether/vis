@@ -6,7 +6,9 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
 
-(def default-theme-id "The built-in theme id used when config has no explicit theme." "vis-light")
+(def default-theme-id
+  "The built-in theme id used when config has no explicit theme."
+  "blockether-light")
 
 (defn- byte? [x] (and (int? x) (<= 0 x 255)))
 
@@ -299,6 +301,178 @@
    :footer-warning-fg [251 191 36]
    :footer-error-fg [248 113 113]})
 
+(def blockether-light-palette
+  "Blockether brand light palette: warm cream ground + amber accent + brand
+   green/red/teal — the exact tokens the blockether.com site and the spel
+   Allure report use. A re-skin of `light-palette`; only the brand chrome is
+   overridden (syntax + per-tool badge colours are inherited)."
+  (merge
+    light-palette
+    {:terminal-bg [250 243 235]
+     :text-fg [38 38 38]
+     :header-fg [38 38 38]
+     :header-hover-fg [180 120 0]
+     :close-button-hover-fg [200 40 40]
+     :header-active-tab-fg [38 30 0]
+     :header-active-tab-bg [240 173 0]
+     :header-active-tab-accent [240 173 0]
+     :header-tab-number-fg [38 30 0]
+     :box-bg [250 243 235]
+     :box-fg [38 38 38]
+     :border-fg [140 133 122]
+     :dialog-bg [255 253 248]
+     :dialog-fg [38 38 38]
+     ;; Amber accent title stripe with dark ink — the blockether.com / spel
+     ;; report signature (amber on the warm ground) carried onto the dialog.
+     :dialog-title-fg [38 30 0]
+     :dialog-title-bg [240 173 0]
+     :button-bg [240 173 0]
+     :button-fg [38 30 0]
+     :dialog-border [201 193 179]
+     :dialog-shadow [214 205 191]
+     :dialog-hint [111 106 99]
+     :dialog-hint-key [63 63 63]
+     :input-field-bg [255 253 248]
+     :user-bubble-bg [250 243 235]
+     :user-bubble-fg [38 38 38]
+     :user-role-fg [111 106 99]
+     :turn-separator-bg [245 238 228]
+     :turn-separator-fg [180 172 158]
+     :ai-bubble-bg [250 243 235]
+     :ai-bubble-fg [38 38 38]
+     :ai-role-fg [22 163 74]
+     :status-ok [22 163 74]
+     :status-bad [220 38 38]
+     :warning-bg [250 236 197]
+     :warning-fg [122 74 0]
+     :warning-border [217 119 6]
+     :cancelled-bg [242 235 223]
+     :cancelled-fg [111 106 99]
+     :code-block-bg [242 235 223]
+     :code-ok-bg [223 240 224]
+     :code-err-bg [250 226 226]
+     :result-bg [242 235 223]
+     :result-path-bg [250 236 197]
+     :result-path-fg [140 92 0]
+     :code-block-fg [38 38 38]
+     :code-success-fg [22 163 74]
+     :code-error-fg [220 38 38]
+     :code-duration-fg [111 106 99]
+     :code-result-fg [38 38 38]
+     :code-error-result-fg [180 40 40]
+     :code-border-fg [140 133 122]
+     :iteration-header-fg [176 167 152]
+     :iteration-header-bg [245 238 228]
+     :answer-sep-fg [200 191 176]
+     :answer-sep-bg [250 243 235]
+     :answer-bg [250 243 235]
+     :answer-fg [38 38 38]
+     :md-h1-fg [38 38 38]
+     :md-h2-fg [63 63 63]
+     :md-h3-fg [90 84 74]
+     :confidence-fg [111 106 99]
+     :md-summary-bg [250 236 197]
+     :md-summary-fg [122 74 0]
+     :th-md-summary-bg [245 238 228]
+     :th-md-summary-fg [63 63 63]
+     :link-chrome-fg [8 145 178]
+     :link-chrome-arrow-fg [111 106 99]
+     :link-chrome-url-fg [120 110 95]
+     :link-chrome-hover-bg [250 236 197]
+     :link-chrome-hover-fg [180 120 0]
+     :link-chrome-blocked-fg [180 172 158]
+     :footer-fg [63 63 63]
+     :footer-fg-muted [111 106 99]
+     :footer-fg-strong [38 38 38]
+     :footer-spinner-fg [22 163 74]
+     :footer-warning-fg [180 110 0]
+     :footer-error-fg [200 40 40]}))
+
+(def blockether-dark-palette
+  "Blockether brand dark palette: deep slate ground + amber accent + brand
+   green/red/teal — matching the blockether.com / spel report dark theme.
+   A re-skin of `dark-palette`; syntax + per-tool badge colours are inherited."
+  (merge
+    dark-palette
+    {:terminal-bg [15 17 23]
+     :text-fg [243 244 246]
+     :header-fg [243 244 246]
+     :header-hover-fg [255 196 32]
+     :close-button-hover-fg [248 113 113]
+     :header-active-tab-fg [15 17 23]
+     :header-active-tab-bg [255 196 32]
+     :header-active-tab-accent [255 196 32]
+     :header-tab-number-fg [15 17 23]
+     :box-bg [22 24 32]
+     :box-fg [243 244 246]
+     :border-fg [70 74 84]
+     :dialog-bg [22 24 32]
+     :dialog-fg [243 244 246]
+     ;; Amber accent title stripe with dark ink — brand signature on dark.
+     :dialog-title-fg [15 17 23]
+     :dialog-title-bg [255 196 32]
+     :button-bg [40 43 54]
+     :button-fg [243 244 246]
+     :dialog-border [70 74 84]
+     :dialog-shadow [4 5 8]
+     :dialog-hint [156 163 175]
+     :dialog-hint-key [243 244 246]
+     :input-field-bg [12 14 18]
+     :user-bubble-bg [15 17 23]
+     :user-bubble-fg [243 244 246]
+     :user-role-fg [156 163 175]
+     :turn-separator-bg [20 22 30]
+     :turn-separator-fg [70 74 84]
+     :ai-bubble-bg [15 17 23]
+     :ai-bubble-fg [243 244 246]
+     :ai-role-fg [74 222 128]
+     :status-ok [74 222 128]
+     :status-bad [248 113 113]
+     :warning-bg [60 46 8]
+     :warning-fg [251 220 130]
+     :warning-border [251 191 36]
+     :cancelled-bg [30 32 40]
+     :cancelled-fg [156 163 175]
+     :code-block-bg [30 32 40]
+     :code-ok-bg [20 50 35]
+     :code-err-bg [69 26 34]
+     :result-bg [22 24 32]
+     :result-path-bg [60 46 8]
+     :result-path-fg [255 210 120]
+     :code-block-fg [243 244 246]
+     :code-success-fg [74 222 128]
+     :code-error-fg [248 113 113]
+     :code-duration-fg [156 163 175]
+     :code-result-fg [243 244 246]
+     :code-error-result-fg [252 165 165]
+     :code-border-fg [70 74 84]
+     :iteration-header-fg [120 120 120]
+     :iteration-header-bg [22 24 32]
+     :answer-sep-fg [70 74 84]
+     :answer-sep-bg [15 17 23]
+     :answer-bg [15 17 23]
+     :answer-fg [243 244 246]
+     :md-h1-fg [243 244 246]
+     :md-h2-fg [209 213 219]
+     :md-h3-fg [156 163 175]
+     :confidence-fg [156 163 175]
+     :md-summary-bg [60 46 8]
+     :md-summary-fg [255 220 150]
+     :th-md-summary-bg [22 24 32]
+     :th-md-summary-fg [180 180 180]
+     :link-chrome-fg [34 211 238]
+     :link-chrome-arrow-fg [156 163 175]
+     :link-chrome-url-fg [130 200 220]
+     :link-chrome-hover-bg [30 40 50]
+     :link-chrome-hover-fg [140 230 250]
+     :link-chrome-blocked-fg [70 74 84]
+     :footer-fg [209 213 219]
+     :footer-fg-muted [156 163 175]
+     :footer-fg-strong [243 244 246]
+     :footer-spinner-fg [74 222 128]
+     :footer-warning-fg [251 191 36]
+     :footer-error-fg [248 113 113]}))
+
 (def solarized-light-palette
   ;; Ethan Schoonover's Solarized Light: base3 paper, base00/base01 ink,
   ;; standard accent hues mapped onto the same roles as `light-palette`.
@@ -527,10 +701,20 @@
   "Solarized Dark theme."
   (make-theme "solarized-dark" "Solarized Dark" :dark solarized-dark-palette))
 
-(def default-theme vis-light)
+(def blockether-light
+  "Blockether brand light theme — warm cream + amber, matching blockether.com."
+  (make-theme "blockether-light" "Blockether Light" :light blockether-light-palette))
+
+(def blockether-dark
+  "Blockether brand dark theme — matching blockether.com / the spel report."
+  (make-theme "blockether-dark" "Blockether Dark" :dark blockether-dark-palette))
+
+(def default-theme blockether-light)
 
 (def built-in-themes
-  {"vis-light" vis-light
+  {"blockether-light" blockether-light
+   "blockether-dark" blockether-dark
+   "vis-light" vis-light
    "vis-dark" vis-dark
    "solarized-light" solarized-light
    "solarized-dark" solarized-dark})
@@ -766,6 +950,11 @@
    ;;   --accent    the lighter accent companion   --surface    the neutral panel ground
    ;;   --secondary emphasis ink  --warning/-bg warn text+ground  --ok/--err status.
    "--surface" :dialog-bg
+   ;; Dialog title stripe — the amber accent bar (blockether.com / spel report
+   ;; signature) the TUI dialog paints, so web modals wear the SAME header.
+   "--dialog-title-bg" :dialog-title-bg
+   "--dialog-title-fg" :dialog-title-fg
+   "--dialog-border" :dialog-border
    "--primary" :header-active-tab-bg
    "--primary-fg" :header-active-tab-fg
    "--accent" :header-active-tab-accent

@@ -123,14 +123,19 @@
 (import-vars [gateway-events-since gateway-client/events-since]
              [gateway-session-model gateway-client/session-model]
              [gateway-session-model-cached gateway-client/session-model-cached]
-             [gateway-set-session-model! gateway-client/set-session-model!])
+             [gateway-set-session-model! gateway-client/set-session-model!]
+             [gateway-provider-status gateway-client/provider-status]
+             [gateway-provider-limits gateway-client/provider-limits])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
 (import-vars [session-model-of session-model/model-of]
              [session-model-of-cached session-model/model-of-cached]
              [set-session-model! session-model/set-model!]
-             [gateway-session-workspace gateway-client/session-workspace-info])
+             [gateway-session-workspace gateway-client/session-workspace-info]
+             [gateway-add-filesystem-root! gateway-client/add-filesystem-root!]
+             [gateway-remove-filesystem-root! gateway-client/remove-filesystem-root!]
+             [gateway-change-root! gateway-client/change-root!])
 
 ;; =============================================================================
 ;; Cancellation

@@ -26,6 +26,7 @@ src:url('/ui/fonts/jetbrains-mono.woff2') format('woff2')}
 :root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--surface:#f8f8f8;
 --line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#6b6b6b;
 --primary:#2563eb;--primary-fg:#f0f4fc;--accent:#2563eb;--secondary:#1e1e1e;--warning:#503c00;--warning-bg:#fff5b4;
+--dialog-title-bg:#f0ad00;--dialog-title-fg:#261e00;--dialog-border:#c9c1b3;
 --hover:#f4f4f3;
 --err:#dc3232;--ok:#28a03c;
 --shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:0;--r-xs:0;--r-sm:0;--r-md:0;--r-lg:0;--r-xl:0;--r-circle:50%;--r-pill:999px;
@@ -903,7 +904,7 @@ backdrop-filter:blur(4px) saturate(1.1);-webkit-backdrop-filter:blur(4px) satura
 .modal{width:fit-content;max-width:min(40rem,calc(100vw - 2rem));
 min-width:min(21rem,calc(100vw - 2rem));max-height:86dvh;
 display:flex;flex-direction:column;overflow:hidden;background:var(--bg);
-border:1px solid var(--line);border-top:2px solid var(--primary);
+border:1px solid var(--dialog-border);border-top:2px solid var(--dialog-title-bg);
 border-radius:var(--r-xl);
 box-shadow:var(--shadow-lg);
 animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
@@ -912,10 +913,11 @@ animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 /* mid variant: a touch roomier than default (Backgrounds) */
 .modal.modal-mid{max-width:min(50rem,calc(100vw - 2rem));min-width:min(30rem,calc(100vw - 2rem))}
 .modal-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;
-padding:.35rem .7rem;border-bottom:1px solid var(--line);flex:none;
-background:var(--bg);position:relative;z-index:1;min-height:2.35rem}
+padding:.35rem .7rem;border-bottom:1px solid var(--dialog-border);flex:none;
+background:var(--dialog-title-bg);color:var(--dialog-title-fg);position:relative;z-index:1;min-height:2.35rem}
 .modal-head h2{font-size:.92rem;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.modal-head .bar-toggle{width:26px;height:26px;font-size:.85rem}
+.modal-head .bar-toggle{width:26px;height:26px;font-size:.85rem;color:var(--dialog-title-fg)}
+.modal-head .bar-toggle:hover{background:color-mix(in srgb,var(--dialog-title-fg) 14%,transparent);color:var(--dialog-title-fg)}
 .modal-body{padding:.5rem .7rem .8rem;overflow-y:auto;flex:1 1 auto;min-height:0}
 .modal-section{padding:.6rem 0}
 .modal-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
@@ -1294,7 +1296,7 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
   .modal{width:100%;max-width:100%;height:100dvh;max-height:100dvh;
     border:0;border-radius:0;box-shadow:none}
   .modal-head{padding:max(.65rem,env(safe-area-inset-top)) .9rem .65rem;
-    border-bottom:1px solid var(--line)}
+    border-bottom:1px solid var(--dialog-border)}
   .modal-head h2{font-size:1.15rem;letter-spacing:.01em}
   .modal-body{padding:.65rem .9rem max(1rem,env(safe-area-inset-bottom))}
 }

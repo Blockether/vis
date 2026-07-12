@@ -1,0 +1,13 @@
+{:paths ["src" "resources"]
+ ;; React Native companion app plus tiny gateway helper routes.
+ ;; This does not register a `vis channels ...` entry.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.5"}
+  com.blockether/vis    {:local/root "../../.."}
+  com.cnuernber/charred {:mvn/version "1.039"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main"]}}}

@@ -118,6 +118,12 @@
                      (expect (not (str/includes? ex "rejected the request")))))
                (it "the next step tells the user to just retry"
                    (expect (str/includes? (perr/provider-error-next-step err) "retry")))
+               (it "classifies the terse `closed` wrapper as transport"
+                   (let [closed-err {:message "closed" :data {}}]
+                     (expect (= :transport (perr/provider-error-kind closed-err)))
+                     (expect (= "Could not reach provider" (perr/provider-error-title closed-err)))
+                     (expect (str/includes? (perr/provider-error-explanation closed-err)
+                                            "connection dropped"))))
                (it "a real HTTP status is NOT mistaken for a transport failure"
                    (expect (= :generic
                               (perr/provider-error-kind
