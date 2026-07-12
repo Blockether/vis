@@ -2336,7 +2336,9 @@
         actual-size
         (.length file)]
 
-    (cond (and (some? expected_mtime) (not= (long expected_mtime) actual-mtime))
+    (cond (and (some? expected_mtime)
+               (pos? (long expected_mtime))
+               (not= (long expected_mtime) actual-mtime))
           {:reason :stale-mtime
            :expected_mtime expected_mtime
            :actual-mtime actual-mtime
@@ -2953,41 +2955,44 @@
             actual-mtime (when exists? (.lastModified file))
             actual-size (when exists? (.length file))
             fail
-            (cond
-              is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
-              (and (not is_overwrite) exists?)
-              {:reason :exists
-               :path rel
-               :message (str "write refused: " rel " already exists and :is_overwrite is false")}
-              ;; A whole-file write over a file with UNCOMMITTED changes is
-              ;; how a truncated reconstruction silently wipes work. Refuse
-              ;; it: surgical edits belong in patch()/struct_patch().
-              (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
-              {:reason :dirty
-               :path rel
-               :message (str "write refused: "
-                             rel
-                             " has UNCOMMITTED changes — a "
-                             "whole-file write would clobber edits already in flight "
-                             "(this is exactly how a truncated reconstruction wipes a "
-                             "file). Make surgical changes with patch(...) or "
-                             "struct_patch(...) instead, or commit/checkout "
-                             rel
-                             " first. Pass allow_dirty=True to overwrite on purpose.")}
-              (and exists? (some? expected_mtime) (not= (long expected_mtime) (long actual-mtime)))
-              {:reason :stale
-               :stale {:reason :stale-mtime
-                       :expected_mtime expected_mtime
-                       :actual-mtime actual-mtime
-                       :actual-size actual-size}
-               :message (str "write refused: " rel " mtime changed since :expected_mtime")}
-              (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
-              {:reason :stale
-               :stale {:reason :stale-size
-                       :expected_size expected_size
-                       :actual-size actual-size
-                       :actual-mtime actual-mtime}
-               :message (str "write refused: " rel " size changed since :expected_size")})]
+            (cond is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
+                  (and (not is_overwrite) exists?)
+                  {:reason :exists
+                   :path rel
+                   :message
+                   (str "write refused: " rel " already exists and :is_overwrite is false")}
+                  ;; A whole-file write over a file with UNCOMMITTED changes is
+                  ;; how a truncated reconstruction silently wipes work. Refuse
+                  ;; it: surgical edits belong in patch()/struct_patch().
+                  (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
+                  {:reason :dirty
+                   :path rel
+                   :message (str "write refused: "
+                                 rel
+                                 " has UNCOMMITTED changes — a "
+                                 "whole-file write would clobber edits already in flight "
+                                 "(this is exactly how a truncated reconstruction wipes a "
+                                 "file). Make surgical changes with patch(...) or "
+                                 "struct_patch(...) instead, or commit/checkout "
+                                 rel
+                                 " first. Pass allow_dirty=True to overwrite on purpose.")}
+                  (and exists?
+                       (some? expected_mtime)
+                       (pos? (long expected_mtime))
+                       (not= (long expected_mtime) (long actual-mtime)))
+                  {:reason :stale
+                   :stale {:reason :stale-mtime
+                           :expected_mtime expected_mtime
+                           :actual-mtime actual-mtime
+                           :actual-size actual-size}
+                   :message (str "write refused: " rel " mtime changed since :expected_mtime")}
+                  (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
+                  {:reason :stale
+                   :stale {:reason :stale-size
+                           :expected_size expected_size
+                           :actual-size actual-size
+                           :actual-mtime actual-mtime}
+                   :message (str "write refused: " rel " size changed since :expected_size")})]
 
         (if fail
           (let [n (bump-patch-fail-count! file)]
