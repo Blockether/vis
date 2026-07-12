@@ -155,22 +155,25 @@
       ;; detached HEAD, no-upstream) are noise — show the draft's location
       ;; (so the user knows WHERE the isolated tree lives) and how many
       ;; files differ, all in one chunk.
-      draft? [{:text (str "DRAFT "
+      draft? [{:text (str " DRAFT "
                           (if draft-root (abbreviate-home draft-root) "draft")
                           (when-let [bits (git-change-bits status)]
                             (str " (" bits ")"))
-                          (when chord (str "  (" chord ")")))
+                          (when chord (str "  (" chord ")"))
+                          " ")
                :fg t/footer-warning-fg
                :bold? true
                :region :right
                :priority 2
+               :tint :draft
                :kind :footer-git}]
       workspace? [{:text
-                   (str git-label " " (git-repo-label status) (when chord (str "  (" chord ")")))
+                   (str " " git-label " " (git-repo-label status) (when chord (str "  (" chord ")")) " ")
                    :fg t/footer-fg-strong
                    :bold? true
                    :region :right
                    :priority 2
+                   :tint :git
                    :kind :footer-git}]
       :else [{:text (str "No " git-label)
               :fg t/footer-error-fg
@@ -868,7 +871,7 @@
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
                 ;; accent on hover, click region registered under `:kind`).
-                (do (components/button! g c row (:text s) (:kind s) {:register? true})
+                (do (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
                     (+ c (p/display-width (:text s))))
                 (do (p/clear-styles! g)
                     (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
