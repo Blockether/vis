@@ -146,28 +146,37 @@
       (str path))))
 (defn- git-footer-spans
   [{:keys [workspace? draft? draft-root] :as status}]
-  (cond
-    ;; In a draft, the clone's internal git details (clone dir name,
-    ;; detached HEAD, no-upstream) are noise — show the draft's location
-    ;; (so the user knows WHERE the isolated tree lives) and how many
-    ;; files differ, all in one chunk.
-    draft? [{:text (str "DRAFT "
-                        (if draft-root (abbreviate-home draft-root) "draft")
-                        (when-let [bits (git-change-bits status)]
-                          (str " (" bits ")")))
-             :fg t/footer-warning-fg
-             :bold? true
-             :region :right
-             :priority 2
-             :kind :footer-git}]
-    workspace? [{:text (str git-label " " (git-repo-label status))
-                 :fg t/footer-fg-strong
-                 :bold? true
-                 :region :right
-                 :priority 2
-                 :kind :footer-git}]
-    :else
-    [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
+  ;; The chord rides ON the chip (like the `resources N (C-x s)` /
+  ;; `filesystem N (C-x d)` buttons) so C-x g is discoverable right where the
+  ;; git button lives, not only in the help overlay.
+  (let [chord (keymap/label-for :open-magit)]
+    (cond
+      ;; In a draft, the clone's internal git details (clone dir name,
+      ;; detached HEAD, no-upstream) are noise — show the draft's location
+      ;; (so the user knows WHERE the isolated tree lives) and how many
+      ;; files differ, all in one chunk.
+      draft? [{:text (str "DRAFT "
+                          (if draft-root (abbreviate-home draft-root) "draft")
+                          (when-let [bits (git-change-bits status)]
+                            (str " (" bits ")"))
+                          (when chord (str "  (" chord ")")))
+               :fg t/footer-warning-fg
+               :bold? true
+               :region :right
+               :priority 2
+               :kind :footer-git}]
+      workspace? [{:text
+                   (str git-label " " (git-repo-label status) (when chord (str "  (" chord ")")))
+                   :fg t/footer-fg-strong
+                   :bold? true
+                   :region :right
+                   :priority 2
+                   :kind :footer-git}]
+      :else [{:text (str "No " git-label)
+              :fg t/footer-error-fg
+              :bold? true
+              :region :right
+              :priority 2}])))
 (def ^:private session-cost-keys
   [:input-cost :input-uncached-cost :input-cached-cost :input-cache-write-cost :cache-read-cost
    :cache-write-cost :output-cost :total-cost])
