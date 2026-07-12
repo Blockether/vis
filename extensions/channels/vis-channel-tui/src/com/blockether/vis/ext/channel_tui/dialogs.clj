@@ -1888,6 +1888,68 @@
 
     [t/dialog-fg false]))
 
+(defn- run-async-with-ticker!
+  "Run blocking `thunk` on a BACKGROUND thread so the caller's UI thread stays
+   live. Between polls it calls `(tick!)` (paint a spinner frame, drain input)
+   every `poll-ms` until the work settles, then returns `thunk`'s value. A thrown
+   `thunk` becomes `{:ok? false :msg <message>}` — a network verb never escapes
+   as an exception onto the modal loop. Screen-free control flow, so it is
+   unit-testable with a plain counting `tick!`."
+  [thunk tick! poll-ms]
+  (let [fut (future (try (thunk)
+                         (catch Throwable t
+                           {:ok? false :msg (or (not-empty (ex-message t)) (str t))})))]
+    (loop []
+
+      (if (realized? fut) @fut (do (tick!) (Thread/sleep (long poll-ms)) (recur))))))
+
+(defn- draw-network-spinner!
+  "Paint a tiny centered `Git` box with a braille spinner + `label…` over the
+   current screen, and drain any keystrokes typed while the op runs so they can't
+   misfire once it returns. Best-effort — a draw failure never aborts the wait."
+  [^TerminalScreen screen ^String label]
+  (try (loop []
+
+         (when (.pollInput screen) (recur)))
+       (let [size
+             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+             cols
+             (.getColumns size)
+
+             rows
+             (.getRows size)
+
+             g
+             (.newTextGraphics screen)
+
+             {:keys [left top inner-w inner-h]}
+             (draw-dialog-chrome! g cols rows "Git" 1)
+
+             text
+             (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
+
+             row-y
+             (+ (long top) (quot (long inner-h) 2))
+
+             tx
+             (+ (long left) 1 (max 0 (quot (- (long inner-w) (count text)) 2)))]
+
+         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+         (p/put-str! g tx row-y (ellipsize text (max 1 (long inner-w))))
+         (.setCursorPosition screen (p/cursor-pos 0 0))
+         (.refresh screen Screen$RefreshType/DELTA))
+       (catch Throwable _ nil)))
+
+(defn- run-network!
+  "Run a blocking git network `thunk` (push/pull/fetch) on a background thread
+   while a spinner keeps the modal alive and shows `label` progress, returning the
+   thunk's `{:ok? :msg}`. The fix for the frozen-UI-on-pull gripe: the network
+   round-trip no longer blocks the render/input loop."
+  [^TerminalScreen screen label thunk]
+  (run-async-with-ticker! thunk #(draw-network-spinner! screen label) 80))
+
+
 (defn- magit-section-action!
   "Apply `f` (a `path → result` action) to every file row under the `:section`
    header at `idx`. Returns the first failure, or a rolled-up success."
@@ -1948,7 +2010,10 @@
                                [{:label "Push" :id :push}
                                 {:label "Push, set upstream (-u origin)" :id :upstream}
                                 {:label "Force push (--force-with-lease)" :id :force}])]
-    (magit/push! root {:set-upstream? (= :upstream (:id c)) :force? (= :force (:id c))})))
+    (run-network!
+      screen
+      "Pushing"
+      #(magit/push! root {:set-upstream? (= :upstream (:id c)) :force? (= :force (:id c))}))))
 
 (defn- magit-branch-flow!
   [^TerminalScreen screen root]
@@ -2043,10 +2108,10 @@
     (magit-push-flow! screen root)
 
     \F
-    (magit/pull! root)
+    (run-network! screen "Pulling" #(magit/pull! root))
 
     \f
-    (magit/fetch! root)
+    (run-network! screen "Fetching" #(magit/fetch! root))
 
     \b
     (magit-branch-flow! screen root)
