@@ -142,6 +142,20 @@
 (def footer-warning-fg (rgb :footer-warning-fg))
 (def footer-error-fg (rgb :footer-error-fg))
 
+(defn chip-tint
+  "Foreground/background pair for a semantically COLOURED button chip
+   (`components/button!`'s `:tint`). The cap is FILLED with the accent colour and
+   the label painted in the inverse-tab foreground for contrast — the same
+   filled-cap treatment hovered header buttons use, so a tinted chip reads as a
+   real button, not decoration. Unknown tints fall back to the neutral button
+   palette."
+  [tint]
+  (case tint
+    :git [header-active-tab-fg code-success-fg]
+    (:draft :warning) [header-active-tab-fg footer-warning-fg]
+    :error [header-active-tab-fg footer-error-fg]
+    [button-fg button-bg]))
+
 ;; Widths
 (def dialog-width-ratio (width :dialog-width-ratio))
 (def dialog-min-width (width :dialog-min-width))
@@ -212,6 +226,7 @@
    :code-syntax-number-fg #'code-syntax-number-fg
    :code-syntax-comment-fg #'code-syntax-comment-fg
    :code-border-fg #'code-border-fg
+   :result-bg #'result-bg
    :result-path-bg #'result-path-bg
    :result-path-fg #'result-path-fg
    :tool-color-read #'tool-color-read

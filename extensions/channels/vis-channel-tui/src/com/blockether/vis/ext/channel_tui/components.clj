@@ -114,7 +114,7 @@
    against `cr/hovered`, so two buttons of the same kind but different ids stay
    independent."
   ([g col row label kind] (button! g col row label kind nil))
-  ([g col row label kind {:keys [extra danger? accent? register?] :or {register? true}}]
+  ([g col row label kind {:keys [extra danger? accent? register? tint] :or {register? true}}]
    (let [w
          (long (p/display-width label))
 
@@ -143,8 +143,9 @@
            (and hovered? accent?) (p/set-colors! g t/header-active-tab-fg t/header-hover-fg)
            accent? (p/set-colors! g t/header-active-tab-fg t/code-success-fg)
            hovered? (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+           tint (let [[fg bg] (t/chip-tint tint)] (p/set-colors! g fg bg))
            :else (p/set-colors! g t/button-fg t/button-bg))
-     (when (or hovered? accent?) (p/enable! g p/BOLD))
+     (when (or hovered? accent? tint) (p/enable! g p/BOLD))
      (p/put-str! g col row label)
      (p/clear-styles! g)
      (when register?
