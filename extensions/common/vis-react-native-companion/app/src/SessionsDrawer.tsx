@@ -9,14 +9,15 @@ import {
   View
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import { GatewayGroup, SessionSoul } from "./VisClient";
-import { c, mono, relTime, shortId } from "./theme";
+import { c, mono, projectColor, relTime, shortId, tint } from "./theme";
 import { ActionBtn, DialogModal } from "./ui";
 
 const PANEL_W = 316;
 
-/* The drawer renders a mixed list: folder headers + their sessions + an
+/* The drawer renders a mixed list: project headers + their sessions + an
    "ungrouped" bucket. A discriminated union keeps the FlatList virtualized
    while carrying both row kinds. */
 type Row =
@@ -28,8 +29,8 @@ const recency = (s: SessionSoul): number =>
   s.last_active_at ?? s.updated_at ?? s.created_at ?? 0;
 
 /* Slide-in sessions panel — the web channel's sidebar, warm-paper style:
-   sessions organized into folders (session groups), status dot, title,
-   channel tag + age, rename / delete / move-to-folder per row. */
+   sessions organized into projects (session groups), each with its own accent
+   color, status dot, title, channel tag + age, rename / delete / move per row. */
 export const SessionsDrawer = ({
   visible,
   sessions,
@@ -64,8 +65,8 @@ export const SessionsDrawer = ({
   const [renaming, setRenaming] = useState<SessionSoul | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [moving, setMoving] = useState<SessionSoul | null>(null);
-  const [newFolder, setNewFolder] = useState(false);
-  const [folderDraft, setFolderDraft] = useState("");
+  const [newProject, setNewProject] = useState(false);
+  const [projectDraft, setProjectDraft] = useState("");
   const [editGroup, setEditGroup] = useState<GatewayGroup | null>(null);
   const [groupDraft, setGroupDraft] = useState("");
   const [confirmGroupDelete, setConfirmGroupDelete] = useState<GatewayGroup | null>(null);
@@ -79,7 +80,7 @@ export const SessionsDrawer = ({
     }).start();
   }, [slide, visible]);
 
-  /* Flatten folders + sessions into one virtualized row list. Folders come
+  /* Flatten projects + sessions into one virtualized row list. Projects come
      first (by position, then name), each followed by its sessions (newest
      first); ungrouped sessions land in a trailing bucket. */
   const rows = useMemo<Row[]>(() => {
@@ -108,7 +109,7 @@ export const SessionsDrawer = ({
       out.push({ kind: "group", group: g, count: members.length, collapsed: isCollapsed });
       if (!isCollapsed) for (const s of members) out.push({ kind: "session", session: s });
     }
-    /* Sessions whose group_id points at a folder the list doesn't know about
+    /* Sessions whose group_id points at a project the list doesn't know about
        (e.g. a channel-scoped one filtered out) still surface as ungrouped. */
     for (const [gid, members] of byGroup) {
       if (!groups.some((g) => g.id === gid)) ungrouped.push(...members);
@@ -120,19 +121,26 @@ export const SessionsDrawer = ({
 
   const toggle = (gid: string) => setCollapsed((m) => ({ ...m, [gid]: !(m[gid] ?? false) }));
 
-  const renderSession = (item: SessionSoul, inFolder: boolean) => {
+  const renderSession = (item: SessionSoul, inProject: boolean, accent?: string) => {
     const active = item.id === activeId;
     return (
       <Pressable
         onPress={() => onSelect(item)}
         style={({ pressed }) => [
           styles.row,
-          inFolder && styles.rowIndent,
+          inProject && styles.rowIndent,
+          inProject && accent ? { borderLeftColor: accent } : null,
           active && styles.rowActive,
           pressed && { opacity: 0.85 }
         ]}
       >
-        <View style={[styles.dot, active && styles.dotActive]} />
+        <View
+          style={[
+            styles.dot,
+            active && styles.dotActive,
+            !active && accent ? { backgroundColor: accent } : null
+          ]}
+        />
         <View style={styles.rowBody}>
           <Text numberOfLines={1} style={[styles.rowTitle, active && styles.rowTitleActive]}>
             {item.title?.trim() || `session ${shortId(item.id)}`}
@@ -142,7 +150,7 @@ export const SessionsDrawer = ({
           </Text>
         </View>
         <Pressable hitSlop={6} onPress={() => setMoving(item)} style={styles.rowIcon}>
-          <Feather name="folder" size={13} color={active ? c.amberBright : c.dim} />
+          <Feather name="move" size={13} color={active ? c.amberBright : c.dim} />
         </Pressable>
         <Pressable
           hitSlop={6}
@@ -164,26 +172,35 @@ export const SessionsDrawer = ({
   const renderRow = (item: Row) => {
     if (item.kind === "ungrouped-label") {
       return (
-        <View style={styles.folderHead}>
+        <View style={styles.ungroupedHead}>
           <Feather name="inbox" size={13} color={c.dim} />
-          <Text style={styles.folderName}>ungrouped</Text>
+          <Text style={styles.ungroupedName}>ungrouped</Text>
         </View>
       );
     }
     if (item.kind === "group") {
       const g = item.group;
+      const accent = projectColor(g.id, g.color);
       return (
-        <View style={styles.folderHead}>
-          <Pressable hitSlop={6} onPress={() => toggle(g.id)} style={styles.folderChevron}>
+        <View
+          style={[
+            styles.projectHead,
+            { backgroundColor: tint(accent, "14"), borderColor: tint(accent, "44") }
+          ]}
+        >
+          <View style={[styles.projectBar, { backgroundColor: accent }]} />
+          <Pressable hitSlop={6} onPress={() => toggle(g.id)} style={styles.projectChevron}>
             <Feather name={item.collapsed ? "chevron-right" : "chevron-down"} size={14} color={c.ink} />
           </Pressable>
-          <Feather name="folder" size={13} color={g.color ?? c.amberDeep} />
-          <Pressable style={styles.folderNameBtn} onPress={() => toggle(g.id)}>
-            <Text numberOfLines={1} style={styles.folderName}>
+          <Feather name="layers" size={13} color={accent} />
+          <Pressable style={styles.projectNameBtn} onPress={() => toggle(g.id)}>
+            <Text numberOfLines={1} style={styles.projectName}>
               {g.name}
             </Text>
           </Pressable>
-          <Text style={styles.folderCount}>{item.count}</Text>
+          <View style={[styles.projectCount, { backgroundColor: tint(accent, "26") }]}>
+            <Text style={[styles.projectCountText, { color: accent }]}>{item.count}</Text>
+          </View>
           <Pressable
             hitSlop={6}
             onPress={() => {
@@ -200,8 +217,13 @@ export const SessionsDrawer = ({
         </View>
       );
     }
-    /* a session row — indented when it sits under a folder (any folder exists) */
-    return renderSession(item.session, groups.length > 0 && !!item.session.group_id);
+    /* a session row — indented + accent-tinted when it sits under a project */
+    const parent = item.session.group_id;
+    const inProject = groups.length > 0 && !!parent;
+    const accent = inProject
+      ? projectColor(parent, groups.find((g) => g.id === parent)?.color)
+      : undefined;
+    return renderSession(item.session, inProject, accent);
   };
 
   if (!visible) return null;
@@ -210,12 +232,17 @@ export const SessionsDrawer = ({
       <View style={styles.root}>
         <Pressable style={styles.scrim} onPress={onClose} />
         <Animated.View style={[styles.panel, { transform: [{ translateX: slide }] }]}>
-          <View style={styles.titleBar}>
+          <LinearGradient
+            colors={[c.amberBright, c.amber]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.titleBar}
+          >
             <Text style={styles.title}>sessions</Text>
             <Pressable onPress={onClose} hitSlop={8}>
               <Feather name="x" size={16} color={c.amberInk} />
             </Pressable>
-          </View>
+          </LinearGradient>
 
           <FlatList
             data={rows}
@@ -234,20 +261,20 @@ export const SessionsDrawer = ({
           <View style={styles.footRow}>
             <Pressable
               onPress={() => {
-                setFolderDraft("");
-                setNewFolder(true);
+                setProjectDraft("");
+                setNewProject(true);
               }}
               style={({ pressed }) => [styles.footBtn, pressed && { opacity: 0.7 }]}
             >
-              <Feather name="folder-plus" size={15} color={c.ink} />
-              <Text style={styles.footLabel}>folder</Text>
+              <Feather name="layers" size={15} color={c.ink} />
+              <Text style={styles.footLabel}>project</Text>
             </Pressable>
             <Pressable
               onPress={onCreate}
               style={({ pressed }) => [styles.footBtn, styles.footBtnPrimary, pressed && { opacity: 0.7 }]}
             >
-              <Feather name="plus" size={15} color={c.ink} />
-              <Text style={styles.footLabel}>session</Text>
+              <Feather name="plus" size={15} color={c.amberInk} />
+              <Text style={[styles.footLabel, styles.footLabelPrimary]}>session</Text>
             </Pressable>
           </View>
         </Animated.View>
@@ -302,8 +329,8 @@ export const SessionsDrawer = ({
         />
       </DialogModal>
 
-      {/* move session to a folder */}
-      <DialogModal visible={moving != null} title="Move to folder" onClose={() => setMoving(null)}>
+      {/* move session to a project */}
+      <DialogModal visible={moving != null} title="Move to project" onClose={() => setMoving(null)}>
         <Pressable
           style={[styles.pickRow, !moving?.group_id && styles.pickRowActive]}
           onPress={() => {
@@ -312,11 +339,12 @@ export const SessionsDrawer = ({
           }}
         >
           <Feather name="inbox" size={14} color={c.ink} />
-          <Text style={styles.pickLabel}>No folder</Text>
+          <Text style={styles.pickLabel}>No project</Text>
           {!moving?.group_id && <Feather name="check" size={14} color={c.roleVis} />}
         </Pressable>
         {groups.map((g) => {
           const on = moving?.group_id === g.id;
+          const accent = projectColor(g.id, g.color);
           return (
             <Pressable
               key={g.id}
@@ -326,7 +354,7 @@ export const SessionsDrawer = ({
                 setMoving(null);
               }}
             >
-              <Feather name="folder" size={14} color={g.color ?? c.amberDeep} />
+              <Feather name="layers" size={14} color={accent} />
               <Text numberOfLines={1} style={styles.pickLabel}>
                 {g.name}
               </Text>
@@ -335,16 +363,16 @@ export const SessionsDrawer = ({
           );
         })}
         {groups.length === 0 && (
-          <Text style={styles.empty}>no folders yet — create one from the drawer footer</Text>
+          <Text style={styles.empty}>no projects yet — create one from the drawer footer</Text>
         )}
       </DialogModal>
 
-      {/* new folder */}
-      <DialogModal visible={newFolder} title="New folder" onClose={() => setNewFolder(false)}>
+      {/* new project */}
+      <DialogModal visible={newProject} title="New project" onClose={() => setNewProject(false)}>
         <TextInput
-          value={folderDraft}
-          onChangeText={setFolderDraft}
-          placeholder="folder name"
+          value={projectDraft}
+          onChangeText={setProjectDraft}
+          placeholder="project name"
           placeholderTextColor={c.dim}
           style={styles.renameInput}
           autoFocus
@@ -352,20 +380,20 @@ export const SessionsDrawer = ({
         <ActionBtn
           label="Create"
           tone="amber"
-          disabled={!folderDraft.trim()}
+          disabled={!projectDraft.trim()}
           onPress={() => {
-            if (folderDraft.trim()) onCreateGroup(folderDraft.trim());
-            setNewFolder(false);
+            if (projectDraft.trim()) onCreateGroup(projectDraft.trim());
+            setNewProject(false);
           }}
         />
       </DialogModal>
 
-      {/* rename folder */}
-      <DialogModal visible={editGroup != null} title="Rename folder" onClose={() => setEditGroup(null)}>
+      {/* rename project */}
+      <DialogModal visible={editGroup != null} title="Rename project" onClose={() => setEditGroup(null)}>
         <TextInput
           value={groupDraft}
           onChangeText={setGroupDraft}
-          placeholder="folder name"
+          placeholder="project name"
           placeholderTextColor={c.dim}
           style={styles.renameInput}
           autoFocus
@@ -381,15 +409,15 @@ export const SessionsDrawer = ({
         />
       </DialogModal>
 
-      {/* delete folder */}
+      {/* delete project */}
       <DialogModal
         visible={confirmGroupDelete != null}
-        title="Delete folder"
+        title="Delete project"
         tone="error"
         onClose={() => setConfirmGroupDelete(null)}
       >
         <Text style={styles.confirmText}>
-          Delete folder {confirmGroupDelete?.name}? Its sessions are kept — they just scatter back to
+          Delete project {confirmGroupDelete?.name}? Its sessions are kept — they just scatter back to
           ungrouped.
         </Text>
         <View style={styles.confirmRow}>
@@ -425,9 +453,8 @@ const styles = StyleSheet.create({
     flex: 1
   },
   titleBar: {
-    backgroundColor: c.amber,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between"
@@ -436,35 +463,56 @@ const styles = StyleSheet.create({
     fontFamily: mono,
     fontSize: 13,
     fontWeight: "700",
-    letterSpacing: 1,
+    letterSpacing: 1.5,
     textTransform: "uppercase",
     color: c.amberInk
   },
-  listPad: { padding: 10, gap: 6 },
-  folderHead: {
+  listPad: { padding: 12, gap: 7 },
+  projectHead: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 6,
-    marginTop: 2
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: "hidden"
   },
-  folderChevron: { padding: 2 },
-  folderNameBtn: { flex: 1, minWidth: 0 },
-  folderName: {
+  projectBar: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
+  projectChevron: { padding: 2, marginLeft: 2 },
+  projectNameBtn: { flex: 1, minWidth: 0 },
+  projectName: {
     fontFamily: mono,
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
     color: c.ink
   },
-  folderCount: {
+  projectCount: {
+    minWidth: 22,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    alignItems: "center"
+  },
+  projectCountText: { fontFamily: mono, fontSize: 10.5, fontWeight: "700" },
+  ungroupedHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    marginTop: 4
+  },
+  ungroupedName: {
     fontFamily: mono,
-    fontSize: 10.5,
-    color: c.dim,
-    minWidth: 16,
-    textAlign: "right"
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    color: c.dim
   },
   row: {
     flexDirection: "row",
@@ -473,12 +521,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: c.line,
     backgroundColor: c.field,
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 10
   },
-  rowIndent: { marginLeft: 14, borderLeftWidth: 2, borderLeftColor: c.lineSoft },
+  rowIndent: { marginLeft: 14, borderLeftWidth: 3, borderLeftColor: c.lineSoft },
   rowActive: { backgroundColor: c.ink, borderColor: c.ink },
-  dot: { width: 8, height: 8, backgroundColor: c.line },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.line },
   dotActive: { backgroundColor: c.amberBright },
   rowBody: { flex: 1, gap: 2 },
   rowTitle: { color: c.ink, fontSize: 14, fontWeight: "700" },
@@ -487,7 +536,7 @@ const styles = StyleSheet.create({
   rowMetaActive: { color: c.lineSoft },
   rowIcon: { padding: 4 },
   empty: { fontFamily: mono, fontSize: 12, color: c.dim, textAlign: "center", paddingVertical: 24 },
-  footRow: { flexDirection: "row", gap: 8, marginHorizontal: 10, marginBottom: 24, marginTop: 4 },
+  footRow: { flexDirection: "row", gap: 8, marginHorizontal: 12, marginBottom: 24, marginTop: 6 },
   footBtn: {
     flex: 1,
     flexDirection: "row",
@@ -497,6 +546,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: "dashed",
     borderColor: c.line,
+    borderRadius: 12,
     paddingVertical: 12,
     backgroundColor: c.tsepBg
   },
@@ -509,6 +559,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: c.ink
   },
+  footLabelPrimary: { color: c.amberInk },
   confirmText: { color: c.ink, fontSize: 14, lineHeight: 20 },
   confirmRow: { flexDirection: "row", gap: 8 },
   pickRow: {
@@ -518,6 +569,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: c.line,
     backgroundColor: c.field,
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 10
   },
@@ -530,6 +582,7 @@ const styles = StyleSheet.create({
     color: c.ink,
     fontFamily: mono,
     fontSize: 13,
+    borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8
   }
