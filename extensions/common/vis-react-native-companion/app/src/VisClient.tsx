@@ -1,3 +1,5 @@
+import EventSource from "react-native-sse";
+
 export type SessionSoul = {
   id: string;
   title?: string;
@@ -36,6 +38,53 @@ export type GatewayTurn = {
   tokens?: TurnTokens;
   attachments?: TurnAttachment[];
 };
+
+/* One live gateway SSE event (GET /v1/sessions/:sid/events). The wire is flat
+   JSON — keyword map keys arrive snake_case with the namespace dropped
+   (`:vis/tool-name` → tool_name, `:tool-color-role` → tool_color_role), while
+   keyword VALUES keep their namespace (a colour role rides as the string
+   "tool-color/search"). Only the fields the companion reduces are typed. */
+export type GatewayEvent = {
+  seq?: number;
+  type?: string;
+  turn_id?: string;
+  iteration?: number;
+  /* block.started / block.output — one native-tool / python op-card */
+  block_id?: number;
+  code?: string;
+  result_summary?: string;
+  result_render?: string;
+  stdout?: string;
+  error?: string;
+  silent?: boolean;
+  duration_ms?: number;
+  tool_name?: string;
+  tool_color_role?: string;
+  /* content.delta (prose tail) / reasoning.delta (thinking tail) */
+  text?: string;
+  thinking?: string;
+  /* turn.completed / turn.failed */
+  status?: string;
+  answer_md?: string;
+};
+
+/* The gateway tags every SSE frame with an `event: <type>` line (wire/sse-frame),
+   so a native EventSource dispatches by type — these are the app event types the
+   live reducer folds. Any other type (turn.queued.*, …) is ignored, so it need
+   not be listened for. */
+export const APP_EVENT_TYPES = [
+  "turn.started",
+  "block.started",
+  "block.output",
+  "content.delta",
+  "reasoning.delta",
+  "iteration.completed",
+  "iteration.error",
+  "turn.completed",
+  "turn.failed"
+] as const;
+
+export type GatewayEventType = (typeof APP_EVENT_TYPES)[number];
 
 export type ProviderInfo = { id: string; doc?: string };
 
@@ -174,6 +223,65 @@ export class VisGatewayClient {
       `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`,
       { method: "POST" }
     );
+  }
+
+  /* Live event stream over a NATIVE Server-Sent-Events connection
+     (react-native-sse's EventSource). The library owns the socket, frame
+     parsing, heartbeat handling, AND reconnection: on a drop it re-requests
+     with a `Last-Event-ID` header, which the gateway honours (`sse-cursor`) to
+     resume losslessly — so NO app-level retry is needed. The gateway tags every
+     frame with an `event: <type>` line, so events dispatch by type; we bind the
+     reducer to `message` (untyped frames) AND every app event type. The 8KB
+     anti-buffer pad and `: ping` heartbeats are comment frames with no data, so
+     they never reach a listener. The first connect uses `cursor=0` to replay the
+     in-flight turn; reconnects resume from the last seen `id:`. Returns a
+     close() that tears the connection down. */
+  streamEvents(
+    sessionId: string,
+    handlers: {
+      onEvent: (ev: GatewayEvent) => void;
+      onError?: (err: unknown) => void;
+      onOpen?: () => void;
+    },
+    cursor = 0
+  ): () => void {
+    const url = `${this.gatewayUrl}/v1/sessions/${encodeURIComponent(
+      sessionId
+    )}/events?cursor=${cursor}`;
+    const es = new EventSource<GatewayEventType>(url, {
+      headers: {
+        Accept: "text/event-stream",
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {})
+      },
+      /* reconnect after a short delay, resuming via Last-Event-ID */
+      pollingInterval: 2000,
+      /* the gateway heartbeats forever; never time the idle socket out */
+      timeout: 0,
+      /* lifecycle logs on-device (readyState / status / reconnects) so a stream
+         that never opens is diagnosable instead of silent */
+      debug: typeof __DEV__ !== "undefined" && __DEV__
+    });
+
+    const dispatch = (data: string | null) => {
+      if (!data) return; /* heartbeat / comment / anti-buffer pad */
+      try {
+        handlers.onEvent(JSON.parse(data) as GatewayEvent);
+      } catch {
+        /* a partial / unparseable frame — skip it */
+      }
+    };
+
+    es.addEventListener("open", () => handlers.onOpen?.());
+    es.addEventListener("message", (ev) => dispatch(ev.data));
+    for (const t of APP_EVENT_TYPES) {
+      es.addEventListener(t, (ev) => dispatch(ev.data));
+    }
+    es.addEventListener("error", (ev) => handlers.onError?.(ev));
+
+    return () => {
+      es.removeAllEventListeners();
+      es.close();
+    };
   }
 
   /* ── model routing ────────────────────────────────────────────── */

@@ -7,7 +7,10 @@
     "start": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --host localhost",
     "android": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --android --host localhost",
     "ios": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --ios --host localhost",
-    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "prebuild:ios": "expo prebuild --platform ios",
+    "pods": "cd ios && pod install",
+    "xcode": "xed ios/vis.xcworkspace"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -16,9 +19,11 @@
     "expo-document-picker": "~14.0.8",
     "expo-image-picker": "~17.0.11",
     "expo-linear-gradient": "~15.0.7",
+    "expo-splash-screen": "~31.0.13",
     "react": "19.1.0",
     "react-native": "^0.81.5",
-    "react-native-safe-area-context": "~5.6.0"
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-sse": "^1.2.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.10",

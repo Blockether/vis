@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -29,6 +29,7 @@ import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
+import { LiveCard, LiveCards, LiveState, reduceLiveEvent } from "./src/LiveTurns";
 import { SessionsDrawer } from "./src/SessionsDrawer";
 import { VoiceButton } from "./src/VoiceButton";
 import {
@@ -58,6 +59,8 @@ type Message = {
   time?: string | undefined;
   meta?: string | undefined;
   atts?: TurnAttachment[] | undefined;
+  cards?: LiveCard[] | undefined;
+  thinking?: string | undefined;
 };
 
 /* Only running/queued mean the gateway is actually working the turn. The wire's
@@ -159,7 +162,7 @@ const PendingDots = () => {
 
 /* Flat TUI transcript row: `▌ role ──────── HH:MM` head rule, then the body
    straight on the ground — no card, no border, no bubble. */
-const MessageRow = ({ item }: { item: Message }) => {
+const MessageRow = memo(({ item }: { item: Message }) => {
   const roleColor = item.role === "user" ? c.roleUser : c.roleVis;
   return (
     <View style={styles.msg}>
@@ -183,11 +186,33 @@ const MessageRow = ({ item }: { item: Message }) => {
           ))}
         </View>
       ) : null}
-      {item.pending ? <PendingDots /> : item.text ? <Markdown text={item.text} /> : null}
+      {item.thinking ? <Text style={styles.thinking}>{`\u2731 ${item.thinking}`}</Text> : null}
+      {item.cards?.length ? <LiveCards cards={item.cards} /> : null}
+      {item.text ? (
+        <Markdown text={item.text} />
+      ) : item.pending && !item.cards?.length && !item.thinking ? (
+        <PendingDots />
+      ) : null}
       {!item.pending && item.meta ? <Text style={styles.msgMeta}>{item.meta}</Text> : null}
     </View>
   );
-};
+}, (a, b) => {
+  const x = a.item;
+  const y = b.item;
+  /* Skip re-rendering (and re-parsing Markdown for) a row whose visible content
+     is unchanged — the 1.8s poll + SSE ticks swap the array identity constantly,
+     but only the running turn's row actually changes. */
+  return (
+    x.id === y.id &&
+    x.text === y.text &&
+    x.pending === y.pending &&
+    x.time === y.time &&
+    x.meta === y.meta &&
+    x.thinking === y.thinking &&
+    x.cards === y.cards &&
+    x.atts === y.atts
+  );
+});
 
 export default function App() {
   return (
@@ -220,18 +245,44 @@ function Root() {
   const [capturing, setCapturing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveState>({});
   const listRef = useRef<FlatList<Message>>(null);
   const atBottomRef = useRef(true);
+  /* On session-open we JUMP to the newest message (no animation through the
+     whole backlog) — set by openSession, consumed by onContentSizeChange. */
+  const jumpRef = useRef(false);
   const draggingRef = useRef(false);
 
   const client = useMemo(() => new VisGatewayClient({ gatewayUrl, token }), [gatewayUrl, token]);
 
-  const messages = useMemo(() => turns.flatMap(messageText), [turns]);
+  const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
   const connected = !error && activeSession != null;
   const runningTurn = useMemo(
     () => [...turns].reverse().find((t) => turnLive(t) && (t.id ?? t.turn_id)),
     [turns]
   );
+
+  /* Overlay the running turn's LIVE tool-call cards + streaming prose (reduced
+     from the SSE stream) onto its vis bubble. Only the running turn carries an
+     overlay; once it settles, the poll's answer_md takes over. */
+  const runningId = runningTurn?.id ?? runningTurn?.turn_id;
+  const liveTurn = runningId ? live[runningId] : undefined;
+  const messages = useMemo(() => {
+    if (!runningId || !liveTurn) return baseMessages;
+    const proseText = liveTurn.prose.trim();
+    const thinkingText = liveTurn.thinking.trim();
+    return baseMessages.map((m) =>
+      m.id === `${runningId}-vis`
+        ? {
+            ...m,
+            text: proseText || m.text,
+            pending: m.pending && !proseText,
+            cards: liveTurn.cards,
+            thinking: thinkingText || undefined
+          }
+        : m
+    );
+  }, [baseMessages, runningId, liveTurn]);
 
   const fail = useCallback((err: unknown) => {
     setError(err instanceof Error ? err.message : String(err));
@@ -253,9 +304,26 @@ function Root() {
       setActiveSession(session);
       setShowSessions(false);
       setTurns([]);
+      /* Re-arm auto-follow + request a one-shot jump so a switched-into session
+         lands on its latest message, even if the reader had scrolled up in the
+         previous one (atBottomRef otherwise carries the stale `false`). */
+      atBottomRef.current = true;
+      draggingRef.current = false;
+      jumpRef.current = true;
       try {
         setTurns(await client.listTurns(session.id));
         setModel(await client.sessionModel(session.id));
+        /* onContentSizeChange (jumpRef) handles the common case, but a windowed
+           FlatList mounts its cells async, so a single fire can land before the
+           last rows are measured. Re-assert scrollToEnd across a few frames so a
+           switched-into session reliably settles on the newest message. */
+        for (const ms of [0, 80, 220, 450]) {
+          setTimeout(() => {
+            if (jumpRef.current || atBottomRef.current) {
+              listRef.current?.scrollToEnd({ animated: false });
+            }
+          }, ms);
+        }
       } catch (err) {
         fail(err);
       }
@@ -295,6 +363,54 @@ function Root() {
     }, 1800);
     return () => clearInterval(timer);
   }, [activeSession?.id, fail, refreshTurns]);
+
+  /* Live SSE overlay: subscribe to the gateway event stream for the active
+     session and reduce block.started / block.output / content.delta /
+     reasoning.delta into per-turn live state so tool cards stream in real time.
+     The 1.8s poll stays as the settled-state source (and SSE fallback). */
+  useEffect(() => {
+    const sid = activeSession?.id;
+    if (!sid) return;
+    setLive({});
+    /* Native SSE (react-native-sse) owns the socket AND reconnection: on a drop
+       it re-requests with Last-Event-ID and the gateway resumes losslessly, so
+       there is no app-level retry. cursor=0 on first connect replays the
+       in-flight turn; the reducer is idempotent (cards upsert by (iteration,
+       block), prose is a whole-tail replace) so any replay never double-renders.
+
+       Failures were previously SILENT (no onError/onOpen wired), so a stream that
+       never opened — unreachable gateway, 401, a module that never bundled — read
+       on-device as "cards just don't stream" with zero signal. Surface every
+       lifecycle now: onError sets a visible note (and logs), onOpen clears it. A
+       throw from streamEvents itself (constructor / missing native module) is
+       caught here so the transcript still polls instead of the effect dying. */
+    let close: (() => void) | undefined;
+    try {
+      close = client.streamEvents(
+        sid,
+        {
+          onOpen: () => {
+            if (__DEV__) console.log("[vis] SSE open", sid);
+            setNote((n) => (n && n.startsWith("live stream") ? null : n));
+          },
+          onEvent: (ev) => setLive((prev) => reduceLiveEvent(prev, ev)),
+          onError: (err) => {
+            const msg =
+              (err as { message?: string; xhrStatus?: number })?.xhrStatus
+                ? `HTTP ${(err as { xhrStatus?: number }).xhrStatus}`
+                : (err as { message?: string })?.message || "connection lost";
+            if (__DEV__) console.warn("[vis] SSE error", err);
+            setNote(`live stream: ${msg} (retrying\u2026)`);
+          }
+        },
+        0
+      );
+    } catch (err) {
+      if (__DEV__) console.warn("[vis] SSE failed to start", err);
+      setNote(`live stream unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return () => close?.();
+  }, [activeSession?.id, client]);
 
   /* Auto-follow lives on the FlatList's onContentSizeChange: it fires for new
      messages AND for a streaming answer growing, and it is suppressed while the
@@ -508,11 +624,22 @@ function Root() {
             draggingRef.current = false;
           }}
           onContentSizeChange={() => {
-            if (atBottomRef.current && !draggingRef.current) {
+            /* Session-open: jump straight to the newest message, no animation
+               through the backlog. Otherwise follow a growing/streaming answer,
+               but never while the reader's finger is down. */
+            if (jumpRef.current && messages.length) {
+              jumpRef.current = false;
+              listRef.current?.scrollToEnd({ animated: false });
+            } else if (atBottomRef.current && !draggingRef.current) {
               listRef.current?.scrollToEnd({ animated: true });
             }
           }}
           scrollEventThrottle={16}
+          removeClippedSubviews={Platform.OS === "android"}
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={11}
+          updateCellsBatchingPeriod={40}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           refreshControl={
@@ -661,7 +788,11 @@ function Root() {
               onPress={() => void pickModel("", "")}
               style={[styles.modelChip, !currentPick?.model && styles.modelChipOn]}
             >
-              <Feather name="star" size={11} color={!currentPick?.model ? c.amberBright : c.ink} />
+              <Feather
+                name={!currentPick?.model ? "check" : "star"}
+                size={11}
+                color={!currentPick?.model ? c.amberBright : c.dim}
+              />
               <Text style={[styles.modelChipText, !currentPick?.model && styles.modelChipTextOn]}>
                 router default
               </Text>
@@ -682,6 +813,7 @@ function Root() {
                         onPress={() => void pickModel(p.id, name)}
                         style={[styles.modelChip, on && styles.modelChipOn]}
                       >
+                        {on ? <Feather name="check" size={11} color={c.amberBright} /> : null}
                         <Text style={[styles.modelChipText, on && styles.modelChipTextOn]}>{name}</Text>
                       </Pressable>
                     );
@@ -743,6 +875,7 @@ const styles = StyleSheet.create({
   attImg: { width: 96, height: 96, backgroundColor: c.tsepBg },
   msgMeta: { fontFamily: mono, fontSize: 9.5, color: c.dim, marginTop: 2 },
   pending: { fontFamily: mono, fontSize: 12, color: c.dim },
+  thinking: { fontFamily: mono, fontSize: 11, lineHeight: 16, color: c.dim, fontStyle: "italic" },
   emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingTop: 80 },
   emptyTitle: { fontFamily: mono, fontSize: 13, fontWeight: "700", color: c.ink },
   emptyBody: { fontSize: 12, color: c.dim, textAlign: "center", paddingHorizontal: 40 },
@@ -806,7 +939,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    maxWidth: 230
+    maxWidth: 230,
+    borderWidth: 1,
+    borderColor: c.lineSoft,
+    backgroundColor: c.field,
+    paddingHorizontal: 8,
+    paddingVertical: 3
   },
   footRoutingName: { fontFamily: mono, fontSize: 10, color: c.amberDeep },
   footerText: { flex: 1, textAlign: "right", fontFamily: mono, fontSize: 10, color: c.dim },
@@ -827,11 +965,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6
   },
-  modelScroll: { maxHeight: 420 },
-  modelScrollBody: { gap: 12 },
+  modelScroll: { maxHeight: 460 },
+  modelScrollBody: { gap: 14, paddingBottom: 4 },
   activeModel: { fontSize: 12, color: c.dim },
   activeModelStrong: { fontFamily: mono, fontWeight: "700", color: c.ink },
-  modelGroup: { gap: 6 },
+  modelGroup: { gap: 8 },
   modelGroupLabel: {
     fontFamily: mono,
     fontSize: 10.5,
@@ -844,12 +982,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: c.tsepBg,
-    paddingHorizontal: 8,
-    paddingVertical: 4
+    borderWidth: 1,
+    borderColor: c.line,
+    backgroundColor: c.field,
+    paddingHorizontal: 11,
+    paddingVertical: 7
   },
-  modelChipOn: { backgroundColor: c.ink },
-  modelChipText: { fontFamily: mono, fontSize: 11, color: c.ink },
-  modelChipTextOn: { color: c.amberBright },
+  modelChipOn: { backgroundColor: c.ink, borderColor: c.ink },
+  modelChipText: { fontFamily: mono, fontSize: 12, color: c.ink },
+  modelChipTextOn: { color: c.amberBright, fontWeight: "700" },
   errorText: { color: c.ink, fontSize: 13, lineHeight: 18 }
 });

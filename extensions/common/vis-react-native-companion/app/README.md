@@ -10,7 +10,7 @@ accents. TypeScript 7, strict.
 | --- | --- | --- |
 | Header | `vis▌` wordmark, live `● connected` chip, model chip (⚡), settings (⚙), sessions (▤) | `/v1/sessions` |
 | Sessions drawer | slide-in panel: status dot, title, channel · age · id, **rename** (✎), **delete** (🗑 with confirm), `+ new session` | `GET/POST/PATCH/DELETE /v1/sessions[/:sid]` |
-| Transcript | white cards with colored left rule (amber YOU / green VIS), mono role + HH:MM, markdown-lite: fenced code in ink terminal boxes, headings, bullets, inline `code` / **bold** | `GET /v1/sessions/:sid/turns` (1.8s poll, pull-to-refresh) |
+| Transcript | white cards with colored left rule (amber YOU / green VIS), mono role + HH:MM, markdown-lite: fenced code in ink terminal boxes, headings, bullets, inline `code` / **bold**; a running turn **streams live tool-call cards** (colored op-card badge + summary/stdout, running spinner, duration) and streaming prose/thinking as they happen | `GET /v1/sessions/:sid/turns` (1.8s poll, pull-to-refresh) + `GET /v1/sessions/:sid/events` (native SSE via `react-native-sse` EventSource, live overlay, auto-reconnect w/ Last-Event-ID) |
 | Composer | multiline input, amber ↑ send; while a turn runs the send button becomes a red ■ **cancel** | `POST …/turns`, `POST …/turns/:tid/cancel` |
 | Voice | 🎤 records 16-bit PCM WAV @16kHz mono (expo-audio), pulsing red dot + timer + ✕/✓ strip, transcribes through the gateway's local Parakeet model; drives the model download with progress if it isn't installed yet. iOS-first (Android's MediaRecorder can't emit WAV) | `POST /ui/session/:sid/voice`, `GET/POST …/voice/model` (web channel) |
 | Model picker | provider chips + model input, applies to the session | `GET /v1/models`, `GET/PATCH /v1/sessions/:sid/model` |
