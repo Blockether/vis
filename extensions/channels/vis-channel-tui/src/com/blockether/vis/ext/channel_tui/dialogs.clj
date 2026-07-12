@@ -657,9 +657,9 @@
        ;; Accent bar background
        (p/set-bg! g t/dialog-title-bg)
        (p/fill-rect! g (inc box-left) title-row inner-w 1)
-       ;; Title text
+       ;; Title text - BOLD, matching the spel/blockether 700-weight header
        (p/set-fg! g t/dialog-title-fg)
-       (p/put-str! g tx title-row title-text)
+       (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
        (draw-dialog-close-button! g box-right title-row)
        ;; Top separator - below title bar
        (p/set-colors! g t/dialog-border t/dialog-bg)
