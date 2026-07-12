@@ -1965,3 +1965,111 @@
           (expect (= {} (persistance/db-native-results-for-tool-ids s cid #{})))
           (expect (= {} (persistance/db-native-results-for-tool-ids s nil #{"x"})))
           (expect (= {} (persistance/db-native-results-for-tool-ids s (random-uuid) #{"x"})))))))
+
+;; ─── session groups (folders) + ownership (V6) ───
+
+(defdescribe
+  sqlite-session-group-test
+  (it
+    "creates channel-scoped groups, assigns sessions, and scatters on delete"
+    (let [s
+          (h/store)
+
+          g-tui
+          (persistance/db-create-group! s {:name "vis-core" :channel :tui :color "#4f8"})
+
+          g-x
+          (persistance/db-create-group! s {:name "side-proj"})
+
+          ; cross-channel (nil)
+          ;; created shape + owner tag + auto-incrementing position
+          _
+          (expect (= "vis-core" (:name g-tui)))
+
+          _
+          (expect (= :tui (:channel g-tui)))
+
+          _
+          (expect (= "local" (:owner-id g-tui)))
+
+          _
+          (expect (= 0 (:position g-tui)))
+
+          _
+          (expect (= 1 (:position g-x)))
+
+          ;; :tui view = tui-scoped group PLUS the cross-channel one
+          _
+          (expect (= #{"vis-core" "side-proj"}
+                     (set (map :name (persistance/db-list-groups s {:channel :tui})))))
+
+          ;; :web view = only the cross-channel group (tui-scoped hidden)
+          _
+          (expect (= #{"side-proj"}
+                     (set (map :name (persistance/db-list-groups s {:channel :web})))))
+
+          ;; assign a session; membership + live count reflect it
+          sid
+          (h/store-session! s {:channel :tui :title "grouped one"})
+
+          _
+          (persistance/db-set-session-group! s sid (:id g-tui))
+
+          got
+          (persistance/db-get-session s sid)
+
+          _
+          (expect (= (:id g-tui) (:group-id got)))
+
+          _
+          (expect (= "vis-core" (:group-name got)))
+
+          _
+          (expect (= "local" (:owner-id got)))
+
+          _
+          (expect (= 1 (:session-count (persistance/db-get-group s (:id g-tui)))))
+
+          ;; the group key rides the ONE list-sessions query (no per-row lookup)
+          row
+          (first (filter #(= sid (:id %)) (persistance/db-list-sessions s :all)))
+
+          _
+          (expect (= "vis-core" (:group-name row)))
+
+          ;; rename + recolor
+          _
+          (persistance/db-update-group! s (:id g-tui) {:name "vis" :color "#abc"})
+
+          _
+          (expect (= "vis" (:name (persistance/db-get-group s (:id g-tui)))))
+
+          ;; archive hides from the default list, shows with :include-archived?
+          _
+          (persistance/db-update-group! s (:id g-tui) {:archived? true})
+
+          _
+          (expect (not (contains? (set (map :name (persistance/db-list-groups s {}))) "vis")))
+
+          _
+          (expect (contains? (set (map :name
+                                       (persistance/db-list-groups s {:include-archived? true})))
+                             "vis"))
+
+          ;; delete SCATTERS members back to ungrouped - the conversation survives
+          _
+          (persistance/db-delete-group! s (:id g-tui))
+
+          after
+          (persistance/db-get-session s sid)]
+
+      (expect (some? after))
+      (expect (nil? (:group-id after)))))
+  (it "stamps a default owner on freshly created sessions"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :tui :title "owned"})]
+
+        (expect (= "local" (:owner-id (persistance/db-get-session s sid)))))))

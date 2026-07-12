@@ -922,6 +922,55 @@
 
 (declare drain-next-queued!)
 
+(def ^:private TURN_STALL_TIMEOUT_MS
+  "Daemon backstop: force-cancel a turn wedged in the `:provider-call` phase
+   with NO provider chunk for this long. Set ABOVE svar's 4-minute semantic
+   stream timeout so it fires ONLY when svar's own idle/semantic stream
+   watchdogs miss a stalled provider connection — the 'calling the provider…
+   8m, nothing moving' hang that freezes the session's turn queue. Phase-gated
+   on `:provider-call` so a legitimately long tool / Python-eval phase is never
+   force-cancelled."
+  (* 6 60 1000))
+
+(defn- start-turn-stall-watchdog!
+  "Daemon thread guarding ONE running turn against a stalled provider stream.
+   While `tid` remains the session's current turn, it polls the shared `stall`
+   atom (updated by `run-turn!`'s on-chunk with the live phase + last-chunk
+   wall-clock). If the live phase is `:provider-call` and no chunk has landed
+   for `TURN_STALL_TIMEOUT_MS`, it flags the turn stalled and `cancel!`s the
+   token — which closes the in-flight provider stream (svar's cancel-watchdog),
+   so the blocked worker unwinds into a `turn.failed` and the queue drains.
+   Self-terminating: exits as soon as `tid` is no longer the current turn."
+  [sid tid cancel-token stall]
+  (let [check-ms (-> (long TURN_STALL_TIMEOUT_MS)
+                     (quot 8)
+                     (max 1000)
+                     (min 20000))]
+    (doto (Thread. ^Runnable
+                   (fn []
+                     (try (loop []
+
+                            (Thread/sleep check-ms)
+                            (when (= tid (:current-turn (get @registry sid)))
+                              (let [{:keys [phase last-ms]} @stall
+                                    idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))]
+
+                                (if (and (= :provider-call phase)
+                                         (>= idle-ms (long TURN_STALL_TIMEOUT_MS)))
+                                  (do (tel/log!
+                                        :warn
+                                        ["gateway: provider stream stalled — force-cancelling turn"
+                                         tid (str idle-ms "ms with no provider chunk")])
+                                      (swap! stall assoc :stalled? true)
+                                      (cancellation/cancel! cancel-token))
+                                  (recur)))))
+                          (catch InterruptedException _ nil)
+                          (catch Throwable _ nil)))
+                   (str "gateway-turn-stall-watchdog-" tid))
+      (.setDaemon true)
+      (.start))
+    nil))
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -929,7 +978,7 @@
   turn record and a `turn.failed` event."
   [sid tid request
    {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace
-           engine-opts attachments]}]
+           engine-opts attachments stall]}]
   (let [caller-on-chunk
         (get-in engine-opts [:hooks :on-chunk])
 
@@ -939,6 +988,10 @@
 
         on-chunk
         (fn [chunk]
+          ;; Feed the stall-watchdog BEFORE any coalescing drop: record the live
+          ;; phase + wall-clock of the latest provider chunk so a wedged
+          ;; `:provider-call` phase (no chunks arriving at all) is detectable.
+          (when stall (swap! stall assoc :phase (:phase chunk) :last-ms (System/currentTimeMillis)))
           (try (when caller-on-chunk
                  (try (caller-on-chunk chunk)
                       (catch Throwable t
@@ -1002,8 +1055,12 @@
             answer-ir
             (if ir-answer? answer (when md (try (ir/markdown->ir md) (catch Throwable _ nil))))
 
+            stalled?
+            (boolean (and stall (:stalled? @stall)))
+
             status
-            (cond (= :cancelled (:status result)) "cancelled"
+            (cond stalled? "failed"
+                  (= :cancelled (:status result)) "cancelled"
                   (= :error (:status result)) "failed"
                   needs-input? "suspended"
                   :else "completed")
@@ -1029,6 +1086,8 @@
              :iteration_count (:iteration-count result)
              :duration_ms (:duration-ms result)
              :utilization (:utilization result)
+             :error (when stalled?
+                      (str "provider stream stalled: no output for " TURN_STALL_TIMEOUT_MS "ms"))
              :finished_at (System/currentTimeMillis)}]
 
         (finish-turn! sid tid patch)
@@ -1049,15 +1108,28 @@
         ;; queued turn. Leaving the backlog queued lets the channel pull it back
         ;; into the editor (TUI) or keep it visible/editable (web) instead of
         ;; firing an uninterruptible follow-up the instant the cancel lands.
-        (when-not (cancellation/cancelled? cancel-token) (drain-next-queued! sid)))
+        ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
+        ;; is cancelled either way, so distinguish on the stall flag and drain.
+        (when (or stalled? (not (cancellation/cancelled? cancel-token))) (drain-next-queued! sid)))
       (catch Throwable t
-        (tel/log! :error ["gateway: turn worker failed" tid (ex-message t)])
-        (finish-turn!
-          sid
-          tid
-          {:status "failed" :error (ex-message t) :finished_at (System/currentTimeMillis)})
-        (append-event! sid "turn.failed" {:turn_id tid :status "failed" :error (ex-message t)})
-        (when-not (cancellation/cancelled? cancel-token) (drain-next-queued! sid))))))
+        (let [stalled?
+              (boolean (and stall (:stalled? @stall)))
+
+              err
+              (if stalled?
+                (str "provider stream stalled: no output for "
+                     TURN_STALL_TIMEOUT_MS
+                     "ms (force-cancelled)")
+                (ex-message t))]
+
+          (tel/log! :error ["gateway: turn worker failed" tid err])
+          (finish-turn! sid
+                        tid
+                        {:status "failed" :error err :finished_at (System/currentTimeMillis)})
+          (append-event! sid "turn.failed" {:turn_id tid :status "failed" :error err})
+          (when (or stalled? (not (cancellation/cancelled? cancel-token)))
+            (drain-next-queued! sid)))))))
+
 
 (defn- launch-turn-worker!
   [sid tid request
@@ -1075,21 +1147,25 @@
                                           (System/currentTimeMillis))}
                    queued?
                    (assoc :queued? true)))
-  (cancellation/cancellation-set-future! cancel-token
-                                         (cancellation/worker-future
-                                           (str "gateway-turn-" tid)
-                                           #(run-turn! sid
-                                                       tid
-                                                       request
-                                                       {:messages messages
-                                                        :model model
-                                                        :reasoning-default reasoning-default
-                                                        :cancel-token cancel-token
-                                                        :extra-body extra-body
-                                                        :turn-features turn-features
-                                                        :workspace workspace
-                                                        :engine-opts engine-opts
-                                                        :attachments attachments}))))
+  (let [stall (atom {:phase nil :last-ms (System/currentTimeMillis)})]
+    (cancellation/cancellation-set-future! cancel-token
+                                           (cancellation/worker-future
+                                             (str "gateway-turn-" tid)
+                                             #(run-turn! sid
+                                                         tid
+                                                         request
+                                                         {:messages messages
+                                                          :model model
+                                                          :reasoning-default reasoning-default
+                                                          :cancel-token cancel-token
+                                                          :extra-body extra-body
+                                                          :turn-features turn-features
+                                                          :workspace workspace
+                                                          :engine-opts engine-opts
+                                                          :attachments attachments
+                                                          :stall stall})))
+    (start-turn-stall-watchdog! sid tid cancel-token stall)))
+
 
 (defn- first-queued-turn
   [entry]
@@ -1597,6 +1673,10 @@
        :model (:model session)
        :external_id (:external-id session)
        :created_at (:created-at session)
+       :owner_id (:owner-id session)
+       :group_id (some-> (:group-id session)
+                         str)
+       :group_name (:group-name session)
        :status (cond (:current-turn entry) "running"
                      (= "suspended" (:status last-turn)) "suspended"
                      :else "idle")
@@ -1615,6 +1695,47 @@
    (->> (lp/by-channel channel)
         (keep (comp soul :id))
         vec)))
+
+;; --- Session groups (folders) + ownership (V6) -------------------------------
+
+(defn- group-wire
+  "JSON-friendly projection of a persisted session_group."
+  [g]
+  (when g
+    {:id (str (:id g))
+     :owner_id (:owner-id g)
+     :channel (some-> (:channel g)
+                      name)
+     :name (:name g)
+     :color (:color g)
+     :position (:position g)
+     :session_count (:session-count g)
+     :created_at (:created-at g)
+     :archived_at (:archived-at g)}))
+
+(defn list-groups
+  "Wire groups for one owner/channel view (see loop/groups). `opts` keys:
+   :owner-id, :channel (keyword | :all/nil), :include-archived?."
+  ([] (list-groups {}))
+  ([opts] (mapv group-wire (lp/groups opts))))
+
+(defn get-group [gid] (group-wire (lp/get-group gid)))
+
+(defn create-group! [opts] (group-wire (lp/create-group! opts)))
+
+(defn update-group! [gid opts] (group-wire (lp/update-group! gid opts)))
+
+(defn delete-group!
+  "Delete a group; its member sessions scatter back to ungrouped (never deleted)."
+  [gid]
+  (lp/delete-group! gid)
+  true)
+
+(defn assign-group!
+  "Assign a session to `gid` (nil clears / ungroups). Returns the refreshed soul."
+  [sid gid]
+  (lp/assign-group! sid gid)
+  (soul sid))
 
 (defn release-session!
   "Release the live runtime for a session while keeping persisted data resumable.

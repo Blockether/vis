@@ -8248,7 +8248,10 @@
      :system-prompt (:system-prompt session)
      :model (:model session)
      :title (:title session)
-     :created-at (:created-at session)}))
+     :created-at (:created-at session)
+     :owner-id (:owner-id session)
+     :group-id (:group-id session)
+     :group-name (:group-name session)}))
 
 (defn by-channel
   [channel]
@@ -8257,8 +8260,32 @@
            :channel (:channel c)
            :external-id (:external-id c)
            :title (:title c)
-           :created-at (:created-at c)})
+           :created-at (:created-at c)
+           :owner-id (:owner-id c)
+           :group-id (:group-id c)
+           :group-name (:group-name c)})
         (persistance/db-list-sessions (db-info) channel)))
+
+;; --- Session groups (folders) + ownership (V6) ---
+
+(defn groups
+  "List session_group folders. `opts`: :owner-id (default \"local\"), :channel
+   (keyword | :all/nil), :include-archived?. Each carries a live :session-count."
+  ([] (groups {}))
+  ([opts] (persistance/db-list-groups (db-info) opts)))
+
+(defn get-group [group-id] (persistance/db-get-group (db-info) group-id))
+
+(defn create-group! [opts] (persistance/db-create-group! (db-info) opts))
+
+(defn update-group! [group-id opts] (persistance/db-update-group! (db-info) group-id opts))
+
+(defn delete-group! [group-id] (persistance/db-delete-group! (db-info) group-id))
+
+(defn assign-group!
+  "Assign the session soul to `group-id` (nil clears / ungroups)."
+  [session-id group-id]
+  (persistance/db-set-session-group! (db-info) session-id group-id))
 
 (defn for-telegram-chat!
   [chat-id]

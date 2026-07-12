@@ -318,6 +318,14 @@
 (defdelegate db-get-session-model-pref [db-info session-id])
 (defdelegate db-set-session-model-pref! [db-info session-id provider model])
 
+;; --- Session groups (folders) + ownership (V6) ---
+(defdelegate db-get-group [db-info group-id])
+(defdelegate db-list-groups [db-info opts])
+(defdelegate db-create-group! [db-info opts])
+(defdelegate db-update-group! [db-info group-id opts])
+(defdelegate db-delete-group! [db-info group-id])
+(defdelegate db-set-session-group! [db-info session-id group-id])
+
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
 (defdelegate db-update-session-turn! [db-info session-turn-id opts])

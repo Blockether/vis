@@ -3205,70 +3205,108 @@
                    ;; No `:loading?` guard: opening or focusing a tab never
                    ;; disturbs a turn running in another tab, so there's
                    ;; nothing to wait for. Every action lands on a tab.
-                   (cond (= :new (:action choice)) (when-let [config (:config @state/app-db)]
-                                                     (start-new-session! config
-                                                                         (:seed-text choice)))
-                         (= :fork (:action choice))
-                         (if-let [current-id (or (:id choice) (current-session-id))]
-                           (let [db (vis/db-info)
-                                 ;; Each fork gets its own workspace pin (1:1).
-                                 ;; Mint a fresh rift clone of cwd for the new state.
-                                 ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
-                                            (catch Throwable _ nil))
-                                 fork-state-id
-                                 (try (vis/db-fork-session! db current-id {:workspace-id ws-id})
-                                      (catch Throwable _ nil))]
+                   (cond
+                     (= :new (:action choice)) (when-let [config (:config @state/app-db)]
+                                                 (start-new-session! config (:seed-text choice)))
+                     (= :fork (:action choice))
+                     (if-let [current-id (or (:id choice) (current-session-id))]
+                       (let [db (vis/db-info)
+                             ;; Each fork gets its own workspace pin (1:1).
+                             ;; Mint a fresh rift clone of cwd for the new state.
+                             ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                        (catch Throwable _ nil))
+                             fork-state-id
+                             (try (vis/db-fork-session! db current-id {:workspace-id ws-id})
+                                  (catch Throwable _ nil))]
 
-                             (if fork-state-id
-                               (if-let [session-result (chat/resume-session current-id)]
-                                 (do (open-session-tab! session-result false)
-                                     (vis/notify! "Forked current session"
-                                                  :level :success
-                                                  :ttl-ms copy-success-ttl-ms))
-                                 (vis/notify! "Forked, but failed to reload session"
-                                              :level :warn
+                         (if fork-state-id
+                           (if-let [session-result (chat/resume-session current-id)]
+                             (do (open-session-tab! session-result false)
+                                 (vis/notify! "Forked current session"
+                                              :level :success
                                               :ttl-ms copy-success-ttl-ms))
-                               (vis/notify! "Could not fork current session"
-                                            :level :warn
-                                            :ttl-ms copy-success-ttl-ms)))
-                           (vis/notify! "No current session to fork"
+                             (vis/notify! "Forked, but failed to reload session"
+                                          :level :warn
+                                          :ttl-ms copy-success-ttl-ms))
+                           (vis/notify! "Could not fork current session"
                                         :level :warn
-                                        :ttl-ms copy-success-ttl-ms))
-                         (= :delete (:action choice))
-                         (when-let [target-id (:id choice)]
-                           (when (with-dialog-lock
-                                   #(dlg/confirm-dialog!
-                                      screen
-                                      "Delete session"
-                                      "Permanently delete this session? This cannot be undone."))
-                             (let [current? (= (str target-id) (current-session-id))]
-                               (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
-                               (if current?
-                                 ;; Deleting the active session: drop into a fresh tab.
-                                 (when-let [config (:config @state/app-db)]
-                                   (let [old-tab-id (:active-tab-id @state/app-db)]
-                                     (open-session-tab! (chat/make-session config) true)
-                                     (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
-                                 ;; Non-current: if it's open in a background tab, close
-                                 ;; that now-dangling tab so it doesn't linger.
-                                 (when-let [tab-id (state/tab-id-for-session @state/app-db
-                                                                             target-id)]
-                                   (state/dispatch [:close-tab tab-id])))
-                               (vis/notify! "Deleted session"
+                                        :ttl-ms copy-success-ttl-ms)))
+                       (vis/notify! "No current session to fork"
+                                    :level :warn
+                                    :ttl-ms copy-success-ttl-ms))
+                     (= :delete (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (when (with-dialog-lock
+                               #(dlg/confirm-dialog!
+                                  screen
+                                  "Delete session"
+                                  "Permanently delete this session? This cannot be undone."))
+                         (let [current? (= (str target-id) (current-session-id))]
+                           (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
+                           (if current?
+                             ;; Deleting the active session: drop into a fresh tab.
+                             (when-let [config (:config @state/app-db)]
+                               (let [old-tab-id (:active-tab-id @state/app-db)]
+                                 (open-session-tab! (chat/make-session config) true)
+                                 (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
+                             ;; Non-current: if it's open in a background tab, close
+                             ;; that now-dangling tab so it doesn't linger.
+                             (when-let [tab-id (state/tab-id-for-session @state/app-db target-id)]
+                               (state/dispatch [:close-tab tab-id])))
+                           (vis/notify! "Deleted session"
+                                        :level :success
+                                        :ttl-ms copy-success-ttl-ms))))
+                     ;; Ctrl+B in the navigator → move a session into a
+                     ;; persistent Group (folder). Pick an existing group,
+                     ;; make a new one, or remove it from its group.
+                     (= :group (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (let [groups (try (vis/gateway-list-groups {:channel :tui})
+                                         (catch Throwable _ nil))
+                             items (vec (concat
+                                          (mapv (fn [gp]
+                                                  {:id (:id gp)
+                                                   :label
+                                                   (str (:name gp) "  (" (:session_count gp) ")")})
+                                                groups)
+                                          [{:id ::new-group :label "＋ New group…"}
+                                           {:id ::ungroup :label "✗ Remove from group"}]))
+                             pick
+                             (with-dialog-lock
+                               #(dlg/searchable-select! screen "Move session to group…" items))]
+
+                         (when pick
+                           (let [gid (cond (= ::new-group (:id pick))
+                                           (let [nm (with-dialog-lock #(dlg/text-input-dialog!
+                                                                         screen
+                                                                         "New group"
+                                                                         "Group name"))]
+                                             (when-not (str/blank? (str nm))
+                                               (:id (try (vis/gateway-create-group!
+                                                           {:name nm :channel "tui"})
+                                                         (catch Throwable _ nil)))))
+                                           (= ::ungroup (:id pick)) nil
+                                           :else (:id pick))]
+                             (when (or (= ::ungroup (:id pick)) gid)
+                               (try (vis/gateway-assign-group! target-id gid)
+                                    (catch Throwable _ nil))
+                               (vis/notify! (if gid
+                                              "Moved session to group"
+                                              "Removed session from group")
                                             :level :success
-                                            :ttl-ms copy-success-ttl-ms))))
-                         (= :switch (:action choice))
-                         ;; Focus the tab already bound to this session, or open a
-                         ;; new one — `:open-session-tab` decides. Switching to a
-                         ;; session whose turn is mid-flight just brings its tab to
-                         ;; the front; the turn was never paused.
-                         (let [target-id (:id choice)]
-                           (when-not (= (str target-id) (current-session-id))
-                             (if-let [session-result (chat/resume-session target-id)]
-                               (open-session-tab! session-result true)
-                               (vis/notify! "Session no longer exists"
-                                            :level :warn
                                             :ttl-ms copy-success-ttl-ms))))))
+                     (= :switch (:action choice))
+                     ;; Focus the tab already bound to this session, or open a
+                     ;; new one — `:open-session-tab` decides. Switching to a
+                     ;; session whose turn is mid-flight just brings its tab to
+                     ;; the front; the turn was never paused.
+                     (let [target-id (:id choice)]
+                       (when-not (= (str target-id) (current-session-id))
+                         (if-let [session-result (chat/resume-session target-id)]
+                           (open-session-tab! session-result true)
+                           (vis/notify! "Session no longer exists"
+                                        :level :warn
+                                        :ttl-ms copy-success-ttl-ms))))))
                  ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
                  ;; tear down THIS session (turns + soul + workspace links)
                  ;; and open a fresh empty one in its place — like Telegram's
@@ -3365,20 +3403,20 @@
                                      (with-dialog-lock #(dlg/resources-dialog!
                                                           screen
                                                           (get-in @state/app-db [:session :id])))))
-                 show-sessions! (fn show-sessions! []
-                                  (when-not (:dialog-open? @state/app-db)
-                                    (let [sessions (mapv enrich-session-row
-                                                         (tui-session-summaries))]
-                                      (when-let [choice (with-dialog-lock #(dlg/navigator-dialog!
-                                                                             screen
-                                                                             {:sessions sessions
-                                                                              :active-session-id
-                                                                              (current-session-id)
-                                                                              :db @state/app-db}))]
-                                        (switch-session! choice)
-                                        ;; After a delete, reopen the picker on the
-                                        ;; refreshed list so pruning can continue.
-                                        (when (= :delete (:action choice)) (show-sessions!))))))
+                 show-sessions!
+                 (fn show-sessions! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]
+                       (when-let [choice (with-dialog-lock #(dlg/navigator-dialog!
+                                                              screen
+                                                              {:sessions sessions
+                                                               :active-session-id
+                                                               (current-session-id)
+                                                               :db @state/app-db}))]
+                         (switch-session! choice)
+                         ;; After a delete, reopen the picker on the
+                         ;; refreshed list so pruning can continue.
+                         (when (#{:delete :group} (:action choice)) (show-sessions!))))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every
                  ;; configured model (active one marked) plus a "★ router

@@ -303,6 +303,90 @@
       java.util.concurrent.ThreadFactory
         (newThread [_ r]
           (doto (Thread. ^Runnable r "vis-tui-progress-trailing-flush") (.setDaemon true))))))
+(def ^:private reasoning-live-tail-reveal-chars
+  "Escape hatch for the live reasoning sentence-buffer. A boundary-less run
+   this long past the last sentence break is revealed anyway, so a long
+   thought with no punctuation still streams instead of hiding forever."
+  200)
+
+(def ^:private reasoning-sentence-boundary-chars
+  "Chars that END a sentence/clause for the live reasoning buffer. We hold a
+   trailing partial back until it reaches one of these, so streamed thinking
+   paints WHOLE sentences instead of a 1-2 char leading stub."
+  #{\. \! \? \; \newline \。 \！ \？})
+
+(def ^:private reasoning-boundary-trailing-chars
+  "Closing punctuation kept WITH a boundary char (so `.\"` / `?)` render whole)."
+  #{\" \' \) \] \} \» \’ \”})
+
+(defn- clip-reasoning-to-sentence
+  "Truncate live-streaming reasoning `s` to just after its LAST sentence/clause
+   boundary, holding any trailing partial sentence back until it completes —
+   this is what turns the provider's `\"I\"` → 0.5s gap → full-sentence burst
+   into a clean whole-sentence reveal. Growth is monotonic (source only grows,
+   the boundary index only advances), so the bubble never shrinks. If the tail
+   past the last boundary exceeds `max-chars`, reveal the whole string (escape
+   hatch for a long boundary-less thought)."
+  [s max-chars]
+  (let [s
+        (str s)
+
+        n
+        (count s)]
+
+    (if (zero? n)
+      s
+      (let [boundary-idx
+            (loop [i (dec n)]
+              (cond (neg? i) -1
+                    (contains? reasoning-sentence-boundary-chars (.charAt s i)) i
+                    :else (recur (dec i))))
+
+            end
+            (if (neg? boundary-idx)
+              0
+              (loop [j (inc boundary-idx)]
+                (if (and (< j n) (contains? reasoning-boundary-trailing-chars (.charAt s j)))
+                  (recur (inc j))
+                  j)))]
+
+        (if (> (- n end) (long max-chars))
+          s ;; long boundary-less tail → reveal everything
+          (subs s 0 end))))))
+
+(defn- entry-streaming-reasoning?
+  "True while a timeline entry is STILL accumulating live reasoning and nothing
+   past it (answer prose, a form, the final) has landed yet — the only window
+   where the sentence-buffer should hold a trailing partial. Once the model
+   moves on, the full thinking is revealed."
+  [entry]
+  (and (map? entry)
+       (some? (:thinking entry))
+       (not (:done? entry))
+       (nil? (:final entry))
+       (empty? (:forms entry))
+       (str/blank? (str (:assistant-prose entry)))
+       (str/blank? (str (:content-stream entry)))))
+
+(defn- clip-live-reasoning
+  "Project a live progress `timeline` for painting: sentence-buffer the reasoning
+   of any entry that's still actively streaming it (see
+   `entry-streaming-reasoning?`). Non-map / completed entries pass through
+   untouched, so restored/final traces always show the full thinking. Only a
+   real timeline VECTOR (the tracker's `as-vec`) is projected; any other shape
+   passes through verbatim."
+  [timeline]
+  (if-not (vector? timeline)
+    timeline
+    (mapv (fn [entry]
+            (if (entry-streaming-reasoning? entry)
+              (assoc entry
+                :thinking (clip-reasoning-to-sentence (:thinking entry)
+                                                      reasoning-live-tail-reveal-chars))
+              entry))
+          timeline)))
+
+
 (defn- make-progress-render-updater
   ([dispatch-fn] (make-progress-render-updater dispatch-fn #(System/currentTimeMillis) nil))
   ([dispatch-fn now-ms-fn] (make-progress-render-updater dispatch-fn now-ms-fn nil))
@@ -346,7 +430,7 @@
 
          dispatch!
          (fn []
-           (dispatch-fn [:set-progress-iterations @latest]))]
+           (dispatch-fn [:set-progress-iterations (clip-live-reasoning @latest)]))]
 
      (letfn [(cancel-pending! [phase]
                (when-let [f (get @scheduled-by-phase phase)]

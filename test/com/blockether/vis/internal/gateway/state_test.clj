@@ -5,6 +5,7 @@
    entirely when an errored op in the form's sink slice already renders the
    same failure as an op card — the web thread painted that failure twice."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.persistance :as persistance]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -413,3 +414,84 @@
         (let [huge (apply str (repeat 1000000 "x"))]
           (expect (false?
                     (coalesce? {:reasoning 1000} {:phase :reasoning :thinking huge} 2001)))))))
+
+(defdescribe
+  turn-stall-watchdog-test
+  "A provider stream wedged in the `:provider-call` phase past the backstop
+   ceiling is force-cancelled: the shared cancellation token flips (which closes
+   the in-flight stream) and the turn is flagged stalled so the queue can drain.
+   A non-provider phase (a legitimately long tool/eval) is left untouched."
+  (let [watchdog
+        @#'state/start-turn-stall-watchdog!
+
+        registry
+        @#'state/registry
+
+        await-cancel
+        (fn [token ms]
+          (let [deadline (+ (System/currentTimeMillis) (long ms))]
+            (loop []
+
+              (cond (cancellation/cancelled? token) true
+                    (>= (System/currentTimeMillis) deadline) false
+                    :else (do (Thread/sleep 25) (recur))))))]
+
+    (it "force-cancels a turn stuck in :provider-call past the ceiling"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              tid
+              "t1"
+
+              token
+              (cancellation/cancellation-token)
+
+              stall
+              (atom {:phase :provider-call :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               ;; await INSIDE with-redefs so the async watchdog thread reads the
+               ;; lowered ceiling before with-redefs reverts it (alter-var-root is
+               ;; global, not thread-local).
+               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                 (watchdog sid tid token stall)
+                 (expect (true? (await-cancel token 4000))))
+               (expect (true? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "leaves a turn alone while it streams a non-provider phase"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              tid
+              "t1"
+
+              token
+              (cancellation/cancellation-token)
+
+              stall
+              (atom {:phase :content :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                 (watchdog sid tid token stall)
+                 (expect (false? (await-cancel token 1200))))
+               (expect (nil? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "leaves a turn alone once it is no longer the current turn"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              token
+              (cancellation/cancellation-token)
+
+              stall
+              (atom {:phase :provider-call :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try
+            ;; a DIFFERENT current turn than the one the watchdog guards
+            (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
+            (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+              (watchdog sid "t1" token stall)
+              (expect (false? (await-cancel token 1200))))
+            (expect (nil? (:stalled? @stall)))
+            (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))

@@ -192,8 +192,12 @@
          (finally (disco/release-spawn-lock! holder)))))
 
 (deftest discover-or-start!-emits-nothing-on-the-fast-attach-path
-  (let [db "/tmp/ev-attach/vis.db"
-        events (atom [])]
+  (let [db
+        "/tmp/ev-attach/vis.db"
+
+        events
+        (atom [])]
+
     (with-redefs [disco/pid-alive? (fn [_]
                                      true)]
       (disco/write-registry! db {:pid 999 :port 7890 :host "127.0.0.1" :secret "s"})
@@ -205,10 +209,16 @@
         (is (empty? @events) "an instant attach must stay silent")))))
 
 (deftest discover-or-start!-emits-spawning-tick-and-ready-when-it-spawns
-  (let [db "/tmp/ev-spawn/vis.db"
-        events (atom [])
-        spawn (fn [_]
-                (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
+  (let [db
+        "/tmp/ev-spawn/vis.db"
+
+        events
+        (atom [])
+
+        spawn
+        (fn [_]
+          (disco/write-registry! db {:pid 123 :port 8000 :host "127.0.0.1" :secret "s"}))]
+
     ;; pid-alive? is false for the first read (nothing registered yet) so we take
     ;; the spawn path; the spawn writes a live entry that await picks up.
     (with-redefs [disco/pid-alive? (fn [_]
@@ -221,15 +231,22 @@
                                           :timeout-ms 2000
                                           :poll-ms 10)
             phases (map :phase @events)]
+
         (is (= :spawned (:mode res)))
         (is (= :spawning (first phases)) "the spawner announces it is starting the daemon")
         (is (= {:phase :ready :mode :spawned :entry (:entry res)} (last @events))
             "a ready event carries the mode + resolved entry")))))
 
 (deftest discover-or-start!-emits-awaiting-and-ready-when-another-process-spawns
-  (let [db "/tmp/ev-await/vis.db"
-        events (atom [])
-        holder (disco/acquire-spawn-lock! db)]
+  (let [db
+        "/tmp/ev-await/vis.db"
+
+        events
+        (atom [])
+
+        holder
+        (disco/acquire-spawn-lock! db)]
+
     (is (some? holder))
     (try (with-redefs [disco/pid-alive? (fn [_]
                                           true)]
@@ -244,6 +261,7 @@
                                                :timeout-ms 3000
                                                :poll-ms 10)
                  phases (map :phase @events)]
+
              (is (= :awaited (:mode res)))
              (is (= :awaiting (first phases))
                  "a waiter announces that ANOTHER vis is starting the gateway")

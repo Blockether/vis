@@ -144,8 +144,39 @@
                       skipped
                       (- (count all-lt) (count selected))
 
+                      lt-suite
+                      (requiring-resolve (quote lazytest.suite/suite))
+
+                      run-suite
+                      (requiring-resolve (quote lazytest.runner/filter-and-run))
+
+                      var->suite
+                      (fn [v]
+                        ;; A defdescribe var derefs to a THUNK that builds the
+                        ;; suite; the older style stores it in :lazytest/test
+                        ;; metadata. Mirror lazytest.runner's own extraction.
+                        (let [m (meta v)]
+                          (if (contains? m :lazytest/test)
+                            (:lazytest/test m)
+                            (let [x (deref v)]
+                              (if (fn? x) (x) x)))))
+
                       run-var
-                      (requiring-resolve (quote lazytest.runner/run-test-var))
+                      (fn [v]
+                        ;; lazytest.runner/run-test-var DROPS the ns-level
+                        ;; :context that set-ns-context! attaches (only
+                        ;; find-ns-suite reads it), so ns fixtures such as
+                        ;; around-each never fire under per-var running.
+                        ;; Rebuild the per-var run suite WITH the ns context so
+                        ;; around-each / before-each wrappers apply. When a ns
+                        ;; has no :context this is nil -> behaves exactly like
+                        ;; run-test-var.
+                        (let [tns (the-ns (symbol (namespace (symbol v))))]
+                          (run-suite (lt-suite {:type :lazytest/run
+                                                :nses [tns]
+                                                :children [(var->suite v)]
+                                                :context (:context (meta tns))})
+                                     {})))
 
                       rseq
                       (requiring-resolve (quote lazytest.results/result-seq))
