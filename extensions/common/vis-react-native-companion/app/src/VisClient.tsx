@@ -9,6 +9,25 @@ export type SessionSoul = {
   updated_at?: number;
   /* epoch ms of the session's last activity — the wire's actual recency field */
   last_active_at?: number;
+  /* session-group (folder) membership + owner (V6). group_id is null when the
+     session is ungrouped; group_name rides along so the drawer needs no join. */
+  group_id?: string | null;
+  group_name?: string | null;
+  owner_id?: string;
+};
+
+/* A session-group folder (GET /v1/groups). Sessions carry group_id; a folder
+   carries a live session_count. `channel` null ⇒ a cross-channel folder visible
+   in every channel's view. */
+export type GatewayGroup = {
+  id: string;
+  name: string;
+  color?: string | null;
+  channel?: string | null;
+  position?: number;
+  session_count?: number;
+  owner_id?: string;
+  archived_at?: number | null;
 };
 
 export type TurnCost = { total_cost?: number; model?: string; provider?: string };
@@ -120,6 +139,7 @@ export type VoiceModelState = {
 };
 
 type ListSessionsResponse = { sessions?: SessionSoul[] };
+type ListGroupsResponse = { groups?: GatewayGroup[] };
 type ListTurnsResponse = { turns?: GatewayTurn[] };
 type ProvidersResponse = { providers?: ProviderInfo[] };
 type CatalogResponse = { catalog?: ProviderModels[] };
@@ -190,6 +210,46 @@ export class VisGatewayClient {
     return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       body: JSON.stringify({ title })
+    });
+  }
+
+  /* ── session groups (folders) ─────────────────────────────────── */
+
+  async listGroups(): Promise<GatewayGroup[]> {
+    /* `channel=all` so the RN drawer sees every folder (its own cross-channel
+       ones plus tui/web-scoped), matching list-sessions' cross-channel view. */
+    const body = await this.request<ListGroupsResponse>("/v1/groups?channel=all");
+    return body.groups ?? [];
+  }
+
+  async createGroup(name: string, color?: string): Promise<GatewayGroup> {
+    /* No channel ⇒ a cross-channel folder, visible from web/tui too. */
+    return this.request<GatewayGroup>("/v1/groups", {
+      method: "POST",
+      body: JSON.stringify(color ? { name, color } : { name })
+    });
+  }
+
+  async updateGroup(
+    groupId: string,
+    patch: { name?: string; color?: string; archived?: boolean }
+  ): Promise<GatewayGroup> {
+    return this.request<GatewayGroup>(`/v1/groups/${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch)
+    });
+  }
+
+  async deleteGroup(groupId: string): Promise<void> {
+    await this.request<null>(`/v1/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+  }
+
+  /* Move a session into a folder, or ungroup it (groupId = null). Returns the
+     re-projected soul (carries the fresh group_id/group_name). */
+  async assignGroup(sessionId: string, groupId: string | null): Promise<SessionSoul> {
+    return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ group_id: groupId })
     });
   }
 

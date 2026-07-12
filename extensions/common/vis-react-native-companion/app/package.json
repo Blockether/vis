@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "prebuild:ios": "expo prebuild --platform ios",
     "pods": "cd ios && pod install",
-    "xcode": "xed ios/vis.xcworkspace"
+    "xcode": "xed ios/vis.xcworkspace",
+    "deploy:ios": "bash scripts/deploy-ios.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -28,6 +29,10 @@
   "devDependencies": {
     "@types/react": "~19.1.10",
     "babel-preset-expo": "~54.0.10",
-    "typescript": "^7.0.2"
+    "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "expo-asset": "~12.0.13",
+    "expo-font": "~14.0.12"
   }
 }

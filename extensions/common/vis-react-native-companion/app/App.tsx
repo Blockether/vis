@@ -18,6 +18,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 
 import {
+  GatewayGroup,
   GatewayTurn,
   ProviderModels,
   SessionModel,
@@ -229,6 +230,7 @@ function Root() {
   const [showSessions, setShowSessions] = useState(false);
   const [showModel, setShowModel] = useState(false);
   const [sessions, setSessions] = useState<SessionSoul[]>([]);
+  const [groups, setGroups] = useState<GatewayGroup[]>([]);
   const [activeSession, setActiveSession] = useState<SessionSoul | null>(null);
   const [turns, setTurns] = useState<GatewayTurn[]>([]);
   const [model, setModel] = useState<SessionModel>(null);
@@ -418,7 +420,9 @@ function Root() {
 
   const refreshSessions = useCallback(async () => {
     try {
-      setSessions(await client.listSessions());
+      const [ss, gs] = await Promise.all([client.listSessions(), client.listGroups()]);
+      setSessions(ss);
+      setGroups(gs);
     } catch (err) {
       fail(err);
     }
@@ -523,6 +527,74 @@ function Root() {
       }
     },
     [activeSession?.id, client, fail]
+  );
+
+  /* ── session groups (folders) ─────────────────────────────────── */
+
+  const createGroup = useCallback(
+    async (name: string) => {
+      try {
+        const g = await client.createGroup(name);
+        setGroups((prev) => [...prev, g]);
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [client, fail]
+  );
+
+  const renameGroup = useCallback(
+    async (group: GatewayGroup, name: string) => {
+      try {
+        const g = await client.updateGroup(group.id, { name });
+        setGroups((prev) => prev.map((x) => (x.id === group.id ? { ...x, ...g } : x)));
+        setSessions((prev) =>
+          prev.map((s) => (s.group_id === group.id ? { ...s, group_name: name } : s))
+        );
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [client, fail]
+  );
+
+  const deleteGroup = useCallback(
+    async (group: GatewayGroup) => {
+      try {
+        await client.deleteGroup(group.id);
+        setGroups((prev) => prev.filter((x) => x.id !== group.id));
+        /* members scatter back to ungrouped — clear their membership locally */
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.group_id === group.id ? { ...s, group_id: null, group_name: null } : s
+          )
+        );
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [client, fail]
+  );
+
+  const assignGroup = useCallback(
+    async (session: SessionSoul, groupId: string | null) => {
+      /* optimistic: reflect membership + bump both folders' counts at once */
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === session.id
+            ? { ...s, group_id: groupId, group_name: groups.find((g) => g.id === groupId)?.name ?? null }
+            : s
+        )
+      );
+      try {
+        const soul = await client.assignGroup(session.id, groupId);
+        setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)));
+      } catch (err) {
+        fail(err);
+        void refreshSessions();
+      }
+    },
+    [client, fail, groups, refreshSessions]
   );
 
   const openModelDialog = useCallback(async () => {
@@ -753,6 +825,7 @@ function Root() {
       <SessionsDrawer
         visible={showSessions}
         sessions={sessions}
+        groups={groups}
         activeId={activeSession?.id ?? null}
         onClose={() => setShowSessions(false)}
         onSelect={(s) => void openSession(s)}
@@ -762,6 +835,10 @@ function Root() {
         }}
         onDelete={(s) => void deleteSession(s)}
         onRename={(s, title) => void renameSession(s, title)}
+        onCreateGroup={(name) => void createGroup(name)}
+        onRenameGroup={(g, name) => void renameGroup(g, name)}
+        onDeleteGroup={(g) => void deleteGroup(g)}
+        onAssign={(s, gid) => void assignGroup(s, gid)}
       />
 
       {/* ── settings — the web channel's Settings dialog, native ──── */}
