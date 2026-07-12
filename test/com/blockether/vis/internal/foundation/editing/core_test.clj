@@ -2713,7 +2713,17 @@
         (expect (= "1 matching file" (:summary (render {"files" ["only.clj"] "file_count" 1})))))
     (it "content mode is unchanged: `N hits in M files`"
         (let [card (render {"matches" {"x.clj" {"1:abc" "line one"}} "hit_count" 1 "file_count" 1})]
-          (expect (= "1 hit in 1 file" (:summary card)))))))
+          (expect (= "1 hit in 1 file" (:summary card)))))
+    (it "content mode right-aligns the gutter to the file's widest line number"
+        ;; Same class as the cat-card margin bug: mixed 1- and 4-digit line
+        ;; numbers must NOT stagger the text column. Each row's text starts at
+        ;; the same offset once the line number is right-aligned.
+        (let [card (render {"matches" {"x.clj" {"9:bb" {"text" "nine"}
+                                                "1200:dd" {"text" "twelve-hundred"}}}
+                            "hit_count" 2
+                            "file_count" 1})]
+          (expect (clojure.string/includes? (:body card) "\n     9  nine\n"))
+          (expect (clojure.string/includes? (:body card) "\n  1200  twelve-hundred\n"))))))
 
 (defdescribe
   render-cat-result-spans-test
@@ -2725,7 +2735,9 @@
     (it "single contiguous range: `L<a>-<b>`, count implied"
         (let [card (render {"path" "app.css" "anchors" {"1:aa" "x" "2:bb" "y" "3:cc" "z"}})]
           (expect (= "`app.css` · L1-3" (:summary card)))
-          (expect (clojure.string/includes? (:body card) "    1  x"))))
+          ;; Gutter is sized to the widest line number (1 digit here) — no
+          ;; fixed-5 left-pad, so the row is flush `1  x`, not `    1  x`.
+          (expect (clojure.string/includes? (:body card) "\n1  x\n"))))
     (it "single line: bare `L<n>`"
         (expect (= "`app.css` · L42"
                    (:summary (render {"path" "app.css" "anchors" {"42:ff" "q"}})))))

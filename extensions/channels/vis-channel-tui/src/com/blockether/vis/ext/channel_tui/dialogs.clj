@@ -1867,7 +1867,8 @@
    ["Esc" "close"]])
 
 (defn- magit-row-style
-  "`[fg bold?]` for one status-buffer row."
+  "`[fg bold? bg]` for one status-buffer row — foreground, bold?, and an optional
+   background (diff add/remove lines get the subtle green/red band magit uses)."
   [{:keys [kind text]}]
   (case kind
     :repo
@@ -1878,10 +1879,21 @@
 
     :diff
     (let [t (str/triml (str text))]
-      (cond (str/starts-with? t "+") [t/code-success-fg false]
-            (str/starts-with? t "-") [t/code-error-fg false]
-            (str/starts-with? t "@@") [t/dialog-hint-key false]
-            :else [t/dialog-hint false]))
+      (cond
+        ;; diff/file headers read as plain hints, never as add/remove lines
+        (or (str/starts-with? t "+++")
+            (str/starts-with? t "---")
+            (str/starts-with? t "diff ")
+            (str/starts-with? t "index ")
+            (str/starts-with? t "new file")
+            (str/starts-with? t "deleted file")
+            (str/starts-with? t "rename ")
+            (str/starts-with? t "similarity "))
+        [t/dialog-hint false]
+        (str/starts-with? t "@@") [t/dialog-hint-key false t/code-block-bg]
+        (str/starts-with? t "+") [t/code-success-fg false t/code-ok-bg]
+        (str/starts-with? t "-") [t/code-error-fg false t/code-err-bg]
+        :else [t/dialog-hint false]))
 
     :commit
     [t/dialog-hint false]
@@ -1903,51 +1915,15 @@
 
       (if (realized? fut) @fut (do (tick!) (Thread/sleep (long poll-ms)) (recur))))))
 
-(defn- draw-network-spinner!
-  "Paint a tiny centered `Git` box with a braille spinner + `label…` over the
-   current screen, and drain any keystrokes typed while the op runs so they can't
-   misfire once it returns. Best-effort — a draw failure never aborts the wait."
-  [^TerminalScreen screen ^String label]
-  (try (loop []
-
-         (when (.pollInput screen) (recur)))
-       (let [size
-             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-             cols
-             (.getColumns size)
-
-             rows
-             (.getRows size)
-
-             g
-             (.newTextGraphics screen)
-
-             {:keys [left top inner-w inner-h]}
-             (draw-dialog-chrome! g cols rows "Git" 1)
-
-             text
-             (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
-
-             row-y
-             (+ (long top) (quot (long inner-h) 2))
-
-             tx
-             (+ (long left) 1 (max 0 (quot (- (long inner-w) (count text)) 2)))]
-
-         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-         (p/put-str! g tx row-y (ellipsize text (max 1 (long inner-w))))
-         (.setCursorPosition screen (p/cursor-pos 0 0))
-         (.refresh screen Screen$RefreshType/DELTA))
-       (catch Throwable _ nil)))
-
 (defn- run-network!
   "Run a blocking git network `thunk` (push/pull/fetch) on a background thread
-   while a spinner keeps the modal alive and shows `label` progress, returning the
-   thunk's `{:ok? :msg}`. The fix for the frozen-UI-on-pull gripe: the network
-   round-trip no longer blocks the render/input loop."
-  [^TerminalScreen screen label thunk]
-  (run-async-with-ticker! thunk #(draw-network-spinner! screen label) 80))
+   while `busy!` repaints the magit buffer's OWN footer with `label` progress
+   every tick, returning the thunk's `{:ok? :msg}`. There is NO modal overlay —
+   the spinner lives in the status buffer's footer (the hint-bar row), so the
+   buffer stays fully visible while the network round-trip runs off the
+   render/input loop."
+  [busy! label thunk]
+  (run-async-with-ticker! thunk #(busy! label) 80))
 
 
 (defn- magit-section-action!
@@ -2004,14 +1980,14 @@
           (magit/commit! root msg {:amend? amend?}))))))
 
 (defn- magit-push-flow!
-  [^TerminalScreen screen root]
+  [^TerminalScreen screen busy! root]
   (when-let [c (select-dialog! screen
                                "Push"
                                [{:label "Push" :id :push}
                                 {:label "Push, set upstream (-u origin)" :id :upstream}
                                 {:label "Force push (--force-with-lease)" :id :force}])]
     (run-network!
-      screen
+      busy!
       "Pushing"
       #(magit/push! root {:set-upstream? (= :upstream (:id c)) :force? (= :force (:id c))}))))
 
@@ -2084,7 +2060,7 @@
   "Run the magit verb for character `c` against the row under the cursor.
    Returns an action result `{:ok? :msg}`, or nil when the key did nothing.
    Case-SENSITIVE — `s`≠`S`, `u`≠`U`, `f`≠`F`, exactly like magit."
-  [^TerminalScreen screen root model rows idx row c]
+  [^TerminalScreen screen busy! root model rows idx row c]
   (case c
     \s
     (magit-stage-action! root rows idx row)
@@ -2105,13 +2081,13 @@
     (magit-commit-flow! screen root model)
 
     \P
-    (magit-push-flow! screen root)
+    (magit-push-flow! screen busy! root)
 
     \F
-    (run-network! screen "Pulling" #(magit/pull! root))
+    (run-network! busy! "Pulling" #(magit/pull! root))
 
     \f
-    (run-network! screen "Fetching" #(magit/fetch! root))
+    (run-network! busy! "Fetching" #(magit/fetch! root))
 
     \b
     (magit-branch-flow! screen root)
@@ -2194,11 +2170,17 @@
           (let [root
                 (or (:root row) primary-root)
 
+                commit?
+                (= :commit (:kind row))
+
                 k
-                [root (:area row) (:path row)]]
+                [root (:area row) (if commit? (:sha row) (:path row))]]
 
             (or (get @diff-cache k)
-                (let [lines (or (not-empty (magit/file-diff-lines root row)) ["(no diff)"])]
+                (let [lines (or (not-empty (if commit?
+                                             (magit/commit-diff-lines root row)
+                                             (magit/file-diff-lines root row)))
+                                ["(no diff)"])]
                   (swap! diff-cache assoc k lines)
                   lines))))]
 
@@ -2272,7 +2254,30 @@
             (reset! scroll start)
 
             text-w
-            (max 1 (- inner-w 3))]
+            (max 1 (- inner-w 3))
+
+            busy!
+            (fn [label]
+              ;; Progress lives in the buffer's OWN footer, not a modal overlay:
+              ;; drain keystrokes typed mid-op (so they can't misfire once the
+              ;; verb returns), then paint the spinner + `label…` over the
+              ;; hint-bar row. The rest of the status buffer stays untouched.
+              (try (loop []
+
+                     (when (.pollInput screen) (recur)))
+                   (p/set-colors! g t/dialog-fg t/dialog-bg)
+                   (p/fill-rect! g (inc left) hint-row inner-w 1)
+                   (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                   (p/put-str!
+                     g
+                     (+ left 2)
+                     hint-row
+                     (ellipsize
+                       (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
+                       text-w))
+                   (.setCursorPosition screen nil)
+                   (.refresh screen Screen$RefreshType/DELTA)
+                   (catch Throwable _ nil)))]
 
         (dotimes [i visible]
           (let [idx (+ start i)
@@ -2280,14 +2285,15 @@
 
             (when (< idx total)
               (let [row (nth buf-rows idx)
-                    [fg bold?] (magit-row-style row)
+                    [fg bold? row-bg] (magit-row-style row)
+                    bg (or row-bg t/dialog-bg)
                     selected? (and (= idx @sel) (magit/selectable? row))]
 
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/set-colors! g t/dialog-fg bg)
                 (p/fill-rect! g (inc left) row-y inner-w 1)
-                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/set-colors! g t/dialog-hint-key bg)
                 (p/draw-selection-marker! g (inc left) row-y selected?)
-                (p/set-colors! g fg t/dialog-bg)
+                (p/set-colors! g fg bg)
                 (let [txt (ellipsize (:text row) text-w)]
                   (if (or bold? selected?)
                     (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row-y txt))
@@ -2306,7 +2312,10 @@
             (p/set-colors! g (if ok? t/code-success-fg t/code-error-fg) t/dialog-bg)
             (p/put-str! g (+ left 2) row-y (ellipsize (str msg) text-w))))
         (draw-hint-bar! g left hint-row inner-w magit-hints)
-        (.setCursorPosition screen (p/cursor-pos 0 0))
+        ;; No text-input field in the magit buffer — hide the terminal cursor
+        ;; entirely (nil) instead of parking it at 0,0, where it blinks in the
+        ;; top-left corner.
+        (.setCursorPosition screen nil)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key
               (read-modal-key! screen)
@@ -2326,39 +2335,47 @@
 
               toggle-diff!
               (fn []
-                (when (= :file (:kind row))
-                  (let [k [(or (:root row) primary-root) (:area row) (:path row)]]
+                (when (contains? #{:file :commit} (:kind row))
+                  (let [id
+                        (if (= :commit (:kind row)) (:sha row) (:path row))
+
+                        k
+                        [(or (:root row) primary-root) (:area row) id]]
+
                     (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
 
-          (cond
-            (nil? key) (recur)
-            wheel (do (dotimes [_ (Math/abs (long wheel))]
-                        (move! (if (neg? (long wheel)) -1 1)))
-                      (recur))
-            :else
-            (condp = (key-type key)
-              KeyType/Escape nil
-              KeyType/ArrowUp (do (move! -1) (recur))
-              KeyType/ArrowDown (do (move! 1) (recur))
-              KeyType/PageUp (do (dotimes [_ (max 1 (dec list-h))]
-                                   (move! -1))
-                                 (recur))
-              KeyType/PageDown (do (dotimes [_ (max 1 (dec list-h))]
-                                     (move! 1))
-                                   (recur))
-              KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0)) (recur))
-              KeyType/Tab (do (toggle-diff!) (recur))
-              KeyType/Enter (do (toggle-diff!) (recur))
-              KeyType/Character
-              (let [c (key-character key)]
-                (if (= c \q)
-                  nil
-                  (do
-                    (reset! echo nil)
-                    (run-action!
-                      (magit-char-action! screen row-root (model-for row-root) buf-rows @sel row c))
-                    (recur))))
-              (recur))))))))
+          (cond (nil? key) (recur)
+                wheel (do (dotimes [_ (Math/abs (long wheel))]
+                            (move! (if (neg? (long wheel)) -1 1)))
+                          (recur))
+                :else
+                (condp = (key-type key)
+                  KeyType/Escape nil
+                  KeyType/ArrowUp (do (move! -1) (recur))
+                  KeyType/ArrowDown (do (move! 1) (recur))
+                  KeyType/PageUp (do (dotimes [_ (max 1 (dec list-h))]
+                                       (move! -1))
+                                     (recur))
+                  KeyType/PageDown (do (dotimes [_ (max 1 (dec list-h))]
+                                         (move! 1))
+                                       (recur))
+                  KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0)) (recur))
+                  KeyType/Tab (do (toggle-diff!) (recur))
+                  KeyType/Enter (do (toggle-diff!) (recur))
+                  KeyType/Character (let [c (key-character key)]
+                                      (if (= c \q)
+                                        nil
+                                        (do (reset! echo nil)
+                                            (run-action! (magit-char-action! screen
+                                                                             busy!
+                                                                             row-root
+                                                                             (model-for row-root)
+                                                                             buf-rows
+                                                                             @sel
+                                                                             row
+                                                                             c))
+                                            (recur))))
+                  (recur))))))))
 
 (defn- current-model-info
   []
@@ -3932,7 +3949,7 @@
 ;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
   [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
-   {:id :draft :label "Draft" :width 8} {:id :dir :label "Dir" :width 22}
+   {:id :draft :label "Draft" :width 8} {:id :dir :label "Group" :width 22}
    {:id :status :label "Status" :width 10}])
 (defn- navigator-content-w
   "Navigator is wider than the default modal footprint — five columns need
@@ -3971,7 +3988,10 @@
      ;; pinned workspace: whether it's in a draft, and the directory it works
      ;; in. `—` = trunk / no draft.
      :draft (or (not-empty (:draft-label session)) "—")
-     :dir (or (not-empty (:work-dir session)) "—")
+     ;; The persistent Group folder wins as the cluster/label; ungrouped
+     ;; sessions fall back to their project dir (the pre-groups behaviour).
+     :group (not-empty (:group_name session))
+     :dir (or (not-empty (:group_name session)) (not-empty (:work-dir session)) "—")
      :status (if active? "● focused" (str (long (or (:turn-count session) 0)) " turns"))
      :created (navigator-stamp (:created-at session))
      :modified (navigator-stamp (:modified-at session))
@@ -4794,7 +4814,7 @@
                           hint-row
                           inner-w
                           [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
-                           ["C-d" "delete"]
+                           ["C-d" "delete"] ["C-b" "group"]
                            [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
                            ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
@@ -4895,6 +4915,13 @@
                    (= (lower-key-character key) \d))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :delete :id id}
+                (recur))
+              ;; Ctrl+B → move the highlighted session to a group (folder).
+              (and (input/ctrl-modifier? key)
+                   (= KeyType/Character (key-type key))
+                   (= (lower-key-character key) \b))
+              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                {:action :group :id id}
                 (recur))
               (input/ctrl-char? key \u) (do (swap! show-empty-untitled? not) (reset-list!) (recur))
               ;; Clipboard paste → append into the query filter.

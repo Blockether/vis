@@ -107,20 +107,18 @@
 
 (defdescribe
   configured-provider-status-test
-  (it "routes configured provider status through the gateway"
-      (with-redefs [vis/gateway-provider-status
-                    (fn [provider-id]
-                      {:authenticated? true
-                       :source :gateway
-                       :provider-id provider-id
-                       :config-path vis/config-path})]
-        (expect (= {:authenticated? true
-                    :source :gateway
-                    :provider-id :openai
-                    :config-path vis/config-path}
-                   (select-keys (@#'provider/configured-provider-status
-                                 {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                                [:authenticated? :source :provider-id :config-path])))))
+  (it
+    "routes configured provider status through the gateway"
+    (with-redefs [vis/gateway-provider-status (fn [provider-id]
+                                                {:authenticated? true
+                                                 :source :gateway
+                                                 :provider-id provider-id
+                                                 :config-path vis/config-path})]
+      (expect
+        (= {:authenticated? true :source :gateway :provider-id :openai :config-path vis/config-path}
+           (select-keys (@#'provider/configured-provider-status
+                         {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
+                        [:authenticated? :source :provider-id :config-path])))))
   (it "routes local no-auth provider status through the gateway instead of probing locally"
       (let [local-probed? (atom false)]
         (with-redefs [providers/probe-local-reachable
@@ -130,6 +128,7 @@
                       vis/gateway-provider-status
                       (fn [provider-id]
                         {:authenticated? true :source :gateway :provider-id provider-id})]
+
           (expect (= {:authenticated? true :source :gateway :provider-id :ollama}
                      (select-keys (@#'provider/configured-provider-status {:id :ollama})
                                   [:authenticated? :source :provider-id])))

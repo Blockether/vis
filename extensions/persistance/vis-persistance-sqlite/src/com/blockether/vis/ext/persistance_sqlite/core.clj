@@ -902,7 +902,7 @@
      session_state.title."
   [db-info
    {:keys [channel external-id title system-prompt provider model workspace-id parent-state-id
-           claimed?]
+           claimed? owner-id]
     :or {claimed? true}}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
@@ -927,6 +927,7 @@
                                        :external_id (some-> external-id
                                                             str)
                                        :created_at now
+                                       :owner_id (or owner-id "local")
                                        ;; adoption marker (V5). Unclaimed (NULL)
                                        ;; = warm-pool scaffolding, hidden from
                                        ;; db-list-sessions; claimed = a real
@@ -968,7 +969,12 @@
   (when (and (ds db-info) session-id)
     (let [id (->ref session-id)]
       (when-let [soul (query-one! db-info {:select [:*] :from :session_soul :where [:= :id id]})]
-        (let [state (latest-state-for db-info id)]
+        (let [state (latest-state-for db-info id)
+              group (when (:group_id soul)
+                      (query-one!
+                        db-info
+                        {:select [:name] :from :session_group :where [:= :id (:group_id soul)]}))]
+
           (cond-> {:id (->uuid (:id soul))
                    :type :session
                    :channel (->kw-back (:channel soul))
@@ -977,9 +983,14 @@
                    :system-prompt (:system_prompt state)
                    :model (:llm_root_model state)
                    :version (or (:version state) 0)
-                   :created-at (->date (:created_at soul))}
+                   :created-at (->date (:created_at soul))
+                   :owner-id (:owner_id soul)
+                   :group-id (->uuid (:group_id soul))}
             (:llm_root_provider state)
-            (assoc :provider (->kw-back (:llm_root_provider state)))))))))
+            (assoc :provider (->kw-back (:llm_root_provider state)))
+
+            group
+            (assoc :group-name (:name group))))))))
 
 (defn db-resolve-session-id
   [db-info selector]
@@ -1013,37 +1024,42 @@
           all?
           (or (nil? ch) (= "all" ch))]
 
-      (mapv (fn [row]
-              {:id (->uuid (:id row))
-               :channel (->kw-back (:channel row))
-               :external-id (:external_id row)
-               :title (:state_title row)
-               :version (:version row)
-               :fork-count (or (:fork_count row) 0)
-               :created-at (->date (:created_at row))})
-            (query! db-info
-                    {:select [:cs.id :cs.channel :cs.external_id :cs.created_at
-                              [:s.title :state_title] :s.version
-                              [{:select [[[:count :*]]]
-                                :from [[:session_state :child]]
-                                :where [:and [:= :child.session_soul_id :cs.id]
-                                        [:not= :child.parent_state_id nil]]} :fork_count]]
-                     :from [[:session_soul :cs]]
-                     :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                     :where (into [:and
-                                   ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
-                                   ;; hang off their parent's sub-tree, never the session list.
-                                   [:= :cs.parent_state_id nil]
-                                   ;; ADOPTION filter: hide unclaimed warm-pool
-                                   ;; scaffolding (NULL claimed_at) - only real
-                                   ;; conversations reach the cross-channel list.
-                                   [:not= :cs.claimed_at nil]
-                                   [:= :s.version
-                                    {:select [[[:max :s2.version]]]
-                                     :from [[:session_state :s2]]
-                                     :where [:= :s2.session_soul_id :cs.id]}]]
-                                  (when-not all? [[:= :cs.channel ch]]))
-                     :order-by [[:cs.created_at :desc]]})))))
+      (mapv
+        (fn [row]
+          {:id (->uuid (:id row))
+           :channel (->kw-back (:channel row))
+           :external-id (:external_id row)
+           :title (:state_title row)
+           :version (:version row)
+           :fork-count (or (:fork_count row) 0)
+           :created-at (->date (:created_at row))
+           :owner-id (:owner_id row)
+           :group-id (->uuid (:group_id row))
+           :group-name (:group_name row)})
+        (query! db-info
+                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
+                          :cs.group_id [:g.name :group_name] [:s.title :state_title] :s.version
+                          [{:select [[[:count :*]]]
+                            :from [[:session_state :child]]
+                            :where [:and [:= :child.session_soul_id :cs.id]
+                                    [:not= :child.parent_state_id nil]]} :fork_count]]
+                 :from [[:session_soul :cs]]
+                 :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
+                 :left-join [[:session_group :g] [:= :g.id :cs.group_id]]
+                 :where (into [:and
+                               ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
+                               ;; hang off their parent's sub-tree, never the session list.
+                               [:= :cs.parent_state_id nil]
+                               ;; ADOPTION filter: hide unclaimed warm-pool
+                               ;; scaffolding (NULL claimed_at) - only real
+                               ;; conversations reach the cross-channel list.
+                               [:not= :cs.claimed_at nil]
+                               [:= :s.version
+                                {:select [[[:max :s2.version]]]
+                                 :from [[:session_state :s2]]
+                                 :where [:= :s2.session_soul_id :cs.id]}]]
+                              (when-not all? [[:= :cs.channel ch]]))
+                 :order-by [[:cs.created_at :desc]]})))))
 
 (defn db-find-session-by-external
   [db-info channel external-id]
@@ -1093,6 +1109,162 @@
       db-info
       (fn [tx-info]
         (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})))))
+
+;; =============================================================================
+;; Session groups (folders) + ownership  (V6)
+;; =============================================================================
+
+(defn- row->group
+  "Project a `session_group` row (with an optional `session_count` aggregate)
+   into the canonical Clojure shape."
+  [row]
+  {:id (->uuid (:id row))
+   :owner-id (:owner_id row)
+   :channel (->kw-back (:channel row))
+   :name (:name row)
+   :color (:color row)
+   :position (:position row)
+   :created-at (->date (:created_at row))
+   :archived-at (->date (:archived_at row))
+   :session-count (or (:session_count row) 0)})
+
+(def ^:private group-select-cols
+  [:g.id :g.owner_id :g.channel :g.name :g.color :g.position :g.created_at :g.archived_at
+   [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.group_id :g.id]}
+    :session_count]])
+
+(defn db-get-group
+  "Return one `session_group` (canonical shape, with live `:session-count`) or nil."
+  [db-info group-id]
+  (when (and (ds db-info) group-id)
+    (some-> (query-one! db-info
+                        {:select group-select-cols
+                         :from [[:session_group :g]]
+                         :where [:= :g.id (->id group-id)]})
+            row->group)))
+
+(defn db-list-groups
+  "List `session_group` folders for `owner-id` (default \"local\"), each with a
+   live `:session-count`, ordered by (position, created_at).
+
+   `channel` scopes the view: a channel keyword returns that channel's groups
+   PLUS cross-channel (NULL-channel) groups; `:all`/nil returns every group.
+   Archived groups are hidden unless `:include-archived?` is truthy."
+  [db-info {:keys [owner-id channel include-archived?]}]
+  (when (ds db-info)
+    (let [owner
+          (or owner-id "local")
+
+          ch
+          (some-> channel
+                  ->kw)
+
+          all?
+          (or (nil? ch) (= "all" ch))]
+
+      (mapv row->group
+            (query! db-info
+                    {:select group-select-cols
+                     :from [[:session_group :g]]
+                     :where (into [:and [:= :g.owner_id owner]]
+                                  (concat (when-not all?
+                                            [[:or [:= :g.channel ch] [:= :g.channel nil]]])
+                                          (when-not include-archived? [[:= :g.archived_at nil]])))
+                     :order-by [[:g.position :asc] [:g.created_at :asc]]})))))
+
+(defn db-create-group!
+  "Create a `session_group` folder. `:name` is required (non-blank). `:channel`
+   nil ⇒ a cross-channel group. `:owner-id` defaults to \"local\". `:position`,
+   when omitted, appends after the owner's current groups. Returns the created
+   group (canonical shape)."
+  [db-info {:keys [name channel color owner-id position]}]
+  (when (str/blank? (str name))
+    (throw (ex-info "db-create-group! requires a non-blank :name"
+                    {:type :persistance/invalid-group-name})))
+  (when (ds db-info)
+    (let [group-id (sqlite-write-tx!
+                     db-info
+                     (fn [tx-info]
+                       (let [gid (new-uuid)
+                             now (now-ms)
+                             owner (or owner-id "local")
+                             ch (some-> channel
+                                        ->kw)
+                             pos (or position
+                                     (inc (or (:maxpos (query-one! tx-info
+                                                                   {:select [[[:max :position]
+                                                                              :maxpos]]
+                                                                    :from :session_group
+                                                                    :where [:= :owner_id owner]}))
+                                              -1)))]
+
+                         (execute! tx-info
+                                   {:insert-into :session_group
+                                    :values [(cond-> {:id (str gid)
+                                                      :owner_id owner
+                                                      :name (str name)
+                                                      :position pos
+                                                      :created_at now}
+                                               ch
+                                               (assoc :channel ch)
+
+                                               color
+                                               (assoc :color color))]})
+                         gid)))]
+      (db-get-group db-info group-id))))
+
+(defn db-update-group!
+  "Patch a `session_group`: any of `:name` (non-blank), `:color`, `:position`,
+   `:archived?` (true stamps `archived_at`=now, false clears it). Returns the
+   updated group (canonical shape) or nil when nothing to change."
+  [db-info group-id {:keys [name color position archived?] :as opts}]
+  (when (and (ds db-info) group-id (seq opts))
+    (when (and (contains? opts :name) (str/blank? (str name)))
+      (throw (ex-info "db-update-group! :name must be non-blank"
+                      {:type :persistance/invalid-group-name})))
+    (let [set-map (cond-> {}
+                    (contains? opts :name)
+                    (assoc :name (str name))
+
+                    (contains? opts :color)
+                    (assoc :color color)
+
+                    (contains? opts :position)
+                    (assoc :position position)
+
+                    (contains? opts :archived?)
+                    (assoc :archived_at (when archived? (now-ms))))]
+      (when (seq set-map)
+        (sqlite-write-tx!
+          db-info
+          (fn [tx-info]
+            (execute! tx-info
+                      {:update :session_group :set set-map :where [:= :id (->id group-id)]})))
+        (db-get-group db-info group-id)))))
+
+(defn db-delete-group!
+  "Delete a `session_group`. Member souls are scattered back to ungrouped by the
+   `ON DELETE SET NULL` FK - conversations are NEVER deleted."
+  [db-info group-id]
+  (when (and (ds db-info) group-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:delete-from :session_group :where [:= :id (->id group-id)]})))))
+
+(defn db-set-session-group!
+  "Assign the soul behind `session-id` to `group-id`; a nil `group-id` clears
+   membership (ungroups). Returns the soul id."
+  [db-info session-id group-id]
+  (when (and (ds db-info) session-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:update :session_soul
+                                   :set {:group_id (->ref group-id)}
+                                   :where [:= :id (->id session-id)]})))
+    session-id))
+
 
 ;; =============================================================================
 ;; Fork - branch a session at a point

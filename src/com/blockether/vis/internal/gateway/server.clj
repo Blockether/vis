@@ -512,16 +512,24 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- patch-session-handler
+  "PATCH /v1/sessions/:sid — rename (`{title}`) OR change group membership
+   (`{group_id}`, null to ungroup). Membership takes precedence when present."
   [request]
   (let [sid
         (path-sid request)
 
-        title
-        (:title (body-json request))]
+        body
+        (body-json request)]
 
-    (cond (str/blank? (str title))
+    (cond (not sid) (session-404 (get-in request [:path-params :sid]))
+          (contains? body :group_id) (if-let [soul (state/assign-group! sid
+                                                                        (some-> (:group_id body)
+                                                                                parse-uuid))]
+                                       (json-response soul)
+                                       (session-404 (get-in request [:path-params :sid])))
+          (str/blank? (str (:title body)))
           (error-response 400 :invalid-request "title must be a non-blank string")
-          :else (if-let [soul (and sid (state/set-title! sid title))]
+          :else (if-let [soul (state/set-title! sid (:title body))]
                   (json-response soul)
                   (session-404 (get-in request [:path-params :sid]))))))
 
@@ -540,6 +548,102 @@
   (some-> (path-sid request)
           state/release-session!)
   {:status 204 :headers {} :body nil})
+
+;; --- Session groups (folders) + ownership (V6) ---
+
+(defn- path-gid
+  [request]
+  (some-> (get-in request [:path-params :gid])
+          parse-uuid))
+
+(defn- group-404
+  [gid-str]
+  (error-response 404 :group-not-found "unknown group" :group_id (str gid-str)))
+
+(defn- list-groups-handler
+  "GET /v1/groups[?channel=tui|all&owner=…&archived=true] — folders for one
+   owner/channel view, each with a live session_count."
+  [request]
+  (let [channel
+        (or (not-empty (get-in request [:query-params "channel"])) "all")
+
+        owner
+        (not-empty (get-in request [:query-params "owner"]))
+
+        archived?
+        (= "true" (get-in request [:query-params "archived"]))]
+
+    (json-response {:groups (state/list-groups (cond-> {:channel channel
+                                                        :include-archived? archived?}
+                                                 owner
+                                                 (assoc :owner-id owner)))})))
+
+(defn- create-group-handler
+  "POST /v1/groups {name, channel?, color?, owner_id?} — create a folder."
+  [request]
+  (let [{:keys [name channel color owner_id]} (body-json request)]
+    (if (str/blank? (str name))
+      (error-response 400 :invalid-request "name must be a non-blank string")
+      (json-response 201
+                     (state/create-group! (cond-> {:name name}
+                                            channel
+                                            (assoc :channel channel)
+
+                                            color
+                                            (assoc :color color)
+
+                                            owner_id
+                                            (assoc :owner-id owner_id)))))))
+
+(defn- get-group-handler
+  [request]
+  (let [gid-str (get-in request [:path-params :gid])]
+    (if-let [g (some-> (path-gid request)
+                       state/get-group)]
+      (json-response g)
+      (group-404 gid-str))))
+
+(defn- patch-group-handler
+  "PATCH /v1/groups/:gid {name?, color?, position?, archived?} — patch a folder."
+  [request]
+  (let [gid-str
+        (get-in request [:path-params :gid])
+
+        gid
+        (path-gid request)
+
+        body
+        (body-json request)
+
+        opts
+        (cond-> {}
+          (contains? body :name)
+          (assoc :name (:name body))
+
+          (contains? body :color)
+          (assoc :color (:color body))
+
+          (contains? body :position)
+          (assoc :position (:position body))
+
+          (contains? body :archived)
+          (assoc :archived? (boolean (:archived body))))]
+
+    (cond (not gid) (group-404 gid-str)
+          (and (contains? opts :name) (str/blank? (str (:name opts))))
+          (error-response 400 :invalid-request "name must be a non-blank string")
+          (empty? opts) (error-response 400 :invalid-request "no group fields to update")
+          :else (if-let [g (state/update-group! gid opts)]
+                  (json-response g)
+                  (group-404 gid-str)))))
+
+(defn- delete-group-handler
+  "DELETE /v1/groups/:gid — member sessions scatter back to ungrouped."
+  [request]
+  (some-> (path-gid request)
+          state/delete-group!)
+  {:status 204 :headers {} :body nil})
+
 
 (defn- submit-turn-handler
   [request]
@@ -908,6 +1012,9 @@
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
+        ["/groups" {:get list-groups-handler :post create-group-handler}]
+        ["/groups/:gid"
+         {:get get-group-handler :patch patch-group-handler :delete delete-group-handler}]
         ["/sessions/:sid"
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         ["/sessions/:sid/release" {:post release-session-handler}]

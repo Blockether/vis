@@ -151,9 +151,15 @@
    palette."
   [tint]
   (case tint
-    :git [header-active-tab-fg code-success-fg]
-    (:draft :warning) [header-active-tab-fg footer-warning-fg]
-    :error [header-active-tab-fg footer-error-fg]
+    :git
+    [header-active-tab-fg code-success-fg]
+
+    (:draft :warning)
+    [header-active-tab-fg footer-warning-fg]
+
+    :error
+    [header-active-tab-fg footer-error-fg]
+
     [button-fg button-bg]))
 
 ;; Widths

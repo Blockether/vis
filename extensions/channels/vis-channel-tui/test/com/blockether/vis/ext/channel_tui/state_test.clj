@@ -999,6 +999,48 @@
           (expect (= 3 (get tag-counts :c)))))))
 
 (defdescribe
+  reasoning-sentence-buffer-test
+  (let [clip
+        #'state/clip-reasoning-to-sentence
+
+        clip-live
+        #'state/clip-live-reasoning]
+
+    (it "holds a short boundary-less partial back (no 1-2 char leading stub)"
+        (expect (= "" (clip "I" 200)))
+        (expect (= "" (clip "I thi" 200))))
+    (it "reveals up to (and including) the last sentence boundary"
+        (expect (= "I think so." (clip "I think so. And ne" 200)))
+        (expect (= "One. Two!" (clip "One. Two! Thr" 200))))
+    (it "keeps trailing closing punctuation with the boundary"
+        (expect (= "He said \"go.\"" (clip "He said \"go.\" Then" 200))))
+    (it "escape hatch: a long boundary-less tail is revealed whole"
+        (let [s (apply str (repeat 250 "x"))]
+          (expect (= s (clip s 200))))
+        ;; boundary present but a very long partial after it → reveal all
+        (let [s (str "Ok. " (apply str (repeat 250 "y")))]
+          (expect (= s (clip s 200)))))
+    (it "empty / nil stays empty" (expect (= "" (clip "" 200))) (expect (= "" (clip nil 200))))
+    (it "clip-live only touches entries still streaming reasoning"
+        (let [streaming
+              {:iteration 0 :thinking "I think so. And mo" :forms [] :done? false :final nil}
+
+              with-form
+              {:iteration 0 :thinking "I think so. And mo" :forms [{:code "x"}] :done? false}
+
+              done
+              {:iteration 0 :thinking "I think so. And mo" :forms [] :done? true :final :ok}]
+
+          ;; live streaming entry → clipped to the last sentence
+          (expect (= "I think so." (:thinking (first (clip-live [streaming])))))
+          ;; a form has landed → full thinking revealed
+          (expect (= "I think so. And mo" (:thinking (first (clip-live [with-form])))))
+          ;; iteration finished → full thinking revealed
+          (expect (= "I think so. And mo" (:thinking (first (clip-live [done])))))
+          ;; non-map timeline entries pass through untouched
+          (expect (= [:t0] (clip-live [:t0])))))))
+
+(defdescribe
   live-progress-trailing-flush-test
   ;; Regression: leading-edge-only throttling pinned the live
   ;; bubble on the FIRST reasoning frame ("I" / "The") for the

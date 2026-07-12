@@ -26,13 +26,28 @@
         (String/format Locale/ROOT "%.0f" (object-array [d]))
         (String/format Locale/ROOT "%.1f" (object-array [d]))))))
 
+(defn- ->kw
+  "Coerce a wire value back to a keyword. The gateway JSON hop stringifies
+   keyword VALUES (`:rate` -> \"rate\", `:claude-5h` -> \"claude-5h\") while
+   only KEYS are keywordized on parse, so a limits report read back through
+   the daemon carries string `:id`/`:kind` where an in-process report carries
+   keywords. Normalizing here lets the row formatters treat both shapes
+   identically (see `wire/canonical`)."
+  [x]
+  (cond (keyword? x) x
+        (string? x) (keyword x)
+        :else x))
+
+
 (defn generic-limit-label
   "Human label for a dynamic-limit row. Hand-rolled overrides for the
    widely-known plan rows; fallback derives a label from `:label` or
    `:id`, trimming the redundant ` Quota` / ` Quota (%)` suffixes the
-   raw provider rows ship with."
+   raw provider rows ship with. `:id` is coerced via `->kw` so the
+   overrides match whether the report came in-process (keyword ids) or
+   across the gateway wire (string ids)."
   [row]
-  (case (:id row)
+  (case (->kw (:id row))
     :premium_interactions
     "Premium interactions"
 
@@ -65,11 +80,20 @@
   "True when the row is best displayed as a percent-remaining (the
    provider reports a 0-100 percentage rather than raw token counts).
    The ID allowlist covers the Codex / Z.ai plan windows; the
-   `:rate` + `:limit 100` heuristic catches generic percentage rows."
+   `:rate` + `:limit 100` heuristic catches generic percentage rows
+   (the Anthropic Claude windows). `id`/`kind` are coerced via `->kw`
+   so a report that crossed the gateway wire (string values) matches
+   the same as an in-process one (keyword values)."
   [{:keys [id kind limit remaining]}]
-  (and (number? remaining)
-       (or (contains? #{:codex-5h :codex-7d :zai-coding-plan-5h :zai-coding-plan-7d} id)
-           (and (= :rate kind) (number? limit) (== 100.0 (double limit))))))
+  (let [id
+        (->kw id)
+
+        kind
+        (->kw kind)]
+
+    (and (number? remaining)
+         (or (contains? #{:codex-5h :codex-7d :zai-coding-plan-5h :zai-coding-plan-7d} id)
+             (and (= :rate kind) (number? limit) (== 100.0 (double limit)))))))
 
 (defn format-limit-usage
   "Render the usage/remaining portion of a row as a short string,

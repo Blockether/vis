@@ -203,6 +203,16 @@
                (drop-while #(not (str/starts-with? % "@@")))
                vec))))
 
+(defn commit-diff-lines
+  "Diff body for one commit row, as plain lines (for the TAB fold): the patch
+   `git show` produces for `sha`, kept from the first `diff --git` header down so
+   every file the commit touched is named."
+  [root {:keys [sha]}]
+  (when sha
+    (some->> (ok-lines root ["show" "--no-color" "--format=" sha])
+             (drop-while str/blank?)
+             vec)))
+
 ;; =============================================================================
 ;; Actions — all return {:ok? bool :msg str}
 ;; =============================================================================
@@ -417,10 +427,18 @@
    (let [commit-rows
          (fn [area title commits*]
            (when (seq commits*)
-             (into [{:kind :section :area area :text title}]
-                   (map (fn [{:keys [sha subject]}]
-                          {:kind :commit :sha sha :text (str "  " sha " " subject)}))
-                   commits*)))
+             (into
+               [{:kind :section :area area :text title}]
+               (mapcat (fn [{:keys [sha subject]}]
+                         (let [row
+                               {:kind :commit :area area :sha sha :text (str "  " sha " " subject)}]
+                           (if (and expanded (contains? expanded [area sha]))
+                             (into [row]
+                                   (map (fn [l]
+                                          {:kind :diff :text (str "    " l)}))
+                                   (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                             [row]))))
+               commits*)))
 
          upstream-label
          (or upstream "@{upstream}")

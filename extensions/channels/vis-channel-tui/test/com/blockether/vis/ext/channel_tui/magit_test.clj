@@ -441,6 +441,23 @@
                                     (fn [_]
                                       ["+never"]))]
         (expect (not-any? #(= :diff (:kind %)) rows))))
+  (it "expands a commit's diff lines directly under its row"
+      (let [diff-fn
+            (fn [{:keys [sha]}]
+              [(str "@@ " sha " @@") "+added"])
+
+            rows
+            (magit/status-rows sample-model #{[:commits "abc1234"]} diff-fn)
+
+            idx
+            (first (keep-indexed #(when (= "abc1234" (:sha %2)) %1) rows))
+
+            after
+            (subvec rows (inc idx) (+ idx 3))]
+
+        (expect (= [:diff :diff] (mapv :kind after)))
+        (expect (str/includes? (:text (first after)) "abc1234"))
+        (expect (str/includes? (:text (second after)) "+added"))))
   (it "cursor helpers: selectable rows, movement bounds, section membership"
       (let [rows
             (magit/status-rows sample-model #{})
