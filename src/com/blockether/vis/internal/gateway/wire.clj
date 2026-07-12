@@ -85,6 +85,36 @@
   [^String s]
   (when-not (str/blank? s) (try (json/read-json s :key-fn keyword) (catch Throwable _ nil))))
 
+(defn- unwire-key
+  "Inverse of [[wire-key]] for ONE map key: a snake_case keyword (what
+   `parse-json` yields for a JSON object key) -> the engine's kebab keyword.
+   Preserves any namespace; non-keyword keys pass through."
+  [k]
+  (if (keyword? k) (keyword (namespace k) (str/replace (name k) "_" "-")) k))
+
+(defn kebab-keys
+  "Recursively rewrite every MAP KEY snake_case -> kebab-case — the structural
+   INVERSE of the `-`->`_` munge [[wire-key]]/[[->wire]] apply on the way out.
+   Values pass through UNTOUCHED (paths, labels, ids never mutate).
+
+   Deliberately OPT-IN, applied only at a TYPED boundary whose keys are known to
+   be engine keywords (e.g. the gateway workspace record) — NOT folded into
+   [[parse-json]]: once JSON has flattened every key to a string the encoder's
+   keyword-vs-string distinction is gone, so a legit STRING key that genuinely
+   carries an underscore (a fact key, a scope like `turn_5`, a file path) is
+   indistinguishable from a munged keyword and a blanket rewrite would corrupt it.
+   Where the payload has no such string keys, this restores the engine's kebab
+   shape LOSSLESSLY and — unlike a hand-maintained rename map — can never silently
+   miss a newly-added key. Idempotent on already-kebab input."
+  [x]
+  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
+                                           (assoc! m (unwire-key k) (kebab-keys v)))
+                                         (transient {})
+                                         x))
+        (coll? x) (mapv kebab-keys x)
+        :else x))
+
+
 (defn bounded-pr
   "Bounded `pr-str` for tool results / errors riding events. Protects the
    event log and SSE frames from multi-megabyte values."
