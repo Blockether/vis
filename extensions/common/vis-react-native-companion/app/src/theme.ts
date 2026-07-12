@@ -51,7 +51,7 @@ export const projectColor = (id?: string | null, override?: string | null): stri
   const key = id ?? "";
   let h = 0;
   for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return projectPalette[h % projectPalette.length];
+  return projectPalette[h % projectPalette.length] ?? projectPalette[0];
 };
 
 /* translucent tint of a project color for soft fills (#RRGGBB + alpha byte) */

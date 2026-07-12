@@ -1,7 +1,7 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { GatewayEvent } from "./VisClient";
+import { GatewayEvent, TraceIteration } from "./VisClient";
 import { c, mono } from "./theme";
 
 /* ── live turn state ──────────────────────────────────────────────────
@@ -161,6 +161,35 @@ export const reduceLiveEvent = (state: LiveState, ev: GatewayEvent): LiveState =
     default:
       return state;
   }
+};
+
+/* Rebuild the settled tool cards of a turn from its persisted trace
+   (GET /turns/:tid/trace). Mirrors the live block.started/block.output reducer
+   so a scrolled-back turn shows the SAME cards it streamed: `src` is the code,
+   `result_render` the body. The persisted form carries no error flag (its `tag`
+   is the observation/mutation class, not a status), so trace cards never style
+   as errors — a failed tool still shows its result text in the body. Empty when
+   the turn ran no tools. Pure — unit-tested. */
+export const traceCards = (iterations: TraceIteration[]): LiveCard[] => {
+  const cards: LiveCard[] = [];
+  iterations.forEach((it, i) => {
+    const iter = it.position ?? it.iteration ?? i;
+    (it.forms ?? []).forEach((f, j) => {
+      cards.push({
+        key: `${iter}:${j}`,
+        toolName: f.tool_name,
+        label: toolLabel(f.tool_name),
+        colorRole: f.tool_color_role,
+        code: f.src,
+        summary: f.result_summary,
+        body: f.result_render || undefined,
+        durationMs: f.duration_ms,
+        running: false,
+        hideCode: hideCodeFor(f.tool_name, undefined)
+      });
+    });
+  });
+  return cards;
 };
 
 const fmtMs = (ms?: number): string | null => {
