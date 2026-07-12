@@ -2438,9 +2438,9 @@
 
                     (try (cond (nil? provider-id) (when last-provider-id
                                                     (state/dispatch [:clear-provider-limits]))
-                               (or changed? stale? forced?) (state/dispatch
-                                                              [:set-provider-limits provider-id
-                                                               (vis/provider-limits provider-id)]))
+                               (or changed? stale? forced?)
+                               (state/dispatch [:set-provider-limits provider-id
+                                                (vis/gateway-provider-limits provider-id)]))
                          (catch Throwable t
                            (tel/log! {:level :warn
                                       :id ::provider-limits-refresh-failed
@@ -3315,21 +3315,13 @@
                                (let [start (or (:workspace/root @state/app-db)
                                                (System/getProperty "user.dir"))
                                      sid (current-session-id)
-                                     ws (when sid (session-workspace sid))
-                                     ;; C-r (set as root) repoints the SESSION's pinned
-                                     ;; workspace, which needs the state id, not just the
-                                     ;; workspace id.
-                                     state-id (when sid
-                                                (try (vis/db-latest-session-state-id (vis/db-info)
-                                                                                     (str sid))
-                                                     (catch Throwable _ nil)))]
+                                     ws (when sid (session-workspace sid))]
 
                                  (when-let [chosen (with-dialog-lock #(dlg/directory-picker-dialog!
                                                                         screen
                                                                         start
-                                                                        :db-info (vis/db-info)
-                                                                        :workspace-id (:id ws)
-                                                                        :session-state-id state-id
+                                                                        :sid sid
+                                                                        :workspace-info ws
                                                                         :purpose purpose))]
                                    (open-dir-tab! chosen))
                                  ;; A filesystem add/remove or root change may have happened

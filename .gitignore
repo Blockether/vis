@@ -12,6 +12,9 @@
 .shadow-cljs/
 target/
 .pi/extensions/*/node_modules/
+node_modules/
+.expo/
+
 
 # IDE
 .idea/

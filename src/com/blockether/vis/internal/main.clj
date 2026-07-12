@@ -39,13 +39,13 @@
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.progress :as progress]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -2234,13 +2234,20 @@
    {:key :tpm :label "Catalog TPM" :width 12 :align :right}
    {:key :base-url :label "Base URL" :width 36 :align :left}])
 
-(defn- safe-provider-status
-  [provider]
-  (try (cond (:provider/status-fn provider) ((:provider/status-fn provider))
-             (:provider/detect-fn provider) {:authenticated? (boolean ((:provider/detect-fn
-                                                                         provider)))}
-             :else nil)
+(defn- gateway-provider-status-safe
+  [provider-id]
+  (try (gateway-client/provider-status provider-id)
        (catch Throwable e {:authenticated? false :error (or (ex-message e) (str e))})))
+
+(defn- gateway-provider-limits-safe
+  [provider-id]
+  (try (gateway-client/provider-limits provider-id)
+       (catch Throwable e
+         {:provider-id provider-id
+          :status :error
+          :static {}
+          :dynamic {:limits []}
+          :error {:message (or (ex-message e) (str e))}})))
 
 (defn- configured-provider-entry
   [provider-id]
@@ -2250,15 +2257,7 @@
 
 (defn- configured-provider-status
   [provider]
-  (let [provider-id
-        (:provider/id provider)
-
-        configured
-        (configured-provider-entry provider-id)]
-
-    (cond (some? (:api-key configured))
-          {:authenticated? true :source :config :config-path config/config-path}
-          :else (or (safe-provider-status provider) {:authenticated? false}))))
+  (gateway-provider-status-safe (:provider/id provider)))
 
 (defn- configured-provider-base-url
   [provider-id]
@@ -2319,7 +2318,7 @@
 (defn- provider-limit-lines
   [provider-id]
   (let [report
-        (provider-limits/provider-limits provider-id)
+        (gateway-provider-limits-safe provider-id)
 
         static
         (:static report)
@@ -2393,7 +2392,7 @@
                  (configured-provider-status provider)
 
                  report
-                 (provider-limits/provider-limits (:provider/id provider))
+                 (gateway-provider-limits-safe (:provider/id provider))
 
                  base-url
                  (configured-provider-base-url (:provider/id provider))]
@@ -2477,7 +2476,7 @@
             known?
             (or (registry/provider-by-id provider-id)
                 (config/provider-template provider-id)
-                (seq (:static (provider-limits/provider-limits provider-id))))]
+                (seq (:static (gateway-provider-limits-safe provider-id))))]
 
         (if known?
           (print-provider-limits! provider-id)
@@ -3548,6 +3547,12 @@
         (rewrite-session-shortcuts (strip-global-args raw-args))]
 
     (when measure? (System/setProperty "vis.measure" "1"))
+    ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis --jfr`). Role-tagged so a
+    ;; spawned gateway daemon (`vis gateway start`) records to its OWN file,
+    ;; separate from this client's — see internal.jfr.
+    (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!)
+          (if (= "gateway" (first args)) "gateway" "client"))
+         (catch Throwable _ nil))
     (try
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v

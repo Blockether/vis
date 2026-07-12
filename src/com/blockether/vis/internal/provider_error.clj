@@ -125,7 +125,8 @@
                (str/includes? text "name or service not known")
                (str/includes? text "handshake")
                (str/includes? text "premature")
-               (str/includes? text "eof"))))))
+               (str/includes? text "eof")
+               (= "closed" (str/trim text)))))))
 
 (defn transport-throwable?
   "True when Throwable `t` is a CONNECTION/transport failure — the SAME

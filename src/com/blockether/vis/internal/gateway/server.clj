@@ -22,6 +22,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
@@ -326,6 +328,25 @@
                                      {:id (name id) :doc doc})
                                    (registry/registered-providers))}))
 
+(defn- configured-provider
+  [provider-id]
+  (or (some (fn [provider]
+              (when (= provider-id (:id provider)) provider))
+            (providers/configured-providers))
+      {:id provider-id}))
+
+(defn- provider-status-handler
+  [request]
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
+    (json-response {:status (providers/provider-status (configured-provider provider-id))})))
+
+(defn- provider-limits-handler
+  [request]
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
+    (json-response {:report (provider-limits/provider-limits provider-id)})))
+
 (defn- create-session-handler
   [request]
   (let [body (body-json request)]
@@ -524,6 +545,27 @@
     (json-response {:workspace (state/session-workspace-info sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- add-filesystem-root-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:keys [path]} (body-json request)]
+      (json-response {:workspace (state/add-filesystem-root! sid path)}))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- remove-filesystem-root-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [path (or (:path (body-json request)) (get-in request [:query-params "path"]))]
+      (json-response {:workspace (state/remove-filesystem-root! sid path)}))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- change-root-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:keys [path]} (body-json request)]
+      (json-response {:workspace (state/change-root! sid path)}))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- seq-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -713,7 +755,10 @@
        ["/docs/*path"
         {:get (fn [req]
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
-       ["/v1" ["/models" {:get models-handler}] ["/clients" {:post client-register-handler}]
+       ["/v1" ["/models" {:get models-handler}]
+        ["/providers/:provider-id/status" {:get provider-status-handler}]
+        ["/providers/:provider-id/limits" {:get provider-limits-handler}]
+        ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
@@ -726,6 +771,9 @@
         ["/sessions/:sid/transcript" {:get transcript-handler}]
         ["/sessions/:sid/model" {:get session-model-handler :patch set-session-model-handler}]
         ["/sessions/:sid/workspace" {:get workspace-handler}]
+        ["/sessions/:sid/workspace/roots"
+         {:post add-filesystem-root-handler :delete remove-filesystem-root-handler}]
+        ["/sessions/:sid/workspace/root" {:patch change-root-handler}]
         ["/sessions/:sid/suggest" {:get suggest-handler}]
         ["/sessions/:sid/turns" {:get list-turns-handler :post submit-turn-handler}]
         ["/sessions/:sid/turns/:tid"
@@ -1016,6 +1064,10 @@
   "Blocking entry for the `vis gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
   [{:keys [port host token-file require-token? db]}]
+  ;; Profile the daemon into its own JFR file when VIS_JFR is inherited from the
+  ;; client that spawned us (idempotent with the -main call for direct callers).
+  (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
+       (catch Throwable _ nil))
   (let [{:keys [port host token-file require-token?]} (start! {:port (some-> port
                                                                              parse-long)
                                                                :host host

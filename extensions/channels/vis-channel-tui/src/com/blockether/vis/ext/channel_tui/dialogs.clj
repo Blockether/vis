@@ -4106,7 +4106,7 @@
    `:purpose` only sets the dialog title (`:add-root` → \"Add a filesystem
    directory\", `:new-folder` → \"Create a directory\", `:remove` → \"Remove a
    filesystem directory\"); the controls are identical regardless."
-  [^TerminalScreen screen start-path & {:keys [db-info workspace-id session-state-id purpose]}]
+  [^TerminalScreen screen start-path & {:keys [sid workspace-info purpose]}]
   (let [path
         (atom (dir-canon (java.io.File. ^String (or start-path "."))))
 
@@ -4128,10 +4128,17 @@
         ;; C-r (change root) repoints the session to a NEW workspace row — the
         ;; picker tracks the live id so the header roots stay truthful after.
         wid
-        (atom workspace-id)
+        (atom (:id workspace-info))
+
+        ;; Live gateway workspace snapshot (root + filesystem-roots). Seeded from
+        ;; the caller and REFRESHED from every mutation's return value, so the
+        ;; header reflects the DAEMON's authoritative roots — the local db-info
+        ;; index the picker used to read/write never reached the running session.
+        ws-info
+        (atom workspace-info)
 
         manager?
-        (boolean (and db-info workspace-id))
+        (boolean (and sid workspace-info))
 
         title
         (case purpose
@@ -4166,21 +4173,13 @@
             (some? (.getParentFile dir))
 
             ws
-            (when manager?
-              (try (workspace/get db-info @wid)
-                   (catch Throwable t
-                     (tel/log! :debug ["dialogs: workspace/get failed" @wid (ex-message t)])
-                     nil)))
+            (when manager? @ws-info)
 
             base
             (:root ws)
 
             extras
-            (when ws
-              (try (workspace/filesystem-roots ws)
-                   (catch Throwable t
-                     (tel/log! :debug ["dialogs: filesystem-roots failed" (ex-message t)])
-                     nil)))
+            (:filesystem-roots ws)
 
             dir-canon-str
             (norm (.getPath dir))
@@ -4374,9 +4373,12 @@
                         [dir-canon-str :error
                          "This is the session's root — C-r on another folder to change it"])
                       :else
-                      (try (if target-already?
-                             (workspace/remove-filesystem-root! db-info @wid (.getPath target-dir))
-                             (workspace/add-filesystem-root! db-info @wid (.getPath target-dir)))
+                      (try (let [updated
+                                 (if target-already?
+                                   (vis/gateway-remove-filesystem-root! sid (.getPath target-dir))
+                                   (vis/gateway-add-filesystem-root! sid (.getPath target-dir)))]
+                             (reset! ws-info updated)
+                             (reset! wid (:id updated)))
                            (reset! notice [dir-canon-str :ok
                                            (str (if target-already? "Removed " "Added ")
                                                 target-name)])
@@ -4389,14 +4391,13 @@
             set-root!
             (fn []
               (when manager?
-                (cond (nil? session-state-id)
-                      (reset! notice [dir-canon-str :error
-                                      "No session yet — send a message first, then set a root"])
+                (cond (nil? sid) (reset! notice
+                                   [dir-canon-str :error
+                                    "No session yet — send a message first, then set a root"])
                       target-base? (reset! notice [dir-canon-str :ok "Already the session's root"])
                       :else
-                      (try (let [new-ws (workspace/change-root! db-info
-                                                                session-state-id
-                                                                (.getPath target-dir))]
+                      (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
+                             (reset! ws-info new-ws)
                              (reset! wid (:id new-ws))
                              ;; Synchronously warm the git status cache for the
                              ;; NEW root so the footer paints the new repo on

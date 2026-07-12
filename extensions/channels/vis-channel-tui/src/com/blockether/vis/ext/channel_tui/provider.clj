@@ -888,11 +888,27 @@
 ;; the dialog code below reads unchanged.
 (def ^:private persisted-provider-config vis/provider-persisted-config)
 (def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
-(def ^:private safe-provider-status vis/provider-status-of-registered)
-(def ^:private configured-provider-status vis/provider-status)
-(def ^:private safe-provider-limits vis/provider-limits-safe)
 (def ^:private initial-provider-status vis/provider-initial-status)
 (def ^:private initial-provider-limits vis/provider-initial-limits)
+
+(defn- gateway-provider-status-safe
+  [provider]
+  (try (vis/gateway-provider-status (:id provider))
+       (catch Throwable e {:authenticated? false :error (or (ex-message e) (str e))})))
+
+(defn- gateway-provider-limits-safe
+  [provider]
+  (try (vis/gateway-provider-limits (:id provider))
+       (catch Throwable e
+         {:provider-id (:id provider)
+          :status :error
+          :static {}
+          :dynamic {:limits []}
+          :error {:message (or (ex-message e) (str e))}})))
+
+(def ^:private safe-provider-status gateway-provider-status-safe)
+(def ^:private configured-provider-status gateway-provider-status-safe)
+(def ^:private safe-provider-limits gateway-provider-limits-safe)
 
 (defn- refresh-provider-diagnostics!
   [provider statuses limits]
@@ -920,13 +936,14 @@
   ([_provider status] (boolean (:authenticated? status))))
 
 (defn show-provider-status!
-  "Status + limits as the RICH canonical markdown form
-   (`vis/provider-status-md`), painted through the IR walker — the same
-   report the web renders as markdown."
+  "Status + limits as the RICH canonical markdown form, painted through the IR
+   walker — the same report the web renders as markdown. The fallback arity
+   fetches diagnostics through the gateway, never through local provider OAuth."
   ([^TerminalScreen screen provider]
-   (dlg/markdown-viewer-dialog! screen
-                                (str (vis/display-label (:id provider)) " Status & Limits")
-                                (vis/provider-status-md provider)))
+   (show-provider-status! screen
+                          provider
+                          (configured-provider-status provider)
+                          (safe-provider-limits provider)))
   ([^TerminalScreen screen provider status limits]
    (dlg/markdown-viewer-dialog! screen
                                 (str (vis/display-label (:id provider)) " Status & Limits")

@@ -4123,8 +4123,10 @@
 
     (cond
       ;; files-only — the matching FILES are the result; there are no per-line hits.
+      ;; "N matching files" NAMES the mode: content-grep collapsed to paths, so it
+      ;; never reads as a name-search (`find_files`) or an empty `0 hits` content run.
       (contains? r "files")
-      {:summary (with-query files-word)
+      {:summary (with-query (str fc " matching file" (when (not= 1 fc) "s")))
        :body (when-let [files (seq (get r "files"))]
                (str "\n```\n"
                     (str/join "\n" (map #(str "  " (highlight-needles needles (kw->str %))) files))
