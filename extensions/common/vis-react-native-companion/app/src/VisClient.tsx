@@ -58,6 +58,32 @@ export type GatewayTurn = {
   attachments?: TurnAttachment[];
 };
 
+/* One persisted iteration form (a settled tool call) from GET
+   /v1/sessions/:sid/turns/:tid/trace `iterations[].forms[]`. Same fields the
+   live SSE block.started/block.output carry, but stored: `src` is the tool-call
+   source (the live `code`), `result_render` the rendered body, `tag` the
+   observation/mutation class. Snake_case, namespace-dropped, like GatewayEvent. */
+export type TraceForm = {
+  tool_name?: string;
+  tool_color_role?: string;
+  src?: string;
+  result_summary?: string;
+  result_render?: string;
+  duration_ms?: number;
+  tag?: string;
+};
+
+/* One persisted iteration of a turn: its position, streamed thinking, and the
+   tool-call forms that ran in it. `wire/canonical`, so it round-trips the HTTP
+   hop as an identity. */
+export type TraceIteration = {
+  position?: number;
+  iteration?: number;
+  status?: string;
+  thinking?: string;
+  forms?: TraceForm[];
+};
+
 /* One live gateway SSE event (GET /v1/sessions/:sid/events). The wire is flat
    JSON — keyword map keys arrive snake_case with the namespace dropped
    (`:vis/tool-name` → tool_name, `:tool-color-role` → tool_color_role), while
@@ -221,17 +247,17 @@ export class VisGatewayClient {
     });
   }
 
-  /* ── session groups (folders) ─────────────────────────────────── */
+  /* ── session groups / projects ────────────────────── */
 
   async listGroups(): Promise<GatewayGroup[]> {
-    /* `channel=all` so the RN drawer sees every folder (its own cross-channel
+    /* `channel=all` so the RN drawer sees every project (its own cross-channel
        ones plus tui/web-scoped), matching list-sessions' cross-channel view. */
     const body = await this.request<ListGroupsResponse>("/v1/groups?channel=all");
     return body.groups ?? [];
   }
 
   async createGroup(name: string, color?: string): Promise<GatewayGroup> {
-    /* No channel ⇒ a cross-channel folder, visible from web/tui too. */
+    /* No channel ⇒ a cross-channel project, visible from web/tui too. */
     return this.request<GatewayGroup>("/v1/groups", {
       method: "POST",
       body: JSON.stringify(color ? { name, color } : { name })
@@ -252,7 +278,7 @@ export class VisGatewayClient {
     await this.request<null>(`/v1/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
   }
 
-  /* Move a session into a folder, or ungroup it (groupId = null). Returns the
+  /* Move a session into a project, or ungroup it (groupId = null). Returns the
      re-projected soul (carries the fresh group_id/group_name). */
   async assignGroup(sessionId: string, groupId: string | null): Promise<SessionSoul> {
     return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
@@ -291,6 +317,18 @@ export class VisGatewayClient {
       `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`,
       { method: "POST" }
     );
+  }
+
+  /* The canonical settled trace of ONE turn: its iteration rows (each with the
+     tool-call forms that ran). Rehydrates tool cards into scrollback AFTER a
+     turn settles — the /turns list carries no trace, so without this the live
+     cards vanish once the poll's answer_md takes over. A pre-trace gateway 404s;
+     callers treat that as "no cards". */
+  async turnTrace(sessionId: string, turnId: string): Promise<TraceIteration[]> {
+    const body = await this.request<{ iterations?: TraceIteration[] }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/trace`
+    );
+    return body.iterations ?? [];
   }
 
   /* Live event stream over a NATIVE Server-Sent-Events connection
