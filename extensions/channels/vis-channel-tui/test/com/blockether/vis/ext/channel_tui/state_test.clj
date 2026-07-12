@@ -867,7 +867,35 @@
           (state/dispatch
             [:attach-running-turn nil
              {:id "s1" :status "running" :current-turn-id "turn-1" :running-request "hello"}])
-          (expect (<= before (long (:turn-start-ms @state/app-db))))))))
+          (expect (<= before (long (:turn-start-ms @state/app-db)))))))
+  (it "does not leave the turn it attaches as running ALSO showing under Queued"
+      ;; Regression: the backlog mirror seeds :pending-sends from the session's
+      ;; :queued-turns snapshot, which can still list the turn that has since
+      ;; started. Attaching that turn as running must strip it from the queue so
+      ;; it paints once (live) and not a second time as "Queued"; the genuinely
+      ;; queued sibling turn stays.
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
+
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
+
+        (reset! state/app-db
+          {:session {:id "s1"} :active-tab-id "s1" :pending-sends [] :render-version 0})
+        (state/dispatch [:attach-running-turn "s1"
+                         {:id "s1"
+                          :status "running"
+                          :current-turn-id "turn-1"
+                          :running-request "hello"
+                          :queued-turns [{:turn-id "turn-1" :text "hello" :queued-at-ms 1}
+                                         {:turn-id "turn-2" :text "world" :queued-at-ms 2}]}])
+        (let [db @state/app-db]
+          (expect (= "turn-1" (:gateway-turn-id db)))
+          ;; the running turn is gone from the queue; only the real backlog remains
+          (expect (= ["turn-2"] (mapv :turn-id (:pending-sends db))))
+          (expect (not (some #(= (:gateway-turn-id db) (:turn-id %)) (:pending-sends db))))))))
 
 (defdescribe
   live-progress-rate-test

@@ -2596,6 +2596,15 @@
                                          (assoc (chat/assistant-message pending-assistant-ir)
                                            :pending? true
                                            :client-turn-id client-turn-id))
+                                 ;; The turn we are ATTACHING as running must not
+                                 ;; ALSO linger as a "Queued" row: the backlog mirror
+                                 ;; above (and any in-flight :sync-queued-turn :add)
+                                 ;; may have seeded `tid` from a snapshot taken while it
+                                 ;; was still queued. Strip it so it paints once — as
+                                 ;; the live turn — not a second time under Queued.
+                                 (update :pending-sends
+                                         (fn [q]
+                                           (vec (remove #(= tid (:turn-id %)) (or q [])))))
                                  (assoc :scroll scroll/follow
                                         :loading? true
                                         :cancel-token token
