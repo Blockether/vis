@@ -3985,10 +3985,22 @@
         (fn [k]
           (first (str/split (str k) #":")))
 
+        anchors
+        (get r "anchors")
+
+        ;; Gutter width = widest line number in THIS slice, not a fixed 5.
+        ;; A hardcoded `%5s` padded 3-digit reads (`380`) with two spurious
+        ;; leading spaces that read as a broken left margin on the cat card.
+        gutter-w
+        (reduce (fn [^long w [k _]]
+                  (max w (count (line-no k))))
+                1
+                anchors)
+
         rows
         (mapv (fn [[k v]]
-                (str (format "%5s" (line-no k)) "  " v))
-              (get r "anchors"))
+                (str (format (str "%" gutter-w "s") (line-no k)) "  " v))
+              anchors)
 
         n
         (count rows)
@@ -4070,29 +4082,45 @@
                        (str "\u001B[7m" m "\u001B[0m")))
         text))))
 
+(defn- rg-gutter-width
+  "Widest line-number column across a file's hits AND their context lines, so
+   every gutter row in the block right-aligns. Mixed 1- and 4-digit line
+   numbers otherwise stagger the text column (the same cat-card margin bug)."
+  [hits]
+  (reduce (fn [^long w [k v]]
+            (let [ctx (when (map? v) (concat (keys (get v "before")) (keys (get v "after"))))]
+              (reduce (fn [^long w2 a]
+                        (max w2 (count (rg-anchor-lineno a))))
+                      (max w (count (rg-anchor-lineno k)))
+                      ctx)))
+          1
+          hits))
+
 (defn- rg-row
-  "One `  <lineno>  <text>` gutter row for a match or a context line. Any OR
-   `needle` occurrence in the text is wrapped for highlight (see
-   `highlight-needles`)."
-  [needles k txt]
-  (str "  " (rg-anchor-lineno k) "  " (str/trimr (highlight-needles needles (str txt)))))
+  "One `  <lineno>  <text>` gutter row for a match or a context line, the line
+   number right-aligned to `width` (the file's widest). Any OR `needle`
+   occurrence in the text is wrapped for highlight (see `highlight-needles`)."
+  [needles width k txt]
+  (str "  " (format (str "%" width "s") (rg-anchor-lineno k))
+       "  " (str/trimr (highlight-needles needles (str txt)))))
 
 (defn- rg-hit-rows
   "Rows for ONE match anchor `k` → value `v`. `v` is a `{:text <match> :before
    {anchor→text} :after {anchor→text}}` map (before/after only with a context
    window) — render the before-context, then the matched line, then the
-   after-context, each as a line-numbered gutter row (sorted by line number). A
-   bare string `v` is tolerated and rendered as the lone matched line."
-  [needles k v]
+   after-context, each as a line-numbered gutter row (sorted by line number),
+   the gutter right-aligned to `width`. A bare string `v` is tolerated and
+   rendered as the lone matched line."
+  [needles width k v]
   (if (map? v)
     (let [ctx-rows (fn [m]
                      (map (fn [[ck cv]]
-                            (rg-row needles ck cv))
+                            (rg-row needles width ck cv))
                           (sort-by (comp rg-anchor-lineno-long key) m)))]
       (concat (ctx-rows (get v "before"))
-              [(rg-row needles k (get v "text"))]
+              [(rg-row needles width k (get v "text"))]
               (ctx-rows (get v "after"))))
-    [(rg-row needles k v)]))
+    [(rg-row needles width k v)]))
 
 (defn- render-rg-result
   "rg → a `{:summary :body}` card for whichever MODE ran — each carries a DIFFERENT
@@ -4134,7 +4162,7 @@
       {:summary (with-query (str fc " matching file" (when (not= 1 fc) "s")))
        :body (when-let [files (seq (get r "files"))]
                (str "\n```\n"
-                    (str/join "\n" (map #(str "  " (highlight-needles needles (kw->str %))) files))
+                    (str/join "\n" (map #(highlight-needles needles (kw->str %)) files))
                     "\n```"))}
       ;; content (default) — per-line hits grouped by file.
       :else (let [hc
@@ -4142,14 +4170,15 @@
 
                   files
                   (for [[path hits] (get r "matches")]
-                    (str "`"
-                         (kw->str path)
-                         "`\n\n```\n"
-                         (str/join "\n"
-                                   (mapcat (fn [[k v]]
-                                             (rg-hit-rows needles k v))
-                                           (sort-by (comp rg-anchor-lineno-long key) hits)))
-                         "\n```"))]
+                    (let [width (rg-gutter-width hits)]
+                      (str "`"
+                           (kw->str path)
+                           "`\n\n```\n"
+                           (str/join "\n"
+                                     (mapcat (fn [[k v]]
+                                               (rg-hit-rows needles width k v))
+                                             (sort-by (comp rg-anchor-lineno-long key) hits)))
+                           "\n```")))]
 
               {:summary (with-query (str hc " hit" (when (not= 1 hc) "s") " in " files-word))
                :body (when (seq files) (str "\n" (str/join "\n\n" files)))}))))
@@ -4249,8 +4278,7 @@
              (when terms (str " · terms: " (str/join ", " terms))))]
 
     {:summary head
-     :body (cond (seq paths)
-                 (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) paths)) "\n```")
+     :body (cond (seq paths) (str "\n```\n" (str/join "\n" (map kw->str paths)) "\n```")
                  ;; 0 results: show the steer (filename-vs-content) instead of a
                  ;; blank card — the same hint the model reads, so the user sees
                  ;; WHY it found nothing.

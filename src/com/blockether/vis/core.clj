@@ -100,7 +100,13 @@
              [gateway-create-session! gateway-client/create-session!]
              [gateway-soul gateway-client/soul]
              [gateway-list-sessions gateway-client/list-sessions]
-             [gateway-close-session! gateway-client/close-session!])
+             [gateway-close-session! gateway-client/close-session!]
+             [gateway-list-groups gateway-client/list-groups]
+             [gateway-get-group gateway-client/get-group]
+             [gateway-create-group! gateway-client/create-group!]
+             [gateway-update-group! gateway-client/update-group!]
+             [gateway-delete-group! gateway-client/delete-group!]
+             [gateway-assign-group! gateway-client/assign-group!])
 
 (import-vars [gateway-release-session! gateway-client/release-session!]
              [gateway-submit-turn! gateway-client/submit-turn!])

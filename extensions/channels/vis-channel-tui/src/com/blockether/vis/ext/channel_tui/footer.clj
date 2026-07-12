@@ -167,14 +167,14 @@
                :priority 2
                :tint :draft
                :kind :footer-git}]
-      workspace? [{:text
-                   (str " " git-label " " (git-repo-label status) (when chord (str "  (" chord ")")) " ")
-                   :fg t/footer-fg-strong
-                   :bold? true
-                   :region :right
-                   :priority 2
-                   :tint :git
-                   :kind :footer-git}]
+      workspace?
+      [{:text (str " " git-label " " (git-repo-label status) (when chord (str "  (" chord ")")) " ")
+        :fg t/footer-fg-strong
+        :bold? true
+        :region :right
+        :priority 2
+        :tint :git
+        :kind :footer-git}]
       :else [{:text (str "No " git-label)
               :fg t/footer-error-fg
               :bold? true
@@ -871,8 +871,9 @@
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
                 ;; accent on hover, click region registered under `:kind`).
-                (do (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
-                    (+ c (p/display-width (:text s))))
+                (do
+                  (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
+                  (+ c (p/display-width (:text s))))
                 (do (p/clear-styles! g)
                     (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
                     (when (:bold? s) (p/enable! g p/BOLD))
