@@ -27,7 +27,11 @@ EXPO_PUBLIC_VIS_GATEWAY_URL=http://127.0.0.1:7890 npm run start
 
 Press `i` for the iOS simulator. Configure gateway URL + bearer token
 in-app under ⚙. `npm run typecheck` runs TypeScript 7 strict
-(`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`).
+(`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`). `npm test` runs
+the Jest (jest-expo) unit suite over the pure logic: the SSE→card reducer
+(`LiveTurns`), the streaming markdown fence splitter (`Markdown`), the gateway
+client's error unwrap + SSE dispatch (`VisClient`), and the drawer time/id
+helpers (`theme`).
 
 Voice requires the `vis-channel-web` + `vis-foundation-voice` extensions
 on the gateway (the app degrades gracefully with a note when absent).

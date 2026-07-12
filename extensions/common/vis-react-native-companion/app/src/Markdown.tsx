@@ -12,7 +12,7 @@ type Block =
   | { kind: "code"; lang: string; body: string }
   | { kind: "text"; body: string };
 
-const splitBlocks = (src: string): Block[] => {
+export const splitBlocks = (src: string): Block[] => {
   const blocks: Block[] = [];
   const fence = /```([^\n`]*)\n([\s\S]*?)```/g;
   let last = 0;
