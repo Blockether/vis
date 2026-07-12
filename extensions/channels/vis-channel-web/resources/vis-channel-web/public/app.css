@@ -903,7 +903,7 @@ backdrop-filter:blur(4px) saturate(1.1);-webkit-backdrop-filter:blur(4px) satura
    room — each modal is sized to what's inside. */
 .modal{width:fit-content;max-width:min(40rem,calc(100vw - 2rem));
 min-width:min(21rem,calc(100vw - 2rem));max-height:86dvh;
-display:flex;flex-direction:column;overflow:hidden;background:var(--bg);
+display:flex;flex-direction:column;overflow:hidden;background:radial-gradient(120% 92% at 0% 0%,color-mix(in srgb,var(--dialog-title-bg) 13%,transparent),transparent 55%),radial-gradient(110% 86% at 100% 0%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 52%),var(--bg);
 border:1px solid var(--dialog-border);border-top:2px solid var(--dialog-title-bg);
 border-radius:var(--r-xl);
 box-shadow:var(--shadow-lg);
@@ -914,7 +914,7 @@ animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 .modal.modal-mid{max-width:min(50rem,calc(100vw - 2rem));min-width:min(30rem,calc(100vw - 2rem))}
 .modal-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;
 padding:.35rem .7rem;border-bottom:1px solid var(--dialog-border);flex:none;
-background:var(--dialog-title-bg);color:var(--dialog-title-fg);position:relative;z-index:1;min-height:2.35rem}
+background:linear-gradient(180deg,color-mix(in srgb,var(--dialog-title-bg) 86%,#fff),var(--dialog-title-bg));color:var(--dialog-title-fg);position:relative;z-index:1;min-height:2.35rem}
 .modal-head h2{font-size:.92rem;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modal-head .bar-toggle{width:26px;height:26px;font-size:.85rem;color:var(--dialog-title-fg)}
 .modal-head .bar-toggle:hover{background:color-mix(in srgb,var(--dialog-title-fg) 14%,transparent);color:var(--dialog-title-fg)}
