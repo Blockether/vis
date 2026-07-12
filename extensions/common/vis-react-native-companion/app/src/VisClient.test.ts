@@ -139,6 +139,28 @@ describe("group endpoints", () => {
   });
 });
 
+describe("turnTrace", () => {
+  it("GETs the turn trace route and unwraps iterations", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse(200, { iterations: [{ position: 0, forms: [{ tool_name: "rg" }] }] })
+    );
+    await expect(client().turnTrace("s1", "t9")).resolves.toEqual([
+      { position: 0, forms: [{ tool_name: "rg" }] }
+    ]);
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/sessions/s1/turns/t9/trace");
+  });
+
+  it("defaults to [] when a (pre-trace) gateway omits iterations", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, {}));
+    await expect(client().turnTrace("s1", "t9")).resolves.toEqual([]);
+  });
+
+  it("propagates a 404 (older gateway without the trace route)", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(404, { error: { message: "no such route" } }, "Not Found"));
+    await expect(client().turnTrace("s1", "t9")).rejects.toThrow("no such route");
+  });
+});
+
 describe("streamEvents SSE dispatch", () => {
   const open = () => {
     const events: GatewayEvent[] = [];

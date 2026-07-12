@@ -1,5 +1,5 @@
-import { reduceLiveEvent, toolColor, toolLabel, LiveState } from "./LiveTurns";
-import { GatewayEvent } from "./VisClient";
+import { reduceLiveEvent, toolColor, toolLabel, traceCards, LiveState } from "./LiveTurns";
+import { GatewayEvent, TraceIteration } from "./VisClient";
 
 /* The heart of live streaming on iOS: the SSE→card reducer. These lock the
    contract the gateway wire depends on (turn_id keying, whole-tail prose
@@ -200,5 +200,78 @@ describe("reduceLiveEvent", () => {
     let s = reduceLiveEvent({}, ev({ type: "content.delta", turn_id: "t1", text: "stale" }));
     s = reduceLiveEvent(s, ev({ type: "turn.started", turn_id: "t1" }));
     expect(s.t1).toEqual({ cards: [], prose: "", thinking: "", done: false });
+  });
+});
+
+/* Rehydration: a settled turn's persisted trace must rebuild the SAME cards it
+   streamed live, so scrolled-back history keeps its op-cards. */
+describe("traceCards", () => {
+  const iter = (o: Partial<TraceIteration>): TraceIteration => o as TraceIteration;
+
+  it("maps one form to a settled card (src→code, result_render→body)", () => {
+    const cards = traceCards([
+      iter({
+        position: 0,
+        forms: [
+          {
+            tool_name: "shell_run",
+            tool_color_role: "tool-color/shell",
+            src: 'shell_run("ls")',
+            result_summary: "$ ls (success)",
+            result_render: "a\nb\nc",
+            duration_ms: 520
+          }
+        ]
+      })
+    ]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      key: "0:0",
+      label: "SHELL RUN",
+      colorRole: "tool-color/shell",
+      code: 'shell_run("ls")',
+      summary: "$ ls (success)",
+      body: "a\nb\nc",
+      durationMs: 520,
+      running: false
+    });
+    /* a successful native tool hides its synthesized code, same as live */
+    expect(cards[0]!.hideCode).toBe(true);
+    expect(cards[0]!.error).toBeUndefined();
+  });
+
+  it("keeps code for python_execution (the model's own program)", () => {
+    const cards = traceCards([
+      iter({ position: 0, forms: [{ tool_name: "python_execution", src: "print(1)" }] })
+    ]);
+    expect(cards[0]!.hideCode).toBe(false);
+  });
+
+  it("never styles a trace card as an error (persisted forms carry no status)", () => {
+    const cards = traceCards([
+      iter({
+        position: 0,
+        forms: [{ tool_name: "cat", tag: "observation", src: "cat('nope')", result_summary: "no such file" }]
+      })
+    ]);
+    expect(cards[0]!.error).toBeUndefined();
+    expect(cards[0]!.summary).toBe("no such file");
+  });
+
+  it("flattens forms across iterations with unique keys", () => {
+    const cards = traceCards([
+      iter({ position: 0, forms: [{ tool_name: "rg" }, { tool_name: "cat" }] }),
+      iter({ position: 1, forms: [{ tool_name: "shell_run" }] })
+    ]);
+    expect(cards.map((k) => k.key)).toEqual(["0:0", "0:1", "1:0"]);
+  });
+
+  it("falls back to array index when position is absent", () => {
+    const cards = traceCards([iter({ forms: [{ tool_name: "rg" }] }), iter({ forms: [{ tool_name: "cat" }] })]);
+    expect(cards.map((k) => k.key)).toEqual(["0:0", "1:0"]);
+  });
+
+  it("is empty for a turn that ran no tools", () => {
+    expect(traceCards([iter({ position: 0, thinking: "just thinking", forms: [] }), iter({})])).toEqual([]);
   });
 });

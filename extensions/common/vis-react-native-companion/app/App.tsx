@@ -31,7 +31,7 @@ import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
-import { LiveCard, LiveCards, LiveState, reduceLiveEvent } from "./src/LiveTurns";
+import { LiveCard, LiveCards, LiveState, reduceLiveEvent, traceCards } from "./src/LiveTurns";
 import {
   ensureNotificationPermissions,
   notifyTurnDone,
@@ -254,6 +254,10 @@ function Root() {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<LiveState>({});
+  /* Settled tool cards per turn_id, rehydrated from GET /turns/:tid/trace so a
+     finished turn keeps its op-cards in scrollback (the /turns poll carries no
+     trace). traceReqRef dedups in-flight / already-failed fetches. */
+  const [traceCache, setTraceCache] = useState<Record<string, LiveCard[]>>({});
   const [notify, setNotify] = useState(true);
   const listRef = useRef<FlatList<Message>>(null);
   const atBottomRef = useRef(true);
@@ -268,6 +272,7 @@ function Root() {
   const appActiveRef = useRef(AppState.currentState === "active");
   const turnsRef = useRef<GatewayTurn[]>([]);
   const notifiedRef = useRef<Set<string>>(new Set());
+  const traceReqRef = useRef<Set<string>>(new Set());
 
   const client = useMemo(() => new VisGatewayClient({ gatewayUrl, token }), [gatewayUrl, token]);
 
@@ -284,21 +289,30 @@ function Root() {
   const runningId = runningTurn?.id ?? runningTurn?.turn_id;
   const liveTurn = runningId ? live[runningId] : undefined;
   const messages = useMemo(() => {
-    if (!runningId || !liveTurn) return baseMessages;
-    const proseText = liveTurn.prose.trim();
-    const thinkingText = liveTurn.thinking.trim();
-    return baseMessages.map((m) =>
-      m.id === `${runningId}-vis`
-        ? {
-            ...m,
-            text: proseText || m.text,
-            pending: m.pending && !proseText,
-            cards: liveTurn.cards,
-            thinking: thinkingText || undefined
-          }
-        : m
-    );
-  }, [baseMessages, runningId, liveTurn]);
+    const hasTrace = Object.keys(traceCache).length > 0;
+    if ((!runningId || !liveTurn) && !hasTrace) return baseMessages;
+    const proseText = liveTurn?.prose.trim() ?? "";
+    const thinkingText = liveTurn?.thinking.trim() ?? "";
+    return baseMessages.map((m) => {
+      if (runningId && liveTurn && m.id === `${runningId}-vis`) {
+        return {
+          ...m,
+          text: proseText || m.text,
+          pending: m.pending && !proseText,
+          cards: liveTurn.cards,
+          thinking: thinkingText || undefined
+        };
+      }
+      /* Settled turn: attach its rehydrated trace cards. Never the running turn
+         — that already carries the LIVE cards above. */
+      if (hasTrace && m.role === "vis" && m.id.endsWith("-vis")) {
+        const tid = m.id.slice(0, -"-vis".length);
+        const cards = tid !== runningId ? traceCache[tid] : undefined;
+        if (cards && cards.length) return { ...m, cards };
+      }
+      return m;
+    });
+  }, [baseMessages, runningId, liveTurn, traceCache]);
 
   const fail = useCallback((err: unknown) => {
     setError(err instanceof Error ? err.message : String(err));
@@ -320,6 +334,8 @@ function Root() {
       setActiveSession(session);
       setShowSessions(false);
       setTurns([]);
+      setTraceCache({});
+      traceReqRef.current = new Set();
       /* Re-arm auto-follow + request a one-shot jump so a switched-into session
          lands on its latest message, even if the reader had scrolled up in the
          previous one (atBottomRef otherwise carries the stale `false`). */
@@ -404,6 +420,43 @@ function Root() {
     }, 1800);
     return () => clearInterval(timer);
   }, [activeSession?.id, fail, refreshTurns]);
+
+  /* Rehydrate settled tool cards from each finished multi-iteration turn's
+     trace, so scrolled-back turns keep their op-cards (the /turns poll carries
+     none). Lazy + cached + deduped; a pre-trace gateway 404s and is ignored. */
+  useEffect(() => {
+    const sid = activeSession?.id;
+    if (!sid) return;
+    const need = turns.filter((t) => {
+      const tid = t.turn_id ?? t.id;
+      return (
+        !!tid &&
+        !turnLive(t) &&
+        (t.iteration_count ?? 0) > 1 &&
+        !traceCache[tid] &&
+        !traceReqRef.current.has(tid)
+      );
+    });
+    if (!need.length) return;
+    let cancelled = false;
+    void (async () => {
+      for (const t of need) {
+        const tid = (t.turn_id ?? t.id) as string;
+        traceReqRef.current.add(tid);
+        try {
+          const cards = traceCards(await client.turnTrace(sid, tid));
+          if (!cancelled && cards.length) {
+            setTraceCache((prev) => ({ ...prev, [tid]: cards }));
+          }
+        } catch (err) {
+          if (__DEV__) console.warn("[vis] turnTrace failed", err);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [turns, activeSession?.id, client, traceCache]);
 
   /* Live SSE overlay: subscribe to the gateway event stream for the active
      session and reduce block.started / block.output / content.delta /
