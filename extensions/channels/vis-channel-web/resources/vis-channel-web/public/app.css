@@ -434,7 +434,7 @@ min-height:34px;box-sizing:border-box;overflow-y:auto;color:var(--fg)}
 .composer textarea::placeholder{color:var(--dim)}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
 .send{flex:none;width:34px;height:34px;border-radius:var(--r-circle);border:0;cursor:pointer;
-background:var(--primary);color:#fff;font-size:1.05rem;font-weight:700;
+background:var(--primary);color:var(--primary-fg);font-size:1.05rem;font-weight:700;
 display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .send:hover{filter:brightness(1.07)}
 /* stop control - shown above the composer only while a turn runs */
@@ -622,7 +622,7 @@ color:var(--fg);font-size:.84rem;font-weight:600;cursor:pointer;transition:backg
 .fs-add-btn,.fs-root-btn{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;
 padding:.55rem .8rem;border-radius:var(--r-md);font-size:.85rem;font-weight:600;line-height:1.2;
 cursor:pointer;transition:filter .12s,background .1s,border-color .1s}
-.fs-add-btn{border:0;background:var(--primary);color:#fff}
+.fs-add-btn{border:0;background:var(--primary);color:var(--primary-fg)}
 .fs-add-btn:hover{filter:brightness(1.06)}
 .fs-root-btn{border:1px solid var(--line2);background:var(--bg);color:var(--fg)}
 .fs-root-btn:hover{background:var(--hover);border-color:var(--accent)}
@@ -647,7 +647,7 @@ display:inline-flex;align-items:center;gap:.3rem;
 transition:background .12s,color .12s,border-color .12s}
 .side-select-toggle:hover{background:var(--hover);color:var(--fg);border-color:var(--accent)}
 /* in select-mode the toggle becomes an unmistakable filled "Done" pill */
-.sidebar.select-mode .side-select-toggle{background:var(--primary);color:#fff;border-color:var(--accent)}
+.sidebar.select-mode .side-select-toggle{background:var(--primary);color:var(--primary-fg);border-color:var(--accent)}
 .sidebar.select-mode .side-select-toggle:hover{filter:brightness(1.05)}
 .side-select-toggle .when-select{display:none}
 .sidebar.select-mode .side-select-toggle .when-idle{display:none}
@@ -704,7 +704,7 @@ display:flex;align-items:center;justify-content:center;font-size:.95rem;
 font-weight:700;transition:filter .15s,background .15s}
 .rec-cancel{background:var(--panel2);color:var(--err)}
 .rec-cancel:hover{background:color-mix(in srgb,var(--err) 12%,var(--bg))}
-.rec-accept{background:var(--primary);color:#fff}
+.rec-accept{background:var(--primary);color:var(--primary-fg)}
 .rec-accept:hover{filter:brightness(1.07)}
 .send:disabled{background:var(--line2);color:var(--bg);cursor:default;filter:none}
 .wave{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;
@@ -870,14 +870,14 @@ transition:border-color .15s,box-shadow .15s,background .15s}
 box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
 .auth-go{display:flex;align-items:center;justify-content:center;gap:.45rem;
 border:0;border-radius:var(--r-md);padding:.7rem;cursor:pointer;
-background:var(--primary);color:#fff;font-weight:700;font-size:.95rem;
+background:var(--primary);color:var(--primary-fg);font-weight:700;font-size:.95rem;
 transition:filter .12s}
 .auth-go:hover{filter:brightness(.97)}
 .auth-go:active{filter:brightness(.94)}
 .auth-go svg{transition:transform .15s}
 .auth-go:hover svg{transform:translateX(2px)}
 .send-wide{border:0;border-radius:var(--r-md);padding:.6rem;cursor:pointer;
-background:var(--primary);color:#fff;font-weight:700;font-size:.95rem}
+background:var(--primary);color:var(--primary-fg);font-weight:700;font-size:.95rem}
 .auth-error{color:var(--err);font-size:.85rem;padding:.45rem .6rem;border-radius:var(--r-md);
 background:color-mix(in srgb,var(--err) 7%,var(--bg));border:1px solid color-mix(in srgb,var(--err) 25%,var(--line))}
 .auth-hint{color:var(--dim);font-size:.78rem}
@@ -949,7 +949,7 @@ transition:border-color .12s,box-shadow .12s}
 .modal-res-field input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 30%,transparent)}
 .modal-res-go{flex:none;justify-self:end;align-self:start;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
 border-radius:var(--r-circle);border:0;cursor:pointer;
-background:var(--primary);color:#fff;
+background:var(--primary);color:var(--primary-fg);
 box-shadow:0 1px 2px rgba(20,20,20,.08);transition:filter .12s,box-shadow .12s,transform .06s}
 .modal-res-go .icon{width:14px;height:14px;stroke-width:2.4}
 .modal-res-go:hover{filter:brightness(1.05);box-shadow:0 3px 12px rgba(190,150,40,.28)}
