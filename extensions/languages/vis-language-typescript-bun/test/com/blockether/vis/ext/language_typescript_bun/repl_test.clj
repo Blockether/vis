@@ -153,11 +153,17 @@
                         (spit (io/file root "app.ts") "export {}\n")
                         (expect (true? (activation-fn {:workspace/root (.getAbsolutePath root)})))
                         (finally (cleanup root)))))
-             (it "stays dark on package.json WITHOUT TypeScript"
+             (it "activates on package.json + a .jsx source (React app, no TS)"
+                 (let [root (tmp-dir)]
+                   (try (spit (io/file root "package.json") "{\"name\": \"x\"}\n")
+                        (spit (io/file root "App.jsx") "export default () => null\n")
+                        (expect (true? (activation-fn {:workspace/root (.getAbsolutePath root)})))
+                        (finally (cleanup root)))))
+             (it "activates on package.json + a plain .js source (Bun runs JS natively)"
                  (let [root (tmp-dir)]
                    (try (spit (io/file root "package.json") "{\"name\": \"x\"}\n")
                         (spit (io/file root "index.js") "console.log(1)\n")
-                        (expect (false? (activation-fn {:workspace/root (.getAbsolutePath root)})))
+                        (expect (true? (activation-fn {:workspace/root (.getAbsolutePath root)})))
                         (finally (cleanup root)))))
              (it "stays dark on a non-Bun workspace"
                  (let [root (tmp-dir)]
@@ -165,6 +171,21 @@
                         (expect (false? (activation-fn {:workspace/root (.getAbsolutePath root)})))
                         (finally (cleanup root)))))
              (it "stays dark with no :workspace/root" (expect (false? (activation-fn {})))))
+
+;; ── language registration (TS / TSX / JS / JSX all route through the facade) ────
+(defdescribe
+  language-registration-test
+  "The pack registers repl_eval / run_tests / repl_start for ALL of TS / TSX /
+   JS / JSX, so the facade routes whichever way the language is derived — an
+   explicit repl_eval(\"jsx\", …), a .tsx file's grammar, or a js/ts primary."
+  (it "registers the four Bun-runnable languages"
+      (let [langs (into #{} (map :language) (:ext/language-tools core/vis-extension))]
+        (expect (= #{"typescript" "javascript" "tsx" "jsx"} langs))))
+  (it "every language exposes repl_eval, run_tests and repl_start handlers"
+      (doseq [entry (:ext/language-tools core/vis-extension)]
+        (expect (fn? (:repl-eval-fn entry)))
+        (expect (fn? (:test-fn entry)))
+        (expect (fn? (:start-repl-fn entry))))))
 
 (defdescribe
   value-representation-test
