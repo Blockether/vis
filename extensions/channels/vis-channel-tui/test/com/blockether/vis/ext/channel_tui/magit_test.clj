@@ -5,6 +5,7 @@
    projection and the C-x g / footer wiring."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
@@ -472,14 +473,51 @@
                  (let [spans (#'footer/git-footer-spans
                               {:workspace? true :repo "vis" :branch "main"})]
                    (expect (= :footer-git (:kind (first spans))))
-                   (expect (str/includes? (:text (first spans)) "vis"))))
+                   (expect (str/includes? (:text (first spans)) "vis"))
+                   ;; the C-x g chord rides on the chip (discoverability gripe)
+                   (expect (str/includes? (:text (first spans)) "C-x g"))))
              (it "the DRAFT footer segment is clickable too"
                  (let [spans (#'footer/git-footer-spans
                               {:workspace? true :draft? true :draft-root "/tmp/draft"})]
-                   (expect (= :footer-git (:kind (first spans))))))
+                   (expect (= :footer-git (:kind (first spans))))
+                   (expect (str/includes? (:text (first spans)) "C-x g"))))
              (it "outside a workspace the dead 'No git' label stays a plain span"
                  (let [spans (#'footer/git-footer-spans {:workspace? false})]
                    (expect (nil? (:kind (first spans)))))))
+
+;;; ── async network verbs (push/pull/fetch never freeze the modal) ─────────────
+
+(defdescribe async-network-run-test
+             (it "runs the thunk off-thread and returns its result, ticking while it works"
+                 (let [ticks
+                       (atom 0)
+
+                       result
+                       (#'dialogs/run-async-with-ticker!
+                        (fn []
+                          (Thread/sleep 120)
+                          {:ok? true :msg "done"})
+                        (fn []
+                          (swap! ticks inc))
+                        20)]
+
+                   (expect (= {:ok? true :msg "done"} result))
+                   ;; the spinner ticked at least once — the UI thread was NOT blocked
+                   (expect (pos? @ticks))))
+             (it "turns a thrown thunk into an :ok? false result instead of escaping"
+                 (let [result (#'dialogs/run-async-with-ticker!
+                               (fn []
+                                 (throw (ex-info "boom" {})))
+                               (fn [])
+                               10)]
+                   (expect (false? (:ok? result)))
+                   (expect (str/includes? (str (:msg result)) "boom"))))
+             (it "a fast thunk settles immediately"
+                 (expect (:ok? (#'dialogs/run-async-with-ticker!
+                                (fn []
+                                  {:ok? true})
+                                (fn [])
+                                10)))))
 
 ;;; ── Multi-root workspaces (one root + extra filesystem roots, drafts) ───────
 
