@@ -7,15 +7,12 @@
     "start": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --host localhost",
     "android": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --android --host localhost",
     "ios": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --ios --host localhost",
-    "web": "EXPO_NO_TYPESCRIPT_SETUP=1 expo start --web --host localhost",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "expo": "~54.0.0",
     "react": "19.1.0",
-    "react-dom": "^19.1.0",
-    "react-native": "^0.81.5",
-    "react-native-web": "^0.21.2"
+    "react-native": "^0.81.5"
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
