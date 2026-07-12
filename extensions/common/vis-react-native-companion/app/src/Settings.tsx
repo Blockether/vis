@@ -43,7 +43,9 @@ export const SettingsPane = ({
   connecting,
   onGatewayUrl,
   onToken,
-  onReconnect
+  onReconnect,
+  notify,
+  onNotify
 }: {
   client: VisGatewayClient;
   gatewayUrl: string;
@@ -52,6 +54,8 @@ export const SettingsPane = ({
   onGatewayUrl: (value: string) => void;
   onToken: (value: string) => void;
   onReconnect: () => void;
+  notify: boolean;
+  onNotify: (value: boolean) => void;
 }) => {
   const { height: winH } = useWindowDimensions();
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
@@ -107,7 +111,8 @@ export const SettingsPane = ({
     [groups, q]
   );
   const count = visible.reduce((n, g) => n + g.toggles.length, 0);
-  const gatewayVisible = q === "" || "gateway url bearer token reconnect".includes(q);
+  const gatewayVisible =
+    q === "" || "gateway url bearer token reconnect notifications".includes(q);
 
   const jumpTo = (id: string) => {
     setActive(id);
@@ -130,7 +135,7 @@ export const SettingsPane = ({
           style={st.searchInput}
         />
         <Text style={st.count}>
-          {count + (gatewayVisible ? 2 : 0)} settings
+          {count + (gatewayVisible ? 3 : 0)} settings
         </Text>
       </View>
 
@@ -208,6 +213,15 @@ export const SettingsPane = ({
               }}
             >
               <Text style={st.groupTitle}>Gateway</Text>
+              <View style={st.row}>
+                <View style={st.rowText}>
+                  <Text style={st.rowLabel}>Turn notifications</Text>
+                  <Text style={st.rowDesc}>
+                    Ping me when a turn finishes while the app is in the background.
+                  </Text>
+                </View>
+                <PillSwitch on={notify} onPress={() => onNotify(!notify)} />
+              </View>
               <Text style={st.fieldLabel}>gateway url</Text>
               <TextInput
                 value={gatewayUrl}

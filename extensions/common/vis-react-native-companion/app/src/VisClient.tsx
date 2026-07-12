@@ -9,15 +9,15 @@ export type SessionSoul = {
   updated_at?: number;
   /* epoch ms of the session's last activity — the wire's actual recency field */
   last_active_at?: number;
-  /* session-group (folder) membership + owner (V6). group_id is null when the
+  /* session-group (project) membership + owner (V6). group_id is null when the
      session is ungrouped; group_name rides along so the drawer needs no join. */
   group_id?: string | null;
   group_name?: string | null;
   owner_id?: string;
 };
 
-/* A session-group folder (GET /v1/groups). Sessions carry group_id; a folder
-   carries a live session_count. `channel` null ⇒ a cross-channel folder visible
+/* A session-group / project (GET /v1/groups). Sessions carry group_id; a group
+   carries a live session_count. `channel` null ⇒ a cross-channel project visible
    in every channel's view. */
 export type GatewayGroup = {
   id: string;

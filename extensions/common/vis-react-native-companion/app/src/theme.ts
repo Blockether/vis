@@ -26,8 +26,37 @@ export const c = {
   codeBg: "#F2EBDF" /* :code-block-bg */,
   codeInk: "#262626" /* :code-block-fg */,
   chipBg: "#FAECC5" /* :md-summary-bg */,
-  chipInk: "#7A4A00" /* :md-summary-fg */
+  chipInk: "#7A4A00" /* :md-summary-fg */,
+  accent: "#7C5CFF" /* modern violet — active / project pop */,
+  accentSoft: "#EFEAFF",
+  accentInk: "#2E1F6B"
 } as const;
+
+/* ── project accents ──────────────────────────────────────────────
+   Each project (session group) gets a stable, vivid color: the gateway
+   color when set, else one picked from this palette by id hash. The drawer
+   paints it on the header bar, icon, count pill and child-row indent. */
+export const projectPalette = [
+  "#F0AD00" /* amber   */,
+  "#16A34A" /* green   */,
+  "#2563EB" /* blue    */,
+  "#7C5CFF" /* violet  */,
+  "#DB2777" /* magenta */,
+  "#0891B2" /* teal    */,
+  "#EA580C" /* orange  */
+] as const;
+
+export const projectColor = (id?: string | null, override?: string | null): string => {
+  if (override) return override;
+  const key = id ?? "";
+  let h = 0;
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return projectPalette[h % projectPalette.length];
+};
+
+/* translucent tint of a project color for soft fills (#RRGGBB + alpha byte) */
+export const tint = (hex: string, alpha = "1F"): string =>
+  hex.length === 7 ? `${hex}${alpha}` : hex;
 
 export const mono = Platform.select({
   ios: "Menlo",

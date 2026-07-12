@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -31,6 +32,11 @@ import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
 import { LiveCard, LiveCards, LiveState, reduceLiveEvent } from "./src/LiveTurns";
+import {
+  ensureNotificationPermissions,
+  notifyTurnDone,
+  shouldNotifyTurnDone
+} from "./src/Notifications";
 import { SessionsDrawer } from "./src/SessionsDrawer";
 import { VoiceButton } from "./src/VoiceButton";
 import {
@@ -248,12 +254,20 @@ function Root() {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<LiveState>({});
+  const [notify, setNotify] = useState(true);
   const listRef = useRef<FlatList<Message>>(null);
   const atBottomRef = useRef(true);
   /* On session-open we JUMP to the newest message (no animation through the
      whole backlog) — set by openSession, consumed by onContentSizeChange. */
   const jumpRef = useRef(false);
   const draggingRef = useRef(false);
+  /* Read fresh inside the long-lived SSE callback (which only re-subscribes on
+     session/client change): the notify pref, foreground state, latest turns
+     (for the notification body), and the set of turn_ids already notified. */
+  const notifyRef = useRef(true);
+  const appActiveRef = useRef(AppState.currentState === "active");
+  const turnsRef = useRef<GatewayTurn[]>([]);
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   const client = useMemo(() => new VisGatewayClient({ gatewayUrl, token }), [gatewayUrl, token]);
 
@@ -359,6 +373,31 @@ function Root() {
   }, []);
 
   useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
+
+  useEffect(() => {
+    notifyRef.current = notify;
+  }, [notify]);
+
+  /* Track foreground/background so a completion only pings when the operator
+     ISN'T already watching the live stream. */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      appActiveRef.current = state === "active";
+    });
+    return () => sub.remove();
+  }, []);
+
+  /* Ask for notification permission once on mount; a denial just means
+     notifyTurnDone silently no-ops (and we reflect it by disabling the pref). */
+  useEffect(() => {
+    void ensureNotificationPermissions().then((ok) => {
+      if (!ok) setNotify(false);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!activeSession?.id) return;
     const timer = setInterval(() => {
       refreshTurns().catch(fail);
@@ -374,6 +413,7 @@ function Root() {
     const sid = activeSession?.id;
     if (!sid) return;
     setLive({});
+    notifiedRef.current = new Set();
     /* Native SSE (react-native-sse) owns the socket AND reconnection: on a drop
        it re-requests with Last-Event-ID and the gateway resumes losslessly, so
        there is no app-level retry. cursor=0 on first connect replays the
@@ -395,7 +435,27 @@ function Root() {
             if (__DEV__) console.log("[vis] SSE open", sid);
             setNote((n) => (n && n.startsWith("live stream") ? null : n));
           },
-          onEvent: (ev) => setLive((prev) => reduceLiveEvent(prev, ev)),
+          onEvent: (ev) => {
+            setLive((prev) => reduceLiveEvent(prev, ev));
+            /* fire a local notification on turn completion when backgrounded */
+            const tid = ev.turn_id;
+            if (
+              tid &&
+              !notifiedRef.current.has(tid) &&
+              shouldNotifyTurnDone({
+                type: ev.type,
+                enabled: notifyRef.current,
+                appActive: appActiveRef.current
+              })
+            ) {
+              notifiedRef.current.add(tid);
+              void notifyTurnDone({
+                failed: ev.type === "turn.failed",
+                sessionTitle: activeSession?.title,
+                request: turnsRef.current.find((t) => (t.id ?? t.turn_id) === tid)?.request
+              });
+            }
+          },
           onError: (err) => {
             const msg =
               (err as { message?: string; xhrStatus?: number })?.xhrStatus
@@ -424,7 +484,7 @@ function Root() {
       setSessions(ss);
       /* Session groups are a newer gateway feature — an older/stale gateway 404s
          /v1/groups. Never let that blank the sessions list; fall back to no
-         folders so the drawer still shows every session. */
+         projects so the drawer still shows every session. */
       try {
         setGroups(await client.listGroups());
       } catch (groupErr) {
@@ -537,7 +597,7 @@ function Root() {
     [activeSession?.id, client, fail]
   );
 
-  /* ── session groups (folders) ─────────────────────────────────── */
+  /* ── session groups / projects ───────────────────── */
 
   const createGroup = useCallback(
     async (name: string) => {
@@ -586,7 +646,7 @@ function Root() {
 
   const assignGroup = useCallback(
     async (session: SessionSoul, groupId: string | null) => {
-      /* optimistic: reflect membership + bump both folders' counts at once */
+      /* optimistic: reflect membership + bump both projects' counts at once */
       setSessions((prev) =>
         prev.map((s) =>
           s.id === session.id
@@ -859,6 +919,11 @@ function Root() {
           onGatewayUrl={setGatewayUrl}
           onToken={setToken}
           onReconnect={() => void connect()}
+          notify={notify}
+          onNotify={(v) => {
+            setNotify(v);
+            if (v) void ensureNotificationPermissions().then((ok) => setNotify(ok));
+          }}
         />
       </DialogModal>
 

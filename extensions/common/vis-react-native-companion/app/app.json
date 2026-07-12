@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "vis",
+    "slug": "vis-react-native-companion",
+    "scheme": "visrn",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.blockether.vis",
+      "buildNumber": "3",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "package": "com.blockether.vis",
+      "versionCode": 3
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FAF3EB"
+        }
+      ],
+      [
+        "expo-audio",
+        { "microphonePermission": "vis records short voice prompts and transcribes them locally on your gateway." }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#E0A83B"
+        }
+      ]
+    ]
+  }
+}
