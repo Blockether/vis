@@ -12,6 +12,12 @@
     },
     "android": {
       "edgeToEdgeEnabled": true
-    }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        { "microphonePermission": "vis records short voice prompts and transcribes them locally on your gateway." }
+      ]
+    ]
   }
 }
