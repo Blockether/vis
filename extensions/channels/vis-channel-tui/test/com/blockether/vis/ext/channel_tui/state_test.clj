@@ -8,6 +8,24 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
+;; The `:openai-codex/verbosity` enum toggle is registered by the OpenAI Codex
+;; PROVIDER extension in production (it lives next to the backend it tunes), a
+;; module this channel-tui test suite does not load. Register it here so the
+;; `:settings` projection and the verbosity-cycle events resolve against a real
+;; `:enum` toggle, mirroring production.
+(vis/register-toggle! {:id :openai-codex/verbosity
+                       :label "Verbosity"
+                       :description "Output detail hint passed to the OpenAI Codex backend."
+                       :type :enum
+                       :choices [:low :medium :high]
+                       :default :low
+                       :owner :vis
+                       :group :provider
+                       :persist? true
+                       :settings? false
+                       :visible-fn (fn []
+                                     (boolean (vis/has-provider? :openai-codex)))})
+
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
                  ;; Their toggles were retired (the trace IS the transcript — nothing to
@@ -345,7 +363,7 @@
         (state/init!)
         (expect (= :balanced (get-in @state/app-db [:settings :reasoning-level])))
         (expect (= :low (get-in @state/app-db [:settings :openai-codex-verbosity])))
-        (expect (= :vis-light (get-in @state/app-db [:settings :theme-name])))
+        (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
         (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))
         (expect (false? (get-in @state/app-db [:settings :voice/respond])))))
@@ -840,7 +858,7 @@
                     (fn [_ _]
                       nil)]
 
-        (reset! state/app-db {:session {:id "s1"} :render-version 0})
+        (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
         (state/dispatch [:attach-running-turn nil
                          {:id "s1"
                           :status "running"
@@ -862,7 +880,7 @@
                     (fn [_ _]
                       nil)]
 
-        (reset! state/app-db {:session {:id "s1"} :render-version 0})
+        (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
         (let [before (System/currentTimeMillis)]
           (state/dispatch
             [:attach-running-turn nil
@@ -1482,7 +1500,7 @@
                         {:role :assistant :pending? true :client-turn-id pending-id}]
              :progress {:iterations []}
              :submitted-input {:text "first" :pastes {} :paste-counter 0}
-             :pending-sends [{:text "second" :pastes {} :paste-counter 0}]}
+             :pending-sends [{:text "second" :pastes {} :paste-counter 0 :client-id "c1"}]}
 
             {:keys [db fx]}
             (message-received-fn db
@@ -1508,8 +1526,9 @@
              :input (input/empty-input)
              :pastes {}
              :paste-counter 0
-             :pending-sends [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2"}
-                             {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3"}]}
+             :pending-sends
+             [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :client-id "c1"}
+              {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :client-id "c1"}]}
 
             {:keys [db fx]}
             (restore-fn db [:restore-pending-to-input :main])]
@@ -1681,7 +1700,7 @@
              ;; The gateway is the queue of record; :sync-queued-turn mirrors ONE queue
              ;; event (queued/updated/deleted/drained) into this tab's :pending-sends.
              (it "mirrors a sibling's queue add / update / delete into pending-sends"
-                 (reset! state/app-db {:session {:id "s1"} :render-version 0})
+                 (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
                  (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
                  (let [q (:pending-sends @state/app-db)]
                    (expect (= 1 (count q)))
@@ -1698,6 +1717,7 @@
                  (expect (= [] (:pending-sends @state/app-db))))
              (it "binds an unbound local echo by text instead of duplicating"
                  (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
                                        :render-version 0
                                        :pending-sends [{:text "hello" :client-id "c1"}]})
                  (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "hello"}])
@@ -1711,8 +1731,11 @@
              ;; to the same work shows the SAME elapsed — local submit/drain/attach
              ;; stamps drift from the actual run start.
              (it "re-seeds :turn-start-ms from the canonical clock while loading"
-                 (reset! state/app-db
-                   {:session {:id "s1"} :render-version 0 :loading? true :turn-start-ms 999999})
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :turn-start-ms 999999})
                  (state/dispatch [:sync-turn-clock nil {:turn-id "t1" :started-at-ms 1234}])
                  (expect (= 1234 (:turn-start-ms @state/app-db))))
              (it "no-ops when the tab is not mid-turn"
@@ -1740,7 +1763,7 @@
                                (fn [_ _]
                                  nil)]
 
-                   (reset! state/app-db {:session {:id "s1"} :render-version 0})
+                   (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
                    (state/dispatch [:sibling-turn-started nil
                                     {:turn-id "t9" :request "from web" :started-at-ms 777}])
                    (let [db @state/app-db]
