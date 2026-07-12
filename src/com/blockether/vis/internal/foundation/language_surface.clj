@@ -114,38 +114,100 @@
 
 (defn- opts-language [opts] (get opts "language"))
 
-(defn- target-language [env opts] (or (normalize-language (opts-language opts)) (env-language env)))
+(def ^:private language-aliases
+  "Grammar VARIANTS that share a base language's TOOLING. `tsx`/`jsx` are distinct
+   tree-sitter grammars (the distinction matters for PARSING), but Bun/Node run
+   them exactly like their base language, so a tool request for a variant resolves
+   to the base family's handler when no exact handler is registered. The
+   `.mjs/.cjs/.mts/.cts` module variants already collapse in the workspace scan,
+   but a caller can still name one explicitly."
+  {"tsx" "typescript"
+   "mts" "typescript"
+   "cts" "typescript"
+   "jsx" "javascript"
+   "mjs" "javascript"
+   "cjs" "javascript"})
+
+(defn- alias-of [lang] (get language-aliases lang))
+
+(defn- scanned-languages
+  "The workspace scan's languages in FILE-COUNT order (most files first),
+   normalized to lowercase strings, nil-free."
+  [env]
+  (->> (get-in env [:env/languages :languages])
+       (keep #(normalize-language (or (:language %) (:name %) %)))))
+
+(defn- candidate-languages
+  "Ordered, DISTINCT languages to try when resolving a handler, each followed by
+   its family alias so a variant (`tsx`) can fall back to its base (`typescript`):
+
+     1. an EXPLICIT `language` opt is the whole intent — try only it (+ alias), so
+        an explicit unsupported language still errors rather than silently picking
+        another pack;
+     2. otherwise the workspace PRIMARY language, then every OTHER scanned language
+        in file-count order.
+
+   Step 2 is the heuristic that makes a bare `repl_eval`/`run_tests`/`format_code`
+   work in a repo whose top language is DATA (a json/yaml-heavy TS app, or vis
+   itself): the dominant data language has no pack, so we fall through to the
+   first REAL code language a pack can actually handle."
+  [env explicit]
+  (->> (if explicit [explicit] (cons (env-language env) (scanned-languages env)))
+       (mapcat (fn [l]
+                 [l (alias-of l)]))
+       (remove nil?)
+       distinct
+       vec))
 
 (defn- choose-handler
   [env capability opts]
   (let [handlers
         (vec (registered-handlers env capability))
 
-        lang
-        (target-language env opts)
+        by-lang
+        (group-by :language handlers)
 
-        matches
-        (if lang (filter #(= lang (:language %)) handlers) handlers)]
+        explicit
+        (normalize-language (opts-language opts))
 
-    (cond (= 1 (count matches)) (first matches)
-          (empty? handlers) (throw (ex-info
+        ;; First candidate resolving to EXACTLY one handler wins; a candidate
+        ;; matching several is genuinely ambiguous and stops the search there.
+        picked
+        (some (fn [l]
+                (let [ms (get by-lang l)]
+                  (cond (= 1 (count ms)) {:handler (first ms)}
+                        (seq ms) {:ambiguous l :matches ms})))
+              (candidate-languages env explicit))]
+
+    (cond (empty? handlers) (throw (ex-info
                                      (str "No language extension registered for " (name capability))
                                      {:type :language-surface/no-handler :capability capability}))
-          (empty? matches) (throw (ex-info (str "No " (name capability)
-                                                " handler for language " lang)
-                                           {:type :language-surface/no-language-handler
-                                            :language lang
-                                            :capability capability
-                                            :available (vec (keep :language handlers))}))
+          (:handler picked) (:handler picked)
+          (:ambiguous picked)
+          (throw (ex-info (str
+                            "Multiple language handlers match "
+                            (:ambiguous picked)
+                            "; pass the language as first arg, e.g. repl_eval with language first")
+                          {:type :language-surface/ambiguous-language
+                           :language (:ambiguous picked)
+                           :capability capability
+                           :available (vec (keep :language (:matches picked)))}))
+          ;; No candidate matched, but exactly one pack is active and the caller named
+          ;; no language — use it (single-pack convenience).
+          (and (nil? explicit) (= 1 (count handlers))) (first handlers)
+          explicit (throw (ex-info (str "No " (name capability) " handler for language " explicit)
+                                   {:type :language-surface/no-language-handler
+                                    :language explicit
+                                    :capability capability
+                                    :available (vec (keep :language handlers))}))
           :else (throw (ex-info
                          (str
-                           "Multiple language handlers match "
-                           (or lang "current workspace")
+                           "Multiple language handlers match current workspace"
                            "; pass the language as first arg, e.g. repl_eval with language first")
                          {:type :language-surface/ambiguous-language
-                          :language lang
+                          :language nil
                           :capability capability
-                          :available (vec (keep :language matches))})))))
+                          :available (vec (keep :language handlers))})))))
 
 (defn- parse-language-call
   [args]

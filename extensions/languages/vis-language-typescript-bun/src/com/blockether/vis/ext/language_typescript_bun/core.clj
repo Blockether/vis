@@ -20,11 +20,19 @@
 ;; Activation
 ;; =============================================================================
 
+(def ^:private source-extensions
+  "File suffixes Bun runs natively — TS/TSX/JS/JSX plus the .mjs/.cjs module
+   variants. Any of them in a plain `package.json` workspace marks it a
+   Bun/Node project the pack should light up on."
+  [".ts" ".tsx" ".js" ".jsx" ".mjs" ".cjs"])
+
 (defn- ts-file?
   [^java.io.File f]
   (and (.isFile f)
        (let [n (.getName f)]
-         (or (str/ends-with? n ".ts") (str/ends-with? n ".tsx")))))
+         (boolean (some (fn [^String ext]
+                          (str/ends-with? n ext))
+                        source-extensions)))))
 
 (defn- workspace-has-bun?
   [env]
@@ -32,8 +40,8 @@
                      io/file)]
     (when (and root (.isDirectory root))
       (or (some #(.exists (io/file root %)) ["bunfig.toml" "bun.lock" "bun.lockb" ".bun-version"])
-          ;; a generic package.json workspace with TS sources runs on bun too
-          ;; (bounded scan for a .ts/.tsx anywhere, lazy file-seq, capped)
+          ;; a generic package.json workspace with TS/TSX/JS/JSX sources runs on
+          ;; bun too (bounded scan for one anywhere, lazy file-seq, capped)
           (and (.exists (io/file root "package.json"))
                (boolean (some ts-file? (take 3000 (file-seq root)))))))))
 
@@ -292,21 +300,30 @@
 ;; ({ok,out,err,value,data,type,exc}; opaque values carry __type__/__attrs__/
 ;; __opaque__) is self-documenting.
 
+(def ^:private facade-languages
+  "Every grammar Bun runs natively — TS, TSX, JS, JSX — each routed to the SAME
+   managed-Bun handlers. Registering all four means the facade resolves however
+   the language is derived: an explicit `repl_eval(\"jsx\", …)`, a `.tsx` file's
+   detected grammar, or a javascript/typescript workspace primary language."
+  ["typescript" "javascript" "tsx" "jsx"])
+
 (def vis-extension
   (vis/extension
     {:ext/name "language-typescript-bun"
      :ext/description
-     "TypeScript/Bun language pack: a managed Bun REPL (persistent globals, top-level await, reload()) behind the generic repl_start/repl_eval/repl_stop facade, plus run_tests -> `bun test`. Activates on Bun/TypeScript workspaces."
+     "TypeScript/JavaScript (Bun) language pack: a managed Bun REPL (persistent globals, top-level await, reload()) behind the generic repl_start/repl_eval/repl_stop facade, plus run_tests -> `bun test`. Covers TS/TSX/JS/JSX and activates on Bun/Node workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/activation-fn activation-fn
-     :ext/language-tools [{:language "typescript"
-                           :test-fn ts-test-fn
-                           :repl-eval-fn ts-repl-eval-fn
-                           :start-repl-fn (fn [env op opts]
-                                            (ts-start-repl-fn env op opts))}]
+     :ext/language-tools (mapv (fn [language]
+                                 {:language language
+                                  :test-fn ts-test-fn
+                                  :repl-eval-fn ts-repl-eval-fn
+                                  :start-repl-fn (fn [env op opts]
+                                                   (ts-start-repl-fn env op opts))})
+                               facade-languages)
      :ext/startable-resources [{:kind :repl
                                 :dir? true
                                 :label "Bun REPL"
