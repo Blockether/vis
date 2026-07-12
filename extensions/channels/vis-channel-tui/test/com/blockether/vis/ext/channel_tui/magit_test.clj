@@ -475,12 +475,17 @@
                    (expect (= :footer-git (:kind (first spans))))
                    (expect (str/includes? (:text (first spans)) "vis"))
                    ;; the C-x g chord rides on the chip (discoverability gripe)
-                   (expect (str/includes? (:text (first spans)) "C-x g"))))
+                   (expect (str/includes? (:text (first spans)) "C-x g"))
+                   ;; a real repo chip is tinted green so it reads like the sibling
+                   ;; resources/filesystem buttons, not muted decoration
+                   (expect (= :git (:tint (first spans))))))
              (it "the DRAFT footer segment is clickable too"
                  (let [spans (#'footer/git-footer-spans
                               {:workspace? true :draft? true :draft-root "/tmp/draft"})]
                    (expect (= :footer-git (:kind (first spans))))
-                   (expect (str/includes? (:text (first spans)) "C-x g"))))
+                   (expect (str/includes? (:text (first spans)) "C-x g"))
+                   ;; a draft chip is tinted amber (isolated-tree warning colour)
+                   (expect (= :draft (:tint (first spans))))))
              (it "outside a workspace the dead 'No git' label stays a plain span"
                  (let [spans (#'footer/git-footer-spans {:workspace? false})]
                    (expect (nil? (:kind (first spans)))))))
