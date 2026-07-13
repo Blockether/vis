@@ -47,6 +47,34 @@
 
     (io/file (vis-home) (format "vis-%s-%s-%s.jfr" role pid ts))))
 
+(def ^:private MAX_RECORDINGS
+  "Newest JFR dumps to keep under ~/.vis; older ones are pruned on each start so
+   opt-in profiling can't silently fill the disk. `.setDumpOnExit` leaves one
+   file per run tagged by pid, so dead processes' recordings pile up otherwise."
+  6)
+
+(defn- role-max-bytes
+  "Ring-buffer cap. A short-lived TUI / one-shot client needs little; the
+   long-lived gateway daemon gets more headroom."
+  ^long [role]
+  (* 1024 1024 (if (= role "gateway") 256 128)))
+
+(defn- prune-old-recordings!
+  "Keep only the newest `MAX_RECORDINGS` `vis-*.jfr` dumps under ~/.vis and delete
+   the rest (dead processes' orphaned recordings). Never throws."
+  []
+  (try (let [files (->> (.listFiles (vis-home))
+                        (filter (fn [^File f]
+                                  (let [n (.getName f)]
+                                    (and (.isFile f)
+                                         (str/starts-with? n "vis-")
+                                         (str/ends-with? n ".jfr")))))
+                        (sort-by (fn [^File f]
+                                   (- (.lastModified f)))))]
+         (doseq [^File f (drop MAX_RECORDINGS files)]
+           (.delete f)))
+       (catch Throwable _ nil)))
+
 (defn maybe-start!
   "Start a per-process JFR recording tagged with `role` (\"client\"/\"gateway\")
    when `VIS_JFR` is set. Idempotent (first call per process wins), never throws.
@@ -54,6 +82,7 @@
   [role]
   (when (and (enabled?) (compare-and-set! started false true))
     (try (.mkdirs (vis-home))
+         (prune-old-recordings!)
          (let [f
                (recording-file role)
 
@@ -63,7 +92,7 @@
            (doto rec
              (.setName (str "vis-" role))
              (.setDumpOnExit true)
-             (.setMaxSize (* 500 1024 1024))
+             (.setMaxSize (role-max-bytes role))
              (.setDestination (.toPath f))
              (.start))
            (binding [*out* *err*]

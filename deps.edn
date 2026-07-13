@@ -86,7 +86,8 @@
                         "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"
                         "-Djava.awt.headless=true"
-                        "-Dapple.awt.UIElement=true"]
+                        "-Dapple.awt.UIElement=true"
+                        "-Dvis.drafts.dir=target/vis-drafts-test"]
           :extra-paths ["test"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/providers/vis-provider-github-copilot/test"
