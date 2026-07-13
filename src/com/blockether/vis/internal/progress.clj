@@ -323,7 +323,8 @@
     ;; :form-start/:form-result (`:activity nil`).
     (assoc entry
       :activity :tool-call
-      :tool/op (some-> (:op (:tool-event chunk)) name))
+      :tool/op (some-> (:op (:tool-event chunk))
+                       name))
 
     :response-parse
     (if (= :done (:status chunk))
