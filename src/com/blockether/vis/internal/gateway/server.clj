@@ -799,6 +799,91 @@
     (json-response {:iterations (state/turn-trace (get-in request [:path-params :tid]))})
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- path-rid [request] (get-in request [:path-params :rid]))
+
+(defn- resources-handler
+  "GET /v1/sessions/:sid/resources — the session's live vis-managed resources
+   (shell_bg children, managed REPLs, MCP connections, …) FROM THE DAEMON's
+   registry. The web channel reads its own in-process registry directly because
+   it runs INSIDE the daemon, but the TUI and mobile clients run in a DIFFERENT
+   process from the one the agent's tools execute in; without this endpoint they
+   read an empty local registry and never learn a background started."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:resources (resources/list-resources sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- resource-stop-handler
+  "POST /v1/sessions/:sid/resources/:rid/stop — run the resource's stop-fn in
+   the daemon (the single canonical stop path) and unregister it."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response (resources/stop! sid (path-rid request)))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- resource-restart-handler
+  "POST /v1/sessions/:sid/resources/:rid/restart — run the resource's restart-fn
+   in the daemon (it owns re-registration of any changed DATA)."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response (resources/restart! sid (path-rid request)))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- resource-logs-handler
+  "GET /v1/sessions/:sid/resources/:rid/logs — captured output lines for a
+   background via its logs-fn (nil when the resource has none)."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:lines (resources/logs sid (path-rid request))})
+    (session-404 (get-in request [:path-params :sid]))))
+(defn- path-iid [request] (get-in request [:path-params :iid]))
+(defn- path-idx
+  [request]
+  (some-> (get-in request [:path-params :idx])
+          parse-long))
+
+(defn- attachment-bytes-handler
+  "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx — the raw bytes of ONE
+   outbound artifact (a matplotlib figure / produced image) a tool call emitted
+   in iteration `:iid`, addressed by its 0-based `:idx` in the iteration's ordered
+   attachment list — the SAME list (and order) the live `iteration.completed`
+   descriptors index. Served with the artifact's own Content-Type so a native
+   client (iOS/RN) `<img>`-loads it directly; the lazy fetch that keeps the live
+   SSE frame lean. HISTORY and LIVE resolve through the SAME durable DB rows, so
+   it works the instant the iteration is stored and forever after (404 until the
+   row lands — the client retries, as the trace re-fetch already does). An
+   attachment is append-only + content-addressed by (iteration, index), so it is
+   safely `immutable`-cacheable."
+  [request]
+  (if (path-sid request)
+    (let [idx
+          (path-idx request)
+
+          atts
+          (state/iteration-attachments (path-iid request))
+
+          att
+          (when (and idx (nat-int? idx)) (nth atts idx nil))
+
+          ^bytes bs
+          (some-> att
+                  state/attachment-bytes)]
+
+      (if bs
+        {:status 200
+         :headers {"Content-Type" (or (not-empty (str (:media-type att)))
+                                      "application/octet-stream")
+                   "Content-Length" (str (alength bs))
+                   "Cache-Control" "private, max-age=31536000, immutable"}
+         :body (java.io.ByteArrayInputStream. bs)}
+        (error-response 404
+                        :attachment-not-found "unknown attachment"
+                        :iteration_id (str (path-iid request))
+                        :index idx)))
+    (session-404 (get-in request [:path-params :sid]))))
+
+
+
 (defn- session-model-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -1048,6 +1133,11 @@
         ["/sessions/:sid/events-since" {:get events-since-handler}]
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/transcript" {:get transcript-handler}]
+        ["/sessions/:sid/resources" {:get resources-handler}]
+        ["/sessions/:sid/resources/:rid/stop" {:post resource-stop-handler}]
+        ["/sessions/:sid/resources/:rid/restart" {:post resource-restart-handler}]
+        ["/sessions/:sid/resources/:rid/logs" {:get resource-logs-handler}]
+        ["/sessions/:sid/iterations/:iid/attachments/:idx" {:get attachment-bytes-handler}]
         ["/sessions/:sid/model" {:get session-model-handler :patch set-session-model-handler}]
         ["/sessions/:sid/workspace" {:get workspace-handler}]
         ["/sessions/:sid/workspace/roots"

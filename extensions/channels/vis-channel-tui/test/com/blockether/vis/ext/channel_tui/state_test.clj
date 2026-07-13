@@ -757,6 +757,48 @@
                      (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
                                 @notified))))))
 
+(defdescribe cancel-reaches-gateway-after-send-test
+             ;; REGRESSION (user report): cancel a running turn, then send a correction.
+             ;; The correction landed in BOTH the transcript AND the gateway queue, then
+             ;; sat there until the "cancelled" turn finished on its own — because the
+             ;; cancel never reached the daemon. Root cause: a plain `:send-message` turn
+             ;; has no `:gateway-turn-id` yet (it's minted server-side), and
+             ;; `:sync-turn-clock` used to drop the id the `turn.started` chunk carries.
+             ;; So `:cancel-turn`'s `(when (and sid tid) …)` short-circuited and the
+             ;; daemon kept running. Fix: `:sync-turn-clock` late-binds the id.
+             (it
+               "cancel of a send-message turn reaches the gateway once turn.started arrives"
+               (let [cancelled-gateway (atom nil)]
+                 (with-redefs [vis/cancel! (fn [_]
+                                             nil)
+                               vis/notify! (fn [_ & _]
+                                             nil)
+                               vis/gateway-cancel-turn! (fn [sid tid]
+                                                          (reset! cancelled-gateway [sid tid])
+                                                          {:status "cancelling"})]
+
+                   ;; State AFTER `:send-message` submitted a fresh turn: loading, but
+                   ;; the gateway turn id is not known yet.
+                   (reset! state/app-db {:session {:id "s1"}
+                                         :active-tab-id "s1"
+                                         :render-version 0
+                                         :loading? true
+                                         :cancel-token :token
+                                         :cancelling? false
+                                         :gateway-turn-id nil
+                                         :turn-start-ms 10})
+                   ;; BEFORE turn.started: a cancel can't reach the gateway — the id is
+                   ;; unknown (the turn isn't assigned server-side yet either).
+                   (state/dispatch [:cancel-turn])
+                   (expect (nil? @cancelled-gateway))
+                   ;; turn.started lands, projected as a :turn-start chunk with the id.
+                   (state/dispatch [:sync-turn-clock nil {:turn-id "gw-turn-1" :started-at-ms 123}])
+                   (expect (= "gw-turn-1" (:gateway-turn-id @state/app-db)))
+                   ;; NOW the cancel reaches the daemon with the real (sid, tid).
+                   (reset! cancelled-gateway nil)
+                   (state/dispatch [:cancel-turn])
+                   (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))))))
+
 (defdescribe
   cancel-turn-stale-gateway-test
   (it
@@ -804,6 +846,85 @@
           (expect (= ["Turn is no longer running; cleared local cancelling state."
                       [:level :info :ttl-ms 2500]]
                      @notified)))))))
+(defdescribe
+  cancel-self-heal-test
+  ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
+  ;; waits for the daemon's terminal `turn.completed` (cancelled) event
+  ;; to release it. If that event NEVER lands — an SSE reconnect gap
+  ;; right at cancel, or the daemon dying mid-unwind — the flag sticks
+  ;; true, every send parks purely local (the enqueue race guard), and
+  ;; input is wedged until the daemon's ~6-minute stall watchdog fires:
+  ;; a freeze, to a human. The render-loop heartbeat pokes
+  ;; `:cancel-self-heal-tick`, which self-heals once the pending flag
+  ;; outlives `cancel-self-heal-timeout-ms` (8s). Pure over an injected
+  ;; `now-ms`, so the dropped-event scenario is deterministic here.
+  (let [heal-fn (-> #'state/event-registry
+                    deref
+                    deref
+                    (get :cancel-self-heal-tick)
+                    :fn)]
+    (it "no-ops while the pending cancel is younger than the timeout"
+        (with-redefs [vis/cancel! (fn [_]
+                                    (throw (ex-info "self-heal must not fire early" {})))]
+          (let [db {:active-tab-id :main
+                    :session {:id "s1"}
+                    :loading? true
+                    :cancel-token :token
+                    :cancelling? true
+                    :cancelling-at-ms 1000}
+                ;; 1s elapsed ≪ 8s timeout
+                {db' :db} (heal-fn db [:cancel-self-heal-tick 2000])]
+
+            (expect (true? (:cancelling? db')))
+            (expect (true? (:loading? db'))))))
+    (it "clears the stuck cancel once it outlives the timeout"
+        (let [cancelled (atom nil)]
+          (with-redefs [vis/cancel! (fn [tok]
+                                      (reset! cancelled tok))]
+            (let [db {:active-tab-id :main
+                      :session {:id "s1"}
+                      :loading? true
+                      :cancel-token :token
+                      :cancelling? true
+                      :progress {:iterations []}
+                      :turn-start-ms 10
+                      :cancelling-at-ms 1000}
+                  ;; 8.5s elapsed > 8s timeout
+                  {db' :db fx :fx} (heal-fn db [:cancel-self-heal-tick 9500])]
+
+              ;; Local token re-fired (tears down any lingering attach waiter).
+              (expect (= :token @cancelled))
+              ;; Turn state fully cleared → input flows again.
+              (expect (false? (:cancelling? db')))
+              (expect (false? (:loading? db')))
+              (expect (nil? (:cancel-token db')))
+              (expect (nil? (:cancelling-at-ms db')))
+              ;; The user is told, and with no authored backlog nothing is restored.
+              (expect (some #(= :notify (first %)) fx))
+              (expect (not-any? #(= :dispatch (first %)) fx))))))
+    (it "restores the authored backlog to the editor when it self-heals"
+        (with-redefs [vis/cancel! (fn [_]
+                                    nil)]
+          (let [db {:active-tab-id :main
+                    :session {:id "s1"}
+                    :loading? true
+                    :cancel-token :token
+                    :cancelling? true
+                    :cancelling-at-ms 0
+                    :pending-sends [{:text "my correction" :client-id "c1"}]}
+                {fx :fx} (heal-fn db [:cancel-self-heal-tick 20000])]
+
+            ;; The correction the user typed during the cancel comes back
+            ;; to the editor rather than being silently dropped.
+            (expect (some #{[:dispatch [:restore-pending-to-input :main]]} fx)))))
+    (it "never fires when no cancel is pending, even with a stale timestamp"
+        (with-redefs [vis/cancel! (fn [_]
+                                    (throw (ex-info "self-heal must not fire when idle" {})))]
+          (let [db {:active-tab-id :main :loading? true :cancelling? false :cancelling-at-ms 0}
+                {db' :db} (heal-fn db [:cancel-self-heal-tick 999999])]
+
+            (expect (false? (:cancelling? db')))
+            (expect (true? (:loading? db'))))))))
 
 (defdescribe session-refresh-reconciles-in-flight-state-test
              (it "clears stale cancelling state when refreshed session is terminal"
@@ -1823,11 +1944,46 @@
                    {:session {:id "s1"} :render-version 0 :loading? false :turn-start-ms 42})
                  (state/dispatch [:sync-turn-clock nil {:turn-id "t1" :started-at-ms 1234}])
                  (expect (= 42 (:turn-start-ms @state/app-db))))
-             (it "no-ops when the event carries no clock"
-                 (reset! state/app-db
-                   {:session {:id "s1"} :render-version 0 :loading? true :turn-start-ms 42})
+             (it "binds :gateway-turn-id even when the event carries no clock"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id nil
+                                       :turn-start-ms 42})
                  (state/dispatch [:sync-turn-clock nil {:turn-id "t1"}])
-                 (expect (= 42 (:turn-start-ms @state/app-db)))))
+                 (expect (= 42 (:turn-start-ms @state/app-db)))
+                 ;; No clock, but turn.started still carries the id — bind it so
+                 ;; :cancel-turn can reach the gateway even for a clock-less start.
+                 (expect (= "t1" (:gateway-turn-id @state/app-db))))
+             (it "late-binds :gateway-turn-id for a plain send (nil until turn.started)"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id nil
+                                       :turn-start-ms 999999})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t7" :started-at-ms 1234}])
+                 (let [db @state/app-db]
+                   (expect (= "t7" (:gateway-turn-id db)))
+                   (expect (= 1234 (:turn-start-ms db)))))
+             (it "never clobbers a :gateway-turn-id a drain/attach already bound"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? true
+                                       :gateway-turn-id "already"
+                                       :turn-start-ms 999999})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t7" :started-at-ms 1234}])
+                 (expect (= "already" (:gateway-turn-id @state/app-db))))
+             (it "does not bind :gateway-turn-id when the tab is not mid-turn"
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :active-tab-id "s1"
+                                       :render-version 0
+                                       :loading? false
+                                       :gateway-turn-id nil})
+                 (state/dispatch [:sync-turn-clock nil {:turn-id "t7" :started-at-ms 1234}])
+                 (expect (nil? (:gateway-turn-id @state/app-db)))))
 
 (defdescribe sibling-turn-started-test
              ;; The persistent per-session event stream (chat/subscribe-session-events!)

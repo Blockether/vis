@@ -82,6 +82,137 @@
                         (expect (= 1 (:id (dlg/select-dialog! screen "Items" items))))
                         (finally (.stopScreen screen))))))
 
+;; ── run-modal! component spike ──────────────────────────────────────────────
+;; The React-like payoff: `select-modal-component` is the pure heart of
+;; `list-dialog!` — its :measure (geometry), :reconcile (scroll window) and
+;; :on-key (nav / filter / select) are plain functions of immutable state, so
+;; they test with NO live terminal at all (contrast every other dialog test
+;; above, which must spin up a DefaultVirtualTerminal).
+(defn- ks [t] (KeyStroke. ^KeyType t))
+(defn- char-key [c] (KeyStroke. (Character/valueOf c) false false false))
+(def ^:private done-key :com.blockether.vis.ext.channel-tui.dialogs/done)
+
+(defdescribe select-modal-component-pure-test
+             (it "arrow nav + Enter selects the right item with no screen"
+                 (let [items
+                       (mapv #(hash-map :label (str "Item " %) :id %) (range 20))
+
+                       {:keys [init measure reconcile on-key]}
+                       (dlg/select-modal-component "Items" items {:height :content})
+
+                       geom
+                       (measure init 80 30)
+
+                       s0
+                       (reconcile init geom)
+
+                       down
+                       (ks KeyType/ArrowDown)
+
+                       s3
+                       (nth (iterate #(on-key % down geom) s0) 3)
+
+                       done
+                       (on-key s3 (ks KeyType/Enter) geom)]
+
+                   (expect (= 20 (:total geom)))
+                   (expect (= 0 (:selected s0)))
+                   (expect (= 3 (:selected s3)))
+                   (expect (= {:label "Item 3" :id 3} (done-key done)))))
+             (it "Escape closes with nil"
+                 (let [{:keys [init measure on-key]}
+                       (dlg/select-modal-component "X" [{:label "a"}] {})
+
+                       geom
+                       (measure init 80 30)]
+
+                   (expect (contains? (on-key init (ks KeyType/Escape) geom) done-key))
+                   (expect (nil? (done-key (on-key init (ks KeyType/Escape) geom))))))
+             (it "type-to-filter narrows :filtered and backspace widens it again"
+                 (let [items
+                       (mapv #(hash-map :label %) ["apple" "apricot" "banana" "cherry"])
+
+                       {:keys [init measure reconcile on-key]}
+                       (dlg/select-modal-component "F" items {:filter? true :height :content})
+
+                       step
+                       (fn [s k]
+                         (on-key s k (measure s 80 30)))
+
+                       s1
+                       (-> (reconcile init (measure init 80 30))
+                           (step (char-key \a))
+                           (step (char-key \p)))
+
+                       s2
+                       (step s1 (ks KeyType/Backspace))]
+
+                   (expect (= "ap" (:query s1)))
+                   (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
+                   (expect (= "a" (:query s2)))
+                   (expect (= ["apple" "apricot" "banana"]
+                              (mapv :label (:filtered (measure s2 80 30)))))))
+             (it "a wheel burst moves selection by the coalesced step"
+                 (let [items
+                       (mapv #(hash-map :label (str %) :id %) (range 20))
+
+                       {:keys [init measure reconcile on-key]}
+                       (dlg/select-modal-component "W" items {:height :content})
+
+                       geom
+                       (measure init 80 30)
+
+                       s0
+                       (reconcile init geom)
+
+                       burst
+                       (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10))]
+
+                   (expect (= 5 (:selected (on-key s0 burst geom)))))))
+
+(defdescribe
+  magit-transient-toggle-test
+  (let [spec
+        {:groups [{:title "Arguments"
+                   :items [{:key "f" :type :switch :id :force :label "Force"}
+                           {:key "u" :type :switch :id :set-upstream :label "Upstream"}
+                           {:key "t" :type :option :id :topic :label "Topic"}]}
+                  {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}
+
+        init
+        {:switches #{} :options {}}]
+
+    (it "binds a key to its item across every group"
+        (expect (= :force (:id (dlg/transient-item-by-key spec \f))))
+        (expect (= :push (:id (dlg/transient-item-by-key spec \p))))
+        (expect (nil? (dlg/transient-item-by-key spec \z))))
+    (it "a switch flips on then off; an unbound key is a no-op"
+        (let [on
+              (dlg/transient-toggle spec init \f)
+
+              off
+              (dlg/transient-toggle spec (:state on) \f)]
+
+          (expect (= :continue (:kind on)))
+          (expect (= #{:force} (:switches (:state on))))
+          (expect (= #{} (:switches (:state off))))
+          (expect (= init (:state (dlg/transient-toggle spec init \z))))))
+    (it "two switches accumulate independently"
+        (let [s (-> (dlg/transient-toggle spec init \f)
+                    :state
+                    (->> (#(dlg/transient-toggle spec % \u)))
+                    :state)]
+          (expect (= #{:force :set-upstream} (:switches s)))))
+    (it "an option key asks the caller to read a value"
+        (let [r (dlg/transient-toggle spec init \t)]
+          (expect (= :option (:kind r)))
+          (expect (= :topic (:id (:item r))))))
+    (it "an action key fires with the item, leaving state untouched"
+        (let [r (dlg/transient-toggle spec {:switches #{:force} :options {}} \p)]
+          (expect (= :action (:kind r)))
+          (expect (= :push (:id (:item r))))))))
+
+
 (defdescribe session-dialog-wheel-test
              (it "session picker coalesces wheel floods and moves selection"
                  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
@@ -487,10 +618,10 @@
           (expect (some #{"Terminal UI"} sections))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
-          ;; blockether + solarized themes ship in the core registry alongside
-          ;; vis-dark/light (all sorted by id).
-          (expect (= [:blockether-dark :blockether-light :solarized-dark :solarized-light :vis-dark
-                      :vis-light]
+          ;; vis-dark/light are pinned to the TOP; blockether + solarized
+          ;; themes follow, sorted by id.
+          (expect (= [:vis-light :vis-dark :blockether-dark :blockether-light :solarized-dark
+                      :solarized-light]
                      (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           ;; Mouse auto-copy is now ALWAYS ON (`:settings? false`) — out of Settings.
           (expect (not-any? #(= :mouse-selection-copy (:key %)) rows))
@@ -517,8 +648,8 @@
         (try (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
              (with-redefs [vis/get-router (constantly nil)]
                (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
-                 (expect (= [:THEME_NAME :blockether-dark :blockether-light :solarized-dark
-                             :solarized-light :vis-dark :vis-light]
+                 (expect (= [:vis-light :vis-dark :THEME_NAME :blockether-dark :blockether-light
+                             :solarized-dark :solarized-light]
                             (:choices row)))
                  (expect (= "Theme: THEME_NAME"
                             (settings-option-label row {:theme-name :THEME_NAME})))))

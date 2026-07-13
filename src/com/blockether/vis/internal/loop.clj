@@ -5757,6 +5757,9 @@
                             (on-chunk {:phase :iteration-final
                                        :iteration (inc (long iteration))
                                        :thinking thinking
+                                       :assistant-prose assistant-prose
+                                       :iteration-id iteration-id
+                                       :attachment-count (count iteration-attachments)
                                        :final {:answer (:answer final-result)
                                                :iteration-count (inc iteration)
                                                :status :success}
@@ -5805,6 +5808,9 @@
                                 (on-chunk {:phase :iteration-final
                                            :iteration (inc (long iteration))
                                            :thinking thinking
+                                           :assistant-prose assistant-prose
+                                           :iteration-id iteration-id
+                                           :attachment-count (count iteration-attachments)
                                            :final {:answer answer
                                                    :iteration-count (inc iteration)
                                                    :status :success}
@@ -5914,19 +5920,26 @@
                             ;; live channels render the forced answer; a non-terminal
                             ;; chunk before the force-finalize would never show it.
                             (when on-chunk
-                              (on-chunk (if forced?
-                                          {:phase :iteration-final
-                                           :iteration (inc (long iteration))
-                                           :thinking thinking
-                                           :final {:answer forced-answer
-                                                   :iteration-count (inc iteration)
-                                                   :status :success}
-                                           :done? true}
-                                          {:phase :iteration-final
-                                           :iteration (inc (long iteration))
-                                           :thinking thinking
-                                           :final nil
-                                           :done? false})))
+                              (on-chunk
+                                (if forced?
+                                  {:phase :iteration-final
+                                   :iteration (inc (long iteration))
+                                   :thinking thinking
+                                   :assistant-prose assistant-prose
+                                   :iteration-id iteration-id
+                                   :attachment-count (count iteration-attachments)
+                                   :final {:answer forced-answer
+                                           :iteration-count (inc iteration)
+                                           :status :success}
+                                   :done? true}
+                                  {:phase :iteration-final
+                                   :iteration (inc (long iteration))
+                                   :thinking thinking
+                                   :assistant-prose assistant-prose
+                                   :iteration-id iteration-id
+                                   :attachment-count (count iteration-attachments)
+                                   :final nil
+                                   :done? false})))
                             (if forced?
                               (do (log-stage! :final
                                               iteration

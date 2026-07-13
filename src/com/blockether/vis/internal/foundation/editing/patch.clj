@@ -449,29 +449,41 @@
     (Long/parseLong (subs s 0 (long i)))))
 
 (defn lines->anchor-map
-  "Ordered `{anchor text}` map for `[[ln text]…]` tuples: a REAL
+  "Ordered `{anchor {\"text\" line}}` map for `[[ln text]…]` tuples: a REAL
    `java.util.LinkedHashMap` (natively insertion-ordered), built in line order
-   — each KEY is the line's `<lineno>:<hash>` `line-anchor`, each VALUE the
-   verbatim text. Being an ordered hashmap (not a Clojure map), it stays in
-   file order across the Clojure → JSON/charred → GraalPy dict boundary at ANY
-   size, with NO comparator. EVERY line is keyed (blanks included, so the read
-   stays gap-free); duplicate text differs by line number, so keys are unique.
-   THE single model-facing line payload `cat` returns; the key IS the
+   — each KEY is the line's `<lineno>:<hash>` `line-anchor`, each VALUE a
+   `{\"text\" <line>}` map. This MIRRORS rg's hit value, so a consumer reads
+   `v[\"text\"]` uniformly across `cat` and `rg` (the whole point of the shape).
+   Being an ordered hashmap (not a Clojure map), it stays in file order across
+   the Clojure → JSON/charred → GraalPy dict boundary at ANY size, with NO
+   comparator. EVERY line is keyed (blanks included, so the read stays
+   gap-free); duplicate text differs by line number, so keys are unique. THE
+   single model-facing line payload `cat` returns; the key IS the
    `patch :from_anchor`."
   ^java.util.LinkedHashMap [tuples]
   (let [m (java.util.LinkedHashMap.)]
     (doseq [[ln s] tuples]
-      (.put m (line-anchor ln s) s))
+      (.put m (line-anchor ln s) {"text" s}))
     m))
 
+(defn anchor-value-text
+  "Extract the line text from an `:anchors` / `before` / `after` map VALUE.
+   Every model-facing anchor value is a `{\"text\" <line>}` map (see
+   `lines->anchor-map`); a bare string is tolerated for legacy / hand-built
+   maps so the human renderers never choke on an older shape."
+  [v]
+  (if (map? v) (get v "text") v))
+
 (defn anchor-map->tuples
-  "Inverse of `lines->anchor-map`: `{anchor text}` → `[[ln text]…]` tuples,
-   line number parsed from each `<lineno>:<hash>` key, sorted by line. For the
-   channel/human gutter and any internal consumer that still wants tuples."
+  "Inverse of `lines->anchor-map`: `{anchor {\"text\" text}}` → `[[ln text]…]`
+   tuples, the line number parsed from each `<lineno>:<hash>` key and the text
+   pulled from the value's `\"text\"` (a bare-string value is tolerated via
+   `anchor-value-text`), sorted by line. For the channel/human gutter and any
+   internal consumer that still wants tuples."
   [m]
   (->> m
        (map (fn [[a t]]
-              [(anchor->line a) t]))
+              [(anchor->line a) (anchor-value-text t)]))
        (sort-by first)
        vec))
 (def ^:const hashline-gutter

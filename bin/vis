@@ -191,7 +191,7 @@ fi
 #   vis update                       (in a git checkout) update SOURCE via git pull
 #   vis update --rebuild             ... and BUILD the native from that source
 #   vis update --native              ... and DOWNLOAD the latest release native
-#   vis update <version>|latest [--with-assets]
+#   vis update <version>|latest
 #                                    pull a NATIVE binary from a GitHub release
 #   vis update <git-sha>             switch to JVM source pinned to that commit
 # VIS_HOME overrides the location (default ~/.vis).
@@ -217,10 +217,9 @@ vis_platform_asset() {
 }
 
 vis_do_update() {
-  local target="" with_assets=0 fetch_native=0 rebuild=0 a
+  local target="" fetch_native=0 rebuild=0 a
   for a in "$@"; do
     case "$a" in
-      --with-assets) with_assets=1 ;;
       --native)      fetch_native=1 ;;  # also DOWNLOAD the latest release binary
       --rebuild)     rebuild=1 ;;        # also BUILD the native from pulled source
       *)             target="$a" ;;
@@ -280,9 +279,6 @@ vis_do_update() {
   command -v curl >/dev/null || { echo "vis update needs curl on PATH" >&2; exit 1; }
   local asset api dl
   asset="$(vis_platform_asset)" || exit 1
-  if (( with_assets )); then
-    if [[ "$asset" == *.exe ]]; then asset="${asset%.exe}-with-assets.exe"; else asset="${asset}-with-assets"; fi
-  fi
   if [[ -z "$target" || "$target" == latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
   else
@@ -373,6 +369,13 @@ if [[ -z "$dist" ]]; then
     if [[ -x "$native_bin" ]]; then
       measure_log "exec native binary $native_bin"; cd "$invocation_cwd"
       run_measured_or_exec "process native binary" "$native_bin" "$@"
+    fi
+    # No native binary anywhere for this (non-repo) user — nudge toward the fast
+    # native path. The native binary is the shipped distribution; source is slow.
+    if [[ -z "${VIS_NO_NATIVE_HINT:-}" && -t 2 ]]; then
+      echo "vis: running from JVM source (slow cold start). For fast startup, get the native binary:" >&2
+      echo "vis:   'vis update --native'  (download the latest release)   or   'vis native'  (build it)" >&2
+      echo "vis:   (set VIS_NO_NATIVE_HINT=1 to silence)" >&2
     fi
   fi
 fi

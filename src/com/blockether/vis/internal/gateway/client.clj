@@ -319,6 +319,81 @@
 
 (defn session-model-cached [sid] (session-model sid))
 
+;; ---------------------------------------------------------------------------
+;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
+;; tools register here while a turn runs IN THE DAEMON), so a client in another
+;; process reads/controls them over HTTP. The in-process web channel uses the
+;; local registry directly and never touches these.
+;; ---------------------------------------------------------------------------
+
+(defn list-resources
+  "Vector of the session's live resource DATA maps from the daemon's registry
+   (string-keyed, same shape `resources/list-resources` returns in-process)."
+  [sid]
+  (:resources (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources"))))
+
+(defonce ^:private resources-cache (atom {}))
+(def ^:private resources-cache-ttl-ms 750)
+
+(defn list-resources-cached
+  "Footer-frequency read: `list-resources` memoized per sid for a short TTL so
+   painting the TUI every frame doesn't round-trip the daemon. Swallows errors
+   to the last-known value (nil before the first success)."
+  [sid]
+  (let [k
+        (str sid)
+
+        now
+        (System/currentTimeMillis)
+
+        {:keys [at val]}
+        (get @resources-cache k)]
+
+    (if (and at (< (- now at) resources-cache-ttl-ms))
+      val
+      (let [v (try (list-resources sid) (catch Throwable _ (:val (get @resources-cache k))))]
+        (swap! resources-cache assoc k {:at now :val v})
+        v))))
+
+(defn stop-resource!
+  "Run the resource's stop-fn in the daemon and unregister it. Returns the
+   daemon's stop result map (`{:result \"stopped\"|\"unknown\"|… :id …}`)."
+  [sid rid]
+  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/stop")))
+
+(defn restart-resource!
+  "Run the resource's restart-fn in the daemon. Returns the restart result map."
+  [sid rid]
+  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/restart")))
+
+(defn resource-logs
+  "Captured output lines for a background via its daemon-side logs-fn, or nil."
+  [sid rid]
+  (:lines (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/logs"))))
+(defn iteration-attachment-bytes
+  "Raw bytes (a byte-array) of ONE outbound artifact — iteration `iid`, its 0-based
+   `idx` in the iteration's ordered attachment list — fetched from the daemon's
+   attachment byte endpoint, or nil (404 / no bytes). The lazy-fetch companion to
+   a live `iteration.completed` attachment descriptor: a client sees `{:index
+   :media_type …}` on the frame, then pulls the bytes here. HISTORY resolves the
+   same way (the trace iteration's `:id` + attachment index)."
+  [sid iid idx]
+  (let [entry
+        (ensure-gateway!)
+
+        _
+        (ensure-client! entry)
+
+        path
+        (str "/v1/sessions/" (enc sid) "/iterations/" (enc iid) "/attachments/" idx)
+
+        response
+        (.send @http-client
+               (.build (request-builder entry path))
+               (HttpResponse$BodyHandlers/ofByteArray))]
+
+    (when (< (.statusCode response) 400) (.body response))))
+
 (defn set-session-model!
   [sid provider model]
   (:model (send-json! "PATCH"

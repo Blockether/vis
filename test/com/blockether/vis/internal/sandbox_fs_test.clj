@@ -151,7 +151,13 @@
           (Files/createTempDirectory "vis-outbox-tap" (make-array FileAttribute 0))
 
           rootdir
-          (Files/createTempDirectory "vis-outbox-root" (make-array FileAttribute 0))
+          ;; A NON-temp root (under the repo): a write here is NOT captured.
+          ;; NB not a createTempDirectory dir — that lives under $TMPDIR, which
+          ;; the widened tap now (correctly) captures, so it wouldn't isolate
+          ;; the "non-outbox root" case.
+          (let [d (java.io.File. "target/vis-outbox-root-test")]
+            (.mkdirs d)
+            (.toPath (.getCanonicalFile d)))
 
           sink
           (atom [])
@@ -173,7 +179,7 @@
                 seen]
 
         (write-channel! fs (.resolve outdir "report.csv") "x,y\n1,2\n")
-        ;; write under a normal root — untouched
+        ;; write under a normal (non-temp) root — untouched
         (write-channel! fs (.resolve rootdir "work.txt") "not captured")
         ;; read under the outbox — untouched
         (.close (.newByteChannel fs
@@ -212,3 +218,59 @@
           (write-channel! fs (.resolve outdir "a.csv") "1")
           (write-channel! fs (.resolve outdir "a.csv") "22"))
         (expect (= 1 (count @sink))))))
+
+(defdescribe
+  temp-root-tap-test
+  (it "captures a WRITE under a system temp root (/tmp, $TMPDIR), not just $VIS_OUTBOX"
+      (let [outdir
+            (Files/createTempDirectory "vis-tmptap-outbox" (make-array FileAttribute 0))
+
+            sink
+            (atom [])
+
+            seen
+            (atom #{})
+
+            ;; bogus /fs root + an outbox dir the probe is NOT under, so the tap
+            ;; can ONLY fire via the system-temp-root widening.
+            fs
+            (sfs/confined-filesystem (fn []
+                                       ["/no/such/workspace/root"])
+                                     {:dir (str outdir)
+                                      :on-close (fn [p]
+                                                  (mc/record-file! p))})
+
+            probe
+            (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-" (System/nanoTime) ".csv")]
+
+        (binding [mc/*attachment-sink*
+                  sink
+
+                  mc/*outbox-seen*
+                  seen]
+
+          (write-channel! fs (p probe) "a,b\n1,2\n"))
+        (let [[att] @sink]
+          (expect (= 1 (count @sink)))
+          (expect (= "text/csv" (:media-type att)))
+          (expect (= "file" (:kind att)))))))
+
+(defdescribe
+  confined-fs-temp-roots-test
+  (it "ALWAYS allows the system temp dirs (/tmp, $TMPDIR) even when NOT a /fs root"
+      (let [fs
+            (sfs/confined-filesystem (fn []
+                                       ["/no/such/workspace/root"]))
+
+            probe
+            (str (System/getProperty "java.io.tmpdir") "/vis-temproot-" (System/nanoTime) ".txt")]
+
+        (try
+          ;; write + read scratch under $TMPDIR works despite the bogus root
+          (write-channel! fs (p probe) "temp-ok")
+          (expect (= "temp-ok" (slurp probe)))
+          ;; a literal /tmp path resolves through confinement (allowed)
+          (expect (some? (.toRealPath fs (p "/tmp") (make-array java.nio.file.LinkOption 0))))
+          ;; ...but a path outside every root AND every temp dir is still DENIED
+          (expect (denied? #(write-channel! fs (p "/etc/vis-nope.txt") "x")))
+          (finally (Files/deleteIfExists (p probe)))))))

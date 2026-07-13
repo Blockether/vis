@@ -272,21 +272,124 @@
                                      (conj "--amend"))))))
 
 (defn push!
-  "`opts`: :set-upstream? adds `-u origin <branch>`, :force? uses
-   `--force-with-lease` (never bare --force)."
-  [root {:keys [set-upstream? force?]}]
+  "`opts`: :remote (default \"origin\"), :set-upstream? adds `-u <remote> <branch>`,
+   :force? uses `--force-with-lease` (never bare --force), :dry-run? adds
+   `--dry-run`, :no-verify? adds `--no-verify` to skip pre-push hooks."
+  [root {:keys [set-upstream? force? remote dry-run? no-verify?]}]
   (let [branch
         (ok-out root ["rev-parse" "--abbrev-ref" "HEAD"])
+
+        remote
+        (or remote "origin")
 
         args
         (cond-> ["push"]
           force?
           (conj "--force-with-lease")
 
+          dry-run?
+          (conj "--dry-run")
+
+          no-verify?
+          (conj "--no-verify")
+
           set-upstream?
-          (into ["-u" "origin" (str branch)]))]
+          (into ["-u" remote (str branch)])
+
+          (and (not set-upstream?) (not= "origin" remote))
+          (conj remote))]
 
     (action-result "Pushed" (git! root args {:timeout-secs network-timeout-secs}))))
+(defn current-branch
+  "Short name of the current branch (`main`), or nil on a detached/unborn HEAD."
+  [root]
+  (let [b (ok-out root ["rev-parse" "--abbrev-ref" "HEAD"])]
+    (when-not (or (str/blank? (str b)) (= "HEAD" b)) b)))
+
+(defn remotes
+  "Configured remotes as `[{:name :url}]` (the PUSH url), in git's own order.
+   Deduplicated so a remote with distinct fetch/push urls shows once."
+  [root]
+  (->> (ok-lines root ["remote" "-v"])
+       (keep (fn [line]
+               (let [[name url kind] (str/split (str/trim (str line)) #"\s+")]
+                 (when (and name url (= "(push)" kind)) {:name name :url url}))))
+       distinct
+       vec))
+
+(defn- gerrit-url?
+  "Heuristic: does a remote URL point at a Gerrit server? Gerrit's SSH port is
+   29418, its hosts usually carry `gerrit`, and its authenticated HTTP path is
+   `/a/`."
+  [url]
+  (let [u (str url)]
+    (or (str/includes? u ":29418") (str/includes? u "gerrit") (str/includes? u "/a/"))))
+
+(defn- gitreview-file ^File [root] (File. (as-file root) ".gitreview"))
+
+(defn gerrit-remote
+  "Name of the remote that talks to a Gerrit server, or nil. Prefers an explicit
+   `gerrit` remote, then any remote whose URL smells like Gerrit, then falls back
+   to the first remote when a `.gitreview` file is present."
+  [root]
+  (let [rs (remotes root)]
+    (or (some #(when (= "gerrit" (:name %)) (:name %)) rs)
+        (some #(when (gerrit-url? (:url %)) (:name %)) rs)
+        (when (.exists (gitreview-file root)) (or (:name (first rs)) "origin")))))
+
+(defn gerrit?
+  "True when this repo appears to target a Gerrit server."
+  [root]
+  (some? (gerrit-remote root)))
+
+(defn gerrit-target-branch
+  "Branch a Gerrit review targets: the upstream branch (minus its remote), else
+   the current branch, else `master`."
+  [root]
+  (or (some-> (upstream-name root)
+              (str/replace #"^[^/]+/" ""))
+      (current-branch root)
+      "master"))
+
+(defn refs-for-spec
+  "PURE: the Gerrit push refspec `HEAD:refs/for/<branch>`, with an optional
+   `%topic=<topic>` appended when `topic` is non-blank."
+  [branch topic]
+  (str "HEAD:refs/for/"
+       branch
+       (when-not (str/blank? (str topic)) (str "%topic=" (str/trim (str topic))))))
+
+(defn gerrit-push!
+  "Push HEAD to Gerrit for review (`refs/for/<branch>`) — a regular push, just
+   carrying an optional Gerrit topic. `opts`: :remote :branch :topic :dry-run?
+   :no-verify?. `remote`/`branch` default to the detected Gerrit remote and
+   upstream branch."
+  [root {:keys [remote branch topic dry-run? no-verify?]}]
+  (let [remote
+        (or remote (gerrit-remote root) "origin")
+
+        branch
+        (or branch (gerrit-target-branch root))
+
+        spec
+        (refs-for-spec branch topic)
+
+        args
+        (cond-> ["push"]
+          dry-run?
+          (conj "--dry-run")
+
+          no-verify?
+          (conj "--no-verify")
+
+          :always
+          (into [remote spec]))]
+
+    (action-result (str "Pushed for review → refs/for/"
+                        branch
+                        (when-not (str/blank? (str topic))
+                          (str " (topic " (str/trim (str topic)) ")")))
+                   (git! root args {:timeout-secs network-timeout-secs}))))
 
 (defn pull!
   [root]

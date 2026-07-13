@@ -60,7 +60,7 @@ describe("shouldNotifyTurnDone", () => {
       "turn.started",
       "block.started",
       "block.output",
-      "content.delta",
+      "context.updated",
     ]) {
       expect(
         shouldNotifyTurnDone({ type, enabled: true, appActive: false }),

@@ -2228,6 +2228,11 @@
       (let [ly (:layout db)]
         (when (and ly (:total-h ly) (:inner-h ly) (or (:loading? db) (scroll-anim-active? db)))
           (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)])))
+      ;; STUCK-cancel self-heal: while a cancel is pending, poke the state layer on
+      ;; the heartbeat (this loop wakes every spinner-tick-ms while loading) so a
+      ;; dropped terminal `turn.completed` event can't wedge input for minutes.
+      ;; The handler no-ops until the pending flag outlives its timeout.
+      (when (:cancelling? db) (state/dispatch [:cancel-self-heal-tick]))
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version @state/app-db) 0))
               ;; tryLock so a dialog session (which holds the lock for
@@ -2837,6 +2842,109 @@
           :else (recur (.getCause t)))))
 
 
+(def ^:private boot-splash-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(def ^:private boot-splash-grace-ms
+  "Don't paint the splash until the work has outlasted this window, so a fast
+   warm attach to an already-running daemon never flashes a spinner."
+  250)
+
+(defn- paint-boot-splash!
+  "Paint ONE centered 'Connecting to gateway…' frame. The caller MUST hold
+   `draw-lock` (this touches `screen-size`/`refresh`). Best-effort — the
+   animation loop swallows throws so a paint hiccup can never kill startup."
+  [^TerminalScreen screen frame]
+  (let [size
+        (screen-size screen)
+
+        cols
+        (.getColumns size)
+
+        rows
+        (.getRows size)
+
+        g
+        (.newTextGraphics screen)
+
+        spin
+        (nth boot-splash-frames (mod (long frame) (count boot-splash-frames)))
+
+        label
+        (str spin "  Connecting to gateway…")
+
+        row
+        (max 0 (quot (dec rows) 2))]
+
+    (p/set-colors! g t/terminal-bg t/terminal-bg)
+    (p/fill-rect! g 0 0 cols rows)
+    (p/set-colors! g t/text-fg t/terminal-bg)
+    (p/put-str! g 0 row (p/center-text label cols))
+    (.setCursorPosition screen nil)
+    (.refresh screen Screen$RefreshType/DELTA)))
+
+(defn- with-boot-splash!
+  "Run `thunk` while animating a centered 'Connecting to gateway…' splash on
+   `screen`, then clear it and return `thunk`'s value.
+
+   Bridges the one window where the user is otherwise staring at a blank screen:
+   after `.startScreen` but before the render thread exists, the first gateway
+   call spins up the detached daemon (up to ~15s on a native cold start) and the
+   client's own progress spinner only reaches stderr — invisible once Lanterna
+   owns the alternate buffer. This paints IN the TUI instead.
+
+   Beautiful + correct: it stays silent for the first `boot-splash-grace-ms` so a
+   warm attach never flashes; it paints under a non-blocking `tryLock` and skips
+   whenever a modal is up (`:dialog-open?`), so it never fights the no-provider
+   manager `make-startup` may open on the rotated-creds path; and it always joins
+   the animator + clears the buffer in a `finally` so the first real frame paints
+   clean even if the body throws."
+  [^TerminalScreen screen thunk]
+  (let [stop?
+        (atom false)
+
+        painted?
+        (atom false)
+
+        animator
+        (doto (Thread. ^Runnable
+                       (fn []
+                         (let [start (System/currentTimeMillis)]
+                           (loop [frame 0]
+                             (when-not @stop?
+                               (when (and (>= (- (System/currentTimeMillis) start)
+                                              boot-splash-grace-ms)
+                                          (not (:dialog-open? @state/app-db))
+                                          (.tryLock ^ReentrantLock draw-lock))
+                                 (try (paint-boot-splash! screen frame)
+                                      (reset! painted? true)
+                                      (catch Throwable _ nil)
+                                      (finally (.unlock ^ReentrantLock draw-lock))))
+                               (Thread/sleep 90)
+                               (recur (inc frame))))))
+                       "vis-channel-tui-boot-splash")
+          (.setDaemon true))]
+
+    (.start animator)
+    (try (thunk)
+         (finally (reset! stop? true)
+                  (try (.join animator 500) (catch InterruptedException _ nil))
+                  ;; Wipe the splash so the render thread's first frame paints onto a
+                  ;; clean buffer (skip entirely when nothing was ever drawn).
+                  (when @painted?
+                    (.lock ^ReentrantLock draw-lock)
+                    (try (let [size
+                               (screen-size screen)
+
+                               g
+                               (.newTextGraphics screen)]
+
+                           (p/set-colors! g t/terminal-bg t/terminal-bg)
+                           (p/fill-rect! g 0 0 (.getColumns size) (.getRows size))
+                           (.refresh screen Screen$RefreshType/COMPLETE))
+                         (catch Throwable _ nil)
+                         (finally (.unlock ^ReentrantLock draw-lock))))))))
+
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -2983,16 +3091,19 @@
                    ;; throws :svar/no-providers. Onboarding was skipped (config
                    ;; present), so surface the provider manager here, then retry
                    ;; the build ONCE with the freshest config.
-                   (try (make-startup config)
-                        (catch Throwable e
-                          (if (svar-no-providers-cause? e)
-                            (do (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
-                                                                  screen
-                                                                  (:config @state/app-db)))]
-                                  (state/dispatch [:set-config c])
-                                  (state/dispatch [:force-provider-limits-refresh]))
-                                (make-startup (:config @state/app-db)))
-                            (throw e))))]
+                   (with-boot-splash!
+                     screen
+                     (fn []
+                       (try (make-startup config)
+                            (catch Throwable e
+                              (if (svar-no-providers-cause? e)
+                                (do (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
+                                                                      screen
+                                                                      (:config @state/app-db)))]
+                                      (state/dispatch [:set-config c])
+                                      (state/dispatch [:force-provider-limits-refresh]))
+                                    (make-startup (:config @state/app-db)))
+                                (throw e))))))]
 
                (vswap! title-listeners assoc (str id) (init-visible-session! startup-session))
                ;; Record this place's tab set (just the single startup tab)
@@ -4450,7 +4561,16 @@
                      (recur))
                    :else
                    (let [{:keys [action state workspace-index]} (input/handle-key key (:input db))]
-                     (state/dispatch [:update-input state])
+                     ;; Apply the editor state for EVERY action except
+                     ;; :clear-input. `handle-key` returns :clear-input with an
+                     ;; already-empty buffer whenever the draft is non-empty, but
+                     ;; Escape there may actually mean "cancel the running turn /
+                     ;; close an overlay" (see the :clear-input case below), and
+                     ;; the draft must survive that. Applying the empty state here
+                     ;; wiped a typed correction before we decided the Esc wasn't a
+                     ;; clear at all. The true clear-draft branch resets via
+                     ;; :reset-input, so nothing is lost by skipping it here.
+                     (when-not (= action :clear-input) (state/dispatch [:update-input state]))
                      (let
                        [run-command!
                         ;; The extension-contributed `:tui.slot/commands` slot is GONE;
