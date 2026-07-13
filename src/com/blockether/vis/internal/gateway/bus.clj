@@ -146,21 +146,68 @@
   [f]
   (reset! deliver-fn f))
 
+(defonce ^:private relevant-sid-fn (atom nil))
+
+(defn set-relevant-sid-fn!
+  "Register a predicate `(f sid) -> truthy` naming the sessions this process has a
+   LOCAL consumer for. The tailer skips draining journals for any other sid: a
+   foreign event for a session with no local registry entry is dropped by the
+   delivery fn anyway (gateway.state/ingest-mirrored-event! no-ops on an unknown
+   sid), so opening + reading + JSON-parsing — and even stat'ing — those journals
+   on every poll is pure waste, the CPU an otherwise-idle daemon burns re-scanning
+   every sibling's journal forever. Absent a wired predicate (tests, early boot)
+   every sid is relevant, preserving the drain-everything behavior. Wired by
+   `gateway.state`."
+  [f]
+  (reset! relevant-sid-fn f))
+
+(defn- relevant-sid?
+  "Whether the tailer should drain `sid`'s journal — true unless a wired predicate
+   says this process has no local consumer for it. Never throws: a predicate error
+   fails open (drain) so a wiring bug can't silently stall cross-process mirroring."
+  [sid]
+  (if-let [f @relevant-sid-fn]
+    (boolean (try (f sid) (catch Throwable _ true)))
+    true))
+
+(defn- journal-sid
+  "The sid a `.ndjson` journal file name encodes, or nil for a non-journal file."
+  ^String [^String n]
+  (when (str/ends-with? n ".ndjson") (subs n 0 (- (count n) (count ".ndjson")))))
+
 ;; sid-str -> byte offset already consumed
 (defonce ^:private offsets (atom {}))
 (defonce ^:private tailer (atom nil))
 
+(def ^:private ^String self-marker
+  "The exact `\"_producer\":\"<id>\"` JSON fragment this process writes. A raw
+   substring test against it short-circuits the (comparatively expensive) JSON
+   parse for our OWN journal lines — and the streaming producer tails its own
+   file, so without this it would parse-then-discard nearly every line it wrote."
+  (str "\"_producer\":\"" producer-id "\""))
+
+;; One growable read buffer, reused across polls. drain-file! runs ONLY on the
+;; single tailer thread (poll-once! drains files sequentially), so steady-state
+;; tailing needs no per-drain byte-array allocation — zero GC churn on the hot
+;; loop that runs in every vis process.
+(defonce ^:private drain-buf (atom (byte-array 0)))
+
 (defn- deliver-line!
   [sid ^String line]
-  (when-let [event (wire/parse-json line)]
-    (when-not (= (:_producer event) producer-id)
-      (when-let [f @deliver-fn]
-        (let [store? (boolean (:_store event))
-              clean (dissoc event :_producer :_pid :_store)]
+  ;; Skip our OWN lines with a cheap substring test BEFORE parsing — the
+  ;; streaming producer tails its own journal, so this avoids parse-then-discard
+  ;; on nearly every line it just wrote. The `:_producer` equality below stays as
+  ;; a correctness backstop for the (foreign) lines that do get parsed.
+  (when-not (.contains line self-marker)
+    (when-let [event (wire/parse-json line)]
+      (when-not (= (:_producer event) producer-id)
+        (when-let [f @deliver-fn]
+          (let [store? (boolean (:_store event))
+                clean (dissoc event :_producer :_pid :_store)]
 
-          (try (f sid store? clean)
-               (catch Throwable t
-                 (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)]))))))))
+            (try (f sid store? clean)
+                 (catch Throwable t
+                   (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)])))))))))
 
 (defn- drain-file!
   [^File f]
@@ -183,21 +230,34 @@
     (when (> len off)
       (with-open [raf (RandomAccessFile. f "r")]
         (.seek raf (long off))
-        (let [remaining (- len off)
-              buf (byte-array remaining)
-              _ (.readFully raf buf)
-              text (String. buf StandardCharsets/UTF_8)
-              nl (.lastIndexOf text "\n")]
+        (let [remaining (int (- len off))
+              ;; Reuse one growable buffer across polls (single tailer thread) so
+              ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
+              ^bytes buf
+              (let [^bytes b @drain-buf]
+                (if (>= (alength b) remaining) b (reset! drain-buf (byte-array remaining))))
+              _ (.readFully raf buf 0 remaining)]
 
-          (when (>= nl 0)
-            (let [complete (subs text 0 nl)
-                  consumed (count (.getBytes ^String (subs text 0 (inc nl))
-                                             StandardCharsets/UTF_8))]
+          ;; ONE forward pass over the tail: decode each COMPLETE line in
+          ;; isolation and deliver it inline — no whole-tail String, no regex
+          ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
+          ;; `last-nl` tracks the last newline seen; the cursor advances exactly
+          ;; past it, leaving any trailing partial line for the next drain.
+          (loop [start 0
+                 i 0
+                 last-nl -1]
 
-              (doseq [line (str/split-lines complete)]
-                (when-not (str/blank? line) (deliver-line! sid line)))
-              (swap! offsets assoc sid (+ off consumed))
-              true)))))))
+            (if (< i remaining)
+              (if (== (aget buf i) 10)
+                (let [end (if (and (> i start) (== (aget buf (dec i)) 13))
+                            (dec i) ; strip a CR from a CRLF line ending
+                            i)]
+                  (when (> end start)
+                    (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
+                      (when-not (str/blank? line) (deliver-line! sid line))))
+                  (recur (inc i) (inc i) i))
+                (recur start (inc i) last-nl))
+              (when (>= last-nl 0) (swap! offsets assoc sid (+ off (inc last-nl))) true))))))))
 
 (defn journal-high-water-seq
   "Highest `:seq` persisted in `sid`'s journal file, or 0 when there is none.
@@ -309,21 +369,26 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!
-  "Drain every journal once. Returns true when any line was delivered, so the
-   tailer can poll fast under load and back off when the tail is quiet."
+  "Drain every journal with a LOCAL consumer once. Returns true when any line was
+   delivered, so the tailer can poll fast under load and back off when the tail is
+   quiet. Journals for sessions this process isn't tracking are skipped up front
+   (see `relevant-sid?`) — their foreign events would be dropped on delivery
+   anyway — so an idle daemon no longer opens and stats every sibling's journal on
+   every poll."
   []
   (try (let [dir (.toFile (events-dir))]
          (if (.isDirectory dir)
            (reduce (fn [busy ^File f]
-                     (if (str/ends-with? (.getName f) ".ndjson")
-                       (or (try (boolean (drain-file! f))
-                                (catch Throwable t
-                                  (tel/log! :debug
-                                            ["gateway-bus: drain failed" (.getName f)
-                                             (ex-message t)])
-                                  false))
-                           busy)
-                       busy))
+                     (let [sid (journal-sid (.getName f))]
+                       (if (and sid (relevant-sid? sid))
+                         (or (try (boolean (drain-file! f))
+                                  (catch Throwable t
+                                    (tel/log! :debug
+                                              ["gateway-bus: drain failed" (.getName f)
+                                               (ex-message t)])
+                                    false))
+                             busy)
+                         busy)))
                    false
                    (.listFiles dir))
            false))

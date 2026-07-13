@@ -262,7 +262,7 @@
                          " >"
                          (sh-quote (.getPath log))
                          " 2>&1 &")]
-            (ProcessBuilder. ^java.util.List ["sh" "-c" cmd]))
+            (ProcessBuilder. ^java.util.List (vec ["sh" "-c" cmd])))
           (ProcessBuilder. ^java.util.List (vec argv)))]
 
     (if (unix?)

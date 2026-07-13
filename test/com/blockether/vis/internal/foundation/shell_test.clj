@@ -144,6 +144,16 @@
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (expect (threw? #(shell-run* {} "pwd" {"cwd" "../.."})))))))
+  (it "accepts an ABSOLUTE cwd that lands inside a workspace root"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let [abs (.getCanonicalPath (java.io.File. (str (workspace/cwd))))
+                               r (:result (shell-run* {} "pwd" {"cwd" abs}))]
+
+                           (expect (string? (get r "cwd")))
+                           (expect (= abs (get r "cwd"))))
+                         ;; an absolute path OUTSIDE every root is still rejected
+                         (expect (threw? #(shell-run* {} "pwd" {"cwd" "/"})))))))
   (it "accepts a float timeout but rejects a non-numeric one with a typed error"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]

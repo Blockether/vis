@@ -102,6 +102,30 @@ QR also lists the reachable hosts it picked, in preference order:
 **Tailscale addresses first** (they keep working off-LAN), then LAN
 (`10.x` / `192.168.x` / `172.16–31.x`), then the concrete bind host.
 
+### Pairing a gateway that is already running
+
+The TUI (and other channels) auto-spawn a **loopback** gateway on first launch,
+so there is usually one running already — but bound to `127.0.0.1`, which a
+phone can never reach. To pair a running daemon **without a start flag**, use:
+
+```sh
+vis gateway pair
+```
+
+It reads the gateway registered for the current DB and prints the same QR that
+`--pair` prints at boot — no restart needed. Two guardrails:
+
+- **No gateway running** → it tells you to start one:
+  `vis gateway start --host 0.0.0.0 --require-token --pair`.
+- **Running but loopback-bound** (the auto-spawned TUI daemon) → it refuses,
+  because `127.0.0.1` is phone-local, and prints the exact restart to run:
+  `vis gateway stop` then `vis gateway start --host 0.0.0.0 --require-token --pair`.
+
+So: if you only ever ran `vis channels tui`, the daemon behind it is loopback
+and cannot be paired as-is — stop it and restart the gateway reachable (above).
+Once it is bound to `0.0.0.0` (or a Tailscale host), `vis gateway pair` prints
+the QR on demand any time.
+
 ## Tailscale (access from anywhere)
 
 `0.0.0.0` only exposes the gateway on the local network. To reach it from

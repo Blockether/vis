@@ -3689,7 +3689,7 @@
    fallback to keep `patch` result rendering from becoming the slow path."
   [before after]
   (cond (= before after) nil
-        (nil? before) (str "+++ (new file, " (count (str/split-lines (or after ""))) " lines)")
+        (nil? before) (str/join "\n" (prefixed-diff-lines "+" (str/split-lines (or after ""))))
         (nil? after) (str "--- (deleted, " (count (str/split-lines (or before ""))) " lines)")
         :else (let [a
                     (vec (str/split-lines before))

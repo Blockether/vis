@@ -336,13 +336,11 @@
 ;; id-badge!).
 
 (defn- id-copy-block-text
+  "Space-padded chip label for the id copy button, same shape as the F1/F2
+   buttons so `id-badge!` can paint it through the shared `button!` and it
+   reads as a real button: the `#id` is the affordance text."
   [id-short]
-  (if id-short
-    ;; Space-padded chip label, same shape as the F1/F2 buttons, so `id-badge!`
-    ;; can paint it through the shared `button!` and it reads as a real button:
-    ;; the `#id` is the affordance text.
-    (str " #" id-short " ")
-    ""))
+  (if id-short (str " #" id-short " ") ""))
 
 (def ^:dynamic *register-click-regions?*
   "Bind false for header-only hover repaints. Geometry did not change,
@@ -351,9 +349,9 @@
   true)
 
 (defn- right-block-text
-  "Compose the right-side text: \"4b1ed602\" when a session id
-   exists, otherwise empty. Single place that knows the layout so
-   `draw-header!` can stay focused on placement math."
+  "Compose the right-side text: \" #4b1ed602 \" when a session id exists,
+   otherwise empty. Single place that knows the layout so `draw-header!`
+   can stay focused on placement math."
   [id-short]
   (id-copy-block-text id-short))
 
@@ -704,7 +702,7 @@
     ;; path. The ✕ close button is suppressed when it's the ONLY session, since
     ;; the last tab can't be closed.
     (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
-    ;; RIGHT 20%: stable session-id copy affordance only.
+    ;; RIGHT 20%: session-id copy button.
     (components/id-badge! g action-col content-row id-copy-text full-uuid *register-click-regions?*)
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
     ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a

@@ -153,7 +153,9 @@ export const SettingsPane = ({
   useEffect(() => {
     let alive = true;
     client
-      .settingsGroups()
+      // Scope to THIS channel so web/tui-only controls (e.g. the web theme
+      // picker, `:channels #{:web}`) don't leak into the mobile Settings.
+      .settingsGroups("react-native")
       .then((gs) => {
         if (alive) {
           setGroups(gs);

@@ -2822,6 +2822,30 @@
                     (when-let [db (:db m)]
                       (str " db=" db)))))))
 
+(defn- cli-gateway-pair!
+  "Print a companion pairing QR for the gateway ALREADY running for this DB, so
+   you can pair without stopping/restarting it. Refuses a loopback-bound daemon
+   (a phone can never reach 127.0.0.1) with a copy-paste fix."
+  [parsed _residual]
+  (config/init-cli!)
+  (when-let [db (get parsed "db")]
+    (System/setProperty "vis.db.path" db))
+  (let [{:keys [running? host port token loopback?]}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
+    (cond (not running?)
+          (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
+                               "  vis gateway start --host 0.0.0.0 --require-token --pair")
+                          {:vis/user-error true}))
+          loopback? (throw (ex-info (str
+                                      "the running gateway is bound to " host
+                                      " (loopback) — a phone cannot reach it.\n"
+                                      "Restart it on a reachable host:\n"
+                                      "  vis gateway stop\n"
+                                      "  vis gateway start --host 0.0.0.0 --require-token --pair")
+                                    {:vis/user-error true}))
+          :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
+                  {:host host :port port :token token :require-token? (boolean token)}))))
+
 (defn- cli-gateway-stop!
   [parsed _residual]
   (config/init-cli!)
@@ -2870,7 +2894,7 @@
                :cmd/run-fn cli-update!}
               {:cmd/name "gateway"
                :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
-               :cmd/usage "vis gateway <start|status|stop> [--db PATH]"
+               :cmd/usage "vis gateway <start|status|stop|pair> [--db PATH]"
                :cmd/subcommands #(registry/registered-under ["gateway"])}]]
   (registry/register-cmd! spec))
 
@@ -2924,7 +2948,17 @@
      :cmd/usage "vis gateway stop [--db PATH]"
      :cmd/args
      [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}]
-     :cmd/run-fn cli-gateway-stop!}]]
+     :cmd/run-fn cli-gateway-stop!}
+    {:cmd/name "pair"
+     :cmd/parent ["gateway"]
+     :cmd/doc "Print a companion pairing QR for the gateway already running for this DB."
+     :cmd/usage "vis gateway pair [--db PATH]"
+     :cmd/examples ["vis gateway pair"]
+     :cmd/args [{:name "db"
+                 :kind :flag
+                 :type :string
+                 :doc "SQLite DB path whose running gateway should be paired."}]
+     :cmd/run-fn cli-gateway-pair!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis providers` subcommands ─────────────────────────────────────────

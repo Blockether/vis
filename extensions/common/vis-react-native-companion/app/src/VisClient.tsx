@@ -304,6 +304,13 @@ export const gatewayErrorMessage = (
 export const isGatewayConnectionMessage = (message: string): boolean =>
   message.startsWith("Cannot reach the Vis gateway at ");
 
+/* The gateway answers a missing/expired/wrong bearer token with a 401
+   "missing or invalid bearer token" (gateway/server.clj). Treat that like a
+   connection problem so the UI surfaces Settings — where the token lives —
+   instead of a dead-end error banner. */
+export const isGatewayAuthMessage = (message: string): boolean =>
+  /missing or invalid bearer token|unauthorized/i.test(message);
+
 export class VisGatewayClient {
   private readonly gatewayUrl: string;
   private readonly token: string | undefined;

@@ -1118,8 +1118,7 @@
   ;; consistently-wrapped Python; falls back to verbatim source if ruff is
   ;; unavailable. Long bodies scroll, never clipped.
   (let [code-str (vis/beautify-python code)]
-    [:div.block-code-card [:div.block-code-label "code"]
-     [:div.block.block-code [:pre.ir-pre [:code.language-python code-str]]]]))
+    [:div.block-code-card [:div.block.block-code [:pre.ir-pre [:code.language-python code-str]]]]))
 
 (defn- result-markdown
   "Human trace result body. Stdout is model-context only; channels render the
@@ -1131,23 +1130,6 @@
           (string? result) (not-empty (str/trimr result))
           :else (str "```edn\n" (pr-str result) "\n```"))))
 
-(def ^:private tool-color-var
-  "Per-tool BADGE color for native tool result cards as THEMED CSS vars — the
-   `--tool-*` custom properties `theme->web-css-vars` emits from the SAME palette
-   tokens the TUI paints op-cards with, so the badge tracks every theme
-   (light/dark/…). Keyed by the `:color-role` a native tool declares; mirrors the
-   TUI's `tool-color-role->fg`."
-  {:tool-color/read "var(--tool-read)"
-   :tool-color/search "var(--tool-search)"
-   :tool-color/preview "var(--tool-preview)"
-   :tool-color/edit "var(--tool-edit)"
-   :tool-color/create "var(--tool-create)"
-   :tool-color/delete "var(--tool-delete)"
-   :tool-color/move "var(--tool-move)"
-   :tool-color/shell "var(--tool-shell)"
-   :tool-color/meta "var(--tool-meta)"
-   :tool-color/test "var(--tool-test)"})
-
 (defn- result-card->hiccup
   "One op-card descriptor (`vis/result-card`) → its hiccup: a collapsible
    `<details>` when it has a body (chevroned badge row is the `<summary>`, body
@@ -1155,7 +1137,7 @@
    native-tool form AND each card of a print-many block, so every op-card paints
    identically however many a form carries. nil when there's neither body nor
    summary."
-  [{:keys [label color-role summary body]} & [strip-fences?]]
+  [{:keys [summary body]} & [strip-fences?]]
   (let [body-md
         ((if strip-fences? strip-image-fences resolve-image-fences) (result-markdown body))
 
@@ -1169,23 +1151,17 @@
                          (str/starts-with? "\n")))]
 
     (when (or body-md summary)
-      (let [color
-            (get tool-color-var color-role)
-
-            label-attr
-            (if (and label color) {:style (str "color:" color)} {})
-
-            head
-            [(or (when color label) "result")
-             (when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
-
+      ;; The op-card TOOL-NAME badge (the colored uppercase CAT/RG/PATCH label)
+      ;; is dropped — the card shows only its summary + expandable body. The
+      ;; `.block-result-label` class stays for the disclosure chevron + layout.
+      (let [head [(when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
         (if body-md
-          [:details.block-result-card (into [:summary.block-sum.block-result-label label-attr] head)
+          [:details.block-result-card (into [:summary.block-sum.block-result-label] head)
            [:div.block.block-result.md
             (cond-> {:data-md body-md}
               head-gap?
               (assoc :class "has-head-gap")) (md->hiccup body-md)]]
-          [:div.block-result-card (into [:div.block-result-label label-attr] head)])))))
+          [:div.block-result-card (into [:div.block-result-label] head)])))))
 
 (defn- block-result
   "The form's RETURN value as a result card. A native tool form (cat/rg/patch/…)
@@ -1630,7 +1606,6 @@
   [sid]
   (->> (vis/gateway-list-turns sid)
        (filter #(= "queued" (pick % :status)))
-       reverse
        vec))
 
 (defn- queued-content
@@ -2335,7 +2310,7 @@
         (vis/gateway-soul sid)
 
         all-turns
-        (reverse (vis/gateway-list-turns sid))
+        (vec (vis/gateway-list-turns sid))
 
         turns
         (remove #(= "queued" (pick % :status)) all-turns)
@@ -4610,7 +4585,7 @@
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body ""}
       (let [turns-all
-            (vec (reverse (vis/gateway-list-turns sid)))
+            (vec (vis/gateway-list-turns sid))
 
             idx
             (or (some (fn [[i t]]
@@ -5240,7 +5215,7 @@
       (str "Session not found: " sid "\n")
       (let [turns
             (remove #(= "queued" (pick % :status))
-              (reverse (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
+              (vec (try (vis/gateway-list-turns sid) (catch Throwable _ []))))
 
             title
             (or (:title soul) (get-in data [:session :title]) "vis session")

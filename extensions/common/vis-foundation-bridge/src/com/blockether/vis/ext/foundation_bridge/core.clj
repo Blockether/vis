@@ -366,29 +366,95 @@
      :next-step (action->extension-op (:next-action check-result))
      :suggestions (vec actions)}))
 
+(def ^:private hint-recheck-ms
+  "Re-run the reflective Bridge check at most this often per workspace even when
+   `.bridge/` looks unchanged, so working-tree drift (stale artifacts vs edited
+   sources) still refreshes the nudge without paying the check every iteration."
+  30000)
+
+(defonce ^:private hint-cache
+  ;; workspace-root -> {:fingerprint fp :at ms :hint hint}. Memoizes the
+  ;; iteration-start check: `bridge-check` reaches Bridge through UNHINTED Java
+  ;; interop (a full reflective `Class/getMethods` + `Method[]` copy per call —
+  ;; the single biggest allocation source during a turn per the gateway JFR), and
+  ;; the hint reran it on EVERY agent iteration. Keyed on a `.bridge/` fingerprint
+  ;; so a receipt / profile / policy write invalidates it immediately.
+  (atom {}))
+
+(defn- bridge-dir-fingerprint
+  "Cheap change-detector for `.bridge/` inputs: `[max-mtime total-size file-count]`
+   across the tree. Any profile / policy / receipt write shifts it, so the memoized
+   check re-runs exactly then. nil when `.bridge/` is absent."
+  [root]
+  (try (let [dir (java.io.File. (str root) ".bridge")]
+         (when (.isDirectory dir)
+           (loop [stack [dir]
+                  mx 0
+                  sz 0
+                  n 0]
+
+             (if-let [^java.io.File f (peek stack)]
+               (let [stack (pop stack)]
+                 (if (.isDirectory f)
+                   (recur (into stack (or (seq (.listFiles f)) [])) mx sz n)
+                   (recur stack (max mx (.lastModified f)) (+ sz (.length f)) (inc n))))
+               [mx sz n]))))
+       (catch Throwable _ nil)))
+
+(defn- compute-bridge-hint
+  "The uncached hint body: run Bridge's check and, only when it reports open work,
+   build the :info nudge. Split out so `bridge-hint` can memoize the reflective
+   check around it."
+  [env]
+  (let [status-result (:result (bridge-check env {}))]
+    (when (and status-result (pos? (long (or (:issue-count status-result) 0))))
+      {:importance :info
+       :title
+       (str
+         "Bridge reports open verification work in this workspace. "
+         "Inspect the next suggested Bridge action via bare "
+         (render-tool-call (tool-call "br/next" []))
+         ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))
+
 (defn- bridge-hint
   "Iteration-start hint. Emits nothing when Bridge is not configured —
    a workspace without Bridge is the normal state, not actionable work
    (the static extension prompt already documents `br_init()` for when
    Bridge is in scope). Only configured workspaces with open
-   verification work get an :info hint."
+   verification work get an :info hint.
+
+   The underlying `bridge-check` reaches Bridge through reflective Java interop,
+   so its result is MEMOIZED per workspace (see `hint-cache`) and recomputed only
+   when `.bridge/` changes (a receipt / profile / policy write shifts the
+   fingerprint) or the cached value ages past `hint-recheck-ms` — rather than
+   running a fresh reflective check on every single agent iteration."
   [{:keys [environment]}]
   (let [env
         (or environment {})
 
+        root
+        (workspace-root env)
+
         discovery
-        (profile-discovery (workspace-root env) {})]
+        (profile-discovery root {})]
 
     (when (:configured? discovery)
-      (let [status-result (:result (bridge-check env {}))]
-        (when (and status-result (pos? (long (or (:issue-count status-result) 0))))
-          {:importance :info
-           :title
-           (str
-             "Bridge reports open verification work in this workspace. "
-             "Inspect the next suggested Bridge action via bare "
-             (render-tool-call (tool-call "br/next" []))
-             ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))))
+      (let [fp
+            (bridge-dir-fingerprint root)
+
+            now
+            (now-ms)
+
+            cached
+            (get @hint-cache root)]
+
+        (if (and cached
+                 (= (:fingerprint cached) fp)
+                 (< (- now (long (:at cached))) hint-recheck-ms))
+          (:hint cached)
+          (let [hint (compute-bridge-hint env)]
+            (swap! hint-cache assoc root {:fingerprint fp :at now :hint hint})
+            hint))))))
 
 (defn init
   "Bootstrap Bridge in this workspace. `await br_init()` (opts `{\"root\": path}`). Returns the existing config if already set up."

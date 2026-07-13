@@ -32,6 +32,15 @@
                   :request {:headers {"accept" "*/*"}}})))
 
 (defonce ^:private cached-entry (atom nil))
+;; Freshness debounce: `ensure-gateway!` verifies the daemon with a full HTTP
+;; GET /healthz probe on EVERY call. The TUI footer/poll loop calls it dozens of
+;; times a second, so that doubled every gateway request (probe + real call) and
+;; dominated client-side allocation (Clojure reflective interop on the OLD raw
+;; java.net.http response + HTTP futures) on the render JVM. The JSON layer is
+;; charred (reflection-free); interop was the churn. We keep the belt-and-suspenders probe but only re-run it once per
+;; `entry-probe-ttl-ms`; within the window a cheap pid-liveness check suffices.
+(def ^:private entry-probe-ttl-ms 4000)
+(defonce ^:private entry-fresh-until-ns (atom 0))
 (defonce ^:private client-id (atom nil))
 (defonce ^:private release-hook-installed? (atom false))
 (defonce ^:private subscriptions (atom {}))
@@ -195,25 +204,44 @@
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
-   headless one-shots stay in-process and should not call here."
+   headless one-shots stay in-process and should not call here.
+
+   Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
+   runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
+   whose pid is still alive is trusted directly, so the TUI's chatty poll loop
+   stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
+   every gateway call."
   []
   (let [db (db-target)]
     (when (discovery/memory-db? db)
       (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-    (if (discovery/registry-fresh? @cached-entry probe-entry?)
-      @cached-entry
-      ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
-      ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
-      ;; it self-registers, so give it a much longer runway.
-      (let [{:keys [entry] :as result} (discovery/discover-or-start!
-                                         {:db db :port DEFAULT_PORT :host DEFAULT_HOST}
-                                         :probe probe-entry?
-                                         :on-event (progress-reporter)
-                                         :timeout-ms (if (discovery/native-image?) 15000 60000))]
-        (if entry
-          (do (reset! cached-entry entry) entry)
-          (throw (ex-info "gateway daemon did not become ready"
-                          (assoc result :type :gateway/start-timeout))))))))
+    (let [cached @cached-entry
+          now (System/nanoTime)
+          fresh?
+          (if (and (map? cached) (< now @entry-fresh-until-ns) (discovery/pid-alive? (:pid cached)))
+            true
+            ;; Window elapsed (or no cached entry): pay for the real
+            ;; HTTP probe once, then re-open the debounce window.
+            (when (discovery/registry-fresh? cached probe-entry?)
+              (reset! entry-fresh-until-ns (+ now (* entry-probe-ttl-ms 1000000)))
+              true))]
+
+      (if fresh?
+        cached
+        ;; Native-image startup can exceed 8s while SQLite/Flyway initializes;
+        ;; JVM source boot (dev) needs ~30s to load Clojure + extensions before
+        ;; it self-registers, so give it a much longer runway.
+        (let [{:keys [entry] :as result} (discovery/discover-or-start!
+                                           {:db db :port DEFAULT_PORT :host DEFAULT_HOST}
+                                           :probe probe-entry?
+                                           :on-event (progress-reporter)
+                                           :timeout-ms (if (discovery/native-image?) 15000 60000))]
+          (if entry
+            (do (reset! cached-entry entry)
+                (reset! entry-fresh-until-ns (+ (System/nanoTime) (* entry-probe-ttl-ms 1000000)))
+                entry)
+            (throw (ex-info "gateway daemon did not become ready"
+                            (assoc result :type :gateway/start-timeout)))))))))
 
 (defn- release-client!
   []
@@ -539,6 +567,27 @@
       (send-json-with-entry! entry "GET" "/v1/admin/status")
       {:status "stopped" :db (when-not (discovery/memory-db? db) (str (discovery/db-target db)))})))
 
+(defn pairing-info
+  "Connection details for the daemon registered for the current DB, so a caller
+   can build a companion pairing QR on demand (not only at `--pair` boot time).
+   Returns {:running? :host :port :token :loopback?}; `:running?` is false when no
+   fresh daemon is registered, and `:loopback?` flags a 127.0.0.1/::1/localhost
+   bind that a phone can never reach."
+  []
+  (let [db
+        (db-target)
+
+        {:keys [host port secret] :as entry}
+        (discovery/read-registry db)]
+
+    (if (discovery/registry-fresh? entry probe-entry?)
+      {:running? true
+       :host host
+       :port port
+       :token secret
+       :loopback? (contains? #{"127.0.0.1" "::1" "localhost"} (str host))}
+      {:running? false})))
+
 (defn stop-daemon!
   []
   (let [db
@@ -809,7 +858,7 @@
    `:http-status` on a non-200 response. Shared by `read-sse-stream!` (blocking
    turns) and `subscribe!` (the live mirror) so the frame parsing lives in ONE
    place."
-  [sid cursor cursor* stream* handle]
+  [sid cursor cursor* stream* handle & [on-open]]
   (let [response (sse-response! sid cursor)]
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway SSE HTTP " (:status response))
@@ -818,6 +867,7 @@
                 rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
 
       (when stream* (reset! stream* in))
+      (when on-open (on-open))
       (let [last-line-ns* (atom (System/nanoTime))
             alive?* (atom true)
             watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
@@ -869,19 +919,27 @@
             ;; A live mirror never terminates on its own: the handler always
             ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
             ;; or throws (non-200 / IO) — either way `dropped?` is true and we
-            ;; reconnect.
+            ;; reconnect. `on-open` fires once the stream is live, and a drop
+            ;; before we (maybe) reconnect fires the inverse — both delivered
+            ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
+            ;; events so the channel can paint a live connection indicator.
             (let [dropped? (try (open-sse-events! sid
                                                   @cursor*
                                                   cursor*
                                                   stream*
                                                   (fn [event]
                                                     (sink event)
-                                                    nil))
+                                                    nil)
+                                                  (fn []
+                                                    (try (sink {:type "gateway.connected"})
+                                                         (catch Throwable _ nil))))
                                 true
                                 (catch Throwable _ true))]
               (when (and dropped? (contains? @subscriptions sub-id))
-                (let [interrupted? (try (Thread/sleep
-                                          (min 5000 (* sse-reconnect-backoff-ms (inc attempt))))
+                (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
+                (let [interrupted? (try (Thread/sleep (long (min 5000
+                                                                 (* sse-reconnect-backoff-ms
+                                                                    (inc attempt)))))
                                         false
                                         (catch InterruptedException _ true))]
                   (when-not interrupted? (recur (inc attempt)))))))
@@ -893,7 +951,7 @@
 (defn unsubscribe!
   [_sid sub-id]
   (when-let [{:keys [future stream]} (get @subscriptions sub-id)]
-    (try (some-> @stream
+    (try (some-> ^java.io.Closeable @stream
                  .close)
          (catch Throwable _ nil))
     (future-cancel future)
@@ -974,7 +1032,8 @@
           ;; mid-turn. Back off and reconnect from the last cursor; give up
           ;; (with a real error) once the budget is spent.
           (if (< attempt sse-reconnect-max-attempts)
-            (do (Thread/sleep (* sse-reconnect-backoff-ms (inc attempt))) (recur (inc attempt)))
+            (do (Thread/sleep (long (* sse-reconnect-backoff-ms (inc attempt))))
+                (recur (inc attempt)))
             (throw (ex-info "Lost connection to the gateway daemon before the turn finished."
                             {:gateway-disconnected true :turn-id (str wanted-turn-id)}))))))))
 

@@ -39,12 +39,15 @@ import {
   VisGatewayClient,
   gatewayErrorMessage,
   isGatewayConnectionMessage,
+  isGatewayAuthMessage,
 } from "./src/VisClient";
 import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/UI";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
 import {
+  LiveBlock,
+  LiveBlocks,
   LiveCard,
   LiveCards,
   LiveState,
@@ -92,6 +95,7 @@ type Message = {
   meta?: string | undefined;
   atts?: TurnAttachment[] | undefined;
   cards?: LiveCard[] | undefined;
+  blocks?: LiveBlock[] | undefined;
   thinking?: string | undefined;
 };
 
@@ -116,10 +120,14 @@ const fmtTokens = (n?: number): string | null => {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
 };
 
-/* "42s · $0.4677 · 87.3k→1.3k tok · 3 iter" — every finished turn carries
-   duration_ms, cost.total_cost and tokens.input/output on the wire. */
+/* "claude-opus-4-8 · 42s · $0.4677 · 87.3k→1.3k tok · 3 iter" — every finished
+   turn carries the serving model (cost.model), duration_ms, cost.total_cost and
+   tokens.input/output on the wire. The model leads so every bubble names who
+   answered it. */
 const turnMeta = (turn: GatewayTurn): string | undefined => {
   const parts: string[] = [];
+  const model = turn.cost?.model;
+  if (model) parts.push(model);
   const dur = fmtDuration(turn.duration_ms);
   if (dur) parts.push(dur);
   const cost = turn.cost?.total_cost;
@@ -254,13 +262,20 @@ const MessageRow = memo(
             ))}
           </View>
         ) : null}
+        {item.blocks?.length ? (
+          <LiveBlocks blocks={item.blocks} />
+        ) : item.cards?.length ? (
+          <LiveCards cards={item.cards} />
+        ) : null}
         {item.thinking ? (
           <Text style={styles.thinking}>{`\u2731 ${item.thinking}`}</Text>
         ) : null}
-        {item.cards?.length ? <LiveCards cards={item.cards} /> : null}
         {item.text ? (
           <Markdown text={item.text} />
-        ) : item.pending && !item.cards?.length && !item.thinking ? (
+        ) : item.pending &&
+          !item.blocks?.length &&
+          !item.cards?.length &&
+          !item.thinking ? (
           <PendingDots />
         ) : null}
         {!item.pending && item.meta ? (
@@ -283,6 +298,7 @@ const MessageRow = memo(
       x.meta === y.meta &&
       x.thinking === y.thinking &&
       x.cards === y.cards &&
+      x.blocks === y.blocks &&
       x.atts === y.atts
     );
   },
@@ -368,6 +384,9 @@ function Root() {
   }, [gatewayUrl, token]);
   const mention = useMemo(() => activeFileMention(input), [input]);
 
+  /* The gateway serves turns OLDEST-first (chronological wire contract), so a
+     chat thread renders them top-to-bottom directly and scrollToEnd lands on
+     the newest message. */
   const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
   const connected = !gatewayProblem && !error && activeSession != null;
   const runningTurn = useMemo(
@@ -383,16 +402,16 @@ function Root() {
   const messages = useMemo(() => {
     const hasTrace = Object.keys(traceCache).length > 0;
     if ((!runningId || !liveTurn) && !hasTrace) return baseMessages;
-    const proseText = liveTurn?.prose.trim() ?? "";
-    const thinkingText = liveTurn?.thinking.trim() ?? "";
     return baseMessages.map((m) => {
       if (runningId && liveTurn && m.id === `${runningId}-vis`) {
         return {
           ...m,
-          text: proseText || m.text,
-          pending: m.pending && !proseText,
-          cards: liveTurn.cards,
-          thinking: thinkingText || undefined,
+          /* Running turn: its ordered thinking / prose / op-card blocks pin
+             live; each iteration ADDS to them (nothing is overwritten). The
+             poll's answer_md takes over once the turn settles. */
+          blocks: liveTurn.blocks,
+          thinking: liveTurn.thinking.trim() || undefined,
+          pending: m.pending && !liveTurn.blocks.length,
         };
       }
       /* Settled turn: attach its rehydrated trace cards. Never the running turn
@@ -409,7 +428,7 @@ function Root() {
   const fail = useCallback(
     (err: unknown) => {
       const msg = gatewayErrorMessage(gatewayUrl, err);
-      if (isGatewayConnectionMessage(msg)) {
+      if (isGatewayConnectionMessage(msg) || isGatewayAuthMessage(msg)) {
         setGatewayProblem(msg);
         setError(null);
         setNote(null);
@@ -660,7 +679,7 @@ function Root() {
               ? `HTTP ${status}`
               : gatewayErrorMessage(gatewayUrl, err) || "connection lost";
             if (__DEV__) console.warn("[vis] SSE error", err);
-            if (isGatewayConnectionMessage(msg)) {
+            if (isGatewayConnectionMessage(msg) || isGatewayAuthMessage(msg)) {
               setGatewayProblem(msg);
               if (!gatewaySheetDismissedRef.current) setShowSettings(true);
               setNote(null);
@@ -674,7 +693,7 @@ function Root() {
     } catch (err) {
       const msg = gatewayErrorMessage(gatewayUrl, err);
       if (__DEV__) console.warn("[vis] SSE failed to start", err);
-      if (isGatewayConnectionMessage(msg)) {
+      if (isGatewayConnectionMessage(msg) || isGatewayAuthMessage(msg)) {
         setGatewayProblem(msg);
         if (!gatewaySheetDismissedRef.current) setShowSettings(true);
         setNote(null);
@@ -1201,6 +1220,12 @@ function Root() {
                   style={styles.input}
                   editable={connected && !sending}
                   multiline
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  keyboardAppearance="light"
+                  textContentType="none"
+                  returnKeyType="default"
                   onSubmitEditing={() => void send()}
                 />
                 <IconBtn
