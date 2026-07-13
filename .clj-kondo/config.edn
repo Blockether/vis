@@ -7,6 +7,10 @@
   ;; destructured bindings in the body resolve.
   com.blockether.vis.core/validator-fn clojure.core/fn}
 
+ ;; `with-python-context` (sandbox-shim tests) is an anaphoric macro that binds
+ ;; `python-context`; tell kondo the symbol is intentional, not a typo.
+ :linters {:unresolved-symbol {:exclude [python-context]}}
+
  :hooks
  {:analyze-call
   {;; Macro that wraps a runtime backend lookup behind a defn.

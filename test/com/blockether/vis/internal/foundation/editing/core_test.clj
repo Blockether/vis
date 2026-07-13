@@ -1357,7 +1357,7 @@
 
 (defdescribe
   vis-rg-structured-shape-test
-  (it "returns a 2-key map: :hits + :truncated-by"
+  (it "returns the content shape: :hits :truncated-by + breadth counts"
       (let [_
             (write-temp! "rg/a.txt" "alpha needle gamma\nbeta\n")
 
@@ -1370,7 +1370,11 @@
             out
             (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
 
-        (expect (= #{:hits :truncated-by} (set (keys out))))
+        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact?}
+                   (set (keys out))))
+        ;; both files match — breadth == displayed file count, fully counted.
+        (expect (= 2 (:total-file-count out)))
+        (expect (true? (:total-file-count-exact? out)))
         (expect (vector? (:hits out)))
         ;; Every hit is a clean {:path :line :text :anchor} map (the content-addressed
         ;; anchor lets the model patch straight from a hit), no sentinel.
@@ -1569,7 +1573,10 @@
             out
             (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
 
-        (expect (= #{:files :truncated-by} (set (keys out))))
+        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact?}
+                   (set (keys out))))
+        (expect (= 2 (:total-file-count out)))
+        (expect (true? (:total-file-count-exact? out)))
         (expect (= 2 (count (:files out))))
         (expect (every? string? (:files out)))))
   (it ":context is IGNORED (not rejected) in :is_files_only mode"
@@ -1583,7 +1590,8 @@
             (grep
               {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
 
-        (expect (= #{:files :truncated-by} (set (keys out))))
+        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact?}
+                   (set (keys out))))
         (expect (every? string? (:files out)))))
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
       ;; rg never mutilates a hit line. The full :text lives in the result value —

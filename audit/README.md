@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-10.
+> Generated 2026-07-12.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -179,8 +179,8 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.9.6-8` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.1.2` | MIT | 9 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.56` | Apache-2.0 | 448 KB | Blockether (in-house) |
-| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.7` | MIT | 164 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.57` | Apache-2.0 | 449 KB | Blockether (in-house) |
+| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.10` | MIT | 164 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.039` | MIT | 48 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |

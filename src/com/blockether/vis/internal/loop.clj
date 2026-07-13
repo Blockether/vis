@@ -4147,6 +4147,52 @@
          (catch Throwable _ svar-provider))
     svar-provider))
 
+(defn- boot-refresh-provider-token!
+  "Build-time sibling of `try-refresh-provider-token!`. When a provider's
+   router build fails with an AUTH-shaped error (401/403 or an auth-worded
+   message) AND the provider exposes `:provider/refresh-token-fn`, force ONE
+   refresh-token exchange (persisting rotated creds) so the caller can retry
+   the build. Strictly gated to auth errors — transport failures (TLS/DNS/
+   timeout) are never auth-shaped and fall straight through to the skip path.
+
+   Unlike the mid-turn `try-refresh-provider-token!` it must NOT rebuild the
+   router: it runs DURING the build itself, and a rebuild would recurse.
+   Returns true when a refresh actually happened (caller retries the build)."
+  [pid ^Throwable t]
+  (let [d
+        (ex-data t)
+
+        provider-message
+        (perr/provider-body-message (some-> (:body d)
+                                            str))
+
+        provider
+        (registry/provider-by-id pid)
+
+        f
+        (:provider/refresh-token-fn provider)]
+
+    (boolean
+      (when (and f (perr/auth-provider-error? (:status d) provider-message (ex-message t)))
+        (let [rejected (try (:token ((:provider/get-token-fn provider))) (catch Throwable _ nil))]
+          (try
+            ;; force refresh-token exchange + persist; pass the rejected token
+            ;; so reuse can't hand it straight back. Fall back to 0-arity for
+            ;; older/third-party hooks that don't accept it.
+            (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+            (tel/log! {:level :warn :id ::boot-auth-token-refreshed :data {:provider pid}}
+                      (str "Provider build hit auth error — force-refreshed OAuth token for "
+                           pid
+                           "; retrying build"))
+            true
+            (catch Throwable rt
+              (tel/log! {:level :warn
+                         :id ::boot-auth-token-refresh-failed
+                         :data {:provider pid :error (ex-message rt)}}
+                        (str "Provider build auth refresh FAILED for " pid "; skipping"))
+              false)))))))
+
+
 (defn- runtime-router-providers
   "Resolve durable provider config into the svar runtime shape.
 
@@ -4166,21 +4212,29 @@
     ;; warning and keep every provider that DID resolve. Falling through with
     ;; the others (or none) lets the app start and surface a fixable message.
     (->> (:providers config)
-         (keep (fn [p]
-                 (try (enrich-provider-models (config/->svar-provider p) ropts)
-                      (catch Throwable t
-                        (tel/log! {:level :warn
-                                   :id ::provider-unavailable-skipped
-                                   :data {:provider (:id p)
-                                          :status (:status (ex-data t))
-                                          :error (ex-message t)}
-                                   :msg (str "Provider "
-                                             (some-> (:id p)
-                                                     name)
-                                             " unavailable — skipping ("
-                                             (ex-message t)
-                                             ")")})
-                        nil))))
+         (keep
+           (fn [p]
+             (letfn [(build [] (enrich-provider-models (config/->svar-provider p) ropts))]
+               (try (build)
+                    (catch Throwable t
+                      ;; Before dropping an auth-failed provider, try to HEAL it:
+                      ;; a server-rotated OAuth token is auth-shaped and force-
+                      ;; refreshable in place — refresh once, retry the build once.
+                      ;; Anything else (or a failed retry) falls through to skip.
+                      (or (try (when (boot-refresh-provider-token! (:id p) t) (build))
+                               (catch Throwable _ nil))
+                          (do (tel/log! {:level :warn
+                                         :id ::provider-unavailable-skipped
+                                         :data {:provider (:id p)
+                                                :status (:status (ex-data t))
+                                                :error (ex-message t)}
+                                         :msg (str "Provider "
+                                                   (some-> (:id p)
+                                                           name)
+                                                   " unavailable — skipping ("
+                                                   (ex-message t)
+                                                   ")")})
+                              nil)))))))
          vec)))
 
 (defn- honor-config-primary!
@@ -8250,8 +8304,9 @@
      :title (:title session)
      :created-at (:created-at session)
      :owner-id (:owner-id session)
-     :group-id (:group-id session)
-     :group-name (:group-name session)}))
+     :project-id (:project-id session)
+     :project-name (:project-name session)
+     :project-position (:project-position session)}))
 
 (defn by-channel
   [channel]
@@ -8262,30 +8317,36 @@
            :title (:title c)
            :created-at (:created-at c)
            :owner-id (:owner-id c)
-           :group-id (:group-id c)
-           :group-name (:group-name c)})
+           :project-id (:project-id c)
+           :project-name (:project-name c)
+           :project-position (:project-position c)})
         (persistance/db-list-sessions (db-info) channel)))
 
-;; --- Session groups (folders) + ownership (V6) ---
+;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
-(defn groups
-  "List session_group folders. `opts`: :owner-id (default \"local\"), :channel
+(defn projects
+  "List projects. `opts`: :owner-id (default \"local\"), :channel
    (keyword | :all/nil), :include-archived?. Each carries a live :session-count."
-  ([] (groups {}))
-  ([opts] (persistance/db-list-groups (db-info) opts)))
+  ([] (projects {}))
+  ([opts] (persistance/db-list-projects (db-info) opts)))
 
-(defn get-group [group-id] (persistance/db-get-group (db-info) group-id))
+(defn get-project [project-id] (persistance/db-get-project (db-info) project-id))
 
-(defn create-group! [opts] (persistance/db-create-group! (db-info) opts))
+(defn create-project! [opts] (persistance/db-create-project! (db-info) opts))
 
-(defn update-group! [group-id opts] (persistance/db-update-group! (db-info) group-id opts))
+(defn update-project! [project-id opts] (persistance/db-update-project! (db-info) project-id opts))
 
-(defn delete-group! [group-id] (persistance/db-delete-group! (db-info) group-id))
+(defn delete-project! [project-id] (persistance/db-delete-project! (db-info) project-id))
 
-(defn assign-group!
-  "Assign the session soul to `group-id` (nil clears / ungroups)."
-  [session-id group-id]
-  (persistance/db-set-session-group! (db-info) session-id group-id))
+(defn assign-project!
+  "Assign the session soul to `project-id` (nil clears / removes from project)."
+  [session-id project-id]
+  (persistance/db-set-session-project! (db-info) session-id project-id))
+
+(defn reorder-project-sessions!
+  "Persist a manual order for the sessions inside `project-id`."
+  [project-id session-ids]
+  (persistance/db-reorder-project-sessions! (db-info) project-id session-ids))
 
 (defn for-telegram-chat!
   [chat-id]

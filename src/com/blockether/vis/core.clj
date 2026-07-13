@@ -101,12 +101,13 @@
              [gateway-soul gateway-client/soul]
              [gateway-list-sessions gateway-client/list-sessions]
              [gateway-close-session! gateway-client/close-session!]
-             [gateway-list-groups gateway-client/list-groups]
-             [gateway-get-group gateway-client/get-group]
-             [gateway-create-group! gateway-client/create-group!]
-             [gateway-update-group! gateway-client/update-group!]
-             [gateway-delete-group! gateway-client/delete-group!]
-             [gateway-assign-group! gateway-client/assign-group!])
+             [gateway-list-projects gateway-client/list-projects]
+             [gateway-get-project gateway-client/get-project]
+             [gateway-create-project! gateway-client/create-project!]
+             [gateway-update-project! gateway-client/update-project!]
+             [gateway-delete-project! gateway-client/delete-project!]
+             [gateway-assign-project! gateway-client/assign-project!]
+             [gateway-reorder-project-sessions! gateway-client/reorder-project-sessions!])
 
 (import-vars [gateway-release-session! gateway-client/release-session!]
              [gateway-submit-turn! gateway-client/submit-turn!])

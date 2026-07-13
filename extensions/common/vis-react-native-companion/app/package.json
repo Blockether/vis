@@ -19,6 +19,7 @@
     "@expo/vector-icons": "^15.0.3",
     "expo": "~54.0.0",
     "expo-audio": "~1.1.1",
+    "expo-camera": "~17.0.10",
     "expo-document-picker": "~14.0.8",
     "expo-image-picker": "~17.0.11",
     "expo-linear-gradient": "~15.0.7",
