@@ -39,4 +39,32 @@
                              (expect (= [img] (cap/drain sink)))))
                        (it "returns nil for an empty sink (the block produced nothing)"
                            (expect (nil? (cap/drain (atom [])))))
-                       (it "returns nil for a nil sink" (expect (nil? (cap/drain nil))))))
+                       (it "returns nil for a nil sink" (expect (nil? (cap/drain nil)))))
+             (describe "record-file! size/extension filter"
+                       (it "captures normal writes but skips empty + noisy-extension files"
+                           (let [dir
+                                 (java.nio.file.Files/createTempDirectory
+                                   "vis-filter-test"
+                                   (make-array java.nio.file.attribute.FileAttribute 0))
+
+                                 wf
+                                 (fn [name ^String s]
+                                   (let [p (.resolve dir ^String name)]
+                                     (spit (.toFile p) s)
+                                     p))
+
+                                 sink
+                                 (atom [])]
+
+                             (binding [cap/*attachment-sink*
+                                       sink
+
+                                       cap/*outbox-seen*
+                                       (atom #{})]
+
+                               (cap/record-file! (wf "keep.txt" "hello"))
+                               (cap/record-file! (wf "junk.pyc" "bytes"))
+                               (cap/record-file! (wf "app.lock" "1"))
+                               (cap/record-file! (wf "empty.dat" ""))
+                               (cap/record-file! (wf "data.csv" "a,b")))
+                             (expect (= ["keep.txt" "data.csv"] (mapv :filename @sink)))))))

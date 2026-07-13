@@ -111,8 +111,8 @@ export type GatewayEvent = {
   duration_ms?: number;
   tool_name?: string;
   tool_color_role?: string;
-  /* content.delta (prose tail) / reasoning.delta (thinking tail) */
-  text?: string;
+  /* iteration.completed — complete model text, never partial prose/thinking */
+  assistant_prose?: string;
   thinking?: string;
   /* turn.completed / turn.failed */
   status?: string;
@@ -123,14 +123,12 @@ export type GatewayEvent = {
 
 /* The gateway tags every SSE frame with an `event: <type>` line (wire/sse-frame),
    so a native EventSource dispatches by type — these are the app event types the
-   live reducer folds. Any other type (turn.queued.*, …) is ignored, so it need
-   not be listened for. */
+   live reducer folds. Model text is intentionally absent here: thinking/prose
+   arrives complete on iteration.completed, never as content/reasoning deltas. */
 export const APP_EVENT_TYPES = [
   "turn.started",
   "block.started",
   "block.output",
-  "content.delta",
-  "reasoning.delta",
   "iteration.completed",
   "iteration.error",
   "turn.completed",

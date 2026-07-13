@@ -102,7 +102,7 @@
                 (for [[lang tools] data]
                   (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns a lean changed? + char-delta ack) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
+      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns a lean changed? + char-delta ack) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). ALWAYS pass the `language` as the FIRST arg to repl_eval/run_tests/repl_start (e.g. repl_eval(\"clojure\", code)) — do NOT rely on workspace inference; being explicit avoids running in the wrong pack in a mixed repo. Only format_code/lint_code may omit it for the {\"path\": file} form (then it's inferred).")))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -688,15 +688,14 @@
                    (str " " id)))})
 
 (defn format-code
-  "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
+  "Format source using a language extension. Pass `language` FIRST when you know it — format_code(language, arg); it may be omitted only for the {\"path\": file} form (then inferred from the file/workspace).
    `arg` is either a raw code string / {\"code\": ...} (returns a lean changed? + char-delta ack, not the text), a {\"path\": file} map (formats that ONE file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back), or a {\"paths\": [file-or-dir …]} map (formats MANY paths IN PLACE — a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up). Omit all of code/path/paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
 (defn lint-code
-  "Lint source using a language extension. `language` is OPTIONAL — inferred from
-   the active workspace when omitted; pass lint_code(language, arg) only to
-   disambiguate when several packs match. `arg` is a raw code string / {\"code\": ...}
+  "Lint source using a language extension. Pass `language` FIRST when you know it —
+   lint_code(language, arg); inferred from the file/workspace only when omitted. `arg` is a raw code string / {\"code\": ...}
    (lints the snippet), a {\"path\": file} or {\"paths\": […]} map (lints those on
    disk), or nothing (lints the workspace's default source paths). Returns the
    linter's findings + severity counts."
@@ -704,7 +703,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run tests using a language extension. Prefer run_tests(language, arg); the one-arg form uses the active workspace language. `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
+  "Run tests using a language extension. ALWAYS pass the language FIRST — run_tests(language, arg). `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
   [env & args]
   ;; Wall-clock the whole run so the RUN_TESTS card can headline how long it
   ;; took (parity with repl_eval's `(Nms)`); language handlers don't time
@@ -718,12 +717,12 @@
     (if (map? result) (assoc result :ms (- (System/currentTimeMillis) start)) result)))
 
 (defn repl-eval
-  "Evaluate code in a language REPL. Prefer repl_eval(language, arg). `arg` may include `id`/`repl_id` to target a registered REPL resource, and `dir` to target/auto-start the REPL in a subdirectory (e.g. a monorepo app dir) — REQUIRED when the code must run under that dir's config (tsconfig, package.json); defaults to the workspace root."
+  "Evaluate code in a language REPL. ALWAYS pass the language FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id` to target a registered REPL resource, and `dir` to target/auto-start the REPL in a subdirectory (e.g. a monorepo app dir) — REQUIRED when the code must run under that dir's config (tsconfig, package.json); defaults to the workspace root."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start/manage a language REPL resource. Prefer repl_start(language, opts); opts may include `id` and language-specific options."
+  "Start/manage a language REPL resource. ALWAYS pass the language FIRST — repl_start(language, opts); opts may include `id` and language-specific options."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -740,9 +739,10 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string"
-                   :description
-                   "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
+      {"language"
+       {:type "string"
+        :description
+        "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
        "code" {:type "string"
                :description
                "Source to format (returns a lean changed? + char-delta ack, not the text)."}
@@ -760,29 +760,30 @@
      :tag :mutation}))
 
 (def lint-symbol
-  (vis/symbol #'lint-code
-              {:symbol 'lint_code
-               :native-tool? true
-               :render render-lint-result
-               :color-role :tool-color/read
-               :schema
-               {:type "object"
-                :properties
-                {"language" {:type "string"
-                             :description
-                             "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
-                 "code" {:type "string"
-                         :description
-                         "Source to lint (returns findings). Mutually exclusive with path/paths."}
-                 "path" {:type "string" :description "Lint this file on disk."}
-                 "paths"
-                 {:type "array"
-                  :items {:type "string"}
-                  :description
-                  "Lint these files/dirs. OMIT all to lint the workspace's default source paths."}}
-                :required []}
-               :before-fn inject-env
-               :tag :observation}))
+  (vis/symbol
+    #'lint-code
+    {:symbol 'lint_code
+     :native-tool? true
+     :render render-lint-result
+     :color-role :tool-color/read
+     :schema
+     {:type "object"
+      :properties
+      {"language"
+       {:type "string"
+        :description
+        "Language pack (e.g. \"clojure\"); pass it first — inferred from the file/workspace only when omitted."}
+       "code" {:type "string"
+               :description
+               "Source to lint (returns findings). Mutually exclusive with path/paths."}
+       "path" {:type "string" :description "Lint this file on disk."}
+       "paths" {:type "array"
+                :items {:type "string"}
+                :description
+                "Lint these files/dirs. OMIT all to lint the workspace's default source paths."}}
+      :required []}
+     :before-fn inject-env
+     :tag :observation}))
 
 (def test-symbol
   (vis/symbol
@@ -795,7 +796,9 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+      {"language" {:type "string"
+                   :description
+                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
        "namespaces"
        {:type "array"
         :items {:type "string"}
@@ -819,7 +822,7 @@
         "Directory to run the test command in (e.g. a monorepo app dir). Defaults to the workspace root."}
        "filter" {:type "string"
                  :description "Test-name filter, for packs that support it (e.g. `bun test -t`)."}}
-      :required []}
+      :required ["language"]}
      :before-fn inject-env
      :tag :mutation}))
 
@@ -834,7 +837,9 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+      {"language" {:type "string"
+                   :description
+                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
        "code" {:type "string" :description "Source to evaluate in the language REPL."}
        "id" {:type "string" :description "Target a specific registered REPL resource by id."}
        "dir"
@@ -842,7 +847,7 @@
         :description
         "Directory to run the REPL in (e.g. a monorepo app dir like \"apps/api\") — the REPL auto-starts there and picks up THAT dir's config (tsconfig/package.json). Defaults to the workspace root."}
        "timeout_ms" {:type "integer" :description "Eval timeout in milliseconds (default 30000)."}}
-      :required ["code"]}
+      :required ["language" "code"]}
      :before-fn inject-env
      :tag :mutation}))
 
@@ -856,14 +861,16 @@
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language" {:type "string"
-                           :description "Language pack; OMIT to infer from the workspace."}
+              {"language"
+               {:type "string"
+                :description
+                "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
                "id" {:type "string" :description "Resource id for the REPL (default per language)."}
                "dir" {:type "string" :description "Directory to start the REPL in."}
                "aliases" {:type "array"
                           :items {:type "string"}
                           :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
-              :required []}
+              :required ["language"]}
      :before-fn inject-env
      :tag :mutation}))
 

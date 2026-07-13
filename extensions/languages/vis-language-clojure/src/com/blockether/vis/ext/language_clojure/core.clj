@@ -641,7 +641,9 @@
          (when (map? arg) (get arg "paths"))
 
          path
-         (when (map? arg) (get arg "path"))
+         (when-let [p (and (map? arg) (get arg "path"))]
+           (let [f (io/file (str p))]
+             (str (if (.isAbsolute f) f (io/file root (str p))))))
 
          has-code?
          (and (map? arg) (contains? arg "code"))

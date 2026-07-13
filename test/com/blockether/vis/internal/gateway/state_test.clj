@@ -19,13 +19,9 @@
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
    consumers in sync. The web channel may still render defensively, but it must
    not be the first place where blank-line runs disappear."
-  (it "normalizes streamed reasoning deltas before they enter the event log"
-      (let [[type store? payload] (#'state/chunk->event
-                                   {:phase :reasoning
-                                    :text " first  \n\n\t\nsecond\r\n\r\nthird  "})]
-        (expect (= "reasoning.delta" type))
-        (expect (false? store?))
-        (expect (= "first\nsecond\nthird" (:text payload)))))
+  (it "does not emit streamed reasoning deltas over the gateway"
+      (expect (nil? (#'state/chunk->event
+                     {:phase :reasoning :text " first  \n\n\t\nsecond\r\n\r\nthird  "}))))
   (it "normalizes iteration-boundary thinking for pinned session history"
       (let [[type store? payload]
             (#'state/chunk->event
@@ -88,15 +84,61 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))))
-  (it "reasoning.delta carries :iteration on the wire"
-      (let [[type _ payload] (#'state/chunk->event {:phase :reasoning :iteration 2 :text "hmm"})]
-        (expect (= "reasoning.delta" type))
-        (expect (= 2 (:iteration payload)))))
-  (it "iteration-final carries :iteration on the wire"
+  (it "reasoning.delta is not emitted on the gateway wire"
+      (expect (nil? (#'state/chunk->event {:phase :reasoning :iteration 2 :text "hmm"}))))
+  (it "iteration-final carries :iteration and complete assistant prose on the wire"
       (let [[type _ payload] (#'state/chunk->event
-                              {:phase :iteration-final :iteration 5 :done true :thinking "t"})]
+                              {:phase :iteration-final
+                               :iteration 5
+                               :done true
+                               :thinking "t"
+                               :assistant-prose " full prose "})]
         (expect (= "iteration.completed" type))
-        (expect (= 5 (:iteration payload))))))
+        (expect (= 5 (:iteration payload)))
+        (expect (= "full prose" (:assistant-prose payload))))))
+
+(defdescribe
+  iteration-attachment-descriptor-wire-test
+  ;; Live `iteration.completed` carries metadata-ONLY attachment descriptors
+  ;; (NEVER base64) so a native client (iOS/RN) learns an image was produced and
+  ;; lazy-fetches it from the byte endpoint. `:index` is the position in the SAME
+  ;; ordered list the byte endpoint serves, so index N always names one artifact.
+  (it "omits :attachments when the iteration produced none"
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :iteration-final :iteration 2 :done true :thinking "t"})]
+        (expect (= "iteration.completed" type))
+        (expect (not (contains? payload :attachments)))))
+  (it "omits :attachments when there is no iteration-id to address them"
+      (let [[_ _ payload] (#'state/chunk->event
+                           {:phase :iteration-final :iteration 2 :done true :attachment-count 3})]
+        (expect (not (contains? payload :attachments)))))
+  (it "projects lean snake-case descriptors and NEVER leaks base64"
+      (with-redefs [state/iteration-attachments
+                    (fn [_iid]
+                      [{:tool-call-id "call_A"
+                        :kind "image"
+                        :media-type "image/png"
+                        :filename "fig.png"
+                        :size 1234
+                        :base64 "SECRET"} {:tool-call-id nil :media-type "image/svg+xml" :size 0}])]
+        (let [[_ _ payload] (#'state/chunk->event
+                             {:phase :iteration-final
+                              :iteration 4
+                              :done false
+                              :iteration-id "00000000-0000-0000-0000-0000000000ab"
+                              :attachment-count 2})
+              atts (:attachments payload)]
+
+          (expect (= 2 (count atts)))
+          (expect (= [0 1] (mapv :index atts)))
+          (expect (= "image/png" (:media_type (first atts))))
+          (expect (= "call_A" (:tool_call_id (first atts))))
+          (expect (= 1234 (:size (first atts))))
+          ;; default kind for the un-kinded second artifact
+          (expect (= "image" (:kind (second atts))))
+          ;; bytes NEVER ride the frame
+          (expect (not (str/includes? (pr-str payload) "SECRET")))
+          (expect (every? #(not (contains? % :base64)) atts))))))
 
 (defdescribe
   broadcast-title-poll-parity-test
@@ -388,9 +430,8 @@
 
 (defdescribe
   delta-coalesce-test
-  ;; reasoning/content wire deltas are CUMULATIVE frames, so intermediates
-  ;; inside the window are safely skipped; :done? frames and every non-delta
-  ;; phase must always pass.
+  ;; model text phases are withheld from the gateway wire; coalescing still
+  ;; guards the internal skip path from doing repeated work inside the window.
   (let [coalesce? @#'state/coalesce-delta?]
     (it "skips a reasoning delta inside the window"
         (expect (true? (coalesce? {:reasoning 1000} {:phase :reasoning} 1050))))
@@ -400,9 +441,8 @@
         (expect (false? (coalesce? {:reasoning 1000} {:phase :reasoning :done? true} 1050))))
     (it "phases track independent clocks"
         (expect (false? (coalesce? {:reasoning 1000} {:phase :content} 1050))))
-    (it "non-delta phases always pass"
-        (expect (false? (coalesce? {:reasoning 1000} {:phase :form-result} 1050)))
-        (expect (false? (coalesce? {} {:phase :assistant-prose} 0))))
+    (it "tool phases always pass"
+        (expect (false? (coalesce? {:reasoning 1000} {:phase :form-result} 1050))))
     (it "the window grows with the cumulative text size"
         ;; ~60KB of thinking -> ~234ms window: a frame at +150ms is
         ;; still coalesced, where a small frame (100ms floor) passes.

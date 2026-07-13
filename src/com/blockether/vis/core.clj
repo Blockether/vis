@@ -127,6 +127,13 @@
              [gateway-unsubscribe! gateway-client/unsubscribe!]
              [gateway-current-seq gateway-client/current-seq])
 
+(import-vars [gateway-list-resources gateway-client/list-resources]
+             [gateway-list-resources-cached gateway-client/list-resources-cached]
+             [gateway-stop-resource! gateway-client/stop-resource!]
+             [gateway-restart-resource! gateway-client/restart-resource!]
+             [gateway-resource-logs gateway-client/resource-logs]
+             [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes])
+
 (import-vars [gateway-events-since gateway-client/events-since]
              [gateway-session-model gateway-client/session-model]
              [gateway-session-model-cached gateway-client/session-model-cached]

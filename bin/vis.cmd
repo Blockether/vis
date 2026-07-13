@@ -47,15 +47,12 @@ REM   vis update [--native]            (in a git checkout) update SOURCE via git
 REM                                    pull; --native also rebuilds the binary
 REM   vis update --rebuild           ... and BUILD the native from that source
 REM   vis update --native            ... and DOWNLOAD the latest release native
-REM   vis update <version>|latest [--with-assets]   pull a NATIVE binary
+REM   vis update <version>|latest   pull a NATIVE binary
 REM   vis update <git-sha>            switch to JVM source @ commit
 if /I "%~1"=="update" (
   set "TGT=%~2"
-  set "WA="
   set "REBUILD="
   set "FETCH_NATIVE="
-  if /I "%~2"=="--with-assets" ( set "WA=-with-assets" & set "TGT=%~3" )
-  if /I "%~3"=="--with-assets" ( set "WA=-with-assets" )
   if /I "%~2"=="--rebuild" ( set "REBUILD=1" & set "TGT=" )
   if /I "%~3"=="--rebuild" ( set "REBUILD=1" )
   if /I "%~2"=="--native"  ( set "FETCH_NATIVE=1" & set "TGT=" )
@@ -90,7 +87,7 @@ if /I "%~1"=="update" (
     REM fall through to the release download below ^(TGT empty -^> latest^)
   )
   if "!TGT!"=="" set "TGT=latest"
-  set "ASSET=vis-windows-x64!WA!.exe"
+  set "ASSET=vis-windows-x64.exe"
   powershell -NoProfile -Command "$t='!TGT!'; $a='!ASSET!'; if($t -eq 'latest'){$u='https://api.github.com/repos/Blockether/vis/releases/latest'}else{$u='https://api.github.com/repos/Blockether/vis/releases/tags/'+$t}; $r=Invoke-RestMethod $u -Headers @{'User-Agent'='vis'}; $url=($r.assets ^| Where-Object name -eq $a).browser_download_url; if(-not $url){Write-Error ('no asset '+$a); exit 1}; Invoke-WebRequest $url -OutFile '%VIS_INSTALL%\native.exe'" || exit /b 1
   > "%VIS_INSTALL%\mode" echo native
   echo vis: updated to native !ASSET!

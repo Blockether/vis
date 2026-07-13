@@ -733,13 +733,226 @@
      :inner-w inner-w
      :inner-h (- box-h 2)}))
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
+(defn dialog-bounds
+  "Pure geometry twin of `draw-dialog-chrome!` (explicit width+height arity):
+   the box rectangle a `content-w`×`content-h` dialog occupies, computed WITHOUT
+   painting. Lets a component measure its full layout — and reconcile a scroll
+   window — before any drawing happens. Returns the SAME shape the chrome does
+   ({:left :top :right :bottom :inner-w :inner-h}), from the same golden math."
+  [cols rows content-w content-h]
+  (let [[box-w box-h]
+        (render/golden-dialog-size cols rows content-w content-h)
+
+        box-left
+        (quot (- cols box-w) 2)
+
+        box-top
+        (quot (- rows box-h) 2)]
+
+    {:left box-left
+     :top box-top
+     :right (+ box-left box-w -1)
+     :bottom (+ box-top box-h -1)
+     :inner-w (- box-w 2)
+     :inner-h (- box-h 2)}))
+
+(defn run-modal!
+  "Shared modal driver — the ONE event loop every ported dialog reuses instead
+   of hand-rolling its own `loop/recur`. `component` is a map of PURE fns (they
+   never touch the screen) plus one impure paint fn:
+
+     :init      immutable start state (a map), or a 0-arg fn returning it
+     :measure   (fn [state cols rows] -> geom)     — geometry, screen-free, TESTABLE
+     :reconcile (fn [state geom] -> state)         — optional clamp (e.g. scroll window)
+     :paint     (fn [g state geom] -> cursor|nil)  — the only impure piece; draws to `g`
+     :on-key    (fn [state key geom] -> state | {::done result})  — screen-free, TESTABLE
+
+   run-modal! owns everything the old dialogs copy-pasted: terminal sizing, the
+   `TextGraphics`, wheel/close/Esc normalization (via `read-modal-key!`), the
+   cursor + DELTA refresh, and the recur loop. A key handler returns the next
+   state to continue, or `{::done v}` to close the modal with value `v` (nil on
+   Esc/close). Because `:measure`/`:reconcile`/`:on-key` are pure functions of
+   data, a dialog's geometry and key logic can be unit-tested with no live
+   terminal at all — the React-like win."
+  [^TerminalScreen screen {:keys [init measure reconcile paint on-key]}]
+  (loop [state (if (fn? init) (init) init)]
+    (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+          cols (.getColumns size)
+          rows (.getRows size)
+          geom (measure state cols rows)
+          state (if reconcile (reconcile state geom) state)
+          g (.newTextGraphics screen)
+          cursor (paint g state geom)]
+
+      ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
+      ;; same fix applied to the magit buffer); a text field returns its cell.
+      (.setCursorPosition screen cursor)
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [key (read-modal-key! screen)]
+        (if (nil? key)
+          (recur state)
+          (let [r (on-key state key geom)]
+            (if (and (map? r) (contains? r ::done)) (::done r) (recur r))))))))
+
+(defn select-modal-component
+  "Build the `run-modal!` component behind `list-dialog!` — a scrollable,
+   selectable, optionally type-to-filter list. This is the pure-fn heart of the
+   dialog: its `:measure` (geometry), `:reconcile` (scroll window) and `:on-key`
+   (navigation / filtering / select) are plain functions of immutable state, so
+   they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
+   screen. `items`/opts match `list-dialog!`."
+  [title items {:keys [filter? placeholder enter-label height]}]
+  (let [items
+        (vec items)
+
+        content?
+        (= height :content)
+
+        head-rows
+        (if filter? 2 0)]
+
+    {:init {:query "" :selected 0 :scroll 0}
+     :measure
+     (fn [{:keys [query]} cols rows]
+       (let [q
+             (str/lower-case query)
+
+             filtered
+             (if (and filter? (not (str/blank? q)))
+               (filterv #(str/includes? (str/lower-case (str (:label %))) q) items)
+               items)
+
+             total
+             (count filtered)
+
+             footer
+             (cond-> []
+               filter?
+               (conj ["type" "filter"])
+
+               true
+               (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
+
+             item-w
+             (+ 4
+                (reduce max
+                        0
+                        (map (fn [it]
+                               (+ (p/display-width (str (:label it)))
+                                  (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
+                             items)))
+
+             content-w
+             (footer-content-width cols footer item-w)
+
+             content-h-req
+             (if content? (+ head-rows (min (count items) 16) 1) (adaptive-content-height rows nil))
+
+             bounds
+             (dialog-bounds cols rows content-w content-h-req)
+
+             {:keys [content-top content-h hint-row]}
+             (dialog-layout bounds)
+
+             list-top
+             (+ content-top head-rows)
+
+             list-h
+             (max 1 (- content-h head-rows 1))]
+
+         {:cols cols
+          :rows rows
+          :title title
+          :filtered filtered
+          :total total
+          :footer footer
+          :content-w content-w
+          :content-h-req content-h-req
+          :bounds bounds
+          :content-top content-top
+          :content-h content-h
+          :hint-row hint-row
+          :list-top list-top
+          :list-h list-h
+          :filter? filter?
+          :placeholder placeholder}))
+     :reconcile (fn [state {:keys [total list-h]}]
+                  (let [selected (clamp (:selected state) 0 (max 0 (dec total)))]
+                    (assoc state
+                      :selected selected
+                      :scroll (visible-window-start selected (:scroll state) list-h total))))
+     :paint (fn [g {:keys [selected scroll query]}
+                 {:keys [cols rows title filtered total footer content-w content-h-req bounds
+                         content-top content-h hint-row list-top list-h filter? placeholder]}]
+              (let [{:keys [left right inner-w]} bounds]
+                (draw-dialog-chrome! g cols rows title content-w content-h-req)
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) content-top inner-w content-h)
+                (let [cursor (when filter?
+                               (draw-text-input-field! g
+                                                       left
+                                                       content-top
+                                                       inner-w
+                                                       query
+                                                       (count query)
+                                                       placeholder))]
+                  (when filter?
+                    (p/set-colors! g t/dialog-border t/dialog-bg)
+                    (p/draw-separator! g left right (inc content-top)))
+                  (dotimes [i (min list-h total)]
+                    (let [idx (+ scroll i)
+                          row (+ list-top i)]
+
+                      (when (< idx total)
+                        (let [item (nth filtered idx)]
+                          (draw-list-item! g
+                                           left
+                                           row
+                                           (if (> total list-h) (dec inner-w) inner-w)
+                                           (= idx selected)
+                                           (:label item)
+                                           (:hint item))))))
+                  (when (> total list-h)
+                    (scrollbar/draw! g
+                                     {:col (+ left inner-w)
+                                      :top list-top
+                                      :track-h list-h
+                                      :total-h total
+                                      :inner-h list-h
+                                      :scroll scroll}))
+                  (draw-hint-bar! g left hint-row inner-w footer)
+                  cursor)))
+     :on-key
+     (fn [{:keys [selected query] :as state} key {:keys [total filtered]}]
+       (let [clampf #(clamp % 0 (max 0 (dec total)))]
+         (if-let [wheel (modal-wheel-step key)]
+           (assoc state :selected (clampf (+ selected wheel)))
+           (condp = (key-type key)
+             KeyType/Escape {::done nil}
+             KeyType/ArrowUp (assoc state :selected (clampf (dec selected)))
+             KeyType/ArrowDown (assoc state :selected (clampf (inc selected)))
+             KeyType/Enter {::done (when (pos? total) (nth filtered selected))}
+             KeyType/Backspace (if filter?
+                                 (assoc state
+                                   :query (if (seq query) (subs query 0 (dec (count query))) query)
+                                   :selected 0)
+                                 state)
+             KeyType/Character (if filter?
+                                 (let [c (key-character key)]
+                                   (if (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
+                                     (assoc state
+                                       :query (str query c)
+                                       :selected 0)
+                                     state))
+                                 state)
+             state))))}))
+
 (defn list-dialog!
   "Reusable scrollable, selectable list dialog — the SINGLE implementation
    behind `select-dialog!` (plain) and `searchable-select!` (type-to-filter).
-   Owns the whole loop: chrome → optional query field → selectable list (each
-   row via the shared `draw-list-item!`, with an optional dim right-aligned
-   `:hint` chip) → scrollbar → hint-bar → nav keys. Returns the chosen item map
-   (the full map, so callers recover `:id`/slash keys), or nil on Esc.
+   Now a THIN driver: `select-modal-component` supplies the pure geometry /
+   scroll / key logic and `run-modal!` owns the loop. Returns the chosen item
+   map (the full map, so callers recover `:id`/slash keys), or nil on Esc.
 
    `items` is a vec of maps with at least `:label`. opts:
      :filter?      type-to-filter on `:label`, case-insensitive (default false)
@@ -747,164 +960,8 @@
      :enter-label  hint-bar verb for Enter (default \"select\")
      :height       `:content` sizes the box to the item count (+ the query
                    field), capped; nil uses the shared (tall) footprint."
-  [^TerminalScreen screen title items {:keys [filter? placeholder enter-label height]}]
-  (let [items
-        (vec items)
-
-        query
-        (atom "")
-
-        selected
-        (atom 0)
-
-        scroll
-        (atom 0)
-
-        head-rows
-        (if filter? 2 0)
-
-        content?
-        (= height :content)]
-
-    (loop []
-
-      (let [q
-            (str/lower-case @query)
-
-            filtered
-            (if (and filter? (not (str/blank? q)))
-              (filterv #(str/includes? (str/lower-case (str (:label %))) q) items)
-              items)
-
-            total
-            (count filtered)
-
-            size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-            cols
-            (.getColumns size)
-
-            rows
-            (.getRows size)
-
-            g
-            (.newTextGraphics screen)
-
-            ;; Content-sized box: query field + margin (head-rows) + every item
-            ;; (so the commands FIT, not overflow) + a bottom margin row, capped
-            ;; so a huge list still scrolls inside a sane height. WIDTH shrink-
-            ;; wraps to the action footer (+2 columns padding each side), never
-            ;; narrower than the widest item label.
-            footer
-            (cond-> []
-              filter?
-              (conj ["type" "filter"])
-
-              true
-              (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
-
-            item-w
-            (+ 4
-               (reduce max
-                       0
-                       (map (fn [it]
-                              (+ (p/display-width (str (:label it)))
-                                 (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
-                            items)))
-
-            content-w
-            (footer-content-width cols footer item-w)
-
-            bounds
-            (if content?
-              (draw-dialog-chrome! g
-                                   cols
-                                   rows
-                                   title
-                                   content-w
-                                   (+ head-rows (min (count items) 16) 1))
-              (draw-dialog-chrome! g cols rows title content-w (adaptive-content-height rows nil)))
-
-            {:keys [left right inner-w]}
-            bounds
-
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
-
-            list-top
-            (+ content-top head-rows)
-
-            ;; Reserve one blank row below the list (bottom margin before the
-            ;; hint bar) so the commands don't butt up against the frame.
-            list-h
-            (max 1 (- content-h head-rows 1))
-
-            _
-            (swap! selected #(clamp % 0 (max 0 (dec total))))
-
-            _
-            (swap! scroll #(visible-window-start @selected % list-h total))]
-
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (when filter?
-                           (draw-text-input-field! g
-                                                   left
-                                                   content-top
-                                                   inner-w
-                                                   @query
-                                                   (count @query)
-                                                   placeholder))]
-          (when filter?
-            (p/set-colors! g t/dialog-border t/dialog-bg)
-            (p/draw-separator! g left right (inc content-top)))
-          (dotimes [i (min list-h total)]
-            (let [idx (+ @scroll i)
-                  row (+ list-top i)]
-
-              (when (< idx total)
-                (let [item (nth filtered idx)]
-                  (draw-list-item! g
-                                   left
-                                   row
-                                   (if (> total list-h) (dec inner-w) inner-w)
-                                   (= idx @selected)
-                                   (:label item)
-                                   (:hint item))))))
-          (when (> total list-h)
-            (scrollbar/draw! g
-                             {:col (+ left inner-w)
-                              :top list-top
-                              :track-h list-h
-                              :total-h total
-                              :inner-h list-h
-                              :scroll @scroll}))
-          (draw-hint-bar! g left hint-row inner-w footer)
-          (.setCursorPosition screen (or cursor-pos (p/cursor-pos 0 0))))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (when key
-            (if-let [wheel-step (modal-wheel-step key)]
-              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
-              (condp = (key-type key)
-                KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                      (recur))
-                KeyType/Enter (when (pos? total) (nth filtered @selected))
-                KeyType/Backspace (do (when filter?
-                                        (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                        (reset! selected 0))
-                                      (recur))
-                KeyType/Character (do
-                                    (when filter?
-                                      (let [c (key-character key)]
-                                        (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
-                                          (swap! query str c)
-                                          (reset! selected 0))))
-                                    (recur))
-                (recur)))))))))
+  [^TerminalScreen screen title items opts]
+  (run-modal! screen (select-modal-component title items opts)))
 (defn select-dialog!
   "Show a selection list dialog. Returns the selected item map or nil on Esc.
    `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`."
@@ -1313,7 +1370,7 @@
   (let [selected (atom 0)]
     (loop []
 
-      (let [items (vec (try (vis/list-resources session-id)
+      (let [items (vec (try (vis/gateway-list-resources session-id)
                             (catch Throwable t
                               (tel/log! :warn
                                         ["dialogs: list-resources failed" session-id
@@ -1398,7 +1455,7 @@
                     (when (pos? total)
                       (let [r (nth items (clamp @selected 0 (dec total)))]
                         (cond
-                          (= c \s) (do (vis/stop-resource! session-id (get r "id"))
+                          (= c \s) (do (vis/gateway-stop-resource! session-id (get r "id"))
                                        (vis/notify! (str "Stopped " (get r "label"))
                                                     :level :info
                                                     :ttl-ms 3000))
@@ -1409,7 +1466,7 @@
                                ;; logs-fn runs OFF the UI thread under a hard
                                ;; deadline — a wedged resource can never hang F4.
                                fetch
-                               #(let [f (future (vis/resource-logs session-id rid))
+                               #(let [f (future (vis/gateway-resource-logs session-id rid))
                                       v (deref f 3000 ::log-fetch-timeout)]
 
                                   (if (= ::log-fetch-timeout v)
@@ -1425,7 +1482,7 @@
                                                    :tail? true)
                                 (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
                           (= c \r) (when (get r "can_restart")
-                                     (vis/restart-resource! session-id (get r "id"))
+                                     (vis/gateway-restart-resource! session-id (get r "id"))
                                      (vis/notify! (str "Restarted " (get r "label"))
                                                   :level :info
                                                   :ttl-ms 3000)))))
@@ -1979,17 +2036,284 @@
                                            (if amend? (or (magit/last-commit-message root) "") ""))]
           (magit/commit! root msg {:amend? amend?}))))))
 
+(defn transient-item-by-key
+  "PURE: the transient spec item bound to single character `ch` (a Character or
+   string), scanning every group in order. nil when nothing is bound."
+  [spec ch]
+  (let [k (str ch)]
+    (some (fn [{:keys [items]}]
+            (some #(when (= k (:key %)) %) items))
+          (:groups spec))))
+
+(defn transient-toggle
+  "PURE reducer for ONE keystroke against a magit transient `state`
+   (`{:switches #{ids} :options {id val}}`). Returns a map whose `:kind` tells
+   the impure caller what to do next:
+     {:kind :continue :state s'}  a SWITCH flipped (or an unbound key — no-op)
+     {:kind :option   :item it}   an OPTION was hit; caller reads a value then
+                                   re-enters with it stored under [:options id]
+     {:kind :action   :item it}   an ACTION fires; caller runs it and closes.
+   Switches are the only kind this fn mutates; options/actions leave `state`
+   untouched (the impure loop finishes their job)."
+  [spec state ch]
+  (if-let [{:keys [type id] :as it} (transient-item-by-key spec ch)]
+    (case type
+      :switch
+      {:kind :continue
+       :state (update state :switches #(if (contains? % id) (disj % id) (conj (or % #{}) id)))}
+
+      :option
+      {:kind :option :item it}
+
+      :action
+      {:kind :action :item it}
+
+      {:kind :continue :state state})
+    {:kind :continue :state state}))
+
+(defn- draw-transient-item!
+  "One transient row: `key` glyph (accented, BOLD when active) + label. An active
+   switch or a set option shows in full `dialog-fg`; inactive rows dim to
+   `dialog-hint`, so live switches visibly pop. An option's value trails in parens."
+  [g left row inner-w {:keys [key label]} active? value]
+  (let [keytxt
+        (str key)
+
+        x
+        (+ left 2)
+
+        lx
+        (+ x (p/display-width keytxt) 2)
+
+        has-val?
+        (and value (not (str/blank? (str value))))
+
+        body
+        (str label (when has-val? (str "  (" value ")")))
+
+        shown
+        (ellipsize body (max 0 (- (+ left inner-w) lx 1)))]
+
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc left) row inner-w 1)
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (if active? (p/styled g [p/BOLD] (p/put-str! g x row keytxt)) (p/put-str! g x row keytxt))
+    (p/set-colors! g (if active? t/dialog-fg t/dialog-hint) t/dialog-bg)
+    (if active? (p/styled g [p/BOLD] (p/put-str! g lx row shown)) (p/put-str! g lx row shown))
+    (p/set-colors! g t/dialog-fg t/dialog-bg)))
+
+(defn magit-transient!
+  "Magit-style transient overlay: a keymap of toggleable SWITCHES / value OPTIONS
+   and fire-once ACTIONS, grouped under headers. There is NO moving cursor — you
+   press an item's `:key` directly (magit's transient model). Switches highlight
+   while active; options display their value inline. `spec` is
+   `{:groups [{:title str :items [{:key :type :id :label}]}]}` where `:type` is
+   `:switch` | `:option` | `:action`. `read-option` (impure) fetches an option's
+   value: `(read-option item current) -> str|nil` — nil (Esc) leaves it unchanged.
+   Returns `{:action id :switches #{…} :options {id val}}` when an action fires,
+   or nil on Esc."
+  [^TerminalScreen screen title spec read-option]
+  (let [display-rows
+        (vec (butlast (into []
+                            (mapcat (fn [{:keys [title items]}]
+                                      (concat [{:kind :header :text title}]
+                                              (map (fn [it]
+                                                     {:kind :item :item it})
+                                                   items)
+                                              [{:kind :blank}])))
+                            (:groups spec))))
+
+        total
+        (count display-rows)
+
+        item-w
+        (+ 8
+           (reduce max
+                   16
+                   (map (fn [r]
+                          (case (:kind r)
+                            :item
+                            (+ 4 (p/display-width (str (:label (:item r)))))
+
+                            :header
+                            (p/display-width (str (:text r)))
+
+                            0))
+                        display-rows)))
+
+        footer
+        [["key" "toggle/run"] ["Esc" "cancel"]]]
+
+    (loop [state {:switches #{} :options {}}]
+      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols (.getColumns size)
+            rows (.getRows size)
+            g (.newTextGraphics screen)
+            bounds (draw-dialog-chrome! g
+                                        cols
+                                        rows
+                                        title
+                                        (footer-content-width cols footer item-w)
+                                        (adaptive-content-height rows (max 1 total)))
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
+
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (dotimes [i (min total content-h)]
+          (let [r (nth display-rows i)
+                row (+ content-top i)]
+
+            (case (:kind r)
+              :header
+              (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/styled g [p/BOLD] (p/put-str! g (+ left 1) row (str (:text r)))))
+
+              :blank
+              nil
+
+              :item
+              (let [{:keys [type id] :as it} (:item r)
+                    active? (case type
+                              :switch
+                              (contains? (:switches state) id)
+
+                              :option
+                              (contains? (:options state) id)
+
+                              false)
+                    value (when (= type :option) (get (:options state) id))]
+
+                (draw-transient-item! g left row inner-w it active? value)))))
+        (draw-hint-bar! g left hint-row inner-w footer)
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (if (nil? key)
+            (recur state)
+            (condp = (key-type key)
+              KeyType/Escape nil
+              KeyType/Character
+              (let [ch (lower-key-character key)
+                    r (transient-toggle spec state ch)]
+
+                (case (:kind r)
+                  :continue
+                  (recur (:state r))
+
+                  :option
+                  (let [{:keys [id] :as it} (:item r)
+                        v (read-option it (get (:options state) id))]
+
+                    (recur (if (nil? v) state (assoc-in state [:options id] v))))
+
+                  :action
+                  {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
+              (recur state))))))))
+
+
 (defn- magit-push-flow!
+  "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):
+   force-with-lease, dry-run, disable hooks (--no-verify), set-upstream. When the
+   repo targets Gerrit a `t Topic` OPTION appears and the primary `p` push lands
+   on `refs/for/<branch>` carrying that topic. Every OTHER configured remote is
+   listed INLINE as its own `Push to <remote>` action in the SAME overlay (magit
+   lists push targets in the transient — no second dialog)."
   [^TerminalScreen screen busy! root]
-  (when-let [c (select-dialog! screen
-                               "Push"
-                               [{:label "Push" :id :push}
-                                {:label "Push, set upstream (-u origin)" :id :upstream}
-                                {:label "Force push (--force-with-lease)" :id :force}])]
-    (run-network!
-      busy!
-      "Pushing"
-      #(magit/push! root {:set-upstream? (= :upstream (:id c)) :force? (= :force (:id c))}))))
+  (let [upstream
+        (magit/upstream-name root)
+
+        remotes
+        (magit/remotes root)
+
+        g-remote
+        (magit/gerrit-remote root)
+
+        g-branch
+        (magit/gerrit-target-branch root)
+
+        branch
+        (magit/current-branch root)
+
+        gerrit?
+        (some? g-remote)
+
+        other-remotes
+        (->> remotes
+             (map :name)
+             (remove #(or (= "origin" %) (= g-remote %)))
+             (take 9)
+             vec)
+
+        arg-items
+        (cond-> [{:key "f" :type :switch :id :force :label "Force with lease (--force-with-lease)"}
+                 {:key "n" :type :switch :id :dry-run :label "Dry run (--dry-run)"}
+                 {:key "h" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
+                 {:key "u" :type :switch :id :set-upstream :label "Set upstream (-u)"}]
+          gerrit?
+          (conj {:key "t" :type :option :id :topic :label "Topic"}))
+
+        primary
+        (if gerrit?
+          {:key "p" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}
+          {:key "p"
+           :type :action
+           :id :push
+           :label (str "Push" (when upstream (str " to " upstream)))})
+
+        ;; Each remaining remote becomes its own inline action row keyed by a
+        ;; digit — magit lists push targets in the SAME transient, never a
+        ;; second dialog.
+        remote-rows
+        (map-indexed (fn [i name]
+                       {:key (str (inc i))
+                        :type :action
+                        :id (keyword "remote" name)
+                        :label (str "Push to " name)})
+                     other-remotes)
+
+        remote-action->name
+        (into {}
+              (map (fn [name]
+                     [(keyword "remote" name) name]))
+              other-remotes)
+
+        push-items
+        (vec (cons primary remote-rows))
+
+        spec
+        {:groups [{:title "Arguments" :items arg-items} {:title "Push" :items push-items}]}
+
+        read-option
+        (fn [{:keys [id]} current]
+          (when (= id :topic)
+            (text-input-dialog! screen
+                                "Topic" "Topic (optional)"
+                                :initial (or current
+                                             (when (and branch (not= branch g-branch)) branch)
+                                             ""))))]
+
+    (when-let [{:keys [action switches options]} (magit-transient! screen "Push" spec read-option)]
+      (let [base {:set-upstream? (contains? switches :set-upstream)
+                  :force? (contains? switches :force)
+                  :dry-run? (contains? switches :dry-run)
+                  :no-verify? (contains? switches :no-verify)}
+            topic (:topic options)]
+
+        (cond (= action :review) (run-network! busy!
+                                               "Pushing for review"
+                                               #(magit/gerrit-push!
+                                                  root
+                                                  (merge
+                                                    {:remote g-remote :branch g-branch :topic topic}
+                                                    (select-keys base [:dry-run? :no-verify?]))))
+              (= action :push) (run-network! busy! "Pushing" #(magit/push! root base))
+              (contains? remote-action->name action)
+              (let [rname (get remote-action->name action)]
+                (run-network! busy!
+                              (str "Pushing to " rname)
+                              #(magit/push! root (assoc base :remote rname))))
+              :else nil)))))
 
 (defn- magit-branch-flow!
   [^TerminalScreen screen root]
@@ -2247,8 +2571,11 @@
             visible
             (min total list-h)
 
+            max-start
+            (max 0 (- total visible))
+
             start
-            (visible-window-start @sel @scroll visible total)
+            (clamp @scroll 0 max-start)
 
             _
             (reset! scroll start)
@@ -2331,7 +2658,30 @@
 
               move!
               (fn [dir]
-                (swap! sel #(magit/next-selectable buf-rows % dir)))
+                ;; Move the selection AND keep it in view (arrows follow point).
+                (let [n (magit/next-selectable buf-rows @sel dir)]
+                  (reset! sel n)
+                  (reset! scroll (visible-window-start n @scroll visible total))))
+
+              scroll-view!
+              (fn [delta]
+                ;; Scroll the VIEWPORT independently of the selection, so a long
+                ;; expanded diff (whose lines aren't selectable) can be read.
+                (swap! scroll #(clamp (+ (long %) (long delta)) 0 max-start)))
+
+              reconcile-sel!
+              (fn []
+                ;; After a pure viewport scroll, pull the point onto the nearest
+                ;; selectable row still on screen so verbs act on something visible.
+                (let [s
+                      @scroll
+
+                      hi
+                      (min total (+ s visible))]
+
+                  (when (or (< (long @sel) s) (>= (long @sel) hi))
+                    (when-let [n (some #(when (magit/selectable? (nth buf-rows %)) %) (range s hi))]
+                      (reset! sel n)))))
 
               toggle-diff!
               (fn []
@@ -2345,21 +2695,19 @@
                     (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
 
           (cond (nil? key) (recur)
-                wheel (do (dotimes [_ (Math/abs (long wheel))]
-                            (move! (if (neg? (long wheel)) -1 1)))
-                          (recur))
+                wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
                 :else
                 (condp = (key-type key)
                   KeyType/Escape nil
                   KeyType/ArrowUp (do (move! -1) (recur))
                   KeyType/ArrowDown (do (move! 1) (recur))
-                  KeyType/PageUp (do (dotimes [_ (max 1 (dec list-h))]
-                                       (move! -1))
-                                     (recur))
-                  KeyType/PageDown (do (dotimes [_ (max 1 (dec list-h))]
-                                         (move! 1))
-                                       (recur))
-                  KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0)) (recur))
+                  KeyType/PageUp
+                  (do (scroll-view! (- (max 1 (dec list-h)))) (reconcile-sel!) (recur))
+                  KeyType/PageDown (do (scroll-view! (max 1 (dec list-h))) (reconcile-sel!) (recur))
+                  KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0))
+                                   (reset! scroll 0)
+                                   (recur))
+                  KeyType/End (do (reset! scroll max-start) (reconcile-sel!) (recur))
                   KeyType/Tab (do (toggle-diff!) (recur))
                   KeyType/Enter (do (toggle-diff!) (recur))
                   KeyType/Character (let [c (key-character key)]
