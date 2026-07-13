@@ -1888,7 +1888,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                                      (fn? v)))
                            (mapcat (fn [[sym _]]
                                      (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                           (remove #{"session_fold" "session_drop" "__vis_par__"
+                           (remove #{"session_fold" "__vis_par__"
                                      "__vis_par_isolated__"
                                      ;; ntr/native_tools_results host callbacks:
                                      ;; plain sync lookups, never awaitable thunks.

@@ -2093,21 +2093,21 @@
                        v))))
 
 (defn- compaction-verbs
-  "Build the model-facing compaction verbs bound into the sandbox as
-   `session_fold` / `session_drop`, closing over `ctx-atom`. Each records a
-   `:session/summaries` intent the wire applies via `apply-summaries`, and each
-   RETURNS a visible confirmation string (NOT the `\"vis_silent\"` row-suppression
-   sentinel) so the action shows in the Python result instead of vanishing.
+  "Build the model-facing compaction verb bound into the sandbox as
+   `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
+   intent the wire applies via `apply-summaries`, and RETURNS a visible
+   confirmation string (NOT the `\"vis_silent\"` row-suppression sentinel) so the
+   action shows in the Python result instead of vanishing.
 
    First positional arg selects the target: a list/string of explicit scopes, or
    a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
    `->clj` keeps dict keys as VERBATIM STRINGS, so `\"through\"` is the accessor).
-   Intents are STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
-     fold → {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>}
-     drop → {…, \"drop\" true, \"gist\" <why-dropped>}   ; reason kept so the
-            `dropped: why` audit breadcrumb (and introspection) never loses it.
-   `\"drop\"` — not gist presence — is the fold-vs-drop discriminator, since a drop
-   now carries a reason in `\"gist\"` too."
+   The second arg — the gist — is OPTIONAL: pass it to KEEP a one-line takeaway,
+   OMIT it to simply DISCARD the step (this replaces the old `session_drop`; a
+   gist-less fold collapses the step with no summary line). Intents are
+   STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
+     {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>?}
+   `apply-summaries` still renders any legacy persisted `{\"drop\" true}` intents."
   [ctx-atom]
   (let [->set
         (fn [scopes]
@@ -2146,23 +2146,7 @@
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}} "model folded scopes")
            (str "folded " label (when g (str " → " g))))
-         "session_fold: nothing to fold (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))
-     'session-drop
-     (fn session-drop [scopes & [reason]]
-       (if-let [[base label] (target scopes)]
-         (let [r (some-> reason
-                         str
-                         str/trim
-                         not-empty)
-               intent (cond-> (assoc base "drop" true)
-                        r
-                        (assoc "gist" r))]
-
-           (record! intent)
-           (tel/log! {:level :info :id ::session-drop :data {:intent intent}}
-                     "model dropped scopes")
-           (str "dropped " label (when r (str " (" r ")"))))
-         "session_drop: nothing to drop (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))}))
+         "session_fold: nothing to fold (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))}))
 
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
@@ -2824,7 +2808,7 @@
                     " tokens). " "Before you continue, COMPACT: "))
              "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
              "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
-             "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter."
+             "takeaway — or omit the gist to just drop steps that no longer matter."
              heavy
              " This reminder clears itself once you're back under budget.")))))
 
@@ -7740,7 +7724,7 @@
         ctx-atom
         (ctx-loop/make-ctx-atom session-id)
 
-        ;; Two model-driven context-compaction verbs, both recording a
+        ;; ONE model-driven context-compaction verb, recording a
         ;; `:session/summaries` intent the wire applies via `apply-summaries`:
         ;;
         ;;   session_fold(["tN/iN", …], "what this step established")  — KEEP the
@@ -7749,15 +7733,15 @@
         ;;   session_fold({"through": "tN/iN"}, "…")  — RANGE: fold every step at
         ;;     or before tN/iN in one shot (a positional options dict, NOT a kwarg:
         ;;     Python kwargs don't cross into a Clojure verb — see wrap-ifn).
-        ;;   session_drop(["tN/iN", …]) / session_drop({"through": "tN/iN"})
-        ;;     — DISCARD outright. For observations that no longer make sense (an
-        ;;     approach you abandoned, a read you misread, intent you reframed)
-        ;;     where keeping even a summary would mislead.
+        ;;   session_fold(["tN/iN", …])  — the gist is OPTIONAL: OMIT it to just
+        ;;     DISCARD the step outright (an approach you abandoned, a read you
+        ;;     misread) where keeping even a summary would mislead. Replaces the
+        ;;     old `session_drop`.
         ;;
-        ;; Both record a `:session/summaries` intent the wire applies via
-        ;; apply-summaries, and both RETURN a visible confirmation (not the silent
-        ;; sentinel) so the fold/drop shows in the Python result. See
-        ;; `compaction-verbs` for the intent shape + range/drop-reason handling.
+        ;; It records a `:session/summaries` intent the wire applies via
+        ;; apply-summaries, and RETURNS a visible confirmation (not the silent
+        ;; sentinel) so the fold shows in the Python result. See
+        ;; `compaction-verbs` for the intent shape + range handling.
         compaction
         (compaction-verbs ctx-atom)
 

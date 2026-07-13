@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.compaction-verbs-test
-  "Raw-Python integration: drive session_fold / session_drop THROUGH the GraalPy
+  "Raw-Python integration: drive session_fold THROUGH the GraalPy
    sandbox so the real argument marshalling is exercised (Python list/dict →
    `->clj`), not just the pure Clojure fns. This closes the gap flagged in
    review — the `{\"through\": …}` options-dict path and the visible return value
@@ -12,7 +12,7 @@
 (def ^:private apply-summaries (var-get #'lp/apply-summaries))
 
 (defn- with-verbs
-  "Fresh ctx-atom + a GraalPy context with session_fold/session_drop bound.
+  "Fresh ctx-atom + a GraalPy context with session_fold bound.
    Returns [ctx-atom eval-fn]; eval-fn runs Python and returns the result string."
   []
   (let [ca
@@ -47,26 +47,15 @@
 
         (expect (= [{"through" "t1/i5" "gist" "early reads"}] (get @ca "session_summaries")))
         (expect (re-find #"through t1/i5" out))))
-  (it
-    "session_drop(list, reason): records \"drop\" true + the reason, returns a dropped confirmation"
-    (let [[ca ev]
-          (with-verbs)
-
-          out
-          (ev "session_drop([\"t1/i1\"], \"wrong file\")")]
-
-      (expect (= [{"scopes" #{"t1/i1"} "drop" true "gist" "wrong file"}]
-                 (get @ca "session_summaries")))
-      (expect (re-find #"^dropped " out))
-      (expect (re-find #"wrong file" out))))
-  (it "session_drop without a reason still records the drop (reason optional)"
+  (it "session_fold WITHOUT a gist records a gist-less collapse (replaces session_drop)"
       (let [[ca ev]
             (with-verbs)
 
-            _
-            (ev "session_drop([\"t1/i1\"])")]
+            out
+            (ev "session_fold([\"t1/i1\"])")]
 
-        (expect (= [{"scopes" #{"t1/i1"} "drop" true}] (get @ca "session_summaries")))))
+        (expect (= [{"scopes" #{"t1/i1"}}] (get @ca "session_summaries")))
+        (expect (re-find #"^folded t1/i1" out))))
   (it "an empty/blank target is a no-op: records nothing, returns a hint"
       (let [[ca ev]
             (with-verbs)
