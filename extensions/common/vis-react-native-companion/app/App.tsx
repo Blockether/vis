@@ -38,6 +38,7 @@ import {
   TurnAttachment,
   VisGatewayClient,
   gatewayErrorMessage,
+  isGatewayConnectionMessage,
 } from "./src/VisClient";
 import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
@@ -330,6 +331,7 @@ function Root() {
   const [capturing, setCapturing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gatewayProblem, setGatewayProblem] = useState<string | null>(null);
   const [live, setLive] = useState<LiveState>({});
   /* Context-fullness the model reads (session_utilization). Seeded from GET
      /v1/sessions/:sid/context on open, then kept live by the `context.updated`
@@ -362,7 +364,7 @@ function Root() {
   const mention = useMemo(() => activeFileMention(input), [input]);
 
   const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
-  const connected = !error && activeSession != null;
+  const connected = !gatewayProblem && !error && activeSession != null;
   const runningTurn = useMemo(
     () => [...turns].reverse().find((t) => turnLive(t) && (t.id ?? t.turn_id)),
     [turns],
@@ -399,9 +401,20 @@ function Root() {
     });
   }, [baseMessages, runningId, liveTurn, traceCache]);
 
-  const fail = useCallback((err: unknown) => {
-    setError(err instanceof Error ? err.message : String(err));
-  }, []);
+  const fail = useCallback(
+    (err: unknown) => {
+      const msg = gatewayErrorMessage(gatewayUrl, err);
+      if (isGatewayConnectionMessage(msg)) {
+        setGatewayProblem(msg);
+        setError(null);
+        setNote(null);
+        setShowSettings(true);
+      } else {
+        setError(msg);
+      }
+    },
+    [gatewayUrl],
+  );
 
   const refreshTurns = useCallback(
     async (sessionId = activeSession?.id) => {
@@ -462,6 +475,8 @@ function Root() {
       )[0];
       const session = latest ?? (await client.createSession());
       setSessions(existing.length ? existing : [session]);
+      setGatewayProblem(null);
+      setNote(null);
       setShowSettings(false);
       await openSession(session);
     } catch (err) {
@@ -639,16 +654,27 @@ function Root() {
               ? `HTTP ${status}`
               : gatewayErrorMessage(gatewayUrl, err) || "connection lost";
             if (__DEV__) console.warn("[vis] SSE error", err);
-            setNote(`live stream: ${msg} (retrying…)`);
+            if (isGatewayConnectionMessage(msg)) {
+              setGatewayProblem(msg);
+              setShowSettings(true);
+              setNote(null);
+            } else {
+              setNote(`live stream: ${msg} (retrying…)`);
+            }
           },
         },
         0,
       );
     } catch (err) {
+      const msg = gatewayErrorMessage(gatewayUrl, err);
       if (__DEV__) console.warn("[vis] SSE failed to start", err);
-      setNote(
-        `live stream unavailable: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      if (isGatewayConnectionMessage(msg)) {
+        setGatewayProblem(msg);
+        setShowSettings(true);
+        setNote(null);
+      } else {
+        setNote(`live stream unavailable: ${msg}`);
+      }
     }
     return () => close?.();
   }, [activeSession?.id, client]);
@@ -1266,8 +1292,9 @@ function Root() {
       {/* ── settings — the web channel's Settings dialog, native ──── */}
       <DialogModal
         visible={showSettings}
-        title="Settings"
+        title={gatewayProblem ? "Connect gateway" : "Settings"}
         onClose={() => setShowSettings(false)}
+        dismissable={!gatewayProblem}
         flush
       >
         <SettingsPane
@@ -1275,6 +1302,7 @@ function Root() {
           gatewayUrl={gatewayUrl}
           token={token}
           connecting={connecting}
+          connectionProblem={gatewayProblem}
           onGatewayUrl={setGatewayUrl}
           onToken={setToken}
           onReconnect={() => void connect()}

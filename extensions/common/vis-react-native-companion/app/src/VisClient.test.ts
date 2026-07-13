@@ -37,6 +37,7 @@ import {
   GatewayEvent,
   gatewayConnectionMessage,
   gatewayErrorMessage,
+  isGatewayConnectionMessage,
 } from "./VisClient";
 
 interface FakeES {
@@ -120,10 +121,11 @@ describe("request error unwrapping ([object Object] regression)", () => {
     );
   });
 
-  it("explains the localhost-on-phone trap", () => {
-    expect(gatewayConnectionMessage("http://127.0.0.1:7890")).toContain(
-      "points at the phone itself",
-    );
+  it("explains the localhost-on-phone trap and marks gateway connection errors", () => {
+    const msg = gatewayConnectionMessage("http://127.0.0.1:7890");
+    expect(msg).toContain("points at the phone itself");
+    expect(isGatewayConnectionMessage(msg)).toBe(true);
+    expect(isGatewayConnectionMessage("503 Service Unavailable")).toBe(false);
   });
 
   it("normalizes generic SSE error objects to gateway guidance", () => {

@@ -52,6 +52,7 @@ export const DialogModal = ({
   onClose,
   tone = "amber",
   flush = false,
+  dismissable = true,
   children,
 }: {
   visible: boolean;
@@ -60,6 +61,8 @@ export const DialogModal = ({
   tone?: "amber" | "error";
   /* flush = edge-to-edge body (the Settings pane brings its own chrome). */
   flush?: boolean;
+  /* false keeps the sheet pinned until the caller clears the condition. */
+  dismissable?: boolean;
   children: React.ReactNode;
 }) => {
   if (!visible) return null;
@@ -68,7 +71,10 @@ export const DialogModal = ({
       behavior={Platform.select({ ios: "padding", default: undefined })}
       style={styles.overlay}
     >
-      <Pressable style={styles.scrim} onPress={onClose}>
+      <Pressable
+        style={styles.scrim}
+        onPress={dismissable ? onClose : undefined}
+      >
         <Pressable
           style={[styles.dialog, tone === "error" && styles.dialogError]}
           onPress={() => {}}
@@ -79,13 +85,15 @@ export const DialogModal = ({
             <Text style={[styles.title, tone === "error" && styles.titleError]}>
               {title}
             </Text>
-            <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn}>
-              <Feather
-                name="x"
-                size={15}
-                color={tone === "error" ? "#FFFFFF" : c.dim}
-              />
-            </Pressable>
+            {dismissable ? (
+              <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn}>
+                <Feather
+                  name="x"
+                  size={15}
+                  color={tone === "error" ? "#FFFFFF" : c.dim}
+                />
+              </Pressable>
+            ) : null}
           </View>
           <View style={[styles.body, flush && styles.bodyFlush]}>
             {children}
