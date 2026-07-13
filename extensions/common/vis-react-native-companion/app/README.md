@@ -45,7 +45,7 @@ on the gateway (the app degrades gracefully with a note when absent).
 App.tsx                 orchestration: header, transcript, composer, dialogs
 src/theme.ts            blockether.com design tokens + time helpers
 src/VisClient.tsx       typed gateway client (/v1 + voice endpoints)
-src/ui.tsx              IconBtn, DialogModal, ActionBtn
+src/UI.tsx              IconBtn, DialogModal, ActionBtn
 src/Markdown.tsx        markdown-lite transcript renderer
 src/SessionsDrawer.tsx  slide-in sessions panel
 src/VoiceButton.tsx     mic + capture strip + Parakeet upload

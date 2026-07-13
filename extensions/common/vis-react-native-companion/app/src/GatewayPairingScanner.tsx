@@ -8,7 +8,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 
 import { c, mono } from "./theme";
-import { ActionBtn } from "./ui";
+import { ActionBtn } from "./UI";
 import {
   parseGatewayPairing,
   pairingDisplayHost,
