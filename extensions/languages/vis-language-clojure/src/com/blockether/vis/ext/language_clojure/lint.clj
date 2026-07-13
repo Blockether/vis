@@ -40,4 +40,28 @@
 
 (defn lint-code "Lint a raw code string via stdin." [code] (with-in-str code (run-lint ["-"] nil)))
 
-(defn lint-paths "Lint one or more filesystem paths." [paths] (run-lint (vec paths) nil))
+(defn lint-paths
+  "Lint one or more filesystem paths. With `config-dir` (a `.clj-kondo`
+   directory) it is threaded to clj-kondo as `:config-dir`, so a NESTED project's
+   config is honored instead of clj-kondo's process-CWD default resolution."
+  ([paths] (run-lint (vec paths) nil))
+  ([paths config-dir] (run-lint (vec paths) (when config-dir {:config-dir (str config-dir)}))))
+
+(def empty-result
+  "The zeroed lint result (no files, no findings) — identity for `merge-results`."
+  {"op" "clj-lint" "error" 0 "warning" 0 "info" 0 "files" 0 "findings" []})
+
+(defn merge-results
+  "Combine per-config-dir `run-lint` result maps into one uniform map: summed
+   counts, concatenated findings. Lets a grouped (monorepo) lint — one run per
+   nearest `.clj-kondo` dir — report back as a single result."
+  [results]
+  (reduce (fn [a b]
+            {"op" "clj-lint"
+             "error" (+ (or (get a "error") 0) (or (get b "error") 0))
+             "warning" (+ (or (get a "warning") 0) (or (get b "warning") 0))
+             "info" (+ (or (get a "info") 0) (or (get b "info") 0))
+             "files" (+ (or (get a "files") 0) (or (get b "files") 0))
+             "findings" (into (vec (get a "findings")) (get b "findings"))})
+          empty-result
+          results))

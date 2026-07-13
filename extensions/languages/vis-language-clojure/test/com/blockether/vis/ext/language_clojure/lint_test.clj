@@ -103,6 +103,35 @@
              (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} {"paths" ["src"]})]
                (expect (pos? (get res "warning"))))
              (finally (cleanup dir)))))
+  ;; Monorepo: a file under a NESTED project must be linted against THAT
+  ;; project's .clj-kondo, not the workspace root's — clj-kondo's own run!
+  ;; otherwise resolves config from the process CWD only.
+  (it "honors a nested project's .clj-kondo config over the workspace root"
+      (let [dir (tmp-dir)]
+        (try
+          ;; workspace-root config: unused-binding stays a warning
+          (let [root-kondo (io/file dir ".clj-kondo")]
+            (.mkdirs root-kondo)
+            (spit (io/file root-kondo "config.edn")
+                  "{:linters {:unused-binding {:level :warning}}}"))
+          ;; nested project silences unused-binding
+          (let [sub-kondo (io/file dir "sub" ".clj-kondo")
+                src (io/file dir "sub" "src" "x.clj")]
+
+            (.mkdirs sub-kondo)
+            (spit (io/file sub-kondo "config.edn") "{:linters {:unused-binding {:level :off}}}")
+            (.mkdirs (.getParentFile src))
+            (spit src "(ns x) (defn h [a b] a)"))
+          ;; nested config wins -> the unused binding is NOT reported
+          (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} {"path" "sub/src/x.clj"})]
+            (expect (not (some #(= "unused-binding" (get % "type")) (get res "findings")))))
+          ;; contrast: identical code under the ROOT config IS flagged
+          (let [rsrc (io/file dir "src" "y.clj")]
+            (.mkdirs (.getParentFile rsrc))
+            (spit rsrc "(ns y) (defn h [a b] a)")
+            (let [res (lint-result {:workspace/root (.getAbsolutePath dir)} {"path" "src/y.clj"})]
+              (expect (some #(= "unused-binding" (get % "type")) (get res "findings")))))
+          (finally (cleanup dir)))))
   (it "with no arg, defaults to the workspace's src (and test) dirs"
       (let [dir (tmp-dir)]
         (try (let [src (io/file dir "src" "z.clj")]
