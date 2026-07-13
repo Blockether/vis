@@ -40,7 +40,7 @@ import type {
 const GATEWAY_GROUP = "gateway";
 const WORKSPACE_GROUP = "workspace";
 
-/* The web's .switch/.knob — 40×22 pill, amber when on, sliding knob. */
+/* iOS-style switch, blue when on, sliding knob. */
 const PillSwitch = ({ on, onPress }: { on: boolean; onPress: () => void }) => (
   <Pressable
     onPress={onPress}
@@ -380,9 +380,9 @@ export const SettingsPane = ({
                 {pairedNote ? (
                   <Text style={st.okNote}>{pairedNote}</Text>
                 ) : null}
-                <Text style={st.rowDesc}>
-                  Pair over same Wi‑Fi, or use a Tailscale 100.x gateway address
-                  for the clean "it just works" path.
+                <Text style={st.sectionCopy}>
+                  Pair over the same Wi‑Fi, or use a Tailscale 100.x address for
+                  the cleanest path.
                 </Text>
                 {scanOpen ? (
                   <View style={st.scannerSlot}>
@@ -484,12 +484,12 @@ const st = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginHorizontal: 16,
-    marginTop: 14,
-    marginBottom: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 12,
+    marginHorizontal: 18,
+    marginTop: 16,
+    marginBottom: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 14,
     backgroundColor: "rgba(118,118,128,0.12)",
   },
   searchInput: {
@@ -513,12 +513,12 @@ const st = StyleSheet.create({
   },
   tocBody: { padding: 10, gap: 4 },
   tocItem: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10 },
-  tocItemActive: { backgroundColor: "rgba(240,173,0,0.16)" },
+  tocItemActive: { backgroundColor: c.accentSoft },
   tocLabel: { fontSize: 12, color: c.dim, fontWeight: "500" },
   tocLabelActive: { color: c.ink, fontWeight: "700" },
   /* .settings-groups */
   groups: { flex: 1, minWidth: 0 },
-  groupsBody: { paddingHorizontal: 16, paddingBottom: 22 },
+  groupsBody: { paddingHorizontal: 18, paddingBottom: 24 },
   groupTitle: {
     fontSize: 13,
     fontWeight: "700",
@@ -529,8 +529,8 @@ const st = StyleSheet.create({
   },
   sectionCard: {
     overflow: "hidden",
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(60,60,67,0.16)",
   },
@@ -539,9 +539,9 @@ const st = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    minHeight: 52,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    minHeight: 56,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "rgba(60,60,67,0.14)",
   },
@@ -556,7 +556,7 @@ const st = StyleSheet.create({
     backgroundColor: c.hair,
     justifyContent: "center",
   },
-  switchOn: { backgroundColor: c.amber },
+  switchOn: { backgroundColor: c.accent },
   knob: {
     position: "absolute",
     top: 2,
@@ -574,9 +574,10 @@ const st = StyleSheet.create({
   knobOn: { left: 20 },
   /* .toggle-cycle */
   cycle: {
-    backgroundColor: c.chipBg,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    backgroundColor: "rgba(118,118,128,0.12)",
+    borderRadius: 11,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
   },
   cycleLabel: { fontFamily: mono, fontSize: 11, color: c.chipInk },
   staleNote: { fontSize: 11, color: c.dim, marginTop: 10, lineHeight: 15 },
@@ -593,13 +594,26 @@ const st = StyleSheet.create({
     marginHorizontal: 14,
     backgroundColor: "rgba(118,118,128,0.10)",
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
     fontSize: 14,
     color: c.ink,
   },
-  okNote: { fontSize: 12, color: c.ok, marginTop: 10, marginHorizontal: 14 },
-  scannerSlot: { marginTop: 16, marginHorizontal: 14 },
+  okNote: {
+    fontSize: 12,
+    color: c.ok,
+    marginTop: 10,
+    marginHorizontal: 14,
+    lineHeight: 17,
+  },
+  sectionCopy: {
+    fontSize: 12.5,
+    color: c.dim,
+    lineHeight: 18,
+    marginTop: 10,
+    marginHorizontal: 14,
+  },
+  scannerSlot: { marginTop: 18, marginHorizontal: 14 },
   reconnect: {
     flexDirection: "row",
     gap: 10,

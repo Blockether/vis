@@ -1097,7 +1097,7 @@ function Root() {
                     <Text style={styles.emptyBody}>
                       {connected
                         ? "Say something \u2014 vis is listening."
-                        : "Open \u2699 and point me at a running vis gateway."}
+                        : "Open Settings and point me at a running vis gateway."}
                     </Text>
                   </>
                 )}
@@ -1312,7 +1312,7 @@ function Root() {
               <Feather
                 name={!currentPick?.model ? "check" : "star"}
                 size={11}
-                color={!currentPick?.model ? c.amberBright : c.dim}
+                color={!currentPick?.model ? "#FFFFFF" : c.dim}
               />
               <Text
                 style={[
@@ -1349,11 +1349,7 @@ function Root() {
                           style={[styles.modelChip, on && styles.modelChipOn]}
                         >
                           {on ? (
-                            <Feather
-                              name="check"
-                              size={11}
-                              color={c.amberBright}
-                            />
+                            <Feather name="check" size={11} color="#FFFFFF" />
                           ) : null}
                           <Text
                             style={[
@@ -1548,7 +1544,7 @@ const styles = StyleSheet.create({
     fontFamily: mono,
     fontSize: 16,
     fontWeight: "700",
-    color: c.amber,
+    color: c.accent,
     lineHeight: 30,
     marginRight: 4,
   },
@@ -1567,7 +1563,7 @@ const styles = StyleSheet.create({
     height: 30,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: c.amber,
+    backgroundColor: c.accent,
   },
   stopBtn: { backgroundColor: c.err },
   footer: {
@@ -1592,13 +1588,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
     maxWidth: 230,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: c.lineSoft,
-    backgroundColor: c.field,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 11,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  footRoutingName: { fontFamily: mono, fontSize: 10, color: c.amberDeep },
+  footRoutingName: { fontFamily: mono, fontSize: 10, color: c.accentInk },
   footerText: {
     flex: 1,
     textAlign: "right",
@@ -1623,11 +1620,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  modelScroll: { maxHeight: 460 },
-  modelScrollBody: { gap: 14, paddingBottom: 4 },
-  activeModel: { fontSize: 12, color: c.dim },
+  modelScroll: { maxHeight: 500 },
+  modelScrollBody: { gap: 16, paddingBottom: 6 },
+  activeModel: { fontSize: 13, color: c.dim, lineHeight: 18 },
   activeModelStrong: { fontFamily: mono, fontWeight: "700", color: c.ink },
-  modelGroup: { gap: 8 },
+  modelGroup: {
+    gap: 10,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: c.lineSoft,
+    padding: 14,
+  },
   modelGroupLabel: {
     fontFamily: mono,
     fontSize: 10.5,
@@ -1636,19 +1640,20 @@ const styles = StyleSheet.create({
     color: c.dim,
   },
   modelGroupMeta: { fontSize: 10.5, color: c.dim, marginTop: -4 },
-  modelChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  modelChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   modelChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    borderWidth: 1,
-    borderColor: c.line,
-    backgroundColor: c.field,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: c.lineSoft,
+    borderRadius: 13,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
-  modelChipOn: { backgroundColor: c.ink, borderColor: c.ink },
+  modelChipOn: { backgroundColor: c.accent, borderColor: c.accent },
   modelChipText: { fontFamily: mono, fontSize: 12, color: c.ink },
-  modelChipTextOn: { color: c.amberBright, fontWeight: "700" },
+  modelChipTextOn: { color: "#FFFFFF", fontWeight: "700" },
   errorText: { color: c.ink, fontSize: 13, lineHeight: 18 },
 });

@@ -11,7 +11,7 @@ import { Feather } from "@expo/vector-icons";
 
 import { c, mono } from "./theme";
 
-/* Flat square icon button — TUI header button: no chrome until pressed. */
+/* Native rounded icon button — quiet until pressed/active. */
 export const IconBtn = ({
   name,
   onPress,
@@ -38,11 +38,11 @@ export const IconBtn = ({
       disabled && styles.iconBtnDisabled,
     ]}
   >
-    <Feather name={name} size={size} color={active ? c.amberBright : color} />
+    <Feather name={name} size={size} color={active ? "#FFFFFF" : color} />
   </Pressable>
 );
 
-/* The vis dialog — amber title bar, warm body, square corners.
+/* The vis dialog — native rounded sheet, neutral chrome.
    Rendered as an ABSOLUTE OVERLAY, not an RN <Modal>: transparent modals
    are unreliable on the iOS 26 simulator and cannot nest, and an overlay
    is flatter anyway. Mount it near the root so it covers the screen. */
@@ -96,7 +96,7 @@ export const DialogModal = ({
   );
 };
 
-/* Solid square action button: BLOCKY, mono, uppercase. */
+/* Native action button. `amber` is the primary blue action tone. */
 export const ActionBtn = ({
   label,
   onPress,
@@ -123,7 +123,7 @@ export const ActionBtn = ({
     <Text
       style={[
         styles.actionLabel,
-        tone === "amber" && { color: c.amberInk },
+        tone === "amber" && { color: "#FFFFFF" },
         tone === "ghost" && { color: c.ink },
       ]}
     >
@@ -134,14 +134,15 @@ export const ActionBtn = ({
 
 const styles = StyleSheet.create({
   iconBtn: {
-    width: 30,
-    height: 30,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: 17,
     backgroundColor: "transparent",
   },
-  iconBtnActive: { backgroundColor: c.ink },
-  iconBtnPressed: { backgroundColor: c.tsepBg },
+  iconBtnActive: { backgroundColor: c.accent },
+  iconBtnPressed: { backgroundColor: "rgba(118,118,128,0.14)" },
   iconBtnDisabled: { opacity: 0.4 },
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 60, elevation: 60 },
   scrim: {
@@ -193,14 +194,17 @@ const styles = StyleSheet.create({
   body: { padding: 14, gap: 10 },
   bodyFlush: { padding: 0, gap: 0 },
   action: {
+    minHeight: 36,
+    borderRadius: 12,
     backgroundColor: c.ink,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     alignItems: "center",
+    justifyContent: "center",
   },
-  actionAmber: { backgroundColor: c.amber },
+  actionAmber: { backgroundColor: c.accent },
   actionDanger: { backgroundColor: c.err },
-  actionGhost: { backgroundColor: c.tsepBg },
+  actionGhost: { backgroundColor: "rgba(118,118,128,0.12)" },
   actionLabel: {
     fontFamily: mono,
     fontSize: 10.5,
