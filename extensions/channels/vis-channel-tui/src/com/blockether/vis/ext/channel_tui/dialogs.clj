@@ -3949,7 +3949,7 @@
 ;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
   [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
-   {:id :draft :label "Draft" :width 8} {:id :dir :label "Group" :width 22}
+   {:id :draft :label "Draft" :width 8} {:id :dir :label "Project" :width 22}
    {:id :status :label "Status" :width 10}])
 (defn- navigator-content-w
   "Navigator is wider than the default modal footprint — five columns need
@@ -3988,10 +3988,12 @@
      ;; pinned workspace: whether it's in a draft, and the directory it works
      ;; in. `—` = trunk / no draft.
      :draft (or (not-empty (:draft-label session)) "—")
-     ;; The persistent Group folder wins as the cluster/label; ungrouped
-     ;; sessions fall back to their project dir (the pre-groups behaviour).
-     :group (not-empty (:group_name session))
-     :dir (or (not-empty (:group_name session)) (not-empty (:work-dir session)) "—")
+     ;; The persistent Project wins as the cluster/label; sessions with no
+     ;; project fall back to their project dir (the pre-project behaviour).
+     :group (not-empty (:project_name session))
+     ;; Manual order within the project (movable tabs); nil for projectless.
+     :position (:project_position session)
+     :dir (or (not-empty (:project_name session)) (not-empty (:work-dir session)) "—")
      :status (if active? "● focused" (str (long (or (:turn-count session) 0)) " turns"))
      :created (navigator-stamp (:created-at session))
      :modified (navigator-stamp (:modified-at session))
@@ -4008,7 +4010,11 @@
         by-dir
         (group-by :dir rows)]
 
-    (vec (mapcat by-dir order))))
+    ;; Within each project group, honour the persisted manual order
+    ;; (`:position`); projectless rows (nil position) keep recency order.
+    (vec (mapcat (fn [d]
+                   (sort-by #(or (:position %) Long/MAX_VALUE) (by-dir d)))
+                 order))))
 (defn- navigator-all-rows
   "Sessions arrive newest-modified-first from `tui-session-summaries`. The
    focused session pins to the top; the rest are grouped by PROJECT
@@ -4814,7 +4820,7 @@
                           hint-row
                           inner-w
                           [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
-                           ["C-d" "delete"] ["C-b" "group"]
+                           ["C-d" "delete"] ["C-b" "project"]
                            [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
                            ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
@@ -4916,12 +4922,12 @@
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                 {:action :delete :id id}
                 (recur))
-              ;; Ctrl+B → move the highlighted session to a group (folder).
+              ;; Ctrl+B → move the highlighted session to a project.
               (and (input/ctrl-modifier? key)
                    (= KeyType/Character (key-type key))
                    (= (lower-key-character key) \b))
               (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
-                {:action :group :id id}
+                {:action :project :id id}
                 (recur))
               (input/ctrl-char? key \u) (do (swap! show-empty-untitled? not) (reset-list!) (recur))
               ;; Clipboard paste → append into the query filter.
@@ -4930,26 +4936,35 @@
                                                (swap! query str (str/replace pasted #"\s+" " "))
                                                (reset-list!)))
                                            (recur))
-              :else
-              (condp = (key-type key)
-                KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                      (recur))
-                KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
-                KeyType/Backspace
-                (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %)) (reset-list!) (recur))
-                ;; Plain printable character → filter query. Skip control
-                ;; chars and Alt/Ctrl-modified keys (those are commands).
-                KeyType/Character (let [c (key-character key)]
-                                    (when (and c
-                                               (not (input/alt-modifier? key))
-                                               (not (input/ctrl-modifier? key))
-                                               (not (iso-control-character? c)))
-                                      (swap! query str c)
-                                      (reset-list!))
-                                    (recur))
-                (recur)))))))))
+              :else (condp = (key-type key)
+                      KeyType/Escape nil
+                      KeyType/ArrowUp (if (and (input/reorder-modifier? key) (pos? total))
+                                        (if-let [id (:id (:target (nth visible-rows @selected)))]
+                                          {:action :reorder :id id :dir :up}
+                                          (recur))
+                                        (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
+                                            (recur)))
+                      KeyType/ArrowDown
+                      (if (and (input/reorder-modifier? key) (pos? total))
+                        (if-let [id (:id (:target (nth visible-rows @selected)))]
+                          {:action :reorder :id id :dir :down}
+                          (recur))
+                        (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur)))
+                      KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
+                      KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                            (reset-list!)
+                                            (recur))
+                      ;; Plain printable character → filter query. Skip control
+                      ;; chars and Alt/Ctrl-modified keys (those are commands).
+                      KeyType/Character (let [c (key-character key)]
+                                          (when (and c
+                                                     (not (input/alt-modifier? key))
+                                                     (not (input/ctrl-modifier? key))
+                                                     (not (iso-control-character? c)))
+                                            (swap! query str c)
+                                            (reset-list!))
+                                          (recur))
+                      (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the

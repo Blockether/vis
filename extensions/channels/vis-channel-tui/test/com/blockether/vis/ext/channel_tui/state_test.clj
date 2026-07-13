@@ -1578,7 +1578,45 @@
         (expect (= "second\n\nthird" (input/input->text (:input db))))
         (expect (empty? (:pending-sends db)))
         (expect (some #{[:gateway-delete-queued "c1" "t-2"]} fx))
-        (expect (some #{[:gateway-delete-queued "c1" "t-3"]} fx)))))
+        (expect (some #{[:gateway-delete-queued "c1" "t-3"]} fx))))
+  (it "a send while a cancel is in flight never registers a gateway queued turn"
+      ;; Regression: cancel (`:cancelling?`) then immediately send. The send used
+      ;; to still fire `:gateway-enqueue`, registering a SERVER-SIDE queued turn.
+      ;; The cancel's restore deletes gateway records by :turn-id, but that id is
+      ;; bound LATE by an async round-trip — so the restore raced ahead, the
+      ;; orphaned turn survived and auto-drained (= SENT) while the text ALSO
+      ;; landed back in the editor: "sent AND queued at the same time". A send
+      ;; during a cancel must stay purely LOCAL so restore reclaims it cleanly.
+      (let [send-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :send-message)
+                :fn)
+
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :workspace {:workspace/root "."}
+             :loading? true
+             :cancelling? true
+             :input (input/empty-input)
+             :pastes {}
+             :paste-counter 0
+             :pending-sends []
+             :input-history []}
+
+            {:keys [fx] cancelling-db :db}
+            (send-fn db [:send-message "second" :main])
+
+            {normal-fx :fx}
+            (send-fn (assoc db :cancelling? false) [:send-message "second" :main])]
+
+        ;; cancel window: queued locally, NOTHING registered server-side.
+        (expect (not-any? #(= :gateway-enqueue (first %)) fx))
+        (expect (= ["second"] (mapv :text (:pending-sends cancelling-db))))
+        ;; normal in-flight queue (not cancelling) still registers server-side.
+        (expect (some #(= :gateway-enqueue (first %)) normal-fx)))))
 
 (defdescribe set-title-background-tab-test
              (it "relabels a background tab live without touching the active tab"

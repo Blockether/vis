@@ -2147,67 +2147,175 @@
          [:div.auth-card [:div.auth-mark code] [:p.tagline title] [:p.auth-error detail]
           [:p.auth-hint [:a {:href "/ui"} "← back to your sessions"]]]]))
 
+(defn- project-hue
+  "Stable 0-359 hue for a project id, so each project gets its OWN vivid accent
+   with no fixed palette to exhaust. Deterministic — the same project always
+   paints the same color across renders and across the drawer / pick modal."
+  [id]
+  (mod (reduce (fn [^long h ^Character c]
+                 (+ (unchecked-multiply 31 h) (int c)))
+               17
+               (str id))
+       360))
+
+(defn- project-accent
+  "CSS color for a project: its explicit `:color` (hex) when set, else a hashed
+   vivid hue. Fed to markup as the `--proj` custom property the CSS tints from."
+  [{:keys [id color]}]
+  (if (not-empty color) color (str "hsl(" (project-hue id) " 62% 58%)")))
+
+(defn- session-row-li
+  "One session row in the drawer: the bulk-select checkbox, the row link (active
+   highlight + running dot), and the hover actions — move-to-project + delete.
+   Shared by every project bucket AND the projectless list. When `reorder` is
+   supplied ({:pid :first? :last?}) the row also carries up/down controls that
+   move this PROJECT SESSION within its project (persisted via the gateway
+   reorder endpoint) — the web twin of dragging a TUI tab."
+  ([session active-sid] (session-row-li session active-sid nil))
+  ([{:keys [id title status]} active-sid reorder]
+   [:li.side-item
+    ;; bulk-delete checkbox - hidden until the aside carries .select-mode;
+    ;; checked rows ride hx-include to the confirm modal
+    [:input.side-check {:type "checkbox" :name "sid" :value (str id) :aria-label "Select session"}]
+    [:a
+     {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
+      :href (str "/ui/session/" id)} [:span.side-title (or title "Untitled")]
+     (when (= status "running") [:span.side-dot])]
+    ;; hover-revealed reorder: move this project session up / down (movable tabs)
+    (when reorder
+      [:span.side-reorder
+       [:button.side-move-up
+        {:type "button"
+         :disabled (boolean (:first? reorder))
+         :aria-label "Move session up"
+         :hx-post (str "/ui/session/" id "/reorder")
+         :hx-vals "{\"dir\":\"up\"}"
+         :hx-swap "none"} "↑"]
+       [:button.side-move-down
+        {:type "button"
+         :disabled (boolean (:last? reorder))
+         :aria-label "Move session down"
+         :hx-post (str "/ui/session/" id "/reorder")
+         :hx-vals "{\"dir\":\"down\"}"
+         :hx-swap "none"} "↓"]])
+    ;; hover-revealed move: open the project picker for THIS session
+    [:button.side-move
+     {:type "button"
+      :aria-label "Move to project"
+      :hx-get (str "/ui/session/" id "/move")
+      :hx-target "#modal"
+      :hx-swap "innerHTML"} (icon "folder")]
+    ;; hover-revealed delete - DELETE /ui/session/:sid (TUI Ctrl+D parity)
+    [:button.side-del
+     {:type "button"
+      :aria-label "Delete session"
+      :hx-get (str "/ui/session/" id "/delete")
+      :hx-target "#modal"
+      :hx-swap "innerHTML"} (icon "x")]]))
+
+
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
    can re-render titles and running dots without replacing the <aside>
    (which carries the sse-swap target itself). Select-mode (bulk delete)
    is a CSS class on the <aside> toggled in ui.js, so it SURVIVES the
-   SSE innerHTML re-render."
+   SSE innerHTML re-render.
+
+   Sessions are grouped into persistent PROJECTS (the web twin of the TUI
+   navigator's Ctrl+B move-to-project): each project is a colored section
+   listing its project sessions, projectless sessions fall to the bottom list."
   [active-sid]
-  (list [:div.side-head
-         [:form.newchat {:method "post" :action "/ui/sessions"}
-          [:button.newchat-btn {:type "submit"} [:span.newchat-plus "+"] "New session"]]
-         [:button.side-select-toggle
-          {:type "button" :data-select-toggle "1" :aria-label "Select sessions"}
-          [:span.when-idle "Select"] [:span.when-select "Done"]]]
-        [:ul.side-sessions
-         (for [{:keys [id title status]} (vis/gateway-list-sessions)]
-           [:li.side-item
-            ;; bulk-delete checkbox - hidden until the aside carries
-            ;; .select-mode; checked rows ride hx-include to the confirm modal
-            [:input.side-check
-             {:type "checkbox" :name "sid" :value (str id) :aria-label "Select session"}]
-            [:a
-             {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
-              :href (str "/ui/session/" id)} [:span.side-title (or title "Untitled")]
-             (when (= status "running") [:span.side-dot])]
-            ;; hover-revealed delete - DELETE /ui/session/:sid (the gateway
-            ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
-            [:button.side-del
-             {:type "button"
-              :aria-label "Delete session"
-              :hx-get (str "/ui/session/" id "/delete")
-              :hx-target "#modal"
-              :hx-swap "innerHTML"} (icon "x")]])]
-        ;; select-mode action bar - the confirm modal receives the checked ids
-        ;; as repeated `sid` query params via hx-include
-        [:div.side-bulkbar
-         [:button.btn-danger.side-bulk-del
-          {:type "button"
-           :disabled true
-           :hx-get "/ui/sessions/delete"
-           :hx-include ".side-check:checked"
-           :hx-target "#modal"
-           :hx-swap "innerHTML"} "Delete selected"]]
-        ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
-        ;; in the cramped mobile header.
-        [:div.side-foot
-         [:button.side-foot-btn
-          {:type "button"
-           :aria-label "Providers"
-           :hx-get (str "/ui/session/" active-sid "/providers")
-           :hx-target "#modal"
-           :hx-swap "innerHTML"} (icon "zap") [:span "Providers"]]
-         [:button.side-foot-btn
-          {:type "button"
-           :aria-label "Settings"
-           :hx-get "/ui/settings"
-           :hx-target "#modal"
-           :hx-swap "innerHTML"} (icon "settings") [:span "Settings"]]
-         [:a.side-foot-btn
-          {:href (str "/ui/session/" active-sid "/export.html")
-           :download true
-           :aria-label "Export transcript as HTML"} (icon "download") [:span "Export"]]]))
+  (let [sessions
+        (vis/gateway-list-sessions)
+
+        projects
+        (try (vis/gateway-list-projects {:channel :web}) (catch Throwable _ nil))
+
+        by-project
+        (group-by #(some-> (:project_id %)
+                           str)
+                  sessions)
+
+        no-project
+        (get by-project nil)
+
+        ordered
+        (sort-by (juxt :position :name) projects)]
+
+    (list [:div.side-head
+           [:form.newchat {:method "post" :action "/ui/sessions"}
+            [:button.newchat-btn {:type "submit"} [:span.newchat-plus "+"] "New session"]]
+           ;; create a persistent project for organizing sessions
+           [:button.side-newproject
+            {:type "button"
+             :aria-label "New project"
+             :hx-get "/ui/projects/new"
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} (icon "folder-plus")]
+           [:button.side-select-toggle
+            {:type "button" :data-select-toggle "1" :aria-label "Select sessions"}
+            [:span.when-idle "Select"] [:span.when-select "Done"]]]
+          ;; ONE scroll region wraps every project section AND the projectless list
+          [:div.side-scroll
+           (for [p
+                 ordered
+
+                 :let [members
+                       (vec (sort-by (juxt :project_position :name) (get by-project (str (:id p)))))
+
+                       last-idx
+                       (dec (count members))]]
+
+             [:section.side-project {:style (str "--proj:" (project-accent p))}
+              [:div.side-project-head [:span.side-project-dot]
+               [:span.side-project-name (or (not-empty (:name p)) "Project")]
+               [:span.side-project-count (count members)]
+               [:button.side-project-edit
+                {:type "button"
+                 :aria-label "Manage project"
+                 :hx-get (str "/ui/projects/" (:id p))
+                 :hx-target "#modal"
+                 :hx-swap "innerHTML"} (icon "edit")]]
+              (if (seq members)
+                [:ul.side-list
+                 (map-indexed (fn [i s]
+                                (session-row-li
+                                  s
+                                  active-sid
+                                  {:pid (:id p) :first? (zero? i) :last? (= i last-idx)}))
+                              members)]
+                [:p.side-project-empty "empty — move a session here"])])
+           (when (and (seq ordered) (seq no-project)) [:div.side-project-label "No project"])
+           [:ul.side-list (map #(session-row-li % active-sid) no-project)]]
+          ;; select-mode action bar - the confirm modal receives the checked ids
+          ;; as repeated `sid` query params via hx-include
+          [:div.side-bulkbar
+           [:button.btn-danger.side-bulk-del
+            {:type "button"
+             :disabled true
+             :hx-get "/ui/sessions/delete"
+             :hx-include ".side-check:checked"
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} "Delete selected"]]
+          ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
+          ;; in the cramped mobile header.
+          [:div.side-foot
+           [:button.side-foot-btn
+            {:type "button"
+             :aria-label "Providers"
+             :hx-get (str "/ui/session/" active-sid "/providers")
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} (icon "zap") [:span "Providers"]]
+           [:button.side-foot-btn
+            {:type "button"
+             :aria-label "Settings"
+             :hx-get "/ui/settings"
+             :hx-target "#modal"
+             :hx-swap "innerHTML"} (icon "settings") [:span "Settings"]]
+           [:a.side-foot-btn
+            {:href (str "/ui/session/" active-sid "/export.html")
+             :download true
+             :aria-label "Export transcript as HTML"} (icon "download") [:span "Export"]]])))
 
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
@@ -3074,6 +3182,200 @@
     {:status 200
      :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
+;; ── Projects: create / rename / delete / move project sessions ───────
+;;
+;; The web twin of the TUI navigator's Ctrl+B move-to-project. All four
+;; mutations flow through the SAME gateway projects API the TUI uses
+;; (`vis/gateway-*-project!`, channel "web") and answer with HX-Refresh so the
+;; project sidebar (`sidebar-content`) re-renders in one hop.
+
+(defn- hx-refresh
+  "Empty response that tells htmx to reload the page — the simplest reliable
+   way to re-render the whole project sidebar after a mutation."
+  []
+  {:status 200 :headers {"HX-Refresh" "true"} :body ""})
+
+(defn- path-project-id
+  "Parse the `:pid` path param into a UUID (nil when absent / malformed)."
+  [request]
+  (some-> (get-in request [:path-params :pid])
+          parse-uuid))
+
+(defn- web-projects
+  "Web-channel projects, newest gateway view. Never throws — an unreachable
+   daemon yields nil (the drawer then shows only projectless sessions)."
+  []
+  (try (vis/gateway-list-projects {:channel :web}) (catch Throwable _ nil)))
+
+(defn- new-project-modal-handler
+  "GET /ui/projects/new — name a new project."
+  [_request]
+  {:status 200
+   :headers {"Content-Type" "text/html; charset=utf-8"}
+   :body
+   (modal-shell
+     "New project"
+     [:form.proj-form {:hx-post "/ui/projects" :hx-swap "none"}
+      [:input.proj-input
+       {:type "text" :name "name" :autocomplete "off" :autofocus true :placeholder "Project name"}]
+      [:div.proj-actions [:button.btn-ghost {:type "button" :data-close-modal "x"} "Cancel"]
+       [:button.btn-primary {:type "submit"} "Create project"]]])})
+
+(defn- create-project-handler
+  "POST /ui/projects {name} — create a web project, then refresh the drawer."
+  [request]
+  (let [name (str/trim (str (get-in request [:form-params "name"])))]
+    (when-not (str/blank? name)
+      (try (vis/gateway-create-project! {:name name :channel "web"}) (catch Throwable _ nil)))
+    (hx-refresh)))
+
+(defn- manage-project-handler
+  "GET /ui/projects/:pid — rename OR delete a project."
+  [request]
+  (let [pid
+        (path-project-id request)
+
+        p
+        (some #(when (= (str (:id %)) (str pid)) %) (web-projects))]
+
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (modal-shell
+             "Manage project"
+             [:form.proj-form {:hx-post (str "/ui/projects/" pid "/rename") :hx-swap "none"}
+              [:input.proj-input
+               {:type "text"
+                :name "name"
+                :autocomplete "off"
+                :autofocus true
+                :value (or (:name p) "")
+                :placeholder "Project name"}]
+              [:div.proj-actions
+               [:button.btn-danger
+                {:type "button" :hx-post (str "/ui/projects/" pid "/delete") :hx-swap "none"}
+                "Delete"] [:span.proj-actions-spacer]
+               [:button.btn-ghost {:type "button" :data-close-modal "x"} "Cancel"]
+               [:button.btn-primary {:type "submit"} "Save"]]])}))
+
+(defn- rename-project-handler
+  "POST /ui/projects/:pid/rename {name} — rename a project."
+  [request]
+  (let [pid
+        (path-project-id request)
+
+        name
+        (str/trim (str (get-in request [:form-params "name"])))]
+
+    (when (and pid (not (str/blank? name)))
+      (try (vis/gateway-update-project! pid {:name name}) (catch Throwable _ nil)))
+    (hx-refresh)))
+
+(defn- delete-project-handler
+  "POST /ui/projects/:pid/delete — delete a project; its project sessions
+   scatter back to projectless (never deleted)."
+  [request]
+  (when-let [pid (path-project-id request)]
+    (try (vis/gateway-delete-project! pid) (catch Throwable _ nil)))
+  (hx-refresh))
+
+(defn- move-session-modal-handler
+  "GET /ui/session/:sid/move — pick a project for THIS session (or clear it).
+   The current project is highlighted; a shortcut opens the new-project modal."
+  [request]
+  (let [sid
+        (some-> (get-in request [:path-params :sid])
+                parse-uuid)
+
+        cur
+        (some #(when (= (str (:id %)) (str sid)) (:project_id %)) (vis/gateway-list-sessions))
+
+        projects
+        (sort-by (juxt :position :name) (web-projects))]
+
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (modal-shell
+             "Move to project"
+             [:div.proj-pick
+              (for [p projects]
+                [:form {:hx-post (str "/ui/session/" sid "/move") :hx-swap "none"}
+                 [:input {:type "hidden" :name "project_id" :value (str (:id p))}]
+                 [:button.proj-pick-row
+                  {:type "submit"
+                   :class (when (= (str (:id p)) (str cur)) "current")
+                   :style (str "--proj:" (project-accent p))} [:span.side-project-dot]
+                  [:span.proj-pick-name (or (not-empty (:name p)) "Project")]
+                  [:span.side-project-count (:session_count p)]]])
+              [:form {:hx-post (str "/ui/session/" sid "/move") :hx-swap "none"}
+               [:input {:type "hidden" :name "project_id" :value ""}]
+               [:button.proj-pick-row.proj-pick-none {:type "submit"} (icon "x")
+                [:span "Remove from project"]]]
+              [:button.proj-pick-row.proj-pick-new
+               {:type "button" :hx-get "/ui/projects/new" :hx-target "#modal" :hx-swap "innerHTML"}
+               (icon "folder-plus") [:span "New project…"]]])}))
+
+(defn- assign-session-handler
+  "POST /ui/session/:sid/move {project_id} — assign (blank clears), then refresh."
+  [request]
+  (let [sid
+        (some-> (get-in request [:path-params :sid])
+                parse-uuid)
+
+        pid
+        (let [p (str/trim (str (get-in request [:form-params "project_id"])))]
+          (when-not (str/blank? p) p))]
+
+    (when sid (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil)))
+    (hx-refresh)))
+(defn- reorder-session-handler
+  "POST /ui/session/:sid/reorder {dir} — move THIS project session up or down
+   within its project and persist the new order via the gateway
+   (`gateway-reorder-project-sessions!`). The web twin of dragging a TUI tab."
+  [request]
+  (let [sid
+        (some-> (get-in request [:path-params :sid])
+                parse-uuid)
+
+        dir
+        (str/trim (str (get-in request [:form-params "dir"])))
+
+        sessions
+        (vis/gateway-list-sessions)
+
+        pid
+        (some #(when (= (str (:id %)) (str sid)) (:project_id %)) sessions)
+
+        ordered
+        (when pid
+          (->> sessions
+               (filter #(= (str (:project_id %)) (str pid)))
+               (sort-by (juxt :project_position :name))
+               (mapv #(str (:id %)))))
+
+        idx
+        (when ordered (.indexOf ^java.util.List ordered (str sid)))
+
+        swap-with
+        (when (and idx (>= idx 0))
+          (case dir
+            "up"
+            (when (> idx 0) (dec idx))
+
+            "down"
+            (when (< idx (dec (count ordered))) (inc idx))
+
+            nil))
+
+        reordered
+        (when swap-with
+          (assoc ordered
+            idx (nth ordered swap-with)
+            swap-with (nth ordered idx)))]
+
+    (when (and pid reordered)
+      (try (vis/gateway-reorder-project-sessions! pid reordered) (catch Throwable _ nil)))
+    (hx-refresh)))
+
 
 ;; ── Backgrounds (managed resources): progressive "add" flow ──────────
 ;;
@@ -5395,6 +5697,13 @@
    ["/ui/sessions/list" {:get #'sessions-list-handler}]
    ["/ui/sessions/delete"
     {:get #'delete-sessions-confirm-handler :post #'delete-sessions-bulk-handler}]
+   ["/ui/projects" {:post #'create-project-handler}]
+   ["/ui/projects/new" {:get #'new-project-modal-handler}]
+   ["/ui/projects/:pid" {:get #'manage-project-handler}]
+   ["/ui/projects/:pid/rename" {:post #'rename-project-handler}]
+   ["/ui/projects/:pid/delete" {:post #'delete-project-handler}]
+   ["/ui/session/:sid/move" {:get #'move-session-modal-handler :post #'assign-session-handler}]
+   ["/ui/session/:sid/reorder" {:post #'reorder-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler :delete #'delete-session-ui-handler}]
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/session/:sid/export.html" {:get #'export-handler}]

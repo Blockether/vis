@@ -538,6 +538,79 @@ padding-top:.55rem;border-top:1px solid var(--line)}
 padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .side-foot-btn:hover{background:var(--hover)}
 .side-foot-btn .icon{color:var(--dim);flex:none}
+/* ── session projects (folders) ───────────────────────────────────── */
+/* new-project button, sits between +New session and Select in the head */
+.side-newproject{flex:none;display:flex;align-items:center;justify-content:center;
+  width:2rem;height:2rem;border-radius:var(--r-md);border:1px solid var(--line2);
+  color:var(--dim);background:transparent;transition:background .1s,color .1s,border-color .1s}
+.side-newproject:hover{background:var(--hover);color:var(--accent);border-color:var(--accent)}
+.side-newproject .icon{width:15px;height:15px}
+/* the single scroll region wrapping every project + the ungrouped list */
+.side-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.5rem}
+.side-list{display:flex;flex-direction:column;gap:.15rem;list-style:none;margin:0;padding:0}
+/* a project card: colored left rail + a faint tint of its own accent */
+.side-project{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;
+  background:color-mix(in srgb,var(--proj) 5%,transparent)}
+.side-project-head{display:flex;align-items:center;gap:.45rem;padding:.4rem .5rem;
+  border-left:3px solid var(--proj);background:color-mix(in srgb,var(--proj) 11%,transparent)}
+.side-project-dot{flex:none;width:9px;height:9px;border-radius:var(--r-circle);background:var(--proj);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--proj) 22%,transparent)}
+.side-project-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:.82rem;font-weight:650;letter-spacing:.01em}
+.side-project-count{flex:none;font-size:.66rem;font-weight:700;padding:.05rem .42rem;border-radius:var(--r-pill);
+  color:var(--proj);background:color-mix(in srgb,var(--proj) 18%,transparent)}
+.side-project-edit{flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border-radius:var(--r-xs);color:var(--dim);opacity:0;transition:opacity .1s,background .1s,color .1s}
+.side-project:hover .side-project-edit,.side-project:focus-within .side-project-edit{opacity:1}
+.side-project-edit:hover{background:var(--hover);color:var(--proj)}
+.side-project-edit .icon{width:13px;height:13px}
+.side-project .side-list{padding:.25rem .3rem .3rem}
+/* a session's running dot borrows its project's accent, so the whole card reads as one color */
+.side-project .side-dot{background:var(--proj);box-shadow:0 0 0 2px color-mix(in srgb,var(--proj) 25%,transparent)}
+.side-project .side-row.active{background:color-mix(in srgb,var(--proj) 9%,var(--surface))}
+.side-project-empty{margin:0;padding:.4rem .55rem .5rem;font-size:.74rem;color:var(--dim)}
+.side-project-label{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--dim);padding:.1rem .3rem .05rem}
+/* per-session move-to-project button, hover-revealed left of delete */
+.side-move{position:absolute;right:2.05rem;top:50%;transform:translateY(-50%);
+  width:22px;height:22px;border-radius:var(--r-xs);color:var(--dim);
+  display:flex;align-items:center;justify-content:center;opacity:0;
+  transition:background .1s,color .1s,opacity .1s}
+.side-item:hover .side-move,.side-item:focus-within .side-move{opacity:1}
+.side-move .icon{width:13px;height:13px}
+.side-move:hover{background:var(--hover);color:var(--accent)}
+.side-item .side-row{padding-right:3.7rem}
+.sidebar.select-mode .side-move{display:none}
+/* per-project-session reorder arrows (movable tabs), hover-revealed left of move */
+.side-reorder{position:absolute;right:3.55rem;top:50%;transform:translateY(-50%);
+  display:flex;gap:1px;opacity:0;transition:opacity .1s}
+.side-item:hover .side-reorder,.side-item:focus-within .side-reorder{opacity:1}
+.side-reorder button{width:16px;height:22px;border:0;background:transparent;cursor:pointer;
+  color:var(--dim);font-size:11px;line-height:1;border-radius:var(--r-xs);padding:0;
+  display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s}
+.side-reorder button:hover:not(:disabled){background:var(--hover);color:var(--proj,var(--accent))}
+.side-reorder button:disabled{opacity:.25;cursor:default}
+.side-item:has(.side-reorder) .side-row{padding-right:5.35rem}
+.sidebar.select-mode .side-reorder{display:none}
+/* new / manage project modal */
+.proj-form{display:flex;flex-direction:column;gap:1rem}
+.proj-input{width:100%;padding:var(--field-py) var(--field-px);border:1px solid var(--line2);
+  border-radius:var(--r-sm);background:var(--bg);color:var(--fg);font:inherit;font-size:.9rem}
+.proj-input:focus{outline:0;border-color:var(--primary)}
+.proj-actions{display:flex;align-items:center;gap:.5rem;justify-content:flex-end}
+.proj-actions-spacer{flex:1}
+/* move-to-project picker: one colored row per project + clear/new shortcuts */
+.proj-pick{display:flex;flex-direction:column;gap:.25rem}
+.proj-pick form{margin:0}
+.proj-pick-row{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;
+  padding:.5rem .6rem;border-radius:var(--r-md);border:1px solid transparent;color:var(--fg);
+  font-size:.86rem;background:transparent;cursor:pointer;transition:background .1s,border-color .1s}
+.proj-pick-row:hover{background:var(--hover)}
+.proj-pick-row.current{border-color:var(--proj);background:color-mix(in srgb,var(--proj) 10%,transparent)}
+.proj-pick-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.proj-pick-none .icon,.proj-pick-new .icon{flex:none;width:15px;height:15px;color:var(--dim)}
+.proj-pick-new{color:var(--accent);font-weight:600}
+.proj-pick-new .icon{color:var(--accent)}
 /* ── add-directory filesystem picker modal ───────────────────────── */
 .dir-browser{display:flex;flex-direction:column;gap:1.15rem}
 /* intro: one-sentence explanation in a soft info panel, with clear space

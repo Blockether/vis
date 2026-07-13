@@ -69,6 +69,15 @@
    instead of 250 fat hits the wire clip would then chop mid-structure."
   (* 50 1024))
 
+(def ^:private rg-breadth-probe-limit
+  "Max EXTRA files probed for breadth AFTER a content/files result hits its
+   display cap. Past the cap rg keeps short-circuit-probing candidate files to
+   report a true `total_file_count`; this bounds that tail so a hostile-needle
+   full-tree scan (fff disabled) can't turn a truncated result into a whole-tree
+   sweep. When the budget is exhausted `total_file_count` is a LOWER bound
+   (`total_file_count_is_exact` false)."
+  5000)
+
 (def ^:private rg-fff-scan-timeout-ms
   "Ceiling on how long `rg-fff-open` blocks for fff's initial scan (paths +
    content index) to COMPLETE before the instance is usable. wait-for-scan
@@ -1977,11 +1986,11 @@
    picked by `:is_files_only` / (default content).
 
    Returns one of:
-     {:hits   [{:path :line :text :anchor :before? :after?} ...] :truncated-by KW}  ;; content
+     {:hits   [{:path :line :text :anchor :before? :after?} ...] :truncated-by KW :total-file-count N :total-file-count-exact? BOOL}  ;; content
    `:anchor` is the `<lineno>:<hash>` anchor for that line — the same one `cat`
    emits in `:anchors` — so a hit is directly patchable via `{:from_anchor <anchor>}`
    without a follow-up `cat`. Absent on blank lines.
-     {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
+     {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW :total-file-count N :total-file-count-exact? BOOL}  ;; files-only
 
    `:truncated-by` is `:limit` (hit count), `:bytes` (total-bytes budget), or
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
@@ -2070,60 +2079,101 @@
              (mapv second)
              (rg-fff-candidate-files roots needles))]
 
-    (cond is_files_only (let [out
-                              (atom [])
+    (cond
+      is_files_only (let [out
+                          (atom [])
 
-                              capped?
-                              (atom false)]
+                          capped?
+                          (atom false)
 
-                          (doseq [^File f
-                                  files
+                          total-files
+                          (atom 0)
 
-                                  :while (not @capped?)]
+                          probed-extra
+                          (atom 0)
 
-                            ;; the scan phase reads every candidate file —
-                            ;; poll so Esc/timeout aborts mid-sweep
-                            (check-interrupt!)
-                            (when (file-has-any-hit? f matches?)
-                              (swap! out conj (rel-path f))
-                              (when (>= (count @out) limit) (reset! capped? true))))
-                          {:files (vec @out) :truncated-by (if @capped? :limit :end-of-results)})
-          :else (let [out
-                      (atom [])
+                          breadth-capped?
+                          (atom false)]
 
-                      bytes-used
-                      (atom 0)
+                      ;; the scan phase reads every candidate file — poll so Esc/timeout
+                      ;; aborts mid-sweep. Past the display cap we keep short-circuit-probing
+                      ;; candidate files to report TRUE breadth (`total_file_count`), bounded
+                      ;; by `rg-breadth-probe-limit` so a hostile-needle full-tree scan (fff
+                      ;; disabled) can't turn a truncated result into a whole-tree sweep.
+                      (doseq [^File f
+                              files
 
-                      cap-reason
-                      (atom nil)]
+                              :while (not @breadth-capped?)]
+
+                        (check-interrupt!)
+                        (if @capped?
+                          (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
+                              (when (>= (swap! probed-extra inc) rg-breadth-probe-limit)
+                                (reset! breadth-capped? true)))
+                          (when (file-has-any-hit? f matches?)
+                            (swap! total-files inc)
+                            (swap! out conj (rel-path f))
+                            (when (>= (count @out) limit) (reset! capped? true)))))
+                      {:files (vec @out)
+                       :truncated-by (if @capped? :limit :end-of-results)
+                       :total-file-count @total-files
+                       :total-file-count-exact? (not @breadth-capped?)})
+      :else (let [out
+                  (atom [])
+
+                  bytes-used
+                  (atom 0)
+
+                  cap-reason
+                  (atom nil)
 
                   ;; nil | :limit | :bytes
-                  (doseq [^File f
-                          files
+                  total-files
+                  (atom 0)
 
-                          :while (not @cap-reason)]
+                  probed-extra
+                  (atom 0)
 
-                    ;; the scan phase reads every candidate file — poll so
-                    ;; Esc/timeout aborts mid-sweep
-                    (check-interrupt!)
-                    (let [hits (search-file-content f matches? before-ctx after-ctx)]
-                      (when (seq hits)
-                        ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
-                        ;; :text is kept FULL — it's the model's data, sliceable in Python
-                        ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
-                        ;; Stop on the hit limit OR the total-bytes budget (whichever first).
-                        (doseq [hit hits
-                                :while (not @cap-reason)]
+                  breadth-capped?
+                  (atom false)]
 
-                          (let [hit* (cond-> hit
-                                       (not (str/blank? (:text hit)))
-                                       (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
-                            (swap! out conj hit*)
-                            (swap! bytes-used + (hit-bytes hit*))
-                            (cond (>= (count @out) limit) (reset! cap-reason :limit)
-                                  (>= @bytes-used max-rg-result-bytes) (reset! cap-reason
-                                                                         :bytes)))))))
-                  {:hits (vec @out) :truncated-by (or @cap-reason :end-of-results)}))))
+              (doseq [^File f
+                      files
+
+                      :while (not @breadth-capped?)]
+
+                ;; the scan phase reads every candidate file — poll so Esc/timeout
+                ;; aborts mid-sweep
+                (check-interrupt!)
+                (if @cap-reason
+                  ;; DISPLAY is full — keep counting matching files for breadth via a
+                  ;; short-circuit probe (no hit objects/context, so the tail stays
+                  ;; cheap), bounded by `rg-breadth-probe-limit`.
+                  (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
+                      (when (>= (swap! probed-extra inc) rg-breadth-probe-limit)
+                        (reset! breadth-capped? true)))
+                  (let [hits (search-file-content f matches? before-ctx after-ctx)]
+                    (when (seq hits)
+                      (swap! total-files inc)
+                      ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
+                      ;; :text is kept FULL — it's the model's data, sliceable in Python
+                      ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
+                      ;; Stop on the hit limit OR the total-bytes budget (whichever first).
+                      (doseq [hit hits
+                              :while (not @cap-reason)]
+
+                        (let [hit* (cond-> hit
+                                     (not (str/blank? (:text hit)))
+                                     (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
+                          (swap! out conj hit*)
+                          (swap! bytes-used + (hit-bytes hit*))
+                          (cond (>= (count @out) limit) (reset! cap-reason :limit)
+                                (>= @bytes-used max-rg-result-bytes) (reset! cap-reason
+                                                                       :bytes))))))))
+              {:hits (vec @out)
+               :truncated-by (or @cap-reason :end-of-results)
+               :total-file-count @total-files
+               :total-file-count-exact? (not @breadth-capped?)}))))
 
 ;; =============================================================================
 ;; Thin babashka.fs wrappers
@@ -3286,7 +3336,11 @@
      content:       {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\", \"first_hit\"}
      is_files_only: {\"files\": [...], \"file_count\"}
    The content value is ALWAYS a `{\"text\": line}` map (ONE uniform shape); WITH
-   context it ALSO carries \"before\"/\"after\" {anchor: text} maps.
+   context it ALSO carries \"before\"/\"after\" {anchor: text} maps. `hit_count` and
+   `file_count` count what's SHOWN; a multi-file result adds `file_counts`
+   {path: n} — the shown files ranked hottest-first (skip the Counter). When MORE
+   files match than shown, `total_file_count` reports the true breadth (a LOWER
+   bound, flagged `total_file_count_is_exact` false, if the breadth probe capped).
    Gotcha: each \"matches\" key is a \"lineno:hash\" anchor — pass it AS patch from_anchor."
   [& args]
   ;; Accept either a single spec map OR inline kwargs. Manual dispatch
@@ -3359,6 +3413,12 @@
                 by-path
                 (group-by :path hits)
 
+                total-files
+                (:total-file-count out)
+
+                more-files?
+                (> total-files (count ordered-paths))
+
                 ;; Grouped by file → each file is an ORDERED
                 ;; `{match-anchor → value}` map (a LinkedHashMap, so it
                 ;; serializes in line order). The path is stated ONCE (the
@@ -3382,22 +3442,55 @@
                                 (seq after)
                                 (assoc "after" (patch/lines->anchor-map after)))))
                       (.put mm p fm)))
-                  mm)]
+                  mm)
 
-            (assoc shared
-              "matches" matches
-              "hit_count" (count hits)
-              "file_count" (count ordered-paths)
-              "first_hit" (when (pos? (count hits))
-                            (let [{:keys [path line]} (nth hits 0)]
-                              (str path ":" line)))
-              "context" (when (pos? context) {"before" context "after" context})))
+                ;; Per-file hit counts for the SHOWN files, ranked hottest-first
+                ;; — saves the model a `Counter` over `matches`, and doubles as a
+                ;; top-files view. Keys mirror `matches` (shown files only); the
+                ;; hottest file's count can be partial when a cap cut it mid-file.
+                file-counts
+                (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+                  (doseq [p (sort-by (fn [p]
+                                       [(- (count (get by-path p))) p])
+                                     ordered-paths)]
+                    (.put fc p (count (get by-path p))))
+                  fc)]
+
+            (cond-> (assoc shared
+                      "matches" matches
+                      "hit_count" (count hits)
+                      "file_count" (count ordered-paths)
+                      "first_hit" (when (pos? (count hits))
+                                    (let [{:keys [path line]} (nth hits 0)]
+                                      (str path ":" line)))
+                      "context" (when (pos? context) {"before" context "after" context}))
+              (> (count ordered-paths) 1)
+              (assoc "file_counts" file-counts)
+
+              more-files?
+              (assoc "total_file_count" total-files)
+
+              (and more-files? (not (:total-file-count-exact? out)))
+              (assoc "total_file_count_is_exact" false)))
 
           :files-only
-          (let [files (vec (:files out))]
-            (assoc shared
-              "files" files
-              "file_count" (count files))))]
+          (let [files
+                (vec (:files out))
+
+                total-files
+                (:total-file-count out)
+
+                more-files?
+                (> total-files (count files))]
+
+            (cond-> (assoc shared
+                      "files" files
+                      "file_count" (count files))
+              more-files?
+              (assoc "total_file_count" total-files)
+
+              (and more-files? (not (:total-file-count-exact? out)))
+              (assoc "total_file_count_is_exact" false))))]
 
     (tool-success {:op :rg
                    :path (if (= 1 (count paths)) (first paths) ".")
@@ -3881,13 +3974,17 @@
   "Structural outline of a source file — a high-level, line-ranged skeleton via
    tree-sitter. Read this BEFORE cat: it maps each definition, nested by
    structure, to one line:
-     <kind> <visibility> <name>  <signature>  @<start-anchor>..<end-anchor>
-   with the first line of its doc string on an indented line below (when present).
-   So you get kind (function/constant/…), visibility (public/private), the exact
-   name, the arglist, the docstring gist, and the full start..end span — WITHOUT
-   reading the body; cat just the range you need instead of the whole file. The
-   <name> is the VERBATIM `struct_patch` target: copy it as-is (it is already
-   clean — no `^:private`/type-hint noise), and pair it with <kind> when two defs
+     <kind> [private] <name>  <signature>  @<start-anchor>..<end-anchor>
+   with the first line of its doc/comment gist on an indented line below (when
+   present) — for JS/TS/TSX that's the leading `//`/JSDoc comment above the def.
+   So you get kind (function/constant/…), a `private` marker only when the def is
+   private (public is the default and stays implicit), the exact name, the
+   arglist, the doc/comment gist, and the full start..end span — WITHOUT reading
+   the body. To read ONE definition's SOURCE, `cat` exactly its span — pass the
+   row's anchors: cat(path, {\"anchor\": [<start-anchor>, <end-anchor>]}) — instead
+   of the whole file. The <name> is the VERBATIM `struct_patch` target: copy it
+   as-is (it is already clean — no `^:private`/type-hint noise), and pair it with
+   <kind> when two defs
    share a name.
      await outline(path)
    Returns {\"skeleton\": \"...\", \"definitions\": [{\"name\",\"kind\",\"visibility\",
@@ -4487,26 +4584,29 @@
        (catch Throwable _ true)))    ;; any failure → fail OPEN
 
 (def outline-symbol
-  (vis/symbol #'outline-tool
-              {:symbol 'outline
-               :native-tool? true
-               :active-fn structural-supported?
-               :description
-               (str "Structural skeleton of a CODE file via tree-sitter: every definition "
-                    "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
-                    "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
-                    "jump straight to the range you need (then `cat` that range), and to patch a "
-                    "whole def straight from its anchors. Returns a structured `definitions` list "
-                    "(each row the SAME shape as an `occurrences` definition: name/kind/visibility/"
-                    "signature/doc/anchor/end_anchor + nesting depth) beside the human `skeleton`.")
-               :render render-outline-result
-               :color-role :tool-color/read
-               :schema {:type "object"
-                        :properties {"path" {:type "string" :description "Path to a source file."}}
-                        :required ["path"]}
-               :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
-               :tag :observation
-               :on-error-fn (tool-failure-on-error :outline :file nil)}))
+  (vis/symbol
+    #'outline-tool
+    {:symbol 'outline
+     :native-tool? true
+     :active-fn structural-supported?
+     :description
+     (str
+       "Structural skeleton of a CODE file via tree-sitter: every definition "
+       "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
+       "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
+       "jump straight to the range you need — then `cat` that def's anchors, "
+       "cat(path, {anchor: [start_anchor, end_anchor]}), to read that ONE def's source — and to patch a "
+       "whole def straight from its anchors. Returns a structured `definitions` list "
+       "(each row the SAME shape as an `occurrences` definition: name/kind/visibility/"
+       "signature/doc/anchor/end_anchor + nesting depth) beside the human `skeleton`.")
+     :render render-outline-result
+     :color-role :tool-color/read
+     :schema {:type "object"
+              :properties {"path" {:type "string" :description "Path to a source file."}}
+              :required ["path"]}
+     :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :outline :file nil)}))
 
 (def cat-symbol
   (vis/symbol

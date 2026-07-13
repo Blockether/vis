@@ -405,6 +405,38 @@
            :zai-thinking :reasoning-effort?
            false))))))
 
+(def ^:private boot-token-timeout-ms
+  "Upper bound on a synchronous boot-time token fetch (OAuth `get-token-fn`).
+   `->svar-provider` resolves a token per keyless provider WHILE the router
+   builds, and the router builds on the startup path — so a hung/slow token
+   endpoint would stall the first frame indefinitely. Bounding it lets the
+   provider be skipped (→ onboarding) instead of blocking startup."
+  15000)
+
+(defn- with-boot-token-timeout
+  "Run token-resolving `thunk` on a worker bounded by `boot-token-timeout-ms`.
+   On timeout, cancel and throw so the router build skips this provider (a
+   timeout is transport-shaped, never auth-shaped, so it never triggers the
+   refresh-before-drop path) rather than hanging first paint."
+  [pid thunk]
+  (let [fut
+        (future (thunk))
+
+        v
+        (deref fut boot-token-timeout-ms ::timeout)]
+
+    (if (= v ::timeout)
+      (do (future-cancel fut)
+          (throw (ex-info (str "Provider "
+                               (some-> pid
+                                       name)
+                               " token fetch timed out after "
+                               boot-token-timeout-ms
+                               "ms")
+                          {:type :vis/token-timeout :provider pid})))
+      v)))
+
+
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
@@ -473,7 +505,7 @@
 
     (if get-token-fn
       (let [{:keys [token api-url llm-headers responses-path]}
-            (get-token-fn)
+            (with-boot-token-timeout pid get-token-fn)
 
             url
             (provider-token-base-url pid explicit-url api-url)

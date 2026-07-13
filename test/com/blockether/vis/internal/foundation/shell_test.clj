@@ -16,6 +16,7 @@
 (def ^:private render-shell-run-result @#'shell/render-shell-run-result)
 (def ^:private render-shell-bg-result @#'shell/render-shell-bg-result)
 (def ^:private render-shell-logs-result @#'shell/render-shell-logs-result)
+(def ^:private format-shell-command @#'shell/format-shell-command)
 
 (defn- with-shell-on
   [f]
@@ -280,6 +281,22 @@
         (expect (str/includes? (:body card) "**COMMAND**"))
         (expect (str/includes? (:body card) "**STATUS**"))
         (expect (str/includes? (:body card) "**STDOUT**"))))
+  (it "separates a compound command onto its own lines in the COMMAND card"
+      (let [card (render-shell-run-result {"cmd" "a; b && c" "exit" 0 "duration_ms" 1})]
+        (expect (str/includes? (:body card) "a;\nb &&\nc"))))
+  (it "pretty-prints top-level shell operators, quote/paren-aware"
+      ;; top-level ; && || each end their line
+      (expect (= "a;\nb &&\nc ||\nd" (format-shell-command "a; b && c || d")))
+      ;; separators inside quotes stay put
+      (expect (= "echo 'a; b && c'" (format-shell-command "echo 'a; b && c'")))
+      (expect (= "echo \"a; b\"" (format-shell-command "echo \"a; b\"")))
+      ;; separators nested in $(…) stay put; the top-level ; still breaks
+      (expect (= "x=$(f || g);\ny" (format-shell-command "x=$(f || g); y")))
+      ;; single & (background) and 2>&1 are never split
+      (expect (= "nohup ./x > log 2>&1 &" (format-shell-command "nohup ./x > log 2>&1 &")))
+      ;; a simple command comes back unchanged
+      (expect (= "ls -la" (format-shell-command "ls -la")))
+      (expect (= "" (format-shell-command nil))))
   (it "surfaces shell failures and timeouts on the collapsed chip"
       (expect (str/includes? (:summary (render-shell-run-result
                                          {"cmd" "grep nope missing" "exit" 2 "duration_ms" 34}))

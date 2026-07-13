@@ -3019,6 +3019,16 @@
     com.blockether.vis.internal.foundation.shim-matplotlib
     com.blockether.vis.internal.foundation.shim-requests
     com.blockether.vis.internal.foundation.shim-pytest
+    com.blockether.vis.internal.foundation.shim-pil
+    com.blockether.vis.internal.foundation.shim-numpy
+    com.blockether.vis.internal.foundation.shim-bs4
+    com.blockether.vis.internal.foundation.shim-pandas
+    com.blockether.vis.internal.foundation.shim-tabulate
+    com.blockether.vis.internal.foundation.shim-toml
+    com.blockether.vis.internal.foundation.shim-tzdata
+    com.blockether.vis.internal.foundation.shim-sqlite3
+    com.blockether.vis.internal.foundation.shim-httpx
+    com.blockether.vis.internal.foundation.shim-urllib3
     com.blockether.vis.internal.foundation.shim-attach])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`

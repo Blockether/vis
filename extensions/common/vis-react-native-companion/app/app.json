@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.blockether.vis",
       "buildNumber": "4",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "vis scans gateway pairing QR codes and captures optional image attachments."
       }
     },
     "android": {
@@ -42,6 +43,12 @@
         {
           "icon": "./assets/icon.png",
           "color": "#E0A83B"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "vis scans gateway pairing QR codes and captures optional image attachments."
         }
       ]
     ]

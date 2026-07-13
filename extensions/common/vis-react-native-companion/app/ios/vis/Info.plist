@@ -48,7 +48,7 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>vis scans gateway pairing QR codes and captures optional image attachments.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>vis records short voice prompts and transcribes them locally on your gateway.</string>
     <key>NSPhotoLibraryUsageDescription</key>

@@ -879,6 +879,45 @@ function Root() {
     [client, fail, projects, refreshSessions],
   );
 
+  /* Move a session up/down within its project's manual order (movable tabs).
+     Optimistically re-numbers project_position, then persists the full order. */
+  const reorderProject = useCallback(
+    async (session: SessionSoul, dir: "up" | "down") => {
+      const pid = session.project_id;
+      if (!pid) return;
+      const members = sessions
+        .filter((s) => s.project_id === pid)
+        .sort(
+          (a, b) =>
+            (a.project_position ?? 0) - (b.project_position ?? 0) ||
+            (b.last_active_at ?? 0) - (a.last_active_at ?? 0),
+        );
+      const idx = members.findIndex((s) => s.id === session.id);
+      const swapWith = dir === "up" ? idx - 1 : idx + 1;
+      if (idx < 0 || swapWith < 0 || swapWith >= members.length) return;
+      const reordered = [...members];
+      const a = reordered[idx]!;
+      reordered[idx] = reordered[swapWith]!;
+      reordered[swapWith] = a;
+      const order = reordered.map((s) => s.id);
+      const posById = new Map(order.map((id, i) => [id, i] as const));
+      setSessions((prev) =>
+        prev.map((s) =>
+          posById.has(s.id)
+            ? { ...s, project_position: posById.get(s.id)! }
+            : s,
+        ),
+      );
+      try {
+        await client.reorderProjectSessions(pid, order);
+      } catch (err) {
+        fail(err);
+        void refreshSessions();
+      }
+    },
+    [client, fail, sessions, refreshSessions],
+  );
+
   const openModelDialog = useCallback(async () => {
     setShowModel(true);
     setProviderReports({});
@@ -1220,6 +1259,7 @@ function Root() {
         onRenameProject={(g, name) => void renameProject(g, name)}
         onDeleteProject={(g) => void deleteProject(g)}
         onAssign={(s, gid) => void assignProject(s, gid)}
+        onReorder={(s, dir) => void reorderProject(s, dir)}
       />
 
       {/* ── settings — the web channel's Settings dialog, native ──── */}

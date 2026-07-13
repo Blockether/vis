@@ -134,3 +134,82 @@
     (is (= :skip (first (client/sse-event-action {:type "block.output" :turn_id "OTHER"} "t1"))))
     (is (= :skip
            (first (client/sse-event-action {:type "turn.completed" :turn_id "OTHER"} "t1"))))))
+
+(deftest terminal-event->result-unwires-nested-maps
+  (testing
+    "the wire munges :total-cost -> :total_cost; the client must restore
+           the KEBAB shape so meta-cost / the footer's session-cost-keys read it"
+    (let [t->r
+          (rv 'terminal-event->result)
+
+          ;; What `parse-json` yields after the SSE hop: nested map keys snake_cased.
+          event
+          {:type "turn.completed"
+           :turn_id "t1"
+           :cost {:total_cost 0.0123 :model "m" :provider "p"}
+           :tokens {:input 10 :cached_input 4 :output 2}}
+
+          result
+          (t->r event "t1")]
+
+      (is (= 0.0123 (get-in result [:cost :total-cost])) "cost total is kebab again")
+      (is (= "m" (get-in result [:cost :model])))
+      (is (= 4 (get-in result [:tokens :cached-input])) "token slots kebab too"))))
+
+(deftest read-events-until!-surfaces-disconnect
+  (testing
+    "a stream that never reaches a terminal event throws a clear
+           gateway-disconnected error (not a silent blank result) after the
+           reconnect budget is spent"
+    (let [reads (atom 0)]
+      (with-redefs-fn {(rv 'read-sse-stream!) (fn [_ _ _ _ _]
+                                                (swap! reads inc)
+                                                [:closed])
+                       (rv 'sse-reconnect-backoff-ms) 0
+                       (rv 'sse-reconnect-max-attempts) 2}
+        (fn []
+          (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+            (is (true? (:gateway-disconnected ex)))
+            (is (= 3 @reads) "initial attempt + 2 reconnects")))))))
+
+(deftest read-events-until!-reconnects-then-completes
+  (testing "a dropped stream reconnects and still returns the terminal event"
+    (let [scripted (atom [[:closed] [:terminal {:type "turn.completed" :turn_id "t1"}]])]
+      (with-redefs-fn {(rv 'read-sse-stream!) (fn [_ _ _ _ _]
+                                                (let [[r] @scripted]
+                                                  (swap! scripted rest)
+                                                  r))
+                       (rv 'sse-reconnect-backoff-ms) 0}
+        (fn []
+          (is (= {:type "turn.completed" :turn_id "t1"}
+                 ((rv 'read-events-until!) "s" 0 "t1" nil))))))))
+
+(deftest read-events-until!-reconnects-on-http-status
+  (testing
+    "a non-200 mid-turn (502/503 while the daemon restarts) is treated as a
+           drop and reconnected, same as an EOF — not rethrown as a bare error"
+    (let [reads (atom 0)]
+      (with-redefs-fn {(rv 'read-sse-stream!)
+                       (fn [_ _ _ _ _]
+                         (if (< @reads 2)
+                           (do (swap! reads inc)
+                               (throw (ex-info "gateway SSE HTTP 503" {:http-status 503})))
+                           (do (swap! reads inc)
+                               [:terminal {:type "turn.completed" :turn_id "t1"}])))
+                       (rv 'sse-reconnect-backoff-ms) 0}
+        (fn []
+          (is (= {:type "turn.completed" :turn_id "t1"} ((rv 'read-events-until!) "s" 0 "t1" nil)))
+          (is (= 3 @reads) "two 503 reconnects + the completing read"))))))
+
+(deftest read-events-until!-rethrows-non-http-ex-info
+  (testing "an ex-info WITHOUT :http-status is not swallowed as a drop"
+    (with-redefs-fn {(rv 'read-sse-stream!) (fn [_ _ _ _ _]
+                                              (throw (ex-info "boom" {:kaboom true})))
+                     (rv 'sse-reconnect-backoff-ms) 0}
+      (fn []
+        (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (true? (:kaboom ex))))))))

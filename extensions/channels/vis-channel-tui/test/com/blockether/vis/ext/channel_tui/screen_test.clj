@@ -476,10 +476,10 @@
                                               {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
 
                                              []))]
-      (let [old-summary
-            (session-summary :db {:id "old" :created-at #inst "2024-01-01T00:00:00.000-00:00"})
-            new-summary
-            (session-summary :db {:id "new" :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
+      (let [old-summary (session-summary {:id "old"
+                                          :created-at #inst "2024-01-01T00:00:00.000-00:00"})
+            new-summary (session-summary {:id "new"
+                                          :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
 
         (expect (= 1 (:turn-count old-summary)))
         (expect (= 2 (:turn-count new-summary)))

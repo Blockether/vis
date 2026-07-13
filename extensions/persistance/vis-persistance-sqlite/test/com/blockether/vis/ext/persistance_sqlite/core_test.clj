@@ -1966,105 +1966,150 @@
           (expect (= {} (persistance/db-native-results-for-tool-ids s nil #{"x"})))
           (expect (= {} (persistance/db-native-results-for-tool-ids s (random-uuid) #{"x"})))))))
 
-;; ─── session groups (folders) + ownership (V6) ───
+;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 
 (defdescribe
-  sqlite-session-group-test
+  sqlite-project-test
   (it
-    "creates channel-scoped groups, assigns sessions, and scatters on delete"
+    "creates channel-scoped projects, assigns sessions, and scatters on delete"
     (let [s
           (h/store)
 
-          g-tui
-          (persistance/db-create-group! s {:name "vis-core" :channel :tui :color "#4f8"})
+          p-tui
+          (persistance/db-create-project! s {:name "vis-core" :channel :tui :color "#4f8"})
 
-          g-x
-          (persistance/db-create-group! s {:name "side-proj"})
+          p-x
+          (persistance/db-create-project! s {:name "side-proj"})
 
           ; cross-channel (nil)
           ;; created shape + owner tag + auto-incrementing position
           _
-          (expect (= "vis-core" (:name g-tui)))
+          (expect (= "vis-core" (:name p-tui)))
 
           _
-          (expect (= :tui (:channel g-tui)))
+          (expect (= :tui (:channel p-tui)))
 
           _
-          (expect (= "local" (:owner-id g-tui)))
+          (expect (= "local" (:owner-id p-tui)))
 
           _
-          (expect (= 0 (:position g-tui)))
+          (expect (= 0 (:position p-tui)))
 
           _
-          (expect (= 1 (:position g-x)))
+          (expect (= 1 (:position p-x)))
 
-          ;; :tui view = tui-scoped group PLUS the cross-channel one
+          ;; :tui view = tui-scoped project PLUS the cross-channel one
           _
           (expect (= #{"vis-core" "side-proj"}
-                     (set (map :name (persistance/db-list-groups s {:channel :tui})))))
+                     (set (map :name (persistance/db-list-projects s {:channel :tui})))))
 
-          ;; :web view = only the cross-channel group (tui-scoped hidden)
+          ;; :web view = only the cross-channel project (tui-scoped hidden)
           _
           (expect (= #{"side-proj"}
-                     (set (map :name (persistance/db-list-groups s {:channel :web})))))
+                     (set (map :name (persistance/db-list-projects s {:channel :web})))))
 
           ;; assign a session; membership + live count reflect it
           sid
-          (h/store-session! s {:channel :tui :title "grouped one"})
+          (h/store-session! s {:channel :tui :title "project one"})
 
           _
-          (persistance/db-set-session-group! s sid (:id g-tui))
+          (persistance/db-set-session-project! s sid (:id p-tui))
 
           got
           (persistance/db-get-session s sid)
 
           _
-          (expect (= (:id g-tui) (:group-id got)))
+          (expect (= (:id p-tui) (:project-id got)))
 
           _
-          (expect (= "vis-core" (:group-name got)))
+          (expect (= "vis-core" (:project-name got)))
 
           _
           (expect (= "local" (:owner-id got)))
 
           _
-          (expect (= 1 (:session-count (persistance/db-get-group s (:id g-tui)))))
+          (expect (= 1 (:session-count (persistance/db-get-project s (:id p-tui)))))
 
-          ;; the group key rides the ONE list-sessions query (no per-row lookup)
+          ;; the project key rides the ONE list-sessions query (no per-row lookup)
           row
           (first (filter #(= sid (:id %)) (persistance/db-list-sessions s :all)))
 
           _
-          (expect (= "vis-core" (:group-name row)))
+          (expect (= "vis-core" (:project-name row)))
 
           ;; rename + recolor
           _
-          (persistance/db-update-group! s (:id g-tui) {:name "vis" :color "#abc"})
+          (persistance/db-update-project! s (:id p-tui) {:name "vis" :color "#abc"})
 
           _
-          (expect (= "vis" (:name (persistance/db-get-group s (:id g-tui)))))
+          (expect (= "vis" (:name (persistance/db-get-project s (:id p-tui)))))
 
           ;; archive hides from the default list, shows with :include-archived?
           _
-          (persistance/db-update-group! s (:id g-tui) {:archived? true})
+          (persistance/db-update-project! s (:id p-tui) {:archived? true})
 
           _
-          (expect (not (contains? (set (map :name (persistance/db-list-groups s {}))) "vis")))
+          (expect (not (contains? (set (map :name (persistance/db-list-projects s {}))) "vis")))
 
           _
           (expect (contains? (set (map :name
-                                       (persistance/db-list-groups s {:include-archived? true})))
+                                       (persistance/db-list-projects s {:include-archived? true})))
                              "vis"))
 
-          ;; delete SCATTERS members back to ungrouped - the conversation survives
+          ;; delete SCATTERS members back to project-less - the conversation survives
           _
-          (persistance/db-delete-group! s (:id g-tui))
+          (persistance/db-delete-project! s (:id p-tui))
 
           after
           (persistance/db-get-session s sid)]
 
       (expect (some? after))
-      (expect (nil? (:group-id after)))))
+      (expect (nil? (:project-id after)))))
+  (it
+    "keeps project sessions MOVABLE via project_position"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "movable" :channel :tui})
+
+          a
+          (h/store-session! s {:channel :tui :title "A"})
+
+          b
+          (h/store-session! s {:channel :tui :title "B"})
+
+          c
+          (h/store-session! s {:channel :tui :title "C"})
+
+          _
+          (doseq [sid [a b c]]
+            (persistance/db-set-session-project! s sid (:id p)))
+
+          ;; assignment APPENDS in order: A=0, B=1, C=2
+          order0
+          (->> (persistance/db-list-sessions s :all)
+               (filter #(= (:id p) (:project-id %)))
+               (sort-by :project-position)
+               (mapv :title))
+
+          _
+          (expect (= ["A" "B" "C"] order0))
+
+          ;; reorder to C, A, B
+          n
+          (persistance/db-reorder-project-sessions! s (:id p) [c a b])
+
+          _
+          (expect (= 3 n))
+
+          order1
+          (->> (persistance/db-list-sessions s :all)
+               (filter #(= (:id p) (:project-id %)))
+               (sort-by :project-position)
+               (mapv :title))]
+
+      (expect (= ["C" "A" "B"] order1))))
   (it "stamps a default owner on freshly created sessions"
       (let [s
             (h/store)

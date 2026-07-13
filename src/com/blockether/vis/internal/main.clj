@@ -2798,6 +2798,7 @@
      :host (get parsed "host")
      :token-file (get parsed "token-file")
      :require-token? (boolean (get parsed "require-token"))
+     :pair? (boolean (get parsed "pair"))
      :managed? (= "1" (System/getenv "VIS_GATEWAY_MANAGED"))
      :db (config/resolve-db-spec (when-let [db (get parsed "db")]
                                    (if (= db ":memory") :memory {:backend :sqlite :path db})))}))
@@ -2880,7 +2881,7 @@
    [{:cmd/name "start"
      :cmd/parent ["gateway"]
      :cmd/doc "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground."
-     :cmd/usage "vis gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH]"
+     :cmd/usage "vis gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
      :cmd/args
      [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
       {:name "host"
@@ -2899,8 +2900,14 @@
        :kind :flag
        :type :boolean
        :doc
-       "Require the bearer token on loopback too (auth is OFF by default on 127.0.0.1; a non-loopback bind always requires it)."}]
-     :cmd/examples ["vis gateway start" "vis gateway start --port 8080"]
+       "Require the bearer token on loopback too (auth is OFF by default on 127.0.0.1; a non-loopback bind always requires it)."}
+      {:name "pair"
+       :kind :flag
+       :type :boolean
+       :doc
+       "Print a VIS companion pairing QR (URL + bearer token). Use with --host 0.0.0.0 or a Tailscale/LAN host for phone access."}]
+     :cmd/examples ["vis gateway start" "vis gateway start --port 8080"
+                    "vis gateway start --host 0.0.0.0 --require-token --pair"]
      :cmd/run-fn cli-gateway-start!}
     {:cmd/name "status"
      :cmd/parent ["gateway"]

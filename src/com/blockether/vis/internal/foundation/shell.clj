@@ -936,6 +936,64 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
           (< ms 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
           :else (str/replace (format "%.1fm" (/ (double ms) 60000.0)) "," "."))))
 
+(defn- format-shell-command
+  "Pretty-print a shell command for the COMMAND card so a compound one-liner
+   reads as separated statements instead of one crammed blob. Break onto its
+   own line at TOP-LEVEL `;`, `&&`, `||` operators, keeping the operator at the
+   end of its line. Quote- AND paren-aware: separators inside `'…'` / `\"…\"`
+   or nested `$(…)` / `(…)` stay put (so `$(f || g)` and `2>&1 &` are never
+   split), and a simple command comes back unchanged."
+  [s]
+  (let [s
+        (str s)
+
+        n
+        (count s)
+
+        sb
+        (StringBuilder.)]
+
+    (loop [i
+           0
+
+           sq
+           false
+
+           dq
+           false
+
+           depth
+           0]
+
+      (if (>= i n)
+        (let [out (->> (str/split-lines (str sb))
+                       (map str/trim)
+                       (remove str/blank?)
+                       (str/join "\n"))]
+          (if (str/blank? out) (str/trim s) out))
+        (let [c
+              (.charAt s i)
+
+              nxt
+              (when (< (inc i) n) (.charAt s (inc i)))]
+
+          (cond
+            ;; backslash escape (not inside single quotes): copy the pair verbatim
+            (and (not sq) (= c \\))
+            (do (.append sb c) (when nxt (.append sb nxt)) (recur (+ i 2) sq dq depth))
+            (and (not dq) (= c \')) (do (.append sb c) (recur (inc i) (not sq) dq depth))
+            (and (not sq) (= c \")) (do (.append sb c) (recur (inc i) sq (not dq) depth))
+            (or sq dq) (do (.append sb c) (recur (inc i) sq dq depth))
+            (= c \() (do (.append sb c) (recur (inc i) sq dq (inc depth)))
+            (= c \)) (do (.append sb c) (recur (inc i) sq dq (max 0 (dec depth))))
+            (and (zero? depth) (= c \&) (= nxt \&)) (do (.append sb "&&\n")
+                                                        (recur (+ i 2) sq dq depth))
+            (and (zero? depth) (= c \|) (= nxt \|)) (do (.append sb "||\n")
+                                                        (recur (+ i 2) sq dq depth))
+            (and (zero? depth) (= c \;)) (do (.append sb ";\n") (recur (inc i) sq dq depth))
+            :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
+
+
 (defn- fence
   "Wrap `s` in a code fence, or nil when blank."
   ([s] (fence s nil))
@@ -1009,8 +1067,9 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
                    ["stderr" (when (get r "stderr_truncated") "truncated")]])
 
         body
-        (->> [(shell-section "COMMAND" (get r "cmd") "bash") (shell-section "STATUS" status)
-              (shell-section "STDOUT" (get r "stdout")) (shell-section "STDERR" (get r "stderr"))]
+        (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
+              (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout"))
+              (shell-section "STDERR" (get r "stderr"))]
              (remove nil?)
              (str/join "\n\n"))]
 
@@ -1039,7 +1098,8 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
                    ["socket" (get r "socket")]])
 
         body
-        (->> [(shell-section "COMMAND" (get r "cmd") "bash") (shell-section "STATUS" details)]
+        (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
+              (shell-section "STATUS" details)]
              (remove nil?)
              (str/join "\n\n"))]
 
