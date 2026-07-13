@@ -62,6 +62,7 @@ export const SettingsPane = ({
   gatewayUrl,
   token,
   connecting,
+  connectionProblem,
   onGatewayUrl,
   onToken,
   onReconnect,
@@ -73,6 +74,7 @@ export const SettingsPane = ({
   gatewayUrl: string;
   token: string;
   connecting: boolean;
+  connectionProblem?: string | null;
   onGatewayUrl: (value: string) => void;
   onToken: (value: string) => void;
   onReconnect: () => void;
@@ -214,6 +216,17 @@ export const SettingsPane = ({
     setPairedNote(`paired ${describePairing(pairing)} — reconnect when ready`);
   };
 
+  useEffect(() => {
+    if (!connectionProblem) return;
+    setQuery("");
+    setActive(GATEWAY_GROUP);
+    requestAnimationFrame(() => {
+      const y = sectionY.current[GATEWAY_GROUP];
+      if (y != null)
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 4), animated: true });
+    });
+  }, [connectionProblem]);
+
   return (
     <View style={[st.pane, { height: Math.min(680, Math.round(winH * 0.82)) }]}>
       {/* ── full-width live search — the web's .settings-search ── */}
@@ -304,44 +317,7 @@ export const SettingsPane = ({
               restart the vis gateway to manage engine toggles here.
             </Text>
           ) : null}
-          {visible.map((g) => (
-            <View
-              key={g.id}
-              onLayout={(e) => {
-                sectionY.current[g.id] = e.nativeEvent.layout.y;
-              }}
-            >
-              <Text style={st.groupTitle}>{g.title}</Text>
-              <View style={st.sectionCard}>
-                {g.toggles.map((row) => (
-                  <View key={row.id} style={st.row}>
-                    <View style={st.rowText}>
-                      <Text style={st.rowLabel}>{row.label}</Text>
-                      {row.description ? (
-                        <Text style={st.rowDesc}>{row.description}</Text>
-                      ) : null}
-                    </View>
-                    {row.choices?.length ? (
-                      <Pressable
-                        onPress={() => mutate(row)}
-                        hitSlop={6}
-                        style={st.cycle}
-                      >
-                        <Text style={st.cycleLabel}>{row.value ?? "?"}</Text>
-                      </Pressable>
-                    ) : (
-                      <PillSwitch
-                        on={row.enabled === true}
-                        onPress={() => mutate(row)}
-                      />
-                    )}
-                  </View>
-                ))}
-              </View>
-            </View>
-          ))}
-
-          {/* ── app-local Gateway group ── */}
+          {/* ── app-local Gateway group — first when connection is broken ── */}
           {gatewayVisible ? (
             <View
               onLayout={(e) => {
@@ -350,6 +326,21 @@ export const SettingsPane = ({
             >
               <Text style={st.groupTitle}>Gateway</Text>
               <View style={st.sectionCard}>
+                {connectionProblem ? (
+                  <View style={st.problemBox}>
+                    <Feather name="wifi-off" size={16} color={c.err} />
+                    <View style={st.problemText}>
+                      <Text style={st.problemTitle}>
+                        Gateway connection required
+                      </Text>
+                      <Text style={st.problemCopy}>{connectionProblem}</Text>
+                      <Text style={st.problemHint}>
+                        Scan the gateway QR, use your Mac LAN/Tailscale address,
+                        then tap Reconnect.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
                 <View style={st.row}>
                   <View style={st.rowText}>
                     <Text style={st.rowLabel}>Turn notifications</Text>
@@ -408,6 +399,43 @@ export const SettingsPane = ({
               </View>
             </View>
           ) : null}
+
+          {visible.map((g) => (
+            <View
+              key={g.id}
+              onLayout={(e) => {
+                sectionY.current[g.id] = e.nativeEvent.layout.y;
+              }}
+            >
+              <Text style={st.groupTitle}>{g.title}</Text>
+              <View style={st.sectionCard}>
+                {g.toggles.map((row) => (
+                  <View key={row.id} style={st.row}>
+                    <View style={st.rowText}>
+                      <Text style={st.rowLabel}>{row.label}</Text>
+                      {row.description ? (
+                        <Text style={st.rowDesc}>{row.description}</Text>
+                      ) : null}
+                    </View>
+                    {row.choices?.length ? (
+                      <Pressable
+                        onPress={() => mutate(row)}
+                        hitSlop={6}
+                        style={st.cycle}
+                      >
+                        <Text style={st.cycleLabel}>{row.value ?? "?"}</Text>
+                      </Pressable>
+                    ) : (
+                      <PillSwitch
+                        on={row.enabled === true}
+                        onPress={() => mutate(row)}
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+            </View>
+          ))}
           {/* ── workspace + filesystem roots (canonical /v1/sessions/:sid/workspace) ── */}
           {workspaceVisible ? (
             <View
@@ -581,6 +609,22 @@ const st = StyleSheet.create({
   },
   cycleLabel: { fontFamily: mono, fontSize: 11, color: c.chipInk },
   staleNote: { fontSize: 11, color: c.dim, marginTop: 10, lineHeight: 15 },
+  problemBox: {
+    flexDirection: "row",
+    gap: 11,
+    marginHorizontal: 14,
+    marginTop: 14,
+    marginBottom: 4,
+    padding: 13,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,59,48,0.09)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,59,48,0.24)",
+  },
+  problemText: { flex: 1, minWidth: 0, gap: 3 },
+  problemTitle: { fontSize: 14, fontWeight: "700", color: c.ink },
+  problemCopy: { fontSize: 12.5, color: c.err, lineHeight: 17 },
+  problemHint: { fontSize: 12, color: c.dim, lineHeight: 16 },
   /* gateway fields */
   fieldLabel: {
     fontSize: 12,

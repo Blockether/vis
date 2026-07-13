@@ -303,6 +303,9 @@ export const gatewayErrorMessage = (
   return raw;
 };
 
+export const isGatewayConnectionMessage = (message: string): boolean =>
+  message.startsWith("Cannot reach the Vis gateway at ");
+
 export class VisGatewayClient {
   private readonly gatewayUrl: string;
   private readonly token: string | undefined;
