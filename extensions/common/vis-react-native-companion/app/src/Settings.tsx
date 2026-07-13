@@ -81,7 +81,8 @@ export const SettingsPane = ({
   /* Active session — enables the canonical /v1/sessions/:sid/workspace section. */
   sessionId?: string | null;
 }) => {
-  const { height: winH } = useWindowDimensions();
+  const { height: winH, width: winW } = useWindowDimensions();
+  const isWide = winW >= 560;
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [stale, setStale] = useState(false);
   const [query, setQuery] = useState("");
@@ -214,7 +215,7 @@ export const SettingsPane = ({
   };
 
   return (
-    <View style={[st.pane, { height: Math.min(560, Math.round(winH * 0.72)) }]}>
+    <View style={[st.pane, { height: Math.min(680, Math.round(winH * 0.82)) }]}>
       {/* ── full-width live search — the web's .settings-search ── */}
       <View style={st.search}>
         <Feather name="search" size={14} color={c.dim} />
@@ -232,59 +233,64 @@ export const SettingsPane = ({
         </Text>
       </View>
 
-      <View style={st.cols}>
+      <View style={[st.cols, !isWide && st.colsStack]}>
         {/* ── category rail — the web's .settings-toc ── */}
-        <ScrollView style={st.toc} contentContainerStyle={st.tocBody}>
-          {visible.map((g) => (
-            <Pressable
-              key={g.id}
-              onPress={() => jumpTo(g.id)}
-              style={[st.tocItem, active === g.id && st.tocItemActive]}
-            >
-              <Text
-                numberOfLines={1}
-                style={[st.tocLabel, active === g.id && st.tocLabelActive]}
+        {isWide ? (
+          <ScrollView style={st.toc} contentContainerStyle={st.tocBody}>
+            {visible.map((g) => (
+              <Pressable
+                key={g.id}
+                onPress={() => jumpTo(g.id)}
+                style={[st.tocItem, active === g.id && st.tocItemActive]}
               >
-                {g.title}
-              </Text>
-            </Pressable>
-          ))}
-          {gatewayVisible ? (
-            <Pressable
-              onPress={() => jumpTo(GATEWAY_GROUP)}
-              style={[st.tocItem, active === GATEWAY_GROUP && st.tocItemActive]}
-            >
-              <Text
-                numberOfLines={1}
+                <Text
+                  numberOfLines={1}
+                  style={[st.tocLabel, active === g.id && st.tocLabelActive]}
+                >
+                  {g.title}
+                </Text>
+              </Pressable>
+            ))}
+            {gatewayVisible ? (
+              <Pressable
+                onPress={() => jumpTo(GATEWAY_GROUP)}
                 style={[
-                  st.tocLabel,
-                  active === GATEWAY_GROUP && st.tocLabelActive,
+                  st.tocItem,
+                  active === GATEWAY_GROUP && st.tocItemActive,
                 ]}
               >
-                Gateway
-              </Text>
-            </Pressable>
-          ) : null}
-          {workspaceVisible ? (
-            <Pressable
-              onPress={() => jumpTo(WORKSPACE_GROUP)}
-              style={[
-                st.tocItem,
-                active === WORKSPACE_GROUP && st.tocItemActive,
-              ]}
-            >
-              <Text
-                numberOfLines={1}
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    st.tocLabel,
+                    active === GATEWAY_GROUP && st.tocLabelActive,
+                  ]}
+                >
+                  Gateway
+                </Text>
+              </Pressable>
+            ) : null}
+            {workspaceVisible ? (
+              <Pressable
+                onPress={() => jumpTo(WORKSPACE_GROUP)}
                 style={[
-                  st.tocLabel,
-                  active === WORKSPACE_GROUP && st.tocLabelActive,
+                  st.tocItem,
+                  active === WORKSPACE_GROUP && st.tocItemActive,
                 ]}
               >
-                Workspace
-              </Text>
-            </Pressable>
-          ) : null}
-        </ScrollView>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    st.tocLabel,
+                    active === WORKSPACE_GROUP && st.tocLabelActive,
+                  ]}
+                >
+                  Workspace
+                </Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        ) : null}
 
         {/* ── grouped rows — the web's .settings-groups ── */}
         <ScrollView
@@ -306,30 +312,32 @@ export const SettingsPane = ({
               }}
             >
               <Text style={st.groupTitle}>{g.title}</Text>
-              {g.toggles.map((row) => (
-                <View key={row.id} style={st.row}>
-                  <View style={st.rowText}>
-                    <Text style={st.rowLabel}>{row.label}</Text>
-                    {row.description ? (
-                      <Text style={st.rowDesc}>{row.description}</Text>
-                    ) : null}
+              <View style={st.sectionCard}>
+                {g.toggles.map((row) => (
+                  <View key={row.id} style={st.row}>
+                    <View style={st.rowText}>
+                      <Text style={st.rowLabel}>{row.label}</Text>
+                      {row.description ? (
+                        <Text style={st.rowDesc}>{row.description}</Text>
+                      ) : null}
+                    </View>
+                    {row.choices?.length ? (
+                      <Pressable
+                        onPress={() => mutate(row)}
+                        hitSlop={6}
+                        style={st.cycle}
+                      >
+                        <Text style={st.cycleLabel}>{row.value ?? "?"}</Text>
+                      </Pressable>
+                    ) : (
+                      <PillSwitch
+                        on={row.enabled === true}
+                        onPress={() => mutate(row)}
+                      />
+                    )}
                   </View>
-                  {row.choices?.length ? (
-                    <Pressable
-                      onPress={() => mutate(row)}
-                      hitSlop={6}
-                      style={st.cycle}
-                    >
-                      <Text style={st.cycleLabel}>{row.value ?? "?"}</Text>
-                    </Pressable>
-                  ) : (
-                    <PillSwitch
-                      on={row.enabled === true}
-                      onPress={() => mutate(row)}
-                    />
-                  )}
-                </View>
-              ))}
+                ))}
+              </View>
             </View>
           ))}
 
@@ -341,56 +349,62 @@ export const SettingsPane = ({
               }}
             >
               <Text style={st.groupTitle}>Gateway</Text>
-              <View style={st.row}>
-                <View style={st.rowText}>
-                  <Text style={st.rowLabel}>Turn notifications</Text>
-                  <Text style={st.rowDesc}>
-                    Ping me when a turn finishes while the app is in the
-                    background.
-                  </Text>
+              <View style={st.sectionCard}>
+                <View style={st.row}>
+                  <View style={st.rowText}>
+                    <Text style={st.rowLabel}>Turn notifications</Text>
+                    <Text style={st.rowDesc}>
+                      Ping me when a turn finishes while the app is in the
+                      background.
+                    </Text>
+                  </View>
+                  <PillSwitch on={notify} onPress={() => onNotify(!notify)} />
                 </View>
-                <PillSwitch on={notify} onPress={() => onNotify(!notify)} />
-              </View>
-              <Text style={st.fieldLabel}>gateway url</Text>
-              <TextInput
-                value={gatewayUrl}
-                onChangeText={onGatewayUrl}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={st.field}
-              />
-              <Text style={st.fieldLabel}>bearer token</Text>
-              <TextInput
-                value={token}
-                onChangeText={onToken}
-                autoCapitalize="none"
-                autoCorrect={false}
-                secureTextEntry
-                style={st.field}
-              />
-              {pairedNote ? <Text style={st.okNote}>{pairedNote}</Text> : null}
-              <Text style={st.rowDesc}>
-                Pair over same Wi‑Fi, or use a Tailscale 100.x gateway address
-                for the clean "it just works" path.
-              </Text>
-              {scanOpen ? (
-                <GatewayPairingScanner
-                  onPair={applyPairing}
-                  onClose={() => setScanOpen(false)}
+                <Text style={st.fieldLabel}>Gateway URL</Text>
+                <TextInput
+                  value={gatewayUrl}
+                  onChangeText={onGatewayUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={st.field}
                 />
-              ) : null}
-              <View style={st.reconnect}>
-                <ActionBtn
-                  label="Scan QR"
-                  tone="ghost"
-                  onPress={() => setScanOpen(true)}
+                <Text style={st.fieldLabel}>Bearer token</Text>
+                <TextInput
+                  value={token}
+                  onChangeText={onToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  style={st.field}
                 />
-                <ActionBtn
-                  label={connecting ? "connecting…" : "Reconnect"}
-                  tone="amber"
-                  disabled={connecting}
-                  onPress={onReconnect}
-                />
+                {pairedNote ? (
+                  <Text style={st.okNote}>{pairedNote}</Text>
+                ) : null}
+                <Text style={st.rowDesc}>
+                  Pair over same Wi‑Fi, or use a Tailscale 100.x gateway address
+                  for the clean "it just works" path.
+                </Text>
+                {scanOpen ? (
+                  <View style={st.scannerSlot}>
+                    <GatewayPairingScanner
+                      onPair={applyPairing}
+                      onClose={() => setScanOpen(false)}
+                    />
+                  </View>
+                ) : null}
+                <View style={st.reconnect}>
+                  <ActionBtn
+                    label="Scan QR"
+                    tone="ghost"
+                    onPress={() => setScanOpen(true)}
+                  />
+                  <ActionBtn
+                    label={connecting ? "connecting…" : "Reconnect"}
+                    tone="amber"
+                    disabled={connecting}
+                    onPress={onReconnect}
+                  />
+                </View>
               </View>
             </View>
           ) : null}
@@ -464,16 +478,19 @@ export const SettingsPane = ({
 };
 
 const st = StyleSheet.create({
-  pane: { alignSelf: "stretch" },
+  pane: { alignSelf: "stretch", backgroundColor: "#F2F2F7" },
   /* .settings-search */
   search: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.line,
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: "rgba(118,118,128,0.12)",
   },
   searchInput: {
     flex: 1,
@@ -482,46 +499,55 @@ const st = StyleSheet.create({
     fontSize: 13,
     color: c.ink,
   },
-  count: { fontFamily: mono, fontSize: 9.5, color: c.dim },
+  count: { fontSize: 11, color: c.dim, fontWeight: "600" },
   /* .settings-cols */
   cols: { flex: 1, flexDirection: "row", minHeight: 0 },
+  colsStack: { flexDirection: "column" },
   /* .settings-toc */
   toc: {
-    width: 96,
+    width: 112,
     flexGrow: 0,
     flexShrink: 0,
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: c.line,
+    borderRightColor: "rgba(60,60,67,0.18)",
   },
-  tocBody: { padding: 6 },
-  tocItem: { paddingVertical: 6, paddingHorizontal: 8 },
-  tocItemActive: { backgroundColor: c.chipBg },
-  tocLabel: { fontSize: 11.5, color: c.dim },
-  tocLabelActive: { color: c.ink, fontWeight: "600" },
+  tocBody: { padding: 10, gap: 4 },
+  tocItem: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10 },
+  tocItemActive: { backgroundColor: "rgba(240,173,0,0.16)" },
+  tocLabel: { fontSize: 12, color: c.dim, fontWeight: "500" },
+  tocLabelActive: { color: c.ink, fontWeight: "700" },
   /* .settings-groups */
   groups: { flex: 1, minWidth: 0 },
-  groupsBody: { paddingHorizontal: 12, paddingBottom: 14 },
+  groupsBody: { paddingHorizontal: 16, paddingBottom: 22 },
   groupTitle: {
-    fontSize: 9.5,
-    fontFamily: mono,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
+    fontSize: 13,
+    fontWeight: "700",
     color: c.dim,
-    marginTop: 10,
-    marginBottom: 2,
+    marginTop: 14,
+    marginBottom: 7,
+    marginLeft: 2,
+  },
+  sectionCard: {
+    overflow: "hidden",
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(60,60,67,0.16)",
   },
   /* .toggle-row */
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 8,
+    gap: 12,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.lineSoft,
+    borderBottomColor: "rgba(60,60,67,0.14)",
   },
   rowText: { flex: 1, minWidth: 0 },
-  rowLabel: { fontSize: 12.5, fontWeight: "600", color: c.ink },
-  rowDesc: { fontSize: 10.5, color: c.dim, marginTop: 1 },
+  rowLabel: { fontSize: 15, fontWeight: "600", color: c.ink },
+  rowDesc: { fontSize: 12.5, color: c.dim, marginTop: 3, lineHeight: 17 },
   /* .switch / .knob */
   switch: {
     width: 40,
@@ -556,26 +582,32 @@ const st = StyleSheet.create({
   staleNote: { fontSize: 11, color: c.dim, marginTop: 10, lineHeight: 15 },
   /* gateway fields */
   fieldLabel: {
-    fontFamily: mono,
-    fontSize: 9.5,
-    letterSpacing: 1,
-    textTransform: "uppercase",
+    fontSize: 12,
+    fontWeight: "700",
     color: c.dim,
-    marginTop: 8,
-    marginBottom: 2,
+    marginTop: 14,
+    marginBottom: 6,
+    marginHorizontal: 14,
   },
   field: {
-    backgroundColor: c.paper,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.line,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontFamily: mono,
-    fontSize: 12,
+    marginHorizontal: 14,
+    backgroundColor: "rgba(118,118,128,0.10)",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
     color: c.ink,
   },
-  okNote: { fontFamily: mono, fontSize: 10.5, color: c.ok, marginTop: 6 },
-  reconnect: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 10 },
+  okNote: { fontSize: 12, color: c.ok, marginTop: 10, marginHorizontal: 14 },
+  scannerSlot: { marginTop: 16, marginHorizontal: 14 },
+  reconnect: {
+    flexDirection: "row",
+    gap: 10,
+    flexWrap: "wrap",
+    marginTop: 14,
+    marginHorizontal: 14,
+    marginBottom: 14,
+  },
   wsAdd: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
   wsField: { flex: 1 },
 });
