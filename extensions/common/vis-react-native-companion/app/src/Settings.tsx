@@ -99,6 +99,7 @@ export const SettingsPane = ({
   const [rootDraft, setRootDraft] = useState("");
   const [wsErr, setWsErr] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [scannerNonce, setScannerNonce] = useState(0);
   const [pairedNote, setPairedNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -216,6 +217,10 @@ export const SettingsPane = ({
     setPairedNote(`paired ${describePairing(pairing)} — reconnect when ready`);
   };
 
+  const refreshScannerAfterScroll = useCallback(() => {
+    if (scanOpen) setScannerNonce((n) => n + 1);
+  }, [scanOpen]);
+
   useEffect(() => {
     if (!connectionProblem) return;
     setQuery("");
@@ -312,12 +317,16 @@ export const SettingsPane = ({
           style={st.groups}
           contentContainerStyle={st.groupsBody}
           alwaysBounceVertical
+          canCancelContentTouches
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="always"
-          directionalLockEnabled
+          directionalLockEnabled={false}
+          removeClippedSubviews={false}
           scrollEventThrottle={16}
           nestedScrollEnabled
           showsVerticalScrollIndicator
+          onScrollEndDrag={refreshScannerAfterScroll}
+          onMomentumScrollEnd={refreshScannerAfterScroll}
         >
           {stale ? (
             <View style={st.noticeCard}>
@@ -348,8 +357,8 @@ export const SettingsPane = ({
                       </Text>
                       <Text style={st.problemCopy}>{connectionProblem}</Text>
                       <Text style={st.problemHint}>
-                        Scan the gateway QR, use your Mac LAN/Tailscale address,
-                        then tap Reconnect.
+                        Prefer the Tailscale QR when your Mac is on Tailnet;
+                        same Wi‑Fi is the fallback. Then tap Reconnect.
                       </Text>
                     </View>
                   </View>
@@ -384,13 +393,14 @@ export const SettingsPane = ({
                 {pairedNote ? (
                   <Text style={st.okNote}>{pairedNote}</Text>
                 ) : null}
-                <Text style={st.sectionCopy}>
-                  Pair over the same Wi‑Fi, or use a Tailscale 100.x address for
-                  the cleanest path.
+                <Text style={st.sectionCopy} pointerEvents="none">
+                  Prefer Tailscale when available: the gateway QR advertises the
+                  100.x address first. Use same Wi‑Fi only as the fallback.
                 </Text>
                 {scanOpen ? (
                   <View style={st.scannerSlot}>
                     <GatewayPairingScanner
+                      key={scannerNonce}
                       onPair={applyPairing}
                       onClose={() => setScanOpen(false)}
                     />
