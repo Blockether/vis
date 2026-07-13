@@ -12,7 +12,7 @@ import { Feather } from "@expo/vector-icons";
 
 import { GatewayProject, SessionSoul } from "./VisClient";
 import { c, mono, projectColor, relTime, shortId, tint } from "./theme";
-import { ActionBtn, DialogModal } from "./ui";
+import { ActionBtn, DialogModal } from "./UI";
 
 const PANEL_W = 316;
 

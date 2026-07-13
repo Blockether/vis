@@ -41,7 +41,7 @@ import {
   isGatewayConnectionMessage,
 } from "./src/VisClient";
 import { c, mono, shortId, timeHHMM } from "./src/theme";
-import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
+import { ActionBtn, DialogModal, IconBtn } from "./src/UI";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
 import {
