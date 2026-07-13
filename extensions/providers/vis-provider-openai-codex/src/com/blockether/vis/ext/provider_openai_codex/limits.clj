@@ -14,9 +14,13 @@
 
 (def ^:private spark-model-id "gpt-5.3-codex-spark")
 
-(def ^:private usage-window-specs
+(def ^:private fallback-window-specs
   [{:bucket-key :primary_window :id :codex-5h :label "Codex 5h quota (%)" :unit :hour :size 5}
    {:bucket-key :secondary_window :id :codex-7d :label "Codex 7d quota (%)" :unit :day :size 7}])
+
+(def ^:private known-window-specs-by-seconds
+  {(* 5 60 60) {:id :codex-5h :label "Codex 5h quota (%)" :unit :hour :size 5}
+   (* 7 24 60 60) {:id :codex-7d :label "Codex 7d quota (%)" :unit :day :size 7}})
 
 (defn- object-map [value] (when (and (map? value) (not (record? value))) value))
 
@@ -86,10 +90,42 @@
       (when-let [seconds (field window :reset_after_seconds)]
         (when (number? seconds) (+ (long now-ms) (long (* 1000.0 (double seconds))))))))
 
+(defn- generated-window-spec
+  [seconds fallback]
+  (let [seconds
+        (long seconds)
+
+        day?
+        (zero? (mod seconds (* 24 60 60)))
+
+        hour?
+        (zero? (mod seconds (* 60 60)))
+
+        [unit size suffix]
+        (cond day? [:day (quot seconds (* 24 60 60)) "d"]
+              hour? [:hour (quot seconds (* 60 60)) "h"]
+              :else [:second seconds "s"])]
+
+    (assoc fallback
+      :id (keyword (str "codex-" size suffix))
+      :label (str "Codex " size suffix " quota (%)")
+      :unit unit
+      :size size)))
+
+(defn- window-spec
+  [fallback window]
+  (let [seconds (field window :limit_window_seconds)]
+    (if (number? seconds)
+      (merge fallback
+             (or (get known-window-specs-by-seconds (long seconds))
+                 (generated-window-spec seconds fallback)))
+      fallback)))
+
 (defn- window-row
-  [now-ms {:keys [bucket-key id label unit size]} bucket]
-  (when-let [window (object-map (field bucket bucket-key))]
-    (let [used-percent (field window :used_percent)
+  [now-ms {:keys [bucket-key] :as fallback} bucket]
+  (when-let [window (not-empty (object-map (field bucket bucket-key)))]
+    (let [{:keys [id label unit size]} (window-spec fallback window)
+          used-percent (field window :used_percent)
           left-percent (used->left-percent used-percent)
           reset-ms (reset-at-ms window now-ms)]
 
@@ -124,7 +160,7 @@
          (select-rate-limit-bucket usage model-ref)
 
          rows
-         (if bucket (into [] (keep #(window-row now-ms % bucket)) usage-window-specs) [])
+         (if bucket (into [] (keep #(window-row now-ms % bucket)) fallback-window-specs) [])
 
          limited?
          (or (true? (field bucket :limit_reached)) (false? (field bucket :allowed)))]
