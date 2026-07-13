@@ -2453,19 +2453,17 @@
         ;; iteration-level lines (folds / form-budget / ctx delta) carried on the
         ;; first call only (they describe the whole reply, not a single call).
         ;; RESULT HANDLE: a NATIVE tool call stores its return value keyed by THIS
-        ;; tool_use id, so the model can re-read it later via
-        ;; `native_tools_results[<id>]` without re-running the tool. Surface the
-        ;; EXACT key inline (the id the model saw on the wire can differ from the
-        ;; one vis stored — e.g. OpenAI Responses' composite `call_id|item_id` — so
-        ;; we must hand it the literal key, not let it guess). Emitted only when the
-        ;; call actually produced a stored `:result` (python_execution prints, it
-        ;; doesn't store a return, so it gets no handle).
+        ;; tool_use id, so the model can re-read it later via `ntr[<id>]` without
+        ;; re-running the tool. Surface the EXACT key inline (the id the model saw
+        ;; on the wire can differ from the one vis stored — e.g. OpenAI Responses'
+        ;; composite `call_id|item_id` — so we must hand it the literal key, not
+        ;; let it guess). Emitted only when the call actually produced a stored
+        ;; `:result` (python_execution prints, it doesn't store a return, so it
+        ;; gets no handle).
         result-handle
         (fn [tc own]
           (when (and (:id tc) (some #(some? (:result %)) own))
-            (str "# saved: native_tools_results["
-                 (pr-str (str (:id tc)))
-                 "] — re-read without re-running")))
+            (str "# saved: ntr[" (pr-str (str (:id tc))) "] — re-read without re-running")))
 
         call-content
         (fn [idx tc]
@@ -6008,7 +6006,10 @@
       (assoc :session-title-atom (:session-title-atom env))
 
       (:workspace/id env)
-      (assoc :workspace/id (:workspace/id env)))))
+      (assoc :workspace/id (:workspace/id env))
+
+      (:workspace-atom env)
+      (assoc :workspace-atom (:workspace-atom env)))))
 
 (defn- slash-body->ir
   "Coerce a slash `:slash/body` value to canonical IR.
@@ -7902,25 +7903,31 @@
           ;; env_python async-runtime preamble; this is
           ;; the dispatcher they call to overlap awaitables
           ;; on real virtual threads).
-          (merge
-            compaction
-            {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
-            ;; native_tools_results[tool_id] host callbacks:
-            ;; retrieve a PRIOR native tool's persisted result by
-            ;; its provider tool_use id (`:svar/tool-call-id`) —
-            ;; NO re-fetch. `prime` is the batched pre-scan load
-            ;; (list of ids → {id → result}); `fetch` is the lazy
-            ;; single-id fallback for a dynamic key. Both close
-            ;; over db-info + the live session id and delegate to
-            ;; the ONE batched persistence query.
-            {(symbol "__vis_native_result_prime__") (fn native-result-prime [ids]
-                                                      (persistance/db-native-results-for-tool-ids
-                                                        db-info
-                                                        session-id
-                                                        (into #{} (filter some?) (or ids []))))
-             (symbol "__vis_native_result_fetch__")
-             (fn native-result-fetch [id]
-               (get (persistance/db-native-results-for-tool-ids db-info session-id #{id}) id))})
+          (merge compaction
+                 {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
+                 ;; ntr[tool_id] host callbacks:
+                 ;; retrieve a PRIOR native tool's persisted result by
+                 ;; its provider tool_use id (`:svar/tool-call-id`) —
+                 ;; NO re-fetch. `prime` is the batched pre-scan load
+                 ;; (list of ids → {id → result}); `fetch` is the lazy
+                 ;; single-id fallback for a dynamic key. Both close
+                 ;; over db-info + the live session id and delegate to
+                 ;; the ONE batched persistence query.
+                 {(symbol "__vis_native_result_prime__")
+                  (fn native-result-prime [ids]
+                    (persistance/db-native-results-for-tool-ids
+                      db-info
+                      session-id
+                      (into #{} (filter some?) (or ids []))))
+                  (symbol "__vis_native_result_fetch__")
+                  (fn native-result-fetch [id]
+                    (get (persistance/db-native-results-for-tool-ids db-info session-id #{id}) id))
+                  ;; `ids` is the discovery callback: EVERY native tool_use id in the
+                  ;; session branch (newest first) so the sandbox can iterate the
+                  ;; store (keys/items/values/len) instead of needing ids up front.
+                  (symbol "__vis_native_result_ids__")
+                  (fn native-result-ids []
+                    (vec (persistance/db-native-result-ids-for-session db-info session-id)))})
           ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
           ;; binding map so none of the child-dispatch verbs are
           ;; bound (sub_loop + parallel/sequence/selector/retry).

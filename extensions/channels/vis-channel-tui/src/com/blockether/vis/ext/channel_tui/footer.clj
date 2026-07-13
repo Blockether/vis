@@ -392,6 +392,29 @@
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 (comment
   "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
+
+(defn- active-tab-workspace-root
+  "Workspace root of the ACTIVE tab, read from the persistent tab bar (`:tabs`).
+
+   The footer's primary source is the denormalized top-level `:workspace/root`,
+   but that value can be transiently lost when a tab snapshot is taken before
+   `:set-workspace` lands (e.g. rapidly switching tabs right after opening a
+   session). The tab ENTRY, set at tab creation, keeps the root reliably. Read
+   it here so a session footer never silently falls through to the vis process
+   cwd and mislabels the session with the ENGINE's own repo. Nil when there is
+   no tab context (bare startup / tests) — callers then keep the cwd fallback."
+  [db]
+  (let [tabs
+        (:tabs db)
+
+        active-id
+        (or (:active-tab-id db) (:id (some #(when (:active? %) %) tabs)))
+
+        entry
+        (or (some #(when (= (:id %) active-id) %) tabs) (first tabs))]
+
+    (or (:workspace/root entry) (:root (:workspace entry)))))
+
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.
 
@@ -432,7 +455,7 @@
         (:workspace db)
 
         ws-root
-        (or (:workspace/root db) (:root ws))
+        (or (:workspace/root db) (:root ws) (active-tab-workspace-root db))
 
         in-draft?
         (some? (:fork-ms ws))

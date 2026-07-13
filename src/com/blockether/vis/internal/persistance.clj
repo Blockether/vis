@@ -412,12 +412,15 @@
 (defdelegate db-load-latest-ctx [db-info session-id])
 (defdelegate db-load-ctx-history [db-info session-id])
 
-;; --- Native tool result retrieval (`native_tools_results[tool_id]`) ---
+;; --- Native tool result retrieval (`ntr[tool_id]`) ---
 ;; Batched read of prior NATIVE tool results by their provider `tool_use_id`
 ;; (`:svar/tool-call-id`), scoped to the current session branch. ONE query
 ;; loads every iteration's Nippy `:forms`; the matching form's `:result` is
 ;; returned. Absent id ⇒ absent key (caller raises a clean miss).
 (defdelegate db-native-results-for-tool-ids [db-info session-id tool-ids])
+;; List EVERY native tool_use id persisted in the session branch (newest first,
+;; de-duped) — backs iteration over `ntr` (keys/items/…).
+(defdelegate db-native-result-ids-for-session [db-info session-id])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

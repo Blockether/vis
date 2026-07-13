@@ -460,17 +460,34 @@
 
 (defn ensure-repl-for-dir!
   "Return the live REPL info for `[session-id dir]`, AUTOSTARTING one (with the
-   default :dev :test aliases) when the session owns none for `dir`. When the
-   start does NOT yield a live process, returns start!'s STRING-keyed lifecycle
-   result (\"failed\"/\"no-launcher\"… with exit + log_tail) instead of
-   swallowing it — callers tell the cases apart by `:port` (live keyword-keyed
-   info) vs `\"result\"` (string-keyed lifecycle map)."
+   default :dev :test aliases) when the session owns none for `dir` — OR when the
+   recorded process is alive but UNREACHABLE (a boot that never bound its port, or
+   a wedged server thread that `proc-alive?` alone cannot see): such a stale
+   process is stopped and REPLACED instead of silently swallowing every eval on a
+   dead socket (the failure that stalls `run_tests` past the tool budget). A
+   still-present process gets a brief `wait-until-up` grace window to finish a slow
+   cold boot before it is judged wedged, so a legitimately-booting REPL is never
+   needlessly restarted. When the (re)start does NOT yield a live process, returns
+   start!'s STRING-keyed lifecycle result (\"failed\"/\"no-launcher\"… with exit +
+   log_tail) instead of swallowing it — callers tell the cases apart by `:port`
+   (live keyword-keyed info) vs `\"result\"` (string-keyed lifecycle map)."
   [session-id dir]
-  (let [k [session-id dir]]
-    (if (proc-alive? (get @processes k))
-      (get @processes k)
-      (let [r (start! session-id dir nil)]
-        (or (get @processes k) r)))))
+  (let [k
+        [session-id dir]
+
+        info
+        (get @processes k)]
+
+    (if (and (proc-alive? info)
+             (:port info)
+             (= :up (wait-until-up (:process info) (:port info) 5000)))
+      info
+      ;; Dead, or alive-but-wedged (port never answers): drop the stale process
+      ;; first, then autostart — surfacing start!'s lifecycle result when no live
+      ;; process results, exactly as the plain-autostart path does.
+      (do (when (proc-alive? info) (stop! session-id dir))
+          (let [r (start! session-id dir nil)]
+            (or (get @processes k) r))))))
 
 (defn restart-for-dir!
   "Recover THIS session's REPL for `dir` when its recorded process is dead OR
@@ -495,7 +512,7 @@
 
    Rules (the ownership contract):
      - explicit `id` → that REPL (throws if no such live REPL in this session);
-     - `id` = "default" (any case) → sentinel, treated as no explicit id (below);
+     - `id` = `default` (any case) → sentinel, treated as no explicit id (below);
      - 0 REPLs       → autostart `default-dir` with [:dev :test], use it;
      - 1 REPL        → use it (it's the implicit default);
      - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
@@ -504,14 +521,21 @@
                        result reports which REPL ran it, so the model can pass an
                        explicit `id` to override."
   [session-id id default-dir]
-  (let [id (some-> id
-                   str
-                   str/trim
-                   not-empty)
+  (let [id
+        (some-> id
+                str
+                str/trim
+                not-empty)
+
         ;; "default" is a sentinel, not a real resource id — treat it as "no
         ;; explicit id" so it falls through to the implicit-default resolution
         ;; (autostart when the session owns none, else the default REPL).
-        id (when-not (some-> id str/lower-case (= "default")) id)]
+        id
+        (when-not (some-> id
+                          str/lower-case
+                          (= "default"))
+          id)]
+
     (if id
       (or (repl-by-id session-id id)
           (throw (ex-info (str

@@ -276,7 +276,7 @@
                                                         :behind 0}))}
           (fn []
             (expect
-              (= ["git ~/vis (feature/ws ∅)"]
+              (= [" git ~/vis (feature/ws ∅) (C-x g) "]
                  (->> (build-segments {:messages [] :settings {} :workspace/root "/tmp/vis-ws"} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -285,6 +285,47 @@
             (expect (= "/tmp/vis-ws"
                        (some-> @seen-root
                                (.replace "\\" "/"))))))))
+  (it
+    "falls back to the active tab's workspace root when the top-level root was lost"
+    (let [build-segments
+          @#'footer/build-segments
+
+          seen-root
+          (atom nil)]
+
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "gpt-4o" :provider :openai})
+                       #'git/cached-working-tree-status
+                       (fn ([] {:workspace? false}) ([root] (reset! seen-root (.getPath root))
+                                                     {:workspace? true
+                                                      :repo "spel"
+                                                      :branch "main"
+                                                      :modified 0
+                                                      :created 0
+                                                      :deleted 0
+                                                      :upstream? true
+                                                      :ahead 0
+                                                      :behind 0}))}
+        (fn []
+          ;; Top-level :workspace/root is nil (a stale snapshot dropped it), but
+          ;; the active tab entry still carries it: the footer must render the
+          ;; SESSION's repo from the tab root, never the no-arg process cwd.
+          (let [db
+                {:messages []
+                 :settings {}
+                 :active-tab-id :tab-1
+                 :tabs [{:id :tab-1 :active? true :workspace/root "/home/u/spel"}]}
+
+                spans
+                (->> (build-segments db 0)
+                     (filter #(= :right (:region %)))
+                     (remove fixture-seg?)
+                     (mapv :text))]
+
+            (expect (= [" git ~/spel (main) (C-x g) "] spans))
+            (expect (= "/home/u/spel"
+                       (some-> @seen-root
+                               (.replace "\\" "/")))))))))
   (it "shows git repository state with one changed-file count on the first footer line right side"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
@@ -300,7 +341,7 @@
                                                              :ahead 4
                                                              :behind 0})}
           (fn []
-            (expect (= ["git ~/vis (main ~2 +3 -1 ⇡4)"]
+            (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
                        (->> (build-segments {:messages [] :settings {}} 0)
                             (filter #(= :right (:region %)))
                             (remove fixture-seg?)
@@ -333,7 +374,7 @@
                                                              :ahead 0
                                                              :behind 0})}
           (fn []
-            (expect (= ["git ~/vis (main)"]
+            (expect (= [" git ~/vis (main) (C-x g) "]
                        (->> (build-segments {:messages [] :settings {}} 0)
                             (filter #(= :right (:region %)))
                             (remove fixture-seg?)
@@ -353,7 +394,7 @@
                                                              :ahead 0
                                                              :behind 0})}
           (fn []
-            (expect (= ["git ~/vis (main ∅)"]
+            (expect (= [" git ~/vis (main ∅) (C-x g) "]
                        (->> (build-segments {:messages [] :settings {}} 0)
                             (filter #(= :right (:region %)))
                             (remove fixture-seg?)
