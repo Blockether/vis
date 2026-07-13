@@ -1958,6 +1958,34 @@
 
     [t/dialog-fg false]))
 
+(defn- magit-diff-filename-split
+  "Char index at which the FILE PATH begins on a rendered diff HEADER line
+   (`diff --git …`, `--- …`, `+++ …`, `rename`/`copy from|to …`) — so the caller
+   paints the `diff --git`/`a/`/`b/` scaffolding dim and the filename that follows
+   in the path colour magit gives it. nil for lines that name no file (context,
+   hunk `@@`, +/- body), which stay flat."
+  [text]
+  (let [full
+        (str text)
+
+        t
+        (str/triml full)
+
+        lead
+        (- (count full) (count t))
+
+        after
+        (fn [marker]
+          (when (str/starts-with? t marker) (+ lead (count marker))))]
+
+    (or (after "diff --git ")
+        (after "--- ")
+        (after "+++ ")
+        (after "rename from ")
+        (after "rename to ")
+        (after "copy from ")
+        (after "copy to "))))
+
 (defn- run-async-with-ticker!
   "Run blocking `thunk` on a BACKGROUND thread so the caller's UI thread stays
    live. Between polls it calls `(tick!)` (paint a spinner frame, drain input)
@@ -2622,10 +2650,22 @@
                 (p/set-colors! g t/dialog-hint-key bg)
                 (p/draw-selection-marker! g (inc left) row-y selected?)
                 (p/set-colors! g fg bg)
-                (let [txt (ellipsize (:text row) text-w)]
-                  (if (or bold? selected?)
-                    (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row-y txt))
-                    (p/put-str! g (+ left 3) row-y txt)))))))
+                (let [txt (ellipsize (:text row) text-w)
+                      ;; On a diff HEADER row, split off the filename so it pops
+                      ;; in the path colour while the `diff --git`/a-/b- scaffolding
+                      ;; stays dim — magit's file-heading look.
+                      split (when (= :diff (:kind row)) (magit-diff-filename-split (:text row)))]
+
+                  (cond (and split (< (long split) (count txt)))
+                        (let [pre (subs txt 0 split)]
+                          (p/put-str! g (+ left 3) row-y pre)
+                          (p/set-colors! g t/result-path-fg bg)
+                          (p/styled g
+                                    [p/BOLD]
+                                    (p/put-str! g (+ left 3 (long split)) row-y (subs txt split))))
+                        (or bold? selected?)
+                        (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row-y txt))
+                        :else (p/put-str! g (+ left 3) row-y txt)))))))
         (scrollbar/draw! g
                          {:col (+ left inner-w)
                           :top content-top
