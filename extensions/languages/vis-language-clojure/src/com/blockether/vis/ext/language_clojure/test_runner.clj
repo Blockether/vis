@@ -548,15 +548,31 @@
              (boolean (some (fn* [p1__44725#] (= "lazytest.main" p1__44725#)) main-opts)))))
        (catch Throwable _ false)))
 (defn- cli-command-for
-  "Pick the CLI test command for `root` by build file, so the fallback is not\n   hardcoded to `clojure -M:test`. Returns {:tool kw :cmd [strings] :selectors? bool}\n   or nil when no known Clojure build manifest is present:\n     deps.edn    -> clojure -M:test  (selectors passed through to lazytest.main\n                    when the :test alias actually mains lazytest.main)\n     project.clj -> lein test        (whole suite; selectors do NOT apply)\n     bb.edn      -> bb test          (whole suite; selectors do NOT apply)\n   `sel` is the normalized selector map {:nses :only :include :exclude}."
+  "Pick the CLI test command for `root` by build file, so the fallback is not
+   hardcoded to `clojure -M:test`. Returns {:tool kw :cmd [strings] :selectors? bool}
+   or nil when no known Clojure build manifest is present:
+     deps.edn    -> clojure -M:test  (selectors passed through to lazytest.main
+                    when the :test alias actually mains lazytest.main)
+     project.clj -> lein test        (whole suite; selectors do NOT apply)
+     bb.edn      -> bb test          (whole suite; selectors do NOT apply)
+   `sel` is the normalized selector map {:nses :only :include :exclude}."
   [root sel]
-  (let [present? (fn [n]
-                   (.isFile (io/file root n)))]
-    (cond (present? "deps.edn") (if (lazytest-cli? root)
-                                  {:tool :clj
-                                   :cmd (into ["clojure" "-M:test"] (lazytest-selector-args sel))
-                                   :selectors? true}
-                                  {:tool :clj :cmd ["clojure" "-M:test"] :selectors? false})
+  (let [present?
+        (fn [n]
+          (.isFile (io/file root n)))
+
+        ;; A NESTED project whose deps.edn declares no :jvm-opts for :test inherits
+        ;; the workspace's, passed as -J flags so the CLI suite runs with the same
+        ;; JVM options as the managed nREPL (native-access / preview / unsafe-memory).
+        jflags
+        (mapv #(str "-J" %) (repl-manager/inherited-jvm-opts (io/file root) [:test]))]
+
+    (cond (present? "deps.edn")
+          (if (lazytest-cli? root)
+            {:tool :clj
+             :cmd (into (into ["clojure"] jflags) (into ["-M:test"] (lazytest-selector-args sel)))
+             :selectors? true}
+            {:tool :clj :cmd (into (into ["clojure"] jflags) ["-M:test"]) :selectors? false})
           (present? "project.clj") {:tool :lein :cmd ["lein" "test"] :selectors? false}
           (present? "bb.edn") {:tool :bb :cmd ["bb" "test"] :selectors? false}
           :else nil)))

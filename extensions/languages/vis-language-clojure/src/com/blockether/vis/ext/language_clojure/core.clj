@@ -692,6 +692,33 @@
                         (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"
                         (not= out code)))}))))))
 
+(defn- nearest-kondo-dir
+  "The nearest `.clj-kondo` config directory walking UP from `file`, or nil when
+   none exists above it. Mirrors format's per-file `.zprint.edn` walk so a NESTED
+   project's `.clj-kondo` wins over the workspace root's: clj-kondo's own `run!`
+   otherwise resolves config from the process CWD (`user.dir`) and never sees a
+   nested config dir. nil means 'no project config' -> clj-kondo default."
+  ^java.io.File [^java.io.File file]
+  (loop [dir (if (.isDirectory file) file (.getParentFile file))]
+    (when dir
+      (let [c (io/file dir ".clj-kondo")]
+        (if (.isDirectory c) c (recur (.getParentFile dir)))))))
+
+(defn- lint-grouped
+  "Lint absolute source-`files`, GROUPED by each file's nearest `.clj-kondo` dir,
+   running clj-kondo once per group under that group's `:config-dir` — so files
+   in a nested project are linted against ITS config, not the workspace root's.
+   Files with no `.clj-kondo` above them fall back to clj-kondo's default
+   resolution (key nil). The per-group results are merged into one uniform map."
+  [files]
+  (if (empty? files)
+    lint/empty-result
+    (->> files
+         (group-by #(nearest-kondo-dir (io/file (str %))))
+         (mapv (fn [[cfg-dir group]]
+                 (lint/lint-paths group cfg-dir)))
+         (lint/merge-results))))
+
 (defn clj-lint-fn
   "clj-kondo lint via the language facade (`lint_code`). Accepts:
      - a raw code string / {\"code\": ...}  -> lint it on stdin
@@ -723,9 +750,10 @@
 
         base
         (cond code (lint/lint-code code)
-              path (lint/lint-paths [(under path)])
-              (seq paths) (lint/lint-paths (mapv under paths))
-              :else (lint/lint-paths (discover-project-source-paths root)))]
+              path (lint-grouped (expand-clj-source-files root [(under path)]))
+              (seq paths) (lint-grouped (expand-clj-source-files root (mapv under paths)))
+              :else (lint-grouped (expand-clj-source-files root
+                                                           (discover-project-source-paths root))))]
 
     (extension/success
       {:result (assoc (update base

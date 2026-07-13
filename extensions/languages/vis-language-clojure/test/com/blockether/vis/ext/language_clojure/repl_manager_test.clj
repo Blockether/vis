@@ -64,6 +64,50 @@
         (expect (some #(= "+dev,+test" %) cmd))
         (expect (some #(= "55123" %) cmd)))))
 
+(defdescribe
+  inherited-jvm-opts-test
+  ;; A nested project whose own deps.edn declares no :jvm-opts must inherit the
+  ;; workspace's launch-alias JVM options, so its nREPL never boots a bare JVM.
+  (it
+    "a nested project with no :jvm-opts inherits an ancestor's launch-alias opts"
+    (let
+      [parent
+       (tmp-dir)
+
+       _
+       (with-file
+         parent
+         "deps.edn"
+         "{:aliases {:dev {:jvm-opts [\"--enable-preview\"]} :test {:jvm-opts [\"-Dfoo=bar\"]}}}")
+
+       child
+       (str (io/file parent "svc"))
+
+       _
+       (.mkdirs (io/file child))
+
+       _
+       (with-file child "deps.edn" "{:deps {}}")]
+
+      ;; nested dir declares none -> inherits the parent's :dev + :test opts
+      (expect (= ["--enable-preview" "-Dfoo=bar"]
+                 (rm/inherited-jvm-opts (io/file child) [:dev :test])))
+      ;; the parent declares its OWN -> nothing inherited (already applied by -M)
+      (expect (nil? (rm/inherited-jvm-opts (io/file parent) [:dev :test])))
+      ;; launcher-for for the nested dir bakes the inherited opts into the alias
+      (let [cmd
+            (:cmd (rm/launcher-for child [:dev :test] 12345))
+
+            sdeps
+            (some #(when (str/includes? (str %) ":jvm-opts") (str %)) cmd)]
+
+        (expect (some? sdeps))
+        (expect (str/includes? sdeps "--enable-preview"))
+        (expect (str/includes? sdeps "-Dfoo=bar")))
+      ;; launcher-for for the parent does NOT duplicate (no :jvm-opts injected)
+      (let [cmd (:cmd (rm/launcher-for parent [:dev :test] 12345))]
+        (expect (not-any? #(str/includes? (str %) ":jvm-opts") cmd))))))
+
 (defdescribe status+stop-test
              ;; status/stop are SESSION-scoped and return STRING-keyed lifecycle maps (they
              ;; cross the strings-only boundary as tool `:result`s).

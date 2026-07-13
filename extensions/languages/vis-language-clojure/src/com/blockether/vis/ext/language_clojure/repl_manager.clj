@@ -21,7 +21,8 @@
    this is safe in any project.
 
    Starting/stopping is CORE and ALWAYS allowed — never gated behind a flag."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client])
   (:import (java.io RandomAccessFile)
@@ -90,6 +91,46 @@
   [aliases]
   (when (seq aliases) (apply str (map #(str ":" (name %)) aliases))))
 
+(defn- read-deps-edn
+  "Parse `dir`/deps.edn to an EDN map, or nil when absent/unreadable."
+  [^java.io.File dir]
+  (try (let [f (io/file dir "deps.edn")]
+         (when (.isFile f) (edn/read-string (slurp f))))
+       (catch Throwable _ nil)))
+
+(defn- alias-jvm-opts
+  "The `:jvm-opts` `aliases` declare in a parsed deps.edn map, concatenated in the
+   order the aliases are given (nil-safe, distinct)."
+  [deps aliases]
+  (->> aliases
+       (mapcat (fn [a]
+                 (get-in deps [:aliases a :jvm-opts])))
+       distinct
+       vec))
+
+(defn inherited-jvm-opts
+  "JVM options a nested project should INHERIT from an ancestor deps.edn.
+
+   The nREPL is launched with `-M:dev:test:vis/nrepl-launch`, so any `:jvm-opts`
+   `dir`'s OWN deps.edn declares for those aliases already reach the JVM — in that
+   case nothing is inherited (returns nil, keeping the top-level project unchanged).
+
+   But a NESTED project whose deps.edn declares no such aliases (e.g. an extension
+   with a bare `{:deps …}` map) would otherwise boot a BARE JVM — missing the
+   workspace's flags (`--enable-native-access`, `--enable-preview`,
+   `--sun-misc-unsafe-memory-access=allow`, …) that its code needs, so tests crash
+   before they run. For that case we walk UP from `dir` to the nearest ancestor
+   whose deps.edn declares `:jvm-opts` for `aliases` and return them, so the nested
+   nREPL inherits the workspace's JVM options."
+  [^java.io.File dir aliases]
+  (when (seq aliases)
+    (let [own (alias-jvm-opts (read-deps-edn dir) aliases)]
+      (when (empty? own)
+        (loop [d (.getParentFile (.getAbsoluteFile dir))]
+          (when d
+            (let [opts (alias-jvm-opts (read-deps-edn d) aliases)]
+              (if (seq opts) opts (recur (.getParentFile d))))))))))
+
 (defn launcher-for
   "Subprocess command to boot a project nREPL in `dir` on the EXPLICIT `port`,
    honouring `aliases` (deps.edn aliases / lein profiles). Returns
@@ -104,15 +145,21 @@
           ;; its OWN `:main-opts` still contributes its deps + source paths to the
           ;; classpath, but our `-m nrepl.cmdline --port N` is what actually runs. We
           ;; want the user aliases' deps/paths, never their main.
-          {:tool :clj
-           :cmd ["clojure" "-Sdeps"
-                 (str "{:aliases {:vis/nrepl-launch "
-                      "{:extra-deps {nrepl/nrepl {:mvn/version \""
-                      nrepl-version
-                      "\"}} "
-                      ":main-opts [\"-m\" \"nrepl.cmdline\" \"--port\" \""
-                      port
-                      "\"]}}}") (str "-M" (alias-suffix aliases) ":vis/nrepl-launch")]}
+          (let [jvm (seq (inherited-jvm-opts (io/file dir) aliases))]
+            {:tool :clj
+             :cmd ["clojure" "-Sdeps"
+                   (str "{:aliases {:vis/nrepl-launch "
+                        "{:extra-deps {nrepl/nrepl {:mvn/version \""
+                        nrepl-version
+                        "\"}} "
+                        ;; A NESTED project whose own deps.edn declares no :jvm-opts
+                        ;; for the launch aliases inherits the workspace's — so its
+                        ;; nREPL never boots a bare JVM missing --enable-native-access
+                        ;; / --enable-preview / --sun-misc-unsafe-memory-access.
+                        (when jvm (str ":jvm-opts " (pr-str (vec jvm)) " "))
+                        ":main-opts [\"-m\" \"nrepl.cmdline\" \"--port\" \""
+                        port
+                        "\"]}}}") (str "-M" (alias-suffix aliases) ":vis/nrepl-launch")]})
           (present? "project.clj") {:tool :lein
                                     :cmd (if (seq aliases)
                                            ["lein" "with-profile"
