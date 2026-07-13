@@ -44,12 +44,13 @@ export const GatewayPairingScanner = ({
 
   if (!permission?.granted) {
     return (
-      <View style={st.wrap}>
+      <View style={st.wrap} collapsable={false}>
         <Feather name="camera" size={24} color={c.accent} />
         <Text style={st.title}>Scan gateway QR</Text>
-        <Text style={st.copy}>
-          Allow camera access, then scan a VIS pairing QR. It may point at your
-          LAN IP or a Tailscale 100.x address.
+        <Text style={st.copy} pointerEvents="none">
+          Allow camera access, then scan a VIS pairing QR. When Tailscale is
+          connected, the QR prefers its stable 100.x address; same Wi‑Fi is the
+          fallback.
         </Text>
         <View style={st.actions}>
           <ActionBtn
@@ -64,8 +65,8 @@ export const GatewayPairingScanner = ({
   }
 
   return (
-    <View style={st.wrap}>
-      <View style={st.cameraBox} pointerEvents="box-none">
+    <View style={st.wrap} collapsable={false}>
+      <View style={st.cameraBox} pointerEvents="none" collapsable={false}>
         <CameraView
           pointerEvents="none"
           style={StyleSheet.absoluteFill}
@@ -76,9 +77,9 @@ export const GatewayPairingScanner = ({
         <View style={st.reticle} pointerEvents="none" />
       </View>
       <Text style={st.title}>Scan VIS gateway QR</Text>
-      <Text style={st.copy}>
-        The QR fills Gateway URL + bearer token. Works best over Tailscale or
-        the same Wi‑Fi.
+      <Text style={st.copy} pointerEvents="none">
+        Prefer the Tailscale 100.x URL when it is present in the QR. Same Wi‑Fi
+        is only the fallback.
       </Text>
       {error ? <Text style={st.err}>{error}</Text> : null}
       <ActionBtn label="Cancel" tone="ghost" onPress={onClose} />
