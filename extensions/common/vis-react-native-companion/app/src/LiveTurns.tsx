@@ -1,7 +1,7 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { GatewayEvent, TraceIteration } from "./VisClient";
+import { CtxUtilization, GatewayEvent, TraceIteration } from "./VisClient";
 import { c, mono } from "./theme";
 
 /* ── live turn state ──────────────────────────────────────────────────
@@ -77,6 +77,24 @@ export const toolColor = (role?: string): string => {
   if (!role) return c.dim;
   const key = role.includes("/") ? role.slice(role.indexOf("/") + 1) : role;
   return ROLE_COLORS[key] ?? c.dim;
+};
+
+/* Context-fullness percent from the session-view utilization the model reads
+   (`session_utilization` / the live `context.updated` event). `saturation` is
+   already a 0..100 percent server-side (ctx-engine rounds 100*req/window); if it
+   is absent, derive it from the most recent request size vs the free headroom.
+   Clamped 0..100; null when there is nothing to show yet. */
+export const ctxPct = (u?: CtxUtilization | null): number | null => {
+  if (!u) return null;
+  if (typeof u.saturation === "number" && isFinite(u.saturation)) {
+    return Math.max(0, Math.min(100, Math.round(u.saturation)));
+  }
+  const req = u.last_request_tokens;
+  const head = u.headroom_tokens;
+  if (typeof req === "number" && typeof head === "number" && req + head > 0) {
+    return Math.max(0, Math.min(100, Math.round((100 * req) / (req + head))));
+  }
+  return null;
 };
 
 const emptyLiveTurn = (): LiveTurn => ({ cards: [], prose: "", thinking: "", done: false });

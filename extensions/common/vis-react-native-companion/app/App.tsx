@@ -19,11 +19,15 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 
 import {
-  GatewayGroup,
+  GatewayProject,
   GatewayTurn,
+  CtxUtilization,
+  ProviderLimitsReport,
   ProviderModels,
+  ProviderStatusReport,
   SessionModel,
   SessionSoul,
+  SuggestRow,
   TurnAttachment,
   VisGatewayClient
 } from "./src/VisClient";
@@ -31,13 +35,14 @@ import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
-import { LiveCard, LiveCards, LiveState, reduceLiveEvent, traceCards } from "./src/LiveTurns";
+import { LiveCard, LiveCards, LiveState, ctxPct, reduceLiveEvent, traceCards } from "./src/LiveTurns";
 import {
   ensureNotificationPermissions,
   notifyTurnDone,
   shouldNotifyTurnDone
 } from "./src/Notifications";
 import { SessionsDrawer } from "./src/SessionsDrawer";
+import { activeFileMention, applyFileMention, suggestLabel } from "./src/ComposerSuggest";
 import { VoiceButton } from "./src/VoiceButton";
 import {
   AttachmentTray,
@@ -158,6 +163,25 @@ const modelLabel = (model: SessionModel): string => {
   return model.model ?? model.provider ?? "router default";
 };
 
+const providerReportText = (report?: {
+  status?: ProviderStatusReport | undefined;
+  limits?: ProviderLimitsReport | undefined;
+}): string | null => {
+  if (!report) return null;
+  const parts: string[] = [];
+  if (report.status?.configured === false) parts.push("not configured");
+  else if (report.status?.configured === true) parts.push("configured");
+  if (report.limits?.status) parts.push(String(report.limits.status));
+  if (report.limits?.message) parts.push(String(report.limits.message));
+  const stat = report.limits?.static;
+  if (stat && typeof stat === "object") {
+    for (const [k, v] of Object.entries(stat).slice(0, 2)) {
+      if (["string", "number", "boolean"].includes(typeof v)) parts.push(`${k}: ${String(v)}`);
+    }
+  }
+  return parts.length ? parts.join(" · ") : null;
+};
+
 const PendingDots = () => {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -236,17 +260,22 @@ function Root() {
   const [showSessions, setShowSessions] = useState(false);
   const [showModel, setShowModel] = useState(false);
   const [sessions, setSessions] = useState<SessionSoul[]>([]);
-  const [groups, setGroups] = useState<GatewayGroup[]>([]);
+  const [projects, setProjects] = useState<GatewayProject[]>([]);
   const [activeSession, setActiveSession] = useState<SessionSoul | null>(null);
   const [turns, setTurns] = useState<GatewayTurn[]>([]);
   const [model, setModel] = useState<SessionModel>(null);
   const [catalog, setCatalog] = useState<ProviderModels[]>([]);
+  const [providerReports, setProviderReports] = useState<
+    Record<string, { status: ProviderStatusReport | undefined; limits: ProviderLimitsReport | undefined }>
+  >({});
   const [showRename, setShowRename] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [picking, setPicking] = useState(false);
   const [catalogHint, setCatalogHint] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [pendingAtts, setPendingAtts] = useState<PendingAttachment[]>([]);
+  const [suggestRows, setSuggestRows] = useState<SuggestRow[]>([]);
+  const [suggestBusy, setSuggestBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -254,6 +283,10 @@ function Root() {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<LiveState>({});
+  /* Context-fullness the model reads (session_utilization). Seeded from GET
+     /v1/sessions/:sid/context on open, then kept live by the `context.updated`
+     SSE event — the SAME canonical mirror the web/TUI context rail shows. */
+  const [ctxUtil, setCtxUtil] = useState<CtxUtilization | null>(null);
   /* Settled tool cards per turn_id, rehydrated from GET /turns/:tid/trace so a
      finished turn keeps its op-cards in scrollback (the /turns poll carries no
      trace). traceReqRef dedups in-flight / already-failed fetches. */
@@ -275,6 +308,7 @@ function Root() {
   const traceReqRef = useRef<Set<string>>(new Set());
 
   const client = useMemo(() => new VisGatewayClient({ gatewayUrl, token }), [gatewayUrl, token]);
+  const mention = useMemo(() => activeFileMention(input), [input]);
 
   const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
   const connected = !error && activeSession != null;
@@ -413,6 +447,37 @@ function Root() {
     });
   }, []);
 
+  /* Canonical @-file picker: UI trigger lives here; ranking comes from
+     GET /v1/sessions/:sid/suggest, the same gateway service every channel uses. */
+  useEffect(() => {
+    const sid = activeSession?.id;
+    if (!sid || !mention) {
+      setSuggestRows([]);
+      setSuggestBusy(false);
+      return;
+    }
+    let alive = true;
+    setSuggestBusy(true);
+    const timer = setTimeout(() => {
+      void client
+        .suggest(sid, mention.q)
+        .then((rows) => {
+          if (alive) setSuggestRows(rows.slice(0, 6));
+        })
+        .catch((err) => {
+          if (__DEV__) console.warn("[vis] suggest failed", err);
+          if (alive) setSuggestRows([]);
+        })
+        .finally(() => {
+          if (alive) setSuggestBusy(false);
+        });
+    }, 120);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [activeSession?.id, client, mention]);
+
   useEffect(() => {
     if (!activeSession?.id) return;
     const timer = setInterval(() => {
@@ -490,6 +555,8 @@ function Root() {
           },
           onEvent: (ev) => {
             setLive((prev) => reduceLiveEvent(prev, ev));
+            /* live context-fullness — context.updated carries the fresh utilization */
+            if (ev.type === "context.updated" && ev.utilization) setCtxUtil(ev.utilization);
             /* fire a local notification on turn completion when backgrounded */
             const tid = ev.turn_id;
             if (
@@ -527,6 +594,26 @@ function Root() {
     return () => close?.();
   }, [activeSession?.id, client]);
 
+  /* Seed the context-fullness rail on session open (the live context.updated
+     event keeps it fresh after). A pre-context gateway 404s → clear, never throw. */
+  useEffect(() => {
+    const sid = activeSession?.id;
+    setCtxUtil(null);
+    if (!sid) return;
+    let alive = true;
+    void client
+      .sessionContext(sid)
+      .then((snap) => {
+        if (alive) setCtxUtil(snap.session_utilization ?? null);
+      })
+      .catch((err) => {
+        if (__DEV__) console.warn("[vis] sessionContext failed", err);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSession?.id, client]);
+
   /* Auto-follow lives on the FlatList's onContentSizeChange: it fires for new
      messages AND for a streaming answer growing, and it is suppressed while the
      reader's finger is down — a poll landing mid-gesture must never yank. */
@@ -535,14 +622,14 @@ function Root() {
     try {
       const ss = await client.listSessions();
       setSessions(ss);
-      /* Session groups are a newer gateway feature — an older/stale gateway 404s
-         /v1/groups. Never let that blank the sessions list; fall back to no
+      /* Session projects are a newer gateway feature — an older/stale gateway 404s
+         /v1/projects. Never let that blank the sessions list; fall back to no
          projects so the drawer still shows every session. */
       try {
-        setGroups(await client.listGroups());
-      } catch (groupErr) {
-        if (__DEV__) console.warn("[vis] listGroups failed", groupErr);
-        setGroups([]);
+        setProjects(await client.listProjects());
+      } catch (projectErr) {
+        if (__DEV__) console.warn("[vis] listProjects failed", projectErr);
+        setProjects([]);
       }
     } catch (err) {
       fail(err);
@@ -650,13 +737,13 @@ function Root() {
     [activeSession?.id, client, fail]
   );
 
-  /* ── session groups / projects ───────────────────── */
+  /* ── projects / projects ───────────────────── */
 
-  const createGroup = useCallback(
+  const createProject = useCallback(
     async (name: string) => {
       try {
-        const g = await client.createGroup(name);
-        setGroups((prev) => [...prev, g]);
+        const g = await client.createProject(name);
+        setProjects((prev) => [...prev, g]);
       } catch (err) {
         fail(err);
       }
@@ -664,13 +751,13 @@ function Root() {
     [client, fail]
   );
 
-  const renameGroup = useCallback(
-    async (group: GatewayGroup, name: string) => {
+  const renameProject = useCallback(
+    async (project: GatewayProject, name: string) => {
       try {
-        const g = await client.updateGroup(group.id, { name });
-        setGroups((prev) => prev.map((x) => (x.id === group.id ? { ...x, ...g } : x)));
+        const g = await client.updateProject(project.id, { name });
+        setProjects((prev) => prev.map((x) => (x.id === project.id ? { ...x, ...g } : x)));
         setSessions((prev) =>
-          prev.map((s) => (s.group_id === group.id ? { ...s, group_name: name } : s))
+          prev.map((s) => (s.project_id === project.id ? { ...s, project_name: name } : s))
         );
       } catch (err) {
         fail(err);
@@ -679,15 +766,15 @@ function Root() {
     [client, fail]
   );
 
-  const deleteGroup = useCallback(
-    async (group: GatewayGroup) => {
+  const deleteProject = useCallback(
+    async (project: GatewayProject) => {
       try {
-        await client.deleteGroup(group.id);
-        setGroups((prev) => prev.filter((x) => x.id !== group.id));
-        /* members scatter back to ungrouped — clear their membership locally */
+        await client.deleteProject(project.id);
+        setProjects((prev) => prev.filter((x) => x.id !== project.id));
+        /* members scatter back to projectless — clear their membership locally */
         setSessions((prev) =>
           prev.map((s) =>
-            s.group_id === group.id ? { ...s, group_id: null, group_name: null } : s
+            s.project_id === project.id ? { ...s, project_id: null, project_name: null } : s
           )
         );
       } catch (err) {
@@ -697,29 +784,30 @@ function Root() {
     [client, fail]
   );
 
-  const assignGroup = useCallback(
-    async (session: SessionSoul, groupId: string | null) => {
+  const assignProject = useCallback(
+    async (session: SessionSoul, projectId: string | null) => {
       /* optimistic: reflect membership + bump both projects' counts at once */
       setSessions((prev) =>
         prev.map((s) =>
           s.id === session.id
-            ? { ...s, group_id: groupId, group_name: groups.find((g) => g.id === groupId)?.name ?? null }
+            ? { ...s, project_id: projectId, project_name: projects.find((g) => g.id === projectId)?.name ?? null }
             : s
         )
       );
       try {
-        const soul = await client.assignGroup(session.id, groupId);
+        const soul = await client.assignProject(session.id, projectId);
         setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)));
       } catch (err) {
         fail(err);
         void refreshSessions();
       }
     },
-    [client, fail, groups, refreshSessions]
+    [client, fail, projects, refreshSessions]
   );
 
   const openModelDialog = useCallback(async () => {
     setShowModel(true);
+    setProviderReports({});
     try {
       setModel(activeSession ? await client.sessionModel(activeSession.id) : null);
     } catch (err) {
@@ -728,6 +816,19 @@ function Root() {
     try {
       const catalog = await client.providerCatalog();
       setCatalog(catalog);
+      /* Provider status/limits are canonical gateway reports too; load them
+         opportunistically so the mobile picker shows the SAME health/quota
+         hints as the desktop provider panes. Never block choosing a model. */
+      const reports = await Promise.all(
+        catalog.map(async (p) => {
+          const [status, limits] = await Promise.all([
+            client.providerStatus(p.id).catch(() => undefined),
+            client.providerLimits(p.id).catch(() => undefined)
+          ]);
+          return [p.id, { status, limits }] as const;
+        })
+      );
+      setProviderReports(Object.fromEntries(reports));
       /* An older running gateway serves /v1/models WITHOUT the catalog key. */
       setCatalogHint(
         catalog.length > 0
@@ -736,6 +837,7 @@ function Root() {
       );
     } catch {
       setCatalog([]);
+      setProviderReports({});
       setCatalogHint("Could not load the model catalog from the gateway.");
     }
   }, [activeSession, client, fail]);
@@ -865,6 +967,35 @@ function Root() {
           </Pressable>
         ) : null}
 
+        {mention && (suggestRows.length > 0 || suggestBusy) ? (
+          <View style={styles.suggestBox}>
+            <View style={styles.suggestHead}>
+              <Feather name="at-sign" size={12} color={c.amberDeep} />
+              <Text style={styles.suggestTitle}>file suggestions</Text>
+              {suggestBusy ? <ActivityIndicator size="small" color={c.amber} /> : null}
+            </View>
+            {suggestRows.map((row) => (
+              <Pressable
+                key={row.name}
+                onPress={() => {
+                  setInput(applyFileMention(input, mention, row));
+                  setSuggestRows([]);
+                }}
+                style={styles.suggestRow}
+              >
+                <Text numberOfLines={1} style={styles.suggestName}>
+                  {row.name}
+                </Text>
+                {suggestLabel(row) ? (
+                  <Text numberOfLines={1} style={styles.suggestMeta}>
+                    {suggestLabel(row)}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {/* ── attachment tray + flat composer ─────────────────────── */}
         <AttachmentTray items={pendingAtts} onRemove={(key) => setPendingAtts((prev) => prev.filter((a) => a.key !== key))} />
         <View style={styles.composer}>
@@ -934,6 +1065,9 @@ function Root() {
               {modelLabel(model)}
             </Text>
           </Pressable>
+          {ctxPct(ctxUtil) != null ? (
+            <Text style={styles.ctxChip}>{`ctx ${ctxPct(ctxUtil)}%`}</Text>
+          ) : null}
           <Text numberOfLines={1} style={styles.footerText}>
             {gatewayHost}
             {activeSession ? ` \u00b7 ${shortId(activeSession.id)}` : ""}
@@ -946,7 +1080,7 @@ function Root() {
       <SessionsDrawer
         visible={showSessions}
         sessions={sessions}
-        groups={groups}
+        projects={projects}
         activeId={activeSession?.id ?? null}
         onClose={() => setShowSessions(false)}
         onSelect={(s) => void openSession(s)}
@@ -956,10 +1090,10 @@ function Root() {
         }}
         onDelete={(s) => void deleteSession(s)}
         onRename={(s, title) => void renameSession(s, title)}
-        onCreateGroup={(name) => void createGroup(name)}
-        onRenameGroup={(g, name) => void renameGroup(g, name)}
-        onDeleteGroup={(g) => void deleteGroup(g)}
-        onAssign={(s, gid) => void assignGroup(s, gid)}
+        onCreateProject={(name) => void createProject(name)}
+        onRenameProject={(g, name) => void renameProject(g, name)}
+        onDeleteProject={(g) => void deleteProject(g)}
+        onAssign={(s, gid) => void assignProject(s, gid)}
       />
 
       {/* ── settings — the web channel's Settings dialog, native ──── */}
@@ -972,6 +1106,7 @@ function Root() {
           onGatewayUrl={setGatewayUrl}
           onToken={setToken}
           onReconnect={() => void connect()}
+          sessionId={activeSession?.id ?? null}
           notify={notify}
           onNotify={(v) => {
             setNotify(v);
@@ -1004,26 +1139,30 @@ function Root() {
           {catalog.length === 0 ? (
             <Text style={styles.emptyBody}>{catalogHint ?? "No providers configured yet."}</Text>
           ) : (
-            catalog.map((p) => (
-              <View key={p.id} style={styles.modelGroup}>
-                <Text style={styles.modelGroupLabel}>{p.label ?? p.id}</Text>
-                <View style={styles.modelChips}>
-                  {p.models.map((name) => {
-                    const on = currentPick?.provider === p.id && currentPick?.model === name;
-                    return (
-                      <Pressable
-                        key={name}
-                        onPress={() => void pickModel(p.id, name)}
-                        style={[styles.modelChip, on && styles.modelChipOn]}
-                      >
-                        {on ? <Feather name="check" size={11} color={c.amberBright} /> : null}
-                        <Text style={[styles.modelChipText, on && styles.modelChipTextOn]}>{name}</Text>
-                      </Pressable>
-                    );
-                  })}
+            catalog.map((p) => {
+              const report = providerReportText(providerReports[p.id]);
+              return (
+                <View key={p.id} style={styles.modelGroup}>
+                  <Text style={styles.modelGroupLabel}>{p.label ?? p.id}</Text>
+                  {report ? <Text style={styles.modelGroupMeta}>{report}</Text> : null}
+                  <View style={styles.modelChips}>
+                    {p.models.map((name) => {
+                      const on = currentPick?.provider === p.id && currentPick?.model === name;
+                      return (
+                        <Pressable
+                          key={name}
+                          onPress={() => void pickModel(p.id, name)}
+                          style={[styles.modelChip, on && styles.modelChipOn]}
+                        >
+                          {on ? <Feather name="check" size={11} color={c.amberBright} /> : null}
+                          <Text style={[styles.modelChipText, on && styles.modelChipTextOn]}>{name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       </DialogModal>
@@ -1093,6 +1232,21 @@ const styles = StyleSheet.create({
     paddingVertical: 7
   },
   noteText: { flex: 1, fontFamily: mono, fontSize: 11.5, color: c.chipInk },
+  suggestBox: {
+    marginHorizontal: 12,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: c.lineSoft,
+    backgroundColor: c.field,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: 6
+  },
+  suggestHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  suggestTitle: { flex: 1, fontFamily: mono, fontSize: 10, color: c.amberDeep, textTransform: "uppercase" },
+  suggestRow: { gap: 2, paddingVertical: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.lineSoft },
+  suggestName: { fontFamily: mono, fontSize: 12, color: c.ink },
+  suggestMeta: { fontSize: 10, color: c.dim },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -1138,6 +1292,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 4
   },
+  ctxChip: {
+    fontFamily: mono,
+    fontSize: 10,
+    color: c.dim,
+    borderWidth: 1,
+    borderColor: c.lineSoft,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2
+  },
   footRouting: {
     flexDirection: "row",
     alignItems: "center",
@@ -1180,6 +1344,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: c.dim
   },
+  modelGroupMeta: { fontSize: 10.5, color: c.dim, marginTop: -4 },
   modelChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   modelChip: {
     flexDirection: "row",
