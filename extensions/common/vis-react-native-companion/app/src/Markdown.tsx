@@ -9,8 +9,7 @@ import { c, mono } from "./theme";
    transcript readable without shipping a markdown engine. */
 
 type Block =
-  | { kind: "code"; lang: string; body: string }
-  | { kind: "text"; body: string };
+  { kind: "code"; lang: string; body: string } | { kind: "text"; body: string };
 
 export const splitBlocks = (src: string): Block[] => {
   const blocks: Block[] = [];
