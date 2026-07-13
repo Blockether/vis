@@ -5,6 +5,7 @@ import {
   traceCards,
   LiveState,
 } from "./LiveTurns";
+import { c } from "./theme";
 import { GatewayEvent, TraceIteration } from "./VisClient";
 
 /* The heart of live streaming on iOS: the SSE→card reducer. These lock the
@@ -40,8 +41,8 @@ describe("toolColor", () => {
     expect(toolColor("read")).toBe("#2563EB");
   });
   it("falls back to dim for unknown / missing roles", () => {
-    expect(toolColor("tool-color/nope")).toBe("#6F6A63");
-    expect(toolColor(undefined)).toBe("#6F6A63");
+    expect(toolColor("tool-color/nope")).toBe(c.dim);
+    expect(toolColor(undefined)).toBe(c.dim);
   });
 });
 
