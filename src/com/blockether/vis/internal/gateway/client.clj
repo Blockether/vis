@@ -237,12 +237,12 @@
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
-;; --- Session groups (folders) + ownership (V6) ---
+;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
-(defn list-groups
-  "GET /v1/groups. `opts`: :channel (keyword/string, :all ⇒ every group),
-   :owner (string), :archived? (bool). Returns the :groups vector."
-  ([] (list-groups nil))
+(defn list-projects
+  "GET /v1/projects. `opts`: :channel (keyword/string, :all ⇒ every project),
+   :owner (string), :archived? (bool). Returns the :projects vector."
+  ([] (list-projects nil))
   ([{:keys [channel owner archived?]}]
    (let [qs
          (->> [(when (and channel (not= :all channel) (not= "all" channel))
@@ -252,28 +252,34 @@
               (str/join "&"))
 
          path
-         (cond-> "/v1/groups"
+         (cond-> "/v1/projects"
            (seq qs)
            (str "?" qs))]
 
-     (:groups (send-json! "GET" path)))))
+     (:projects (send-json! "GET" path)))))
 
-(defn create-group! [opts] (send-json! "POST" "/v1/groups" opts))
+(defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
-(defn get-group
-  [gid]
-  (try (send-json! "GET" (str "/v1/groups/" (enc gid)))
+(defn get-project
+  [pid]
+  (try (send-json! "GET" (str "/v1/projects/" (enc pid)))
        (catch clojure.lang.ExceptionInfo e
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
-(defn update-group! [gid opts] (send-json! "PATCH" (str "/v1/groups/" (enc gid)) opts))
+(defn update-project! [pid opts] (send-json! "PATCH" (str "/v1/projects/" (enc pid)) opts))
 
-(defn delete-group! [gid] (send-json! "DELETE" (str "/v1/groups/" (enc gid))))
+(defn delete-project! [pid] (send-json! "DELETE" (str "/v1/projects/" (enc pid))))
 
-(defn assign-group!
-  "Assign a session to a group (nil clears / ungroups). Returns the soul."
-  [sid gid]
-  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:group_id (when gid (str gid))}))
+(defn assign-project!
+  "Assign a session to a project (nil clears / removes from project). Returns the soul."
+  [sid pid]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:project_id (when pid (str pid))}))
+
+(defn reorder-project-sessions!
+  "Persist the manual order of a project's sessions (TUI tabs). `session-ids` is
+   the desired ordering."
+  [pid session-ids]
+  (send-json! "PATCH" (str "/v1/projects/" (enc pid) "/sessions") {:order (mapv str session-ids)}))
 
 (defn release-session!
   "Release a session VIEW when the owning channel exits: tell the daemon to
@@ -594,10 +600,10 @@
       (assoc :llm-routing-trace (:llm_routing_trace event))
 
       (:tokens event)
-      (assoc :tokens (:tokens event))
+      (assoc :tokens (wire/kebab-keys (:tokens event)))
 
       (:cost event)
-      (assoc :cost (:cost event))
+      (assoc :cost (wire/kebab-keys (:cost event)))
 
       (:confidence event)
       (assoc :confidence (:confidence event))
@@ -620,6 +626,48 @@
         (.GET)
         (.build))))
 
+
+(def ^:private sse-reconnect-max-attempts
+  "How many times a blocking turn stream reconnects after the daemon drops the
+   connection mid-turn before giving up and surfacing a disconnect error."
+  5)
+
+(def ^:private sse-reconnect-backoff-ms 250)
+
+(defn- open-sse-events!
+  "Open ONE SSE connection for `sid` from `cursor` and drive the raw
+   `data:`-line/blank-line frame parser. For each parsed event: advance `cursor*`
+   (highest `:seq` seen) then call `(handle event)`. When `handle` returns a
+   truthy value, stop and return it (a terminal signal); otherwise keep reading.
+   Resets `stream*` (when non-nil) to the live InputStream so `unsubscribe!` can
+   close it. Returns `[:closed]` on EOF; throws `ex-info` with `:http-status` on
+   a non-200 response. Shared by `read-sse-stream!` (blocking turns) and
+   `subscribe!` (the live mirror) so the frame parsing lives in ONE place."
+  [sid cursor cursor* stream* handle]
+  (let [response
+        (.send @http-client (sse-request sid cursor) (HttpResponse$BodyHandlers/ofInputStream))]
+    (when-not (= 200 (.statusCode response))
+      (throw (ex-info (str "gateway SSE HTTP " (.statusCode response))
+                      {:http-status (.statusCode response)})))
+    (with-open [^InputStream in (.body response)
+                rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+
+      (when stream* (reset! stream* in))
+      (loop [data-lines []]
+        (if-let [line (.readLine rdr)]
+          (if (str/blank? line)
+            (let [data (str/join "\n" data-lines)
+                  event (when (seq data) (wire/parse-json data))]
+
+              (if-not event
+                (recur [])
+                (do (when-let [s (:seq event)]
+                      (swap! cursor* max (long s)))
+                    (or (handle event) (recur [])))))
+            (if (str/starts-with? line "data: ")
+              (recur (conj data-lines (subs line 6)))
+              (recur data-lines)))
+          [:closed])))))
 (defn subscribe!
   "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
    that replays `cursor` then calls `sink` for every live event. Returns an empty
@@ -635,31 +683,36 @@
         stream*
         (atom nil)
 
+        cursor*
+        (atom (long (or cursor 0)))
+
         fut
         (future
-          (try (let [response (.send @http-client
-                                     (sse-request sid cursor)
-                                     (HttpResponse$BodyHandlers/ofInputStream))]
-                 (when-not (= 200 (.statusCode response))
-                   (throw (ex-info (str "gateway SSE HTTP " (.statusCode response))
-                                   {:http-status (.statusCode response)})))
-                 (with-open [^InputStream in (.body response)
-                             rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
-
-                   (reset! stream* in)
-                   (loop [data-lines []]
-                     (when-let [line (.readLine rdr)]
-                       (if (str/blank? line)
-                         (let [data (str/join "
-" data-lines)]
-                           (when-let [event (when (seq data) (wire/parse-json data))]
-                             (sink event))
-                           (recur []))
-                         (if (str/starts-with? line "data: ")
-                           (recur (conj data-lines (subs line 6)))
-                           (recur data-lines)))))))
-               (catch Throwable _ nil)
-               (finally (swap! subscriptions dissoc sub-id))))]
+          ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
+          ;; drops the stream, so a gateway restart / transient blip no longer
+          ;; kills the live mirror silently. Stops only when unsubscribe!
+          ;; removes the sub from the registry (or closes the stream).
+          (loop [attempt 0]
+            ;; A live mirror never terminates on its own: the handler always
+            ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
+            ;; or throws (non-200 / IO) — either way `dropped?` is true and we
+            ;; reconnect.
+            (let [dropped? (try (open-sse-events! sid
+                                                  @cursor*
+                                                  cursor*
+                                                  stream*
+                                                  (fn [event]
+                                                    (sink event)
+                                                    nil))
+                                true
+                                (catch Throwable _ true))]
+              (when (and dropped? (contains? @subscriptions sub-id))
+                (let [interrupted? (try (Thread/sleep
+                                          (min 5000 (* sse-reconnect-backoff-ms (inc attempt))))
+                                        false
+                                        (catch InterruptedException _ true))]
+                  (when-not interrupted? (recur (inc attempt)))))))
+          (swap! subscriptions dissoc sub-id))]
 
     (swap! subscriptions assoc sub-id {:future fut :stream stream*})
     []))
@@ -701,37 +754,56 @@
           (contains? wire/queue-mirror-event-types type) [:forward event]
           :else [:skip event])))
 
+(defn- read-sse-stream!
+  "Read ONE SSE connection for `sid` from `cursor` until the wanted turn reaches
+   a terminal event OR the stream closes. Forwards non-terminal events to
+   `on-event` and advances `cursor*` (an atom holding the highest `:seq` seen)
+   so a reconnect resumes losslessly. Returns `[:terminal event]` on a terminal
+   event, or `[:closed]` when the daemon dropped the stream before the turn
+   finished (EOF)."
+  [sid cursor wanted-turn-id on-event cursor*]
+  (open-sse-events! sid
+                    cursor
+                    cursor*
+                    nil
+                    (fn [event]
+                      (let [[action event'] (sse-event-action event wanted-turn-id)]
+                        (case action
+                          :terminal
+                          (do (when on-event (on-event event)) [:terminal event'])
+
+                          :forward
+                          (do (when on-event (on-event event)) nil)
+
+                          nil)))))
+
 (defn- read-events-until!
+  "Block on the session SSE stream until the wanted turn reaches a terminal
+   event. RECONNECTS (resuming from the last-seen cursor) when the gateway
+   daemon drops the stream mid-turn — a transient blip or a daemon restart no
+   longer strands the turn as a silent blank bubble. When the reconnect budget
+   is spent, THROWS so the caller renders a real disconnect error instead of an
+   empty answer."
   [sid cursor wanted-turn-id on-event]
-  (let [response
-        (.send @http-client (sse-request sid cursor) (HttpResponse$BodyHandlers/ofInputStream))]
-    (when-not (= 200 (.statusCode response))
-      (throw (ex-info (str "gateway SSE HTTP " (.statusCode response))
-                      {:http-status (.statusCode response)})))
-    (with-open [^InputStream in (.body response)
-                rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
-
-      (loop [data-lines []]
-        (if-let [line (.readLine rdr)]
-          (if (str/blank? line)
-            (let [data (str/join "\n" data-lines)
-                  event (when (seq data) (wire/parse-json data))]
-
-              (if-not event
-                (recur [])
-                (let [[action event'] (sse-event-action event wanted-turn-id)]
-                  (case action
-                    :terminal
-                    (do (when on-event (on-event event)) event')
-
-                    :forward
-                    (do (when on-event (on-event event)) (recur []))
-
-                    (recur [])))))
-            (if (str/starts-with? line "data: ")
-              (recur (conj data-lines (subs line 6)))
-              (recur data-lines)))
-          nil)))))
+  (let [cursor* (atom (long (or cursor 0)))]
+    (loop [attempt 0]
+      (let [outcome (try (read-sse-stream! sid @cursor* wanted-turn-id on-event cursor*)
+                         (catch java.io.IOException _ [:closed])
+                         ;; A non-200 mid-turn (502/503 while the daemon
+                         ;; restarts) throws from open-sse-events!; treat it as a
+                         ;; drop and reconnect, same as an EOF — otherwise a
+                         ;; transient 5xx would strand the turn.
+                         (catch clojure.lang.ExceptionInfo e
+                           (if (:http-status (ex-data e)) [:closed] (throw e))))]
+        (if (= :terminal (first outcome))
+          (second outcome)
+          ;; Stream closed before a terminal event → the daemon dropped us
+          ;; mid-turn. Back off and reconnect from the last cursor; give up
+          ;; (with a real error) once the budget is spent.
+          (if (< attempt sse-reconnect-max-attempts)
+            (do (Thread/sleep (* sse-reconnect-backoff-ms (inc attempt))) (recur (inc attempt)))
+            (throw (ex-info "Lost connection to the gateway daemon before the turn finished."
+                            {:gateway-disconnected true :turn-id (str wanted-turn-id)}))))))))
 
 (defn submit-turn-sync!
   [sid {:keys [on-event] :as opts}]

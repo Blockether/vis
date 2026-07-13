@@ -318,13 +318,14 @@
 (defdelegate db-get-session-model-pref [db-info session-id])
 (defdelegate db-set-session-model-pref! [db-info session-id provider model])
 
-;; --- Session groups (folders) + ownership (V6) ---
-(defdelegate db-get-group [db-info group-id])
-(defdelegate db-list-groups [db-info opts])
-(defdelegate db-create-group! [db-info opts])
-(defdelegate db-update-group! [db-info group-id opts])
-(defdelegate db-delete-group! [db-info group-id])
-(defdelegate db-set-session-group! [db-info session-id group-id])
+;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
+(defdelegate db-get-project [db-info project-id])
+(defdelegate db-list-projects [db-info opts])
+(defdelegate db-create-project! [db-info opts])
+(defdelegate db-update-project! [db-info project-id opts])
+(defdelegate db-delete-project! [db-info project-id])
+(defdelegate db-set-session-project! [db-info session-id project-id])
+(defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
 
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])

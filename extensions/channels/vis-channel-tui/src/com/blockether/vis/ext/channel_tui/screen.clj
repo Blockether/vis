@@ -2816,11 +2816,27 @@
   [^TerminalScreen _screen]
   nil)
 (defn- pre-resolve-session-id!
-  "Resolve an optional session id through the gateway before Lanterna starts."
+  "Resolve an optional session id through the gateway before Lanterna starts.
+   Reconcile orphaned :running turns FIRST (via the gateway) so the rebuilt
+   history carries no stale :running turns."
   [opts]
   (when-let [cid (:session-id opts)]
+    (vis/gateway-reconcile-running-turns!)
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
+(defn- svar-no-providers-cause?
+  "True when `e` — or any exception in its cause chain — is svar's
+   `make-router requires at least one provider` (`:type :svar/no-providers`).
+   A config EXISTS but every configured provider failed to resolve at router-
+   build time. Walks the cause chain because the gateway may wrap the original
+   `ex-info` while creating the session."
+  [^Throwable e]
+  (loop [t e]
+    (cond (nil? t) false
+          (= :svar/no-providers (:type (ex-data t))) true
+          :else (recur (.getCause t)))))
+
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -2929,37 +2945,55 @@
              ;; the first Ctrl+N. Idempotent; the post-open `prewarm-session!` just
              ;; tops it up toward the pool depth.
              (chat/prewarm-session! config)
-             (let [{:keys [id history] :as startup-session}
-                   (cond (:session-id opts) resumed-from-flag
-                         ;; --continue: reopen the most-recent :tui session
-                         (:continue opts) (if-let [latest (first (remove empty-untitled-session?
-                                                                   (tui-session-summaries)))]
-                                            (or (chat/resume-session (:id latest))
-                                                (chat/make-session config))
-                                            (chat/make-session config))
-                         ;; --resume: start fresh; the session picker opens
-                         ;; before the main loop (see below), like `pi -r`.
-                         (:resume opts) (chat/make-session config)
-                         ;; Plain launch: resume ONLY the most recent saved
-                         ;; session for this place (the saved-ACTIVE one, else the
-                         ;; first saved id that still resolves) — ONE tab, ONE
-                         ;; transcript fetch. Every other session stays in the DB
-                         ;; and opens LAZILY from the session navigator/picker;
-                         ;; startup never restores a whole tab set.
-                         ;; No usable sidecar → fall back to the newest non-empty
-                         ;; session PINNED to this project (gateway session list
-                         ;; filtered by workspace root) — still one tab. Nothing
-                         ;; at all → a fresh session.
-                         :else
-                         (let [snap (tabs/read-snapshot)
-                               preferred (distinct (concat (when-let [a (:active snap)]
-                                                             [a])
-                                                           (tabs/snapshot-session-ids snap)))]
+             (let [make-startup
+                   (fn [config]
+                     (cond (:session-id opts) resumed-from-flag
+                           ;; --continue: reopen the most-recent :tui session
+                           (:continue opts) (if-let [latest (first (remove empty-untitled-session?
+                                                                     (tui-session-summaries)))]
+                                              (or (chat/resume-session (:id latest))
+                                                  (chat/make-session config))
+                                              (chat/make-session config))
+                           ;; --resume: start fresh; the session picker opens
+                           ;; before the main loop (see below), like `pi -r`.
+                           (:resume opts) (chat/make-session config)
+                           ;; Plain launch: resume ONLY the most recent saved
+                           ;; session for this place (the saved-ACTIVE one, else the
+                           ;; first saved id that still resolves) — ONE tab, ONE
+                           ;; transcript fetch. Every other session stays in the DB
+                           ;; and opens LAZILY from the session navigator/picker;
+                           ;; startup never restores a whole tab set.
+                           ;; No usable sidecar → fall back to the newest non-empty
+                           ;; session PINNED to this project (gateway session list
+                           ;; filtered by workspace root) — still one tab. Nothing
+                           ;; at all → a fresh session.
+                           :else (let [snap (tabs/read-snapshot)
+                                       preferred (distinct (concat (when-let [a (:active snap)]
+                                                                     [a])
+                                                                   (tabs/snapshot-session-ids
+                                                                     snap)))]
 
-                           (or (some chat/resume-session preferred)
-                               (some-> (latest-project-session-id)
-                                       chat/resume-session)
-                               (chat/make-session config))))]
+                                   (or (some chat/resume-session preferred)
+                                       (some-> (latest-project-session-id)
+                                               chat/resume-session)
+                                       (chat/make-session config)))))
+                   {:keys [id history] :as startup-session}
+                   ;; A config EXISTS but every provider may have failed to
+                   ;; resolve at router-build time (rotated/expired creds) → svar
+                   ;; throws :svar/no-providers. Onboarding was skipped (config
+                   ;; present), so surface the provider manager here, then retry
+                   ;; the build ONCE with the freshest config.
+                   (try (make-startup config)
+                        (catch Throwable e
+                          (if (svar-no-providers-cause? e)
+                            (do (when-let [c (with-dialog-lock #(provider/show-provider-dialog!
+                                                                  screen
+                                                                  (:config @state/app-db)))]
+                                  (state/dispatch [:set-config c])
+                                  (state/dispatch [:force-provider-limits-refresh]))
+                                (make-startup (:config @state/app-db)))
+                            (throw e))))]
+
                (vswap! title-listeners assoc (str id) (init-visible-session! startup-session))
                ;; Record this place's tab set (just the single startup tab)
                ;; — otherwise a session never persists and a plain relaunch
@@ -3257,44 +3291,79 @@
                                         :level :success
                                         :ttl-ms copy-success-ttl-ms))))
                      ;; Ctrl+B in the navigator → move a session into a
-                     ;; persistent Group (folder). Pick an existing group,
-                     ;; make a new one, or remove it from its group.
-                     (= :group (:action choice))
+                     ;; persistent Project. Pick an existing one,
+                     ;; make a new one, or remove it from its project.
+                     (= :project (:action choice))
                      (when-let [target-id (:id choice)]
-                       (let [groups (try (vis/gateway-list-groups {:channel :tui})
-                                         (catch Throwable _ nil))
+                       (let [projects (try (vis/gateway-list-projects {:channel :tui})
+                                           (catch Throwable _ nil))
                              items (vec (concat
-                                          (mapv (fn [gp]
-                                                  {:id (:id gp)
+                                          (mapv (fn [pr]
+                                                  {:id (:id pr)
                                                    :label
-                                                   (str (:name gp) "  (" (:session_count gp) ")")})
-                                                groups)
-                                          [{:id ::new-group :label "＋ New group…"}
-                                           {:id ::ungroup :label "✗ Remove from group"}]))
+                                                   (str (:name pr) "  (" (:session_count pr) ")")})
+                                                projects)
+                                          [{:id ::new-project :label "＋ New project…"}
+                                           {:id ::remove-project :label "✗ Remove from project"}]))
                              pick
                              (with-dialog-lock
-                               #(dlg/searchable-select! screen "Move session to group…" items))]
+                               #(dlg/searchable-select! screen "Move session to project…" items))]
 
                          (when pick
-                           (let [gid (cond (= ::new-group (:id pick))
+                           (let [pid (cond (= ::new-project (:id pick))
                                            (let [nm (with-dialog-lock #(dlg/text-input-dialog!
                                                                          screen
-                                                                         "New group"
-                                                                         "Group name"))]
+                                                                         "New project"
+                                                                         "Project name"))]
                                              (when-not (str/blank? (str nm))
-                                               (:id (try (vis/gateway-create-group!
+                                               (:id (try (vis/gateway-create-project!
                                                            {:name nm :channel "tui"})
                                                          (catch Throwable _ nil)))))
-                                           (= ::ungroup (:id pick)) nil
+                                           (= ::remove-project (:id pick)) nil
                                            :else (:id pick))]
-                             (when (or (= ::ungroup (:id pick)) gid)
-                               (try (vis/gateway-assign-group! target-id gid)
+                             (when (or (= ::remove-project (:id pick)) pid)
+                               (try (vis/gateway-assign-project! target-id pid)
                                     (catch Throwable _ nil))
-                               (vis/notify! (if gid
-                                              "Moved session to group"
-                                              "Removed session from group")
+                               (vis/notify! (if pid
+                                              "Moved session to project"
+                                              "Removed session from project")
                                             :level :success
                                             :ttl-ms copy-success-ttl-ms))))))
+                     ;; Shift/Alt+↑/↓ in the navigator → move THIS project
+                     ;; session up/down within its project's manual order
+                     ;; (movable tabs), persisted cross-channel via the gateway.
+                     (= :reorder (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (let [summaries (tui-session-summaries)
+                             target (some #(when (= (str (:id %)) (str target-id)) %) summaries)
+                             pid (:project_id target)
+                             ordered (when pid
+                                       (->> summaries
+                                            (filter #(= (str (:project_id %)) (str pid)))
+                                            (sort-by #(or (:project_position %) Long/MAX_VALUE))
+                                            (mapv #(str (:id %)))))
+                             idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
+                             swap-with (when (and idx (>= (long idx) 0))
+                                         (case (:dir choice)
+                                           :up
+                                           (when (> (long idx) 0) (dec (long idx)))
+
+                                           :down
+                                           (when (< (long idx) (dec (count ordered)))
+                                             (inc (long idx)))
+
+                                           nil))
+                             reordered (when swap-with
+                                         (assoc ordered
+                                           idx (nth ordered swap-with)
+                                           swap-with (nth ordered idx)))]
+
+                         (when (and pid reordered)
+                           (try (vis/gateway-reorder-project-sessions! pid reordered)
+                                (catch Throwable _ nil))
+                           (vis/notify! "Reordered session"
+                                        :level :success
+                                        :ttl-ms copy-success-ttl-ms))))
                      (= :switch (:action choice))
                      ;; Focus the tab already bound to this session, or open a
                      ;; new one — `:open-session-tab` decides. Switching to a
@@ -3416,7 +3485,7 @@
                          (switch-session! choice)
                          ;; After a delete, reopen the picker on the
                          ;; refreshed list so pruning can continue.
-                         (when (#{:delete :group} (:action choice)) (show-sessions!))))))
+                         (when (#{:delete :project :reorder} (:action choice)) (show-sessions!))))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every
                  ;; configured model (active one marked) plus a "★ router

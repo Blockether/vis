@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.file-picker :as file-picker]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.registry :as registry]
@@ -512,8 +513,8 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- patch-session-handler
-  "PATCH /v1/sessions/:sid — rename (`{title}`) OR change group membership
-   (`{group_id}`, null to ungroup). Membership takes precedence when present."
+  "PATCH /v1/sessions/:sid — rename (`{title}`) OR change project membership
+   (`{project_id}`, null to remove from project). Membership takes precedence."
   [request]
   (let [sid
         (path-sid request)
@@ -522,11 +523,12 @@
         (body-json request)]
 
     (cond (not sid) (session-404 (get-in request [:path-params :sid]))
-          (contains? body :group_id) (if-let [soul (state/assign-group! sid
-                                                                        (some-> (:group_id body)
-                                                                                parse-uuid))]
-                                       (json-response soul)
-                                       (session-404 (get-in request [:path-params :sid])))
+          (contains? body :project_id) (if-let [soul (state/assign-project! sid
+                                                                            (some-> (:project_id
+                                                                                      body)
+                                                                                    parse-uuid))]
+                                         (json-response soul)
+                                         (session-404 (get-in request [:path-params :sid])))
           (str/blank? (str (:title body)))
           (error-response 400 :invalid-request "title must be a non-blank string")
           :else (if-let [soul (state/set-title! sid (:title body))]
@@ -549,19 +551,19 @@
           state/release-session!)
   {:status 204 :headers {} :body nil})
 
-;; --- Session groups (folders) + ownership (V6) ---
+;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
-(defn- path-gid
+(defn- path-pid
   [request]
-  (some-> (get-in request [:path-params :gid])
+  (some-> (get-in request [:path-params :pid])
           parse-uuid))
 
-(defn- group-404
-  [gid-str]
-  (error-response 404 :group-not-found "unknown group" :group_id (str gid-str)))
+(defn- project-404
+  [pid-str]
+  (error-response 404 :project-not-found "unknown project" :project_id (str pid-str)))
 
-(defn- list-groups-handler
-  "GET /v1/groups[?channel=tui|all&owner=…&archived=true] — folders for one
+(defn- list-projects-handler
+  "GET /v1/projects[?channel=tui|all&owner=…&archived=true] — projects for one
    owner/channel view, each with a live session_count."
   [request]
   (let [channel
@@ -573,44 +575,44 @@
         archived?
         (= "true" (get-in request [:query-params "archived"]))]
 
-    (json-response {:groups (state/list-groups (cond-> {:channel channel
-                                                        :include-archived? archived?}
-                                                 owner
-                                                 (assoc :owner-id owner)))})))
+    (json-response {:projects (state/list-projects (cond-> {:channel channel
+                                                            :include-archived? archived?}
+                                                     owner
+                                                     (assoc :owner-id owner)))})))
 
-(defn- create-group-handler
-  "POST /v1/groups {name, channel?, color?, owner_id?} — create a folder."
+(defn- create-project-handler
+  "POST /v1/projects {name, channel?, color?, owner_id?} — create a project."
   [request]
   (let [{:keys [name channel color owner_id]} (body-json request)]
     (if (str/blank? (str name))
       (error-response 400 :invalid-request "name must be a non-blank string")
       (json-response 201
-                     (state/create-group! (cond-> {:name name}
-                                            channel
-                                            (assoc :channel channel)
+                     (state/create-project! (cond-> {:name name}
+                                              channel
+                                              (assoc :channel channel)
 
-                                            color
-                                            (assoc :color color)
+                                              color
+                                              (assoc :color color)
 
-                                            owner_id
-                                            (assoc :owner-id owner_id)))))))
+                                              owner_id
+                                              (assoc :owner-id owner_id)))))))
 
-(defn- get-group-handler
+(defn- get-project-handler
   [request]
-  (let [gid-str (get-in request [:path-params :gid])]
-    (if-let [g (some-> (path-gid request)
-                       state/get-group)]
-      (json-response g)
-      (group-404 gid-str))))
+  (let [pid-str (get-in request [:path-params :pid])]
+    (if-let [p (some-> (path-pid request)
+                       state/get-project)]
+      (json-response p)
+      (project-404 pid-str))))
 
-(defn- patch-group-handler
-  "PATCH /v1/groups/:gid {name?, color?, position?, archived?} — patch a folder."
+(defn- patch-project-handler
+  "PATCH /v1/projects/:pid {name?, color?, position?, archived?} — patch a project."
   [request]
-  (let [gid-str
-        (get-in request [:path-params :gid])
+  (let [pid-str
+        (get-in request [:path-params :pid])
 
-        gid
-        (path-gid request)
+        pid
+        (path-pid request)
 
         body
         (body-json request)
@@ -629,20 +631,43 @@
           (contains? body :archived)
           (assoc :archived? (boolean (:archived body))))]
 
-    (cond (not gid) (group-404 gid-str)
+    (cond (not pid) (project-404 pid-str)
           (and (contains? opts :name) (str/blank? (str (:name opts))))
           (error-response 400 :invalid-request "name must be a non-blank string")
-          (empty? opts) (error-response 400 :invalid-request "no group fields to update")
-          :else (if-let [g (state/update-group! gid opts)]
-                  (json-response g)
-                  (group-404 gid-str)))))
+          (empty? opts) (error-response 400 :invalid-request "no project fields to update")
+          :else (if-let [p (state/update-project! pid opts)]
+                  (json-response p)
+                  (project-404 pid-str)))))
 
-(defn- delete-group-handler
-  "DELETE /v1/groups/:gid — member sessions scatter back to ungrouped."
+(defn- delete-project-handler
+  "DELETE /v1/projects/:pid — member sessions scatter back to project-less."
   [request]
-  (some-> (path-gid request)
-          state/delete-group!)
+  (some-> (path-pid request)
+          state/delete-project!)
   {:status 204 :headers {} :body nil})
+
+(defn- reorder-project-sessions-handler
+  "PATCH /v1/projects/:pid/sessions {order:[sid…]} — persist the manual order of
+   the sessions (TUI tabs) inside a project so they stay MOVABLE cross-channel."
+  [request]
+  (let [pid-str
+        (get-in request [:path-params :pid])
+
+        pid
+        (path-pid request)
+
+        order
+        (->> (:order (body-json request))
+             (keep #(some-> %
+                            str
+                            parse-uuid))
+             vec)]
+
+    (cond (not pid) (project-404 pid-str)
+          (empty? order)
+          (error-response 400 :invalid-request "order must be a non-empty array of session ids")
+          :else (do (state/reorder-project-sessions! pid order)
+                    (json-response {:project_id (str pid) :count (count order)})))))
 
 
 (defn- submit-turn-handler
@@ -1012,9 +1037,10 @@
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
-        ["/groups" {:get list-groups-handler :post create-group-handler}]
-        ["/groups/:gid"
-         {:get get-group-handler :patch patch-group-handler :delete delete-group-handler}]
+        ["/projects" {:get list-projects-handler :post create-project-handler}]
+        ["/projects/:pid"
+         {:get get-project-handler :patch patch-project-handler :delete delete-project-handler}]
+        ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
         ["/sessions/:sid"
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         ["/sessions/:sid/release" {:post release-session-handler}]
@@ -1328,7 +1354,7 @@
 (defn serve-main!
   "Blocking entry for the `vis gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
-  [{:keys [port host token-file require-token? db managed?]}]
+  [{:keys [port host token-file require-token? db managed? pair?]}]
   ;; Profile the daemon into its own JFR file when VIS_JFR is inherited from the
   ;; client that spawned us (idempotent with the -main call for direct callers).
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
@@ -1344,6 +1370,13 @@
     (if require-token?
       (println (str "bearer token: " token-file))
       (println "auth: disabled (loopback default; pass --require-token to enable)"))
+    (when pair?
+      (pairing/print-pairing! {:host host
+                               :port port
+                               :token (some-> token-file
+                                              slurp
+                                              str/trim)
+                               :require-token? require-token?}))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
     @serve-exit
     (System/exit 0)))

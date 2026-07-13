@@ -125,8 +125,9 @@
 
 (defn- doc-snippet
   "First non-blank line of a definition's doc string, trimmed and clipped to a
-   single readable gist (nil when there is none). The pack now populates
-   `docComment` for languages that carry docstrings (e.g. Clojure def-forms)."
+   single readable gist (nil when there is none). The pack populates `docComment`
+   from the def's own doc string / leading comment — Clojure docstrings, and the
+   `//` / JSDoc block written directly above a JS/TS/TSX def."
   [^StructureItem it]
   (when-let [d (.docComment it)]
     (when-let [line (->> (str/split-lines d)
@@ -152,13 +153,14 @@
                 str
                 str/lower-case)
 
-        ;; The pack reports the clean name + a structured `visibility`
-        ;; (public/private) — no more `^:private` glued onto the name.
-        vis
-        (some-> (.visibility it)
-                str
-                str/lower-case
-                not-empty)
+        ;; The pack reports the clean name + a structured `visibility`; the
+        ;; skeleton surfaces only the noteworthy `private` marker — public is
+        ;; the default, so it stays implicit and out of the way.
+        private?
+        (= "private"
+           (some-> (.visibility it)
+                   str
+                   str/lower-case))
 
         nm
         (.name it)
@@ -173,7 +175,7 @@
 
         label
         (str/trim
-          (str kind (when vis (str " " vis)) (when nm (str " " nm)) (when sig (str "  " sig))))
+          (str kind (when private? " private") (when nm (str " " nm)) (when sig (str "  " sig))))
 
         from
         (patch/line-anchor start (line-text lines start))

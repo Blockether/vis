@@ -2269,8 +2269,18 @@
              :paste-counter (:paste-counter source-db)
              :queued-at-ms (System/currentTimeMillis)}
 
+            ;; RACE GUARD: never register a SERVER-SIDE queued turn while a
+            ;; cancel is in flight (`:cancelling?`). A cancel restores the whole
+            ;; backlog to the editor (:restore-pending-to-input) instead of
+            ;; draining it — but that restore deletes gateway records by
+            ;; :turn-id, and the enqueue's turn-id is bound LATE by an async
+            ;; round-trip (:set-queued-turn-id). If the restore wins that race
+            ;; the orphaned gateway turn survives and auto-drains after the
+            ;; cancel = the message gets SENT while ALSO landing back in the
+            ;; queue/editor. Keeping it purely LOCAL here means restore pulls it
+            ;; cleanly to the editor with nothing to leak server-side.
             gw-fx
-            (when (and session agent-text)
+            (when (and session agent-text (not (:cancelling? source-db)))
               (let [extra-body
                     (turn-extra-body db)
 

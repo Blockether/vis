@@ -31,7 +31,7 @@
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.17"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack        {:mvn/version "1.12.3-blockether.12"}
+  com.blockether/tree-sitter-language-pack        {:mvn/version "1.12.3-blockether.14"}
   com.blockether/ruff                             {:mvn/version "0.1.2"}
   org.clojure/core.memoize                        {:mvn/version "1.2.281"}
   com.blockether/fff                              {:mvn/version "0.9.6-8"}
@@ -50,7 +50,8 @@
   org.yamlstar/yamlstar                           {:mvn/version "0.1.11"}
   ring/ring-core                                  {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.5"}
-  metosin/reitit-ring                             {:mvn/version "0.10.1"}}
+  metosin/reitit-ring                             {:mvn/version "0.10.1"}
+  com.google.zxing/core                           {:mvn/version "3.5.3"}}
 
  :aliases
  {:lint   {:deps {io.github.enajski/codestyle

@@ -52,7 +52,14 @@
 
 (defn- compile-rule
   "Compile one raw `.gitignore` line into a rule map, or nil for blank/comment
-   lines. `{:neg? :dir? :self <Pattern> :under <Pattern>}`."
+   lines. `{:neg? :dir? :anchored? :self <Pattern> :under <Pattern>}`.
+
+   `self`/`under` are ANCHORED regexes (`^…$`) with NO `(?:^|.*/)` prefix: an
+   unanchored (slash-free) pattern's \"match at any depth\" is handled by
+   `ignored?` testing each `/`-aligned suffix, NOT by a `.*/` prefix. That
+   matters — a `(?:^|.*/)body/.*$` regex has TWO unbounded `.*` and backtracks
+   CATASTROPHICALLY (ReDoS: ~quadratic in path length) under `re-find`, which
+   pinned a core for ~2ms per deep path and made a repo-wide walk take a minute."
   [^String raw]
   (let [line (str/replace raw #"\s+$" "")]
     (when-not (or (str/blank? line) (str/starts-with? line "#"))
@@ -67,11 +74,10 @@
             anchored? (str/includes? line "/")
             line (if (str/starts-with? line "/") (subs line 1) line)
             body (translate-body line)
-            prefix (if anchored? "^" "(?:^|.*/)")
-            self (re-pattern (str prefix body "$"))
-            under (re-pattern (str prefix body "/.*$"))]
+            self (re-pattern (str "^" body "$"))
+            under (re-pattern (str "^" body "/.*$"))]
 
-        {:neg? neg? :dir? dir? :self self :under under}))))
+        {:neg? neg? :dir? dir? :anchored? anchored? :self self :under under}))))
 
 (defn load-matcher
   "Parse `root`/.gitignore into an ordered rule vector, or nil when absent.
@@ -85,17 +91,36 @@
 (defn ignored?
   "True when the `/`-separated relative path `rel` (with `path-dir?` telling
    whether it is a directory) is ignored by `matcher`. Last matching rule wins;
-   a `!` rule un-ignores. nil matcher → false."
+   a `!` rule un-ignores. nil matcher → false.
+
+   An UNANCHORED (slash-free) pattern matches a name at ANY depth. Rather than
+   bake a `(?:^|.*/)` prefix into every rule's regex — which pairs with the
+   trailing `.*` to backtrack catastrophically (ReDoS) — we match each rule's
+   ANCHORED `^…$` regex against every `/`-aligned SUFFIX of `rel` (the whole
+   path, plus the tail after each `/`). Those suffix starts are exactly the
+   positions the `.*/` prefix used to enumerate, so semantics are unchanged but
+   evaluation is linear in path length."
   [matcher ^String rel path-dir?]
-  (boolean (when (and matcher (seq rel))
-             (reduce (fn [ignored {:keys [neg? dir? self under]}]
-                       (let [match? (if dir?
-                                      ;; dir-only rule: children (`under`) always match; the
-                                      ;; exact path matches only when it is itself a dir.
-                                      (or (boolean (re-find under rel))
-                                          (and path-dir? (boolean (re-find self rel))))
-                                      (or (boolean (re-find self rel))
-                                          (boolean (re-find under rel))))]
-                         (if match? (not neg?) ignored)))
-                     false
-                     matcher))))
+  (boolean
+    (when (and matcher (seq rel))
+      (let [;; `/`-aligned suffixes: `rel` itself and the tail after each `/`.
+            suffixes (loop [acc (transient [rel])
+                            i (.indexOf rel (int \/))]
+
+                       (if (neg? i)
+                         (persistent! acc)
+                         (let [nxt (unchecked-inc i)]
+                           (recur (conj! acc (subs rel nxt)) (.indexOf rel (int \/) nxt)))))]
+        (reduce (fn [ignored {:keys [neg? dir? anchored? self under]}]
+                  (let [cands (if anchored? [rel] suffixes)
+                        match? (if dir?
+                                 ;; dir-only rule: children (`under`) always match;
+                                 ;; the exact path matches only when it is itself a dir.
+                                 (or (boolean (some #(re-matches under %) cands))
+                                     (and path-dir? (boolean (some #(re-matches self %) cands))))
+                                 (or (boolean (some #(re-matches self %) cands))
+                                     (boolean (some #(re-matches under %) cands))))]
+
+                    (if match? (not neg?) ignored)))
+                false
+                matcher)))))

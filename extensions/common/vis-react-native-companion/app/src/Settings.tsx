@@ -18,6 +18,11 @@ import { Feather } from "@expo/vector-icons";
 
 import { c, mono } from "./theme";
 import { ActionBtn } from "./ui";
+import {
+  GatewayPairingScanner,
+  describePairing,
+} from "./GatewayPairingScanner";
+import type { GatewayPairing } from "./GatewayPairing";
 import type {
   SettingsGroup,
   ToggleRow,
@@ -90,6 +95,8 @@ export const SettingsPane = ({
   const [wsBusy, setWsBusy] = useState(false);
   const [rootDraft, setRootDraft] = useState("");
   const [wsErr, setWsErr] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [pairedNote, setPairedNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
@@ -200,6 +207,12 @@ export const SettingsPane = ({
       scrollRef.current?.scrollTo({ y: Math.max(0, y - 4), animated: true });
   };
 
+  const applyPairing = (pairing: GatewayPairing) => {
+    onGatewayUrl(pairing.gatewayUrl);
+    if (pairing.token != null) onToken(pairing.token);
+    setPairedNote(`paired ${describePairing(pairing)} — reconnect when ready`);
+  };
+
   return (
     <View style={[st.pane, { height: Math.min(560, Math.round(winH * 0.72)) }]}>
       {/* ── full-width live search — the web's .settings-search ── */}
@@ -215,7 +228,7 @@ export const SettingsPane = ({
           style={st.searchInput}
         />
         <Text style={st.count}>
-          {count + (gatewayVisible ? 3 : 0)} settings
+          {count + (gatewayVisible ? 4 : 0)} settings
         </Text>
       </View>
 
@@ -355,7 +368,23 @@ export const SettingsPane = ({
                 secureTextEntry
                 style={st.field}
               />
+              {pairedNote ? <Text style={st.okNote}>{pairedNote}</Text> : null}
+              <Text style={st.rowDesc}>
+                Pair over same Wi‑Fi, or use a Tailscale 100.x gateway address
+                for the clean "it just works" path.
+              </Text>
+              {scanOpen ? (
+                <GatewayPairingScanner
+                  onPair={applyPairing}
+                  onClose={() => setScanOpen(false)}
+                />
+              ) : null}
               <View style={st.reconnect}>
+                <ActionBtn
+                  label="Scan QR"
+                  tone="ghost"
+                  onPress={() => setScanOpen(true)}
+                />
                 <ActionBtn
                   label={connecting ? "connecting…" : "Reconnect"}
                   tone="amber"
@@ -545,7 +574,8 @@ const st = StyleSheet.create({
     fontSize: 12,
     color: c.ink,
   },
-  reconnect: { marginTop: 10 },
+  okNote: { fontFamily: mono, fontSize: 10.5, color: c.ok, marginTop: 6 },
+  reconnect: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 10 },
   wsAdd: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
   wsField: { flex: 1 },
 });

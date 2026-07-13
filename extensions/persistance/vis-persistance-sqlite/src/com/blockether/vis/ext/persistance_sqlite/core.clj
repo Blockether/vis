@@ -970,10 +970,10 @@
     (let [id (->ref session-id)]
       (when-let [soul (query-one! db-info {:select [:*] :from :session_soul :where [:= :id id]})]
         (let [state (latest-state-for db-info id)
-              group (when (:group_id soul)
-                      (query-one!
-                        db-info
-                        {:select [:name] :from :session_group :where [:= :id (:group_id soul)]}))]
+              project (when (:project_id soul)
+                        (query-one!
+                          db-info
+                          {:select [:name] :from :project :where [:= :id (:project_id soul)]}))]
 
           (cond-> {:id (->uuid (:id soul))
                    :type :session
@@ -985,12 +985,13 @@
                    :version (or (:version state) 0)
                    :created-at (->date (:created_at soul))
                    :owner-id (:owner_id soul)
-                   :group-id (->uuid (:group_id soul))}
+                   :project-id (->uuid (:project_id soul))
+                   :project-position (:project_position soul)}
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 
-            group
-            (assoc :group-name (:name group))))))))
+            project
+            (assoc :project-name (:name project))))))))
 
 (defn db-resolve-session-id
   [db-info selector]
@@ -1034,18 +1035,20 @@
            :fork-count (or (:fork_count row) 0)
            :created-at (->date (:created_at row))
            :owner-id (:owner_id row)
-           :group-id (->uuid (:group_id row))
-           :group-name (:group_name row)})
+           :project-id (->uuid (:project_id row))
+           :project-position (:project_position row)
+           :project-name (:project_name row)})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
-                          :cs.group_id [:g.name :group_name] [:s.title :state_title] :s.version
+                          :cs.project_id :cs.project_position [:p.name :project_name]
+                          [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
                                     [:not= :child.parent_state_id nil]]} :fork_count]]
                  :from [[:session_soul :cs]]
                  :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                 :left-join [[:session_group :g] [:= :g.id :cs.group_id]]
+                 :left-join [[:project :p] [:= :p.id :cs.project_id]]
                  :where (into [:and
                                ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
                                ;; hang off their parent's sub-tree, never the session list.
@@ -1059,7 +1062,7 @@
                                  :from [[:session_state :s2]]
                                  :where [:= :s2.session_soul_id :cs.id]}]]
                               (when-not all? [[:= :cs.channel ch]]))
-                 :order-by [[:cs.created_at :desc]]})))))
+                 :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
 
 (defn db-find-session-by-external
   [db-info channel external-id]
@@ -1111,12 +1114,12 @@
         (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})))))
 
 ;; =============================================================================
-;; Session groups (folders) + ownership  (V6)
+;; Projects (cross-channel) + movable project sessions + ownership  (V6/V7)
 ;; =============================================================================
 
-(defn- row->group
-  "Project a `session_group` row (with an optional `session_count` aggregate)
-   into the canonical Clojure shape."
+(defn- row->project
+  "Project a `project` row (with an optional `session_count` aggregate) into the
+   canonical Clojure shape."
   [row]
   {:id (->uuid (:id row))
    :owner-id (:owner_id row)
@@ -1128,28 +1131,28 @@
    :archived-at (->date (:archived_at row))
    :session-count (or (:session_count row) 0)})
 
-(def ^:private group-select-cols
-  [:g.id :g.owner_id :g.channel :g.name :g.color :g.position :g.created_at :g.archived_at
-   [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.group_id :g.id]}
+(def ^:private project-select-cols
+  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.created_at :p.archived_at
+   [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.project_id :p.id]}
     :session_count]])
 
-(defn db-get-group
-  "Return one `session_group` (canonical shape, with live `:session-count`) or nil."
-  [db-info group-id]
-  (when (and (ds db-info) group-id)
+(defn db-get-project
+  "Return one `project` (canonical shape, with live `:session-count`) or nil."
+  [db-info project-id]
+  (when (and (ds db-info) project-id)
     (some-> (query-one! db-info
-                        {:select group-select-cols
-                         :from [[:session_group :g]]
-                         :where [:= :g.id (->id group-id)]})
-            row->group)))
+                        {:select project-select-cols
+                         :from [[:project :p]]
+                         :where [:= :p.id (->id project-id)]})
+            row->project)))
 
-(defn db-list-groups
-  "List `session_group` folders for `owner-id` (default \"local\"), each with a
-   live `:session-count`, ordered by (position, created_at).
+(defn db-list-projects
+  "List `project`s for `owner-id` (default \"local\"), each with a live
+   `:session-count`, ordered by (position, created_at).
 
-   `channel` scopes the view: a channel keyword returns that channel's groups
-   PLUS cross-channel (NULL-channel) groups; `:all`/nil returns every group.
-   Archived groups are hidden unless `:include-archived?` is truthy."
+   `channel` scopes the view: a channel keyword returns that channel's projects
+   PLUS cross-channel (NULL-channel) projects; `:all`/nil returns every project.
+   Archived projects are hidden unless `:include-archived?` is truthy."
   [db-info {:keys [owner-id channel include-archived?]}]
   (when (ds db-info)
     (let [owner
@@ -1162,66 +1165,66 @@
           all?
           (or (nil? ch) (= "all" ch))]
 
-      (mapv row->group
+      (mapv row->project
             (query! db-info
-                    {:select group-select-cols
-                     :from [[:session_group :g]]
-                     :where (into [:and [:= :g.owner_id owner]]
+                    {:select project-select-cols
+                     :from [[:project :p]]
+                     :where (into [:and [:= :p.owner_id owner]]
                                   (concat (when-not all?
-                                            [[:or [:= :g.channel ch] [:= :g.channel nil]]])
-                                          (when-not include-archived? [[:= :g.archived_at nil]])))
-                     :order-by [[:g.position :asc] [:g.created_at :asc]]})))))
+                                            [[:or [:= :p.channel ch] [:= :p.channel nil]]])
+                                          (when-not include-archived? [[:= :p.archived_at nil]])))
+                     :order-by [[:p.position :asc] [:p.created_at :asc]]})))))
 
-(defn db-create-group!
-  "Create a `session_group` folder. `:name` is required (non-blank). `:channel`
-   nil ⇒ a cross-channel group. `:owner-id` defaults to \"local\". `:position`,
-   when omitted, appends after the owner's current groups. Returns the created
-   group (canonical shape)."
+(defn db-create-project!
+  "Create a `project`. `:name` is required (non-blank). `:channel` nil => a
+   cross-channel project. `:owner-id` defaults to \"local\". `:position`, when
+   omitted, appends after the owner's current projects. Returns the created
+   project (canonical shape)."
   [db-info {:keys [name channel color owner-id position]}]
   (when (str/blank? (str name))
-    (throw (ex-info "db-create-group! requires a non-blank :name"
-                    {:type :persistance/invalid-group-name})))
+    (throw (ex-info "db-create-project! requires a non-blank :name"
+                    {:type :persistance/invalid-project-name})))
   (when (ds db-info)
-    (let [group-id (sqlite-write-tx!
-                     db-info
-                     (fn [tx-info]
-                       (let [gid (new-uuid)
-                             now (now-ms)
-                             owner (or owner-id "local")
-                             ch (some-> channel
-                                        ->kw)
-                             pos (or position
-                                     (inc (or (:maxpos (query-one! tx-info
-                                                                   {:select [[[:max :position]
-                                                                              :maxpos]]
-                                                                    :from :session_group
-                                                                    :where [:= :owner_id owner]}))
-                                              -1)))]
+    (let [project-id (sqlite-write-tx!
+                       db-info
+                       (fn [tx-info]
+                         (let [pid (new-uuid)
+                               now (now-ms)
+                               owner (or owner-id "local")
+                               ch (some-> channel
+                                          ->kw)
+                               pos (or position
+                                       (inc (or (:maxpos (query-one! tx-info
+                                                                     {:select [[[:max :position]
+                                                                                :maxpos]]
+                                                                      :from :project
+                                                                      :where [:= :owner_id owner]}))
+                                                -1)))]
 
-                         (execute! tx-info
-                                   {:insert-into :session_group
-                                    :values [(cond-> {:id (str gid)
-                                                      :owner_id owner
-                                                      :name (str name)
-                                                      :position pos
-                                                      :created_at now}
-                                               ch
-                                               (assoc :channel ch)
+                           (execute! tx-info
+                                     {:insert-into :project
+                                      :values [(cond-> {:id (str pid)
+                                                        :owner_id owner
+                                                        :name (str name)
+                                                        :position pos
+                                                        :created_at now}
+                                                 ch
+                                                 (assoc :channel ch)
 
-                                               color
-                                               (assoc :color color))]})
-                         gid)))]
-      (db-get-group db-info group-id))))
+                                                 color
+                                                 (assoc :color color))]})
+                           pid)))]
+      (db-get-project db-info project-id))))
 
-(defn db-update-group!
-  "Patch a `session_group`: any of `:name` (non-blank), `:color`, `:position`,
+(defn db-update-project!
+  "Patch a `project`: any of `:name` (non-blank), `:color`, `:position`,
    `:archived?` (true stamps `archived_at`=now, false clears it). Returns the
-   updated group (canonical shape) or nil when nothing to change."
-  [db-info group-id {:keys [name color position archived?] :as opts}]
-  (when (and (ds db-info) group-id (seq opts))
+   updated project (canonical shape) or nil when nothing to change."
+  [db-info project-id {:keys [name color position archived?] :as opts}]
+  (when (and (ds db-info) project-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
-      (throw (ex-info "db-update-group! :name must be non-blank"
-                      {:type :persistance/invalid-group-name})))
+      (throw (ex-info "db-update-project! :name must be non-blank"
+                      {:type :persistance/invalid-project-name})))
     (let [set-map (cond-> {}
                     (contains? opts :name)
                     (assoc :name (str name))
@@ -1238,32 +1241,59 @@
         (sqlite-write-tx!
           db-info
           (fn [tx-info]
-            (execute! tx-info
-                      {:update :session_group :set set-map :where [:= :id (->id group-id)]})))
-        (db-get-group db-info group-id)))))
+            (execute! tx-info {:update :project :set set-map :where [:= :id (->id project-id)]})))
+        (db-get-project db-info project-id)))))
 
-(defn db-delete-group!
-  "Delete a `session_group`. Member souls are scattered back to ungrouped by the
+(defn db-delete-project!
+  "Delete a `project`. Member souls are scattered back to project-less by the
    `ON DELETE SET NULL` FK - conversations are NEVER deleted."
-  [db-info group-id]
-  (when (and (ds db-info) group-id)
+  [db-info project-id]
+  (when (and (ds db-info) project-id)
     (sqlite-write-tx! db-info
                       (fn [tx-info]
                         (execute! tx-info
-                                  {:delete-from :session_group :where [:= :id (->id group-id)]})))))
+                                  {:delete-from :project :where [:= :id (->id project-id)]})))))
 
-(defn db-set-session-group!
-  "Assign the soul behind `session-id` to `group-id`; a nil `group-id` clears
-   membership (ungroups). Returns the soul id."
-  [db-info session-id group-id]
+(defn db-set-session-project!
+  "Assign the soul behind `session-id` to `project-id`; a nil `project-id` clears
+   membership (removes it from its project). When moving INTO a project the soul
+   is APPENDED (its `project_position` becomes max+1 within that project) so
+   project sessions stay MOVABLE. Returns the soul id."
+  [db-info session-id project-id]
   (when (and (ds db-info) session-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [pos (when project-id
+                    (inc (or (:maxpos (query-one! tx-info
+                                                  {:select [[[:max :project_position] :maxpos]]
+                                                   :from :session_soul
+                                                   :where [:= :project_id (->id project-id)]}))
+                             -1)))]
+          (execute! tx-info
+                    {:update :session_soul
+                     :set (cond-> {:project_id (->ref project-id)}
+                            pos
+                            (assoc :project_position pos))
+                     :where [:= :id (->id session-id)]}))))
+    session-id))
+
+(defn db-reorder-project-sessions!
+  "Persist a manual order for the sessions inside `project-id`: `session-ids` is
+   the desired ordering; each soul's `project_position` is rewritten to its index.
+   Only souls that already belong to `project-id` are moved. Returns the count of
+   ids applied."
+  [db-info project-id session-ids]
+  (when (and (ds db-info) project-id (seq session-ids))
     (sqlite-write-tx! db-info
                       (fn [tx-info]
-                        (execute! tx-info
-                                  {:update :session_soul
-                                   :set {:group_id (->ref group-id)}
-                                   :where [:= :id (->id session-id)]})))
-    session-id))
+                        (doseq [[pos sid] (map-indexed vector session-ids)]
+                          (execute! tx-info
+                                    {:update :session_soul
+                                     :set {:project_position pos}
+                                     :where [:and [:= :id (->id sid)]
+                                             [:= :project_id (->id project-id)]]}))))
+    (count session-ids)))
 
 
 ;; =============================================================================

@@ -1674,9 +1674,10 @@
        :external_id (:external-id session)
        :created_at (:created-at session)
        :owner_id (:owner-id session)
-       :group_id (some-> (:group-id session)
-                         str)
-       :group_name (:group-name session)
+       :project_id (some-> (:project-id session)
+                           str)
+       :project_name (:project-name session)
+       :project_position (:project-position session)
        :status (cond (:current-turn entry) "running"
                      (= "suspended" (:status last-turn)) "suspended"
                      :else "idle")
@@ -1696,46 +1697,51 @@
         (keep (comp soul :id))
         vec)))
 
-;; --- Session groups (folders) + ownership (V6) -------------------------------
+;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
-(defn- group-wire
-  "JSON-friendly projection of a persisted session_group."
-  [g]
-  (when g
-    {:id (str (:id g))
-     :owner_id (:owner-id g)
-     :channel (some-> (:channel g)
+(defn- project-wire
+  "JSON-friendly projection of a persisted project."
+  [p]
+  (when p
+    {:id (str (:id p))
+     :owner_id (:owner-id p)
+     :channel (some-> (:channel p)
                       name)
-     :name (:name g)
-     :color (:color g)
-     :position (:position g)
-     :session_count (:session-count g)
-     :created_at (:created-at g)
-     :archived_at (:archived-at g)}))
+     :name (:name p)
+     :color (:color p)
+     :position (:position p)
+     :session_count (:session-count p)
+     :created_at (:created-at p)
+     :archived_at (:archived-at p)}))
 
-(defn list-groups
-  "Wire groups for one owner/channel view (see loop/groups). `opts` keys:
+(defn list-projects
+  "Wire projects for one owner/channel view (see loop/projects). `opts` keys:
    :owner-id, :channel (keyword | :all/nil), :include-archived?."
-  ([] (list-groups {}))
-  ([opts] (mapv group-wire (lp/groups opts))))
+  ([] (list-projects {}))
+  ([opts] (mapv project-wire (lp/projects opts))))
 
-(defn get-group [gid] (group-wire (lp/get-group gid)))
+(defn get-project [pid] (project-wire (lp/get-project pid)))
 
-(defn create-group! [opts] (group-wire (lp/create-group! opts)))
+(defn create-project! [opts] (project-wire (lp/create-project! opts)))
 
-(defn update-group! [gid opts] (group-wire (lp/update-group! gid opts)))
+(defn update-project! [pid opts] (project-wire (lp/update-project! pid opts)))
 
-(defn delete-group!
-  "Delete a group; its member sessions scatter back to ungrouped (never deleted)."
-  [gid]
-  (lp/delete-group! gid)
+(defn delete-project!
+  "Delete a project; its member sessions scatter back to project-less (never deleted)."
+  [pid]
+  (lp/delete-project! pid)
   true)
 
-(defn assign-group!
-  "Assign a session to `gid` (nil clears / ungroups). Returns the refreshed soul."
-  [sid gid]
-  (lp/assign-group! sid gid)
+(defn assign-project!
+  "Assign a session to `pid` (nil clears / removes from project). Returns the refreshed soul."
+  [sid pid]
+  (lp/assign-project! sid pid)
   (soul sid))
+
+(defn reorder-project-sessions!
+  "Persist the manual order of sessions inside `pid`. Returns the count applied."
+  [pid session-ids]
+  (lp/reorder-project-sessions! pid session-ids))
 
 (defn release-session!
   "Release the live runtime for a session while keeping persisted data resumable.

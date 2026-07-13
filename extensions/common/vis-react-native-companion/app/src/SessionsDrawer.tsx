@@ -50,6 +50,7 @@ export const SessionsDrawer = ({
   onRenameProject,
   onDeleteProject,
   onAssign,
+  onReorder,
 }: {
   visible: boolean;
   sessions: SessionSoul[];
@@ -64,6 +65,7 @@ export const SessionsDrawer = ({
   onRenameProject: (project: GatewayProject, name: string) => void;
   onDeleteProject: (project: GatewayProject) => void;
   onAssign: (session: SessionSoul, projectId: string | null) => void;
+  onReorder: (session: SessionSoul, dir: "up" | "down") => void;
 }) => {
   const slide = useRef(new Animated.Value(-PANEL_W)).current;
   const [confirmDelete, setConfirmDelete] = useState<SessionSoul | null>(null);
@@ -112,7 +114,11 @@ export const SessionsDrawer = ({
 
     const out: Row[] = [];
     for (const g of sortedProjects) {
-      const members = (byProject.get(g.id) ?? []).sort(byRecency);
+      const members = (byProject.get(g.id) ?? []).sort(
+        (a, b) =>
+          (a.project_position ?? 0) - (b.project_position ?? 0) ||
+          recency(b) - recency(a),
+      );
       const isCollapsed = collapsed[g.id] ?? false;
       out.push({
         kind: "project",
@@ -178,6 +184,32 @@ export const SessionsDrawer = ({
               .join(" \u00b7 ")}
           </Text>
         </View>
+        {inProject && (
+          <>
+            <Pressable
+              hitSlop={6}
+              onPress={() => onReorder(item, "up")}
+              style={styles.rowIcon}
+            >
+              <Feather
+                name="chevron-up"
+                size={14}
+                color={active ? c.amberBright : c.dim}
+              />
+            </Pressable>
+            <Pressable
+              hitSlop={6}
+              onPress={() => onReorder(item, "down")}
+              style={styles.rowIcon}
+            >
+              <Feather
+                name="chevron-down"
+                size={14}
+                color={active ? c.amberBright : c.dim}
+              />
+            </Pressable>
+          </>
+        )}
         <Pressable
           hitSlop={6}
           onPress={() => setMoving(item)}

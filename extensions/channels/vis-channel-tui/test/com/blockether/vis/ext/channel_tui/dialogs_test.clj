@@ -487,8 +487,10 @@
           (expect (some #{"Terminal UI"} sections))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
-          ;; solarized themes ship in the core registry alongside vis-dark/light
-          (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
+          ;; blockether + solarized themes ship in the core registry alongside
+          ;; vis-dark/light (all sorted by id).
+          (expect (= [:blockether-dark :blockether-light :solarized-dark :solarized-light :vis-dark
+                      :vis-light]
                      (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           ;; Mouse auto-copy is now ALWAYS ON (`:settings? false`) — out of Settings.
           (expect (not-any? #(= :mouse-selection-copy (:key %)) rows))
@@ -515,7 +517,8 @@
         (try (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
              (with-redefs [vis/get-router (constantly nil)]
                (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
-                 (expect (= [:THEME_NAME :solarized-dark :solarized-light :vis-dark :vis-light]
+                 (expect (= [:THEME_NAME :blockether-dark :blockether-light :solarized-dark
+                             :solarized-light :vis-dark :vis-light]
                             (:choices row)))
                  (expect (= "Theme: THEME_NAME"
                             (settings-option-label row {:theme-name :THEME_NAME})))))
