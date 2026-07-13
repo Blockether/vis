@@ -1,11 +1,15 @@
-import { activeFileMention, applyFileMention, suggestLabel } from "./ComposerSuggest";
+import {
+  activeFileMention,
+  applyFileMention,
+  suggestLabel,
+} from "./ComposerSuggest";
 
 describe("composer @-file suggestions", () => {
   it("detects a trailing @ token and sends only the query to the gateway", () => {
     expect(activeFileMention("please inspect @src/com")).toEqual({
       start: 15,
       end: 23,
-      q: "src/com"
+      q: "src/com",
     });
   });
 
@@ -19,14 +23,19 @@ describe("composer @-file suggestions", () => {
 
   it("replaces just the active token with the selected path", () => {
     const mention = activeFileMention("read @src then", 9)!;
-    expect(applyFileMention("read @src then", mention, { name: "src/app.clj" })).toBe(
-      "read @src/app.clj then"
-    );
+    expect(
+      applyFileMention("read @src then", mention, { name: "src/app.clj" }),
+    ).toBe("read @src/app.clj then");
   });
 
   it("formats the gateway row metadata", () => {
-    expect(suggestLabel({ name: "src/app.clj", status: "tracked", age: "2d", size: 42 })).toBe(
-      "tracked · 2d · 42b"
-    );
+    expect(
+      suggestLabel({
+        name: "src/app.clj",
+        status: "tracked",
+        age: "2d",
+        size: 42,
+      }),
+    ).toBe("tracked · 2d · 42b");
   });
 });

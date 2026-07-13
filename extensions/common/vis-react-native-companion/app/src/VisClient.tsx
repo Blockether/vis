@@ -32,7 +32,11 @@ export type GatewayProject = {
   archived_at?: number | null;
 };
 
-export type TurnCost = { total_cost?: number; model?: string; provider?: string };
+export type TurnCost = {
+  total_cost?: number;
+  model?: string;
+  provider?: string;
+};
 
 /* Persisted turn attachment, gateway-hydrated from the attachment store. */
 export type TurnAttachment = {
@@ -131,7 +135,7 @@ export const APP_EVENT_TYPES = [
   "iteration.error",
   "turn.completed",
   "turn.failed",
-  "context.updated"
+  "context.updated",
 ] as const;
 
 export type GatewayEventType = (typeof APP_EVENT_TYPES)[number];
@@ -142,7 +146,10 @@ export type ProviderInfo = { id: string; doc?: string };
    same source the web channel’s session model picker renders). */
 export type ProviderModels = { id: string; label?: string; models: string[] };
 
-export type SessionModel = { provider?: string; model?: string } | string | null;
+export type SessionModel =
+  | { provider?: string; model?: string }
+  | string
+  | null;
 
 /* /v1/settings — the engine toggle registry (the same rows the web
    channel's Settings dialog renders via `toggles-for-channel`). */
@@ -197,7 +204,11 @@ export type SuggestRow = {
 /* GET /v1/sessions/:sid/workspace — the same workspace state the web footer and
    TUI directory picker read. `filesystem_roots` are the session's extra roots.
    `draft?` keeps its `?` on the wire (wire-key munges only `-`->`_`). */
-export type FilesystemRoot = { trunk?: string; clone?: string; fork_ms?: number };
+export type FilesystemRoot = {
+  trunk?: string;
+  clone?: string;
+  fork_ms?: number;
+};
 export type WorkspaceInfo = {
   id?: string;
   "draft?"?: boolean;
@@ -262,7 +273,10 @@ export class VisGatewayClient {
       headers.set("Content-Type", "application/json");
     }
 
-    const response = await fetch(`${this.gatewayUrl}${path}`, { ...init, headers });
+    const response = await fetch(`${this.gatewayUrl}${path}`, {
+      ...init,
+      headers,
+    });
     const text = await response.text();
     const body = text ? JSON.parse(text) : null;
 
@@ -292,21 +306,24 @@ export class VisGatewayClient {
   async createSession(title = "React Native"): Promise<SessionSoul> {
     return this.request<SessionSoul>("/v1/sessions", {
       method: "POST",
-      body: JSON.stringify({ channel: "react-native", title })
+      body: JSON.stringify({ channel: "react-native", title }),
     });
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.request<null>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE"
+      method: "DELETE",
     });
   }
 
   async renameSession(sessionId: string, title: string): Promise<SessionSoul> {
-    return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title })
-    });
+    return this.request<SessionSoul>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      },
+    );
   }
 
   /* ── projects (cross-channel session grouping) ────────────────────── */
@@ -314,7 +331,9 @@ export class VisGatewayClient {
   async listProjects(): Promise<GatewayProject[]> {
     /* `channel=all` so the RN drawer sees every project (its own cross-channel
        ones plus tui/web-scoped), matching list-sessions' cross-channel view. */
-    const body = await this.request<ListProjectsResponse>("/v1/projects?channel=all");
+    const body = await this.request<ListProjectsResponse>(
+      "/v1/projects?channel=all",
+    );
     return body.projects ?? [];
   }
 
@@ -322,47 +341,64 @@ export class VisGatewayClient {
     /* No channel ⇒ a cross-channel project, visible from web/tui too. */
     return this.request<GatewayProject>("/v1/projects", {
       method: "POST",
-      body: JSON.stringify(color ? { name, color } : { name })
+      body: JSON.stringify(color ? { name, color } : { name }),
     });
   }
 
   async updateProject(
     projectId: string,
-    patch: { name?: string; color?: string; archived?: boolean }
+    patch: { name?: string; color?: string; archived?: boolean },
   ): Promise<GatewayProject> {
-    return this.request<GatewayProject>(`/v1/projects/${encodeURIComponent(projectId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch)
-    });
+    return this.request<GatewayProject>(
+      `/v1/projects/${encodeURIComponent(projectId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    );
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    await this.request<null>(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+    await this.request<null>(`/v1/projects/${encodeURIComponent(projectId)}`, {
+      method: "DELETE",
+    });
   }
 
   /* Move a session into a project, or remove it (projectId = null). Returns the
      re-projected soul (carries the fresh project_id/project_name). */
-  async assignProject(sessionId: string, projectId: string | null): Promise<SessionSoul> {
-    return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ project_id: projectId })
-    });
+  async assignProject(
+    sessionId: string,
+    projectId: string | null,
+  ): Promise<SessionSoul> {
+    return this.request<SessionSoul>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ project_id: projectId }),
+      },
+    );
   }
 
   /* Persist the manual order of a project's sessions (movable tabs). `order` is
      the full list of session ids in the desired order. */
-  async reorderProjectSessions(projectId: string, order: string[]): Promise<void> {
-    await this.request<null>(`/v1/projects/${encodeURIComponent(projectId)}/sessions`, {
-      method: "PATCH",
-      body: JSON.stringify({ order })
-    });
+  async reorderProjectSessions(
+    projectId: string,
+    order: string[],
+  ): Promise<void> {
+    await this.request<null>(
+      `/v1/projects/${encodeURIComponent(projectId)}/sessions`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ order }),
+      },
+    );
   }
 
   /* ── turns ────────────────────────────────────────────────────── */
 
   async listTurns(sessionId: string): Promise<GatewayTurn[]> {
     const body = await this.request<ListTurnsResponse>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/turns`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
     );
     return body.turns ?? [];
   }
@@ -370,23 +406,32 @@ export class VisGatewayClient {
   async submitTurn(
     sessionId: string,
     request: string,
-    attachments?: OutgoingAttachment[]
+    attachments?: OutgoingAttachment[],
   ): Promise<GatewayTurn> {
     const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const payload: Record<string, unknown> = { request, idempotency_key: idempotencyKey };
+    const payload: Record<string, unknown> = {
+      request,
+      idempotency_key: idempotencyKey,
+    };
     if (attachments?.length) {
-      payload.attachments = attachments.map(({ base64, filename }) => ({ base64, filename }));
+      payload.attachments = attachments.map(({ base64, filename }) => ({
+        base64,
+        filename,
+      }));
     }
-    return this.request<GatewayTurn>(`/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+    return this.request<GatewayTurn>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
   }
 
   async cancelTurn(sessionId: string, turnId: string): Promise<void> {
     await this.request<unknown>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`,
-      { method: "POST" }
+      { method: "POST" },
     );
   }
 
@@ -395,9 +440,12 @@ export class VisGatewayClient {
      turn settles — the /turns list carries no trace, so without this the live
      cards vanish once the poll's answer_md takes over. A pre-trace gateway 404s;
      callers treat that as "no cards". */
-  async turnTrace(sessionId: string, turnId: string): Promise<TraceIteration[]> {
+  async turnTrace(
+    sessionId: string,
+    turnId: string,
+  ): Promise<TraceIteration[]> {
     const body = await this.request<{ iterations?: TraceIteration[] }>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/trace`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/trace`,
     );
     return body.iterations ?? [];
   }
@@ -420,15 +468,15 @@ export class VisGatewayClient {
       onError?: (err: unknown) => void;
       onOpen?: () => void;
     },
-    cursor = 0
+    cursor = 0,
   ): () => void {
     const url = `${this.gatewayUrl}/v1/sessions/${encodeURIComponent(
-      sessionId
+      sessionId,
     )}/events?cursor=${cursor}`;
     const es = new EventSource<GatewayEventType>(url, {
       headers: {
         Accept: "text/event-stream",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {})
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
       },
       /* reconnect after a short delay, resuming via Last-Event-ID */
       pollingInterval: 2000,
@@ -436,7 +484,7 @@ export class VisGatewayClient {
       timeout: 0,
       /* lifecycle logs on-device (readyState / status / reconnects) so a stream
          that never opens is diagnosable instead of silent */
-      debug: typeof __DEV__ !== "undefined" && __DEV__
+      debug: typeof __DEV__ !== "undefined" && __DEV__,
     });
 
     const dispatch = (data: string | null) => {
@@ -480,13 +528,16 @@ export class VisGatewayClient {
      "all" (default) for the cross-channel view — every visible toggle. */
   async settingsGroups(scope: string = "all"): Promise<SettingsGroup[]> {
     const body = await this.request<{ groups?: SettingsGroup[] }>(
-      `/v1/settings?channel=${encodeURIComponent(scope)}`
+      `/v1/settings?channel=${encodeURIComponent(scope)}`,
     );
     return body.groups ?? [];
   }
 
   /* Flip a boolean / cycle an enum; resolves to the refreshed row. */
-  async settingsMutate(id: string, action: "toggle" | "cycle"): Promise<ToggleRow> {
+  async settingsMutate(
+    id: string,
+    action: "toggle" | "cycle",
+  ): Promise<ToggleRow> {
     return this.request<ToggleRow>("/v1/settings", {
       method: "POST",
       body: JSON.stringify({ id, action }),
@@ -495,32 +546,42 @@ export class VisGatewayClient {
 
   async sessionModel(sessionId: string): Promise<SessionModel> {
     const body = await this.request<ModelResponse>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/model`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/model`,
     );
     return body.model ?? null;
   }
 
-  async setSessionModel(sessionId: string, provider: string, model: string): Promise<SessionModel> {
+  async setSessionModel(
+    sessionId: string,
+    provider: string,
+    model: string,
+  ): Promise<SessionModel> {
     const body = await this.request<ModelResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/model`,
-      { method: "PATCH", body: JSON.stringify({ provider, model }) }
+      { method: "PATCH", body: JSON.stringify({ provider, model }) },
     );
     return body.model ?? null;
   }
 
   /* ── voice (served by the web channel: /ui/session/:sid/voice) ── */
 
-  async voiceModelState(sessionId: string, startDownload = false): Promise<VoiceModelState> {
+  async voiceModelState(
+    sessionId: string,
+    startDownload = false,
+  ): Promise<VoiceModelState> {
     const url = `${this.gatewayUrl}/ui/session/${encodeURIComponent(sessionId)}/voice/model`;
     const response = await fetch(url, {
       method: startDownload ? "POST" : "GET",
-      headers: this.headers()
+      headers: this.headers(),
     });
     const text = await response.text();
     try {
       return JSON.parse(text) as VoiceModelState;
     } catch {
-      return { status: "unavailable", error: `voice endpoint answered ${response.status}` };
+      return {
+        status: "unavailable",
+        error: `voice endpoint answered ${response.status}`,
+      };
     }
   }
 
@@ -531,13 +592,19 @@ export class VisGatewayClient {
     const response = await fetch(url, {
       method: "POST",
       headers: this.headers({ "Content-Type": "application/octet-stream" }),
-      body: blob
+      body: blob,
     });
-    const body = (await response.json()) as { text?: string; error?: string; status?: string };
+    const body = (await response.json()) as {
+      text?: string;
+      error?: string;
+      status?: string;
+    };
     if (!response.ok) {
       throw new Error(
         body.error ??
-          (response.status === 425 ? `voice model ${body.status ?? "not ready"}` : `${response.status}`)
+          (response.status === 425
+            ? `voice model ${body.status ?? "not ready"}`
+            : `${response.status}`),
       );
     }
     return (body.text ?? "").trim();
@@ -547,16 +614,22 @@ export class VisGatewayClient {
      The live `context.updated` SSE event carries the same utilization incrementally. ── */
 
   async sessionContext(sessionId: string): Promise<ContextSnapshot> {
-    return this.request<ContextSnapshot>(`/v1/sessions/${encodeURIComponent(sessionId)}/context`);
+    return this.request<ContextSnapshot>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/context`,
+    );
   }
 
   /* ── @-file suggestions (GET /v1/sessions/:sid/suggest) — same rows web/TUI render ── */
 
-  async suggest(sessionId: string, q: string, kind = "file"): Promise<SuggestRow[]> {
+  async suggest(
+    sessionId: string,
+    q: string,
+    kind = "file",
+  ): Promise<SuggestRow[]> {
     const rows = await this.request<SuggestRow[]>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/suggest?kind=${encodeURIComponent(
-        kind
-      )}&q=${encodeURIComponent(q)}`
+        kind,
+      )}&q=${encodeURIComponent(q)}`,
     );
     return rows ?? [];
   }
@@ -566,34 +639,43 @@ export class VisGatewayClient {
 
   async sessionWorkspace(sessionId: string): Promise<WorkspaceInfo | null> {
     const body = await this.request<WorkspaceResponse>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace`,
     );
     return body.workspace ?? null;
   }
 
-  async addRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+  async addRoot(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceInfo | null> {
     const body = await this.request<WorkspaceResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/roots`,
-      { method: "POST", body: JSON.stringify({ path }) }
+      { method: "POST", body: JSON.stringify({ path }) },
     );
     return body.workspace ?? null;
   }
 
-  async removeRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+  async removeRoot(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceInfo | null> {
     /* DELETE carries the path as a query param (the gateway reads either body or ?path). */
     const body = await this.request<WorkspaceResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/roots?path=${encodeURIComponent(
-        path
+        path,
       )}`,
-      { method: "DELETE" }
+      { method: "DELETE" },
     );
     return body.workspace ?? null;
   }
 
-  async changeRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+  async changeRoot(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceInfo | null> {
     const body = await this.request<WorkspaceResponse>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/root`,
-      { method: "PATCH", body: JSON.stringify({ path }) }
+      { method: "PATCH", body: JSON.stringify({ path }) },
     );
     return body.workspace ?? null;
   }
@@ -603,14 +685,14 @@ export class VisGatewayClient {
 
   async providerStatus(providerId: string): Promise<ProviderStatusReport> {
     const body = await this.request<{ status?: ProviderStatusReport }>(
-      `/v1/providers/${encodeURIComponent(providerId)}/status`
+      `/v1/providers/${encodeURIComponent(providerId)}/status`,
     );
     return body.status ?? {};
   }
 
   async providerLimits(providerId: string): Promise<ProviderLimitsReport> {
     const body = await this.request<{ report?: ProviderLimitsReport }>(
-      `/v1/providers/${encodeURIComponent(providerId)}/limits`
+      `/v1/providers/${encodeURIComponent(providerId)}/limits`,
     );
     return body.report ?? {};
   }

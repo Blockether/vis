@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import {
   AudioQuality,
@@ -8,7 +16,7 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState
+  useAudioRecorderState,
 } from "expo-audio";
 
 import { VisGatewayClient } from "./VisClient";
@@ -28,9 +36,9 @@ const WAV_RECORDING: RecordingOptions = {
     audioQuality: AudioQuality.HIGH,
     linearPCMBitDepth: 16,
     linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false
+    linearPCMIsFloat: false,
   },
-  web: {}
+  web: {},
 };
 
 type Phase = "idle" | "checking" | "downloading" | "recording" | "transcribing";
@@ -48,7 +56,7 @@ export const VoiceButton = ({
   sessionId,
   onTranscript,
   onNote,
-  onPhase
+  onPhase,
 }: {
   client: VisGatewayClient;
   sessionId: string | null;
@@ -70,9 +78,17 @@ export const VoiceButton = ({
     if (phase !== "recording") return;
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 0.35, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true })
-      ])
+        Animated.timing(pulse, {
+          toValue: 0.35,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
     );
     loop.start();
     return () => loop.stop();
@@ -82,7 +98,7 @@ export const VoiceButton = ({
     () => () => {
       if (pollRef.current) clearInterval(pollRef.current);
     },
-    []
+    [],
   );
 
   const beginRecording = useCallback(async () => {
@@ -132,7 +148,13 @@ export const VoiceButton = ({
   }, [beginRecording, client, onNote, sessionId]);
 
   const onMicPress = useCallback(async () => {
-    if (!sessionId || phase === "checking" || phase === "downloading" || phase === "transcribing") return;
+    if (
+      !sessionId ||
+      phase === "checking" ||
+      phase === "downloading" ||
+      phase === "transcribing"
+    )
+      return;
     if (Platform.OS !== "ios") {
       onNote("Voice needs WAV capture \u2014 iOS only for now.");
       return;
@@ -146,7 +168,9 @@ export const VoiceButton = ({
       await ensureModelThenRecord();
     } catch (err) {
       setPhase("idle");
-      onNote(`Voice capture failed: ${err instanceof Error ? err.message : String(err)}`);
+      onNote(
+        `Voice capture failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }, [ensureModelThenRecord, onNote, phase, sessionId]);
 
@@ -175,35 +199,52 @@ export const VoiceButton = ({
         setPhase("idle");
       } catch (err) {
         setPhase("idle");
-        onNote(`Transcription failed: ${err instanceof Error ? err.message : String(err)}`);
+        onNote(
+          `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     },
-    [client, onNote, onTranscript, recorder, sessionId]
+    [client, onNote, onTranscript, recorder, sessionId],
   );
 
   if (phase === "recording") {
     return (
       <View style={styles.strip}>
         <Animated.View style={[styles.recDot, { opacity: pulse }]} />
-        <Text style={styles.clock}>{fmtClock(recorderState.durationMillis)}</Text>
+        <Text style={styles.clock}>
+          {fmtClock(recorderState.durationMillis)}
+        </Text>
         <Text style={styles.stripLabel}>recording</Text>
-        <Pressable hitSlop={8} onPress={() => void finish(false)} style={styles.stripBtn}>
+        <Pressable
+          hitSlop={8}
+          onPress={() => void finish(false)}
+          style={styles.stripBtn}
+        >
           <Feather name="x" size={15} color={c.err} />
         </Pressable>
-        <Pressable hitSlop={8} onPress={() => void finish(true)} style={[styles.stripBtn, styles.stripAccept]}>
+        <Pressable
+          hitSlop={8}
+          onPress={() => void finish(true)}
+          style={[styles.stripBtn, styles.stripAccept]}
+        >
           <Feather name="check" size={15} color={c.amberInk} />
         </Pressable>
       </View>
     );
   }
 
-  const busy = phase === "checking" || phase === "downloading" || phase === "transcribing";
+  const busy =
+    phase === "checking" || phase === "downloading" || phase === "transcribing";
   return (
     <Pressable
       onPress={() => void onMicPress()}
       disabled={busy || !sessionId}
       hitSlop={8}
-      style={({ pressed }) => [styles.mic, pressed && { backgroundColor: c.lineSoft }, (busy || !sessionId) && { opacity: 0.5 }]}
+      style={({ pressed }) => [
+        styles.mic,
+        pressed && { backgroundColor: c.lineSoft },
+        (busy || !sessionId) && { opacity: 0.5 },
+      ]}
     >
       {busy ? (
         <ActivityIndicator size="small" color={c.amber} />
@@ -220,7 +261,7 @@ const styles = StyleSheet.create({
     height: 30,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "transparent"
+    backgroundColor: "transparent",
   },
   strip: {
     flex: 1,
@@ -229,17 +270,23 @@ const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: c.tsepBg,
     paddingHorizontal: 10,
-    height: 32
+    height: 32,
   },
   recDot: { width: 8, height: 8, backgroundColor: c.err },
   clock: { fontFamily: mono, fontSize: 12, fontWeight: "700", color: c.ink },
-  stripLabel: { flex: 1, fontFamily: mono, fontSize: 11, color: c.dim, letterSpacing: 1 },
+  stripLabel: {
+    flex: 1,
+    fontFamily: mono,
+    fontSize: 11,
+    color: c.dim,
+    letterSpacing: 1,
+  },
   stripBtn: {
     width: 28,
     height: 28,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "transparent"
+    backgroundColor: "transparent",
   },
-  stripAccept: { backgroundColor: c.amber }
+  stripAccept: { backgroundColor: c.amber },
 });

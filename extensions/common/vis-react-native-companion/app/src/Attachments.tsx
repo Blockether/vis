@@ -12,7 +12,10 @@ import { OutgoingAttachment } from "./VisClient";
    {attachments: [{base64, filename}]}` — the engine sniffs the MIME from
    magic bytes, so only images survive validation; both pickers are
    image-scoped for that reason). */
-export type PendingAttachment = OutgoingAttachment & { key: string; uri?: string };
+export type PendingAttachment = OutgoingAttachment & {
+  key: string;
+  uri?: string;
+};
 
 const uniq = (() => {
   let n = 0;
@@ -43,7 +46,7 @@ export const pickImages = async (): Promise<PendingAttachment[]> => {
     allowsMultipleSelection: true,
     selectionLimit: 6,
     base64: true,
-    quality: 0.85
+    quality: 0.85,
   });
   if (res.canceled) return [];
   return res.assets
@@ -52,7 +55,7 @@ export const pickImages = async (): Promise<PendingAttachment[]> => {
       key: uniq(),
       base64: a.base64 as string,
       filename: a.fileName ?? `photo-${Date.now()}.jpg`,
-      uri: a.uri
+      uri: a.uri,
     }));
 };
 
@@ -60,7 +63,10 @@ export const pickImages = async (): Promise<PendingAttachment[]> => {
 export const captureImage = async (): Promise<PendingAttachment[]> => {
   const perm = await ImagePicker.requestCameraPermissionsAsync();
   if (!perm.granted) throw new Error("camera permission denied");
-  const res = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.85 });
+  const res = await ImagePicker.launchCameraAsync({
+    base64: true,
+    quality: 0.85,
+  });
   if (res.canceled) return [];
   return res.assets
     .filter((a) => a.base64)
@@ -68,7 +74,7 @@ export const captureImage = async (): Promise<PendingAttachment[]> => {
       key: uniq(),
       base64: a.base64 as string,
       filename: a.fileName ?? `camera-${Date.now()}.jpg`,
-      uri: a.uri
+      uri: a.uri,
     }));
 };
 
@@ -77,7 +83,7 @@ export const pickFiles = async (): Promise<PendingAttachment[]> => {
   const res = await DocumentPicker.getDocumentAsync({
     type: "image/*",
     multiple: true,
-    copyToCacheDirectory: true
+    copyToCacheDirectory: true,
   });
   if (res.canceled) return [];
   const out: PendingAttachment[] = [];
@@ -86,7 +92,7 @@ export const pickFiles = async (): Promise<PendingAttachment[]> => {
       key: uniq(),
       base64: await uriToBase64(asset.uri),
       filename: asset.name,
-      uri: asset.uri
+      uri: asset.uri,
     });
   }
   return out;
@@ -96,7 +102,7 @@ export const pickFiles = async (): Promise<PendingAttachment[]> => {
    the web channel's `.attachments` tray, flat. ── */
 export const AttachmentTray = ({
   items,
-  onRemove
+  onRemove,
 }: {
   items: PendingAttachment[];
   onRemove: (key: string) => void;
@@ -106,7 +112,9 @@ export const AttachmentTray = ({
     <View style={styles.tray}>
       {items.map((a) => (
         <View key={a.key} style={styles.chip}>
-          {a.uri ? <Image source={{ uri: a.uri }} style={styles.thumb} /> : null}
+          {a.uri ? (
+            <Image source={{ uri: a.uri }} style={styles.thumb} />
+          ) : null}
           <Text numberOfLines={1} style={styles.chipName}>
             {a.filename ?? "image"}
           </Text>
@@ -125,7 +133,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 6,
     paddingHorizontal: 12,
-    paddingBottom: 6
+    paddingBottom: 6,
   },
   chip: {
     flexDirection: "row",
@@ -135,8 +143,8 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 8,
     paddingVertical: 4,
-    maxWidth: 180
+    maxWidth: 180,
   },
   thumb: { width: 22, height: 22, backgroundColor: c.lineSoft },
-  chipName: { flexShrink: 1, fontFamily: mono, fontSize: 10.5, color: c.ink2 }
+  chipName: { flexShrink: 1, fontFamily: mono, fontSize: 10.5, color: c.ink2 },
 });

@@ -18,8 +18,13 @@ export const splitBlocks = (src: string): Block[] => {
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = fence.exec(src)) !== null) {
-    if (match.index > last) blocks.push({ kind: "text", body: src.slice(last, match.index) });
-    blocks.push({ kind: "code", lang: (match[1] ?? "").trim(), body: (match[2] ?? "").replace(/\n$/, "") });
+    if (match.index > last)
+      blocks.push({ kind: "text", body: src.slice(last, match.index) });
+    blocks.push({
+      kind: "code",
+      lang: (match[1] ?? "").trim(),
+      body: (match[2] ?? "").replace(/\n$/, ""),
+    });
     last = match.index + match[0].length;
   }
   if (last < src.length) {
@@ -29,8 +34,13 @@ export const splitBlocks = (src: string): Block[] => {
     const tail = src.slice(last);
     const open = /```([^\n`]*)\n?([\s\S]*)$/.exec(tail);
     if (open) {
-      if (open.index > 0) blocks.push({ kind: "text", body: tail.slice(0, open.index) });
-      blocks.push({ kind: "code", lang: (open[1] ?? "").trim(), body: (open[2] ?? "").replace(/\n$/, "") });
+      if (open.index > 0)
+        blocks.push({ kind: "text", body: tail.slice(0, open.index) });
+      blocks.push({
+        kind: "code",
+        lang: (open[1] ?? "").trim(),
+        body: (open[2] ?? "").replace(/\n$/, ""),
+      });
     } else {
       blocks.push({ kind: "text", body: tail });
     }
@@ -52,13 +62,13 @@ const renderInline = (line: string, keyBase: string): React.ReactNode[] => {
       out.push(
         <Text key={`${keyBase}-c${i}`} style={styles.inlineCode}>
           {tok.slice(1, -1)}
-        </Text>
+        </Text>,
       );
     } else {
       out.push(
         <Text key={`${keyBase}-b${i}`} style={styles.bold}>
           {tok.slice(2, -2)}
-        </Text>
+        </Text>,
       );
     }
     last = match.index + tok.length;
@@ -74,7 +84,7 @@ const renderInline = (line: string, keyBase: string): React.ReactNode[] => {
       out.push(
         <Text key={`${keyBase}-c${i}`} style={styles.inlineCode}>
           {rest.slice(tick + 1)}
-        </Text>
+        </Text>,
       );
     } else {
       out.push(rest);
@@ -103,7 +113,9 @@ const TextBlock = ({ body, keyBase }: { body: string; keyBase: string }) => {
           return (
             <View key={key} style={styles.bulletRow}>
               <Text style={styles.bulletDot}>{"\u2022"}</Text>
-              <Text style={styles.line}>{renderInline(bullet[1] ?? "", key)}</Text>
+              <Text style={styles.line}>
+                {renderInline(bullet[1] ?? "", key)}
+              </Text>
             </View>
           );
         }
@@ -122,27 +134,35 @@ export const Markdown = ({ text }: { text: string }) => (
     {splitBlocks(text).map((block, i) =>
       block.kind === "code" ? (
         <View key={`b${i}`} style={styles.codeBox}>
-          {block.lang ? <Text style={styles.codeLang}>{block.lang}</Text> : null}
+          {block.lang ? (
+            <Text style={styles.codeLang}>{block.lang}</Text>
+          ) : null}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <Text style={styles.code}>{block.body}</Text>
           </ScrollView>
         </View>
       ) : (
         <TextBlock key={`b${i}`} body={block.body} keyBase={`b${i}`} />
-      )
+      ),
     )}
   </View>
 );
 
 const styles = StyleSheet.create({
   line: { color: c.ink, fontSize: 13, lineHeight: 19, flexShrink: 1 },
-  heading: { color: c.ink, fontSize: 14, lineHeight: 20, fontWeight: "800", marginTop: 4 },
+  heading: {
+    color: c.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    marginTop: 4,
+  },
   bold: { fontWeight: "700", color: c.ink },
   inlineCode: {
     fontFamily: mono,
     fontSize: 12,
     color: c.chipInk,
-    backgroundColor: c.codeBg
+    backgroundColor: c.codeBg,
   },
   bulletRow: { flexDirection: "row", gap: 6, paddingLeft: 2 },
   bulletDot: { color: c.amber, fontSize: 13, lineHeight: 19 },
@@ -152,7 +172,7 @@ const styles = StyleSheet.create({
     borderLeftColor: c.border,
     marginVertical: 6,
     paddingHorizontal: 8,
-    paddingVertical: 6
+    paddingVertical: 6,
   },
   codeLang: {
     fontFamily: mono,
@@ -160,7 +180,7 @@ const styles = StyleSheet.create({
     color: c.dim,
     textTransform: "uppercase",
     letterSpacing: 1,
-    marginBottom: 4
+    marginBottom: 4,
   },
-  code: { fontFamily: mono, fontSize: 11.5, lineHeight: 16, color: c.codeInk }
+  code: { fontFamily: mono, fontSize: 11.5, lineHeight: 16, color: c.codeInk },
 });

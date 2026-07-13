@@ -29,7 +29,7 @@ export const c = {
   chipInk: "#7A4A00" /* :md-summary-fg */,
   accent: "#7C5CFF" /* modern violet — active / project pop */,
   accentSoft: "#EFEAFF",
-  accentInk: "#2E1F6B"
+  accentInk: "#2E1F6B",
 } as const;
 
 /* ── project accents ──────────────────────────────────────────────
@@ -43,14 +43,18 @@ export const projectPalette = [
   "#7C5CFF" /* violet  */,
   "#DB2777" /* magenta */,
   "#0891B2" /* teal    */,
-  "#EA580C" /* orange  */
+  "#EA580C" /* orange  */,
 ] as const;
 
-export const projectColor = (id?: string | null, override?: string | null): string => {
+export const projectColor = (
+  id?: string | null,
+  override?: string | null,
+): string => {
   if (override) return override;
   const key = id ?? "";
   let h = 0;
-  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < key.length; i += 1)
+    h = (h * 31 + key.charCodeAt(i)) >>> 0;
   return projectPalette[h % projectPalette.length] ?? projectPalette[0];
 };
 
@@ -61,7 +65,7 @@ export const tint = (hex: string, alpha = "1F"): string =>
 export const mono = Platform.select({
   ios: "Menlo",
   android: "monospace",
-  default: "monospace"
+  default: "monospace",
 }) as string;
 
 const asMs = (epoch: number): number => (epoch > 1e12 ? epoch : epoch * 1000);

@@ -14,7 +14,9 @@ if (typeof (globalThis as any).Headers === "undefined") {
   (globalThis as any).Headers = class {
     private map = new Map<string, string>();
     constructor(init?: Record<string, string>) {
-      if (init) for (const [k, v] of Object.entries(init)) this.map.set(k.toLowerCase(), v);
+      if (init)
+        for (const [k, v] of Object.entries(init))
+          this.map.set(k.toLowerCase(), v);
     }
     set(k: string, v: string) {
       this.map.set(k.toLowerCase(), v);
