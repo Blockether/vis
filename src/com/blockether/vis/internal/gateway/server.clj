@@ -1152,6 +1152,14 @@
               authed? (or (= expected
                              (some-> (get-in request [:headers "authorization"])
                                      str/trim))
+                          ;; The internal same-machine client (TUI/CLI) carries the
+                          ;; SAME secret in X-Vis-Gateway-Secret (read from the on-disk
+                          ;; registry) — the header it already sends on the /healthz
+                          ;; probe. Accept it so a token-gated gateway (any non-loopback
+                          ;; bind like --host 0.0.0.0) doesn't 401 its own local clients.
+                          (= (str token)
+                             (some-> (get-in request [:headers "x-vis-gateway-secret"])
+                                     str/trim))
                           (some (fn [{:keys [request-authed-fn]}]
                                   (when request-authed-fn (request-authed-fn request token)))
                                 contribs))]

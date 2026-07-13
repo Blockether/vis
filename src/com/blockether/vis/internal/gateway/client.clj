@@ -85,8 +85,19 @@
          (parse-json-body (:body response))]
 
      (when (>= status 400)
-       (throw (ex-info (or (:message parsed) (str "gateway HTTP " status))
-                       (assoc parsed :http-status status))))
+       (throw (if (= status 401)
+                (ex-info (str "could not authenticate to the gateway (HTTP 401: "
+                              (or (:message parsed) "unauthorized")
+                              "). It is bound to a "
+                              "non-loopback host, so a bearer token is required and this "
+                              "client did not present a valid one. Run the TUI on the SAME "
+                              "machine as the gateway (it reads the token from ~/.vis), or "
+                              "restart the gateway on loopback (vis gateway start).")
+                         (assoc parsed
+                           :http-status status
+                           :vis/user-error true))
+                (ex-info (or (:message parsed) (str "gateway HTTP " status))
+                         (assoc parsed :http-status status)))))
      parsed)))
 
 (defn- send-json!
