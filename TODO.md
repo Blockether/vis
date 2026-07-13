@@ -22,26 +22,35 @@ Tracking what's left after the attachment rail work (sink-at-source capture →
 
 ## Open
 
-### P0 — Real vision-model round-trip verification
-Everything so far is **unit-level only** (`conversation-suffix` shapes + fold
-gating). Never proven against a live model that (a) a generated plot actually
-reaches a vision model as an image, and (b) after `session_fold` the
-`image_url` block is truly gone from the outbound request.
-- Option A (fastest): manual — `plt.show()` → `session_fold` that iteration →
-  continue, confirm behaviour/cost on the live endpoint.
-- Option B: integration test that dumps the real outbound request (or hits a
-  live vision endpoint) and asserts no `image_url` block post-fold.
+### P0 — Real vision-model round-trip verification — DONE (t52)
+Proven against a LIVE `claude-opus-4-8` (anthropic-coding-plan, real wire), not just
+unit-level. Setup: built the router in the dev REPL, rendered a distinctive PNG
+(text `PLOT-7391` + red circle).
+- (a) image reaches the model AS AN IMAGE: sent the PNG via `svar/image` → model
+  replied `PLOT-7391, red` (read both the drawn text and the shape colour; input
+  tokens jumped to ~215 confirming real image decode).
+- (b) fold removes the image: fed a real `conversation-suffix` iteration carrying
+  the image → UNFOLDED emits exactly one `image_url` block and the live model reads
+  `PLOT-7391` (335 input tokens); with `:collapsed? true` (session_fold) the suffix
+  emits ZERO `image_url` blocks and the live model answers `NONE` (151 input tokens).
+Structural + live agree: image visibility tracks the iteration's textual visibility.
 
-### P1 — Triage pre-existing red test
-`provider-stream-rewind-retry` fails on main (ArityException in
-`run-iteration`) — confirmed pre-existing / unrelated to attachments, but it's
-red. Triage separately.
+### P1 — Pre-existing red test — NOT RED (t52)
+`provider-stream-rewind-retry-test` (and `native-tool-call-execution-test`) pass.
+Full `com.blockether.vis.internal.loop-test` = **172/0** on a clean JVM
+(`clojure -M:test -n …`). The earlier "ArityException red" was a `run_tests` /
+`run-test-var` selector artifact (wrong classpath / skipped fixture), not a real
+failure. No fix needed.
 
-### P2 — External storage (S3) is a stub
-`storage_uri` column + nil-`bytes` reader guards + exactly-one CHECK are in
-place, but **no producer** writes external payloads and **no resolver** turns
-`storage_uri` → bytes on read-back/replay. Wire the resolver + a producer path
-when S3 (or any external store) lands.
+### P2 — External storage — WIRED (t50); only a real backend remains
+Producer + resolver are LIVE, not a stub: `attachment-storage/offload-attachments`
+runs at both store sites (iteration @loop.clj:5684, turn @6198), `hydrate` /
+`hydrate-all` resolve `storage_uri` → bytes at both read sites (read-back @560,
+cross-turn seed @5149), gated on `active-backend`; `resolve-bytes` dispatches by
+URI scheme; a reference `file://` backend ships (opt-in). What's left is genuinely
+future: no backend is auto-registered by default (correct — never offload without
+a configured store), and no real S3/GCS backend extension exists yet. Add one as a
+separate extension when an external store is actually adopted.
 
 ### P2 — Python read-back ergonomics
 `vis_read_attachment(id)` + listing exist. Confirm the reuse story (list →
