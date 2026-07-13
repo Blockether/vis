@@ -1699,12 +1699,8 @@
     (when-let [thought (block-thinking (:text event))]
       [{:event "thinking" :html (html thought)}])
 
-    ;; Model PROSE returned alongside a tool call (`:assistant-prose` upstream).
-    ;; Both the growing `:content` tail and the final commentary ride here; we
-    ;; PIN only the final one (`:prose-final`) as a permanent thread block so the
-    ;; commentary lands DURING the live stream, not just when the trace is later
-    ;; expanded. The streaming partials stay transient (no frame), so #live never
-    ;; accretes half-written prose. A turn-scoped live-key keeps it idempotent.
+    ;; Older gateways may still send assistant prose as a final content.delta;
+    ;; current gateway builds hold all model text until iteration.completed.
     "content.delta"
     (when (:prose-final event)
       (when-let [prose (block-prose (:text event)
@@ -1754,13 +1750,22 @@
                                     (turn-live-key (str "error:" (:iteration event)) event)))}]
 
     "iteration.completed"
-    (let [thought (block-thinking (:thinking event)
-                                  (turn-live-key (str "thinking:" (:iteration event)) event))]
-      ;; The iteration's reasoning pins into the thread HERE (and the
-      ;; ticker clears) so thinking stays readable after streaming.
+    (let [thought
+          (block-thinking (:thinking event)
+                          (turn-live-key (str "thinking:" (:iteration event)) event))
+
+          prose
+          (block-prose (:assistant-prose event)
+                       (turn-live-key (str "prose:" (:iteration event)) event))]
+
+      ;; Complete reasoning + complete prose pin into the thread HERE. No
+      ;; token/partial model text is streamed by current gateway builds.
       (cond-> []
         thought
         (conj {:event "message" :html (html thought)})
+
+        prose
+        (conj {:event "message" :html (html prose)})
 
         ;; the ticker RESETS to dots (not empty) - the turn is still running,
         ;; so the bottom indicator must survive the iteration boundary; only
@@ -2273,7 +2278,7 @@
                [:button.side-project-edit
                 {:type "button"
                  :aria-label "Manage project"
-                 :hx-get (str "/ui/projects/" (:id p))
+                 :hx-get (str "/ui/project/" (:id p))
                  :hx-target "#modal"
                  :hx-swap "innerHTML"} (icon "edit")]]
               (if (seq members)
@@ -3230,7 +3235,7 @@
     (hx-refresh)))
 
 (defn- manage-project-handler
-  "GET /ui/projects/:pid — rename OR delete a project."
+  "GET /ui/project/:pid — rename OR delete a project."
   [request]
   (let [pid
         (path-project-id request)
@@ -3242,7 +3247,7 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell
              "Manage project"
-             [:form.proj-form {:hx-post (str "/ui/projects/" pid "/rename") :hx-swap "none"}
+             [:form.proj-form {:hx-post (str "/ui/project/" pid "/rename") :hx-swap "none"}
               [:input.proj-input
                {:type "text"
                 :name "name"
@@ -3252,13 +3257,13 @@
                 :placeholder "Project name"}]
               [:div.proj-actions
                [:button.btn-danger
-                {:type "button" :hx-post (str "/ui/projects/" pid "/delete") :hx-swap "none"}
+                {:type "button" :hx-post (str "/ui/project/" pid "/delete") :hx-swap "none"}
                 "Delete"] [:span.proj-actions-spacer]
                [:button.btn-ghost {:type "button" :data-close-modal "x"} "Cancel"]
                [:button.btn-primary {:type "submit"} "Save"]]])}))
 
 (defn- rename-project-handler
-  "POST /ui/projects/:pid/rename {name} — rename a project."
+  "POST /ui/project/:pid/rename {name} — rename a project."
   [request]
   (let [pid
         (path-project-id request)
@@ -3271,7 +3276,7 @@
     (hx-refresh)))
 
 (defn- delete-project-handler
-  "POST /ui/projects/:pid/delete — delete a project; its project sessions
+  "POST /ui/project/:pid/delete — delete a project; its project sessions
    scatter back to projectless (never deleted)."
   [request]
   (when-let [pid (path-project-id request)]
@@ -5699,9 +5704,9 @@
     {:get #'delete-sessions-confirm-handler :post #'delete-sessions-bulk-handler}]
    ["/ui/projects" {:post #'create-project-handler}]
    ["/ui/projects/new" {:get #'new-project-modal-handler}]
-   ["/ui/projects/:pid" {:get #'manage-project-handler}]
-   ["/ui/projects/:pid/rename" {:post #'rename-project-handler}]
-   ["/ui/projects/:pid/delete" {:post #'delete-project-handler}]
+   ["/ui/project/:pid" {:get #'manage-project-handler}]
+   ["/ui/project/:pid/rename" {:post #'rename-project-handler}]
+   ["/ui/project/:pid/delete" {:post #'delete-project-handler}]
    ["/ui/session/:sid/move" {:get #'move-session-modal-handler :post #'assign-session-handler}]
    ["/ui/session/:sid/reorder" {:post #'reorder-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler :delete #'delete-session-ui-handler}]

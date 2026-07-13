@@ -657,20 +657,12 @@
         (event-get event :text)]
 
     (case type
+      ;; Older gateways may still send these partial model-text frames; accept
+      ;; them for backward compatibility. Current gateway builds hold reasoning
+      ;; and prose until iteration.completed.
       "reasoning.delta"
-      ;; The progress tracker accumulates live reasoning from `:thinking`
-      ;; (the loop's chunk contract, progress.clj `:reasoning`) — NOT `:text`.
-      ;; Project the wire's cumulative `:text` onto `:thinking`, or thinking
-      ;; never streams in an attached TUI and only appears when the iteration
-      ;; completes (iteration.completed carries `:thinking`).
       {:phase :reasoning :iteration iteration :thinking text}
 
-      ;; Model prose streaming alongside the tool call — progress.clj accumulates
-      ;; it as :content-stream so the live bubble paints the markdown. The gateway
-      ;; remaps the end-of-iteration `:assistant-prose` onto content.delta too,
-      ;; tagged `:prose-final`; route THAT to the :assistant-prose phase so it
-      ;; pins as its own block (between thinking and the code) instead of the
-      ;; transient content tail that gets dropped once the code block lands.
       "content.delta"
       (if (event-get event :prose-final)
         {:phase :assistant-prose :iteration iteration :text text}
@@ -702,7 +694,11 @@
              (vis/form<-wire event))
 
       "iteration.completed"
-      {:phase :iteration-final :iteration iteration :thinking thinking :done? (boolean done)}
+      {:phase :iteration-final
+       :iteration iteration
+       :thinking thinking
+       :assistant-prose (event-get event :assistant-prose)
+       :done? (boolean done)}
 
       "iteration.error"
       {:phase :iteration-error :iteration iteration :thinking thinking :error error}

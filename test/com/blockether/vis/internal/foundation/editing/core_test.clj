@@ -17,6 +17,7 @@
             ;; tool calls below see the same op-tag registry as production.
             [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
@@ -1252,6 +1253,11 @@
 
                    ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
                    (expect (= 6 (count (get out "anchors"))))
+                   ;; Each anchor VALUE is a {"text" line} map — mirrors rg's hit
+                   ;; value, so `v["text"]` reads the line uniformly across tools.
+                   (expect (every? #(and (map? %) (contains? % "text")) (vals (get out "anchors"))))
+                   (expect (= #{"L5" "L6" "L7" "L8" "L9" "L10"}
+                              (set (map #(get % "text") (vals (get out "anchors"))))))
                    (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
                               (patch/anchor-map->tuples (get out "anchors"))))))
              (it ":range with start == end reads exactly one line"
@@ -2502,8 +2508,14 @@
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
           (expect (throws? clojure.lang.ExceptionInfo
                            #(safe-path (str ctx-root "/../../../../etc/hosts"))))
+          ;; /tmp (and $TMPDIR) are ALWAYS reachable, independent of the bound
+          ;; roots — scratch under the system temp dir just works.
           (binding [workspace/*filesystem-roots* nil]
-            (expect (throws? clojure.lang.ExceptionInfo #(safe-path (str ctx-root "/x"))))))))
+            (expect (some? (safe-path "/tmp/vis-safe-path-probe.txt")))
+            (expect (some? (safe-path (str (System/getProperty "java.io.tmpdir")
+                                           "/vis-safe-path-probe.txt"))))
+            ;; ...but a NON-temp path outside every root is still rejected.
+            (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
   (it "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
       (let [safe-path
             (private-fn "safe-path")
@@ -2533,6 +2545,40 @@
             (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
             (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+
+(defdescribe
+  native-temp-write-capture-test
+  (it
+    "a write to /tmp streams to the DB attachment sink; a workspace write does NOT"
+    (let [write-safe
+          (private-fn "write-safe")
+
+          sink
+          (atom [])
+
+          seen
+          (atom #{})
+
+          tmp
+          (str (System/getProperty "java.io.tmpdir") "/vis-native-tmpcap-" (System/nanoTime) ".txt")
+
+          ws
+          "target/editing-test/vis-native-nontmp.txt"]
+
+      (fs/create-dirs "target/editing-test")
+      (binding [mpl-capture/*attachment-sink*
+                sink
+
+                mpl-capture/*outbox-seen*
+                seen]
+
+        (expect (:success? (write-safe {"path" tmp "content" "captured tmp bytes"})))
+        (expect (:success? (write-safe {"path" ws "content" "not captured"}))))
+      ;; ONLY the /tmp write reached the sink — the workspace write is untouched.
+      (expect (= 1 (count @sink)))
+      (let [[att] @sink]
+        (expect (string/ends-with? (:filename att) ".txt"))
+        (expect (= "file" (:kind att)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; patch is ANCHOR-ONLY — the removed `search`/`replace`/`nth` text-matcher API
@@ -2740,8 +2786,13 @@
   ;; 266 lines` — because the summary carried no line-span info. The headline
   ;; now says WHICH lines were read.
   (let [render @#'editing/render-cat-result]
-    (it "single contiguous range: `L<a>-<b>`, count implied"
-        (let [card (render {"path" "app.css" "anchors" {"1:aa" "x" "2:bb" "y" "3:cc" "z"}})]
+    (it "single contiguous range: `L<a>-<b>`, count implied (renders each value's \"text\")"
+        ;; Canonical anchor value is a {"text" line} map (mirrors rg's hit value);
+        ;; the renderer pulls `"text"` for the gutter row. Bare-string values are
+        ;; still tolerated (the summary-only cases below exercise that path).
+        (let [card (render {"path" "app.css"
+                            "anchors"
+                            {"1:aa" {"text" "x"} "2:bb" {"text" "y"} "3:cc" {"text" "z"}}})]
           (expect (= "`app.css` · L1-3" (:summary card)))
           ;; Gutter is sized to the widest line number (1 digit here) — no
           ;; fixed-5 left-pad, so the row is flush `1  x`, not `    1  x`.

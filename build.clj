@@ -961,7 +961,7 @@
 
 (defn native
   "Build BOTH vis distributions in one shot:
-     1. `target/vis.jar`  — portable JVM uberjar (the `vis --jvm` distribution)
+     1. `target/vis.jar`  — portable JVM uberjar (LOCAL `vis --jvm` fallback, not shipped)
      2. `target/vis`      — standalone native binary (`target/vis.exe` on Windows)
    They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
    GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
@@ -973,10 +973,10 @@
      :profile :cross    — all channels, NO voice.
      :profile :voice    — all channels + voice ASR (the default).
      :with-assets true  — embed the ~465 MB voice ASR model for a fully-offline
-                          binary (default: download on first use). Only valid
-                          with :profile :voice. The SHIPPED `vis-<os>-voice`
-                          release assets build with this ON — voice users get
-                          offline ASR out of the box (~1.1 GB asset)."
+                          LOCAL binary (default: download on first use). Only valid
+                          with :profile :voice. NOT used for releases — the shipped
+                          native downloads the model on first use, like every other
+                          model, so the binary stays lean."
   [opts]
   (let [with-assets?
         (boolean (:with-assets opts))

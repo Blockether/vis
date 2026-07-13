@@ -7,8 +7,8 @@ import { c, mono } from "./theme";
 /* ── live turn state ──────────────────────────────────────────────────
    The RN companion reduces the gateway SSE stream (GET /v1/sessions/:sid/
    events) into per-turn live state so a running turn paints its tool-call
-   cards + streaming prose AS THEY HAPPEN, instead of the poll-only
-   "thinking…" placeholder that waited for the settled answer.
+   cards as they happen. Model prose/thinking does NOT stream token-by-token;
+   the gateway sends complete text on iteration.completed.
 
    The wire is flat JSON per event (wire/sse-frame → json-str): keyword map
    keys arrive snake_case with the namespace dropped, so `:vis/tool-name` →
@@ -34,10 +34,8 @@ export type LiveCard = {
 
 export type LiveTurn = {
   cards: LiveCard[];
-  /* the growing prose tail (content.delta carries the whole tail each frame,
-     so we REPLACE, never append) */
+  /* Complete prose/thinking text, updated only from iteration.completed. */
   prose: string;
-  /* the moving reasoning ticker tail (reasoning.delta, likewise a replace) */
   thinking: string;
   done: boolean;
 };
@@ -180,18 +178,18 @@ export const reduceLiveEvent = (
       };
     }
 
-    case "reasoning.delta":
-      return { ...state, [tid]: { ...cur, thinking: ev.text ?? cur.thinking } };
-
-    case "content.delta":
+    case "iteration.completed":
       return {
         ...state,
-        [tid]: { ...cur, prose: ev.text ?? cur.prose, thinking: "" },
+        [tid]: {
+          ...cur,
+          prose: ev.assistant_prose ?? cur.prose,
+          thinking: ev.thinking ?? "",
+        },
       };
 
-    case "iteration.completed":
     case "iteration.error":
-      return { ...state, [tid]: { ...cur, thinking: "" } };
+      return { ...state, [tid]: { ...cur, thinking: ev.thinking ?? "" } };
 
     case "turn.completed":
     case "turn.failed":

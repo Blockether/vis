@@ -244,6 +244,18 @@
 ;;
 (def ^:private settings-notification-ttl-ms 1500)
 (def ^:private cancel-notification-ttl-ms 2500)
+(def ^:private cancel-self-heal-timeout-ms
+  "Client-side safety net for a STUCK cancel. `:cancel-turn` flips `:cancelling?`
+   and waits for the daemon's terminal `turn.completed` (status cancelled) event
+   to release it — that event is the ONLY release. If it never lands (an SSE
+   reconnect gap right at cancel, or the daemon dying mid-unwind) the flag sticks
+   true, every send parks purely local (see the enqueue race guard), and input is
+   wedged until the daemon's ~6-minute stall watchdog fires — a freeze, to a
+   human. This bounds that window: once `:cancelling?` has been held this long
+   with no terminal event, the client self-heals. Long enough that a healthy
+   terminal event always wins the race; short enough that a dropped one never
+   freezes the user."
+  8000)
 (def ^:private live-progress-render-interval-ms
   "Maximum wall-clock interval between live reasoning redraws.
 
@@ -1298,7 +1310,8 @@
                   :workspace ws
                   :workspace/root (:root ws))))
 (def ^:private active-turn-state-keys
-  [:loading? :cancelling? :progress :turn-start-ms :cancel-token :gateway-turn-id])
+  [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
+   :gateway-turn-id])
 
 (defn- session-running?
   [session]
@@ -1315,7 +1328,8 @@
     :progress nil
     :turn-start-ms nil
     :cancel-token nil
-    :gateway-turn-id nil))
+    :gateway-turn-id nil
+    :cancelling-at-ms nil))
 
 (defn- reconcile-in-flight-state
   [next-db previous-db session]
@@ -2433,19 +2447,36 @@
                                     (vec (or q [])))))))))
 (reg-event-db :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
-              ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares.
-              ;; Re-seed this tab's elapsed timer from it: the local stamps
-              ;; (:send-message's submit time, :drain-pending's drain time) drift from the
-              ;; gateway's actual run start, so two terminals attached to the same work
-              ;; showed different elapsed. No-op unless the tab is mid-turn (:loading?).
-              (fn [db [_ workspace-id {:keys [started-at-ms]}]]
+              ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares —
+              ;; AND the gateway `:turn-id`. Two jobs, both only while the tab is mid-turn
+              ;; (:loading?):
+              ;;   1. Re-seed this tab's elapsed timer from `started_at`. The local stamps
+              ;;      (:send-message's submit time, :drain-pending's drain time) drift from
+              ;;      the gateway's actual run start, so two terminals attached to the same
+              ;;      work showed different elapsed.
+              ;;   2. LATE-BIND `:gateway-turn-id`. A plain `:send-message` submit has NO turn
+              ;;      id yet — it's minted server-side, and `turn.started` is the first place
+              ;;      it reaches this tab. Without this bind the id stays nil and `:cancel-turn`
+              ;;      short-circuits `(when (and sid tid) …)`: the cancel NEVER reaches the
+              ;;      gateway, the daemon keeps running the "cancelled" turn, and the next
+              ;;      submit queues behind that ghost — only surfacing once it finishes on its
+              ;;      own. Fill a still-empty slot only: a drain/attach that already bound the
+              ;;      id (2593 / 2705) wins.
+              (fn [db [_ workspace-id {:keys [started-at-ms turn-id]}]]
                 (let [workspace-id (or workspace-id (current-tab-id db))]
-                  (if-not (and workspace-id (nat-int? started-at-ms))
+                  (if-not workspace-id
                     db
                     (update-tab db
                                 workspace-id
                                 (fn [w]
-                                  (if (:loading? w) (assoc w :turn-start-ms started-at-ms) w)))))))
+                                  (if (:loading? w)
+                                    (cond-> w
+                                      (nat-int? started-at-ms)
+                                      (assoc :turn-start-ms started-at-ms)
+
+                                      (and turn-id (nil? (:gateway-turn-id w)))
+                                      (assoc :gateway-turn-id turn-id))
+                                    w)))))))
 (reg-event-db
   :sync-queued-turn
   ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
@@ -2838,8 +2869,39 @@
           {:db (clear-active-turn-state db)
            :fx [[:notify "Turn is no longer running; cleared local cancelling state." :info
                  cancel-notification-ttl-ms]]}
-          {:db (assoc db :cancelling? true)
+          {:db (assoc db
+                 :cancelling? true
+                 :cancelling-at-ms (System/currentTimeMillis))
            :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]})))))
+(defn- cancel-self-heal-due?
+  "True when a user cancel has been pending (`:cancelling?`) at least
+   `cancel-self-heal-timeout-ms` without the daemon's terminal event arriving to
+   release it — the SSE-drop / daemon-died edge that would otherwise wedge input."
+  [db now-ms]
+  (boolean (and (:cancelling? db)
+                (:cancelling-at-ms db)
+                (>= (- (long now-ms) (long (:cancelling-at-ms db))) cancel-self-heal-timeout-ms))))
+(reg-event-fx :cancel-self-heal-tick
+              ;; Render-loop heartbeat safety net for a STUCK cancel (see
+              ;; `cancel-self-heal-timeout-ms`). Once the pending `:cancelling?` has outlived
+              ;; the timeout with no terminal event, self-heal locally: re-fire the cancel
+              ;; token (tears down any lingering local attach waiter), clear the turn state so
+              ;; sends flow again, and restore the AUTHORED backlog to the editor so nothing
+              ;; the user typed is lost — the same restore the terminal-event path performs.
+              ;; Pure over an injected `now-ms` (tests pass it; the render loop omits it →
+              ;; System/currentTimeMillis), so a dropped event self-heals deterministically.
+              (fn [db [_ now-ms]]
+                (let [now (or now-ms (System/currentTimeMillis))]
+                  (if-not (cancel-self-heal-due? db now)
+                    {:db db}
+                    (let [workspace-id (current-tab-id db)]
+                      (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
+                      {:db (clear-active-turn-state db)
+                       :fx (cond-> [[:notify
+                                     "Cancel timed out \u2014 cleared locally. You can send again."
+                                     :warn cancel-notification-ttl-ms]]
+                             (some :client-id (:pending-sends (db-for-tab db workspace-id)))
+                             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
    tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so
@@ -3003,7 +3065,8 @@
                                   :utilization utilization
                                   :scroll scroll/follow
                                   :loading? still-pending?
-                                  :cancelling? false)
+                                  :cancelling? false
+                                  :cancelling-at-ms nil)
                           (not still-pending?)
                           clear-active-turn-state)
 

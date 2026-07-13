@@ -50,6 +50,13 @@
        #(cond (str/blank? (str b64))
               (throw (ex-info "vis_attach: empty payload (no bytes to persist)" {}))
               (str/blank? (str media-type)) (throw (ex-info "vis_attach: missing media type" {}))
+              (> (long (or size 0)) mpl-capture/max-capture-bytes)
+              (throw (ex-info (str "vis_attach: payload "
+                                   (long (or size 0))
+                                   " bytes exceeds the "
+                                   (quot mpl-capture/max-capture-bytes (* 1024 1024))
+                                   " MiB attachment limit")
+                              {}))
               (nil? mpl-capture/*attachment-sink*)
               (throw (ex-info (str "vis_attach: no active capture sink — call it inside a "
                                    "python_execution block so the produced artifact can be "

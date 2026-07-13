@@ -325,15 +325,21 @@ describe("streamEvents SSE dispatch", () => {
 
   it("parses a typed data frame into onEvent", () => {
     const { events, es } = open();
-    es.emit("content.delta", {
+    es.emit("iteration.completed", {
       data: JSON.stringify({
-        type: "content.delta",
+        type: "iteration.completed",
         turn_id: "t1",
-        text: "hi",
+        thinking: "full thought",
+        assistant_prose: "full prose",
       }),
     });
     expect(events).toEqual([
-      { type: "content.delta", turn_id: "t1", text: "hi" },
+      {
+        type: "iteration.completed",
+        turn_id: "t1",
+        thinking: "full thought",
+        assistant_prose: "full prose",
+      },
     ]);
   });
 

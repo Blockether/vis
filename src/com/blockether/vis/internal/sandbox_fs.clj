@@ -33,6 +33,20 @@
 (def ^:private ^"[Ljava.nio.file.LinkOption;" nofollow
   (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
+(def ^:private temp-roots
+  "System temp directories the sandbox may ALWAYS read/write, independent of the
+   user's `/fs` roots — `/tmp` (and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`).
+   Canonicalized ONCE via `toRealPath` (symlinks resolved, so macOS `/tmp` ->
+   `/private/tmp` matches). Held in a delay so the syscall happens on first use,
+   not at class-load. Non-existent/unresolvable entries are dropped."
+  (delay (->> [(System/getProperty "java.io.tmpdir") "/tmp"]
+              (keep (fn [s]
+                      (when-not (str/blank? (str s))
+                        (try (.toRealPath (Paths/get (str s) (make-array String 0)) no-link-opts)
+                             (catch Throwable _ nil)))))
+              distinct
+              vec)))
+
 (defn- real-path
   "Canonicalize `p` to an absolute, symlink-resolved, `..`-free Path WITHOUT
    requiring `p` itself to exist: resolve the REAL path of its nearest existing
@@ -80,8 +94,9 @@
        vec))
 
 (defn- confine!
-  "Throw a clear SecurityException unless `p` resolves under a current root OR the
-   engine outbox dir (`extra-roots`, always allowed). Returns `p` (a Path) on
+  "Throw a clear SecurityException unless `p` resolves under a current root OR one
+   of the always-allowed `extra-roots` (the engine outbox dir + the system temp
+   dirs `/tmp`/`$TMPDIR`). Returns `p` (a Path) on
    success. `cache` memoizes root canonicalization."
   ^Path [roots-fn cache extra-roots p]
   (let [^Path pp
@@ -138,7 +153,9 @@
    `outbox` (optional) — `{:dir <existing dir path string> :on-close (fn [^Path])}`.
    Its real path is treated as an always-allowed root (so the sandbox can write
    there even though it is not a user `/fs` root); a WRITE channel closed under it
-   fires `on-close` with the file path. Nil ⇒ no tap."
+   fires `on-close` with the file path. The SAME `on-close` also fires for a
+   write closed under any system temp root (`/tmp`, `$TMPDIR`), so plain /tmp
+   scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap."
   (^FileSystem [roots-fn] (confined-filesystem roots-fn nil))
   (^FileSystem [roots-fn outbox]
    (let [^FileSystem d
@@ -156,7 +173,7 @@
          (:on-close outbox)
 
          extra-roots
-         (if outbox-real [outbox-real] [])
+         (into (if outbox-real [outbox-real] []) @temp-roots)
 
          c
          (fn [p]
@@ -181,11 +198,23 @@
                    (c p)
 
                    ch
-                   (.newByteChannel d cp opts attrs)]
+                   (.newByteChannel d cp opts attrs)
 
-               (if (and outbox-real (write-opts? opts) (.startsWith (real-path cp) outbox-real))
-                 (tap-write-channel ch cp on-close)
-                 ch)))
+                   ;; Tap a WRITE opened under the OUTBOX *or* any system temp
+                   ;; root (/tmp, $TMPDIR): once the sandbox CLOSES the file it
+                   ;; streams to the DB as a `session_iteration_attachment` —
+                   ;; the $VIS_OUTBOX capture, widened to plain /tmp scratch so
+                   ;; anything the sandbox drops in /tmp is persisted too.
+                   tap?
+                   (and on-close
+                        (write-opts? opts)
+                        (let [^Path rp (real-path cp)]
+                          (or (and outbox-real (.startsWith rp outbox-real))
+                              (some (fn [^Path tr]
+                                      (.startsWith rp tr))
+                                    @temp-roots))))]
+
+               (if tap? (tap-write-channel ch cp on-close) ch)))
            (newDirectoryStream [dir filt] (.newDirectoryStream d (c dir) filt))
            (createDirectory [dir attrs] (.createDirectory d (c dir) attrs))
            (delete [p] (.delete d (c p)))

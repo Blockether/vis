@@ -885,22 +885,39 @@
           {}
           (or extensions [])))
 
+(def ^:private theme-id-priority
+  "Ids pinned to the TOP of `available-theme-ids` (and thus every theme
+   picker), in this order. Everything else follows alphabetically."
+  ["vis-light" "vis-dark"])
+
 (defn available-theme-ids
   "Theme ids from the process registry plus optional unregistered extension
    descriptor maps. Normally extensions are already installed into `themes`
-   by `register-extension!`; the argument remains for pure tests/previews."
+   by `register-extension!`; the argument remains for pure tests/previews.
+
+   `vis-light`/`vis-dark` are pinned to the top (see `theme-id-priority`);
+   all other ids follow, sorted alphabetically."
   ([] (available-theme-ids nil))
   ([extensions]
-   (->> (merge @themes
-               (into {}
-                     (map (fn [[id entry]]
-                            (theme-entry id entry)))
-                     (extension-themes extensions)))
-        keys
-        (map name)
-        distinct
-        sort
-        vec)))
+   (let [rank
+         (into {}
+               (map-indexed (fn [i n]
+                              [n i])
+                            theme-id-priority))
+
+         floor
+         (count theme-id-priority)]
+
+     (->> (merge @themes
+                 (into {}
+                       (map (fn [[id entry]]
+                              (theme-entry id entry)))
+                       (extension-themes extensions)))
+          keys
+          (map name)
+          distinct
+          (sort-by (juxt #(rank % floor) identity))
+          vec))))
 
 (defn- mix-rgb
   "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."

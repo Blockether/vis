@@ -108,10 +108,11 @@
 
           StructuralApi$Op/INSERT_AFTER)]
 
-    ;; re-insert next to the anchor, with a blank line so it reads as its own form.
-    ;; INSERT_* on the deleted (still-valid) tree; the caller's write re-parses and
-    ;; REFUSES the whole edit if the relocate broke anything.
-    (StructuralApi/edit deleted language jop anchor nil (str "\n" text))))
+    ;; Re-insert next to the anchor. INSERT_* now supplies its own blank-line
+    ;; separator, so `text` goes in verbatim (no leading \n — that would double the
+    ;; gap). INSERT_* runs on the deleted (still-valid) tree; the caller's write
+    ;; re-parses and REFUSES the whole edit if the relocate broke anything.
+    (StructuralApi/edit deleted language jop anchor nil text)))
 
 (defn edit-source
   "Return the new file content for a structural edit, or throw with an

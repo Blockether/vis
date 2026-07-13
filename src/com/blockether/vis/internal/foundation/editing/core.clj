@@ -45,7 +45,8 @@
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.gitignore :as gitignore]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
            (java.io File)))
 
@@ -237,6 +238,38 @@
 ;; Path safety
 ;; =============================================================================
 
+(def ^:private temp-roots
+  "System temp dirs (`/tmp` and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`) the file
+   tools may ALWAYS reach, independent of the workspace roots. Canonical (symlinks
+   resolved, so macOS `/tmp` -> `/private/tmp`), computed once on first use; a
+   non-existent/unresolvable entry is dropped."
+  (delay (->> [(System/getProperty "java.io.tmpdir") "/tmp"]
+              (keep (fn [s]
+                      (when-not (str/blank? (str s))
+                        (try (.toPath (.getCanonicalFile (java.io.File. ^String (str s))))
+                             (catch Throwable _ nil)))))
+              distinct
+              vec)))
+
+(defn- under-temp-root?
+  "True when `f` canonicalizes under a system temp root (`/tmp`, `$TMPDIR`)."
+  [^File f]
+  (try (let [^java.nio.file.Path cp (.toPath (.getCanonicalFile f))]
+         (boolean (some (fn [^java.nio.file.Path tr]
+                          (.startsWith cp tr))
+                        @temp-roots)))
+       (catch Throwable _ false)))
+
+(defn- capture-temp-write!
+  "Stream a just-written TEMP file (under `/tmp` or `$TMPDIR`) to the DB as a
+   `session_iteration_attachment` — the native-tool twin of the sandbox OUTBOX
+   tap. A no-op for a non-temp path, or when no capture sink is bound (the file
+   tool ran outside a driven block). NEVER throws — a capture must not break an
+   edit."
+  [^File f]
+  (try (when (under-temp-root? f) (mpl-capture/record-file! (.toPath f))) (catch Throwable _ nil))
+  nil)
+
 (defn- safe-path
   ^File [p]
   ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
@@ -287,7 +320,13 @@
 
                       (when (and (not= tp cp) (.startsWith canonical tp))
                         (.resolve cp (.relativize tp canonical)))))
-                  mappings))]
+                  mappings)
+            ;; system temp dirs (/tmp, $TMPDIR) are ALWAYS reachable, independent
+            ;; of the workspace roots — read/write scratch under /tmp just works.
+            ;; LAST so an isolated draft's trunk↔clone remap still wins first.
+            (some (fn [^java.nio.file.Path tr]
+                    (when (.startsWith canonical tr) canonical))
+                  @temp-roots))]
 
     (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
@@ -2849,7 +2888,8 @@
                         hint
                         (str "\n" hint))})
           (do (doseq [{:keys [file after]} plans]
-                (spit file after))
+                (spit file after)
+                (capture-temp-write! file))
               (doseq [{:keys [file]} plans]
                 (clear-patch-fail-count! file))
               {:success? true
@@ -3061,6 +3101,7 @@
                         (str "\n" (patch-loop-hint n rel)))})
           (do (ensure-parent-dirs! file)
               (spit file content)
+              (capture-temp-write! file)
               (clear-patch-fail-count! file)
               {:success? true
                :plan {:path rel :before before :after content :op (if exists? :update :add)}
@@ -3122,7 +3163,7 @@
 (defn- cat-result->model
   "Shape an internal read result into the MODEL-facing form: the internal
    `:lines` (a vec of `[ln text]` tuples) becomes the model's `:anchors` — an
-   ordered `{anchor text}` map (`patch/lines->anchor-map`, a line-ordered
+   ordered `{anchor {\"text\" text}}` map (`patch/lines->anchor-map`, a line-ordered
    LinkedHashMap, the key IS the `patch :from_anchor`). The internal `:lines`
    tuple vector and the read-file `{ln anchor}` `:anchors` are both dropped;
    every `:ranges` window converts the same way. The internal read pipeline
@@ -3166,9 +3207,10 @@
      await cat(path, {\"anchor\": \"325:0e3\"})      # one line by its lineno:hash anchor
      await cat(path, {\"anchor\": [\"H1\", \"H2\"]})   # inclusive anchor range H1..H2
      await cat(path, {\"tail\": 200})              # last N lines (omit N → 2000)
-   Returns {\"anchors\": {\"lineno:hash\": text, ...}, \"next_offset\", \"eof\",
+   Returns {\"anchors\": {\"lineno:hash\": {\"text\": line}, ...}, \"next_offset\", \"eof\",
    \"truncated\", \"mtime\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
-   {anchor: text} map; there is NO \"lines\"/\"text\" key (c[\"lines\"] KeyErrors).
+   {anchor: {\"text\": line}} map — MIRRORS rg's hit value, so read v[\"text\"]
+   uniformly; there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors).
    Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
@@ -3336,7 +3378,7 @@
      content:       {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\", \"file_count\", \"first_hit\"}
      is_files_only: {\"files\": [...], \"file_count\"}
    The content value is ALWAYS a `{\"text\": line}` map (ONE uniform shape); WITH
-   context it ALSO carries \"before\"/\"after\" {anchor: text} maps. `hit_count` and
+   context it ALSO carries \"before\"/\"after\" {anchor: {\"text\": line}} maps. `hit_count` and
    `file_count` count what's SHOWN; a multi-file result adds `file_counts`
    {path: n} — the shown files ranked hottest-first (skip the Counter). When MORE
    files match than shown, `total_file_count` reports the true breadth (a LOWER
@@ -3425,7 +3467,7 @@
                 ;; key). The value is ALWAYS a `{"text" <match>}` map — a
                 ;; SINGLE uniform shape whether or not a context window was
                 ;; asked for. WITH context it ALSO carries `:before`/`:after`
-                ;; `{anchor→text}` maps, so every match keeps its own
+                ;; `{anchor→{"text" text}}` maps too, so every match keeps its own
                 ;; before/after context and ALL lines (match + context) stay
                 ;; patchable by anchor key.
                 matches
@@ -4096,7 +4138,7 @@
 
         rows
         (mapv (fn [[k v]]
-                (str (format (str "%" gutter-w "s") (line-no k)) "  " v))
+                (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v)))
               anchors)
 
         n
@@ -4203,7 +4245,7 @@
 
 (defn- rg-hit-rows
   "Rows for ONE match anchor `k` → value `v`. `v` is a `{:text <match> :before
-   {anchor→text} :after {anchor→text}}` map (before/after only with a context
+   {anchor→{\"text\"}} :after {anchor→{\"text\"}}}` map (before/after only with a context
    window) — render the before-context, then the matched line, then the
    after-context, each as a line-numbered gutter row (sorted by line number),
    the gutter right-aligned to `width`. A bare string `v` is tolerated and
@@ -4212,7 +4254,7 @@
   (if (map? v)
     (let [ctx-rows (fn [m]
                      (map (fn [[ck cv]]
-                            (rg-row needles width ck cv))
+                            (rg-row needles width ck (patch/anchor-value-text cv)))
                           (sort-by (comp rg-anchor-lineno-long key) m)))]
       (concat (ctx-rows (get v "before"))
               [(rg-row needles width k (get v "text"))]
@@ -5586,8 +5628,8 @@
         [""
          "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
          "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
-         "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
-         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\"} — the hit VALUE is a {\"text\": line} map (WITH context it ALSO carries \"before\"/\"after\"), so read v[\"text\"] uniformly; every line patchable by its anchor; is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
+         "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": {\"text\": line}} map — MIRRORS rg's hit value, so read v[\"text\"] for the line (iterate `for a, v in c[\"anchors\"].items(): v[\"text\"]`); there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
+         "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\"} — the hit VALUE is a {\"text\": line} map (WITH context it ALSO carries \"before\"/\"after\" {anchor: {\"text\": line}} maps — same shape throughout), so read v[\"text\"] uniformly; every line patchable by its anchor; is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
          "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
          "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
         (when struct?

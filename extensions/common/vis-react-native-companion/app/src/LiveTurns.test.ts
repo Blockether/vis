@@ -9,8 +9,7 @@ import { c } from "./theme";
 import { GatewayEvent, TraceIteration } from "./VisClient";
 
 /* The heart of live streaming on iOS: the SSE→card reducer. These lock the
-   contract the gateway wire depends on (turn_id keying, whole-tail prose
-   replace, silent suppression, block upsert, immutability). */
+   contract the gateway wire depends on (turn_id keying, complete prose/thinking snapshots, silent suppression, block upsert, immutability). */
 
 const ev = (e: Partial<GatewayEvent>): GatewayEvent => e as GatewayEvent;
 
@@ -49,9 +48,7 @@ describe("toolColor", () => {
 describe("reduceLiveEvent", () => {
   it("ignores an event with no turn_id (returns the same state ref)", () => {
     const s: LiveState = {};
-    expect(reduceLiveEvent(s, ev({ type: "content.delta", text: "hi" }))).toBe(
-      s,
-    );
+    expect(reduceLiveEvent(s, ev({ type: "context.updated" }))).toBe(s);
   });
 
   it("turn.started seeds an empty turn", () => {
@@ -173,37 +170,37 @@ describe("reduceLiveEvent", () => {
     expect(s.t1!.cards[0]).toMatchObject({ error: "boom", hideCode: false });
   });
 
-  it("content.delta REPLACES the whole prose tail and clears thinking", () => {
-    let s = reduceLiveEvent(
+  it("iteration.completed sets complete prose and thinking without text deltas", () => {
+    const s = reduceLiveEvent(
       {},
-      ev({ type: "reasoning.delta", turn_id: "t1", text: "pondering" }),
+      ev({
+        type: "iteration.completed",
+        turn_id: "t1",
+        assistant_prose: "Full prose.",
+        thinking: "Full thinking.",
+      }),
     );
-    expect(s.t1!.thinking).toBe("pondering");
-    s = reduceLiveEvent(
-      s,
-      ev({ type: "content.delta", turn_id: "t1", text: "Hello" }),
-    );
-    s = reduceLiveEvent(
-      s,
-      ev({ type: "content.delta", turn_id: "t1", text: "Hello world" }),
-    );
-    expect(s.t1!.prose).toBe("Hello world"); /* replace, not append */
-    expect(s.t1!.thinking).toBe("");
+    expect(s.t1!.prose).toBe("Full prose.");
+    expect(s.t1!.thinking).toBe("Full thinking.");
   });
 
-  it("iteration.completed / error clears the thinking ticker", () => {
+  it("iteration.completed / error replaces the thinking snapshot", () => {
     let s = reduceLiveEvent(
       {},
-      ev({ type: "reasoning.delta", turn_id: "t1", text: "x" }),
+      ev({ type: "iteration.completed", turn_id: "t1", thinking: "x" }),
     );
-    s = reduceLiveEvent(s, ev({ type: "iteration.completed", turn_id: "t1" }));
-    expect(s.t1!.thinking).toBe("");
+    expect(s.t1!.thinking).toBe("x");
+    s = reduceLiveEvent(
+      s,
+      ev({ type: "iteration.error", turn_id: "t1", thinking: "failed" }),
+    );
+    expect(s.t1!.thinking).toBe("failed");
   });
 
   it("turn.completed / failed marks the turn done", () => {
     let s = reduceLiveEvent(
       {},
-      ev({ type: "content.delta", turn_id: "t1", text: "done" }),
+      ev({ type: "block.started", turn_id: "t1", block_id: 0 }),
     );
     expect(s.t1!.done).toBe(false);
     s = reduceLiveEvent(s, ev({ type: "turn.completed", turn_id: "t1" }));
@@ -216,7 +213,11 @@ describe("reduceLiveEvent", () => {
     };
     const s1 = reduceLiveEvent(
       s0,
-      ev({ type: "content.delta", turn_id: "t1", text: "new" }),
+      ev({
+        type: "iteration.completed",
+        turn_id: "t1",
+        assistant_prose: "new",
+      }),
     );
     expect(s1).not.toBe(s0);
     expect(s1.other).toBe(s0.other); /* untouched turn shares the same ref */
@@ -226,7 +227,7 @@ describe("reduceLiveEvent", () => {
   it("folds a full turn lifecycle into the expected final state", () => {
     const seq: Partial<GatewayEvent>[] = [
       { type: "turn.started", turn_id: "t1" },
-      { type: "reasoning.delta", turn_id: "t1", text: "let me search" },
+      { type: "iteration.completed", turn_id: "t1", thinking: "let me search" },
       {
         type: "block.started",
         turn_id: "t1",
@@ -246,7 +247,11 @@ describe("reduceLiveEvent", () => {
         stdout: "x",
         duration_ms: 10,
       },
-      { type: "content.delta", turn_id: "t1", text: "Found it." },
+      {
+        type: "iteration.completed",
+        turn_id: "t1",
+        assistant_prose: "Found it.",
+      },
       { type: "iteration.completed", turn_id: "t1" },
       { type: "turn.completed", turn_id: "t1" },
     ];
@@ -270,7 +275,11 @@ describe("reduceLiveEvent", () => {
   it("turn.started mid-stream resets the accumulated cards/prose", () => {
     let s = reduceLiveEvent(
       {},
-      ev({ type: "content.delta", turn_id: "t1", text: "stale" }),
+      ev({
+        type: "iteration.completed",
+        turn_id: "t1",
+        assistant_prose: "stale",
+      }),
     );
     s = reduceLiveEvent(s, ev({ type: "turn.started", turn_id: "t1" }));
     expect(s.t1).toEqual({ cards: [], prose: "", thinking: "", done: false });

@@ -349,11 +349,11 @@
   (it "insert_before a definition"
       (expect (str/includes?
                 (edit "demo.clj" clj-src {:op :insert-before :target "sub" :code "(def MARK 1)"})
-                "(def MARK 1)\n(defn sub")))
+                "(def MARK 1)\n\n(defn sub")))
   (it "insert_after a definition"
       (expect (str/includes?
                 (edit "demo.clj" clj-src {:op :insert-after :target "add" :code "(def MARK 2)"})
-                "(+ a b))\n(def MARK 2)")))
+                "(+ a b))\n\n(def MARK 2)")))
   (it "append at end of file"
       (expect (str/ends-with? (str/trimr
                                 (edit "demo.clj" clj-src {:op :append :code "(def END 3)"}))

@@ -405,6 +405,11 @@
           (assoc entry
             :thinking (or (normalize-thinking-text (:thinking chunk))
                           (normalize-thinking-text (:thinking entry)))
+            :assistant-prose (or (some-> (:assistant-prose chunk)
+                                         str
+                                         str/trim
+                                         not-empty)
+                                 (:assistant-prose entry))
             :activity nil
             :final (:final chunk)
             :done? (boolean (:done? chunk)))

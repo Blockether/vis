@@ -1,16 +1,16 @@
 name: Native Release
 
-# Companion to release.yml (which cuts the GitHub Release + Clojars deploy).
-# On each `v*` tag this builds, per OS, THREE native distributions:
-#   vis-<os>-tui    — minimal: TUI channel only, no web/Telegram, no voice
-#   vis-<os>        — cross: all channels, no voice
-#   vis-<os>-voice  — cross + voice ASR with the ~465 MB Parakeet model
-#                     EMBEDDED in the binary: fully offline voice, no
-#                     first-use download (~1.1 GB asset)
-# Every variant carries ONLY the build host's native libs, never another
-# platform's. Plus the portable JVM uberjar (full/voice profile — the one
-# deliberately cross-platform artifact), attached to that tag's release.
-# Tags only; never feature branches.
+# Companion to release.yml (which cuts the GitHub Release + Clojars deploy of the
+# libraries/extensions). On each `v*` tag this builds ONE native binary per OS —
+# the full agent, nothing dropped:
+#   vis-<os>  — every channel (TUI + web + Telegram) AND voice ASR
+# The ~465 MB Parakeet voice model is NOT embedded: it downloads on first use
+# (like every other model), so the shipped binary stays lean. Each binary carries
+# ONLY its own build host's native libs, never another platform's.
+#
+# The native binary is the ONLY distributed application artifact — there is no
+# JVM uberjar release asset. Libraries/extensions still publish to Clojars from
+# release.yml for people writing extensions. Tags only; never feature branches.
 on:
   push:
     tags: ['v*']
@@ -27,20 +27,14 @@ jobs:
   native:
     name: native / ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120     # the -with-assets variant also downloads ~465 MB
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-tui,       args: ":profile :tui" }
-          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64,           args: ":profile :cross" }
-          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64-voice,     args: ":profile :voice :with-assets true" }
-          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-tui,     args: ":profile :tui" }
-          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64,         args: ":profile :cross" }
-          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64-voice,   args: ":profile :voice :with-assets true" }
-          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-tui.exe, args: ":profile :tui" }
-          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe,     args: ":profile :cross" }
-          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64-voice.exe, args: ":profile :voice :with-assets true" }
+          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64 }
+          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64 }
+          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe }
     steps:
       - uses: actions/checkout@v4
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
@@ -66,39 +60,36 @@ jobs:
             ~/.vis/build-cache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
+      # The full agent: all channels + voice ASR. The voice model is NOT embedded
+      # (no :with-assets) — it downloads on first use, so the binary stays lean.
       - name: Build native image
-        run: clojure -T:build native ${{ matrix.args }}
+        run: clojure -T:build native :profile :voice
       - name: Stage asset
         shell: bash
         run: cp "${{ matrix.bin }}" "${{ matrix.asset }}"
       - name: Smoke-test the binary
         shell: bash
         run: ./"${{ matrix.bin }}" help >/dev/null
+      # Deeper smoke: boot the gateway. A client command auto-spawns the DETACHED
+      # gateway daemon, which builds the FULL reitit router from EVERY channel's
+      # route contributions and does a real HTTP round-trip. A broken/conflicting
+      # route table makes the daemon exit on startup and the client prints
+      # "gateway daemon did not become ready" — a class of failure `help`
+      # (in-process, no router) can never catch. Fail HERE rather than ship a
+      # binary whose gateway (and thus every agent turn) can't run.
+      - name: Smoke-test the gateway
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(./"${{ matrix.bin }}" providers status anthropic 2>&1 || true)"
+          echo "$out"
+          if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+            echo '::error::gateway daemon failed to boot — the route table is broken'
+            exit 1
+          fi
+          ./"${{ matrix.bin }}" gateway stop >/dev/null 2>&1 || true
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
-          fail_on_unmatched_files: true
-
-  # Portable JVM uberjar — the artifact `vis update <version>` falls back to and
-  # the JVM distribution for platforms/users without a native binary.
-  jar:
-    name: jvm uberjar
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — same pinned
-      # graalvm-ce-builds asset CI installs. This job only builds the JVM uberjar
-      # (no native linker / MSVC needed). Bump the version inside the action
-      # together with deps.edn's org.graalvm.* pins — Truffle/SVM refuse mismatches.
-      - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
-      - name: Build uberjar
-        run: clojure -T:build uber
-      - name: Attach to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: target/vis.jar
           fail_on_unmatched_files: true

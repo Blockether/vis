@@ -198,6 +198,46 @@
                         (finally (cleanup dir))))))
 
 (defdescribe
+  single-relative-path-format-test
+  (it "resolves a RELATIVE {\"path\"} against the workspace root, not the process CWD"
+      (let [dir (tmp-dir)]
+        (try (let [sub (io/file dir "sub")]
+               (.mkdirs sub)
+               (spit (io/file sub "probe.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
+               ;; the relative path exists ONLY under the workspace root, never under CWD
+               (expect (not (.exists (io/file (System/getProperty "user.dir") "sub/probe.clj"))))
+               (let [r (core/clj-format-fn {:workspace/root (str dir)} {"path" "sub/probe.clj"})]
+                 (expect (:success? r))
+                 (expect (= "clj-format" (get-in r [:result "op"])))
+                 (expect (true? (get-in r [:result "changed"])))
+                 ;; reported path is workspace-relative, and the file on disk was rewritten
+                 (expect (= "sub/probe.clj" (get-in r [:result "path"])))
+                 (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file sub "probe.clj"))))))
+             (finally (cleanup dir))))))
+
+
+(defdescribe
+  single-relative-path-lint-test
+  (it "resolves a RELATIVE {\"path\"} against the workspace root, not the process CWD"
+      (let [dir (tmp-dir)]
+        (try (let [sub (io/file dir "sub")]
+               (.mkdirs sub)
+               ;; unused binding x -> a clj-kondo warning
+               (spit (io/file sub "probe.clj") "(ns sub.probe)\n(defn foo [] (let [x 1] 42))\n")
+               ;; the relative path exists ONLY under the workspace root, never under CWD
+               (expect (not (.exists (io/file (System/getProperty "user.dir") "sub/probe.clj"))))
+               (let [r (core/clj-lint-fn {:workspace/root (str dir)} {"path" "sub/probe.clj"})
+                     findings (get-in r [:result "findings"])]
+
+                 (expect (:success? r))
+                 ;; the file under root was actually linted (not silently skipped)
+                 (expect (= 1 (count findings)))
+                 ;; reported file path is workspace-relative
+                 (expect (= "sub/probe.clj" (get (first findings) "file")))
+                 (expect (= "unused binding x" (get (first findings) "message")))))
+             (finally (cleanup dir))))))
+
+(defdescribe
   recursive-format-test
   (it "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
       (let [dir (tmp-dir)]

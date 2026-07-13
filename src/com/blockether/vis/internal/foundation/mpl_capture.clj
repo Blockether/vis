@@ -77,11 +77,23 @@
 ;; (no Python `mimetypes`). Magic bytes → extension → utf-8 probe.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private ^:const max-capture-bytes
-  "Soft cap for a single outbox-captured artifact (32 MiB). A larger file is
-   skipped (never recorded, never throws) so an accidental huge write can't OOM
-   the engine or bloat the DB."
+(def ^:const max-capture-bytes
+  "THE single per-artifact byte cap (32 MiB) — the one source of truth every
+   producer path shares. The filesystem outbox/temp tap (`record-file!`) SKIPS a
+   larger file silently (an incidental write must not throw); the explicit
+   `vis_attach`/`vis_attach_bytes` shim REJECTS one with a clear error (a
+   deliberate attach deserves a signal, not a silent drop). Either way a huge
+   write can't OOM the engine or bloat the DB."
   (* 32 1024 1024))
+
+(def ^:private noisy-capture-exts
+  "Extensions the filesystem tap SKIPS — scratch/cache junk a temp-heavy library
+   drops in /tmp (compiled bytecode, native objects, lock/marker/pid files,
+   editor swaps, partial downloads, logs). Never an artifact worth persisting,
+   so filtering them at the capture source keeps the DB from bloating with noise
+   once every /tmp write streams through here."
+  #{"pyc" "pyo" "pyd" "class" "o" "obj" "so" "dll" "a" "lib" "lock" "pid" "swp" "swo" "tmp" "temp"
+    "part" "crdownload" "log"})
 
 (def ^:private ext->media-type
   "Extension → media-type fallback when magic bytes don't decide it."
@@ -168,8 +180,9 @@
    its media-type, base64-encode, and `record-attachment!` it — the host side of
    the filesystem OUTBOX tap. De-dups per block via `*outbox-seen*` (a file
    re-closed in the same block records once). Skips a file larger than
-   `max-capture-bytes`, a directory, or one already seen. NEVER throws — an outbox
-   write must not break a turn."
+   `max-capture-bytes`, an EMPTY (0-byte) file, one whose extension is in
+   `noisy-capture-exts`, a directory, or one already seen. NEVER throws — an
+   outbox write must not break a turn."
   [^Path path]
   (try
     (let [k
@@ -180,6 +193,7 @@
 
       (when (and *attachment-sink*
                  (or (nil? seen) (not (contains? @seen k)))
+                 (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
         (let [^BasicFileAttributes attrs
               (Files/readAttributes path BasicFileAttributes (make-array LinkOption 0))
@@ -187,7 +201,7 @@
               size
               (.size attrs)]
 
-          (when (<= 0 size max-capture-bytes)
+          (when (<= 1 size max-capture-bytes)
             (let [data
                   (Files/readAllBytes path)
 

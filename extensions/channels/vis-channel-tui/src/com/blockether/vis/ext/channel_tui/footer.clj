@@ -451,7 +451,8 @@
         ;; as noise; the word carries the meaning). Shown only when this
         ;; session owns ≥1.
         res-count
-        (count (try (lp/list-resources (get-in db [:session :id])) (catch Throwable _ nil)))
+        (count (try (lp/gateway-list-resources-cached (get-in db [:session :id]))
+                    (catch Throwable _ nil)))
 
         ;; Filesystem: the session root + any extra dirs granted via /fs or the picker.
         ;; Surfaced in the footer (BOTH channels) so the add-directory

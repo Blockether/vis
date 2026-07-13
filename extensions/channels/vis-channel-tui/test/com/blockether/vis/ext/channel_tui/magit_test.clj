@@ -322,6 +322,60 @@
                    (expect (string? (:msg r)))
                    (expect (not (str/blank? (:msg r)))))))
 
+;;; ── remotes & gerrit ────────────────────────────────────────────────────────
+
+(defdescribe refs-for-spec-test
+             (it "builds a bare refs/for target with no topic"
+                 (expect (= "HEAD:refs/for/main" (magit/refs-for-spec "main" nil))))
+             (it "appends and trims a topic"
+                 (expect (= "HEAD:refs/for/main%topic=my-feature"
+                            (magit/refs-for-spec "main" "  my-feature  "))))
+             (it "ignores a blank topic"
+                 (expect (= "HEAD:refs/for/release/1.2"
+                            (magit/refs-for-spec "release/1.2" "   ")))))
+
+(defdescribe remotes-gerrit-test
+             (it "lists remotes by their push url, deduped, in git order"
+                 (let [dir (init-repo!)]
+                   (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+                   (git-run! dir "remote" "add" "gerrit" "ssh://u@gerrit.acme.com:29418/repo")
+                   (let [rs (magit/remotes dir)]
+                     (expect (= #{"origin" "gerrit"} (set (map :name rs))))
+                     (expect (= "https://github.com/acme/repo.git"
+                                (:url (first (filter #(= "origin" (:name %)) rs))))))))
+             (it "detects a gerrit remote by name and by the 29418 port"
+                 (let [dir (init-repo!)]
+                   (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+                   (git-run! dir "remote" "add" "gerrit" "ssh://u@review.acme.com:29418/repo")
+                   (expect (true? (magit/gerrit? dir)))
+                   (expect (= "gerrit" (magit/gerrit-remote dir)))))
+             (it "is not gerrit with only a plain github remote"
+                 (let [dir (init-repo!)]
+                   (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+                   (expect (false? (magit/gerrit? dir)))
+                   (expect (nil? (magit/gerrit-remote dir)))))
+             (it "falls back to .gitreview for detection"
+                 (let [dir (init-repo!)]
+                   (git-run! dir "remote" "add" "origin" "https://plain.example.com/repo.git")
+                   (spit (str dir "/.gitreview") "[gerrit]\nhost=review.example.com\n")
+                   (expect (true? (magit/gerrit? dir)))
+                   (expect (= "origin" (magit/gerrit-remote dir)))))
+             (it "gerrit push targets refs/for/<upstream-branch> with a topic"
+                 (let [dir
+                       (init-repo!)
+
+                       remote
+                       (add-bare-remote! dir)]
+
+                   (git-run! dir "remote" "rename" "origin" "gerrit")
+                   (magit/push! dir {:set-upstream? true :remote "gerrit"})
+                   (let [r (magit/gerrit-push! dir {:topic "cool-topic"})]
+                     (expect (:ok? r))
+                     ;; the review ref landed in the bare remote
+                     (let [refs (git/run-git (io/file remote)
+                                             ["for-each-ref" "--format=%(refname)"])]
+                       (expect (str/includes? (str (:out refs)) "refs/for/main")))))))
+
 ;;; ── diffs ───────────────────────────────────────────────────────────────────
 
 (defdescribe diff-test

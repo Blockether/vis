@@ -375,9 +375,9 @@ function Root() {
     [turns],
   );
 
-  /* Overlay the running turn's LIVE tool-call cards + streaming prose (reduced
-     from the SSE stream) onto its vis bubble. Only the running turn carries an
-     overlay; once it settles, the poll's answer_md takes over. */
+  /* Overlay the running turn's LIVE tool-call cards plus complete prose/thinking
+     snapshots from iteration.completed. Model text is never token-streamed; once
+     the turn settles, the poll's answer_md takes over. */
   const runningId = runningTurn?.id ?? runningTurn?.turn_id;
   const liveTurn = runningId ? live[runningId] : undefined;
   const messages = useMemo(() => {
@@ -599,8 +599,8 @@ function Root() {
   }, [turns, activeSession?.id, client, traceCache]);
 
   /* Live SSE overlay: subscribe to the gateway event stream for the active
-     session and reduce block.started / block.output / content.delta /
-     reasoning.delta into per-turn live state so tool cards stream in real time.
+     session and reduce block.started / block.output into live tool cards.
+     Complete prose/thinking arrives on iteration.completed; no text deltas stream.
      The 1.8s poll stays as the settled-state source (and SSE fallback). */
   useEffect(() => {
     const sid = activeSession?.id;
