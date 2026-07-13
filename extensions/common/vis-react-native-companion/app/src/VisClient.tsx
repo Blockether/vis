@@ -147,9 +147,7 @@ export type ProviderInfo = { id: string; doc?: string };
 export type ProviderModels = { id: string; label?: string; models: string[] };
 
 export type SessionModel =
-  | { provider?: string; model?: string }
-  | string
-  | null;
+  { provider?: string; model?: string } | string | null;
 
 /* /v1/settings — the engine toggle registry (the same rows the web
    channel's Settings dialog renders via `toggles-for-channel`). */
@@ -251,6 +249,60 @@ type ClientOptions = {
 
 const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
 
+const rawErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const obj = err as { message?: unknown; error?: unknown; type?: unknown };
+    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj.error === "string") return obj.error;
+    if (typeof obj.type === "string") return obj.type;
+  }
+  return String(err);
+};
+
+export const isGatewayNetworkFailure = (err: unknown): boolean => {
+  const msg = rawErrorMessage(err).toLowerCase();
+  return (
+    msg.includes("network request failed") ||
+    msg.includes("failed to fetch") ||
+    msg.includes("load failed") ||
+    msg.includes("networkerror") ||
+    msg.includes("could not connect")
+  );
+};
+
+export const gatewayConnectionMessage = (gatewayUrl: string): string => {
+  let host = trimTrailingSlash(gatewayUrl) || "the configured gateway";
+  let localHint = false;
+  try {
+    const parsed = new URL(gatewayUrl);
+    host = parsed.host || host;
+    localHint = /^(localhost|127\.|0\.0\.0\.0|::1$)/i.test(parsed.hostname);
+  } catch {
+    localHint = /^(localhost|127\.|0\.0\.0\.0)/i.test(host);
+  }
+  const hint = localHint
+    ? "On a phone, localhost/127.0.0.1 points at the phone itself. Use your Mac LAN or Tailscale address, or scan the gateway QR in Settings."
+    : "Check that the gateway is running, reachable from this phone, and that the URL/token in Settings are correct.";
+  return `Cannot reach the Vis gateway at ${host}. ${hint}`;
+};
+
+export const gatewayErrorMessage = (
+  gatewayUrl: string,
+  err: unknown,
+): string => {
+  const raw = rawErrorMessage(err);
+  if (
+    isGatewayNetworkFailure(err) ||
+    raw === "[object Object]" ||
+    raw === "error"
+  ) {
+    return gatewayConnectionMessage(gatewayUrl);
+  }
+  return raw;
+};
+
 export class VisGatewayClient {
   private readonly gatewayUrl: string;
   private readonly token: string | undefined;
@@ -273,10 +325,15 @@ export class VisGatewayClient {
       headers.set("Content-Type", "application/json");
     }
 
-    const response = await fetch(`${this.gatewayUrl}${path}`, {
-      ...init,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.gatewayUrl}${path}`, {
+        ...init,
+        headers,
+      });
+    } catch {
+      throw new Error(gatewayConnectionMessage(this.gatewayUrl));
+    }
     const text = await response.text();
     const body = text ? JSON.parse(text) : null;
 
@@ -570,10 +627,18 @@ export class VisGatewayClient {
     startDownload = false,
   ): Promise<VoiceModelState> {
     const url = `${this.gatewayUrl}/ui/session/${encodeURIComponent(sessionId)}/voice/model`;
-    const response = await fetch(url, {
-      method: startDownload ? "POST" : "GET",
-      headers: this.headers(),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: startDownload ? "POST" : "GET",
+        headers: this.headers(),
+      });
+    } catch {
+      return {
+        status: "unavailable",
+        error: gatewayConnectionMessage(this.gatewayUrl),
+      };
+    }
     const text = await response.text();
     try {
       return JSON.parse(text) as VoiceModelState;
@@ -589,11 +654,16 @@ export class VisGatewayClient {
   async transcribeVoice(sessionId: string, fileUri: string): Promise<string> {
     const blob = await (await fetch(fileUri)).blob();
     const url = `${this.gatewayUrl}/ui/session/${encodeURIComponent(sessionId)}/voice`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: this.headers({ "Content-Type": "application/octet-stream" }),
-      body: blob,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: this.headers({ "Content-Type": "application/octet-stream" }),
+        body: blob,
+      });
+    } catch {
+      throw new Error(gatewayConnectionMessage(this.gatewayUrl));
+    }
     const body = (await response.json()) as {
       text?: string;
       error?: string;

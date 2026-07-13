@@ -32,7 +32,12 @@ jest.mock("react-native-sse", () => {
 });
 
 import EventSource from "react-native-sse";
-import { VisGatewayClient, GatewayEvent } from "./VisClient";
+import {
+  VisGatewayClient,
+  GatewayEvent,
+  gatewayConnectionMessage,
+  gatewayErrorMessage,
+} from "./VisClient";
 
 interface FakeES {
   url: string;
@@ -102,6 +107,28 @@ describe("request error unwrapping ([object Object] regression)", () => {
     );
     await expect(client().listSessions()).rejects.toThrow(
       "503 Service Unavailable",
+    );
+  });
+
+  it("turns React Native's generic network failure into gateway guidance", async () => {
+    mockFetch.mockRejectedValue(new TypeError("Network request failed"));
+    await expect(client().listSessions()).rejects.toThrow(
+      "Cannot reach the Vis gateway at gw:7890.",
+    );
+    await expect(client().listSessions()).rejects.toThrow(
+      "Check that the gateway is running",
+    );
+  });
+
+  it("explains the localhost-on-phone trap", () => {
+    expect(gatewayConnectionMessage("http://127.0.0.1:7890")).toContain(
+      "points at the phone itself",
+    );
+  });
+
+  it("normalizes generic SSE error objects to gateway guidance", () => {
+    expect(gatewayErrorMessage("http://gw:7890", { type: "error" })).toContain(
+      "Cannot reach the Vis gateway at gw:7890",
     );
   });
 });

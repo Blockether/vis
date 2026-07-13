@@ -37,6 +37,7 @@ import {
   SuggestRow,
   TurnAttachment,
   VisGatewayClient,
+  gatewayErrorMessage,
 } from "./src/VisClient";
 import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
@@ -633,12 +634,12 @@ function Root() {
             }
           },
           onError: (err) => {
-            const msg = (err as { message?: string; xhrStatus?: number })
-              ?.xhrStatus
-              ? `HTTP ${(err as { xhrStatus?: number }).xhrStatus}`
-              : (err as { message?: string })?.message || "connection lost";
+            const status = (err as { xhrStatus?: number })?.xhrStatus;
+            const msg = status
+              ? `HTTP ${status}`
+              : gatewayErrorMessage(gatewayUrl, err) || "connection lost";
             if (__DEV__) console.warn("[vis] SSE error", err);
-            setNote(`live stream: ${msg} (retrying\u2026)`);
+            setNote(`live stream: ${msg} (retrying…)`);
           },
         },
         0,
