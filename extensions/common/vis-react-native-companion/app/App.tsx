@@ -356,11 +356,16 @@ function Root() {
   const turnsRef = useRef<GatewayTurn[]>([]);
   const notifiedRef = useRef<Set<string>>(new Set());
   const traceReqRef = useRef<Set<string>>(new Set());
+  const gatewaySheetDismissedRef = useRef(false);
 
   const client = useMemo(
     () => new VisGatewayClient({ gatewayUrl, token }),
     [gatewayUrl, token],
   );
+
+  useEffect(() => {
+    gatewaySheetDismissedRef.current = false;
+  }, [gatewayUrl, token]);
   const mention = useMemo(() => activeFileMention(input), [input]);
 
   const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
@@ -408,7 +413,7 @@ function Root() {
         setGatewayProblem(msg);
         setError(null);
         setNote(null);
-        setShowSettings(true);
+        if (!gatewaySheetDismissedRef.current) setShowSettings(true);
       } else {
         setError(msg);
       }
@@ -476,6 +481,7 @@ function Root() {
       const session = latest ?? (await client.createSession());
       setSessions(existing.length ? existing : [session]);
       setGatewayProblem(null);
+      gatewaySheetDismissedRef.current = false;
       setNote(null);
       setShowSettings(false);
       await openSession(session);
@@ -656,7 +662,7 @@ function Root() {
             if (__DEV__) console.warn("[vis] SSE error", err);
             if (isGatewayConnectionMessage(msg)) {
               setGatewayProblem(msg);
-              setShowSettings(true);
+              if (!gatewaySheetDismissedRef.current) setShowSettings(true);
               setNote(null);
             } else {
               setNote(`live stream: ${msg} (retrying…)`);
@@ -670,7 +676,7 @@ function Root() {
       if (__DEV__) console.warn("[vis] SSE failed to start", err);
       if (isGatewayConnectionMessage(msg)) {
         setGatewayProblem(msg);
-        setShowSettings(true);
+        if (!gatewaySheetDismissedRef.current) setShowSettings(true);
         setNote(null);
       } else {
         setNote(`live stream unavailable: ${msg}`);
@@ -1057,7 +1063,10 @@ function Root() {
             </Pressable>
             <IconBtn
               name="settings"
-              onPress={() => setShowSettings(true)}
+              onPress={() => {
+                gatewaySheetDismissedRef.current = false;
+                setShowSettings(true);
+              }}
               active={showSettings}
             />
           </View>
@@ -1293,8 +1302,11 @@ function Root() {
       <DialogModal
         visible={showSettings}
         title={gatewayProblem ? "Connect gateway" : "Settings"}
-        onClose={() => setShowSettings(false)}
-        dismissable={!gatewayProblem}
+        onClose={() => {
+          if (gatewayProblem) gatewaySheetDismissedRef.current = true;
+          setShowSettings(false);
+        }}
+        dismissable
         fullScreen
         flush
       >
