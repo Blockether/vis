@@ -124,7 +124,21 @@
             (expect (= {:token token
                         :api-url "https://chatgpt.com/backend-api"
                         :llm-headers {"chatgpt-account-id" "acct_123"}}
-                       (codex/get-openai-codex-token!))))))))
+                       (codex/get-openai-codex-token!)))))))
+  (it "forces refresh with the rejected access token so token cycling cannot reuse it"
+      (let [seen (atom ::unset)]
+        (with-redefs-fn {#'codex/refresh-and-persist! (fn [rejected-token]
+                                                        (reset! seen rejected-token)
+                                                        {:token "fresh"
+                                                         :api-url "https://chatgpt.com/backend-api"
+                                                         :llm-headers {"chatgpt-account-id"
+                                                                       "acct_123"}})}
+          (fn []
+            (expect (= {:token "fresh"
+                        :api-url "https://chatgpt.com/backend-api"
+                        :llm-headers {"chatgpt-account-id" "acct_123"}}
+                       (codex/force-refresh-token! "dead")))
+            (expect (= "dead" @seen)))))))
 
 (defdescribe
   codex-limits-test
