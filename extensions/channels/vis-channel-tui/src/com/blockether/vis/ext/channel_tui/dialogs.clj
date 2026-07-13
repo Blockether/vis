@@ -3,6 +3,7 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
+            [com.blockether.vis.ext.channel-tui.highlight :as highlight]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
@@ -1355,6 +1356,7 @@
                                            :ttl-ms 3000)))))))))))
   nil)
 (declare text-view-dialog!)
+(declare log-view-dialog!)
 
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
@@ -1476,11 +1478,12 @@
                                lines (fetch)]
 
                               (if lines
-                                (text-view-dialog! screen
-                                                   (str "Logs — " (get r "label"))
-                                                   lines
-                                                   :refresh-fn fetch
-                                                   :tail? true)
+                                (log-view-dialog! screen
+                                                  (str "Logs — " (get r "label"))
+                                                  lines
+                                                  :refresh-fn fetch
+                                                  :tail? true
+                                                  :grammar "bash")
                                 (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
                           (= c \r) (when (get r "can_restart")
                                      (vis/gateway-restart-resource! session-id (get r "id"))
@@ -1614,6 +1617,170 @@
                                                 (when tail? (reset! follow true)))
                                               (recur))
                         (recur))))))))
+
+(defn log-view-dialog!
+  "FULLSCREEN, syntax-highlighted log viewer — the whole terminal, edge to edge.
+
+   Unlike `text-view-dialog!` (a centered modal box) this owns the entire screen:
+   a title strip on the top row, the log body filling every row beneath it, and a
+   hint strip on the bottom row. Each line is colorized by parsing the WHOLE
+   buffer with tree-sitter (`highlight/highlight`, default the `bash` grammar) and
+   painting the resulting ANSI runs through `render/paint-ansi-line!` — the same
+   path that carries syntax color on the transcript's code fences. Fails open to
+   plain text when the native grammar pack isn't loadable.
+
+   Keys: ↑/↓ line, PgUp/PgDn page, Home/End jump, mouse-wheel scroll, `r` refresh
+   (when `:refresh-fn`), Enter/Esc close. Options:
+   - :refresh-fn  thunk returning fresh lines — enables `r` refresh so a live
+                  buffer (e.g. background-shell logs) can be re-pulled in place.
+   - :tail?       start pinned to the newest line and re-follow the bottom on
+                  refresh (log-tail behaviour); scrolling up releases the pin.
+   - :grammar     tree-sitter grammar for coloring (default \"bash\"); nil = plain.
+   Returns nil after close."
+  [^TerminalScreen screen title lines & {:keys [refresh-fn tail? grammar] :or {grammar "bash"}}]
+  (let [lines*
+        (atom (vec lines))
+
+        scroll
+        (atom 0)
+
+        follow
+        (atom (boolean tail?))]
+
+    (loop []
+
+      (let [size
+            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+            cols
+            (.getColumns size)
+
+            rows
+            (.getRows size)
+
+            g
+            (.newTextGraphics screen)
+
+            cur-lines
+            @lines*
+
+            ;; Colorize the WHOLE buffer at once (cached by [grammar source]) so
+            ;; multi-line shell constructs classify correctly and identical
+            ;; buffers aren't re-parsed on every scroll keystroke. nil = plain.
+            colored
+            (when (and grammar (seq cur-lines))
+              (some-> (highlight/highlight grammar (str/join "\n" (map str cur-lines)))
+                      str/split-lines))
+
+            painted
+            (if (and colored (= (count colored) (count cur-lines)))
+              (vec colored)
+              (mapv str cur-lines))
+
+            total
+            (count painted)
+
+            title-row
+            0
+
+            body-top
+            1
+
+            hint-row
+            (dec rows)
+
+            body-h
+            (max 1 (- rows 2))
+
+            visible
+            (min total body-h)
+
+            max-scroll
+            (max 0 (- total body-h))
+
+            _
+            (when @follow (reset! scroll max-scroll))
+
+            _
+            (swap! scroll #(clamp % 0 max-scroll))]
+
+        ;; Whole-screen wipe, then the code-block background under the body.
+        (render/fill-background! g cols rows)
+        (p/set-colors! g t/code-block-fg t/code-block-bg)
+        (p/fill-rect! g 0 body-top cols body-h)
+        ;; Top strip: title left, tail/position indicator right.
+        (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+        (p/fill-rect! g 0 title-row cols 1)
+        (let [tag
+              (if @follow "  ● tailing  " (str "  " (min total (+ @scroll body-h)) "/" total "  "))
+
+              tag-w
+              (p/display-width tag)
+
+              tag-x
+              (max 0 (- cols tag-w))]
+
+          (p/put-str! g 1 title-row (ellipsize (str " " title) (max 1 (- tag-x 1))))
+          (p/put-str! g tag-x title-row tag))
+        ;; Body: one source line per row, ANSI runs → theme colors, clipped at
+        ;; the right edge (no wrap — log lines stay whole and scroll math simple).
+        (dotimes [i visible]
+          (let [idx (+ @scroll i)
+                y (+ body-top i)]
+
+            (when (< idx total)
+              (render/paint-ansi-line! g 0 y (nth painted idx) t/code-block-fg t/code-block-bg))))
+        ;; Scrollbar last (over the rightmost column) so a wide line can't hide it.
+        (scrollbar/draw! g
+                         {:col (dec cols)
+                          :top body-top
+                          :track-h body-h
+                          :total-h total
+                          :inner-h body-h
+                          :scroll @scroll})
+        ;; Bottom strip: shared hint bar, full width.
+        (draw-hint-bar! g
+                        0
+                        hint-row
+                        (dec cols)
+                        (cond-> [["↑/↓" "scroll"] ["PgUp/PgDn" "page"] ["Home/End" "jump"]]
+                          refresh-fn
+                          (conj ["r" (if @follow "tailing" "refresh")])
+
+                          :always
+                          (conj ["Enter/Esc" "close"])))
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key
+              (read-modal-key! screen)
+
+              wheel
+              (modal-wheel-step key)
+
+              move!
+              (fn [f]
+                (reset! follow false)
+                (swap! scroll #(clamp (f %) 0 max-scroll)))]
+
+          (cond (nil? key) (recur)
+                wheel (do (move! #(+ % wheel)) (recur))
+                :else (condp = (key-type key)
+                        KeyType/Escape nil
+                        KeyType/Enter nil
+                        KeyType/ArrowUp (do (move! dec) (recur))
+                        KeyType/ArrowDown (do (move! inc) (recur))
+                        KeyType/PageUp (do (move! #(- % (max 1 body-h))) (recur))
+                        KeyType/PageDown (do (move! #(+ % (max 1 body-h))) (recur))
+                        KeyType/Home (do (reset! follow false) (reset! scroll 0) (recur))
+                        KeyType/End
+                        (do (reset! follow (boolean tail?)) (reset! scroll max-scroll) (recur))
+                        KeyType/Character (do (when (and refresh-fn
+                                                         (= (lower-key-character key) \r))
+                                                (reset! lines* (vec (refresh-fn)))
+                                                (when tail? (reset! follow true)))
+                                              (recur))
+                        (recur))))))))
+
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 (defn- text-input-body-lines
   [body]

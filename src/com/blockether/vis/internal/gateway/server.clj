@@ -962,7 +962,7 @@
 (defn- session-model-handler
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:model (state/session-model sid)})
+    (json-response {:model (state/session-model-cached sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- set-session-model-handler

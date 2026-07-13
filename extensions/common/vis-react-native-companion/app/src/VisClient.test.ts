@@ -38,6 +38,7 @@ import {
   gatewayConnectionMessage,
   gatewayErrorMessage,
   isGatewayConnectionMessage,
+  isGatewayAuthMessage,
 } from "./VisClient";
 
 interface FakeES {
@@ -126,6 +127,12 @@ describe("request error unwrapping ([object Object] regression)", () => {
     expect(msg).toContain("points at the phone itself");
     expect(isGatewayConnectionMessage(msg)).toBe(true);
     expect(isGatewayConnectionMessage("503 Service Unavailable")).toBe(false);
+  });
+
+  it("marks a missing/invalid bearer token as an auth problem", () => {
+    expect(isGatewayAuthMessage("missing or invalid bearer token")).toBe(true);
+    expect(isGatewayAuthMessage("Unauthorized")).toBe(true);
+    expect(isGatewayAuthMessage("503 Service Unavailable")).toBe(false);
   });
 
   it("normalizes generic SSE error objects to gateway guidance", () => {
