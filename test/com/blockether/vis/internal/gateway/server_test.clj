@@ -213,3 +213,46 @@
         (let [resp (call {:kind "boom"})]
           (is (= 200 (:status resp)))
           (is (= "starting" (:result (wire/parse-json (:body resp))))))))))
+
+(deftest wrap-auth-accepts-gateway-secret-header
+  (testing "a token-gated gateway authenticates the internal client's X-Vis-Gateway-Secret"
+    (with-server-state!
+      {:require-token? true}
+      (fn []
+        (let [wrap-auth
+              (rv 'wrap-auth)
+
+              handler
+              (fn [_req]
+                {:status 200 :body "ok"})
+
+              app
+              (wrap-auth handler "sekret" [])
+
+              req
+              (fn [headers]
+                {:uri "/v1/sessions" :headers headers})]
+
+          (testing "no credential → 401" (is (= 401 (:status (app (req {}))))))
+          (testing "Authorization: Bearer with the right token → 200"
+            (is (= 200 (:status (app (req {"authorization" "Bearer sekret"}))))))
+          (testing
+            "X-Vis-Gateway-Secret carrying the same secret → 200 (the internal client's carrier)"
+            (is (= 200 (:status (app (req {"x-vis-gateway-secret" "sekret"}))))))
+          (testing "X-Vis-Gateway-Secret with a wrong secret → 401"
+            (is (= 401 (:status (app (req {"x-vis-gateway-secret" "nope"})))))))))))
+
+(deftest wrap-auth-disabled-on-loopback-default
+  (testing "with auth off (loopback default) every request passes without a token"
+    (with-server-state! {:require-token? false}
+                        (fn []
+                          (let [wrap-auth
+                                (rv 'wrap-auth)
+
+                                app
+                                (wrap-auth (fn [_req]
+                                             {:status 200})
+                                           "sekret"
+                                           [])]
+
+                            (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))

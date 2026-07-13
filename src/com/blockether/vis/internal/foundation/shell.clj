@@ -1112,7 +1112,7 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
 
         body
         (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
-              (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout"))
+              (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout") "bash")
               (shell-section "STDERR" (get r "stderr"))]
              (remove nil?)
              (str/join "\n\n"))]
@@ -1193,7 +1193,7 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
                    ["dropped" (get r "dropped")] ["uptime" duration]])
 
         body
-        (->> [(shell-section "STATUS" details) (shell-section "LOGS" text)]
+        (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
              (remove nil?)
              (str/join "\n\n"))]
 
