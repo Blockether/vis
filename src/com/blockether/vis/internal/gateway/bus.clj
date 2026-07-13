@@ -37,6 +37,14 @@
 (def ^:private POLL_MS 60)
 (def ^:private MAX_FILE_BYTES (* 16 1024 1024))
 
+(def ^:private RETAIN_MS
+  "Age past which an untouched journal is presumed orphaned and swept: a live
+   session rewrites (truncates + appends) its journal every turn, so a file whose
+   mtime is a day stale cannot belong to a running turn."
+  (* 24 60 60 1000))
+
+(def ^:private SWEEP_EVERY "Run the orphan-journal sweep every Nth poll (~ N*POLL_MS ms)." 1000)
+
 (defonce ^{:doc "Stable per-process id: foreign events carry a different one."} producer-id
   (str (java.util.UUID/randomUUID)))
 
@@ -266,6 +274,26 @@
     (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
   nil)
 
+(defn- sweep!
+  "Delete journals untouched for `RETAIN_MS` — the crashed / kill-9'd / restarted
+   sessions `forget!` never got to clean, which otherwise pile up forever and get
+   re-scanned by every `poll-once!`. A live session rewrites its journal each
+   turn, so a stale mtime proves the producer is gone. Drops the swept file's
+   tail offset too. Never throws."
+  []
+  (try (let [dir
+             (.toFile (events-dir))
+
+             cutoff
+             (- (System/currentTimeMillis) RETAIN_MS)]
+
+         (when (.isDirectory dir)
+           (doseq [^File f (.listFiles dir)]
+             (let [n (.getName f)]
+               (when (and (str/ends-with? n ".ndjson") (< (.lastModified f) cutoff) (.delete f))
+                 (swap! offsets dissoc (subs n 0 (- (count n) (count ".ndjson")))))))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
+
 (defn- poll-once!
   []
   (try (let [dir (.toFile (events-dir))]
@@ -296,10 +324,15 @@
                                         (subs n 0 (- (count n) (count ".ndjson")))
                                         (.length f)))))))
                             (catch Throwable _ nil))
-                       (while (not (Thread/interrupted))
-                         (poll-once!)
-                         (try (Thread/sleep (long POLL_MS))
-                              (catch InterruptedException _ (.interrupt (Thread/currentThread))))))
+                       ;; Sweep orphaned journals ~once a minute so the poll set —
+                       ;; and the disk — never grow without bound on dead sessions.
+                       (loop [tick 0]
+                         (when-not (Thread/interrupted)
+                           (poll-once!)
+                           (when (zero? (mod tick SWEEP_EVERY)) (sweep!))
+                           (try (Thread/sleep (long POLL_MS))
+                                (catch InterruptedException _ (.interrupt (Thread/currentThread))))
+                           (recur (inc tick)))))
                      "gateway-bus-tailer")]
       (.setDaemon t true)
       (.start t)
