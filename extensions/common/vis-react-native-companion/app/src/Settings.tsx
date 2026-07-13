@@ -310,6 +310,10 @@ export const SettingsPane = ({
           ref={scrollRef}
           style={st.groups}
           contentContainerStyle={st.groupsBody}
+          alwaysBounceVertical
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
         >
           {stale ? (
             <Text style={st.staleNote}>
@@ -657,7 +661,11 @@ const st = StyleSheet.create({
     marginTop: 10,
     marginHorizontal: 14,
   },
-  scannerSlot: { marginTop: 18, marginHorizontal: 14 },
+  scannerSlot: {
+    marginTop: 18,
+    marginHorizontal: 14,
+    marginBottom: 4,
+  },
   reconnect: {
     flexDirection: "row",
     gap: 10,

@@ -65,8 +65,9 @@ export const GatewayPairingScanner = ({
 
   return (
     <View style={st.wrap}>
-      <View style={st.cameraBox}>
+      <View style={st.cameraBox} pointerEvents="box-none">
         <CameraView
+          pointerEvents="none"
           style={StyleSheet.absoluteFill}
           facing="back"
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
