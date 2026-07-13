@@ -4,6 +4,8 @@ import {
   toolLabel,
   traceCards,
   LiveState,
+  LiveTurn,
+  LiveCard,
 } from "./LiveTurns";
 import { c } from "./theme";
 import { GatewayEvent, TraceIteration } from "./VisClient";
@@ -46,6 +48,15 @@ describe("toolColor", () => {
 });
 
 describe("reduceLiveEvent", () => {
+  const cardsOf = (t?: LiveTurn): LiveCard[] =>
+    (t?.blocks ?? [])
+      .filter((b) => b.kind === "card")
+      .map((b) => (b as { card: LiveCard }).card);
+  const textsOf = (t: LiveTurn | undefined, kind: "thinking" | "prose"): string[] =>
+    (t?.blocks ?? [])
+      .filter((b) => b.kind === kind)
+      .map((b) => (b as { text: string }).text);
+
   it("ignores an event with no turn_id (returns the same state ref)", () => {
     const s: LiveState = {};
     expect(reduceLiveEvent(s, ev({ type: "context.updated" }))).toBe(s);
@@ -53,7 +64,7 @@ describe("reduceLiveEvent", () => {
 
   it("turn.started seeds an empty turn", () => {
     const s = reduceLiveEvent({}, ev({ type: "turn.started", turn_id: "t1" }));
-    expect(s.t1).toEqual({ cards: [], prose: "", thinking: "", done: false });
+    expect(s.t1).toEqual({ blocks: [], thinking: "", done: false });
   });
 
   it("block.started opens a running card with label + color + code", () => {
@@ -69,7 +80,7 @@ describe("reduceLiveEvent", () => {
         code: '(rg "foo")',
       }),
     );
-    const card = s.t1!.cards[0]!;
+    const card = cardsOf(s.t1)[0]!;
     expect(card).toMatchObject({
       key: "0:3",
       toolName: "rg",
@@ -91,7 +102,7 @@ describe("reduceLiveEvent", () => {
         code: "print(1)",
       }),
     );
-    expect(s.t1!.cards[0]!.hideCode).toBe(false);
+    expect(cardsOf(s.t1)[0]!.hideCode).toBe(false);
   });
 
   it("block.output updates the SAME card (upsert by iteration:block key)", () => {
@@ -118,8 +129,8 @@ describe("reduceLiveEvent", () => {
         duration_ms: 42,
       }),
     );
-    expect(s.t1!.cards).toHaveLength(1);
-    expect(s.t1!.cards[0]).toMatchObject({
+    expect(cardsOf(s.t1)).toHaveLength(1);
+    expect(cardsOf(s.t1)[0]).toMatchObject({
       key: "1:2",
       running: false,
       summary: "3 hits",
@@ -139,7 +150,7 @@ describe("reduceLiveEvent", () => {
         stdout: "RAW",
       }),
     );
-    expect(s.t1!.cards[0]!.body).toBe("RENDERED");
+    expect(cardsOf(s.t1)[0]!.body).toBe("RENDERED");
   });
 
   it("a silent result removes the card entirely", () => {
@@ -147,12 +158,12 @@ describe("reduceLiveEvent", () => {
       {},
       ev({ type: "block.started", turn_id: "t1", block_id: 0, tool_name: "x" }),
     );
-    expect(s.t1!.cards).toHaveLength(1);
+    expect(cardsOf(s.t1)).toHaveLength(1);
     s = reduceLiveEvent(
       s,
       ev({ type: "block.output", turn_id: "t1", block_id: 0, silent: true }),
     );
-    expect(s.t1!.cards).toHaveLength(0);
+    expect(cardsOf(s.t1)).toHaveLength(0);
   });
 
   it("an errored output keeps its code and carries the error", () => {
@@ -167,10 +178,10 @@ describe("reduceLiveEvent", () => {
         code: "(rg)",
       }),
     );
-    expect(s.t1!.cards[0]).toMatchObject({ error: "boom", hideCode: false });
+    expect(cardsOf(s.t1)[0]).toMatchObject({ error: "boom", hideCode: false });
   });
 
-  it("iteration.completed sets complete prose and thinking without text deltas", () => {
+  it("iteration.completed pins complete prose and thinking as blocks", () => {
     const s = reduceLiveEvent(
       {},
       ev({
@@ -180,21 +191,45 @@ describe("reduceLiveEvent", () => {
         thinking: "Full thinking.",
       }),
     );
-    expect(s.t1!.prose).toBe("Full prose.");
-    expect(s.t1!.thinking).toBe("Full thinking.");
+    expect(textsOf(s.t1, "prose")).toEqual(["Full prose."]);
+    expect(textsOf(s.t1, "thinking")).toEqual(["Full thinking."]);
   });
 
-  it("iteration.completed / error replaces the thinking snapshot", () => {
+  it("each iteration PINS its own thinking + prose (nothing is overwritten)", () => {
     let s = reduceLiveEvent(
       {},
-      ev({ type: "iteration.completed", turn_id: "t1", thinking: "x" }),
+      ev({
+        type: "iteration.completed",
+        turn_id: "t1",
+        iteration: 0,
+        thinking: "think 0",
+        assistant_prose: "prose 0",
+      }),
     );
-    expect(s.t1!.thinking).toBe("x");
     s = reduceLiveEvent(
       s,
-      ev({ type: "iteration.error", turn_id: "t1", thinking: "failed" }),
+      ev({
+        type: "iteration.completed",
+        turn_id: "t1",
+        iteration: 1,
+        thinking: "think 1",
+        assistant_prose: "prose 1",
+      }),
     );
-    expect(s.t1!.thinking).toBe("failed");
+    expect(textsOf(s.t1, "thinking")).toEqual(["think 0", "think 1"]);
+    expect(textsOf(s.t1, "prose")).toEqual(["prose 0", "prose 1"]);
+  });
+
+  it("iteration.error pins its thinking block", () => {
+    let s = reduceLiveEvent(
+      {},
+      ev({ type: "iteration.completed", turn_id: "t1", iteration: 0, thinking: "x" }),
+    );
+    s = reduceLiveEvent(
+      s,
+      ev({ type: "iteration.error", turn_id: "t1", iteration: 1, thinking: "failed" }),
+    );
+    expect(textsOf(s.t1, "thinking")).toEqual(["x", "failed"]);
   });
 
   it("turn.completed / failed marks the turn done", () => {
@@ -209,7 +244,7 @@ describe("reduceLiveEvent", () => {
 
   it("is immutable and never touches unrelated turns", () => {
     const s0: LiveState = {
-      other: { cards: [], prose: "keep", thinking: "", done: true },
+      other: { blocks: [], thinking: "", done: true },
     };
     const s1 = reduceLiveEvent(
       s0,
@@ -221,17 +256,17 @@ describe("reduceLiveEvent", () => {
     );
     expect(s1).not.toBe(s0);
     expect(s1.other).toBe(s0.other); /* untouched turn shares the same ref */
-    expect(s1.t1!.prose).toBe("new");
+    expect(textsOf(s1.t1, "prose")).toEqual(["new"]);
   });
 
   it("folds a full turn lifecycle into the expected final state", () => {
     const seq: Partial<GatewayEvent>[] = [
       { type: "turn.started", turn_id: "t1" },
-      { type: "iteration.completed", turn_id: "t1", thinking: "let me search" },
+      { type: "iteration.completed", turn_id: "t1", iteration: 0, thinking: "let me search" },
       {
         type: "block.started",
         turn_id: "t1",
-        iteration: 0,
+        iteration: 1,
         block_id: 0,
         tool_name: "rg",
         tool_color_role: "tool-color/search",
@@ -240,7 +275,7 @@ describe("reduceLiveEvent", () => {
       {
         type: "block.output",
         turn_id: "t1",
-        iteration: 0,
+        iteration: 1,
         block_id: 0,
         tool_name: "rg",
         result_summary: "1 hit",
@@ -250,29 +285,27 @@ describe("reduceLiveEvent", () => {
       {
         type: "iteration.completed",
         turn_id: "t1",
+        iteration: 1,
         assistant_prose: "Found it.",
       },
-      { type: "iteration.completed", turn_id: "t1" },
       { type: "turn.completed", turn_id: "t1" },
     ];
     const final = seq.reduce(
       (s, e) => reduceLiveEvent(s, ev(e)),
       {} as LiveState,
     );
-    expect(final.t1).toMatchObject({
-      prose: "Found it.",
-      thinking: "",
-      done: true,
-    });
-    expect(final.t1!.cards).toHaveLength(1);
-    expect(final.t1!.cards[0]).toMatchObject({
+    expect(final.t1!.done).toBe(true);
+    expect(textsOf(final.t1, "thinking")).toEqual(["let me search"]);
+    expect(textsOf(final.t1, "prose")).toEqual(["Found it."]);
+    expect(cardsOf(final.t1)).toHaveLength(1);
+    expect(cardsOf(final.t1)[0]).toMatchObject({
       label: "RG",
       summary: "1 hit",
       running: false,
     });
   });
 
-  it("turn.started mid-stream resets the accumulated cards/prose", () => {
+  it("turn.started mid-stream resets the accumulated blocks", () => {
     let s = reduceLiveEvent(
       {},
       ev({
@@ -282,7 +315,7 @@ describe("reduceLiveEvent", () => {
       }),
     );
     s = reduceLiveEvent(s, ev({ type: "turn.started", turn_id: "t1" }));
-    expect(s.t1).toEqual({ cards: [], prose: "", thinking: "", done: false });
+    expect(s.t1).toEqual({ blocks: [], thinking: "", done: false });
   });
 });
 

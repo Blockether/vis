@@ -165,9 +165,16 @@
 (defn- contains-dir?
   "When `rel` names an existing directory under canonical `root` (or IS the
    root), the canonical File for it; otherwise nil. `nil` too when it resolves
-   OUTSIDE the root (containment guard, same rule the editing tools enforce)."
+   OUTSIDE the root (containment guard, same rule the editing tools enforce).
+   An ABSOLUTE `rel` is taken as-is (not joined onto root), so a path the model
+   can already see/edit — e.g. the workspace root itself — is runnable verbatim."
   ^File [^File root rel]
-  (let [dir (.getCanonicalFile (io/file root rel))]
+  (let [f
+        (io/file rel)
+
+        dir
+        (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel)))]
+
     (when (and (or (= dir root)
                    (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
                (.isDirectory dir))
@@ -203,7 +210,8 @@
           ;; the base(s) tried and the absolute path we looked for, and say
           ;; WHY (escapes / is-a-file / missing) against the primary root.
           (let [dir
-                (.getCanonicalFile (io/file root rel))
+                (let [f (io/file rel)]
+                  (.getCanonicalFile (if (.isAbsolute f) f (io/file root rel))))
 
                 bases
                 (str/join ", " (distinct (map #(.getPath ^File %) roots)))]

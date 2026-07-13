@@ -750,9 +750,11 @@
                  (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))})
 
 (defn list-turns
-  "Wire views of every turn for `sid`, newest first: persisted history hydrated
-  from the engine DB (survives daemon restarts), plus only genuinely live gateway
-  overlay rows (running/queued or terminal rows not yet visible in persistence).
+  "Wire views of every turn for `sid`, OLDEST-first (chronological, chat order):
+  persisted history hydrated from the engine DB (survives daemon restarts), plus
+  only genuinely live gateway overlay rows (running/queued or terminal rows not
+  yet visible in persistence). Ordering matches `transcript` so every consumer
+  renders top-to-bottom directly — no channel re-reverses for display.
 
   DEDUP: the gateway's `tid` is NOT the engine's persisted row id - the engine
   mints its own id inside `send!`. Once the durable row is visible, prefer it:
@@ -812,9 +814,10 @@
              (remove #(contains? live-ids (:turn_id %)))
              vec)]
 
-    ;; persisted rows arrive oldest-first; the wire contract is
-    ;; newest-first (the page reverses for display).
-    (vec (concat (reverse live) (reverse persisted)))))
+    ;; persisted rows arrive oldest-first; live overlay rows (running/queued,
+    ;; newer) chronologically follow. The wire contract is oldest-first, so a
+    ;; chat thread renders top-to-bottom with no reverse.
+    (vec (concat persisted live))))
 
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
@@ -1845,6 +1848,11 @@
   (do
     ;; pass the VAR so a dev-time ns reload is picked up without re-wiring.
     (bus/set-deliver-fn! #'ingest-mirrored-event!)
+    ;; Tell the tailer which journals are worth draining: only sessions THIS
+    ;; process tracks. `ingest-mirrored-event!` already no-ops on an unknown sid,
+    ;; so draining the rest just burns CPU stat'ing every sibling's journal.
+    (bus/set-relevant-sid-fn! (fn [sid]
+                                (contains? @registry sid)))
     ;; Skip the tailer thread during native-image BUILD: graal InitClojureClasses
     ;; runs this ns-load at build time, and a started thread cannot be baked into
     ;; the image heap. On a normal JVM this guard is false so the tailer starts at

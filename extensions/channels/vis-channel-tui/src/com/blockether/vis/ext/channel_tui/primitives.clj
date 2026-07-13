@@ -382,6 +382,21 @@
 ;; (auto-detected from TERM_PROGRAM). Everything here defers to it, so
 ;; measurement always matches what the fork's painter/screen emit.
 
+(defn- all-narrow-ascii?
+  "True when every char of `s` (length `n`) is printable ASCII (0x20-0x7E).
+   Such a string occupies exactly `n` terminal columns, so we can skip the
+   expensive grapheme/width segmentation in `TextCharacter/fromString` — no
+   `TextCharacter[]` allocation, no `Character$UnicodeBlock.of` per char. This
+   is the overwhelmingly common case (English prose, code, digits, punctuation)
+   and `display-width` is on the hot render/keystroke path, called across the
+   entire scrollback every frame."
+  [^String s ^long n]
+  (loop [i 0]
+    (if (>= i n)
+      true
+      (let [c (int (.charAt s i))]
+        (if (and (>= c 0x20) (<= c 0x7E)) (recur (inc i)) false)))))
+
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
 
@@ -391,7 +406,7 @@
    clusters honoured (BreakIterator-based), CJK + emoji counted as two
    columns, ASCII as one.
 
-   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110...\uE117)
+   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110...\uE119)
    count as zero columns: they're invisible style toggles, never
    painted, never advance the cursor.
 
@@ -399,6 +414,10 @@
    before reaching Lanterna - see `sanitize-control-chars` for the
    why. Without that, a single rogue `\n` in a paint string used to
    take down the entire render thread.
+
+   Pure printable-ASCII strings (the common case) short-circuit to
+   `(.length s)` — one column per char — skipping the grapheme/width
+   segmentation entirely.
 
    Returns 0 for nil/empty input."
   ^long [s]
@@ -409,28 +428,45 @@
   ;; measurable; nil → 0.
   (if (nil? s)
     0
-    (let [^String safe (sanitize-control-chars (str s))]
-      (if (zero? (.length safe))
-        0
-        (let [cells (TextCharacter/fromString safe)
-              n (alength cells)]
+    (let [^String safe
+          (sanitize-control-chars (str s))
 
-          (loop [i 0
-                 width 0]
+          len
+          (.length safe)]
 
-            (if (>= i n)
-              width
-              (let [tc ^TextCharacter (aget cells i)
-                    g ^String (.getCharacterString tc)
-                    w (cond (inline-sentinel? g) 0
-                            ;; Defer to lanterna's isDoubleWidth. The fork owns the
-                            ;; per-terminal width policy (VS-16 = 2 on iTerm2/Ghostty/…,
-                            ;; but 1 on Apple Terminal.app — auto-detected there), so
-                            ;; measurement always matches what putString paints.
-                            (.isDoubleWidth tc) 2
-                            :else 1)]
+      (cond (zero? len) 0
+            ;; Fast path: printable ASCII ⇒ 1 column per char, no allocation.
+            (all-narrow-ascii? safe len) len
+            :else (let [cells
+                        (TextCharacter/fromString safe)
 
-                (recur (inc i) (+ width w))))))))))
+                        n
+                        (alength cells)]
+
+                    (loop [i
+                           0
+
+                           width
+                           0]
+
+                      (if (>= i n)
+                        width
+                        (let [tc
+                              ^TextCharacter (aget cells i)
+
+                              g
+                              ^String (.getCharacterString tc)
+
+                              w
+                              (cond (inline-sentinel? g) 0
+                                    ;; Defer to lanterna's isDoubleWidth. The fork owns the
+                                    ;; per-terminal width policy (VS-16 = 2 on iTerm2/Ghostty/…,
+                                    ;; but 1 on Apple Terminal.app — auto-detected there), so
+                                    ;; measurement always matches what putString paints.
+                                    (.isDoubleWidth tc) 2
+                                    :else 1)]
+
+                          (recur (inc i) (+ width w))))))))))
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
