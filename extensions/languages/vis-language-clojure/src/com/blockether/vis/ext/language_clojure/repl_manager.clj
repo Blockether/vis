@@ -495,6 +495,7 @@
 
    Rules (the ownership contract):
      - explicit `id` → that REPL (throws if no such live REPL in this session);
+     - `id` = "default" (any case) → sentinel, treated as no explicit id (below);
      - 0 REPLs       → autostart `default-dir` with [:dev :test], use it;
      - 1 REPL        → use it (it's the implicit default);
      - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
@@ -506,7 +507,11 @@
   (let [id (some-> id
                    str
                    str/trim
-                   not-empty)]
+                   not-empty)
+        ;; "default" is a sentinel, not a real resource id — treat it as "no
+        ;; explicit id" so it falls through to the implicit-default resolution
+        ;; (autostart when the session owns none, else the default REPL).
+        id (when-not (some-> id str/lower-case (= "default")) id)]
     (if id
       (or (repl-by-id session-id id)
           (throw (ex-info (str
