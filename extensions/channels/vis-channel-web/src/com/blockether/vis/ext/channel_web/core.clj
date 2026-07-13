@@ -1650,6 +1650,34 @@
 ;; SSE: engine events -> named HTML fragments for htmx sse-swap
 ;; =============================================================================
 
+(defn- activity-one-line
+  "First line of a shell command / op name, trimmed and length-capped, for the
+   live ticker label."
+  [s n]
+  (let [s (-> (str s) (str/split #"\n") first str/trim)]
+    (if (> (count s) (long n)) (str (subs s 0 (dec (long n))) "…") s)))
+
+(defn- activity-label
+  "Human ticker label for a coarse `activity` event (provider wait, response
+   parse, nested shell/tool call)."
+  [{:keys [activity cmd op]}]
+  (let [what (activity-one-line (or cmd op "") 80)]
+    (case (str activity)
+      "provider-call"  "Vis is calling the provider…"
+      "response-parse" "Vis is parsing the model response…"
+      "shell-run"      (str "Vis is running: " (if (str/blank? what) "shell" what))
+      "shell-bg"       (str "Vis is starting: " (if (str/blank? what) "shell" what))
+      "tool"           (str "Vis is running: " (if (str/blank? what) "tool" what))
+      "Vis is working…")))
+
+(defn- activity-ticker
+  "Transient `#thinking` ticker: animated dots PLUS a label naming what Vis is
+   doing right now, so a long provider/shell/tool call never leaves the bubble
+   frozen. Reset to bare dots at the iteration boundary."
+  [event]
+  (list [:div.dots [:span] [:span] [:span]]
+        [:div.thinking-activity (activity-label event)]))
+
 (defn- event->frames
   "One gateway event -> seq of `{:event name :html fragment}` for the
    htmx SSE extension (`sse-swap=\"<name>\"`)."
@@ -1681,6 +1709,13 @@
       (when-let [prose (block-prose (:text event)
                                     (turn-live-key (str "prose:" (:iteration event)) event))]
         [{:event "message" :html (html prose)}]))
+
+    ;; Coarse live-progress: a provider wait, response parse, or a nested
+    ;; shell/tool call. Repaint the transient #thinking ticker with a labeled
+    ;; spinner so the user sees SOMETHING is happening; iteration.completed
+    ;; resets it to bare dots.
+    "activity"
+    [{:event "thinking" :html (html (activity-ticker event))}]
 
     "block.started"
     ;; Nothing painted at form START: the code row is emitted at

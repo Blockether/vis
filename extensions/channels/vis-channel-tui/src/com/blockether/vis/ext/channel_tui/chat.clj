@@ -123,7 +123,7 @@
   [block]
   (merge (vis/form<-wire block)
          {:started-at-ms nil
-          :duration-ms (or (:duration_ms block) 0)
+          :duration-ms (or (:duration-ms block) (:duration_ms block) 0)
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
           ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
           :channel (vec (:channel block))
@@ -702,6 +702,21 @@
 
       "iteration.error"
       {:phase :iteration-error :iteration iteration :thinking thinking :error error}
+
+      ;; Coarse live-progress ticker (provider wait, response parse, nested
+      ;; shell/tool call). Project back to the phase the spinner reads so an
+      ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
+      "activity"
+      (let [activity (event-get event :activity)
+            cmd      (event-get event :cmd)
+            op       (event-get event :op)]
+        (case (str activity)
+          "provider-call"  {:phase :provider-call :iteration iteration}
+          "response-parse" {:phase :response-parse :iteration iteration}
+          "shell-run"      {:phase :shell-run :iteration iteration :cmd (or cmd op)}
+          "shell-bg"       {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
+          "tool"           {:phase :tool-start :iteration iteration :tool-event {:op op}}
+          nil))
 
       ;; Queue lifecycle for a DIFFERENT (queued) turn on this session — the
       ;; gateway sync/attach subscriptions forward these so every attached TUI

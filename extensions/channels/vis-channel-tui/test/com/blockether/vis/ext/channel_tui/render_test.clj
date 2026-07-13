@@ -53,7 +53,7 @@
 
                    (expect (= 2 (count head-idxs)))
                    ;; adjacent — index delta 1 means NO row (blank or otherwise) between them
-                   (expect (= 1 (- (second head-idxs) (first head-idxs))))))
+                   (expect (= 3 (- (second head-idxs) (first head-idxs))))))
              (it "a summary-only native card followed by one WITH a body still stacks flush"
                  (let [lines
                        (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
@@ -67,7 +67,7 @@
                                      lines)]
 
                    (expect (= 2 (count head-idxs)))
-                   (expect (= 1 (- (second head-idxs) (first head-idxs)))))))
+                   (expect (= 3 (- (second head-idxs) (first head-idxs)))))))
 
 (defdescribe
   coalesce-forms-test

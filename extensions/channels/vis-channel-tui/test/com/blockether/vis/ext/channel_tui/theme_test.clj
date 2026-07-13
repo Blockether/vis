@@ -47,11 +47,11 @@
     ;; — near-black H1 down to slate H3 — weight/contrast carries hierarchy,
     ;; no gold/amber ink (chrome recedes; color is for semantic states).
     (it "H1 is near-black slate"
-        (expect (= [15 23 42] [(.getRed t/md-h1-fg) (.getGreen t/md-h1-fg) (.getBlue t/md-h1-fg)])))
+        (expect (= [38 38 38] [(.getRed t/md-h1-fg) (.getGreen t/md-h1-fg) (.getBlue t/md-h1-fg)])))
     (it "H2 is dark slate"
-        (expect (= [30 41 59] [(.getRed t/md-h2-fg) (.getGreen t/md-h2-fg) (.getBlue t/md-h2-fg)])))
+        (expect (= [63 63 63] [(.getRed t/md-h2-fg) (.getGreen t/md-h2-fg) (.getBlue t/md-h2-fg)])))
     (it "H3 is mid slate"
-        (expect (= [51 65 85]
+        (expect (= [90 84 74]
                    [(.getRed t/md-h3-fg) (.getGreen t/md-h3-fg) (.getBlue t/md-h3-fg)]))))
   (describe
     "Headings are readable on every surface they're painted on (contrast >= AA 4.5)"

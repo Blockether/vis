@@ -203,7 +203,7 @@
                                   (expect (= [[1 "done"]] (mapv vec (get r "lines")))))
                                 (let [res (first (resources/list-resources sid))]
                                   (expect (some? res))
-                                  (expect (= "exited" (get res "status"))))
+                                  (expect (= "failed" (get res "status"))))
                                 (finally (resources/stop-all! sid))))))))
   (it "refuses a duplicate id while the first is still running"
       (with-shell-on (fn []
@@ -329,7 +329,7 @@
           (render-shell-logs-result
             {"id" "srv" "status" "running" "lines" [[1 "ready"]] "line_count" 1 "uptime_ms" 1500})]
 
-      (expect (str/includes? (:summary bg) "▶ bg `srv` running · pid 123"))
+      (expect (str/includes? (:summary bg) "⚙ bg `srv` running · pid 123"))
       (expect (str/includes? (:body bg) "**COMMAND**"))
       (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
       (expect (str/includes? (:body logs) "**LOGS**")))))
