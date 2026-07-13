@@ -506,13 +506,23 @@
   [{:keys [phase cmd iteration] :as chunk}]
   (when (and (activity-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
-    (let [op       (some-> (:op (:tool-event chunk)) name)
-          activity (if (= phase :tool-start) "tool" (name phase))]
+    (let [op
+          (some-> (:op (:tool-event chunk))
+                  name)
+
+          activity
+          (if (= phase :tool-start) "tool" (name phase))]
+
       ["activity" false
        (cond-> {:activity activity}
-         (some? iteration) (assoc :iteration iteration)
-         (some? cmd)       (assoc :cmd (str cmd))
-         (some? op)        (assoc :op op))])))
+         (some? iteration)
+         (assoc :iteration iteration)
+
+         (some? cmd)
+         (assoc :cmd (str cmd))
+
+         (some? op)
+         (assoc :op op))])))
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
@@ -527,78 +537,79 @@
   ;; `block.output` once lost their forms.
   (when-not (non-streaming-text-phases phase)
     (or
-     (activity-chunk->event chunk)
-    (let [payload (case phase
-                    :form-start
-                    (merge
-                      ;; Carry the native-tool badge identity so a client can hide the
-                      ;; redundant invocation code WHILE the tool runs.
-                      (form/->display chunk)
-                      {:block_id position :code code})
+      (activity-chunk->event chunk)
+      (let [payload
+            (case phase
+              :form-start
+              (merge
+                ;; Carry the native-tool badge identity so a client can hide the
+                ;; redundant invocation code WHILE the tool runs.
+                (form/->display chunk)
+                {:block_id position :code code})
 
-                    :form-result
-                    (merge
-                      ;; The native-tool op-card fields (pre-rendered card + badge label
-                      ;; + colour) — projected from ONE canonical list.
-                      (form/->display chunk)
-                      {:block_id position
-                       :code code
-                       :result result
-                       :stdout (when-let [s (:stdout chunk)]
-                                 (wire/bounded-str s RESULT_PR_LIMIT))
-                       :error (when (some? error)
+              :form-result
+              (merge
+                ;; The native-tool op-card fields (pre-rendered card + badge label
+                ;; + colour) — projected from ONE canonical list.
+                (form/->display chunk)
+                {:block_id position
+                 :code code
+                 :result result
+                 :stdout (when-let [s (:stdout chunk)]
+                           (wire/bounded-str s RESULT_PR_LIMIT))
+                 :error (when (some? error)
+                          (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                 :silent (boolean (or silent?
+                                      (and (nil? error) (contains? #{"vis_silent"} result))))
+                 :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                                (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                  (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+
+              ;; The iteration's complete reasoning + complete assistant prose ride
+              ;; the boundary event. No token/partial model text is sent to remote
+              ;; gateway clients.
+              :iteration-final
+              (cond-> {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
+                (some-> assistant-prose
+                        str
+                        str/trim
+                        not-empty)
+                (assoc :assistant-prose (str/trim (str assistant-prose)))
+
+                (and iteration-id (pos? (long (or attachment-count 0))))
+                (assoc :attachments (live-attachment-descriptors iteration-id)))
+
+              :iteration-error
+              ;; Carry the SAME canonical provider-error map the final settled turn
+              ;; bubble paints the styled CARD from (`provider-error-info` →
+              ;; `:vis/provider-error-data`).
+              (cond-> {:error (when (some? error)
                                 (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                       :silent (boolean (or silent?
-                                            (and (nil? error) (contains? #{"vis_silent"} result))))
-                       :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                                      (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                        (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+                       :thinking (normalize-thinking-text thinking)}
+                (some? error)
+                (assoc :provider-error-data (provider-error/provider-error-info error)))
 
-                    ;; The iteration's complete reasoning + complete assistant prose ride
-                    ;; the boundary event. No token/partial model text is sent to remote
-                    ;; gateway clients.
-                    :iteration-final
-                    (cond-> {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
-                      (some-> assistant-prose
-                              str
-                              str/trim
-                              not-empty)
-                      (assoc :assistant-prose (str/trim (str assistant-prose)))
+              {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
+        [(case phase
+           :form-start
+           "block.started"
 
-                      (and iteration-id (pos? (long (or attachment-count 0))))
-                      (assoc :attachments (live-attachment-descriptors iteration-id)))
+           :form-result
+           "block.output"
 
-                    :iteration-error
-                    ;; Carry the SAME canonical provider-error map the final settled turn
-                    ;; bubble paints the styled CARD from (`provider-error-info` →
-                    ;; `:vis/provider-error-data`).
-                    (cond-> {:error (when (some? error)
-                                      (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                             :thinking (normalize-thinking-text thinking)}
-                      (some? error)
-                      (assoc :provider-error-data (provider-error/provider-error-info error)))
+           :iteration-final
+           "iteration.completed"
 
-                    {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
-      [(case phase
-         :form-start
-         "block.started"
+           :iteration-error
+           "iteration.error"
 
-         :form-result
-         "block.output"
+           :provider-retry-reset
+           "provider.retry"
 
-         :iteration-final
-         "iteration.completed"
-
-         :iteration-error
-         "iteration.error"
-
-         :provider-retry-reset
-         "provider.retry"
-
-         (str "chunk." (name phase))) true
-       (cond-> payload
-         (some? iteration)
-         (assoc :iteration iteration))]))))
+           (str "chunk." (name phase))) true
+         (cond-> payload
+           (some? iteration)
+           (assoc :iteration iteration))]))))
 
 ;; =============================================================================
 ;; Context

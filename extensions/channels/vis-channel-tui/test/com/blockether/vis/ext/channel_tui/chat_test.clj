@@ -471,6 +471,23 @@
           (expect (= "pondering" (:thinking chunk)))))))
 
 (defdescribe
+  activity-event-chunk-test
+  ;; A coarse `activity` wire event (provider wait, response parse, nested
+  ;; shell/tool call) projects back to the phase the live spinner reads, so an
+  ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
+  (let [g->c @#'chat/gateway-event->chunk]
+    (it "a nested tool activity projects to :tool-start naming the op"
+        (expect (= {:phase :tool-start :iteration 2 :tool-event {:op "shell_run"}}
+                   (g->c {:type "activity" :activity "tool" :op "shell_run" :iteration 2}))))
+    (it "a shell-run activity projects to :shell-run with its command"
+        (expect (= {:phase :shell-run :iteration 1 :cmd "./verify.sh"}
+                   (g->c
+                     {:type "activity" :activity "shell-run" :cmd "./verify.sh" :iteration 1}))))
+    (it "a provider-call activity projects to :provider-call"
+        (expect (= {:phase :provider-call :iteration 1}
+                   (g->c {:type "activity" :activity "provider-call" :iteration 1}))))))
+
+(defdescribe
   restore-block-record-test
   ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
   ;; — used to be TWO hand-listed projections, so a display field either forgot

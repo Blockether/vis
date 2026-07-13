@@ -67,6 +67,26 @@
         (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe
+  activity-wire-event-test
+  "Coarse live-progress phases (provider wait, response parse, nested shell/tool
+   call) ship as an EPHEMERAL `activity` event (store? false) so a long call
+   never leaves the bubble frozen; nothing persists into the durable trace."
+  (it "a nested tool-start ships an ephemeral activity event naming the op"
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :tool-start :iteration 2 :tool-event {:op :shell_run}})]
+        (expect (= "activity" type))
+        (expect (false? store?))
+        (expect (= {:activity "tool" :iteration 2 :op "shell_run"} payload))))
+  (it "provider-call and shell-run project to ephemeral activity events"
+      (expect (= ["activity" false {:activity "provider-call" :iteration 1}]
+                 (#'state/chunk->event {:phase :provider-call :iteration 1})))
+      (expect (= ["activity" false {:activity "shell-run" :iteration 1 :cmd "./verify.sh"}]
+                 (#'state/chunk->event {:phase :shell-run :iteration 1 :cmd "./verify.sh"}))))
+  (it "response-parse :done does NOT emit an activity event (the parse finished)"
+      (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
+        (expect (not= "activity" type)))))
+
+(defdescribe
   form-event-iteration-wire-test
   ;; THE "live shows reasoning but no code" bug: every streaming chunk carries
   ;; its iteration POSITION under `:iteration`, and that MUST ride the wire

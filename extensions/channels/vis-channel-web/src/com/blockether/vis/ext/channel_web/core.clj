@@ -1654,7 +1654,10 @@
   "First line of a shell command / op name, trimmed and length-capped, for the
    live ticker label."
   [s n]
-  (let [s (-> (str s) (str/split #"\n") first str/trim)]
+  (let [s (-> (str s)
+              (str/split #"\n")
+              first
+              str/trim)]
     (if (> (count s) (long n)) (str (subs s 0 (dec (long n))) "…") s)))
 
 (defn- activity-label
@@ -1663,11 +1666,21 @@
   [{:keys [activity cmd op]}]
   (let [what (activity-one-line (or cmd op "") 80)]
     (case (str activity)
-      "provider-call"  "Vis is calling the provider…"
-      "response-parse" "Vis is parsing the model response…"
-      "shell-run"      (str "Vis is running: " (if (str/blank? what) "shell" what))
-      "shell-bg"       (str "Vis is starting: " (if (str/blank? what) "shell" what))
-      "tool"           (str "Vis is running: " (if (str/blank? what) "tool" what))
+      "provider-call"
+      "Vis is calling the provider…"
+
+      "response-parse"
+      "Vis is parsing the model response…"
+
+      "shell-run"
+      (str "Vis is running: " (if (str/blank? what) "shell" what))
+
+      "shell-bg"
+      (str "Vis is starting: " (if (str/blank? what) "shell" what))
+
+      "tool"
+      (str "Vis is running: " (if (str/blank? what) "tool" what))
+
       "Vis is working…")))
 
 (defn- activity-ticker
@@ -1675,8 +1688,7 @@
    doing right now, so a long provider/shell/tool call never leaves the bubble
    frozen. Reset to bare dots at the iteration boundary."
   [event]
-  (list [:div.dots [:span] [:span] [:span]]
-        [:div.thinking-activity (activity-label event)]))
+  (list [:div.dots [:span] [:span] [:span]] [:div.thinking-activity (activity-label event)]))
 
 (defn- event->frames
   "One gateway event -> seq of `{:event name :html fragment}` for the
