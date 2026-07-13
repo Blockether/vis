@@ -1295,6 +1295,7 @@ function Root() {
         title={gatewayProblem ? "Connect gateway" : "Settings"}
         onClose={() => setShowSettings(false)}
         dismissable={!gatewayProblem}
+        fullScreen
         flush
       >
         <SettingsPane
