@@ -16,6 +16,8 @@
 (def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 (def ^:private coalesce-forms vis/coalesce-forms)
+(def ^:private format-iteration-entry-entries @#'render/format-iteration-entry-entries)
+(def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
 (defn- native-form
   [tool summary render]
@@ -30,10 +32,18 @@
 
 (defn- render-forms
   [forms]
-  (format-iteration-entry (iteration/canonicalize {:position 0 :thinking nil :forms forms})
-                          80
-                          1
-                          {}))
+  ;; Mirror the REAL bubble-assembly seam: `format-iteration-entry-entries` then the
+  ;; `coalesce-bubble-blanks` pass every live/restored path runs (see `trace-render-entries`).
+  ;; That pass folds the seam between two adjacent native cards — the earlier card's trailing
+  ;; pad + the next card's leading breathe — into ONE shared band row. Asserting on the raw
+  ;; pre-coalesce lines would over-count the gap by one, so run the seam here too.
+  (->> (apply format-iteration-entry-entries
+         (iteration/canonicalize {:position 0 :thinking nil :forms forms})
+         80
+         1
+         [{}])
+       coalesce-bubble-blanks
+       (mapv :line)))
 
 (defdescribe native-card-flush-spacing-test
              ;; Two adjacent code-less native op-cards (cat/rg/ls/…) must stack FLUSH — no
@@ -52,8 +62,9 @@
                                      lines)]
 
                    (expect (= 2 (count head-idxs)))
-                   ;; adjacent — index delta 1 means NO row (blank or otherwise) between them
-                   (expect (= 3 (- (second head-idxs) (first head-idxs))))))
+                   ;; delta 2 == exactly ONE band row between the two headlines (the shared
+                   ;; result-bg breathe), i.e. flush — NOT the pre-coalesce two blanks.
+                   (expect (= 2 (- (second head-idxs) (first head-idxs))))))
              (it "a summary-only native card followed by one WITH a body still stacks flush"
                  (let [lines
                        (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
@@ -67,7 +78,7 @@
                                      lines)]
 
                    (expect (= 2 (count head-idxs)))
-                   (expect (= 3 (- (second head-idxs) (first head-idxs)))))))
+                   (expect (= 2 (- (second head-idxs) (first head-idxs)))))))
 
 (defdescribe
   coalesce-forms-test
@@ -930,6 +941,18 @@
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "git clone"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
+  (it "labels a nested tool call in the spinner while the block runs"
+      ;; A shell_run (or any native tool) INSIDE a python_execution block streams
+      ;; a :tool-call activity naming the op, so the bubble reads
+      ;; "Vis is running: <op>" instead of freezing for the whole call.
+      (let [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
+                                                                   :activity :tool-call
+                                                                   :tool/op "shell_run"}]}
+                                                    80
+                                                    {:show-thinking true :show-iterations true}
+                                                    {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (str/includes? body "Vis is running:"))
+        (expect (str/includes? body "shell_run"))))
   (it "live progress previews huge thinking with the viewport-driven truncation"
       ;; The single-iteration truncation summary only fires when a
       ;; viewport budget is supplied (the renderer can't decide to
