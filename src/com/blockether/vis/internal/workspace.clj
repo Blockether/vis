@@ -294,10 +294,27 @@
   ([] (isolated-workspaces-supported? (trunk-root)))
   ([root] (supports? root (draft-store-root root) draft-required-capabilities)))
 
+(def
+  ^{:dynamic true
+    :doc
+    "Parent dir for every trunk's draft store. `nil` (production default)
+             resolves to the `vis.drafts.dir` system property, else
+             `~/.vis/drafts`. Tests point it at a throwaway dir (the `:test` alias
+             sets `-Dvis.drafts.dir=target/vis-drafts-test`) so the suite never
+             litters the real ~/.vis."}
+  *drafts-home*
+  nil)
+
+(defn- drafts-home
+  ^File []
+  (io/file (or *drafts-home*
+               (System/getProperty "vis.drafts.dir")
+               (io/file (System/getProperty "user.home") ".vis" "drafts"))))
+
 (defn- draft-store-root
   "Backend-neutral parent storage dir for a trunk's derived workspaces."
   ^File [trunk]
-  (io/file (System/getProperty "user.home") ".vis" "drafts" (.getName (io/file trunk))))
+  (io/file (drafts-home) (.getName (io/file trunk))))
 
 (def ^:private copy-opts
   ^"[Ljava.nio.file.CopyOption;"
