@@ -4498,6 +4498,9 @@
         activity
         (:activity last-iteration)
 
+        tool-op
+        (:tool/op last-iteration)
+
         errored?
         (some? err)
 
@@ -4529,6 +4532,7 @@
           (= :shell-bg activity) (str "Vis is starting: " shell-label)
           (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
+          (= :tool-call activity) (str "Vis is running: " (or tool-op "tool") " (iter " n ")")
           thinking? (str "Vis is thinking (iter " n ")")
           executing? (str "Vis is running code (iter " n ")")
           :else (str "Vis is working (iter " n ")"))))

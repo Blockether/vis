@@ -492,6 +492,28 @@
         (iteration-attachments iteration-id)))
 
 
+(def ^:private activity-phases
+  "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
+   into the durable trace: a provider wait, response parsing, and shell/tool
+   calls (incl. a nested `shell_run` inside python_execution) that would
+   otherwise leave the bubble frozen for the whole call."
+  #{:provider-call :response-parse :shell-run :shell-bg :tool-start})
+
+(defn- activity-chunk->event
+  "Ephemeral `activity` wire event `[type store? payload]` for a coarse-progress
+   phase, or nil. store? is false: channels paint a spinner label; nothing
+   persists. `:response-parse :done` clears (emits nil) — the parse finished."
+  [{:keys [phase cmd iteration] :as chunk}]
+  (when (and (activity-phases phase)
+             (not (and (= phase :response-parse) (= :done (:status chunk)))))
+    (let [op       (some-> (:op (:tool-event chunk)) name)
+          activity (if (= phase :tool-start) "tool" (name phase))]
+      ["activity" false
+       (cond-> {:activity activity}
+         (some? iteration) (assoc :iteration iteration)
+         (some? cmd)       (assoc :cmd (str cmd))
+         (some? op)        (assoc :op op))])))
+
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple, or nil for model text phases that
@@ -504,6 +526,8 @@
   ;; chunk (it skips chunks with no iteration) — which is how `block.started` /
   ;; `block.output` once lost their forms.
   (when-not (non-streaming-text-phases phase)
+    (or
+     (activity-chunk->event chunk)
     (let [payload (case phase
                     :form-start
                     (merge
@@ -574,7 +598,7 @@
          (str "chunk." (name phase))) true
        (cond-> payload
          (some? iteration)
-         (assoc :iteration iteration))])))
+         (assoc :iteration iteration))]))))
 
 ;; =============================================================================
 ;; Context

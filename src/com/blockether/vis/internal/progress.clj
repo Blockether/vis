@@ -313,6 +313,18 @@
       :activity :shell-bg
       :shell/cmd (:cmd chunk))
 
+    :tool-start
+    ;; A native tool (shell_run/shell_bg/cat/rg/…) began executing INSIDE a
+    ;; python_execution block. `:form-start` cleared `:activity` to nil, so a
+    ;; long-running nested tool (e.g. a multi-minute shell_run) would otherwise
+    ;; leave the bubble frozen with no sign anything is happening. Surface it as
+    ;; coarse `:tool-call` activity naming the op, so the spinner reads
+    ;; "Vis is running: <op>" with a live wall-clock. Reset by the next
+    ;; :form-start/:form-result (`:activity nil`).
+    (assoc entry
+      :activity :tool-call
+      :tool/op (some-> (:op (:tool-event chunk)) name))
+
     :response-parse
     (if (= :done (:status chunk))
       (-> entry
