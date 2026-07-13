@@ -52,6 +52,7 @@ export const DialogModal = ({
   onClose,
   tone = "amber",
   flush = false,
+  fullScreen = false,
   dismissable = true,
   children,
 }: {
@@ -61,6 +62,8 @@ export const DialogModal = ({
   tone?: "amber" | "error";
   /* flush = edge-to-edge body (the Settings pane brings its own chrome). */
   flush?: boolean;
+  /* fullScreen = edge-to-edge sheet for dense surfaces like Settings. */
+  fullScreen?: boolean;
   /* false keeps the sheet pinned until the caller clears the condition. */
   dismissable?: boolean;
   children: React.ReactNode;
@@ -72,11 +75,15 @@ export const DialogModal = ({
       style={styles.overlay}
     >
       <Pressable
-        style={styles.scrim}
+        style={[styles.scrim, fullScreen && styles.scrimFull]}
         onPress={dismissable ? onClose : undefined}
       >
         <Pressable
-          style={[styles.dialog, tone === "error" && styles.dialogError]}
+          style={[
+            styles.dialog,
+            fullScreen && styles.dialogFull,
+            tone === "error" && styles.dialogError,
+          ]}
           onPress={() => {}}
         >
           <View
@@ -95,7 +102,13 @@ export const DialogModal = ({
               </Pressable>
             ) : null}
           </View>
-          <View style={[styles.body, flush && styles.bodyFlush]}>
+          <View
+            style={[
+              styles.body,
+              flush && styles.bodyFlush,
+              fullScreen && styles.bodyFull,
+            ]}
+          >
             {children}
           </View>
         </Pressable>
@@ -160,6 +173,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 18,
   },
+  scrimFull: {
+    padding: 0,
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+  },
   dialog: {
     alignSelf: "stretch",
     overflow: "hidden",
@@ -170,6 +188,13 @@ const styles = StyleSheet.create({
     shadowRadius: 28,
     shadowOffset: { width: 0, height: 18 },
     elevation: 12,
+  },
+  dialogFull: {
+    flex: 1,
+    width: "100%",
+    borderRadius: 0,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   dialogError: { backgroundColor: c.errBg },
   titleBar: {
@@ -201,6 +226,7 @@ const styles = StyleSheet.create({
   },
   body: { padding: 14, gap: 10 },
   bodyFlush: { padding: 0, gap: 0 },
+  bodyFull: { flex: 1, minHeight: 0 },
   action: {
     minHeight: 36,
     borderRadius: 12,

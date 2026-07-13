@@ -83,8 +83,8 @@ export const SettingsPane = ({
   /* Active session — enables the canonical /v1/sessions/:sid/workspace section. */
   sessionId?: string | null;
 }) => {
-  const { height: winH, width: winW } = useWindowDimensions();
-  const isWide = winW >= 560;
+  const { width: winW } = useWindowDimensions();
+  const isWide = winW >= 700;
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [stale, setStale] = useState(false);
   const [query, setQuery] = useState("");
@@ -228,7 +228,7 @@ export const SettingsPane = ({
   }, [connectionProblem]);
 
   return (
-    <View style={[st.pane, { height: Math.min(680, Math.round(winH * 0.82)) }]}>
+    <View style={st.pane}>
       {/* ── full-width live search — the web's .settings-search ── */}
       <View style={st.search}>
         <Feather name="search" size={14} color={c.dim} />
@@ -242,7 +242,8 @@ export const SettingsPane = ({
           style={st.searchInput}
         />
         <Text style={st.count}>
-          {count + (gatewayVisible ? 4 : 0)} settings
+          {count + (gatewayVisible ? 4 : 0) + (workspaceVisible ? 1 : 0)}{" "}
+          settings
         </Text>
       </View>
 
@@ -311,15 +312,23 @@ export const SettingsPane = ({
           style={st.groups}
           contentContainerStyle={st.groupsBody}
           alwaysBounceVertical
-          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="always"
+          directionalLockEnabled
+          scrollEventThrottle={16}
           nestedScrollEnabled
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator
         >
           {stale ? (
-            <Text style={st.staleNote}>
-              This gateway was started before the /v1/settings API existed —
-              restart the vis gateway to manage engine toggles here.
-            </Text>
+            <View style={st.noticeCard}>
+              <Text style={st.noticeTitle}>Gateway settings unavailable</Text>
+              <Text style={st.noticeCopy}>
+                This gateway is offline or was started before the /v1/settings
+                API existed. The connection controls stay available below;
+                restart or reconnect the gateway to load providers, model,
+                engine, and channel settings.
+              </Text>
+            </View>
           ) : null}
           {/* ── app-local Gateway group — first when connection is broken ── */}
           {gatewayVisible ? (
@@ -510,7 +519,12 @@ export const SettingsPane = ({
 };
 
 const st = StyleSheet.create({
-  pane: { alignSelf: "stretch", backgroundColor: "#F2F2F7" },
+  pane: {
+    flex: 1,
+    minHeight: 0,
+    alignSelf: "stretch",
+    backgroundColor: "#F2F2F7",
+  },
   /* .settings-search */
   search: {
     flexDirection: "row",
@@ -550,7 +564,7 @@ const st = StyleSheet.create({
   tocLabelActive: { color: c.ink, fontWeight: "700" },
   /* .settings-groups */
   groups: { flex: 1, minWidth: 0 },
-  groupsBody: { paddingHorizontal: 18, paddingBottom: 24 },
+  groupsBody: { paddingHorizontal: 18, paddingBottom: 44, flexGrow: 1 },
   groupTitle: {
     fontSize: 13,
     fontWeight: "700",
@@ -613,6 +627,16 @@ const st = StyleSheet.create({
   },
   cycleLabel: { fontFamily: mono, fontSize: 11, color: c.chipInk },
   staleNote: { fontSize: 11, color: c.dim, marginTop: 10, lineHeight: 15 },
+  noticeCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(60,60,67,0.16)",
+  },
+  noticeTitle: { fontSize: 14, fontWeight: "700", color: c.ink },
+  noticeCopy: { fontSize: 12.5, color: c.dim, lineHeight: 18, marginTop: 5 },
   problemBox: {
     flexDirection: "row",
     gap: 11,
