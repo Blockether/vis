@@ -62,7 +62,7 @@ export const DialogModal = ({
   tone?: "amber" | "error";
   /* flush = edge-to-edge body (the Settings pane brings its own chrome). */
   flush?: boolean;
-  /* fullScreen = edge-to-edge sheet for dense surfaces like Settings. */
+  /* fullScreen = large iOS sheet for dense surfaces like Settings. */
   fullScreen?: boolean;
   /* false keeps the sheet pinned until the caller clears the condition. */
   dismissable?: boolean;
@@ -174,9 +174,11 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   scrimFull: {
-    padding: 0,
+    paddingHorizontal: 10,
+    paddingTop: 42,
+    paddingBottom: 14,
     alignItems: "stretch",
-    justifyContent: "flex-start",
+    justifyContent: "center",
   },
   dialog: {
     alignSelf: "stretch",
@@ -190,11 +192,12 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   dialogFull: {
-    flex: 1,
-    width: "100%",
-    borderRadius: 0,
-    shadowOpacity: 0,
-    elevation: 0,
+    alignSelf: "stretch",
+    height: "84%",
+    maxHeight: "84%",
+    borderRadius: 26,
+    shadowOpacity: 0.16,
+    elevation: 10,
   },
   dialogError: { backgroundColor: c.errBg },
   titleBar: {
