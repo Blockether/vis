@@ -1,2 +1,38 @@
-# Expo prebuild / native build output
+# OSX
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native builds / prebuild output
 build/
+android/build/
+android/.gradle/
+android/app/build/
+ios/build/
+ios/Pods/
+
+# Precompiled module / compiler artifacts (Xcode)
+*.pcm
+*.dia
+*.scan
+
+# Metro
+.metro-health-check*
+
+# Debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Local env
+.env*.local
+
+# Typescript
+*.tsbuildinfo
