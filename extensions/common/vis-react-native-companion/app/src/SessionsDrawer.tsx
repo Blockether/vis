@@ -11,54 +11,54 @@ import {
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 
-import { GatewayGroup, SessionSoul } from "./VisClient";
+import { GatewayProject, SessionSoul } from "./VisClient";
 import { c, mono, projectColor, relTime, shortId, tint } from "./theme";
 import { ActionBtn, DialogModal } from "./ui";
 
 const PANEL_W = 316;
 
 /* The drawer renders a mixed list: project headers + their sessions + an
-   "ungrouped" bucket. A discriminated union keeps the FlatList virtualized
+   "no project" bucket. A discriminated union keeps the FlatList virtualized
    while carrying both row kinds. */
 type Row =
-  | { kind: "group"; group: GatewayGroup; count: number; collapsed: boolean }
-  | { kind: "ungrouped-label" }
+  | { kind: "project"; project: GatewayProject; count: number; collapsed: boolean }
+  | { kind: "no-project-label" }
   | { kind: "session"; session: SessionSoul };
 
 const recency = (s: SessionSoul): number =>
   s.last_active_at ?? s.updated_at ?? s.created_at ?? 0;
 
 /* Slide-in sessions panel — the web channel's sidebar, warm-paper style:
-   sessions organized into projects (session groups), each with its own accent
+   sessions organized into projects (projects), each with its own accent
    color, status dot, title, channel tag + age, rename / delete / move per row. */
 export const SessionsDrawer = ({
   visible,
   sessions,
-  groups,
+  projects,
   activeId,
   onClose,
   onSelect,
   onCreate,
   onDelete,
   onRename,
-  onCreateGroup,
-  onRenameGroup,
-  onDeleteGroup,
+  onCreateProject,
+  onRenameProject,
+  onDeleteProject,
   onAssign
 }: {
   visible: boolean;
   sessions: SessionSoul[];
-  groups: GatewayGroup[];
+  projects: GatewayProject[];
   activeId: string | null;
   onClose: () => void;
   onSelect: (session: SessionSoul) => void;
   onCreate: () => void;
   onDelete: (session: SessionSoul) => void;
   onRename: (session: SessionSoul, title: string) => void;
-  onCreateGroup: (name: string) => void;
-  onRenameGroup: (group: GatewayGroup, name: string) => void;
-  onDeleteGroup: (group: GatewayGroup) => void;
-  onAssign: (session: SessionSoul, groupId: string | null) => void;
+  onCreateProject: (name: string) => void;
+  onRenameProject: (project: GatewayProject, name: string) => void;
+  onDeleteProject: (project: GatewayProject) => void;
+  onAssign: (session: SessionSoul, projectId: string | null) => void;
 }) => {
   const slide = useRef(new Animated.Value(-PANEL_W)).current;
   const [confirmDelete, setConfirmDelete] = useState<SessionSoul | null>(null);
@@ -67,9 +67,9 @@ export const SessionsDrawer = ({
   const [moving, setMoving] = useState<SessionSoul | null>(null);
   const [newProject, setNewProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
-  const [editGroup, setEditGroup] = useState<GatewayGroup | null>(null);
-  const [groupDraft, setGroupDraft] = useState("");
-  const [confirmGroupDelete, setConfirmGroupDelete] = useState<GatewayGroup | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [editProject, setEditProject] = useState<GatewayProject | null>(null);
+  const [confirmProjectDelete, setConfirmProjectDelete] = useState<GatewayProject | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -82,42 +82,42 @@ export const SessionsDrawer = ({
 
   /* Flatten projects + sessions into one virtualized row list. Projects come
      first (by position, then name), each followed by its sessions (newest
-     first); ungrouped sessions land in a trailing bucket. */
+     first); projectless sessions land in a trailing bucket. */
   const rows = useMemo<Row[]>(() => {
-    const byGroup = new Map<string, SessionSoul[]>();
-    const ungrouped: SessionSoul[] = [];
+    const byProject = new Map<string, SessionSoul[]>();
+    const projectless: SessionSoul[] = [];
     for (const s of sessions) {
-      if (s.group_id) {
-        const list = byGroup.get(s.group_id) ?? [];
+      if (s.project_id) {
+        const list = byProject.get(s.project_id) ?? [];
         list.push(s);
-        byGroup.set(s.group_id, list);
+        byProject.set(s.project_id, list);
       } else {
-        ungrouped.push(s);
+        projectless.push(s);
       }
     }
     const byRecency = (a: SessionSoul, b: SessionSoul) => recency(b) - recency(a);
-    ungrouped.sort(byRecency);
+    projectless.sort(byRecency);
 
-    const sortedGroups = [...groups].sort(
+    const sortedProjects = [...projects].sort(
       (a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name)
     );
 
     const out: Row[] = [];
-    for (const g of sortedGroups) {
-      const members = (byGroup.get(g.id) ?? []).sort(byRecency);
+    for (const g of sortedProjects) {
+      const members = (byProject.get(g.id) ?? []).sort(byRecency);
       const isCollapsed = collapsed[g.id] ?? false;
-      out.push({ kind: "group", group: g, count: members.length, collapsed: isCollapsed });
+      out.push({ kind: "project", project: g, count: members.length, collapsed: isCollapsed });
       if (!isCollapsed) for (const s of members) out.push({ kind: "session", session: s });
     }
-    /* Sessions whose group_id points at a project the list doesn't know about
-       (e.g. a channel-scoped one filtered out) still surface as ungrouped. */
-    for (const [gid, members] of byGroup) {
-      if (!groups.some((g) => g.id === gid)) ungrouped.push(...members);
+    /* Sessions whose project_id points at a project the list doesn't know about
+       (e.g. a channel-scoped one filtered out) still surface as projectless. */
+    for (const [gid, members] of byProject) {
+      if (!projects.some((g) => g.id === gid)) projectless.push(...members);
     }
-    if (ungrouped.length && sortedGroups.length) out.push({ kind: "ungrouped-label" });
-    for (const s of ungrouped.sort(byRecency)) out.push({ kind: "session", session: s });
+    if (projectless.length && sortedProjects.length) out.push({ kind: "no-project-label" });
+    for (const s of projectless.sort(byRecency)) out.push({ kind: "session", session: s });
     return out;
-  }, [sessions, groups, collapsed]);
+  }, [sessions, projects, collapsed]);
 
   const toggle = (gid: string) => setCollapsed((m) => ({ ...m, [gid]: !(m[gid] ?? false) }));
 
@@ -170,16 +170,16 @@ export const SessionsDrawer = ({
   };
 
   const renderRow = (item: Row) => {
-    if (item.kind === "ungrouped-label") {
+    if (item.kind === "no-project-label") {
       return (
-        <View style={styles.ungroupedHead}>
+        <View style={styles.noProjectHead}>
           <Feather name="inbox" size={13} color={c.dim} />
-          <Text style={styles.ungroupedName}>ungrouped</Text>
+          <Text style={styles.noProjectName}>no project</Text>
         </View>
       );
     }
-    if (item.kind === "group") {
-      const g = item.group;
+    if (item.kind === "project") {
+      const g = item.project;
       const accent = projectColor(g.id, g.color);
       return (
         <View
@@ -204,24 +204,24 @@ export const SessionsDrawer = ({
           <Pressable
             hitSlop={6}
             onPress={() => {
-              setEditGroup(g);
-              setGroupDraft(g.name);
+              setEditProject(g);
+              setEditDraft(g.name);
             }}
             style={styles.rowIcon}
           >
             <Feather name="edit-2" size={12} color={c.dim} />
           </Pressable>
-          <Pressable hitSlop={6} onPress={() => setConfirmGroupDelete(g)} style={styles.rowIcon}>
+          <Pressable hitSlop={6} onPress={() => setConfirmProjectDelete(g)} style={styles.rowIcon}>
             <Feather name="trash-2" size={12} color={c.dim} />
           </Pressable>
         </View>
       );
     }
     /* a session row — indented + accent-tinted when it sits under a project */
-    const parent = item.session.group_id;
-    const inProject = groups.length > 0 && !!parent;
+    const parent = item.session.project_id;
+    const inProject = projects.length > 0 && !!parent;
     const accent = inProject
-      ? projectColor(parent, groups.find((g) => g.id === parent)?.color)
+      ? projectColor(parent, projects.find((g) => g.id === parent)?.color)
       : undefined;
     return renderSession(item.session, inProject, accent);
   };
@@ -247,8 +247,8 @@ export const SessionsDrawer = ({
           <FlatList
             data={rows}
             keyExtractor={(item, i) =>
-              item.kind === "group"
-                ? `g:${item.group.id}`
+              item.kind === "project"
+                ? `g:${item.project.id}`
                 : item.kind === "session"
                   ? `s:${item.session.id}`
                   : `label:${i}`
@@ -332,7 +332,7 @@ export const SessionsDrawer = ({
       {/* move session to a project */}
       <DialogModal visible={moving != null} title="Move to project" onClose={() => setMoving(null)}>
         <Pressable
-          style={[styles.pickRow, !moving?.group_id && styles.pickRowActive]}
+          style={[styles.pickRow, !moving?.project_id && styles.pickRowActive]}
           onPress={() => {
             if (moving) onAssign(moving, null);
             setMoving(null);
@@ -340,10 +340,10 @@ export const SessionsDrawer = ({
         >
           <Feather name="inbox" size={14} color={c.ink} />
           <Text style={styles.pickLabel}>No project</Text>
-          {!moving?.group_id && <Feather name="check" size={14} color={c.roleVis} />}
+          {!moving?.project_id && <Feather name="check" size={14} color={c.roleVis} />}
         </Pressable>
-        {groups.map((g) => {
-          const on = moving?.group_id === g.id;
+        {projects.map((g) => {
+          const on = moving?.project_id === g.id;
           const accent = projectColor(g.id, g.color);
           return (
             <Pressable
@@ -362,7 +362,7 @@ export const SessionsDrawer = ({
             </Pressable>
           );
         })}
-        {groups.length === 0 && (
+        {projects.length === 0 && (
           <Text style={styles.empty}>no projects yet — create one from the drawer footer</Text>
         )}
       </DialogModal>
@@ -382,17 +382,17 @@ export const SessionsDrawer = ({
           tone="amber"
           disabled={!projectDraft.trim()}
           onPress={() => {
-            if (projectDraft.trim()) onCreateGroup(projectDraft.trim());
+            if (projectDraft.trim()) onCreateProject(projectDraft.trim());
             setNewProject(false);
           }}
         />
       </DialogModal>
 
       {/* rename project */}
-      <DialogModal visible={editGroup != null} title="Rename project" onClose={() => setEditGroup(null)}>
+      <DialogModal visible={editProject != null} title="Rename project" onClose={() => setEditProject(null)}>
         <TextInput
-          value={groupDraft}
-          onChangeText={setGroupDraft}
+          value={editDraft}
+          onChangeText={setEditDraft}
           placeholder="project name"
           placeholderTextColor={c.dim}
           style={styles.renameInput}
@@ -401,36 +401,35 @@ export const SessionsDrawer = ({
         <ActionBtn
           label="Rename"
           tone="amber"
-          disabled={!groupDraft.trim()}
+          disabled={!editDraft.trim()}
           onPress={() => {
-            if (editGroup && groupDraft.trim()) onRenameGroup(editGroup, groupDraft.trim());
-            setEditGroup(null);
+            if (editProject && editDraft.trim()) onRenameProject(editProject, editDraft.trim());
+            setEditProject(null);
           }}
         />
       </DialogModal>
 
       {/* delete project */}
       <DialogModal
-        visible={confirmGroupDelete != null}
+        visible={confirmProjectDelete != null}
         title="Delete project"
         tone="error"
-        onClose={() => setConfirmGroupDelete(null)}
+        onClose={() => setConfirmProjectDelete(null)}
       >
         <Text style={styles.confirmText}>
-          Delete project {confirmGroupDelete?.name}? Its sessions are kept — they just scatter back to
-          ungrouped.
+          Delete project {confirmProjectDelete?.name}? Its sessions are kept — they just scatter back to no project.
         </Text>
         <View style={styles.confirmRow}>
           <View style={{ flex: 1 }}>
-            <ActionBtn label="Cancel" tone="ghost" onPress={() => setConfirmGroupDelete(null)} />
+            <ActionBtn label="Cancel" tone="ghost" onPress={() => setConfirmProjectDelete(null)} />
           </View>
           <View style={{ flex: 1 }}>
             <ActionBtn
               label="Delete"
               tone="danger"
               onPress={() => {
-                if (confirmGroupDelete) onDeleteGroup(confirmGroupDelete);
-                setConfirmGroupDelete(null);
+                if (confirmProjectDelete) onDeleteProject(confirmProjectDelete);
+                setConfirmProjectDelete(null);
               }}
             />
           </View>
@@ -498,7 +497,7 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
   projectCountText: { fontFamily: mono, fontSize: 10.5, fontWeight: "700" },
-  ungroupedHead: {
+  noProjectHead: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -506,7 +505,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginTop: 4
   },
-  ungroupedName: {
+  noProjectName: {
     fontFamily: mono,
     fontSize: 11,
     fontWeight: "700",

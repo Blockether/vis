@@ -12,7 +12,7 @@ import { Feather } from "@expo/vector-icons";
 
 import { c, mono } from "./theme";
 import { ActionBtn } from "./ui";
-import type { SettingsGroup, ToggleRow, VisGatewayClient } from "./VisClient";
+import type { SettingsGroup, ToggleRow, VisGatewayClient, WorkspaceInfo } from "./VisClient";
 
 /* ── the web channel's Settings dialog, native ──────────────────────
    VS Code-style: full-width live search + count, a left category rail,
@@ -22,6 +22,7 @@ import type { SettingsGroup, ToggleRow, VisGatewayClient } from "./VisClient";
    fields ride along as the last group. */
 
 const GATEWAY_GROUP = "gateway";
+const WORKSPACE_GROUP = "workspace";
 
 /* The web's .switch/.knob — 40×22 pill, amber when on, sliding knob. */
 const PillSwitch = ({ on, onPress }: { on: boolean; onPress: () => void }) => (
@@ -45,7 +46,8 @@ export const SettingsPane = ({
   onToken,
   onReconnect,
   notify,
-  onNotify
+  onNotify,
+  sessionId
 }: {
   client: VisGatewayClient;
   gatewayUrl: string;
@@ -56,6 +58,8 @@ export const SettingsPane = ({
   onReconnect: () => void;
   notify: boolean;
   onNotify: (value: boolean) => void;
+  /* Active session — enables the canonical /v1/sessions/:sid/workspace section. */
+  sessionId?: string | null;
 }) => {
   const { height: winH } = useWindowDimensions();
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
@@ -64,6 +68,61 @@ export const SettingsPane = ({
   const [active, setActive] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const sectionY = useRef<Record<string, number>>({});
+
+  /* ── workspace + filesystem roots (canonical /v1/sessions/:sid/workspace) —
+     the SAME state + mutations the web footer and TUI directory picker use. ── */
+  const [ws, setWs] = useState<WorkspaceInfo | null>(null);
+  const [wsBusy, setWsBusy] = useState(false);
+  const [rootDraft, setRootDraft] = useState("");
+  const [wsErr, setWsErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setWs(null);
+      return;
+    }
+    let alive = true;
+    client
+      .sessionWorkspace(sessionId)
+      .then((w) => {
+        if (alive) setWs(w);
+      })
+      .catch(() => {
+        /* older gateway predates /v1/workspace — leave null (shows the note) */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [client, sessionId]);
+
+  const addRoot = useCallback(() => {
+    const path = rootDraft.trim();
+    if (!path || !sessionId) return;
+    setWsBusy(true);
+    setWsErr(null);
+    void client
+      .addRoot(sessionId, path)
+      .then((w) => {
+        setWs(w);
+        setRootDraft("");
+      })
+      .catch((e) => setWsErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setWsBusy(false));
+  }, [client, sessionId, rootDraft]);
+
+  const removeRoot = useCallback(
+    (path: string) => {
+      if (!sessionId) return;
+      setWsBusy(true);
+      setWsErr(null);
+      void client
+        .removeRoot(sessionId, path)
+        .then((w) => setWs(w))
+        .catch((e) => setWsErr(e instanceof Error ? e.message : String(e)))
+        .finally(() => setWsBusy(false));
+    },
+    [client, sessionId]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -113,6 +172,8 @@ export const SettingsPane = ({
   const count = visible.reduce((n, g) => n + g.toggles.length, 0);
   const gatewayVisible =
     q === "" || "gateway url bearer token reconnect notifications".includes(q);
+  const workspaceVisible =
+    !!sessionId && (q === "" || "workspace roots filesystem".includes(q));
 
   const jumpTo = (id: string) => {
     setActive(id);
@@ -166,6 +227,19 @@ export const SettingsPane = ({
                 style={[st.tocLabel, active === GATEWAY_GROUP && st.tocLabelActive]}
               >
                 Gateway
+              </Text>
+            </Pressable>
+          ) : null}
+          {workspaceVisible ? (
+            <Pressable
+              onPress={() => jumpTo(WORKSPACE_GROUP)}
+              style={[st.tocItem, active === WORKSPACE_GROUP && st.tocItemActive]}
+            >
+              <Text
+                numberOfLines={1}
+                style={[st.tocLabel, active === WORKSPACE_GROUP && st.tocLabelActive]}
+              >
+                Workspace
               </Text>
             </Pressable>
           ) : null}
@@ -247,6 +321,69 @@ export const SettingsPane = ({
                   onPress={onReconnect}
                 />
               </View>
+            </View>
+          ) : null}
+          {/* ── workspace + filesystem roots (canonical /v1/sessions/:sid/workspace) ── */}
+          {workspaceVisible ? (
+            <View
+              onLayout={(e) => {
+                sectionY.current[WORKSPACE_GROUP] = e.nativeEvent.layout.y;
+              }}
+            >
+              <Text style={st.groupTitle}>Workspace</Text>
+              {ws ? (
+                <>
+                  <View style={st.row}>
+                    <View style={st.rowText}>
+                      <Text style={st.rowLabel}>{ws.label ?? "root"}</Text>
+                      <Text style={st.rowDesc} numberOfLines={1}>
+                        {ws.root ?? ws.repo_root ?? "\u2014"}
+                      </Text>
+                    </View>
+                  </View>
+                  {(ws.filesystem_roots ?? []).map((r, i) => (
+                    <View key={r.trunk ?? String(i)} style={st.row}>
+                      <View style={st.rowText}>
+                        <Text style={st.rowDesc} numberOfLines={1}>
+                          {r.trunk ?? "\u2014"}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => r.trunk && removeRoot(r.trunk)}
+                        hitSlop={6}
+                        disabled={wsBusy}
+                        style={st.cycle}
+                      >
+                        <Feather name="x" size={12} color={c.err} />
+                      </Pressable>
+                    </View>
+                  ))}
+                  <Text style={st.fieldLabel}>add filesystem root</Text>
+                  <View style={st.wsAdd}>
+                    <TextInput
+                      value={rootDraft}
+                      onChangeText={setRootDraft}
+                      placeholder="/absolute/path"
+                      placeholderTextColor={c.dim}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={[st.field, st.wsField]}
+                    />
+                    <ActionBtn
+                      label="Add"
+                      tone="amber"
+                      disabled={wsBusy || rootDraft.trim() === ""}
+                      onPress={addRoot}
+                    />
+                  </View>
+                  {wsErr ? <Text style={st.staleNote}>{wsErr}</Text> : null}
+                </>
+              ) : (
+                <Text style={st.staleNote}>
+                  This gateway does not expose the session workspace (older /v1) — restart the vis
+                  gateway to manage filesystem roots here.
+                </Text>
+              )}
             </View>
           ) : null}
         </ScrollView>
@@ -362,5 +499,7 @@ const st = StyleSheet.create({
     fontSize: 12,
     color: c.ink
   },
-  reconnect: { marginTop: 10 }
+  reconnect: { marginTop: 10 },
+  wsAdd: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
+  wsField: { flex: 1 }
 });

@@ -115,27 +115,27 @@ describe("request success paths", () => {
   });
 });
 
-describe("group endpoints", () => {
-  it("listGroups asks for the cross-channel view", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(200, { groups: [{ id: "g1", name: "vis-core" }] }));
-    await expect(client().listGroups()).resolves.toEqual([{ id: "g1", name: "vis-core" }]);
-    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/groups?channel=all");
+describe("project endpoints", () => {
+  it("listProjects asks for the cross-channel view", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, { projects: [{ id: "g1", name: "vis-core" }] }));
+    await expect(client().listProjects()).resolves.toEqual([{ id: "g1", name: "vis-core" }]);
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/projects?channel=all");
   });
 
-  it("assignGroup PATCHes the session with group_id", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(200, { id: "s1", group_id: "g1" }));
-    await client().assignGroup("s1", "g1");
+  it("assignProject PATCHes the session with project_id", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, { id: "s1", project_id: "g1" }));
+    await client().assignProject("s1", "g1");
     const [url, init] = mockFetch.mock.calls[0] as [string, { method: string; body: string }];
     expect(url).toBe("http://gw:7890/v1/sessions/s1");
     expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body)).toEqual({ group_id: "g1" });
+    expect(JSON.parse(init.body)).toEqual({ project_id: "g1" });
   });
 
-  it("assignGroup with null ungroups (group_id:null)", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(200, { id: "s1", group_id: null }));
-    await client().assignGroup("s1", null);
+  it("assignProject with null clears the project (project_id:null)", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, { id: "s1", project_id: null }));
+    await client().assignProject("s1", null);
     const init = mockFetch.mock.calls[0]![1] as { body: string };
-    expect(JSON.parse(init.body)).toEqual({ group_id: null });
+    expect(JSON.parse(init.body)).toEqual({ project_id: null });
   });
 });
 
@@ -158,6 +158,49 @@ describe("turnTrace", () => {
   it("propagates a 404 (older gateway without the trace route)", async () => {
     mockFetch.mockResolvedValue(jsonResponse(404, { error: { message: "no such route" } }, "Not Found"));
     await expect(client().turnTrace("s1", "t9")).rejects.toThrow("no such route");
+  });
+});
+
+describe("canonical gateway feature endpoints", () => {
+  it("loads the session context snapshot", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, { session_utilization: { saturation: 42 } }));
+    await expect(client().sessionContext("s1")).resolves.toEqual({
+      session_utilization: { saturation: 42 }
+    });
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/sessions/s1/context");
+  });
+
+  it("queries the shared @-file suggestion endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, [{ name: "src/app.clj" }]));
+    await expect(client().suggest("s1", "src/app")).resolves.toEqual([{ name: "src/app.clj" }]);
+    expect(mockFetch.mock.calls[0]![0]).toBe(
+      "http://gw:7890/v1/sessions/s1/suggest?kind=file&q=src%2Fapp"
+    );
+  });
+
+  it("manages workspace filesystem roots through the gateway", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(200, { workspace: { root: "/repo" } }));
+    await client().addRoot("s1", "/tmp/root");
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/sessions/s1/workspace/roots");
+    expect(JSON.parse((mockFetch.mock.calls[0]![1] as { body: string }).body)).toEqual({
+      path: "/tmp/root"
+    });
+
+    mockFetch.mockResolvedValue(jsonResponse(200, { workspace: { root: "/repo" } }));
+    await client().removeRoot("s1", "/tmp/root");
+    expect(mockFetch.mock.calls[1]![0]).toBe(
+      "http://gw:7890/v1/sessions/s1/workspace/roots?path=%2Ftmp%2Froot"
+    );
+    expect((mockFetch.mock.calls[1]![1] as { method: string }).method).toBe("DELETE");
+  });
+
+  it("loads provider status and limits for the model picker", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, { status: { configured: true } }));
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, { report: { status: "ok", message: "fresh" } }));
+    await expect(client().providerStatus("anthropic")).resolves.toEqual({ configured: true });
+    await expect(client().providerLimits("anthropic")).resolves.toEqual({ status: "ok", message: "fresh" });
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://gw:7890/v1/providers/anthropic/status");
+    expect(mockFetch.mock.calls[1]![0]).toBe("http://gw:7890/v1/providers/anthropic/limits");
   });
 });
 

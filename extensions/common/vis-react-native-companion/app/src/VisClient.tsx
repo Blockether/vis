@@ -9,17 +9,19 @@ export type SessionSoul = {
   updated_at?: number;
   /* epoch ms of the session's last activity — the wire's actual recency field */
   last_active_at?: number;
-  /* session-group (project) membership + owner (V6). group_id is null when the
-     session is ungrouped; group_name rides along so the drawer needs no join. */
-  group_id?: string | null;
-  group_name?: string | null;
+  /* project membership + owner. project_id is null when the session belongs to no
+     project; project_name rides along so the drawer needs no join. project_position
+     is the session's manual order within its project (movable). */
+  project_id?: string | null;
+  project_name?: string | null;
+  project_position?: number;
   owner_id?: string;
 };
 
-/* A session-group / project (GET /v1/groups). Sessions carry group_id; a group
+/* A PROJECT (GET /v1/projects). Sessions carry project_id; a project
    carries a live session_count. `channel` null ⇒ a cross-channel project visible
    in every channel's view. */
-export type GatewayGroup = {
+export type GatewayProject = {
   id: string;
   name: string;
   color?: string | null;
@@ -111,6 +113,8 @@ export type GatewayEvent = {
   /* turn.completed / turn.failed */
   status?: string;
   answer_md?: string;
+  /* context.updated — the session-view utilization the model reads (ctx fullness) */
+  utilization?: CtxUtilization;
 };
 
 /* The gateway tags every SSE frame with an `event: <type>` line (wire/sse-frame),
@@ -126,7 +130,8 @@ export const APP_EVENT_TYPES = [
   "iteration.completed",
   "iteration.error",
   "turn.completed",
-  "turn.failed"
+  "turn.failed",
+  "context.updated"
 ] as const;
 
 export type GatewayEventType = (typeof APP_EVENT_TYPES)[number];
@@ -164,12 +169,69 @@ export type VoiceModelState = {
   error?: string;
 };
 
+/* GET /v1/sessions/:sid/context — the read-only ctx mirror the model sees as its
+   bound `session` (state/context-snapshot). The full string-keyed session-view;
+   the companion reads `session_utilization` — the SAME {saturation,
+   headroom_tokens, last_request_tokens} the model reads and the desktop/TUI
+   context rail shows. */
+export type CtxUtilization = {
+  saturation?: number;
+  headroom_tokens?: number;
+  last_request_tokens?: number;
+};
+export type ContextSnapshot = {
+  session_utilization?: CtxUtilization;
+  [k: string]: unknown;
+};
+
+/* GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
+   service behind every composer @-picker; web + TUI render these SAME rows
+   ({:name :size :age :status}). */
+export type SuggestRow = {
+  name: string;
+  size?: number;
+  age?: string;
+  status?: string;
+};
+
+/* GET /v1/sessions/:sid/workspace — the same workspace state the web footer and
+   TUI directory picker read. `filesystem_roots` are the session's extra roots.
+   `draft?` keeps its `?` on the wire (wire-key munges only `-`->`_`). */
+export type FilesystemRoot = { trunk?: string; clone?: string; fork_ms?: number };
+export type WorkspaceInfo = {
+  id?: string;
+  "draft?"?: boolean;
+  root?: string;
+  repo_root?: string;
+  label?: string;
+  fork_ms?: number;
+  filesystem_roots?: FilesystemRoot[];
+};
+
+/* GET /v1/providers/:id/limits `report` — normalized RPM/TPM quota envelope
+   (provider-limits/provider-limits), the same report the TUI provider view shows.
+   Shape varies per provider; only the stable envelope fields are typed. */
+export type ProviderLimitsReport = {
+  provider?: string;
+  status?: string;
+  message?: string;
+  static?: Record<string, unknown>;
+  [k: string]: unknown;
+};
+
+/* GET /v1/providers/:id/status — provider health/config the model picker reads. */
+export type ProviderStatusReport = {
+  configured?: boolean;
+  [k: string]: unknown;
+};
+
 type ListSessionsResponse = { sessions?: SessionSoul[] };
-type ListGroupsResponse = { groups?: GatewayGroup[] };
+type ListProjectsResponse = { projects?: GatewayProject[] };
 type ListTurnsResponse = { turns?: GatewayTurn[] };
 type ProvidersResponse = { providers?: ProviderInfo[] };
 type CatalogResponse = { catalog?: ProviderModels[] };
 type ModelResponse = { model?: SessionModel };
+type WorkspaceResponse = { workspace?: WorkspaceInfo | null };
 
 type ClientOptions = {
   gatewayUrl: string;
@@ -247,43 +309,52 @@ export class VisGatewayClient {
     });
   }
 
-  /* ── session groups / projects ────────────────────── */
+  /* ── projects (cross-channel session grouping) ────────────────────── */
 
-  async listGroups(): Promise<GatewayGroup[]> {
+  async listProjects(): Promise<GatewayProject[]> {
     /* `channel=all` so the RN drawer sees every project (its own cross-channel
        ones plus tui/web-scoped), matching list-sessions' cross-channel view. */
-    const body = await this.request<ListGroupsResponse>("/v1/groups?channel=all");
-    return body.groups ?? [];
+    const body = await this.request<ListProjectsResponse>("/v1/projects?channel=all");
+    return body.projects ?? [];
   }
 
-  async createGroup(name: string, color?: string): Promise<GatewayGroup> {
+  async createProject(name: string, color?: string): Promise<GatewayProject> {
     /* No channel ⇒ a cross-channel project, visible from web/tui too. */
-    return this.request<GatewayGroup>("/v1/groups", {
+    return this.request<GatewayProject>("/v1/projects", {
       method: "POST",
       body: JSON.stringify(color ? { name, color } : { name })
     });
   }
 
-  async updateGroup(
-    groupId: string,
+  async updateProject(
+    projectId: string,
     patch: { name?: string; color?: string; archived?: boolean }
-  ): Promise<GatewayGroup> {
-    return this.request<GatewayGroup>(`/v1/groups/${encodeURIComponent(groupId)}`, {
+  ): Promise<GatewayProject> {
+    return this.request<GatewayProject>(`/v1/projects/${encodeURIComponent(projectId)}`, {
       method: "PATCH",
       body: JSON.stringify(patch)
     });
   }
 
-  async deleteGroup(groupId: string): Promise<void> {
-    await this.request<null>(`/v1/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+  async deleteProject(projectId: string): Promise<void> {
+    await this.request<null>(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
   }
 
-  /* Move a session into a project, or ungroup it (groupId = null). Returns the
-     re-projected soul (carries the fresh group_id/group_name). */
-  async assignGroup(sessionId: string, groupId: string | null): Promise<SessionSoul> {
+  /* Move a session into a project, or remove it (projectId = null). Returns the
+     re-projected soul (carries the fresh project_id/project_name). */
+  async assignProject(sessionId: string, projectId: string | null): Promise<SessionSoul> {
     return this.request<SessionSoul>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
-      body: JSON.stringify({ group_id: groupId })
+      body: JSON.stringify({ project_id: projectId })
+    });
+  }
+
+  /* Persist the manual order of a project's sessions (movable tabs). `order` is
+     the full list of session ids in the desired order. */
+  async reorderProjectSessions(projectId: string, order: string[]): Promise<void> {
+    await this.request<null>(`/v1/projects/${encodeURIComponent(projectId)}/sessions`, {
+      method: "PATCH",
+      body: JSON.stringify({ order })
     });
   }
 
@@ -470,5 +541,77 @@ export class VisGatewayClient {
       );
     }
     return (body.text ?? "").trim();
+  }
+
+  /* ── context mirror (GET /v1/sessions/:sid/context) — the canonical ctx the model reads.
+     The live `context.updated` SSE event carries the same utilization incrementally. ── */
+
+  async sessionContext(sessionId: string): Promise<ContextSnapshot> {
+    return this.request<ContextSnapshot>(`/v1/sessions/${encodeURIComponent(sessionId)}/context`);
+  }
+
+  /* ── @-file suggestions (GET /v1/sessions/:sid/suggest) — same rows web/TUI render ── */
+
+  async suggest(sessionId: string, q: string, kind = "file"): Promise<SuggestRow[]> {
+    const rows = await this.request<SuggestRow[]>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/suggest?kind=${encodeURIComponent(
+        kind
+      )}&q=${encodeURIComponent(q)}`
+    );
+    return rows ?? [];
+  }
+
+  /* ── workspace + filesystem roots — same state (and mutations) the web footer + TUI picker use.
+     add/remove/change all resolve to the refreshed workspace so the caller re-renders roots. ── */
+
+  async sessionWorkspace(sessionId: string): Promise<WorkspaceInfo | null> {
+    const body = await this.request<WorkspaceResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace`
+    );
+    return body.workspace ?? null;
+  }
+
+  async addRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+    const body = await this.request<WorkspaceResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/roots`,
+      { method: "POST", body: JSON.stringify({ path }) }
+    );
+    return body.workspace ?? null;
+  }
+
+  async removeRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+    /* DELETE carries the path as a query param (the gateway reads either body or ?path). */
+    const body = await this.request<WorkspaceResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/roots?path=${encodeURIComponent(
+        path
+      )}`,
+      { method: "DELETE" }
+    );
+    return body.workspace ?? null;
+  }
+
+  async changeRoot(sessionId: string, path: string): Promise<WorkspaceInfo | null> {
+    const body = await this.request<WorkspaceResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/workspace/root`,
+      { method: "PATCH", body: JSON.stringify({ path }) }
+    );
+    return body.workspace ?? null;
+  }
+
+  /* ── provider status / limits (GET /v1/providers/:id/{status,limits}) — the same canonical
+     reports the TUI provider dialog reads; never throws the picker if absent (returns {}). ── */
+
+  async providerStatus(providerId: string): Promise<ProviderStatusReport> {
+    const body = await this.request<{ status?: ProviderStatusReport }>(
+      `/v1/providers/${encodeURIComponent(providerId)}/status`
+    );
+    return body.status ?? {};
+  }
+
+  async providerLimits(providerId: string): Promise<ProviderLimitsReport> {
+    const body = await this.request<{ report?: ProviderLimitsReport }>(
+      `/v1/providers/${encodeURIComponent(providerId)}/limits`
+    );
+    return body.report ?? {};
   }
 }
