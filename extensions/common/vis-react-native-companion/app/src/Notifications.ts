@@ -22,8 +22,8 @@ Notifications.setNotificationHandler({
     shouldShowBanner: true,
     shouldShowList: true,
     shouldPlaySound: false,
-    shouldSetBadge: false
-  })
+    shouldSetBadge: false,
+  }),
 });
 
 export type NotifyDecision = {
@@ -39,8 +39,14 @@ export type NotifyDecision = {
    enabled notifications, and only when the app is NOT foreground-active (if the
    operator is watching the live stream, the completion is already on screen —
    a banner would be redundant noise). */
-export const shouldNotifyTurnDone = ({ type, enabled, appActive }: NotifyDecision): boolean =>
-  enabled && !appActive && (type === "turn.completed" || type === "turn.failed");
+export const shouldNotifyTurnDone = ({
+  type,
+  enabled,
+  appActive,
+}: NotifyDecision): boolean =>
+  enabled &&
+  !appActive &&
+  (type === "turn.completed" || type === "turn.failed");
 
 export type TurnDoneNotice = {
   failed: boolean;
@@ -52,7 +58,7 @@ export type TurnDoneNotice = {
 export const formatTurnDoneNotice = ({
   failed,
   sessionTitle,
-  request
+  request,
 }: TurnDoneNotice): { title: string; body: string } => {
   const where = sessionTitle?.trim() || "vis";
   const title = failed ? `${where} — turn failed` : `${where} — turn finished`;
@@ -100,7 +106,7 @@ export const notifyTurnDone = async (notice: TurnDoneNotice): Promise<void> => {
   try {
     await Notifications.scheduleNotificationAsync({
       content: { title, body, sound: false },
-      trigger: null
+      trigger: null,
     });
   } catch {
     /* best-effort — a failed schedule must never break the stream */

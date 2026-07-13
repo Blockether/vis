@@ -7,12 +7,16 @@ import { splitBlocks } from "./Markdown";
 
 describe("splitBlocks", () => {
   it("returns a single text block for plain prose", () => {
-    expect(splitBlocks("just words")).toEqual([{ kind: "text", body: "just words" }]);
+    expect(splitBlocks("just words")).toEqual([
+      { kind: "text", body: "just words" },
+    ]);
   });
 
   it("splits a closed fence into a code block with lang + body", () => {
     const blocks = splitBlocks("```clojure\n(+ 1 2)\n```");
-    expect(blocks).toEqual([{ kind: "code", lang: "clojure", body: "(+ 1 2)" }]);
+    expect(blocks).toEqual([
+      { kind: "code", lang: "clojure", body: "(+ 1 2)" },
+    ]);
   });
 
   it("keeps surrounding text around a closed fence", () => {
@@ -20,7 +24,7 @@ describe("splitBlocks", () => {
     expect(blocks).toEqual([
       { kind: "text", body: "before\n" },
       { kind: "code", lang: "", body: "code" },
-      { kind: "text", body: "\nafter" }
+      { kind: "text", body: "\nafter" },
     ]);
   });
 
@@ -29,7 +33,7 @@ describe("splitBlocks", () => {
     expect(blocks).toEqual([
       { kind: "code", lang: "js", body: "a" },
       { kind: "text", body: "\nmid\n" },
-      { kind: "code", lang: "py", body: "b" }
+      { kind: "code", lang: "py", body: "b" },
     ]);
   });
 
@@ -37,7 +41,7 @@ describe("splitBlocks", () => {
     const blocks = splitBlocks("intro\n```clojure\n(def x 1");
     expect(blocks).toEqual([
       { kind: "text", body: "intro\n" },
-      { kind: "code", lang: "clojure", body: "(def x 1" }
+      { kind: "code", lang: "clojure", body: "(def x 1" },
     ]);
   });
 
@@ -50,7 +54,7 @@ describe("splitBlocks", () => {
     const blocks = splitBlocks("text\n```");
     expect(blocks).toEqual([
       { kind: "text", body: "text\n" },
-      { kind: "code", lang: "", body: "" }
+      { kind: "code", lang: "", body: "" },
     ]);
   });
 

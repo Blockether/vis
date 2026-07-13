@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -21,7 +21,12 @@ const PANEL_W = 316;
    "no project" bucket. A discriminated union keeps the FlatList virtualized
    while carrying both row kinds. */
 type Row =
-  | { kind: "project"; project: GatewayProject; count: number; collapsed: boolean }
+  | {
+      kind: "project";
+      project: GatewayProject;
+      count: number;
+      collapsed: boolean;
+    }
   | { kind: "no-project-label" }
   | { kind: "session"; session: SessionSoul };
 
@@ -44,7 +49,7 @@ export const SessionsDrawer = ({
   onCreateProject,
   onRenameProject,
   onDeleteProject,
-  onAssign
+  onAssign,
 }: {
   visible: boolean;
   sessions: SessionSoul[];
@@ -69,14 +74,15 @@ export const SessionsDrawer = ({
   const [projectDraft, setProjectDraft] = useState("");
   const [editDraft, setEditDraft] = useState("");
   const [editProject, setEditProject] = useState<GatewayProject | null>(null);
-  const [confirmProjectDelete, setConfirmProjectDelete] = useState<GatewayProject | null>(null);
+  const [confirmProjectDelete, setConfirmProjectDelete] =
+    useState<GatewayProject | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     Animated.timing(slide, {
       toValue: visible ? 0 : -PANEL_W,
       duration: 180,
-      useNativeDriver: true
+      useNativeDriver: true,
     }).start();
   }, [slide, visible]);
 
@@ -95,33 +101,48 @@ export const SessionsDrawer = ({
         projectless.push(s);
       }
     }
-    const byRecency = (a: SessionSoul, b: SessionSoul) => recency(b) - recency(a);
+    const byRecency = (a: SessionSoul, b: SessionSoul) =>
+      recency(b) - recency(a);
     projectless.sort(byRecency);
 
     const sortedProjects = [...projects].sort(
-      (a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name)
+      (a, b) =>
+        (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name),
     );
 
     const out: Row[] = [];
     for (const g of sortedProjects) {
       const members = (byProject.get(g.id) ?? []).sort(byRecency);
       const isCollapsed = collapsed[g.id] ?? false;
-      out.push({ kind: "project", project: g, count: members.length, collapsed: isCollapsed });
-      if (!isCollapsed) for (const s of members) out.push({ kind: "session", session: s });
+      out.push({
+        kind: "project",
+        project: g,
+        count: members.length,
+        collapsed: isCollapsed,
+      });
+      if (!isCollapsed)
+        for (const s of members) out.push({ kind: "session", session: s });
     }
     /* Sessions whose project_id points at a project the list doesn't know about
        (e.g. a channel-scoped one filtered out) still surface as projectless. */
     for (const [gid, members] of byProject) {
       if (!projects.some((g) => g.id === gid)) projectless.push(...members);
     }
-    if (projectless.length && sortedProjects.length) out.push({ kind: "no-project-label" });
-    for (const s of projectless.sort(byRecency)) out.push({ kind: "session", session: s });
+    if (projectless.length && sortedProjects.length)
+      out.push({ kind: "no-project-label" });
+    for (const s of projectless.sort(byRecency))
+      out.push({ kind: "session", session: s });
     return out;
   }, [sessions, projects, collapsed]);
 
-  const toggle = (gid: string) => setCollapsed((m) => ({ ...m, [gid]: !(m[gid] ?? false) }));
+  const toggle = (gid: string) =>
+    setCollapsed((m) => ({ ...m, [gid]: !(m[gid] ?? false) }));
 
-  const renderSession = (item: SessionSoul, inProject: boolean, accent?: string) => {
+  const renderSession = (
+    item: SessionSoul,
+    inProject: boolean,
+    accent?: string,
+  ) => {
     const active = item.id === activeId;
     return (
       <Pressable
@@ -131,26 +152,42 @@ export const SessionsDrawer = ({
           inProject && styles.rowIndent,
           inProject && accent ? { borderLeftColor: accent } : null,
           active && styles.rowActive,
-          pressed && { opacity: 0.85 }
+          pressed && { opacity: 0.85 },
         ]}
       >
         <View
           style={[
             styles.dot,
             active && styles.dotActive,
-            !active && accent ? { backgroundColor: accent } : null
+            !active && accent ? { backgroundColor: accent } : null,
           ]}
         />
         <View style={styles.rowBody}>
-          <Text numberOfLines={1} style={[styles.rowTitle, active && styles.rowTitleActive]}>
+          <Text
+            numberOfLines={1}
+            style={[styles.rowTitle, active && styles.rowTitleActive]}
+          >
             {item.title?.trim() || `session ${shortId(item.id)}`}
           </Text>
-          <Text numberOfLines={1} style={[styles.rowMeta, active && styles.rowMetaActive]}>
-            {[item.channel, relTime(recency(item)), shortId(item.id)].filter(Boolean).join(" \u00b7 ")}
+          <Text
+            numberOfLines={1}
+            style={[styles.rowMeta, active && styles.rowMetaActive]}
+          >
+            {[item.channel, relTime(recency(item)), shortId(item.id)]
+              .filter(Boolean)
+              .join(" \u00b7 ")}
           </Text>
         </View>
-        <Pressable hitSlop={6} onPress={() => setMoving(item)} style={styles.rowIcon}>
-          <Feather name="move" size={13} color={active ? c.amberBright : c.dim} />
+        <Pressable
+          hitSlop={6}
+          onPress={() => setMoving(item)}
+          style={styles.rowIcon}
+        >
+          <Feather
+            name="move"
+            size={13}
+            color={active ? c.amberBright : c.dim}
+          />
         </Pressable>
         <Pressable
           hitSlop={6}
@@ -160,10 +197,22 @@ export const SessionsDrawer = ({
           }}
           style={styles.rowIcon}
         >
-          <Feather name="edit-2" size={13} color={active ? c.amberBright : c.dim} />
+          <Feather
+            name="edit-2"
+            size={13}
+            color={active ? c.amberBright : c.dim}
+          />
         </Pressable>
-        <Pressable hitSlop={6} onPress={() => setConfirmDelete(item)} style={styles.rowIcon}>
-          <Feather name="trash-2" size={13} color={active ? c.amberBright : c.dim} />
+        <Pressable
+          hitSlop={6}
+          onPress={() => setConfirmDelete(item)}
+          style={styles.rowIcon}
+        >
+          <Feather
+            name="trash-2"
+            size={13}
+            color={active ? c.amberBright : c.dim}
+          />
         </Pressable>
       </Pressable>
     );
@@ -185,12 +234,23 @@ export const SessionsDrawer = ({
         <View
           style={[
             styles.projectHead,
-            { backgroundColor: tint(accent, "14"), borderColor: tint(accent, "44") }
+            {
+              backgroundColor: tint(accent, "14"),
+              borderColor: tint(accent, "44"),
+            },
           ]}
         >
           <View style={[styles.projectBar, { backgroundColor: accent }]} />
-          <Pressable hitSlop={6} onPress={() => toggle(g.id)} style={styles.projectChevron}>
-            <Feather name={item.collapsed ? "chevron-right" : "chevron-down"} size={14} color={c.ink} />
+          <Pressable
+            hitSlop={6}
+            onPress={() => toggle(g.id)}
+            style={styles.projectChevron}
+          >
+            <Feather
+              name={item.collapsed ? "chevron-right" : "chevron-down"}
+              size={14}
+              color={c.ink}
+            />
           </Pressable>
           <Feather name="layers" size={13} color={accent} />
           <Pressable style={styles.projectNameBtn} onPress={() => toggle(g.id)}>
@@ -198,8 +258,15 @@ export const SessionsDrawer = ({
               {g.name}
             </Text>
           </Pressable>
-          <View style={[styles.projectCount, { backgroundColor: tint(accent, "26") }]}>
-            <Text style={[styles.projectCountText, { color: accent }]}>{item.count}</Text>
+          <View
+            style={[
+              styles.projectCount,
+              { backgroundColor: tint(accent, "26") },
+            ]}
+          >
+            <Text style={[styles.projectCountText, { color: accent }]}>
+              {item.count}
+            </Text>
           </View>
           <Pressable
             hitSlop={6}
@@ -211,7 +278,11 @@ export const SessionsDrawer = ({
           >
             <Feather name="edit-2" size={12} color={c.dim} />
           </Pressable>
-          <Pressable hitSlop={6} onPress={() => setConfirmProjectDelete(g)} style={styles.rowIcon}>
+          <Pressable
+            hitSlop={6}
+            onPress={() => setConfirmProjectDelete(g)}
+            style={styles.rowIcon}
+          >
             <Feather name="trash-2" size={12} color={c.dim} />
           </Pressable>
         </View>
@@ -231,7 +302,9 @@ export const SessionsDrawer = ({
     <View style={styles.overlay}>
       <View style={styles.root}>
         <Pressable style={styles.scrim} onPress={onClose} />
-        <Animated.View style={[styles.panel, { transform: [{ translateX: slide }] }]}>
+        <Animated.View
+          style={[styles.panel, { transform: [{ translateX: slide }] }]}
+        >
           <LinearGradient
             colors={[c.amberBright, c.amber]}
             start={{ x: 0, y: 0 }}
@@ -255,7 +328,9 @@ export const SessionsDrawer = ({
             }
             contentContainerStyle={styles.listPad}
             renderItem={({ item }) => renderRow(item)}
-            ListEmptyComponent={<Text style={styles.empty}>no sessions yet</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>no sessions yet</Text>
+            }
           />
 
           <View style={styles.footRow}>
@@ -264,17 +339,26 @@ export const SessionsDrawer = ({
                 setProjectDraft("");
                 setNewProject(true);
               }}
-              style={({ pressed }) => [styles.footBtn, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [
+                styles.footBtn,
+                pressed && { opacity: 0.7 },
+              ]}
             >
               <Feather name="layers" size={15} color={c.ink} />
               <Text style={styles.footLabel}>project</Text>
             </Pressable>
             <Pressable
               onPress={onCreate}
-              style={({ pressed }) => [styles.footBtn, styles.footBtnPrimary, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [
+                styles.footBtn,
+                styles.footBtnPrimary,
+                pressed && { opacity: 0.7 },
+              ]}
             >
               <Feather name="plus" size={15} color={c.amberInk} />
-              <Text style={[styles.footLabel, styles.footLabelPrimary]}>session</Text>
+              <Text style={[styles.footLabel, styles.footLabelPrimary]}>
+                session
+              </Text>
             </Pressable>
           </View>
         </Animated.View>
@@ -288,12 +372,18 @@ export const SessionsDrawer = ({
         onClose={() => setConfirmDelete(null)}
       >
         <Text style={styles.confirmText}>
-          Delete {confirmDelete?.title?.trim() || `session ${shortId(confirmDelete?.id)}`}? The
-          transcript is closed for good.
+          Delete{" "}
+          {confirmDelete?.title?.trim() ||
+            `session ${shortId(confirmDelete?.id)}`}
+          ? The transcript is closed for good.
         </Text>
         <View style={styles.confirmRow}>
           <View style={{ flex: 1 }}>
-            <ActionBtn label="Cancel" tone="ghost" onPress={() => setConfirmDelete(null)} />
+            <ActionBtn
+              label="Cancel"
+              tone="ghost"
+              onPress={() => setConfirmDelete(null)}
+            />
           </View>
           <View style={{ flex: 1 }}>
             <ActionBtn
@@ -309,7 +399,11 @@ export const SessionsDrawer = ({
       </DialogModal>
 
       {/* rename session */}
-      <DialogModal visible={renaming != null} title="Rename session" onClose={() => setRenaming(null)}>
+      <DialogModal
+        visible={renaming != null}
+        title="Rename session"
+        onClose={() => setRenaming(null)}
+      >
         <TextInput
           value={renameDraft}
           onChangeText={setRenameDraft}
@@ -323,14 +417,19 @@ export const SessionsDrawer = ({
           tone="amber"
           disabled={!renameDraft.trim()}
           onPress={() => {
-            if (renaming && renameDraft.trim()) onRename(renaming, renameDraft.trim());
+            if (renaming && renameDraft.trim())
+              onRename(renaming, renameDraft.trim());
             setRenaming(null);
           }}
         />
       </DialogModal>
 
       {/* move session to a project */}
-      <DialogModal visible={moving != null} title="Move to project" onClose={() => setMoving(null)}>
+      <DialogModal
+        visible={moving != null}
+        title="Move to project"
+        onClose={() => setMoving(null)}
+      >
         <Pressable
           style={[styles.pickRow, !moving?.project_id && styles.pickRowActive]}
           onPress={() => {
@@ -340,7 +439,9 @@ export const SessionsDrawer = ({
         >
           <Feather name="inbox" size={14} color={c.ink} />
           <Text style={styles.pickLabel}>No project</Text>
-          {!moving?.project_id && <Feather name="check" size={14} color={c.roleVis} />}
+          {!moving?.project_id && (
+            <Feather name="check" size={14} color={c.roleVis} />
+          )}
         </Pressable>
         {projects.map((g) => {
           const on = moving?.project_id === g.id;
@@ -363,12 +464,18 @@ export const SessionsDrawer = ({
           );
         })}
         {projects.length === 0 && (
-          <Text style={styles.empty}>no projects yet — create one from the drawer footer</Text>
+          <Text style={styles.empty}>
+            no projects yet — create one from the drawer footer
+          </Text>
         )}
       </DialogModal>
 
       {/* new project */}
-      <DialogModal visible={newProject} title="New project" onClose={() => setNewProject(false)}>
+      <DialogModal
+        visible={newProject}
+        title="New project"
+        onClose={() => setNewProject(false)}
+      >
         <TextInput
           value={projectDraft}
           onChangeText={setProjectDraft}
@@ -389,7 +496,11 @@ export const SessionsDrawer = ({
       </DialogModal>
 
       {/* rename project */}
-      <DialogModal visible={editProject != null} title="Rename project" onClose={() => setEditProject(null)}>
+      <DialogModal
+        visible={editProject != null}
+        title="Rename project"
+        onClose={() => setEditProject(null)}
+      >
         <TextInput
           value={editDraft}
           onChangeText={setEditDraft}
@@ -403,7 +514,8 @@ export const SessionsDrawer = ({
           tone="amber"
           disabled={!editDraft.trim()}
           onPress={() => {
-            if (editProject && editDraft.trim()) onRenameProject(editProject, editDraft.trim());
+            if (editProject && editDraft.trim())
+              onRenameProject(editProject, editDraft.trim());
             setEditProject(null);
           }}
         />
@@ -417,11 +529,16 @@ export const SessionsDrawer = ({
         onClose={() => setConfirmProjectDelete(null)}
       >
         <Text style={styles.confirmText}>
-          Delete project {confirmProjectDelete?.name}? Its sessions are kept — they just scatter back to no project.
+          Delete project {confirmProjectDelete?.name}? Its sessions are kept —
+          they just scatter back to no project.
         </Text>
         <View style={styles.confirmRow}>
           <View style={{ flex: 1 }}>
-            <ActionBtn label="Cancel" tone="ghost" onPress={() => setConfirmProjectDelete(null)} />
+            <ActionBtn
+              label="Cancel"
+              tone="ghost"
+              onPress={() => setConfirmProjectDelete(null)}
+            />
           </View>
           <View style={{ flex: 1 }}>
             <ActionBtn
@@ -442,21 +559,24 @@ export const SessionsDrawer = ({
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 50, elevation: 50 },
   root: { flex: 1, flexDirection: "row" },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(38,38,38,0.45)" },
+  scrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(38,38,38,0.45)",
+  },
   panel: {
     width: PANEL_W,
     backgroundColor: c.paper,
     borderRightWidth: 1,
     borderRightColor: c.line,
     paddingTop: 54,
-    flex: 1
+    flex: 1,
   },
   titleBar: {
     paddingHorizontal: 14,
     paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between"
+    justifyContent: "space-between",
   },
   title: {
     fontFamily: mono,
@@ -464,7 +584,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 1.5,
     textTransform: "uppercase",
-    color: c.amberInk
+    color: c.amberInk,
   },
   listPad: { padding: 12, gap: 7 },
   projectHead: {
@@ -476,7 +596,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     borderWidth: 1,
     borderRadius: 12,
-    overflow: "hidden"
+    overflow: "hidden",
   },
   projectBar: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
   projectChevron: { padding: 2, marginLeft: 2 },
@@ -487,14 +607,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
-    color: c.ink
+    color: c.ink,
   },
   projectCount: {
     minWidth: 22,
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 999,
-    alignItems: "center"
+    alignItems: "center",
   },
   projectCountText: { fontFamily: mono, fontSize: 10.5, fontWeight: "700" },
   noProjectHead: {
@@ -503,7 +623,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 6,
     paddingVertical: 6,
-    marginTop: 4
+    marginTop: 4,
   },
   noProjectName: {
     fontFamily: mono,
@@ -511,7 +631,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
-    color: c.dim
+    color: c.dim,
   },
   row: {
     flexDirection: "row",
@@ -522,9 +642,13 @@ const styles = StyleSheet.create({
     backgroundColor: c.field,
     borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 10
+    paddingVertical: 10,
   },
-  rowIndent: { marginLeft: 14, borderLeftWidth: 3, borderLeftColor: c.lineSoft },
+  rowIndent: {
+    marginLeft: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: c.lineSoft,
+  },
   rowActive: { backgroundColor: c.ink, borderColor: c.ink },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.line },
   dotActive: { backgroundColor: c.amberBright },
@@ -534,8 +658,20 @@ const styles = StyleSheet.create({
   rowMeta: { fontFamily: mono, fontSize: 10.5, color: c.dim },
   rowMetaActive: { color: c.lineSoft },
   rowIcon: { padding: 4 },
-  empty: { fontFamily: mono, fontSize: 12, color: c.dim, textAlign: "center", paddingVertical: 24 },
-  footRow: { flexDirection: "row", gap: 8, marginHorizontal: 12, marginBottom: 24, marginTop: 6 },
+  empty: {
+    fontFamily: mono,
+    fontSize: 12,
+    color: c.dim,
+    textAlign: "center",
+    paddingVertical: 24,
+  },
+  footRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginHorizontal: 12,
+    marginBottom: 24,
+    marginTop: 6,
+  },
   footBtn: {
     flex: 1,
     flexDirection: "row",
@@ -547,16 +683,20 @@ const styles = StyleSheet.create({
     borderColor: c.line,
     borderRadius: 12,
     paddingVertical: 12,
-    backgroundColor: c.tsepBg
+    backgroundColor: c.tsepBg,
   },
-  footBtnPrimary: { borderStyle: "solid", backgroundColor: c.chipBg, borderColor: c.amber },
+  footBtnPrimary: {
+    borderStyle: "solid",
+    backgroundColor: c.chipBg,
+    borderColor: c.amber,
+  },
   footLabel: {
     fontFamily: mono,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 1,
     textTransform: "uppercase",
-    color: c.ink
+    color: c.ink,
   },
   footLabelPrimary: { color: c.amberInk },
   confirmText: { color: c.ink, fontSize: 14, lineHeight: 20 },
@@ -570,7 +710,7 @@ const styles = StyleSheet.create({
     backgroundColor: c.field,
     borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 10
+    paddingVertical: 10,
   },
   pickRowActive: { borderColor: c.amber, backgroundColor: c.chipBg },
   pickLabel: { flex: 1, color: c.ink, fontSize: 13, fontWeight: "600" },
@@ -583,6 +723,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: 8
-  }
+    paddingVertical: 8,
+  },
 });

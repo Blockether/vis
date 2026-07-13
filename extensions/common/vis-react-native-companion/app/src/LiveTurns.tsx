@@ -50,7 +50,7 @@ const LABEL_OVERRIDES: Record<string, string> = {
   python_execution: "RESULT",
   repl_eval: "REPL",
   shell_run: "SHELL RUN",
-  shell_bg: "SHELL BACKGROUND"
+  shell_bg: "SHELL BACKGROUND",
 };
 
 export const toolLabel = (toolName?: string): string => {
@@ -70,7 +70,7 @@ const ROLE_COLORS: Record<string, string> = {
   move: "#0D9488",
   shell: "#4B5563",
   meta: "#6F6A63",
-  test: "#CA8A04"
+  test: "#CA8A04",
 };
 
 export const toolColor = (role?: string): string => {
@@ -97,7 +97,12 @@ export const ctxPct = (u?: CtxUtilization | null): number | null => {
   return null;
 };
 
-const emptyLiveTurn = (): LiveTurn => ({ cards: [], prose: "", thinking: "", done: false });
+const emptyLiveTurn = (): LiveTurn => ({
+  cards: [],
+  prose: "",
+  thinking: "",
+  done: false,
+});
 
 /* A successful native tool's op-card already says what ran, so its synthesized
    invocation source is redundant chrome — DROP it. python_execution (the
@@ -114,11 +119,15 @@ const upsertCard = (cards: LiveCard[], card: LiveCard): LiveCard[] => {
   return next;
 };
 
-const blockKey = (ev: GatewayEvent): string => `${ev.iteration ?? 0}:${ev.block_id ?? 0}`;
+const blockKey = (ev: GatewayEvent): string =>
+  `${ev.iteration ?? 0}:${ev.block_id ?? 0}`;
 
 /* Fold one SSE event into the live-turn map (immutably — a new object per
    change so React re-renders the running bubble). */
-export const reduceLiveEvent = (state: LiveState, ev: GatewayEvent): LiveState => {
+export const reduceLiveEvent = (
+  state: LiveState,
+  ev: GatewayEvent,
+): LiveState => {
   const tid = ev.turn_id;
   if (!tid) return state;
   const cur = state[tid] ?? emptyLiveTurn();
@@ -135,16 +144,22 @@ export const reduceLiveEvent = (state: LiveState, ev: GatewayEvent): LiveState =
         colorRole: ev.tool_color_role,
         code: ev.code,
         running: true,
-        hideCode: hideCodeFor(ev.tool_name, undefined)
+        hideCode: hideCodeFor(ev.tool_name, undefined),
       };
-      return { ...state, [tid]: { ...cur, cards: upsertCard(cur.cards, card), thinking: "" } };
+      return {
+        ...state,
+        [tid]: { ...cur, cards: upsertCard(cur.cards, card), thinking: "" },
+      };
     }
 
     case "block.output": {
       const key = blockKey(ev);
       /* a vis_silent result suppresses the row entirely */
       if (ev.silent) {
-        return { ...state, [tid]: { ...cur, cards: cur.cards.filter((k) => k.key !== key) } };
+        return {
+          ...state,
+          [tid]: { ...cur, cards: cur.cards.filter((k) => k.key !== key) },
+        };
       }
       const card: LiveCard = {
         key,
@@ -157,16 +172,22 @@ export const reduceLiveEvent = (state: LiveState, ev: GatewayEvent): LiveState =
         error: ev.error,
         durationMs: ev.duration_ms,
         running: false,
-        hideCode: hideCodeFor(ev.tool_name, ev.error)
+        hideCode: hideCodeFor(ev.tool_name, ev.error),
       };
-      return { ...state, [tid]: { ...cur, cards: upsertCard(cur.cards, card) } };
+      return {
+        ...state,
+        [tid]: { ...cur, cards: upsertCard(cur.cards, card) },
+      };
     }
 
     case "reasoning.delta":
       return { ...state, [tid]: { ...cur, thinking: ev.text ?? cur.thinking } };
 
     case "content.delta":
-      return { ...state, [tid]: { ...cur, prose: ev.text ?? cur.prose, thinking: "" } };
+      return {
+        ...state,
+        [tid]: { ...cur, prose: ev.text ?? cur.prose, thinking: "" },
+      };
 
     case "iteration.completed":
     case "iteration.error":
@@ -203,7 +224,7 @@ export const traceCards = (iterations: TraceIteration[]): LiveCard[] => {
         body: f.result_render || undefined,
         durationMs: f.duration_ms,
         running: false,
-        hideCode: hideCodeFor(f.tool_name, undefined)
+        hideCode: hideCodeFor(f.tool_name, undefined),
       });
     });
   });
@@ -273,7 +294,7 @@ const styles = StyleSheet.create({
     borderLeftColor: c.hair,
     paddingHorizontal: 8,
     paddingVertical: 6,
-    gap: 5
+    gap: 5,
   },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 7 },
   badge: { paddingHorizontal: 5, paddingVertical: 1 },
@@ -282,12 +303,18 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "700",
     letterSpacing: 0.6,
-    color: "#FFFFFF"
+    color: "#FFFFFF",
   },
   cardSummary: { flex: 1, fontFamily: mono, fontSize: 11, color: c.ink2 },
-  cardRunning: { flex: 1, fontFamily: mono, fontSize: 11, color: c.dim, fontStyle: "italic" },
+  cardRunning: {
+    flex: 1,
+    fontFamily: mono,
+    fontSize: 11,
+    color: c.dim,
+    fontStyle: "italic",
+  },
   cardDur: { fontFamily: mono, fontSize: 9, color: c.tsep },
   cardCode: { fontFamily: mono, fontSize: 11, color: c.codeInk },
   cardBody: { fontFamily: mono, fontSize: 10.5, lineHeight: 15, color: c.dim },
-  cardErr: { fontFamily: mono, fontSize: 10.5, lineHeight: 15, color: c.err }
+  cardErr: { fontFamily: mono, fontSize: 10.5, lineHeight: 15, color: c.err },
 });

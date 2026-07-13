@@ -1,4 +1,11 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -13,7 +20,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -29,26 +36,37 @@ import {
   SessionSoul,
   SuggestRow,
   TurnAttachment,
-  VisGatewayClient
+  VisGatewayClient,
 } from "./src/VisClient";
 import { c, mono, shortId, timeHHMM } from "./src/theme";
 import { ActionBtn, DialogModal, IconBtn } from "./src/ui";
 import { SettingsPane } from "./src/Settings";
 import { Markdown } from "./src/Markdown";
-import { LiveCard, LiveCards, LiveState, ctxPct, reduceLiveEvent, traceCards } from "./src/LiveTurns";
+import {
+  LiveCard,
+  LiveCards,
+  LiveState,
+  ctxPct,
+  reduceLiveEvent,
+  traceCards,
+} from "./src/LiveTurns";
 import {
   ensureNotificationPermissions,
   notifyTurnDone,
-  shouldNotifyTurnDone
+  shouldNotifyTurnDone,
 } from "./src/Notifications";
 import { SessionsDrawer } from "./src/SessionsDrawer";
-import { activeFileMention, applyFileMention, suggestLabel } from "./src/ComposerSuggest";
+import {
+  activeFileMention,
+  applyFileMention,
+  suggestLabel,
+} from "./src/ComposerSuggest";
 import { VoiceButton } from "./src/VoiceButton";
 import {
   AttachmentTray,
   PendingAttachment,
   pickFiles,
-  pickImages
+  pickImages,
 } from "./src/Attachments";
 
 declare const process: {
@@ -107,13 +125,16 @@ const turnMeta = (turn: GatewayTurn): string | undefined => {
   const inTok = fmtTokens(turn.tokens?.input);
   const outTok = fmtTokens(turn.tokens?.output);
   if (inTok || outTok) parts.push(`${inTok ?? "?"}→${outTok ?? "?"} tok`);
-  if ((turn.iteration_count ?? 0) > 1) parts.push(`${turn.iteration_count} iter`);
+  if ((turn.iteration_count ?? 0) > 1)
+    parts.push(`${turn.iteration_count} iter`);
   return parts.length ? parts.join(" · ") : undefined;
 };
 
 const imageAtts = (turn: GatewayTurn): TurnAttachment[] =>
   (turn.attachments ?? []).filter(
-    (a) => a.base64 && (a.kind === "image" || (a.media_type ?? "").startsWith("image/"))
+    (a) =>
+      a.base64 &&
+      (a.kind === "image" || (a.media_type ?? "").startsWith("image/")),
   );
 
 const messageText = (turn: GatewayTurn): Message[] => {
@@ -125,7 +146,11 @@ const messageText = (turn: GatewayTurn): Message[] => {
   /* Terminal turn that never produced an answer (failed / interrupted / error):
      show its status quietly instead of dots-forever or a silent hole. */
   const note =
-    !answer && !live && turn.status && turn.status !== "done" && turn.status !== "completed"
+    !answer &&
+    !live &&
+    turn.status &&
+    turn.status !== "done" &&
+    turn.status !== "completed"
       ? `(${turn.status})`
       : undefined;
 
@@ -137,8 +162,8 @@ const messageText = (turn: GatewayTurn): Message[] => {
             role: "user" as const,
             text: user ?? "",
             time: timeHHMM(turn.started_at),
-            atts: atts.length ? atts : undefined
-          }
+            atts: atts.length ? atts : undefined,
+          },
         ]
       : []),
     ...(answer || live || note
@@ -149,17 +174,18 @@ const messageText = (turn: GatewayTurn): Message[] => {
             text: answer ?? note ?? "",
             pending: live,
             time: timeHHMM(turn.completed_at),
-            meta: live ? undefined : turnMeta(turn)
-          }
+            meta: live ? undefined : turnMeta(turn),
+          },
         ]
-      : [])
+      : []),
   ];
 };
 
 const modelLabel = (model: SessionModel): string => {
   if (!model) return "router default";
   if (typeof model === "string") return model;
-  if (model.provider && model.model) return `${model.provider} / ${model.model}`;
+  if (model.provider && model.model)
+    return `${model.provider} / ${model.model}`;
   return model.model ?? model.provider ?? "router default";
 };
 
@@ -176,7 +202,8 @@ const providerReportText = (report?: {
   const stat = report.limits?.static;
   if (stat && typeof stat === "object") {
     for (const [k, v] of Object.entries(stat).slice(0, 2)) {
-      if (["string", "number", "boolean"].includes(typeof v)) parts.push(`${k}: ${String(v)}`);
+      if (["string", "number", "boolean"].includes(typeof v))
+        parts.push(`${k}: ${String(v)}`);
     }
   }
   return parts.length ? parts.join(" · ") : null;
@@ -193,57 +220,71 @@ const PendingDots = () => {
 
 /* Flat TUI transcript row: `▌ role ──────── HH:MM` head rule, then the body
    straight on the ground — no card, no border, no bubble. */
-const MessageRow = memo(({ item }: { item: Message }) => {
-  const roleColor = item.role === "user" ? c.roleUser : c.roleVis;
-  return (
-    <View style={styles.msg}>
-      <View style={styles.msgHead}>
-        <View style={[styles.gutter, { backgroundColor: roleColor }]} />
-        <Text style={[styles.msgRole, { color: item.role === "user" ? c.amberDeep : c.roleVis }]}>
-          {item.role === "user" ? "you" : "vis"}
-        </Text>
-        <View style={styles.headRule} />
-        {item.time ? <Text style={styles.msgTime}>{item.time}</Text> : null}
-      </View>
-      {item.atts?.length ? (
-        <View style={styles.attRow}>
-          {item.atts.map((a, i) => (
-            <Image
-              key={`${item.id}-att${i}`}
-              source={{ uri: `data:${a.media_type ?? "image/png"};base64,${a.base64}` }}
-              style={styles.attImg}
-              resizeMode="cover"
-            />
-          ))}
+const MessageRow = memo(
+  ({ item }: { item: Message }) => {
+    const roleColor = item.role === "user" ? c.roleUser : c.roleVis;
+    return (
+      <View style={styles.msg}>
+        <View style={styles.msgHead}>
+          <View style={[styles.gutter, { backgroundColor: roleColor }]} />
+          <Text
+            style={[
+              styles.msgRole,
+              { color: item.role === "user" ? c.amberDeep : c.roleVis },
+            ]}
+          >
+            {item.role === "user" ? "you" : "vis"}
+          </Text>
+          <View style={styles.headRule} />
+          {item.time ? <Text style={styles.msgTime}>{item.time}</Text> : null}
         </View>
-      ) : null}
-      {item.thinking ? <Text style={styles.thinking}>{`\u2731 ${item.thinking}`}</Text> : null}
-      {item.cards?.length ? <LiveCards cards={item.cards} /> : null}
-      {item.text ? (
-        <Markdown text={item.text} />
-      ) : item.pending && !item.cards?.length && !item.thinking ? (
-        <PendingDots />
-      ) : null}
-      {!item.pending && item.meta ? <Text style={styles.msgMeta}>{item.meta}</Text> : null}
-    </View>
-  );
-}, (a, b) => {
-  const x = a.item;
-  const y = b.item;
-  /* Skip re-rendering (and re-parsing Markdown for) a row whose visible content
+        {item.atts?.length ? (
+          <View style={styles.attRow}>
+            {item.atts.map((a, i) => (
+              <Image
+                key={`${item.id}-att${i}`}
+                source={{
+                  uri: `data:${a.media_type ?? "image/png"};base64,${a.base64}`,
+                }}
+                style={styles.attImg}
+                resizeMode="cover"
+              />
+            ))}
+          </View>
+        ) : null}
+        {item.thinking ? (
+          <Text style={styles.thinking}>{`\u2731 ${item.thinking}`}</Text>
+        ) : null}
+        {item.cards?.length ? <LiveCards cards={item.cards} /> : null}
+        {item.text ? (
+          <Markdown text={item.text} />
+        ) : item.pending && !item.cards?.length && !item.thinking ? (
+          <PendingDots />
+        ) : null}
+        {!item.pending && item.meta ? (
+          <Text style={styles.msgMeta}>{item.meta}</Text>
+        ) : null}
+      </View>
+    );
+  },
+  (a, b) => {
+    const x = a.item;
+    const y = b.item;
+    /* Skip re-rendering (and re-parsing Markdown for) a row whose visible content
      is unchanged — the 1.8s poll + SSE ticks swap the array identity constantly,
      but only the running turn's row actually changes. */
-  return (
-    x.id === y.id &&
-    x.text === y.text &&
-    x.pending === y.pending &&
-    x.time === y.time &&
-    x.meta === y.meta &&
-    x.thinking === y.thinking &&
-    x.cards === y.cards &&
-    x.atts === y.atts
-  );
-});
+    return (
+      x.id === y.id &&
+      x.text === y.text &&
+      x.pending === y.pending &&
+      x.time === y.time &&
+      x.meta === y.meta &&
+      x.thinking === y.thinking &&
+      x.cards === y.cards &&
+      x.atts === y.atts
+    );
+  },
+);
 
 export default function App() {
   return (
@@ -266,7 +307,13 @@ function Root() {
   const [model, setModel] = useState<SessionModel>(null);
   const [catalog, setCatalog] = useState<ProviderModels[]>([]);
   const [providerReports, setProviderReports] = useState<
-    Record<string, { status: ProviderStatusReport | undefined; limits: ProviderLimitsReport | undefined }>
+    Record<
+      string,
+      {
+        status: ProviderStatusReport | undefined;
+        limits: ProviderLimitsReport | undefined;
+      }
+    >
   >({});
   const [showRename, setShowRename] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
@@ -307,14 +354,17 @@ function Root() {
   const notifiedRef = useRef<Set<string>>(new Set());
   const traceReqRef = useRef<Set<string>>(new Set());
 
-  const client = useMemo(() => new VisGatewayClient({ gatewayUrl, token }), [gatewayUrl, token]);
+  const client = useMemo(
+    () => new VisGatewayClient({ gatewayUrl, token }),
+    [gatewayUrl, token],
+  );
   const mention = useMemo(() => activeFileMention(input), [input]);
 
   const baseMessages = useMemo(() => turns.flatMap(messageText), [turns]);
   const connected = !error && activeSession != null;
   const runningTurn = useMemo(
     () => [...turns].reverse().find((t) => turnLive(t) && (t.id ?? t.turn_id)),
-    [turns]
+    [turns],
   );
 
   /* Overlay the running turn's LIVE tool-call cards + streaming prose (reduced
@@ -334,7 +384,7 @@ function Root() {
           text: proseText || m.text,
           pending: m.pending && !proseText,
           cards: liveTurn.cards,
-          thinking: thinkingText || undefined
+          thinking: thinkingText || undefined,
         };
       }
       /* Settled turn: attach its rehydrated trace cards. Never the running turn
@@ -358,9 +408,11 @@ function Root() {
       const next = await client.listTurns(sessionId);
       /* Keep the previous array identity when the wire payload is unchanged —
          otherwise the 1.8s poll re-renders the list and fights manual scrolling. */
-      setTurns((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      setTurns((prev) =>
+        JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
+      );
     },
-    [activeSession?.id, client]
+    [activeSession?.id, client],
   );
 
   const openSession = useCallback(
@@ -394,7 +446,7 @@ function Root() {
         fail(err);
       }
     },
-    [client, fail]
+    [client, fail],
   );
 
   const connect = useCallback(async () => {
@@ -404,7 +456,8 @@ function Root() {
       const existing = await client.listSessions();
       const latest = [...existing].sort(
         (a, b) =>
-          (b.last_active_at ?? b.created_at ?? 0) - (a.last_active_at ?? a.created_at ?? 0)
+          (b.last_active_at ?? b.created_at ?? 0) -
+          (a.last_active_at ?? a.created_at ?? 0),
       )[0];
       const session = latest ?? (await client.createSession());
       setSessions(existing.length ? existing : [session]);
@@ -556,7 +609,8 @@ function Root() {
           onEvent: (ev) => {
             setLive((prev) => reduceLiveEvent(prev, ev));
             /* live context-fullness — context.updated carries the fresh utilization */
-            if (ev.type === "context.updated" && ev.utilization) setCtxUtil(ev.utilization);
+            if (ev.type === "context.updated" && ev.utilization)
+              setCtxUtil(ev.utilization);
             /* fire a local notification on turn completion when backgrounded */
             const tid = ev.turn_id;
             if (
@@ -565,31 +619,35 @@ function Root() {
               shouldNotifyTurnDone({
                 type: ev.type,
                 enabled: notifyRef.current,
-                appActive: appActiveRef.current
+                appActive: appActiveRef.current,
               })
             ) {
               notifiedRef.current.add(tid);
               void notifyTurnDone({
                 failed: ev.type === "turn.failed",
                 sessionTitle: activeSession?.title,
-                request: turnsRef.current.find((t) => (t.id ?? t.turn_id) === tid)?.request
+                request: turnsRef.current.find(
+                  (t) => (t.id ?? t.turn_id) === tid,
+                )?.request,
               });
             }
           },
           onError: (err) => {
-            const msg =
-              (err as { message?: string; xhrStatus?: number })?.xhrStatus
-                ? `HTTP ${(err as { xhrStatus?: number }).xhrStatus}`
-                : (err as { message?: string })?.message || "connection lost";
+            const msg = (err as { message?: string; xhrStatus?: number })
+              ?.xhrStatus
+              ? `HTTP ${(err as { xhrStatus?: number }).xhrStatus}`
+              : (err as { message?: string })?.message || "connection lost";
             if (__DEV__) console.warn("[vis] SSE error", err);
             setNote(`live stream: ${msg} (retrying\u2026)`);
-          }
+          },
         },
-        0
+        0,
       );
     } catch (err) {
       if (__DEV__) console.warn("[vis] SSE failed to start", err);
-      setNote(`live stream unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      setNote(
+        `live stream unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return () => close?.();
   }, [activeSession?.id, client]);
@@ -678,7 +736,7 @@ function Root() {
         setNote(err instanceof Error ? err.message : String(err));
       }
     },
-    []
+    [],
   );
 
   const cancelRunning = useCallback(async () => {
@@ -721,20 +779,23 @@ function Root() {
         fail(err);
       }
     },
-    [activeSession?.id, client, fail, openSession, sessions]
+    [activeSession?.id, client, fail, openSession, sessions],
   );
 
   const renameSession = useCallback(
     async (session: SessionSoul, title: string) => {
       try {
         const soul = await client.renameSession(session.id, title);
-        setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)));
-        if (activeSession?.id === session.id) setActiveSession((prev) => (prev ? { ...prev, title } : prev));
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)),
+        );
+        if (activeSession?.id === session.id)
+          setActiveSession((prev) => (prev ? { ...prev, title } : prev));
       } catch (err) {
         fail(err);
       }
     },
-    [activeSession?.id, client, fail]
+    [activeSession?.id, client, fail],
   );
 
   /* ── projects / projects ───────────────────── */
@@ -748,22 +809,26 @@ function Root() {
         fail(err);
       }
     },
-    [client, fail]
+    [client, fail],
   );
 
   const renameProject = useCallback(
     async (project: GatewayProject, name: string) => {
       try {
         const g = await client.updateProject(project.id, { name });
-        setProjects((prev) => prev.map((x) => (x.id === project.id ? { ...x, ...g } : x)));
+        setProjects((prev) =>
+          prev.map((x) => (x.id === project.id ? { ...x, ...g } : x)),
+        );
         setSessions((prev) =>
-          prev.map((s) => (s.project_id === project.id ? { ...s, project_name: name } : s))
+          prev.map((s) =>
+            s.project_id === project.id ? { ...s, project_name: name } : s,
+          ),
         );
       } catch (err) {
         fail(err);
       }
     },
-    [client, fail]
+    [client, fail],
   );
 
   const deleteProject = useCallback(
@@ -774,14 +839,16 @@ function Root() {
         /* members scatter back to projectless — clear their membership locally */
         setSessions((prev) =>
           prev.map((s) =>
-            s.project_id === project.id ? { ...s, project_id: null, project_name: null } : s
-          )
+            s.project_id === project.id
+              ? { ...s, project_id: null, project_name: null }
+              : s,
+          ),
         );
       } catch (err) {
         fail(err);
       }
     },
-    [client, fail]
+    [client, fail],
   );
 
   const assignProject = useCallback(
@@ -790,26 +857,35 @@ function Root() {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === session.id
-            ? { ...s, project_id: projectId, project_name: projects.find((g) => g.id === projectId)?.name ?? null }
-            : s
-        )
+            ? {
+                ...s,
+                project_id: projectId,
+                project_name:
+                  projects.find((g) => g.id === projectId)?.name ?? null,
+              }
+            : s,
+        ),
       );
       try {
         const soul = await client.assignProject(session.id, projectId);
-        setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)));
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session.id ? { ...s, ...soul } : s)),
+        );
       } catch (err) {
         fail(err);
         void refreshSessions();
       }
     },
-    [client, fail, projects, refreshSessions]
+    [client, fail, projects, refreshSessions],
   );
 
   const openModelDialog = useCallback(async () => {
     setShowModel(true);
     setProviderReports({});
     try {
-      setModel(activeSession ? await client.sessionModel(activeSession.id) : null);
+      setModel(
+        activeSession ? await client.sessionModel(activeSession.id) : null,
+      );
     } catch (err) {
       fail(err);
     }
@@ -823,17 +899,17 @@ function Root() {
         catalog.map(async (p) => {
           const [status, limits] = await Promise.all([
             client.providerStatus(p.id).catch(() => undefined),
-            client.providerLimits(p.id).catch(() => undefined)
+            client.providerLimits(p.id).catch(() => undefined),
           ]);
           return [p.id, { status, limits }] as const;
-        })
+        }),
       );
       setProviderReports(Object.fromEntries(reports));
       /* An older running gateway serves /v1/models WITHOUT the catalog key. */
       setCatalogHint(
         catalog.length > 0
           ? null
-          : "No models in the gateway catalog \u2014 if providers are configured, this gateway predates the /v1/models catalog; restart the vis gateway."
+          : "No models in the gateway catalog \u2014 if providers are configured, this gateway predates the /v1/models catalog; restart the vis gateway.",
       );
     } catch {
       setCatalog([]);
@@ -849,14 +925,16 @@ function Root() {
       if (!activeSession || picking) return;
       setPicking(true);
       try {
-        setModel(await client.setSessionModel(activeSession.id, provider, modelName));
+        setModel(
+          await client.setSessionModel(activeSession.id, provider, modelName),
+        );
       } catch (err) {
         fail(err);
       } finally {
         setPicking(false);
       }
     },
-    [activeSession, client, fail, picking]
+    [activeSession, client, fail, picking],
   );
 
   const openRenameDialog = useCallback(() => {
@@ -872,208 +950,256 @@ function Root() {
   }, [activeSession, renameDraft, renameSession]);
 
   const currentPick =
-    model && typeof model !== "string" ? { provider: model.provider ?? "", model: model.model ?? "" } : null;
+    model && typeof model !== "string"
+      ? { provider: model.provider ?? "", model: model.model ?? "" }
+      : null;
 
-  const gatewayHost = gatewayUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  const canSend = connected && !sending && (input.trim().length > 0 || pendingAtts.length > 0);
+  const gatewayHost = gatewayUrl
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+  const canSend =
+    connected &&
+    !sending &&
+    (input.trim().length > 0 || pendingAtts.length > 0);
 
   return (
     <View style={styles.safe}>
       <SafeAreaView style={styles.flex} edges={["top", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor={c.paper} />
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", default: undefined })}
-        style={styles.flex}
-      >
-        {/* ── header: flat, one hairline under it ─────────────────── */}
-        <View style={styles.header}>
-          <IconBtn name="sidebar" onPress={() => { void refreshSessions(); setShowSessions(true); }} />
-          <Pressable onPress={openRenameDialog} style={styles.barTitle} hitSlop={4}>
-            <Text numberOfLines={1} style={styles.barName}>
-              {activeSession?.title?.trim() || "Untitled"}
-            </Text>
-            <Feather name="edit-2" size={11} color={c.tsep} />
-          </Pressable>
-          <IconBtn name="settings" onPress={() => setShowSettings(true)} active={showSettings} />
-        </View>
-
-        {/* ── transcript: flat rows on the warm ground ─────────────── */}
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
+        <StatusBar barStyle="dark-content" backgroundColor={c.paper} />
+        <KeyboardAvoidingView
+          behavior={Platform.select({ ios: "padding", default: undefined })}
           style={styles.flex}
-          contentContainerStyle={styles.transcript}
-          onScroll={(e) => {
-            const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
-            atBottomRef.current =
-              contentOffset.y + layoutMeasurement.height >= contentSize.height - 48;
-          }}
-          onScrollBeginDrag={() => {
-            draggingRef.current = true;
-          }}
-          onScrollEndDrag={() => {
-            draggingRef.current = false;
-          }}
-          onMomentumScrollEnd={() => {
-            draggingRef.current = false;
-          }}
-          onContentSizeChange={() => {
-            /* Session-open: jump straight to the newest message, no animation
+        >
+          {/* ── header: flat, one hairline under it ─────────────────── */}
+          <View style={styles.header}>
+            <IconBtn
+              name="sidebar"
+              onPress={() => {
+                void refreshSessions();
+                setShowSessions(true);
+              }}
+            />
+            <Pressable
+              onPress={openRenameDialog}
+              style={styles.barTitle}
+              hitSlop={4}
+            >
+              <Text numberOfLines={1} style={styles.barName}>
+                {activeSession?.title?.trim() || "Untitled"}
+              </Text>
+              <Feather name="edit-2" size={11} color={c.tsep} />
+            </Pressable>
+            <IconBtn
+              name="settings"
+              onPress={() => setShowSettings(true)}
+              active={showSettings}
+            />
+          </View>
+
+          {/* ── transcript: flat rows on the warm ground ─────────────── */}
+          <FlatList
+            ref={listRef}
+            data={messages}
+            keyExtractor={(m) => m.id}
+            style={styles.flex}
+            contentContainerStyle={styles.transcript}
+            onScroll={(e) => {
+              const { contentOffset, layoutMeasurement, contentSize } =
+                e.nativeEvent;
+              atBottomRef.current =
+                contentOffset.y + layoutMeasurement.height >=
+                contentSize.height - 48;
+            }}
+            onScrollBeginDrag={() => {
+              draggingRef.current = true;
+            }}
+            onScrollEndDrag={() => {
+              draggingRef.current = false;
+            }}
+            onMomentumScrollEnd={() => {
+              draggingRef.current = false;
+            }}
+            onContentSizeChange={() => {
+              /* Session-open: jump straight to the newest message, no animation
                through the backlog. Otherwise follow a growing/streaming answer,
                but never while the reader's finger is down. */
-            if (jumpRef.current && messages.length) {
-              jumpRef.current = false;
-              listRef.current?.scrollToEnd({ animated: false });
-            } else if (atBottomRef.current && !draggingRef.current) {
-              listRef.current?.scrollToEnd({ animated: true });
+              if (jumpRef.current && messages.length) {
+                jumpRef.current = false;
+                listRef.current?.scrollToEnd({ animated: false });
+              } else if (atBottomRef.current && !draggingRef.current) {
+                listRef.current?.scrollToEnd({ animated: true });
+              }
+            }}
+            scrollEventThrottle={16}
+            removeClippedSubviews={Platform.OS === "android"}
+            initialNumToRender={12}
+            maxToRenderPerBatch={10}
+            windowSize={11}
+            updateCellsBatchingPeriod={40}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void onPullRefresh()}
+                tintColor={c.amber}
+              />
             }
-          }}
-          scrollEventThrottle={16}
-          removeClippedSubviews={Platform.OS === "android"}
-          initialNumToRender={12}
-          maxToRenderPerBatch={10}
-          windowSize={11}
-          updateCellsBatchingPeriod={40}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void onPullRefresh()} tintColor={c.amber} />
-          }
-          renderItem={({ item }) => <MessageRow item={item} />}
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              {connecting ? (
-                <ActivityIndicator color={c.amber} />
-              ) : (
-                <>
-                  <Text style={styles.emptyTitle}>{connected ? "fresh session" : "not connected"}</Text>
-                  <Text style={styles.emptyBody}>
-                    {connected
-                      ? "Say something \u2014 vis is listening."
-                      : "Open \u2699 and point me at a running vis gateway."}
-                  </Text>
-                </>
-              )}
-            </View>
-          }
-        />
-
-        {/* ── mic / error note ───────────────────────────────────── */}
-        {note ? (
-          <Pressable onPress={() => setNote(null)} style={styles.note}>
-            <Feather name="info" size={12} color={c.chipInk} />
-            <Text style={styles.noteText}>{note}</Text>
-          </Pressable>
-        ) : null}
-
-        {mention && (suggestRows.length > 0 || suggestBusy) ? (
-          <View style={styles.suggestBox}>
-            <View style={styles.suggestHead}>
-              <Feather name="at-sign" size={12} color={c.amberDeep} />
-              <Text style={styles.suggestTitle}>file suggestions</Text>
-              {suggestBusy ? <ActivityIndicator size="small" color={c.amber} /> : null}
-            </View>
-            {suggestRows.map((row) => (
-              <Pressable
-                key={row.name}
-                onPress={() => {
-                  setInput(applyFileMention(input, mention, row));
-                  setSuggestRows([]);
-                }}
-                style={styles.suggestRow}
-              >
-                <Text numberOfLines={1} style={styles.suggestName}>
-                  {row.name}
-                </Text>
-                {suggestLabel(row) ? (
-                  <Text numberOfLines={1} style={styles.suggestMeta}>
-                    {suggestLabel(row)}
-                  </Text>
-                ) : null}
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-
-        {/* ── attachment tray + flat composer ─────────────────────── */}
-        <AttachmentTray items={pendingAtts} onRemove={(key) => setPendingAtts((prev) => prev.filter((a) => a.key !== key))} />
-        <View style={styles.composer}>
-          {!capturing ? (
-            <>
-              <Text style={styles.prompt}>{"\u203a"}</Text>
-              <TextInput
-                value={input}
-                onChangeText={setInput}
-                placeholder={connected ? "message vis\u2026" : "connect first\u2026"}
-                placeholderTextColor={c.tsep}
-                style={styles.input}
-                editable={connected && !sending}
-                multiline
-                onSubmitEditing={() => void send()}
-              />
-              <IconBtn
-                name="paperclip"
-                size={16}
-                color={c.dim}
-                disabled={!connected}
-                onPress={() => void addAttachments(pickFiles)}
-              />
-              <IconBtn
-                name="image"
-                size={16}
-                color={c.dim}
-                disabled={!connected}
-                onPress={() => void addAttachments(pickImages)}
-              />
-            </>
-          ) : null}
-          <VoiceButton
-            client={client}
-            sessionId={activeSession?.id ?? null}
-            onTranscript={(text) => setInput((prev) => (prev ? `${prev.trimEnd()} ${text}` : text))}
-            onNote={setNote}
-            onPhase={setCapturing}
-          />
-          {!capturing ? (
-            runningTurn ? (
-              <Pressable onPress={() => void cancelRunning()} style={[styles.sendBtn, styles.stopBtn]} hitSlop={6}>
-                <Feather name="square" size={12} color="#FFFFFF" />
-              </Pressable>
-            ) : (
-              <Pressable
-                onPress={() => void send()}
-                disabled={!canSend}
-                style={[styles.sendBtn, !canSend && { opacity: 0.35 }]}
-                hitSlop={6}
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color={c.amberInk} />
+            renderItem={({ item }) => <MessageRow item={item} />}
+            ListEmptyComponent={
+              <View style={styles.emptyWrap}>
+                {connecting ? (
+                  <ActivityIndicator color={c.amber} />
                 ) : (
-                  <Feather name="arrow-up" size={15} color={c.amberInk} />
+                  <>
+                    <Text style={styles.emptyTitle}>
+                      {connected ? "fresh session" : "not connected"}
+                    </Text>
+                    <Text style={styles.emptyBody}>
+                      {connected
+                        ? "Say something \u2014 vis is listening."
+                        : "Open \u2699 and point me at a running vis gateway."}
+                    </Text>
+                  </>
                 )}
-              </Pressable>
-            )
-          ) : null}
-        </View>
+              </View>
+            }
+          />
 
-        {/* ── footer: one mono status line, TUI-style ──────────────── */}
-        <View style={styles.footer}>
-          <Pressable onPress={() => void openModelDialog()} style={styles.footRouting} hitSlop={6}>
-            <Feather name="zap" size={11} color={c.amberDeep} />
-            <Text numberOfLines={1} style={styles.footRoutingName}>
-              {modelLabel(model)}
-            </Text>
-          </Pressable>
-          {ctxPct(ctxUtil) != null ? (
-            <Text style={styles.ctxChip}>{`ctx ${ctxPct(ctxUtil)}%`}</Text>
+          {/* ── mic / error note ───────────────────────────────────── */}
+          {note ? (
+            <Pressable onPress={() => setNote(null)} style={styles.note}>
+              <Feather name="info" size={12} color={c.chipInk} />
+              <Text style={styles.noteText}>{note}</Text>
+            </Pressable>
           ) : null}
-          <Text numberOfLines={1} style={styles.footerText}>
-            {gatewayHost}
-            {activeSession ? ` \u00b7 ${shortId(activeSession.id)}` : ""}
-          </Text>
-        </View>
-      </KeyboardAvoidingView>
+
+          {mention && (suggestRows.length > 0 || suggestBusy) ? (
+            <View style={styles.suggestBox}>
+              <View style={styles.suggestHead}>
+                <Feather name="at-sign" size={12} color={c.amberDeep} />
+                <Text style={styles.suggestTitle}>file suggestions</Text>
+                {suggestBusy ? (
+                  <ActivityIndicator size="small" color={c.amber} />
+                ) : null}
+              </View>
+              {suggestRows.map((row) => (
+                <Pressable
+                  key={row.name}
+                  onPress={() => {
+                    setInput(applyFileMention(input, mention, row));
+                    setSuggestRows([]);
+                  }}
+                  style={styles.suggestRow}
+                >
+                  <Text numberOfLines={1} style={styles.suggestName}>
+                    {row.name}
+                  </Text>
+                  {suggestLabel(row) ? (
+                    <Text numberOfLines={1} style={styles.suggestMeta}>
+                      {suggestLabel(row)}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {/* ── attachment tray + flat composer ─────────────────────── */}
+          <AttachmentTray
+            items={pendingAtts}
+            onRemove={(key) =>
+              setPendingAtts((prev) => prev.filter((a) => a.key !== key))
+            }
+          />
+          <View style={styles.composer}>
+            {!capturing ? (
+              <>
+                <Text style={styles.prompt}>{"\u203a"}</Text>
+                <TextInput
+                  value={input}
+                  onChangeText={setInput}
+                  placeholder={
+                    connected ? "message vis\u2026" : "connect first\u2026"
+                  }
+                  placeholderTextColor={c.tsep}
+                  style={styles.input}
+                  editable={connected && !sending}
+                  multiline
+                  onSubmitEditing={() => void send()}
+                />
+                <IconBtn
+                  name="paperclip"
+                  size={16}
+                  color={c.dim}
+                  disabled={!connected}
+                  onPress={() => void addAttachments(pickFiles)}
+                />
+                <IconBtn
+                  name="image"
+                  size={16}
+                  color={c.dim}
+                  disabled={!connected}
+                  onPress={() => void addAttachments(pickImages)}
+                />
+              </>
+            ) : null}
+            <VoiceButton
+              client={client}
+              sessionId={activeSession?.id ?? null}
+              onTranscript={(text) =>
+                setInput((prev) => (prev ? `${prev.trimEnd()} ${text}` : text))
+              }
+              onNote={setNote}
+              onPhase={setCapturing}
+            />
+            {!capturing ? (
+              runningTurn ? (
+                <Pressable
+                  onPress={() => void cancelRunning()}
+                  style={[styles.sendBtn, styles.stopBtn]}
+                  hitSlop={6}
+                >
+                  <Feather name="square" size={12} color="#FFFFFF" />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => void send()}
+                  disabled={!canSend}
+                  style={[styles.sendBtn, !canSend && { opacity: 0.35 }]}
+                  hitSlop={6}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color={c.amberInk} />
+                  ) : (
+                    <Feather name="arrow-up" size={15} color={c.amberInk} />
+                  )}
+                </Pressable>
+              )
+            ) : null}
+          </View>
+
+          {/* ── footer: one mono status line, TUI-style ──────────────── */}
+          <View style={styles.footer}>
+            <Pressable
+              onPress={() => void openModelDialog()}
+              style={styles.footRouting}
+              hitSlop={6}
+            >
+              <Feather name="zap" size={11} color={c.amberDeep} />
+              <Text numberOfLines={1} style={styles.footRoutingName}>
+                {modelLabel(model)}
+              </Text>
+            </Pressable>
+            {ctxPct(ctxUtil) != null ? (
+              <Text style={styles.ctxChip}>{`ctx ${ctxPct(ctxUtil)}%`}</Text>
+            ) : null}
+            <Text numberOfLines={1} style={styles.footerText}>
+              {gatewayHost}
+              {activeSession ? ` \u00b7 ${shortId(activeSession.id)}` : ""}
+            </Text>
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       {/* ── sessions drawer ──────────────────────────────────────── */}
@@ -1097,7 +1223,12 @@ function Root() {
       />
 
       {/* ── settings — the web channel's Settings dialog, native ──── */}
-      <DialogModal visible={showSettings} title="Settings" onClose={() => setShowSettings(false)} flush>
+      <DialogModal
+        visible={showSettings}
+        title="Settings"
+        onClose={() => setShowSettings(false)}
+        flush
+      >
         <SettingsPane
           client={client}
           gatewayUrl={gatewayUrl}
@@ -1110,52 +1241,88 @@ function Root() {
           notify={notify}
           onNotify={(v) => {
             setNotify(v);
-            if (v) void ensureNotificationPermissions().then((ok) => setNotify(ok));
+            if (v)
+              void ensureNotificationPermissions().then((ok) => setNotify(ok));
           }}
         />
       </DialogModal>
 
       {/* ── session model picker — the web picker, native ─────────── */}
-      <DialogModal visible={showModel} title="Session model" onClose={() => setShowModel(false)}>
-        <ScrollView style={styles.modelScroll} contentContainerStyle={styles.modelScrollBody}>
+      <DialogModal
+        visible={showModel}
+        title="Session model"
+        onClose={() => setShowModel(false)}
+      >
+        <ScrollView
+          style={styles.modelScroll}
+          contentContainerStyle={styles.modelScrollBody}
+        >
           <Text style={styles.activeModel}>
-            This session: <Text style={styles.activeModelStrong}>{modelLabel(model)}</Text>
+            This session:{" "}
+            <Text style={styles.activeModelStrong}>{modelLabel(model)}</Text>
           </Text>
           <View style={styles.modelChips}>
             <Pressable
               onPress={() => void pickModel("", "")}
-              style={[styles.modelChip, !currentPick?.model && styles.modelChipOn]}
+              style={[
+                styles.modelChip,
+                !currentPick?.model && styles.modelChipOn,
+              ]}
             >
               <Feather
                 name={!currentPick?.model ? "check" : "star"}
                 size={11}
                 color={!currentPick?.model ? c.amberBright : c.dim}
               />
-              <Text style={[styles.modelChipText, !currentPick?.model && styles.modelChipTextOn]}>
+              <Text
+                style={[
+                  styles.modelChipText,
+                  !currentPick?.model && styles.modelChipTextOn,
+                ]}
+              >
                 router default
               </Text>
             </Pressable>
           </View>
           {catalog.length === 0 ? (
-            <Text style={styles.emptyBody}>{catalogHint ?? "No providers configured yet."}</Text>
+            <Text style={styles.emptyBody}>
+              {catalogHint ?? "No providers configured yet."}
+            </Text>
           ) : (
             catalog.map((p) => {
               const report = providerReportText(providerReports[p.id]);
               return (
                 <View key={p.id} style={styles.modelGroup}>
                   <Text style={styles.modelGroupLabel}>{p.label ?? p.id}</Text>
-                  {report ? <Text style={styles.modelGroupMeta}>{report}</Text> : null}
+                  {report ? (
+                    <Text style={styles.modelGroupMeta}>{report}</Text>
+                  ) : null}
                   <View style={styles.modelChips}>
                     {p.models.map((name) => {
-                      const on = currentPick?.provider === p.id && currentPick?.model === name;
+                      const on =
+                        currentPick?.provider === p.id &&
+                        currentPick?.model === name;
                       return (
                         <Pressable
                           key={name}
                           onPress={() => void pickModel(p.id, name)}
                           style={[styles.modelChip, on && styles.modelChipOn]}
                         >
-                          {on ? <Feather name="check" size={11} color={c.amberBright} /> : null}
-                          <Text style={[styles.modelChipText, on && styles.modelChipTextOn]}>{name}</Text>
+                          {on ? (
+                            <Feather
+                              name="check"
+                              size={11}
+                              color={c.amberBright}
+                            />
+                          ) : null}
+                          <Text
+                            style={[
+                              styles.modelChipText,
+                              on && styles.modelChipTextOn,
+                            ]}
+                          >
+                            {name}
+                          </Text>
                         </Pressable>
                       );
                     })}
@@ -1168,7 +1335,11 @@ function Root() {
       </DialogModal>
 
       {/* ── rename session ───────────────────────────────────────── */}
-      <DialogModal visible={showRename} title="Rename session" onClose={() => setShowRename(false)}>
+      <DialogModal
+        visible={showRename}
+        title="Rename session"
+        onClose={() => setShowRename(false)}
+      >
         <TextInput
           value={renameDraft}
           onChangeText={setRenameDraft}
@@ -1179,13 +1350,27 @@ function Root() {
           style={styles.field}
           onSubmitEditing={() => void applyRename()}
         />
-        <ActionBtn label="Save" tone="amber" disabled={!renameDraft.trim()} onPress={() => void applyRename()} />
+        <ActionBtn
+          label="Save"
+          tone="amber"
+          disabled={!renameDraft.trim()}
+          onPress={() => void applyRename()}
+        />
       </DialogModal>
 
       {/* ── error dialog ─────────────────────────────────────────── */}
-      <DialogModal visible={error != null} title="Problem" tone="error" onClose={() => setError(null)}>
+      <DialogModal
+        visible={error != null}
+        title="Problem"
+        tone="error"
+        onClose={() => setError(null)}
+      >
         <Text style={styles.errorText}>{error}</Text>
-        <ActionBtn label="Dismiss" tone="ghost" onPress={() => setError(null)} />
+        <ActionBtn
+          label="Dismiss"
+          tone="ghost"
+          onPress={() => setError(null)}
+        />
       </DialogModal>
     </View>
   );
@@ -1202,25 +1387,74 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: c.hair,
-    backgroundColor: c.paper
+    backgroundColor: c.paper,
   },
-  barTitle: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 },
-  barName: { flexShrink: 1, fontFamily: mono, fontSize: 13, fontWeight: "700", color: c.ink },
-  transcript: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 40, gap: 14, flexGrow: 1 },
+  barTitle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+  },
+  barName: {
+    flexShrink: 1,
+    fontFamily: mono,
+    fontSize: 13,
+    fontWeight: "700",
+    color: c.ink,
+  },
+  transcript: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 40,
+    gap: 14,
+    flexGrow: 1,
+  },
   msg: { gap: 5 },
   msgHead: { flexDirection: "row", alignItems: "center", gap: 7 },
   gutter: { width: 3, height: 12 },
-  msgRole: { fontFamily: mono, fontSize: 10, fontWeight: "700", letterSpacing: 1 },
-  headRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: c.hair },
+  msgRole: {
+    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  headRule: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: c.hair,
+  },
   msgTime: { fontFamily: mono, fontSize: 9, color: c.tsep },
   attRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   attImg: { width: 96, height: 96, backgroundColor: c.tsepBg },
   msgMeta: { fontFamily: mono, fontSize: 9.5, color: c.dim, marginTop: 2 },
   pending: { fontFamily: mono, fontSize: 12, color: c.dim },
-  thinking: { fontFamily: mono, fontSize: 11, lineHeight: 16, color: c.dim, fontStyle: "italic" },
-  emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingTop: 80 },
-  emptyTitle: { fontFamily: mono, fontSize: 13, fontWeight: "700", color: c.ink },
-  emptyBody: { fontSize: 12, color: c.dim, textAlign: "center", paddingHorizontal: 40 },
+  thinking: {
+    fontFamily: mono,
+    fontSize: 11,
+    lineHeight: 16,
+    color: c.dim,
+    fontStyle: "italic",
+  },
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingTop: 80,
+  },
+  emptyTitle: {
+    fontFamily: mono,
+    fontSize: 13,
+    fontWeight: "700",
+    color: c.ink,
+  },
+  emptyBody: {
+    fontSize: 12,
+    color: c.dim,
+    textAlign: "center",
+    paddingHorizontal: 40,
+  },
   note: {
     flexDirection: "row",
     alignItems: "center",
@@ -1229,7 +1463,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     backgroundColor: c.chipBg,
     paddingHorizontal: 10,
-    paddingVertical: 7
+    paddingVertical: 7,
   },
   noteText: { flex: 1, fontFamily: mono, fontSize: 11.5, color: c.chipInk },
   suggestBox: {
@@ -1240,11 +1474,22 @@ const styles = StyleSheet.create({
     backgroundColor: c.field,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    gap: 6
+    gap: 6,
   },
   suggestHead: { flexDirection: "row", alignItems: "center", gap: 6 },
-  suggestTitle: { flex: 1, fontFamily: mono, fontSize: 10, color: c.amberDeep, textTransform: "uppercase" },
-  suggestRow: { gap: 2, paddingVertical: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.lineSoft },
+  suggestTitle: {
+    flex: 1,
+    fontFamily: mono,
+    fontSize: 10,
+    color: c.amberDeep,
+    textTransform: "uppercase",
+  },
+  suggestRow: {
+    gap: 2,
+    paddingVertical: 5,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: c.lineSoft,
+  },
   suggestName: { fontFamily: mono, fontSize: 12, color: c.ink },
   suggestMeta: { fontSize: 10, color: c.dim },
   composer: {
@@ -1257,7 +1502,7 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: c.hair,
-    backgroundColor: c.paper
+    backgroundColor: c.paper,
   },
   prompt: {
     fontFamily: mono,
@@ -1265,7 +1510,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: c.amber,
     lineHeight: 30,
-    marginRight: 4
+    marginRight: 4,
   },
   input: {
     flex: 1,
@@ -1275,14 +1520,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     paddingVertical: 6,
     paddingHorizontal: 0,
-    backgroundColor: "transparent"
+    backgroundColor: "transparent",
   },
   sendBtn: {
     width: 30,
     height: 30,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: c.amber
+    backgroundColor: c.amber,
   },
   stopBtn: { backgroundColor: c.err },
   footer: {
@@ -1290,7 +1535,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 4
+    paddingVertical: 4,
   },
   ctxChip: {
     fontFamily: mono,
@@ -1300,7 +1545,7 @@ const styles = StyleSheet.create({
     borderColor: c.lineSoft,
     borderRadius: 4,
     paddingHorizontal: 5,
-    paddingVertical: 2
+    paddingVertical: 2,
   },
   footRouting: {
     flexDirection: "row",
@@ -1311,16 +1556,22 @@ const styles = StyleSheet.create({
     borderColor: c.lineSoft,
     backgroundColor: c.field,
     paddingHorizontal: 8,
-    paddingVertical: 3
+    paddingVertical: 3,
   },
   footRoutingName: { fontFamily: mono, fontSize: 10, color: c.amberDeep },
-  footerText: { flex: 1, textAlign: "right", fontFamily: mono, fontSize: 10, color: c.dim },
+  footerText: {
+    flex: 1,
+    textAlign: "right",
+    fontFamily: mono,
+    fontSize: 10,
+    color: c.dim,
+  },
   fieldLabel: {
     fontFamily: mono,
     fontSize: 10.5,
     letterSpacing: 1,
     textTransform: "uppercase",
-    color: c.dim
+    color: c.dim,
   },
   field: {
     borderWidth: 1,
@@ -1330,7 +1581,7 @@ const styles = StyleSheet.create({
     fontFamily: mono,
     fontSize: 12,
     paddingHorizontal: 10,
-    paddingVertical: 6
+    paddingVertical: 6,
   },
   modelScroll: { maxHeight: 460 },
   modelScrollBody: { gap: 14, paddingBottom: 4 },
@@ -1342,7 +1593,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     letterSpacing: 1,
     textTransform: "uppercase",
-    color: c.dim
+    color: c.dim,
   },
   modelGroupMeta: { fontSize: 10.5, color: c.dim, marginTop: -4 },
   modelChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
@@ -1354,10 +1605,10 @@ const styles = StyleSheet.create({
     borderColor: c.line,
     backgroundColor: c.field,
     paddingHorizontal: 11,
-    paddingVertical: 7
+    paddingVertical: 7,
   },
   modelChipOn: { backgroundColor: c.ink, borderColor: c.ink },
   modelChipText: { fontFamily: mono, fontSize: 12, color: c.ink },
   modelChipTextOn: { color: c.amberBright, fontWeight: "700" },
-  errorText: { color: c.ink, fontSize: 13, lineHeight: 18 }
+  errorText: { color: c.ink, fontSize: 13, lineHeight: 18 },
 });
