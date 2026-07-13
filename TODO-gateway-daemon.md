@@ -94,7 +94,7 @@ becomes correct single-process recovery. No cross-process lease needed.
   init/launchd), then connect to it as client #1 like everyone else. Nobody
   owns it.
 - **D5 — Auto-start.** First channel that finds no gateway spawns it
-  (detached) and connects. No manual `vis serve` required for the common path.
+  (detached) and connects. No manual `vis gateway start` required for the common path.
 
 ### Resolved decisions (locked — user said "do all", proceeding with the leans)
 
@@ -108,9 +108,9 @@ becomes correct single-process recovery. No cross-process lease needed.
   the port IS the daemon; the loser gets `EADDRINUSE` and falls back to
   connecting. No election, no coordinator, no stale lock file. The registry
   `secret` guards pid reuse on attach.
-- **Q4 — Command name → keep `vis serve`, add `vis gateway` alias + `vis gateway
-  stop`/`status`.** `serve-main!` stays the entry (`server.clj:751`); the daemon
-  self-spawns via the `serve` argv.
+- **Q4 — Command name → `vis gateway start` (+ `vis gateway stop`/`status`).**
+  `serve-main!` stays the internal daemon entry; the daemon self-spawns via the
+  `gateway start` argv.
 - **Q5 — Headless one-shot → stays in-process.** `vis "do X"` and `--db :memory`
   do NOT spawn/attach a daemon (a non-interactive single turn owns its own
   runtime). The daemon path is for interactive/persistent sessions only.
@@ -121,7 +121,7 @@ Build status: **implemented through refcount/status/stop/web-SSE cleanup.** Rema
 
 ## What vis ALREADY has (so this is less work than it sounds)
 
-- **`vis serve` is already the gateway daemon.** `gateway/server.clj` is a full
+- **`vis gateway start` is already the gateway daemon.** `gateway/server.clj` is a full
   HTTP/SSE server over the session/turn runtime: `POST submit-turn`,
   `cancel-turn`, sessions CRUD, and `/event` SSE doing **replay-then-live**
   (`sse-body`, `server.clj:108`). Registered at `main.clj:2839` ("Serve the
@@ -135,7 +135,7 @@ Build status: **implemented through refcount/status/stop/web-SSE cleanup.** Rema
   the daemon) → this becomes redundant.
 
 ### The missing half
-- **No vis-side HTTP/SSE CLIENT** that talks to a remote gateway. `vis serve` is
+- **No vis-side HTTP/SSE CLIENT** that talks to a remote gateway. `vis gateway start` is
   a server nobody connects to yet. This client is the real work.
 
 ---
