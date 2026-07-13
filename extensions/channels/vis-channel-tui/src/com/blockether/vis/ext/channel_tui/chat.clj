@@ -707,15 +707,31 @@
       ;; shell/tool call). Project back to the phase the spinner reads so an
       ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
       "activity"
-      (let [activity (event-get event :activity)
-            cmd      (event-get event :cmd)
-            op       (event-get event :op)]
+      (let [activity
+            (event-get event :activity)
+
+            cmd
+            (event-get event :cmd)
+
+            op
+            (event-get event :op)]
+
         (case (str activity)
-          "provider-call"  {:phase :provider-call :iteration iteration}
-          "response-parse" {:phase :response-parse :iteration iteration}
-          "shell-run"      {:phase :shell-run :iteration iteration :cmd (or cmd op)}
-          "shell-bg"       {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
-          "tool"           {:phase :tool-start :iteration iteration :tool-event {:op op}}
+          "provider-call"
+          {:phase :provider-call :iteration iteration}
+
+          "response-parse"
+          {:phase :response-parse :iteration iteration}
+
+          "shell-run"
+          {:phase :shell-run :iteration iteration :cmd (or cmd op)}
+
+          "shell-bg"
+          {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
+
+          "tool"
+          {:phase :tool-start :iteration iteration :tool-event {:op op}}
+
           nil))
 
       ;; Queue lifecycle for a DIFFERENT (queued) turn on this session — the
