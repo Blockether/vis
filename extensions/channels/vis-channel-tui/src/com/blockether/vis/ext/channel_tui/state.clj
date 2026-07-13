@@ -776,11 +776,27 @@
 (defn- restore-tab
   "Pull the per-tab locals for `workspace-id` back into the active db.\n\n   Also clears two DERIVED/display fields that belong to the tab we are\n   LEAVING, not the one we are entering:\n\n   - `:layout` is a single top-level value the render thread computes for the\n     CURRENT tab's messages (`:total-h`, `:offsets`). It is not per-tab, so on a\n     switch it still describes the old tab. The first post-switch frame would\n     clamp the new tab's scroll against that stale document height (and feed the\n     old `:offsets` as `:prev-offsets`) → the viewport lurches, then the next\n     frame recomputes correctly. Dropping it forces a clean recompute for THIS\n     tab before any clamp.\n   - `:pos` on `:scroll` is the eased on-screen row, anchored to the old layout.\n     Stripping it makes a restored FOLLOW tab re-snap to its own bottom instead\n     of inheriting the previous tab's pinned bottom row, and lets a parked tab\n     re-resolve its `:offset` against the fresh layout."
   [db workspace-id]
-  (-> (merge db (or (get-in db [:tab-locals workspace-id]) (empty-tab-state)))
-      (dissoc :layout)
-      (update :scroll
-              (fn [sc]
-                (if (map? sc) (dissoc sc :pos) sc)))))
+  (let [entry
+        (some #(when (= (:id %) workspace-id) %) (:tabs db))
+
+        db'
+        (-> (merge db (or (get-in db [:tab-locals workspace-id]) (empty-tab-state)))
+            (dissoc :layout)
+            (update :scroll
+                    (fn [sc]
+                      (if (map? sc) (dissoc sc :pos) sc))))]
+
+    ;; The tab ENTRY carries the workspace root reliably (set at creation). A
+    ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
+    ;; can null the denormalized top-level `:workspace/root`; backfill it from
+    ;; the entry so every reader (footer, F2 context panel, `/root` picker,
+    ;; magit) keeps the ACTIVE session's root and never the vis process cwd.
+    (cond-> db'
+      (and (nil? (:workspace/root db')) (:workspace/root entry))
+      (assoc :workspace/root (:workspace/root entry))
+
+      (and (nil? (:workspace db')) (:workspace entry))
+      (assoc :workspace (:workspace entry)))))
 (defn- activate-tab
   [db workspace-id]
   (-> db
@@ -1224,56 +1240,90 @@
                         (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
 
                   (if entry (activate-tab db (:id entry)) db))))
-(reg-event-db :close-tab
-              ;; Close one tab (default: the active tab). Removes it from `:tabs`,
-              ;; drops its `:tab-locals` snapshot, and — if it was active — activates
-              ;; the neighbor (same index, clamped). Refuses to close the last tab.
-              (fn [db [_ tab-id]]
-                (let [db
-                      (-> db
-                          ensure-tabs
-                          sync-active-tab)
+(reg-event-fx
+  :close-tab
+  ;; Close one tab (default: the active tab). Removes it from `:tabs`,
+  ;; drops its `:tab-locals` snapshot, and — if it was active — activates
+  ;; the neighbor (same index, clamped). Refuses to close the last tab.
+  ;;
+  ;; RESOURCE RELEASE: when the closed tab was the LAST open view of an
+  ;; IDLE session (no running turn, no queued/pending sends, and the sid
+  ;; is not still open in another tab) we emit `:release-session-listener`
+  ;; (drop the SSE title-listener) + `:release-session-runtime` (tell the
+  ;; daemon to stop that session's shell_bg children / REPLs and drop its
+  ;; live runtime). A session with a running or queued turn is LEFT alone —
+  ;; it stays resumable and keeps streaming; only process exit force-stops.
+  (fn [db [_ tab-id]]
+    (let [db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-                      entries
-                      (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-                      active-id
-                      (current-tab-id db)
+          active-id
+          (current-tab-id db)
 
-                      target-id
-                      (or tab-id active-id)
+          target-id
+          (or tab-id active-id)
 
-                      idx
-                      (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
+          idx
+          (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
 
-                  (if (or (nil? idx) (<= (count entries) 1))
-                    db
-                    (let [remaining
-                          (vec (concat (subvec entries 0 idx) (subvec entries (inc idx))))
+      (if (or (nil? idx) (<= (count entries) 1))
+        {:db db}
+        (let [;; `sync-active-tab` above snapshotted the active tab into
+              ;; `:tab-locals`, so EVERY tab's session + idle state now
+              ;; lives there — read the closing tab's before we drop it.
+              closing-snap
+              (get-in db [:tab-locals target-id])
 
-                          db
-                          (-> db
-                              (assoc :tabs remaining)
-                              (update :tab-locals dissoc target-id))]
+              closing-sid
+              (some-> closing-snap
+                      :session
+                      :id
+                      str)
 
-                      (if (= target-id active-id)
-                        (let [next-idx
-                              (min idx (dec (count remaining)))
+              closing-idle?
+              (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
 
-                              next-id
-                              (:id (nth remaining next-idx))]
+              remaining
+              (vec (concat (subvec entries 0 idx) (subvec entries (inc idx))))
 
-                          (-> db
-                              (assoc :active-tab-id next-id)
-                              (update :tabs
-                                      (fn [es]
-                                        (mapv (fn [entry]
-                                                (cond-> (dissoc entry :active?)
-                                                  (= (:id entry) next-id)
-                                                  (assoc :active? true)))
-                                              es)))
-                              (restore-tab next-id)))
-                        db))))))
+              db
+              (-> db
+                  (assoc :tabs remaining)
+                  (update :tab-locals dissoc target-id))
+
+              open-elsewhere?
+              (boolean (and closing-sid
+                            (some #(= closing-sid (tab-session-id db (:id %))) remaining)))
+
+              db
+              (if (= target-id active-id)
+                (let [next-idx
+                      (min idx (dec (count remaining)))
+
+                      next-id
+                      (:id (nth remaining next-idx))]
+
+                  (-> db
+                      (assoc :active-tab-id next-id)
+                      (update :tabs
+                              (fn [es]
+                                (mapv (fn [entry]
+                                        (cond-> (dissoc entry :active?)
+                                          (= (:id entry) next-id)
+                                          (assoc :active? true)))
+                                      es)))
+                      (restore-tab next-id)))
+                db)]
+
+          {:db db
+           :fx (when (and closing-sid closing-idle? (not open-elsewhere?))
+                 [[:release-session-listener closing-sid]
+                  [:release-session-runtime closing-sid]])})))))
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))
@@ -1305,10 +1355,20 @@
               ;; Replace the session's current workspace record (trunk or draft) after a
               ;; turn that may have switched it (`/root`, `/draft new | apply | abandon`).
               ;; Keep the denormalized root in lockstep; the footer reads it first.
-              (fn [db [_ ws]]
-                (assoc db
-                  :workspace ws
-                  :workspace/root (:root ws))))
+              ;;
+              ;; `workspace-id` = the tab whose session this workspace belongs to. A
+              ;; BACKGROUND (sibling) session can complete a turn while another tab is
+              ;; active; routing through `update-tab` writes the root into THAT tab (its
+              ;; `:tab-locals`) instead of stomping the active tab's footer with the
+              ;; wrong repo. Nil `workspace-id` (e.g. the /root picker on the active
+              ;; session) targets the active tab, as before.
+              (fn [db [_ ws workspace-id]]
+                (update-tab db
+                            workspace-id
+                            (fn [d]
+                              (assoc d
+                                :workspace ws
+                                :workspace/root (:root ws))))))
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
    :gateway-turn-id])
@@ -2430,21 +2490,47 @@
               ;; in-flight turn commits. No provider call happens from this handler.
               (fn [db [_ text workspace-id]]
                 (enqueue-message-result db workspace-id text)))
-(reg-event-db :set-queued-turn-id
+(reg-event-fx :set-queued-turn-id
               ;; Late-bind the gateway's queued turn id onto the local preview entry
               ;; (matched by the client-id stamped at enqueue). ArrowUp-edit and clear
               ;; use it to update/delete the real gateway record.
+              ;;
+              ;; RACE (the "sent AND queued at the same time" wedge): the id lands via
+              ;; an async round-trip AFTER `:gateway-enqueue`. If a cancel fires in that
+              ;; window it restores the backlog to the editor (:restore-pending-to-input)
+              ;; and drops the local entry — but it can only delete gateway records whose
+              ;; :turn-id already bound. When this bind then finds NO matching client-id
+              ;; entry, the entry was already reclaimed by the cancel (or drained onto a
+              ;; fresh local send): the server-side queued turn is now ORPHANED and would
+              ;; auto-drain after the cancel = the message gets SENT while ALSO sitting
+              ;; back in the editor, and the tab wedges on a ghost turn. Delete the
+              ;; orphaned record here so nothing leaks server-side.
               (fn [db [_ workspace-id client-id tid]]
-                (update-tab
-                  db
-                  (or workspace-id (current-tab-id db))
-                  (fn [w]
-                    (update w
-                            :pending-sends
-                            (fn [q]
-                              (mapv (fn [e]
-                                      (if (= client-id (:client-id e)) (assoc e :turn-id tid) e))
-                                    (vec (or q [])))))))))
+                (let [wid
+                      (or workspace-id (current-tab-id db))
+
+                      source-db
+                      (db-for-tab db wid)
+
+                      matched?
+                      (boolean (some #(= client-id (:client-id %)) (:pending-sends source-db)))
+
+                      sid
+                      (get-in source-db [:session :id])]
+
+                  (if matched?
+                    {:db (update-tab db
+                                     wid
+                                     (fn [w]
+                                       (update w
+                                               :pending-sends
+                                               (fn [q]
+                                                 (mapv (fn [e]
+                                                         (if (= client-id (:client-id e))
+                                                           (assoc e :turn-id tid)
+                                                           e))
+                                                       (vec (or q [])))))))}
+                    {:db db :fx (when (and sid tid) [[:gateway-delete-queued sid tid]])}))))
 (reg-event-db :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
               ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares —
@@ -3257,7 +3343,7 @@
 
                                (when (and new-root (not= new-root old-root))
                                  (git/seed-working-tree-status! (java.io.File. new-root)))
-                               (dispatch [:set-workspace ws]))
+                               (dispatch [:set-workspace ws workspace-id]))
                              (catch Throwable _ nil))
                         ;; W3: refresh the F2 context panel's snapshot from the
                         ;; just-completed turn's ctx (tasks + facts). One DB read
@@ -3346,7 +3432,7 @@
                                                :id)
                                    ws (when sid (vis/gateway-session-workspace sid))]
 
-                               (dispatch [:set-workspace ws]))
+                               (dispatch [:set-workspace ws workspace-id]))
                              (catch Throwable _ nil))
                         (try (when-let [sid (:id session)]
                                (dispatch [:set-ctx-panel sid {}]))
@@ -3395,3 +3481,10 @@
 (reg-fx :gateway-close-session
         (fn [sid]
           (when sid (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))
+(reg-fx :release-session-runtime
+        ;; Stop a session's live daemon runtime + background children (shell_bg,
+        ;; managed REPLs) WITHOUT dropping the process client lease — fired by
+        ;; `:close-tab` when the LAST view of an idle session closes. Keeps the
+        ;; transcript resumable; best-effort, never daemon-spawning.
+        (fn [sid]
+          (when sid (try (vis/gateway-release-session-runtime! sid) (catch Throwable _ nil)))))

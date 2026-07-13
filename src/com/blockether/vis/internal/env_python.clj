@@ -616,14 +616,15 @@ def __vis_run_async__(src):
     tree = __vis_AwaitFix__().visit(tree)
     __vis_ast__.fix_missing_locations(tree)
     # PRE-SCAN (piggybacks the block parse — zero extra parse cost): collect every
-    # native_tools_results[\"literal\"] id and PRIME them in ONE batched DB query, so
-    # N literal reads never fan out to N fetches. Dynamic keys fall back to a lazy
-    # per-key fetch in __getitem__. Guarded: the prime callback is only bound in the
-    # full agent context (a bare test context has neither the map nor the callback).
+    # literal id read via ntr[...] (or legacy native_tools_results[...]) and PRIME
+    # them in ONE batched DB query, so N literal reads never fan out to N fetches.
+    # Dynamic keys fall back to a lazy per-key fetch in __getitem__. Guarded: the
+    # prime callback is only bound in the full agent context (a bare test context
+    # has neither the map nor the callback).
     if '__vis_native_result_prime__' in g and '__vis_native_result_scan__' in g:
         __vis_scan_ids__ = __vis_native_result_scan__(tree)
         if __vis_scan_ids__:
-            native_tools_results.__vis_prime__(__vis_scan_ids__)
+            ntr.__vis_prime__(__vis_scan_ids__)
     assigned = __vis_assigned_names__(tree.body)
     body = list(tree.body)
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
@@ -698,11 +699,13 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
     return __vis_real_print__(*__vis_a__, **__vis_kw__)
 print = __vis_print__
 
-# ── native_tools_results: retrieve a PRIOR native tool's result by its provider
-# tool_use id, WITHOUT re-running the tool. Every native tool call vis persisted
-# (this turn's earlier iterations AND past turns) is reachable by the SAME id the
-# model saw on its tool_result. A read is a single DB fetch (thaw + rehydrate to
-# the EXACT __VisResult__ dict the fresh call returned), then cached in-process.
+# ── ntr / native_tools_results: retrieve a PRIOR native tool's result by its
+# provider tool_use id, WITHOUT re-running the tool. `ntr` is the short public
+# name; `native_tools_results` remains as a backwards-compatible verbose alias.
+# Every native tool call vis persisted (this turn's earlier iterations AND past
+# turns) is reachable by the SAME id the model saw on its tool_result. A read is
+# a single DB fetch (thaw + rehydrate to the EXACT __VisResult__ dict the fresh
+# call returned), then cached in-process.
 #
 # `__vis_native_result_prime__(ids)` (Clojure) does ONE batched DB query for a
 # list of ids → {id: result} (a proxy per hit; misses absent). `__vis_run_async__`
@@ -710,6 +713,11 @@ print = __vis_print__
 # ONE query. `__vis_native_result_fetch__(id)` (Clojure) is the lazy single-id
 # fallback for a DYNAMIC key (a variable / comprehension the scan can't see).
 # A miss → a clean KeyError, never a crash.
+#
+# It is ALSO a read-only mapping: `__vis_native_result_ids__()` (Clojure) lists
+# every persisted tool_use id in the session (newest first), backing keys() /
+# items() / values() / __iter__ / __len__ so the store is BROWSEABLE without
+# knowing an id up front.
 class __VisNativeResults__:
     def __init__(self):
         self.__vis_cache__ = {}          # id -> pyified __VisResult__ (already fetched)
@@ -774,18 +782,61 @@ class __VisNativeResults__:
         except KeyError:
             return False
 
-native_tools_results = __VisNativeResults__()
+    def __vis_all_ids__(self):
+        # Host list of EVERY native tool_use id persisted in this session branch
+        # (newest first) so the store is BROWSEABLE. Degrades to the ids already
+        # cached in-process when the callback isn't bound (bare test context).
+        try:
+            __vis_ids__ = __vis_native_result_ids__()
+        except Exception:
+            __vis_ids__ = None
+        if __vis_ids__ is None:
+            return list(self.__vis_cache__.keys())
+        # De-dupe, preserving host (newest-first) order.
+        __vis_seen__ = set()
+        __vis_out__ = []
+        for __vis_i__ in __vis_ids__:
+            if __vis_i__ not in __vis_seen__:
+                __vis_seen__.add(__vis_i__)
+                __vis_out__.append(__vis_i__)
+        return __vis_out__
 
-# Literal-key ids a block reads as native_tools_results[\"...\"] (STRING subscript
-# only). Used by __vis_run_async__ to prime the whole batch in ONE query. A
-# non-literal subscript (a variable / comprehension) is skipped here and served
-# lazily by __getitem__.
+    def keys(self):
+        return self.__vis_all_ids__()
+
+    def __iter__(self):
+        return iter(self.__vis_all_ids__())
+
+    def __len__(self):
+        return len(self.__vis_all_ids__())
+
+    def items(self):
+        __vis_ids__ = self.__vis_all_ids__()
+        self.__vis_prime__(__vis_ids__)   # ONE batched fetch for the whole set
+        __vis_out__ = []
+        for __vis_i__ in __vis_ids__:
+            try:
+                __vis_out__.append((__vis_i__, self[__vis_i__]))
+            except KeyError:
+                pass
+        return __vis_out__
+
+    def values(self):
+        return [__vis_v__ for __vis_k__, __vis_v__ in self.items()]
+
+ntr = __VisNativeResults__()
+native_tools_results = ntr  # backwards-compatible verbose alias
+
+# Literal-key ids a block reads via ntr[...] or native_tools_results[...]
+# (STRING subscript only). Used by __vis_run_async__ to prime the whole batch in
+# ONE query. A non-literal subscript (a variable / comprehension) is skipped here
+# and served lazily by __getitem__.
 def __vis_native_result_scan__(__vis_tree__):
     __vis_ids__ = []
     for __vis_n__ in __vis_ast__.walk(__vis_tree__):
         if (isinstance(__vis_n__, __vis_ast__.Subscript)
                 and isinstance(__vis_n__.value, __vis_ast__.Name)
-                and __vis_n__.value.id == 'native_tools_results'):
+                and __vis_n__.value.id in ('ntr', 'native_tools_results')):
             __vis_k__ = __vis_n__.slice
             if isinstance(__vis_k__, __vis_ast__.Constant) and isinstance(__vis_k__.value, str):
                 __vis_ids__.append(__vis_k__.value)
@@ -1021,7 +1072,7 @@ def __vis_native_result_scan__(__vis_tree__):
   "Python globals the agent may CALL but must not rebind. Rebinding a tool name
    (for example `patch = ...`) shadows the callable in the persistent sandbox;
    the next `patch(...)` then fails as `'str' object is not callable`."
-  #{"apropos" "doc" "gather" "native_tools_results"})
+  #{"apropos" "doc" "gather" "ntr" "native_tools_results"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -1144,11 +1195,12 @@ def __vis_native_result_scan__(__vis_tree__):
         ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
         ;; the prompt teaches them directly, so they must NOT clutter the tool
         ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
-        ;; `native_tools_results` is the prior-result mapping the model subscripts;
-        ;; `asyncio` is the async-runtime shim global (`asyncio = __vis_asyncio__`,
-        ;; so `import asyncio`/`asyncio.run(...)` work) — a runtime, not a tool.
+        ;; `ntr` / `native_tools_results` are the prior-result mappings the model
+        ;; subscripts; `asyncio` is the async-runtime shim global (`asyncio =
+        ;; __vis_asyncio__`, so `import asyncio`/`asyncio.run(...)` work) — a
+        ;; runtime, not a tool.
         non-tool-names
-        #{"native_tools_results" "asyncio"}
+        #{"ntr" "native_tools_results" "asyncio"}
 
         names
         (fn []
@@ -1838,9 +1890,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                                      (cons (sym->py-name sym) (py-aliases-for-sym sym))))
                            (remove #{"session_fold" "session_drop" "__vis_par__"
                                      "__vis_par_isolated__"
-                                     ;; native_tools_results host callbacks: plain sync
-                                     ;; lookups, never awaitable thunks.
-                                     "__vis_native_result_prime__" "__vis_native_result_fetch__"})
+                                     ;; ntr/native_tools_results host callbacks:
+                                     ;; plain sync lookups, never awaitable thunks.
+                                     "__vis_native_result_prime__" "__vis_native_result_fetch__"
+                                     "__vis_native_result_ids__"})
                            distinct
                            vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))

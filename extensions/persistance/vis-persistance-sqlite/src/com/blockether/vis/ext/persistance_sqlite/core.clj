@@ -2982,7 +2982,7 @@
           (<-blob (:ctx row)))))))
 
 (defn db-native-results-for-tool-ids
-  "Batched read for `native_tools_results[tool_id]`: given a SET of provider
+  "Batched read for `ntr[tool_id]`: given a SET of provider
    tool_use ids (`:svar/tool-call-id`, e.g. Anthropic `toolu_…`, OpenAI Chat
    `call_…`, OpenAI Responses composite `call_…|fc_…`), return
    `{tool-id -> result}` for every id whose persisted form is found in THIS
@@ -3034,6 +3034,41 @@
                     rows))
           {}))
       {})))
+
+(defn db-native-result-ids-for-session
+  "List every persisted NATIVE tool_use id (`:svar/tool-call-id`) in THIS
+   session branch — all prior turns AND all earlier iterations of the current
+   turn — NEWEST first, de-duped. Only forms carrying a `:result` (a real
+   native tool call) are included; print-only `python_execution` forms (they
+   carry `:stdout`, not `:result`) are skipped, exactly as
+   `db-native-results-for-tool-ids` skips them on lookup.
+
+   Backs iteration over `ntr` (keys/items/values/len/iter):
+   the sandbox can now DISCOVER what's in the store instead of needing every
+   id up front."
+  [db-info session-id]
+  (if (and (ds db-info) session-id)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (if (seq state-ids)
+        (let [rows (query!
+                     db-info
+                     {:select [:qti.tool_calls]
+                      :from [[:session_turn_iteration :qti]]
+                      :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
+                             [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
+                      :where [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
+                      ;; NEWEST first so a de-dup keeps the latest occurrence.
+                      :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]})]
+          (->> rows
+               (mapcat (fn [row]
+                         (<-blob (:tool_calls row))))
+               (keep (fn [form]
+                       (let [id (:svar/tool-call-id form)]
+                         (when (and id (some? (:result form))) id))))
+               distinct
+               vec))
+        []))
+    []))
 
 ;; =============================================================================
 ;; Backend registration

@@ -5544,11 +5544,11 @@
         (= "1" (get-in request [:query-params "frag"]))]
 
     (try
-      (let [env
-            (vis/env-for sid)
+      (let [wi
+            (vis/gateway-session-workspace sid)
 
             workspace-id
-            (:workspace/id env)]
+            (:id wi)]
 
         (cond (str/blank? path) (throw (ex-info "Choose a directory to add." {}))
               (nil? workspace-id) (throw (ex-info "No active workspace for this session yet." {}))
@@ -5591,11 +5591,11 @@
         at
         (get-in request [:query-params "at"])
 
-        env
-        (vis/env-for sid)
+        wi
+        (vis/gateway-session-workspace sid)
 
         wid
-        (:workspace/id env)]
+        (:id wi)]
 
     (when (and (seq path) wid) (vis/gateway-remove-filesystem-root! sid path))
     {:status 200
@@ -5627,11 +5627,11 @@
         path
         (str/trim (str (get-in request [:form-params "path"])))
 
-        env
-        (vis/env-for sid)
+        wi
+        (vis/gateway-session-workspace sid)
 
         state-id
-        (:session/state-id env)]
+        (:id wi)]
 
     (try (when (str/blank? path) (throw (ex-info "No directory given." {})))
          (when-not state-id (throw (ex-info "Session not ready yet — send a message first." {})))

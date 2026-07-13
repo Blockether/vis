@@ -43,6 +43,17 @@
         (when-let [wid (:workspace/id ctx)]
           (workspace/get db wid)))))
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
+(defn- sync-confinement!
+  "Push the freshly-mutated workspace `ws` into the live sandbox confinement
+   pointer (`:workspace-atom`, deref'd by the gateway's `sandbox-roots-fn` on
+   every real-fs access) so a `/fs`/`/root` change takes effect THIS turn — not
+   only from the next `run-turn!` workspace re-resolve. No-op when the ctx has no
+   atom (web/telegram build their own ctx). Returns `ws` for threading."
+  [ctx ws]
+  (when ws
+    (some-> (:workspace-atom ctx)
+            (reset! ws)))
+  ws)
 (defn- change-line
   [{:keys [status path]}]
   (str (case status
@@ -253,7 +264,7 @@
           (nil? state-id) (err "Send a message first, then /root <path> (session not ready yet)")
           :else (try
                   (let [ws
-                        (workspace/change-root! db state-id path)
+                        (sync-confinement! ctx (workspace/change-root! db state-id path))
 
                         roots
                         (workspace/filesystem-roots ws)]
@@ -284,27 +295,27 @@
 
     (cond (nil? current) (err "No active workspace")
           (nil? path) (err "Give a directory: /fs add <path>")
-          :else (try (let [ws
-                           (workspace/add-filesystem-root! db (:id current) path)
+          :else
+          (try (let [ws
+                     (sync-confinement! ctx (workspace/add-filesystem-root! db (:id current) path))
 
-                           roots
-                           (workspace/filesystem-roots ws)]
+                     roots
+                     (workspace/filesystem-roots ws)]
 
-                       {:slash/status :ok
-                        :slash/title "Added a filesystem directory - the session can work there now"
-                        :slash/body
-                        (str "Filesystem dirs (" (count roots)
-                             "):\n" (str/join
-                                      "\n"
-                                      (map #(str
-                                              "  "
-                                              (:trunk %)
-                                              (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-                                                " (isolated draft copy — lands on /draft apply)"))
-                                           roots)))
-                        :slash/data {:filesystem-roots roots}})
-                     (catch Exception e
-                       (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
+                 {:slash/status :ok
+                  :slash/title "Added a filesystem directory - the session can work there now"
+                  :slash/body
+                  (str "Filesystem dirs (" (count roots)
+                       "):\n" (str/join
+                                "\n"
+                                (map #(str "  "
+                                           (:trunk %)
+                                           (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+                                             " (isolated draft copy — lands on /draft apply)"))
+                                     roots)))
+                  :slash/data {:filesystem-roots roots}})
+               (catch Exception e
+                 (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
 
 (defn- handle-fs-create
   "`/fs create <path>` - make the directory <path> (its last segment, under an
@@ -332,7 +343,9 @@
                            (workspace/create-dir! parent (.getName f))
 
                            ws
-                           (workspace/add-filesystem-root! db (:id current) created)
+                           (sync-confinement!
+                             ctx
+                             (workspace/add-filesystem-root! db (:id current) created))
 
                            roots
                            (workspace/filesystem-roots ws)]
@@ -360,7 +373,8 @@
     (cond (nil? current) (err "No active workspace")
           (nil? path) (err "Give a directory: /fs remove <path>")
           :else (let [ws
-                      (workspace/remove-filesystem-root! db (:id current) path)
+                      (sync-confinement! ctx
+                                         (workspace/remove-filesystem-root! db (:id current) path))
 
                       roots
                       (workspace/filesystem-roots ws)]

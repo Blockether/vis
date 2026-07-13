@@ -1283,20 +1283,18 @@
     [p/STATUS_OFF t/dialog-hint]))
 
 (defn start-resource-flow!
-  "Generic 'start a new resource' flow driven by the declarative
-   `:ext/startable-resources` registry — the SAME definitions the web
-   modal renders. Steps:
-     1. pick a startable (skip when only one is registered),
-     2. collect declared text `:fields` or multi-select proposed `:options-fn`,
-     3. call its `:start-fn` with the session env + the collected value.
-   No resource type is hardcoded here; adding a startable elsewhere makes
-   it appear in this dialog automatically. Returns nil."
+  "Generic 'start a new resource' flow. The daemon owns BOTH the startable
+   registry and the session env, so we FETCH the startable descriptors over the
+   gateway (each already carrying the options the daemon proposed from its env),
+   render the pick / dir / options dialogs locally, then POST the collected choice
+   back — the daemon runs the `:start-fn` so the spawned background registers in
+   ITS registry and shows up in this same Backgrounds list (a locally-started one
+   never would). No resource type is hardcoded here. Returns nil."
   [^TerminalScreen screen session-id]
-  (let [startables (vec (try (vis/registered-startable-resources)
+  (let [startables (vec (try (vis/gateway-list-startables session-id)
                              (catch Throwable t
                                (tel/log! :warn
-                                         ["dialogs: registered-startable-resources failed"
-                                          (ex-message t)])
+                                         ["dialogs: gateway-list-startables failed" (ex-message t)])
                                nil)))]
     (cond (empty? startables)
           (vis/notify! "No startable resources registered" :level :warn :ttl-ms 3000)
@@ -1312,12 +1310,7 @@
                                                             (str " · " v))))
                                            startables)))]
             (when sr
-              (let [env (try (vis/env-for session-id)
-                             (catch Throwable t
-                               (tel/log! :warn
-                                         ["dialogs: env-for failed" session-id (ex-message t)])
-                               nil))
-                    root (str (:workspace/root env))
+              (let [root (str (:root sr))
                     dir (when (:dir? sr)
                           (let [r (startable-fields-form! screen
                                                           (assoc sr
@@ -1332,31 +1325,35 @@
                                 (if (str/blank? d) root d)))))]
 
                 (when-not (= ::cancel dir)
-                  (let [env (cond-> env
-                              dir
-                              (assoc :startable/dir dir))
-                        opts (when-let [f (:options-fn sr)]
-                               (try (vec (f env))
-                                    (catch Throwable t
-                                      (tel/log! :warn
-                                                ["dialogs: startable options-fn failed"
-                                                 (ex-message t)])
-                                      nil)))
-                        selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
-                                       (:options-fn sr)
+                  (let [selected (cond (seq (:fields sr)) (startable-fields-form! screen sr)
+                                       (:options? sr)
                                        (multi-select-dialog!
                                          screen
                                          (str (:label sr) " — " (or (:options-label sr) "options"))
-                                         (or opts []))
+                                         (or (:options sr) []))
                                        :else [])]
-
                     (when (and (some? selected) (not= ::cancel selected))
-                      (try ((:start-fn sr) env (not-empty selected))
-                           (catch Throwable t
-                             (vis/notify! (str "Start failed: " (ex-message t))
-                                          :level :warn
-                                          :ttl-ms 4000))))))))))
-    nil))
+                      (let [res (try (vis/gateway-start-resource!
+                                       session-id
+                                       {:kind (:kind sr) :dir dir :selected (not-empty selected)})
+                                     (catch Throwable t {:result "error" :message (ex-message t)}))]
+                        (cond (= "error" (:result res)) (vis/notify! (str "Start failed: "
+                                                                          (or (:message res)
+                                                                              "unknown error"))
+                                                                     :level :warn
+                                                                     :ttl-ms 4000)
+                              (= "started" (:result res))
+                              (vis/notify! (str "Started " (or (:label res) (:label sr)))
+                                           :level :info
+                                           :ttl-ms 3000)
+                              ;; The daemon boots the resource OFF the request thread
+                              ;; (a REPL/nREPL start is slow) and answers "starting"
+                              ;; at once; it appears in this list as it comes up.
+                              (= "starting" (:result res))
+                              (vis/notify! (str "Starting " (or (:label res) (:label sr)) "…")
+                                           :level :info
+                                           :ttl-ms 3000)))))))))))
+  nil)
 (declare text-view-dialog!)
 
 (defn resources-dialog!
@@ -1370,7 +1367,11 @@
   (let [selected (atom 0)]
     (loop []
 
-      (let [items (vec (try (vis/gateway-list-resources session-id)
+      ;; Cached read (750ms TTL): the dialog re-reads every loop iteration, so an
+      ;; UNcached fetch would round-trip the daemon — with per-resource health
+      ;; probes — on EVERY keystroke, making the list feel like it hangs. The
+      ;; footer uses the same cached path.
+      (let [items (vec (try (vis/gateway-list-resources-cached session-id)
                             (catch Throwable t
                               (tel/log! :warn
                                         ["dialogs: list-resources failed" session-id

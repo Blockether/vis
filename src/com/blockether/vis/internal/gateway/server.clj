@@ -15,6 +15,7 @@
    is doing via `start!`."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.file-picker :as file-picker]
@@ -836,6 +837,80 @@
   (if-let [sid (path-sid request)]
     (json-response {:lines (resources/logs sid (path-rid request))})
     (session-404 (get-in request [:path-params :sid]))))
+(defn- startable->wire
+  "Serializable descriptor of ONE startable for a remote Resources UI: identity +
+   declared inputs, PLUS the options proposed by running its `:options-fn` with
+   the daemon-side session `env` (a client has neither the env nor the workspace
+   to compute them). The non-serializable fns (:start-fn/:options-fn/:visible-fn)
+   are dropped — the client posts {kind, dir, selected} back and the daemon runs
+   :start-fn locally."
+  [env {:keys [kind label options-label fields dir? options-fn]}]
+  (cond-> {:kind (name kind)
+           :label label
+           :dir? (boolean dir?)
+           :root (str (some-> env
+                              :workspace/root))}
+    options-label
+    (assoc :options-label options-label)
+
+    (seq fields)
+    (assoc :fields fields)
+
+    options-fn
+    (assoc :options?
+      true :options
+      (vec (try (options-fn env) (catch Throwable _ nil))))))
+
+(defn- startables-handler
+  "GET /v1/sessions/:sid/resources/startables — the declarative startables a
+   remote Resources UI (TUI/mobile) can offer, each with its options PROPOSED
+   here (daemon-side env). The client renders the pick/options/dir dialogs from
+   this list, then posts the collected choice to `resource-start-handler`."
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [env (try (lp/env-for sid) (catch Throwable _ nil))
+          sts (vec (try (extension/registered-startable-resources) (catch Throwable _ nil)))]
+
+      (json-response {:startables (mapv #(startable->wire env %) sts)}))
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- resource-start-handler
+  "POST /v1/sessions/:sid/resources/start {kind, dir?, selected?} — resolve the
+   startable of `kind` in the daemon's registry and run its `:start-fn` HERE, so
+   the spawned background registers in the DAEMON's registry and becomes visible
+   to every channel's Resources list (a TUI-started one used to register only in
+   the TUI's own process and never showed). No fn crosses the wire; the client
+   sends the plain choices it collected. Mirrors the web's in-process start."
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{:keys [kind dir selected]} (body-json request)
+          kw (some-> kind
+                     not-empty
+                     keyword)
+          sr (some #(when (= kw (:kind %)) %)
+                   (try (extension/registered-startable-resources) (catch Throwable _ [])))]
+
+      (cond (nil? kw) (error-response 400 :invalid-request "kind is required")
+            (nil? sr) (error-response 404 :unknown-startable (str "unknown startable: " kind))
+            :else
+            ;; Run the start-fn OFF the request thread. A REPL/nREPL boot is
+            ;; SYNCHRONOUS and can take tens of seconds (cold JVM + deps download);
+            ;; blocking the POST that long freezes the caller's UI and blows past the
+            ;; client's 30s HTTP timeout. Return "starting" immediately — the resource
+            ;; registers itself in the daemon registry as it comes up (with its own
+            ;; :status/:health-fn), so the footer/F4 pick it up on the next poll and a
+            ;; boot failure surfaces there as :failed instead of a hung dialog.
+            (let [env (cond-> (lp/env-for sid)
+                        (not (str/blank? (str dir)))
+                        (assoc :startable/dir (str dir)))]
+              (future (try ((:start-fn sr) env (not-empty selected))
+                           (catch Throwable t
+                             (tel/log! :warn
+                                       ["gateway: startable failed to start" (name kw)
+                                        (ex-message t)]))))
+              (json-response {:result "starting" :kind (name kw) :label (:label sr)}))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- path-iid [request] (get-in request [:path-params :iid]))
 (defn- path-idx
   [request]
@@ -1134,6 +1209,8 @@
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/transcript" {:get transcript-handler}]
         ["/sessions/:sid/resources" {:get resources-handler}]
+        ["/sessions/:sid/resources/startables" {:get startables-handler}]
+        ["/sessions/:sid/resources/start" {:post resource-start-handler}]
         ["/sessions/:sid/resources/:rid/stop" {:post resource-stop-handler}]
         ["/sessions/:sid/resources/:rid/restart" {:post resource-restart-handler}]
         ["/sessions/:sid/resources/:rid/logs" {:get resource-logs-handler}]
