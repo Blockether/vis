@@ -34,7 +34,18 @@
            [java.nio.file Files LinkOption Path]
            [java.nio.file.attribute FileAttribute]))
 
-(def ^:private POLL_MS 60)
+(def ^:private POLL_MS
+  "Sleep between tail polls while a sibling process is actively streaming."
+  100)
+(def ^:private IDLE_POLL_MS
+  "Sleep once the tail has gone quiet — the steady state, since the cross-process
+   tailer only has work when a SIBLING vis process shares a session. Every poll
+   still stats every journal, so backing off to 2×/s here (vs 17×/s before) is
+   what keeps an otherwise-idle daemon off the CPU."
+  500)
+(def ^:private IDLE_AFTER
+  "Consecutive quiet polls before backing off from `POLL_MS` to `IDLE_POLL_MS`."
+  20)
 (def ^:private MAX_FILE_BYTES (* 16 1024 1024))
 
 (def ^:private RETAIN_MS
@@ -43,7 +54,9 @@
    mtime is a day stale cannot belong to a running turn."
   (* 24 60 60 1000))
 
-(def ^:private SWEEP_EVERY "Run the orphan-journal sweep every Nth poll (~ N*POLL_MS ms)." 1000)
+(def ^:private SWEEP_MS
+  "Run the orphan-journal sweep about this often (wall-clock ms)."
+  (* 60 1000))
 
 (defonce ^{:doc "Stable per-process id: foreign events carry a different one."} producer-id
   (str (java.util.UUID/randomUUID)))
@@ -183,7 +196,8 @@
 
               (doseq [line (str/split-lines complete)]
                 (when-not (str/blank? line) (deliver-line! sid line)))
-              (swap! offsets assoc sid (+ off consumed)))))))))
+              (swap! offsets assoc sid (+ off consumed))
+              true)))))))
 
 (defn journal-high-water-seq
   "Highest `:seq` persisted in `sid`'s journal file, or 0 when there is none.
@@ -295,16 +309,25 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!
+  "Drain every journal once. Returns true when any line was delivered, so the
+   tailer can poll fast under load and back off when the tail is quiet."
   []
   (try (let [dir (.toFile (events-dir))]
-         (when (.isDirectory dir)
-           (doseq [^File f (.listFiles dir)]
-             (when (str/ends-with? (.getName f) ".ndjson")
-               (try (drain-file! f)
-                    (catch Throwable t
-                      (tel/log! :debug
-                                ["gateway-bus: drain failed" (.getName f) (ex-message t)])))))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: poll failed" (ex-message t)]))))
+         (if (.isDirectory dir)
+           (reduce (fn [busy ^File f]
+                     (if (str/ends-with? (.getName f) ".ndjson")
+                       (or (try (boolean (drain-file! f))
+                                (catch Throwable t
+                                  (tel/log! :debug
+                                            ["gateway-bus: drain failed" (.getName f)
+                                             (ex-message t)])
+                                  false))
+                           busy)
+                       busy))
+                   false
+                   (.listFiles dir))
+           false))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: poll failed" (ex-message t)]) false)))
 
 (defn start!
   "Start the background tailer once. Idempotent."
@@ -324,15 +347,24 @@
                                         (subs n 0 (- (count n) (count ".ndjson")))
                                         (.length f)))))))
                             (catch Throwable _ nil))
-                       ;; Sweep orphaned journals ~once a minute so the poll set —
-                       ;; and the disk — never grow without bound on dead sessions.
-                       (loop [tick 0]
+                       ;; Poll fast while a sibling is streaming, then back off to
+                       ;; IDLE_POLL_MS once quiet so an idle daemon stays off the CPU.
+                       ;; Sweep orphaned journals ~once a minute (wall-clock) so the
+                       ;; poll set — and the disk — never grow without bound.
+                       (loop [quiet 0
+                              last-sweep 0]
+
                          (when-not (Thread/interrupted)
-                           (poll-once!)
-                           (when (zero? (mod tick SWEEP_EVERY)) (sweep!))
-                           (try (Thread/sleep (long POLL_MS))
-                                (catch InterruptedException _ (.interrupt (Thread/currentThread))))
-                           (recur (inc tick)))))
+                           (let [busy? (poll-once!)
+                                 now (System/currentTimeMillis)
+                                 last-sweep
+                                 (if (>= (- now last-sweep) SWEEP_MS) (do (sweep!) now) last-sweep)
+                                 quiet (if busy? 0 (inc quiet))]
+
+                             (try
+                               (Thread/sleep (long (if (>= quiet IDLE_AFTER) IDLE_POLL_MS POLL_MS)))
+                               (catch InterruptedException _ (.interrupt (Thread/currentThread))))
+                             (recur quiet last-sweep)))))
                      "gateway-bus-tailer")]
       (.setDaemon t true)
       (.start t)
