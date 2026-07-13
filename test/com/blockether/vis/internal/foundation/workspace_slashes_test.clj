@@ -353,3 +353,49 @@
                               (mapv :trunk
                                     (get-in out [:result :slash/data :filesystem-roots])))))))
              (finally (delete-tree! a) (delete-tree! ext))))))
+
+(defdescribe
+  fs-confinement-sync-test
+  (it
+    "/fs add resets the live sandbox confinement pointer in the SAME turn"
+    (let [a
+          (temp-dir "vis-slash-conf-a")
+
+          ext
+          (temp-dir "vis-slash-conf-ext")]
+
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk
+                  (workspace/create-trunk-at! store a)
+
+                  state-id
+                  (pin-session! store (:id trunk))
+
+                  env
+                  (env-with store)
+
+                  ;; The gateway seeds this atom from the workspace at turn
+                  ;; start; `sandbox-roots-fn` derefs it on every real-fs
+                  ;; access. Before the fix `/fs add` never touched it, so
+                  ;; the new root stayed invisible until the next run-turn!.
+                  ws-atom
+                  (atom (workspace/for-session store state-id))
+
+                  ctx
+                  {:channel/id :tui
+                   :session/id "soul"
+                   :session/state-id state-id
+                   :db-info store
+                   :workspace-atom ws-atom}
+
+                  out
+                  (slash/dispatch env ctx (str "/fs add " ext))]
+
+              (expect (= :ok (get-in out [:result :slash/status])))
+              ;; Pointer now reflects the widened workspace — confinement
+              ;; sees `ext` without waiting for the next turn.
+              (expect (= [(workspace/normalize-root ext)]
+                         (mapv :trunk (workspace/filesystem-roots @ws-atom)))))))
+        (finally (delete-tree! a) (delete-tree! ext))))))

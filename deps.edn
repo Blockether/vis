@@ -26,6 +26,7 @@
   org.commonmark/commonmark                       {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
+  org.babashka/http-client                        {:mvn/version "0.4.23"}
   babashka/process                                {:mvn/version "0.6.25"}
   babashka/fs                                     {:mvn/version "0.5.33"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.17"}

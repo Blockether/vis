@@ -110,6 +110,7 @@
              [gateway-reorder-project-sessions! gateway-client/reorder-project-sessions!])
 
 (import-vars [gateway-release-session! gateway-client/release-session!]
+             [gateway-release-session-runtime! gateway-client/release-session-runtime!]
              [gateway-submit-turn! gateway-client/submit-turn!])
 
 (import-vars [gateway-submit-turn-sync! gateway-client/submit-turn-sync!]
@@ -132,6 +133,8 @@
              [gateway-stop-resource! gateway-client/stop-resource!]
              [gateway-restart-resource! gateway-client/restart-resource!]
              [gateway-resource-logs gateway-client/resource-logs]
+             [gateway-list-startables gateway-client/list-startables]
+             [gateway-start-resource! gateway-client/start-resource!]
              [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes])
 
 (import-vars [gateway-events-since gateway-client/events-since]

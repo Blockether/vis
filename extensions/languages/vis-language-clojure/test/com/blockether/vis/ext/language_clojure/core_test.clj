@@ -447,6 +447,30 @@
                    (expect (= "cli" (get-in result [:result "mode"])))
                    (expect (= "clojure" (get-in result [:result "language"]))))))
 
+(defdescribe
+  test-runner-nested-root-test
+  (it "boots the nREPL at the tests' own nested project root (its deps.edn), not the workspace root"
+      (let [root (tmp-dir)]
+        (try (let [svc (io/file root "services" "svc")
+                   test-dir (io/file svc "test")]
+
+               (.mkdirs test-dir)
+               ;; nested project: deps.edn lives at services/svc, NOT the workspace root
+               (spit (io/file svc "deps.edn") "{:paths [\"src\" \"test\"]}")
+               (spit (io/file test-dir "svc_test.clj") "(ns svc-test)")
+               (let [seen (atom nil)]
+                 (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (fn [_sid dir]
+                                                                        (reset! seen dir)
+                                                                        nil)
+                                  #'test-runner/run-via-cli
+                                  (fn [_root norm]
+                                    {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
+                   #(test-runner/clj-test-fn {:workspace/root (.getAbsolutePath root)}
+                                             {"paths" ["services/svc/test"]}))
+                 ;; the nREPL is autostarted at services/svc, where deps.edn lives
+                 (expect (= (.getCanonicalPath svc) (.getCanonicalPath (io/file @seen))))))
+             (finally (cleanup root))))))
+
 (defn- balanced? [s] (= (count (re-seq #"\(" s)) (count (re-seq #"\)" s))))
 
 (defdescribe

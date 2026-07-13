@@ -3028,6 +3028,17 @@
            terminal-signal-cleanup (volatile! nil)]
 
        (.startScreen screen)
+       ;; `:close-tab` fires this when the LAST view of an idle session closes:
+       ;; invoke + drop that session's SSE title-listener bundle (host title +
+       ;; queue-sync/attach stream) so a closed tab stops holding a live
+       ;; subscription. Paired with `:release-session-runtime` (state.clj), which
+       ;; stops the daemon-side runtime. Idempotent + best-effort.
+       (state/reg-fx :release-session-listener
+                     (fn [sid]
+                       (let [sid (str sid)]
+                         (when-let [cleanup (get @title-listeners sid)]
+                           (vswap! title-listeners dissoc sid)
+                           (try (cleanup) (catch Throwable _ nil))))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
            (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))

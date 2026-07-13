@@ -162,13 +162,35 @@
               str/trim)]
     (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
 
+(defn- contains-dir?
+  "When `rel` names an existing directory under canonical `root` (or IS the
+   root), the canonical File for it; otherwise nil. `nil` too when it resolves
+   OUTSIDE the root (containment guard, same rule the editing tools enforce)."
+  ^File [^File root rel]
+  (let [dir (.getCanonicalFile (io/file root rel))]
+    (when (and (or (= dir root)
+                   (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
+               (.isDirectory dir))
+      dir)))
+
 (defn- resolve-cwd
   "Directory the command runs in: the workspace root (bound per-call by the
    extension wrapper), optionally narrowed by a RELATIVE opts `cwd` that must
-   stay inside the root — same containment rule the editing tools enforce."
+   stay inside a root — same containment rule the editing tools enforce.
+
+   The relative `cwd` is resolved against the primary root FIRST, then each
+   bound filesystem-root `:trunk` (the real dirs the model addresses), so a
+   path the model can see/edit is also runnable here even when the primary
+   root differs (forked/trunk-clone workspaces, or an unbound root falling
+   back to the process cwd)."
   ^File [opts]
   (let [root
         (.getCanonicalFile (workspace/cwd))
+
+        roots
+        (into [root]
+              (comp (keep :trunk) (map #(.getCanonicalFile (io/file %))))
+              workspace/*filesystem-roots*)
 
         rel
         (let [c (get opts "cwd")]
@@ -176,20 +198,42 @@
 
     (if-not rel
       root
-      (let [dir (.getCanonicalFile (io/file root rel))]
-        (when-not (or (= dir root)
-                      (str/starts-with? (.getPath dir) (str (.getPath root) File/separator)))
-          (throw (ex-info (str "shell cwd '" rel
-                               "' escapes the workspace root;"
-                               " relative paths must stay inside it.")
-                          {:type ::cwd-outside-workspace :cwd rel :root (.getPath root)})))
-        (when-not (.isDirectory dir)
-          (throw (ex-info (str "shell cwd '" rel
-                               "' " (if (.exists dir)
-                                      "is a file, not a directory."
-                                      "does not exist under the workspace root."))
-                          {:type ::cwd-not-a-directory :cwd rel :exists (.exists dir)})))
-        dir))))
+      (or (some #(contains-dir? % rel) roots)
+          ;; Nothing matched — build the most useful diagnostic we can: report
+          ;; the base(s) tried and the absolute path we looked for, and say
+          ;; WHY (escapes / is-a-file / missing) against the primary root.
+          (let [dir
+                (.getCanonicalFile (io/file root rel))
+
+                bases
+                (str/join ", " (distinct (map #(.getPath ^File %) roots)))]
+
+            (throw
+              (ex-info
+                (cond (not (or (= dir root)
+                               (str/starts-with? (.getPath dir)
+                                                 (str (.getPath root) File/separator))))
+                      (str "shell cwd '"
+                           rel
+                           "' escapes the workspace root;"
+                           " relative paths must stay inside it (base "
+                           bases
+                           ").")
+                      (.exists dir)
+                      (str "shell cwd '" rel "' is a file, not a directory (" (.getPath dir) ").")
+                      :else (str "shell cwd '"
+                                 rel
+                                 "' does not exist under the workspace"
+                                 " root — looked for "
+                                 (.getPath dir)
+                                 " (base "
+                                 bases
+                                 ")."))
+                {:type ::cwd-unresolved
+                 :cwd rel
+                 :resolved (.getPath dir)
+                 :exists (.exists dir)
+                 :roots (mapv #(.getPath ^File %) roots)})))))))
 
 (defn- lf
   "Normalize CRLF to LF so captured output is byte-identical on every OS."

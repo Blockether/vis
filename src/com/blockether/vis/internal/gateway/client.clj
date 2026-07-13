@@ -6,24 +6,30 @@
    HTTP/SSE API every other client uses. This is the thin-client half of the
    gateway-daemon plan: token refresh, turn execution, and live streaming happen
    in ONE process."
-  (:require [clojure.string :as str]
+  (:require [babashka.http-client :as http]
+            [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.wire :as wire])
-  (:import
-    (java.io BufferedReader InputStream InputStreamReader)
-    (java.net URI URLEncoder)
-    (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
-    (java.nio.charset StandardCharsets)
-    (java.time Duration)))
+  (:import (java.io BufferedReader InputStream InputStreamReader)
+           (java.net URLEncoder)
+           (java.nio.charset StandardCharsets)))
 
 (def ^:private DEFAULT_PORT 7890)
 (def ^:private DEFAULT_HOST "127.0.0.1")
 
 (defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 2))
-             (.build))))
+  (delay
+    ;; HTTP/1.1 + NO accept-encoding on purpose: the loopback daemon streams
+    ;; plain `text/event-stream`; gzip or HTTP/2 framing would buffer the SSE
+    ;; body and defeat BOTH the line reader and the idle watchdog in
+    ;; `open-sse-events!`. Same babashka.http-client stack svar and every
+    ;; provider already use — one HTTP client library across the codebase.
+    (http/client {:follow-redirects :normal
+                  :connect-timeout 2000
+                  :version :http1.1
+                  :request {:headers {"accept" "*/*"}}})))
 
 (defonce ^:private cached-entry (atom nil))
 (defonce ^:private client-id (atom nil))
@@ -38,12 +44,29 @@
   [{:keys [host port]}]
   (str "http://" (or host DEFAULT_HOST) ":" (or port DEFAULT_PORT)))
 
-(defn- request-builder
-  [{:keys [secret] :as entry} path]
-  (doto (HttpRequest/newBuilder (URI/create (str (base-url entry) path)))
-    (.timeout (Duration/ofSeconds 30))
-    (.header "Accept" "application/json")
-    (.header "X-Vis-Gateway-Secret" (str secret))))
+(defn- gw-send!
+  "Perform a babashka.http-client request against gateway `entry`. `method` is a
+   verb string (\"GET\"/\"POST\"/\"PATCH\"/\"DELETE\"/…); `opts` may carry `:body`
+   (serialized to JSON) and `:as` ∈ #{:string :bytes :stream} (default :string).
+   `:throw false`, so 4xx/5xx come back as a response map (callers branch on
+   `:status`) exactly like the old `HttpResponse.statusCode`. A :stream request
+   asks for `text/event-stream` with compression disabled so the SSE body stays
+   byte-live for the line reader + idle watchdog."
+  [{:keys [secret] :as _entry} method path {:keys [body as] :or {as :string}}]
+  (http/request
+    (cond-> {:client @http-client
+             :method (keyword (str/lower-case method))
+             :uri (str (base-url _entry) path)
+             :timeout 30000
+             :throw false
+             :as as
+             :headers (cond-> {"Accept" (if (= as :stream) "text/event-stream" "application/json")
+                               "X-Vis-Gateway-Secret" (str secret)}
+                        (= as :stream)
+                        (assoc "Accept-Encoding" "identity"))}
+      (some? body)
+      (-> (assoc :body (wire/json-str body))
+          (assoc-in [:headers "Content-Type"] "application/json")))))
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
@@ -52,24 +75,14 @@
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
   ([entry method path body]
-   (let [builder
-         (request-builder entry path)
-
-         _
-         (if (some? body)
-           (doto builder
-             (.header "Content-Type" "application/json")
-             (.method method (HttpRequest$BodyPublishers/ofString (wire/json-str body))))
-           (.method builder method (HttpRequest$BodyPublishers/noBody)))
-
-         response
-         (.send @http-client (.build builder) (HttpResponse$BodyHandlers/ofString))
+   (let [response
+         (gw-send! entry method path {:body body})
 
          status
-         (.statusCode response)
+         (:status response)
 
          parsed
-         (parse-json-body (.body response))]
+         (parse-json-body (:body response))]
 
      (when (>= status 400)
        (throw (ex-info (or (:message parsed) (str "gateway HTTP " status))
@@ -85,16 +98,13 @@
 
 (defn- probe-entry?
   [entry]
-  (try (let [builder
-             (request-builder entry "/healthz")
-
-             response
-             (.send @http-client (.build (.GET builder)) (HttpResponse$BodyHandlers/ofString))
+  (try (let [response
+             (gw-send! entry "GET" "/healthz" {})
 
              body
-             (parse-json-body (.body response))]
+             (parse-json-body (:body response))]
 
-         (and (= 200 (.statusCode response)) (= "ok" (:status body)) (true? (:secret_match body))))
+         (and (= 200 (:status response)) (= "ok" (:status body)) (true? (:secret_match body))))
        (catch Throwable _ false)))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
@@ -281,6 +291,22 @@
   [pid session-ids]
   (send-json! "PATCH" (str "/v1/projects/" (enc pid) "/sessions") {:order (mapv str session-ids)}))
 
+(defn release-session-runtime!
+  "Release a session's live RUNTIME on the daemon WITHOUT touching the process
+   client lease: stop its background resources (shell_bg children, managed REPLs)
+   and drop its loop/env, keeping the transcript resumable. Used when ONE view of
+   a session closes (e.g. a single TUI tab) while the owning process stays
+   connected — so the whole-process refcount lease is left intact and the daemon
+   is never nudged toward self-reap while other tabs remain open. Best-effort and
+   never daemon-spawning — nothing to release against when no fresh daemon is
+   registered."
+  [sid]
+  (when sid
+    (try (let [entry (or @cached-entry (discovery/read-registry (db-target)))]
+           (when (discovery/registry-fresh? entry probe-entry?)
+             (send-json-with-entry! entry "POST" (str "/v1/sessions/" (enc sid) "/release"))))
+         (catch Throwable _ nil))))
+
 (defn release-session!
   "Release a session VIEW when the owning channel exits: tell the daemon to
    stop the session's background resources (shell_bg children, REPLs) and drop
@@ -290,11 +316,7 @@
    hit zero. Best-effort and never daemon-spawning — if no fresh daemon is
    registered there is nothing to release against."
   [sid]
-  (when sid
-    (try (let [entry (or @cached-entry (discovery/read-registry (db-target)))]
-           (when (discovery/registry-fresh? entry probe-entry?)
-             (send-json-with-entry! entry "POST" (str "/v1/sessions/" (enc sid) "/release"))))
-         (catch Throwable _ nil)))
+  (release-session-runtime! sid)
   (release-client!))
 
 (defn get-turn
@@ -330,7 +352,8 @@
   "Vector of the session's live resource DATA maps from the daemon's registry
    (string-keyed, same shape `resources/list-resources` returns in-process)."
   [sid]
-  (:resources (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources"))))
+  (mapv walk/stringify-keys
+        (:resources (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")))))
 
 (defonce ^:private resources-cache (atom {}))
 (def ^:private resources-cache-ttl-ms 750)
@@ -370,6 +393,27 @@
   "Captured output lines for a background via its daemon-side logs-fn, or nil."
   [sid rid]
   (:lines (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/logs"))))
+
+(defn list-startables
+  "Declarative startables the session can offer, each with the options the daemon
+   PROPOSED from its own env (kebab-keyed descriptors — the wire snake_cases
+   hyphenated keys on the way out, so we restore them via `kebab-keys` and the
+   TUI sees the SAME `:options-label`/`:dir?`/`:fields` shape the in-process web
+   modal does). Drives a remote 'add
+   background' flow: the client renders the dialogs from this, then posts the
+   chosen one to `start-resource!`."
+  [sid]
+  (mapv wire/kebab-keys
+        (:startables (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/startables")))))
+
+(defn start-resource!
+  "Start the declared startable in the DAEMON (arg map {:kind :dir :selected}), so
+   the spawned background registers there and appears in every channel's Resources
+   list. Returns the daemon's result map ({:result \"started\"|\"error\" …})."
+  [sid {:keys [kind dir selected]}]
+  (send-json! "POST"
+              (str "/v1/sessions/" (enc sid) "/resources/start")
+              {:kind kind :dir dir :selected selected}))
 (defn iteration-attachment-bytes
   "Raw bytes (a byte-array) of ONE outbound artifact — iteration `iid`, its 0-based
    `idx` in the iteration's ordered attachment list — fetched from the daemon's
@@ -388,11 +432,9 @@
         (str "/v1/sessions/" (enc sid) "/iterations/" (enc iid) "/attachments/" idx)
 
         response
-        (.send @http-client
-               (.build (request-builder entry path))
-               (HttpResponse$BodyHandlers/ofByteArray))]
+        (gw-send! entry "GET" path {:as :bytes})]
 
-    (when (< (.statusCode response) 400) (.body response))))
+    (when (< (:status response) 400) (:body response))))
 
 (defn set-session-model!
   [sid provider model]
@@ -527,9 +569,9 @@
               :else (do (Thread/sleep 50) (recur)))))))
 
 (defn- probe-route
-  "Classify whether the daemon at `entry` serves `path`:
-     :served      — any status other than 404 (route mounted; an auth 401/303
-                    still means it exists).
+  "Probe whether the daemon actually SERVES `path`, distinguishing three cases so
+   the caller only ever force-restarts on a genuine missing-route 404:
+     :served      — the daemon answered (any status other than 404).
      :absent      — a real 404: the daemon's classpath lacks the extension that
                     owns `path` (e.g. a gateway auto-started without the web
                     channel never mounts /ui).
@@ -537,13 +579,8 @@
                     NOT a 404, so NEVER treated as license to force-kill; the
                     caller retreats to leaving the daemon alone."
   [entry path]
-  (try (let [builder
-             (request-builder entry path)
-
-             response
-             (.send @http-client (.build (.GET builder)) (HttpResponse$BodyHandlers/ofString))]
-
-         (if (= 404 (.statusCode response)) :absent :served))
+  (try (let [response (gw-send! entry "GET" path {})]
+         (if (= 404 (:status response)) :absent :served))
        (catch Throwable _ :unreachable)))
 
 (defn ensure-gateway-serving!
@@ -692,14 +729,53 @@
       failed?
       (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
 
-(defn- sse-request
+(defn- sse-response!
+  "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the
+   babashka.http-client response map whose `:body` is a live `InputStream`."
   [sid cursor]
   (let [entry (ensure-gateway!)]
-    (-> (request-builder entry
-                         (str "/v1/sessions/" (enc sid) "/events?cursor=" (long (or cursor 0))))
-        (.header "Accept" "text/event-stream")
-        (.GET)
-        (.build))))
+    (gw-send! entry
+              "GET"
+              (str "/v1/sessions/" (enc sid) "/events?cursor=" (long (or cursor 0)))
+              {:as :stream})))
+
+(def ^:private sse-idle-timeout-ms
+  "Close the client SSE stream when NOTHING — not even the daemon's ~15s
+   heartbeat frame (gateway.server/HEARTBEAT_MS) — has arrived for this long.
+   A wedged / half-dead daemon (GC pause, deadlock, dead heartbeat over a
+   half-open TCP) otherwise leaves `.readLine` parked FOREVER (OS TCP keepalive
+   is ~2h), silently freezing the turn. Closing the body `InputStream` kicks
+   the parked read with an IOException, which `read-events-until!` / `subscribe!`
+   already treat as a drop and RECONNECT from the last cursor: a recovered
+   daemon resumes losslessly, a truly dead one fails fast and surfaces a real
+   disconnect once the reconnect budget is spent. 4× the heartbeat so a couple
+   of missed heartbeats don't trip it."
+  60000)
+
+(defn- start-sse-idle-watchdog!
+  "Daemon thread that closes `in` once `last-line-ns*` is staler than
+   `sse-idle-timeout-ms`, unblocking a parked `.readLine`. `alive?*` is flipped
+   false by the reader on normal exit so the watchdog stops touching the stream.
+   Returns the Thread (interrupt it to stop early)."
+  [^InputStream in last-line-ns* alive?*]
+  (let [check-ms
+        (-> (long sse-idle-timeout-ms)
+            (quot 4)
+            (max 250)
+            (min 5000))
+
+        runnable
+        (fn []
+          (loop []
+
+            (when @alive?*
+              (let [idle-ms (long (/ (- (System/nanoTime) (long @last-line-ns*)) 1000000))]
+                (if (>= idle-ms (long sse-idle-timeout-ms))
+                  (when @alive?* (try (.close in) (catch Throwable _ nil)))
+                  (do (try (Thread/sleep check-ms) (catch InterruptedException _ nil))
+                      (recur)))))))]
+
+    (doto (Thread. ^Runnable runnable "vis-gateway-sse-idle-watchdog") (.setDaemon true) (.start))))
 
 
 (def ^:private sse-reconnect-max-attempts
@@ -715,34 +791,45 @@
    (highest `:seq` seen) then call `(handle event)`. When `handle` returns a
    truthy value, stop and return it (a terminal signal); otherwise keep reading.
    Resets `stream*` (when non-nil) to the live InputStream so `unsubscribe!` can
-   close it. Returns `[:closed]` on EOF; throws `ex-info` with `:http-status` on
-   a non-200 response. Shared by `read-sse-stream!` (blocking turns) and
-   `subscribe!` (the live mirror) so the frame parsing lives in ONE place."
+   close it. An idle watchdog (see [[sse-idle-timeout-ms]]) closes the stream if
+   NO frame — not even a heartbeat — arrives for too long, so a wedged daemon
+   surfaces as a normal drop instead of an infinite park. Returns `[:closed]` on
+   EOF (or an idle/close-driven read failure); throws `ex-info` with
+   `:http-status` on a non-200 response. Shared by `read-sse-stream!` (blocking
+   turns) and `subscribe!` (the live mirror) so the frame parsing lives in ONE
+   place."
   [sid cursor cursor* stream* handle]
-  (let [response
-        (.send @http-client (sse-request sid cursor) (HttpResponse$BodyHandlers/ofInputStream))]
-    (when-not (= 200 (.statusCode response))
-      (throw (ex-info (str "gateway SSE HTTP " (.statusCode response))
-                      {:http-status (.statusCode response)})))
-    (with-open [^InputStream in (.body response)
+  (let [response (sse-response! sid cursor)]
+    (when-not (= 200 (:status response))
+      (throw (ex-info (str "gateway SSE HTTP " (:status response))
+                      {:http-status (:status response)})))
+    (with-open [^InputStream in (:body response)
                 rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
 
       (when stream* (reset! stream* in))
-      (loop [data-lines []]
-        (if-let [line (.readLine rdr)]
-          (if (str/blank? line)
-            (let [data (str/join "\n" data-lines)
-                  event (when (seq data) (wire/parse-json data))]
+      (let [last-line-ns* (atom (System/nanoTime))
+            alive?* (atom true)
+            watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
 
-              (if-not event
-                (recur [])
-                (do (when-let [s (:seq event)]
-                      (swap! cursor* max (long s)))
-                    (or (handle event) (recur [])))))
-            (if (str/starts-with? line "data: ")
-              (recur (conj data-lines (subs line 6)))
-              (recur data-lines)))
-          [:closed])))))
+        (try (loop [data-lines []]
+               (if-let [line (.readLine rdr)]
+                 (do (reset! last-line-ns* (System/nanoTime))
+                     (if (str/blank? line)
+                       (let [data (str/join "\n" data-lines)
+                             event (when (seq data) (wire/parse-json data))]
+
+                         (if-not event
+                           (recur [])
+                           (do (when-let [s (:seq event)]
+                                 (swap! cursor* max (long s)))
+                               (or (handle event) (recur [])))))
+                       (if (str/starts-with? line "data: ")
+                         (recur (conj data-lines (subs line 6)))
+                         (recur data-lines))))
+                 [:closed]))
+             (finally (reset! alive?* false)
+                      (some-> ^Thread watchdog
+                              .interrupt)))))))
 (defn subscribe!
   "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
    that replays `cursor` then calls `sink` for every live event. Returns an empty

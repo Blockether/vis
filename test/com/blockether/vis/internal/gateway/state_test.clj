@@ -457,10 +457,11 @@
 
 (defdescribe
   turn-stall-watchdog-test
-  "A provider stream wedged in the `:provider-call` phase past the backstop
-   ceiling is force-cancelled: the shared cancellation token flips (which closes
-   the in-flight stream) and the turn is flagged stalled so the queue can drain.
-   A non-provider phase (a legitimately long tool/eval) is left untouched."
+  "A turn wedged with NO chunk activity past the backstop ceiling is
+   force-cancelled: the shared cancellation token flips (which closes the
+   in-flight stream) and the turn is flagged stalled so the queue can drain.
+   This covers a stuck `:provider-call` AND the between-iteration
+   `:iteration-final` gap. A legitimately long tool/eval phase is left untouched."
   (let [watchdog
         @#'state/start-turn-stall-watchdog!
 
@@ -498,7 +499,12 @@
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "leaves a turn alone while it streams a non-provider phase"
+    (it "force-cancels a turn wedged in the between-iteration :iteration-final gap"
+        ;; Regression: a turn that finished an iteration but hangs building the
+        ;; next provider call (e.g. a blocked auth-header refresh) emits NO more
+        ;; chunks and NO terminal event, so its phase stays :iteration-final.
+        ;; The old `:provider-call`-only gate never caught it and the session
+        ;; queue wedged forever.
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))
 
@@ -509,7 +515,26 @@
               (cancellation/cancellation-token)
 
               stall
-              (atom {:phase :content :last-ms (- (System/currentTimeMillis) 60000)})]
+              (atom {:phase :iteration-final :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                 (watchdog sid tid token stall)
+                 (expect (true? (await-cancel token 4000))))
+               (expect (true? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "leaves a turn alone while it runs a legitimately long tool/eval phase"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              tid
+              "t1"
+
+              token
+              (cancellation/cancellation-token)
+
+              stall
+              (atom {:phase :tool-start :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]

@@ -147,6 +147,13 @@
                      :no-throw
                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
           (expect (= :clj/unknown-repl-id t)))))
+  (it "treats id \"default\" as the sentinel, not a real resource id"
+      (with-redefs [rm/session-repls (fn [_]
+                                       [{:id "nrepl:/a" :dir "/a" :port 1}
+                                        {:id "nrepl:/b" :dir "/b" :port 2}])]
+        ;; "default" (any case) must NOT throw — it resolves the implicit default.
+        (expect (= {:id "nrepl:/b" :dir "/b" :port 2} (rm/resolve-target! "sess" "default" "/b")))
+        (expect (= {:id "nrepl:/a" :dir "/a" :port 1} (rm/resolve-target! "sess" "DEFAULT" "/a")))))
   (it "defaults to the REPL owning default-dir when >1 live and no id"
       (with-redefs [rm/session-repls (fn [_]
                                        [{:id "nrepl:/a" :dir "/a" :port 1}

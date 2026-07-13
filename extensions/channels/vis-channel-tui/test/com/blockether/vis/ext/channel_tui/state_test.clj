@@ -1737,7 +1737,46 @@
         (expect (not-any? #(= :gateway-enqueue (first %)) fx))
         (expect (= ["second"] (mapv :text (:pending-sends cancelling-db))))
         ;; normal in-flight queue (not cancelling) still registers server-side.
-        (expect (some #(= :gateway-enqueue (first %)) normal-fx)))))
+        (expect (some #(= :gateway-enqueue (first %)) normal-fx))))
+  (it "set-queued-turn-id deletes the orphaned gateway turn when the entry is gone"
+      ;; The OTHER half of the "sent AND queued" race: the enqueue registered a
+      ;; SERVER-SIDE queued turn, then a cancel restored the backlog to the editor
+      ;; (dropping the local entry) BEFORE the turn-id round-trip landed. When the
+      ;; late `:set-queued-turn-id` finds no matching client-id, the record is
+      ;; orphaned and would auto-drain (= silently SEND); it must be deleted.
+      (let [bind-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :set-queued-turn-id)
+                :fn)
+
+            db
+            {:active-tab-id :main :session {:id "c1"} :pending-sends []}
+
+            {:keys [db fx]}
+            (bind-fn db [:set-queued-turn-id :main "gone-client" "t-9"])]
+
+        (expect (= [[:gateway-delete-queued "c1" "t-9"]] fx))
+        (expect (empty? (:pending-sends db)))))
+  (it "set-queued-turn-id binds the turn id when the entry still exists"
+      (let [bind-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :set-queued-turn-id)
+                :fn)
+
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :pending-sends [{:text "second" :client-id "c1c"}]}
+
+            {:keys [db fx]}
+            (bind-fn db [:set-queued-turn-id :main "c1c" "t-2"])]
+
+        (expect (nil? fx))
+        (expect (= "t-2" (:turn-id (first (:pending-sends db))))))))
 
 (defdescribe set-title-background-tab-test
              (it "relabels a background tab live without touching the active tab"
@@ -2091,3 +2130,55 @@
                              ;; no workspace → root absent, id-only entry
                              {:id "sid-c"}]}
                  (state/tab-session-snapshot @state/app-db)))))
+
+(defdescribe
+  close-tab-releases-idle-session-test
+  ;; Invoke the `:close-tab` event handler directly and inspect the fx it
+  ;; emits — no global app-db mutation. Closing the LAST idle view of a
+  ;; session must release its daemon runtime + SSE listener; a session that
+  ;; is still open elsewhere, or has a running/queued turn, is left alone.
+  (let [close-tab
+        (fn [db tab-id]
+          ((-> #'state/event-registry
+               deref
+               deref
+               (get :close-tab)
+               :fn)
+            db
+            [:close-tab tab-id]))
+
+        base
+        (fn [extra]
+          (merge {:tabs [{:id :main :label "Main" :active? true} {:id :tab-1 :label "T1"}]
+                  :active-tab-id :main
+                  :tab-locals {:tab-1 {:session {:id "other"}}}
+                  :render-version 0}
+                 extra))]
+
+    (it "closing the last idle view releases its runtime + SSE listener"
+        (let [{:keys [db fx]} (close-tab (base {:session {:id "sid-main"}}) :main)]
+          (expect (= [[:release-session-listener "sid-main"] [:release-session-runtime "sid-main"]]
+                     fx))
+          ;; tab is really gone; the still-open sibling stays
+          (expect (= [:tab-1] (mapv :id (:tabs db))))))
+    (it "a session still open in another tab is NOT released"
+        (let [{:keys [fx]} (close-tab (base {:session {:id "shared"}
+                                             :tab-locals {:tab-1 {:session {:id "shared"}}}})
+                                      :main)]
+          (expect (nil? fx))))
+    (it "a session with a running turn is left alone (option b)"
+        (let [{:keys [fx]} (close-tab (base {:session {:id "busy"} :loading? true}) :main)]
+          (expect (nil? fx))))
+    (it "a session with queued/pending sends is left alone"
+        (let [{:keys [fx]}
+              (close-tab (base {:session {:id "queued"} :pending-sends [{:text "later"}]}) :main)]
+          (expect (nil? fx))))
+    (it "closing the last remaining tab is a no-op (no release)"
+        (let [{:keys [db fx]} (close-tab {:tabs [{:id :main :active? true}]
+                                          :active-tab-id :main
+                                          :session {:id "solo"}
+                                          :tab-locals {}
+                                          :render-version 0}
+                                         :main)]
+          (expect (nil? fx))
+          (expect (= [:main] (mapv :id (:tabs db))))))))

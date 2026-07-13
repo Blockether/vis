@@ -486,7 +486,10 @@
         (str/join " " ns-strs)
 
         r
-        (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 120000})
+        ;; Keep BELOW the run_tests tool budget (~120s) so a slow / wedged nREPL
+        ;; surfaces as a real timeout ERROR (with nREPL err/tail) instead of an
+        ;; opaque harness kill. It must never exceed the caller's tool budget.
+        (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 110000})
 
         parsed
         (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
@@ -603,6 +606,40 @@
                     root
                     " to run tests via CLI")})))
 
+(defn- has-build-file?
+  "True when `dir` holds a Clojure build manifest (deps.edn / project.clj / bb.edn)."
+  [^java.io.File dir]
+  (boolean (some (fn [n]
+                   (.isFile (io/file dir n)))
+                 ["deps.edn" "project.clj" "bb.edn"])))
+
+(defn- within-root?
+  "True when `d` is `root-canon` itself or a directory nested under it."
+  [^String root-canon ^java.io.File d]
+  (let [dc (try (.getCanonicalPath d) (catch Throwable _ (.getPath d)))]
+    (or (= dc root-canon) (str/starts-with? dc (str root-canon java.io.File/separator)))))
+
+(defn- nearest-build-root
+  "Closest ancestor directory of `start` (a File dir or file), at or below `root`,
+   that holds a Clojure build manifest — i.e. the project the tests belong to, so a
+   managed nREPL boots where its own deps.edn lives instead of the workspace root.
+   Never escapes above `root`; falls back to `root` when none is found."
+  ^java.io.File [^java.io.File root ^java.io.File start]
+  (let [root-canon (try (.getCanonicalPath root) (catch Throwable _ (.getPath root)))]
+    (loop [d (if (.isDirectory start) start (.getParentFile start))]
+      (cond (or (nil? d) (not (within-root? root-canon d))) root
+            (has-build-file? d) d
+            :else (recur (.getParentFile d))))))
+
+(defn- effective-test-root
+  "The project root the requested tests belong to: the nearest build-file ancestor
+   SHARED by every requested location, so a nested project runs against its OWN
+   deps.edn. `locations` are absolute File dirs/files. Returns `root` when the
+   locations disagree (a mixed run) or none is nested."
+  ^java.io.File [^java.io.File root locations]
+  (let [roots (distinct (map #(nearest-build-root root %) locations))]
+    (if (= 1 (count roots)) (first roots) root)))
+
 (defn clj-test-fn
   "Run clojure tests. The arg may name namespaces directly (:ns) or point at
    directories/files via :paths / :path, which are walked for *_test.clj and
@@ -611,6 +648,9 @@
    empty selectors mean 'run everything', not 'run nothing'. The one case that
    still errors is explicit-but-empty: a :paths was given yet no *_test.clj was
    found under them (a real 'nothing to run there', not a 'run all' intent).
+   The nREPL boots at the tests' OWN project root — the nearest deps.edn /
+   project.clj / bb.edn at or below the workspace root — so a NESTED project runs
+   against its own build file instead of the workspace root's classpath.
    The result :mode says which path ran; :language is always clojure so the result is self-describing
    across the language / framework / tool / mode axes."
   ([env arg]
@@ -632,6 +672,20 @@
          {:keys [nses] :as norm}
          (normalize-arg arg)
 
+         ;; Locations the caller EXPLICITLY asked for (requested paths, else the
+         ;; named test namespaces resolved to their files) — used ONLY to find the
+         ;; tests' own project root. Empty for a bare "run everything" call, which
+         ;; stays rooted at the workspace so it never file-seqs per namespace.
+         req-locations
+         (cond (seq paths) (map (fn [p]
+                                  (let [pf (io/file (str p))]
+                                    (if (.isAbsolute pf) pf (io/file root (str p)))))
+                                paths)
+               (seq nses) (keep #(some-> (test-file-for root %)
+                                         io/file)
+                                nses)
+               :else nil)
+
          ;; Empty selectors = "run everything": when the caller named nothing
          ;; (no ns AND no paths), default to every *_test namespace under the
          ;; yielded no tests — that's an explicit-but-empty request and stays
@@ -645,11 +699,18 @@
          sel
          (select-keys norm [:only :include :exclude])
 
-         ;; Autostart (or reuse) THIS session's nREPL for the workspace root — the
-         ;; fast inner loop. nil only when there's no launchable build file, then
+         ;; Boot the nREPL where the tests' OWN build file lives (nearest deps.edn /
+         ;; project.clj / bb.edn at or below the workspace root), so a nested
+         ;; project's deps.edn is honored. Falls back to the workspace root when the
+         ;; request is at the top level or spans several projects.
+         eff-root
+         (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
+
+         ;; Autostart (or reuse) THIS session's nREPL for the tests' project root —
+         ;; the fast inner loop. nil only when there's no launchable build file, then
          ;; we fall back to the CLI suite gate below.
          port
-         (some-> (repl-manager/ensure-repl-for-dir! (:session-id env) root)
+         (some-> (repl-manager/ensure-repl-for-dir! (:session-id env) eff-root)
                  :port)]
 
      (when (empty? nses)
@@ -659,12 +720,12 @@
                   "clj_test found no *_test.clj namespaces anywhere under the workspace root")
                 {:type :clj/bad-args :got arg})))
      (let [result
-           (if port (run-via-repl root nses sel port) (run-via-cli root norm))
+           (if port (run-via-repl eff-root nses sel port) (run-via-cli eff-root norm))
 
            result'
            (if (and (get result "error")
                     (str/includes? (get result "error") "Could not locate lazytest/core"))
-             (run-via-cli root norm)
+             (run-via-cli eff-root norm)
              result)]
 
        (extension/success {:result (assoc result' "language" "clojure")})))))

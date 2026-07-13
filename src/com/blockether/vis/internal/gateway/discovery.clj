@@ -238,24 +238,41 @@
    the spawner's terminal (SIGHUP) does NOT kill it (D4). On unix this runs the
    argv under `nohup … &` inside a throwaway `sh` (the daemon is reparented to
    init); elsewhere it falls back to a plain detached ProcessBuilder. The daemon
-   SELF-REGISTERS its pid/port on startup, so we never need its pid here. Output
-   is discarded (the daemon logs through Telemere). Returns nil."
-  [opts]
+   SELF-REGISTERS its pid/port on startup, so we never need its pid here. Its
+   stdout+stderr are captured to a per-DB boot log under the registry dir so a
+   daemon that dies on startup is diagnosable instead of vanishing. Returns nil."
+  [{:keys [db] :as opts}]
   (let [argv
         (spawn-argv opts)
 
         _
         (.mkdirs (registry-dir))
 
+        ;; Per-DB boot log so a daemon that dies on startup (route conflict,
+        ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
+        ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
+        ;; on each spawn, so it always reflects the latest boot.
+        log
+        (io/file (registry-dir) (str (registry-key db) ".log"))
+
         pb
         (if (unix?)
-          (let [cmd (str "nohup " (str/join " " (map sh-quote argv)) " >/dev/null 2>&1 &")]
+          (let [cmd (str "nohup "
+                         (str/join " " (map sh-quote argv))
+                         " >"
+                         (sh-quote (.getPath log))
+                         " 2>&1 &")]
             (ProcessBuilder. ^java.util.List ["sh" "-c" cmd]))
           (ProcessBuilder. ^java.util.List (vec argv)))]
 
-    (doto pb
-      (.redirectOutput ProcessBuilder$Redirect/DISCARD)
-      (.redirectError ProcessBuilder$Redirect/DISCARD))
+    (if (unix?)
+      ;; The daemon's own stdio is redirected to `log` by the shell command;
+      ;; discard only the throwaway `sh` wrapper's stdio.
+      (doto pb
+        (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+        (.redirectError ProcessBuilder$Redirect/DISCARD))
+      ;; No shell wrapper here: send the daemon's own stdout+stderr to `log`.
+      (doto pb (.redirectErrorStream true) (.redirectOutput (ProcessBuilder$Redirect/to log))))
     ;; Marks this `vis gateway start` as client-managed rather than a user-owned
     ;; foreground daemon. The daemon should self-reap when the last client dies;
     ;; a manually-run `vis gateway start` must not.

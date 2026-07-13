@@ -1870,7 +1870,7 @@
 
 (defdescribe
   native-results-for-tool-ids-test
-  "`db-native-results-for-tool-ids` backs `native_tools_results[tool_id]`: given a
+  "`db-native-results-for-tool-ids` backs `ntr[tool_id]`: given a
    set of provider tool_use ids, batch-load the matching NATIVE tool results from
    the session's persisted iteration `:forms` (Nippy), across BOTH prior turns and
    earlier iterations of the current turn. Absent id ⇒ absent key."
@@ -1965,6 +1965,58 @@
           (expect (= {} (persistance/db-native-results-for-tool-ids s cid #{})))
           (expect (= {} (persistance/db-native-results-for-tool-ids s nil #{"x"})))
           (expect (= {} (persistance/db-native-results-for-tool-ids s (random-uuid) #{"x"})))))))
+
+(defdescribe
+  native-result-ids-for-session-test
+  "`db-native-result-ids-for-session` lists EVERY persisted native tool_use id in
+   the session branch (all turns + all iterations), de-duped, print-only forms
+   excluded. Backs iteration over `ntr` (keys/items/values)."
+  (let [form (fn [id result]
+               {:scope "t1/i1"
+                :tag :observation
+                :src "cat(\"x\")"
+                :svar/tool-call-id id
+                :vis/tool-name "cat"
+                :result result})]
+    (it
+      "collects native ids across iterations AND turns, skipping print-only forms"
+      (let [s (h/store)
+            cid (h/store-session! s {:channel :cli})
+            tid1 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1"})
+            _ (h/store-iteration! s
+                                  {:session-turn-id tid1
+                                   :status :done
+                                   :idx 0
+                                   :code "cat"
+                                   :forms [(form "toolu_A" {:op "cat" :text "A"})]})
+            ;; print-only form (no :result) must be EXCLUDED
+            _ (h/store-iteration! s
+                                  {:session-turn-id tid1
+                                   :status :done
+                                   :idx 1
+                                   :code "print(1)"
+                                   :forms [{:scope "t1/i2"
+                                            :tag :observation
+                                            :src "print(1)"
+                                            :svar/tool-call-id "toolu_P"
+                                            :stdout "1\n"}]})
+            tid2 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t2"})
+            _ (h/store-iteration! s
+                                  {:session-turn-id tid2
+                                   :status :done
+                                   :idx 0
+                                   :code "cat"
+                                   :forms [(form "toolu_B" {:op "rg" :hits 2})]})]
+
+        (let [ids (persistance/db-native-result-ids-for-session s cid)]
+          (expect (= #{"toolu_A" "toolu_B"} (set ids)))
+          ;; de-duped, no print-only id
+          (expect (= 2 (count ids)))
+          (expect (not (some #{"toolu_P"} ids))))))
+    (it "unknown / nil session is a safe empty list"
+        (let [s (h/store)]
+          (expect (= [] (persistance/db-native-result-ids-for-session s nil)))
+          (expect (= [] (persistance/db-native-result-ids-for-session s (random-uuid))))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 

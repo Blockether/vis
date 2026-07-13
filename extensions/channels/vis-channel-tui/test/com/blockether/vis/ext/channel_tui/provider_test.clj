@@ -214,7 +214,12 @@
                         :ollama
                         {:provider/status-fn (constantly {:authenticated? true})}
 
-                        nil))]
+                        nil))
+
+                    vis/gateway-provider-status
+                    (fn [provider-id]
+                      (if (= :openai provider-id) {:authenticated? true} {:authenticated? false}))]
+
         (expect (= [:models :authenticate :status :logout]
                    (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
         (expect (= ["Configure Models" "Re-authenticate" "Show Status + Limits" "Log Out"]

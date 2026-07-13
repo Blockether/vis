@@ -40,6 +40,22 @@
 (defonce ^{:doc "Stable per-process id: foreign events carry a different one."} producer-id
   (str (java.util.UUID/randomUUID)))
 
+(def ^:private producer-pid
+  "This process's OS pid, tagged onto every published event as `:_pid`. Lets a
+   consumer tell a turn genuinely streaming in a live SIBLING process apart from
+   one orphaned by a crashed/restarted daemon — the difference between hydrating
+   a live turn and reaping a dead one."
+  (try (.pid (java.lang.ProcessHandle/current)) (catch Throwable _ -1)))
+
+(defn- producer-alive?
+  "True when the OS process that produced a journal event is still running. A
+   missing pid (a pre-`:_pid` journal) or our own pid is treated as alive, so we
+   never reap a turn we cannot PROVE is orphaned."
+  [pid]
+  (or (nil? pid)
+      (= (long pid) (long producer-pid))
+      (try (.isPresent (java.lang.ProcessHandle/of (long pid))) (catch Throwable _ true))))
+
 (defn- events-dir
   ^Path []
   (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "events"])))
@@ -77,6 +93,7 @@
            line
            (str (wire/json-str (assoc event
                                  :_producer producer-id
+                                 :_pid producer-pid
                                  :_store (boolean store?)))
                 "\n")]
 
@@ -118,7 +135,7 @@
     (when-not (= (:_producer event) producer-id)
       (when-let [f @deliver-fn]
         (let [store? (boolean (:_store event))
-              clean (dissoc event :_producer :_store)]
+              clean (dissoc event :_producer :_pid :_store)]
 
           (try (f sid store? clean)
                (catch Throwable t
@@ -159,6 +176,29 @@
               (doseq [line (str/split-lines complete)]
                 (when-not (str/blank? line) (deliver-line! sid line)))
               (swap! offsets assoc sid (+ off consumed)))))))))
+
+(defn journal-high-water-seq
+  "Highest `:seq` persisted in `sid`'s journal file, or 0 when there is none.
+
+   A daemon restart resets its in-memory `:seq` counter to 0, but a client
+   (TUI) keeps its replay cursor as a monotonic MAX across reconnects — so
+   events from the fresh daemon (seq 1, 2, …) fall UNDER the client's stale
+   cursor and its `seq > cursor` replay filter silently drops the whole new
+   turn (the orphan-reap terminal included). Seeding a fresh registry entry
+   from this high-water keeps the restarted daemon numbering ABOVE what the
+   client already saw. Never throws."
+  [sid]
+  (try
+    (let [f (session-file sid)]
+      (if (.exists f)
+        (->> (str/split-lines (slurp f))
+             (remove str/blank?)
+             (keep wire/parse-json)
+             (map #(long (or (:seq %) 0)))
+             (reduce max 0))
+        0))
+    (catch Throwable t (tel/log! :debug ["gateway-bus: high-water read failed" (ex-message t)]) 0)))
+
 (defn hydrate!
   "Replay a session's CURRENT journal into this process's registry NOW, so a
    watcher subscribing mid-turn sees the turn running in a SIBLING process from
@@ -170,28 +210,60 @@
    terminal event yet): a finished turn is already covered by the durable DB +
    normal history, and re-streaming it would double-render a completed answer.
 
+   A non-terminal journal has TWO causes, told apart by `:_pid` liveness: the
+   producer is still alive (a real in-flight sibling turn — mirror it) OR the
+   producer PROCESS is gone (a daemon crash/restart mid-turn). An orphaned turn
+   will never emit a terminal, so resurrecting it pins this process's
+   `:current-turn` to a dead turn — wedging the session queue (new sends pile up
+   `queued`, nothing drains) and spinning every watcher forever. For an orphan we
+   instead land a synthetic `turn.failed` so the queue drains, clients get
+   closure, and no later hydrate replays it again.
+
    Rewinds this process's tail cursor to the file's current end first, so the
    background tailer won't re-deliver what we hand over here. Never throws."
   [sid]
-  (try (when-let [f (session-file sid)]
-         (when (.exists f)
-           (let [len (.length f)
-                 events (->> (str/split-lines (slurp f))
-                             (remove str/blank?)
-                             (keep wire/parse-json))
-                 foreign (remove #(= (:_producer %) producer-id) events)
-                 terminal? (some #(contains? #{"turn.completed" "turn.failed"} (:type %)) foreign)]
+  (try
+    (when-let [f (session-file sid)]
+      (when (.exists f)
+        (let [len (.length f)
+              events (->> (str/split-lines (slurp f))
+                          (remove str/blank?)
+                          (keep wire/parse-json))
+              foreign (remove #(= (:_producer %) producer-id) events)
+              ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
+              ;; THIS process) means the turn is done — don't re-stream it.
+              terminal? (some #(contains? #{"turn.completed" "turn.failed"} (:type %)) events)]
 
-             (when (and (seq foreign) (not terminal?))
-               ;; claim everything up to EOF so poll-once! won't re-deliver it
-               (swap! offsets assoc (str sid) len)
-               (when-let [f' @deliver-fn]
-                 (doseq [ev foreign]
-                   (try (f' sid (boolean (:_store ev)) (dissoc ev :_producer :_store))
-                        (catch Throwable t
-                          (tel/log! :debug
-                                    ["gateway-bus: hydrate deliver failed" (ex-message t)])))))))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
+          (when (and (seq foreign) (not terminal?))
+            ;; claim everything up to EOF so poll-once! won't re-deliver it
+            (swap! offsets assoc (str sid) len)
+            (let [started (some #(when (= "turn.started" (:type %)) %) foreign)]
+              (if (producer-alive? (:_pid (or started (last foreign))))
+                ;; Live sibling: mirror its in-flight turn into the registry.
+                (when-let [f' @deliver-fn]
+                  (doseq [ev foreign]
+                    (try (f' sid (boolean (:_store ev)) (dissoc ev :_producer :_pid :_store))
+                         (catch Throwable t
+                           (tel/log! :debug
+                                     ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                ;; Orphan: producer process is gone. Reap it terminally.
+                (when-let [tid (:turn_id started)]
+                  (let [term {:schema 1
+                              :type "turn.failed"
+                              :session_id (str sid)
+                              :turn_id tid
+                              :status "interrupted"
+                              :error "gateway producer exited before the turn finished"}]
+                    ;; Durable + cross-process: appended (no truncate), so any
+                    ;; process hydrating later sees `terminal?` and skips.
+                    (publish! sid term {:store? true})
+                    (when-let [f' @deliver-fn]
+                      (try (f' sid true term)
+                           (catch Throwable t
+                             (tel/log! :debug
+                                       ["gateway-bus: orphan-reap deliver failed"
+                                        (ex-message t)]))))))))))))
+    (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
   nil)
 
 (defn- poll-once!

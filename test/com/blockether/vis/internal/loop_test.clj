@@ -1297,7 +1297,7 @@
   "END-TO-END over the REAL loop path: a real `create-environment` (real embedded
    GraalPy sandbox + real in-memory SQLite), a native tool result PERSISTED via the
    same `db-store-iteration!` the loop uses, then a `python_execution` block that
-   reads `native_tools_results[<id>]` and gets back the SAME dict — no re-fetch."
+   reads `ntr[<id>]` and gets back the SAME dict — no re-fetch."
   (let [store-native! (fn [env id result]
                         ;; Persist one iteration whose form is a native tool result
                         ;; keyed by `id` — exactly the shape the loop writes.
@@ -1318,7 +1318,7 @@
           (try (store-native! env "toolu_E2E" {"op" "cat" "path" "x.py" "text" "hello world"})
                (let [r (env/run-python-block
                          (:python-context env)
-                         (str "res = native_tools_results[\"toolu_E2E\"]\n"
+                         (str "res = ntr[\"toolu_E2E\"]\n"
                               "print(res[\"text\"], res[\"path\"], type(res).__name__)")
                          "t2/i1")]
                  (expect (nil? (:error r)))
@@ -1329,7 +1329,7 @@
     (it "an unknown id raises a clean KeyError through the normal op-error path (no crash)"
         (let [env (lp/create-environment ::router {:db :memory})]
           (try (let [r (env/run-python-block (:python-context env)
-                                             "print(native_tools_results[\"toolu_DOES_NOT_EXIST\"])"
+                                             "print(ntr[\"toolu_DOES_NOT_EXIST\"])"
                                              "t2/i1")]
                  (expect (some? (:error r)))
                  (expect (= :python/runtime (:phase (:data (:error r)))))
@@ -1344,19 +1344,36 @@
 
           (try (store-native! env "toolu_NOFETCH" {"op" "cat" "text" "cached body"})
                ;; Shadow-proof: install a probe `cat` in the sandbox; retrieval must
-               ;; NOT call it (native_tools_results goes straight to the store).
+               ;; NOT call it (ntr goes straight to the store).
                (env/bind-and-bump! env
                                    'cat
                                    (fn [& _]
                                      (reset! called true)
                                      {"op" "cat" "text" "REFETCHED"}))
-               (let [r (env/run-python-block
-                         (:python-context env)
-                         "print(native_tools_results[\"toolu_NOFETCH\"][\"text\"])"
-                         "t2/i1")]
+               (let [r (env/run-python-block (:python-context env)
+                                             "print(ntr[\"toolu_NOFETCH\"][\"text\"])"
+                                             "t2/i1")]
                  (expect (nil? (:error r)))
                  (expect (= "cached body" (str/trim (str (:stdout r)))))
                  (expect (false? @called))) ;; the tool was NOT re-run
+               (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))
+    (it "iteration DISCOVERS the store: keys/items/values/len/iter over every persisted id"
+        ;; The issue: the proxy only exposed get(). Now it's a read-only mapping —
+        ;; the sandbox can browse ids it never had up front.
+        (let [env (lp/create-environment ::router {:db :memory})]
+          (try (store-native! env "toolu_ONE" {"op" "cat" "text" "one"})
+               (store-native! env "toolu_TWO" {"op" "rg" "text" "two"})
+               (let [r (env/run-python-block
+                         (:python-context env)
+                         (str "ks = sorted(ntr.keys())\n"
+                              "items = dict(ntr.items())\n"
+                              "ops = sorted(v[\"op\"] for v in ntr.values())\n"
+                              "print(len(ntr), ks,\n" "      items[\"toolu_ONE\"][\"text\"], ops,\n"
+                              "      sorted(list(ntr)) == ks,\n" "      (\"toolu_ONE\" in ntr))")
+                         "t3/i1")]
+                 (expect (nil? (:error r)))
+                 (expect (= "2 ['toolu_ONE', 'toolu_TWO'] one ['cat', 'rg'] True True"
+                            (str/trim (str (:stdout r))))))
                (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))))
 
 (defdescribe
@@ -1436,28 +1453,27 @@
           (expect (str/includes? (by-id "B") "BBB"))
           ;; python_execution → its PRINTED string
           (expect (str/includes? (by-id "P") "PPP"))))
-    (it
-      "a NATIVE result tool_result carries its native_tools_results[id] handle; python_execution does NOT"
-      ;; MODEL-SEES-IT: each native call's result is retrievable later via
-      ;; `native_tools_results[<tool_use_id>]`; the id vis stored can differ from
-      ;; the wire id the model saw (OpenAI Responses composite), so we surface
-      ;; the EXACT key inline. python_execution stores no return → no handle.
-      (let [m
-            (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "call_1|fc_9" :name "rg"}
-                               {:id "P" :name "python_execution"}]
-                  :forms-vec
-                  [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
-                   {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
-                   {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+    (it "a NATIVE result tool_result carries its ntr[id] handle; python_execution does NOT"
+        ;; MODEL-SEES-IT: each native call's result is retrievable later via
+        ;; `ntr[<tool_use_id>]`; the id vis stored can differ from the wire id the
+        ;; model saw (OpenAI Responses composite), so we surface the EXACT key inline.
+        ;; python_execution stores no return → no handle.
+        (let [m
+              (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "call_1|fc_9" :name "rg"}
+                                 {:id "P" :name "python_execution"}]
+                    :forms-vec
+                    [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
+                     {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
+                     {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
-            by-id
-            (into {} (map (juxt :tool_use_id :content)) (:content m))]
+              by-id
+              (into {} (map (juxt :tool_use_id :content)) (:content m))]
 
-        ;; native results advertise the literal retrieval key (composite included)
-        (expect (str/includes? (by-id "toolu_A") "native_tools_results[\"toolu_A\"]"))
-        (expect (str/includes? (by-id "call_1|fc_9") "native_tools_results[\"call_1|fc_9\"]"))
-        ;; python_execution printed — no stored return, so no handle offered
-        (expect (not (str/includes? (by-id "P") "native_tools_results")))))
+          ;; native results advertise the literal retrieval key (composite included)
+          (expect (str/includes? (by-id "toolu_A") "ntr[\"toolu_A\"]"))
+          (expect (str/includes? (by-id "call_1|fc_9") "ntr[\"call_1|fc_9\"]"))
+          ;; python_execution printed — no stored return, so no handle offered
+          (expect (not (str/includes? (by-id "P") "ntr")))))
     (it "an ERRORED native call gets no result handle (nothing was stored)"
         (let [m
               (irm {:tool-calls [{:id "bad" :name "cat"}]
@@ -1467,7 +1483,7 @@
               c
               (get-in m [:content 0 :content])]
 
-          (expect (not (str/includes? c "native_tools_results")))))
+          (expect (not (str/includes? c "ntr")))))
     (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
         (let [m
               (irm {:tool-calls [{:id "ok" :name "cat"} {:id "bad" :name "cat"}]

@@ -126,6 +126,15 @@
            (swap! registry update-in [sid :subscribers] dissoc sub-id)
            (tel/log! :debug ["gateway: dropped dead subscriber" sub-id (ex-message t)])))))
 
+(defn- fresh-entry
+  "A brand-new registry entry for `sid`, seeding `:next-seq` from the journal's
+   high-water so a RESTARTED daemon keeps numbering ABOVE a client's stale
+   monotonic replay cursor instead of resetting to 0 (which the client's
+   `seq > cursor` filter would silently drop — dropping a whole reconnect turn,
+   the orphan-reap terminal included)."
+  [sid]
+  {:next-seq (bus/journal-high-water-seq sid)})
+
 (defn append-event!
   "Append one event for `sid`, fan it out to LOCAL subscribers, and publish
    it on the cross-process bus so watchers in OTHER processes stream it too.
@@ -143,7 +152,7 @@
      (swap! registry update
        sid
        (fn [entry]
-         (let [entry (or entry {:next-seq 0})
+         (let [entry (or entry (fresh-entry sid))
                n (inc (:next-seq entry 0))
                event
                (merge
@@ -268,13 +277,13 @@
   (swap! registry update
     sid
     (fn [entry]
-      (or entry {:next-seq 0})))
+      (or entry (fresh-entry sid))))
   (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid))
   (let [replay (volatile! [])]
     (swap! registry update
       sid
       (fn [entry]
-        (let [entry (or entry {:next-seq 0})]
+        (let [entry (or entry (fresh-entry sid))]
           (vreset! replay (filterv #(> (:seq %) (or cursor 0)) (:events entry)))
           (assoc-in entry [:subscribers sub-id] sink))))
     @replay))
@@ -931,14 +940,26 @@
 (declare drain-next-queued!)
 
 (def ^:private TURN_STALL_TIMEOUT_MS
-  "Daemon backstop: force-cancel a turn wedged in the `:provider-call` phase
-   with NO provider chunk for this long. Set ABOVE svar's 4-minute semantic
-   stream timeout so it fires ONLY when svar's own idle/semantic stream
-   watchdogs miss a stalled provider connection — the 'calling the provider…
-   8m, nothing moving' hang that freezes the session's turn queue. Phase-gated
-   on `:provider-call` so a legitimately long tool / Python-eval phase is never
-   force-cancelled."
+  "Daemon backstop: force-cancel a turn wedged with NO chunk activity for this
+   long. Set ABOVE svar's 4-minute semantic stream timeout so it fires ONLY when
+   svar's own idle/semantic stream watchdogs miss a stalled connection — the
+   'calling the provider… 8m, nothing moving' hang that freezes the session's
+   turn queue. Gated on [[stall-exempt-phases]] (NOT just `:provider-call`) so a
+   legitimately long tool / Python-eval phase is never force-cancelled, while a
+   wedge in ANY engine/provider-internal phase — including the between-iteration
+   `:iteration-final` gap where the next provider call is built / auth headers
+   refreshed — is still caught. Without this, such a wedge emits no terminal
+   event, so the turn never finishes and the queued backlog never drains."
   (* 6 60 1000))
+
+(def ^:private stall-exempt-phases
+  "Phases where a running turn may legitimately produce NO chunk for a long time
+   — a slow shell-run / Python-eval / native tool. The stall watchdog NEVER
+   force-cancels while the live phase is one of these. EVERY other phase
+   (provider-call, reasoning/content streaming, response-parse, and the
+   between-iteration `:iteration-final` gap) is engine/provider-internal and must
+   never sit idle for `TURN_STALL_TIMEOUT_MS`."
+  #{:form-start :form-result :tool-start :shell-run :shell-bg})
 
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE running turn against a stalled provider stream.
@@ -963,12 +984,12 @@
                               (let [{:keys [phase last-ms]} @stall
                                     idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))]
 
-                                (if (and (= :provider-call phase)
+                                (if (and (not (contains? stall-exempt-phases phase))
                                          (>= idle-ms (long TURN_STALL_TIMEOUT_MS)))
                                   (do (tel/log!
                                         :warn
                                         ["gateway: provider stream stalled — force-cancelling turn"
-                                         tid (str idle-ms "ms with no provider chunk")])
+                                         tid (str idle-ms "ms idle in phase " phase)])
                                       (swap! stall assoc :stalled? true)
                                       (cancellation/cancel! cancel-token))
                                   (recur)))))
