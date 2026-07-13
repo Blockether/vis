@@ -183,7 +183,42 @@
           (let [report (codex/limits)]
             (expect (= :error (:status report)))
             (expect (= :provider/openai-codex-usage-error (get-in report [:error :type])))
-            (expect (= [] (get-in report [:dynamic :limits]))))))))
+            (expect (= [] (get-in report [:dynamic :limits])))))))
+  (it
+    "refreshes once and retries dynamic limits after a usage auth rejection"
+    (let [calls
+          (atom [])
+
+          rejected
+          (atom nil)]
+
+      (with-redefs-fn {#'codex/detect-credentials (constantly {:access-token "stale"
+                                                               :account-id "acct_123"})
+                       #'codex/get-openai-codex-token!
+                       (constantly {:token "dead" :llm-headers {"chatgpt-account-id" "acct_123"}})
+                       #'codex/force-refresh-token!
+                       (fn [token]
+                         (reset! rejected token)
+                         {:token "fresh" :llm-headers {"chatgpt-account-id" "acct_123"}})
+                       #'codex-limits/dynamic-limits! (fn [token account-id]
+                                                        (swap! calls conj [token account-id])
+                                                        (if (= "dead" token)
+                                                          (throw (ex-info "usage unauthorized"
+                                                                          {:status 401}))
+                                                          {:limits [{:id :codex-7d
+                                                                     :label "Codex 7d quota (%)"
+                                                                     :scope :account
+                                                                     :kind :rate
+                                                                     :precision :exact
+                                                                     :source :provider-api
+                                                                     :unlimited? false
+                                                                     :remaining 42.0}]}))}
+        (fn []
+          (let [report (codex/limits)]
+            (expect (= :ok (:status report)))
+            (expect (= "dead" @rejected))
+            (expect (= [["dead" "acct_123"] ["fresh" "acct_123"]] @calls))
+            (expect (= [:codex-7d] (mapv :id (get-in report [:dynamic :limits]))))))))))
 
 (defdescribe provider-registration-test
              (it "registers the OpenAI Codex auth provider"
