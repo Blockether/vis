@@ -8,7 +8,6 @@ import {
   View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 
 import { c, mono } from "./theme";
 
@@ -74,25 +73,20 @@ export const DialogModal = ({
           style={[styles.dialog, tone === "error" && styles.dialogError]}
           onPress={() => {}}
         >
-          <LinearGradient
-            colors={
-              tone === "error" ? [c.err, c.err] : [c.amberBright, c.amber]
-            }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={styles.titleBar}
+          <View
+            style={[styles.titleBar, tone === "error" && styles.titleBarError]}
           >
             <Text style={[styles.title, tone === "error" && styles.titleError]}>
               {title}
             </Text>
-            <Pressable onPress={onClose} hitSlop={8}>
+            <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn}>
               <Feather
                 name="x"
-                size={14}
-                color={tone === "error" ? "#FFFFFF" : c.amberInk}
+                size={15}
+                color={tone === "error" ? "#FFFFFF" : c.dim}
               />
             </Pressable>
-          </LinearGradient>
+          </View>
           <View style={[styles.body, flush && styles.bodyFlush]}>
             {children}
           </View>
@@ -152,35 +146,51 @@ const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 60, elevation: 60 },
   scrim: {
     flex: 1,
-    backgroundColor: "rgba(38,38,38,0.45)",
+    backgroundColor: "rgba(20,20,20,0.28)",
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
+    padding: 18,
   },
   dialog: {
     alignSelf: "stretch",
-    backgroundColor: c.field,
-    borderWidth: 1,
-    borderColor: c.line,
+    overflow: "hidden",
+    backgroundColor: "#F2F2F7",
+    borderRadius: 22,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 12,
   },
-  dialogError: { borderColor: c.err },
+  dialogError: { backgroundColor: c.errBg },
   titleBar: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    minHeight: 50,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.86)",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(60,60,67,0.18)",
   },
+  titleBarError: { backgroundColor: c.err },
   title: {
-    fontFamily: mono,
-    fontSize: 11.5,
+    fontSize: 17,
     fontWeight: "700",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    color: c.amberInk,
+    letterSpacing: -0.2,
+    color: c.ink,
   },
   titleError: { color: "#FFFFFF" },
-  body: { padding: 12, gap: 8 },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(118,118,128,0.12)",
+  },
+  body: { padding: 14, gap: 10 },
   bodyFlush: { padding: 0, gap: 0 },
   action: {
     backgroundColor: c.ink,

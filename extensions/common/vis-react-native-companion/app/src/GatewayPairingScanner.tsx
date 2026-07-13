@@ -90,17 +90,17 @@ export const describePairing = (pairing: GatewayPairing): string =>
 
 const st = StyleSheet.create({
   wrap: {
-    gap: 10,
+    gap: 12,
     padding: 14,
-    backgroundColor: c.paper,
-    borderWidth: 1,
-    borderColor: c.border,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(60,60,67,0.18)",
   },
   cameraBox: {
     height: 280,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: c.ink,
+    borderRadius: 16,
     backgroundColor: "#000",
   },
   reticle: {
@@ -113,13 +113,12 @@ const st = StyleSheet.create({
     borderColor: c.amberBright,
   },
   title: {
-    fontFamily: mono,
-    fontSize: 14,
-    fontWeight: "900",
+    fontSize: 16,
+    fontWeight: "700",
     color: c.ink,
-    textTransform: "uppercase",
+    letterSpacing: -0.2,
   },
-  copy: { color: c.dim, fontSize: 12, lineHeight: 17 },
+  copy: { color: c.dim, fontSize: 13, lineHeight: 18 },
   err: { color: c.err, fontFamily: mono, fontSize: 11 },
   actions: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
 });
