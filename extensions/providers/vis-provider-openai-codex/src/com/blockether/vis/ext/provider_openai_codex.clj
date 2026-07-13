@@ -451,42 +451,62 @@
 
 (defn logout! [] (delete-auth-file!) :logged-out)
 
+(defn- usage-auth-error? [^Throwable t] (contains? #{401 403} (:status (ex-data t))))
+
+(defn- usage-error-report
+  [^Throwable t]
+  {:provider-id :openai-codex
+   :status :error
+   :fetched-at-ms (System/currentTimeMillis)
+   :dynamic {:limits [] :note "OpenAI Codex usage is unavailable."}
+   :error {:type :provider/openai-codex-usage-error
+           :message (or (ex-message t) (.getName (class t)))}})
+
+(defn- usage-report-from-token!
+  [{:keys [token llm-headers]}]
+  (let [account-id (get llm-headers "chatgpt-account-id")]
+    (if (or (str/blank? token) (str/blank? account-id))
+      {:provider-id :openai-codex
+       :status :error
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic {:limits [] :note "OpenAI Codex credentials are missing usage request fields."}
+       :error {:type :provider/openai-codex-missing-usage-credentials
+               :message "OpenAI Codex credentials are missing access token or account id"}}
+      {:provider-id :openai-codex
+       :status :ok
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic (codex-limits/dynamic-limits! token account-id)})))
+
+(defn- authenticated-limits-report!
+  []
+  (let [provider-token (get-openai-codex-token!)]
+    (try (usage-report-from-token! provider-token)
+         (catch Throwable t
+           (if (usage-auth-error? t)
+             ;; The usage endpoint rejected a locally-valid token. That is the
+             ;; same refresh-token rotation failure mode as a mid-turn 401: force
+             ;; refresh with the rejected token so single-flight cannot hand it
+             ;; back, then retry the usage request once.
+             (try (usage-report-from-token! (force-refresh-token! (:token provider-token)))
+                  (catch Throwable retry-t (usage-error-report retry-t)))
+             (usage-error-report t))))))
+
 (defn limits
   "Normalized limits envelope for the OpenAI Codex provider.
 
    Static RPM/TPM metadata comes from svar's provider catalog; this fn
    reports authentication state and live ChatGPT/Codex quota windows
-   when credentials are available."
+   when credentials are available. A usage-endpoint 401/403 force-refreshes
+   the rotating OAuth token and retries once so TUI/gateway/iOS status panels
+   do not get stuck on a server-rotated access token."
   []
   (let [detected (detect-credentials)]
-    (cond (nil? detected) {:provider-id :openai-codex
-                           :status :unauthenticated
-                           :fetched-at-ms (System/currentTimeMillis)
-                           :dynamic {:limits [] :note "OpenAI Codex is not authenticated."}}
-          :else (try
-                  (let [{:keys [token llm-headers]} (get-openai-codex-token!)
-                        account-id (get llm-headers "chatgpt-account-id")]
-
-                    (if (or (str/blank? token) (str/blank? account-id))
-                      {:provider-id :openai-codex
-                       :status :error
-                       :fetched-at-ms (System/currentTimeMillis)
-                       :dynamic {:limits []
-                                 :note "OpenAI Codex credentials are missing usage request fields."}
-                       :error {:type :provider/openai-codex-missing-usage-credentials
-                               :message
-                               "OpenAI Codex credentials are missing access token or account id"}}
-                      {:provider-id :openai-codex
-                       :status :ok
-                       :fetched-at-ms (System/currentTimeMillis)
-                       :dynamic (codex-limits/dynamic-limits! token account-id)}))
-                  (catch Throwable t
-                    {:provider-id :openai-codex
-                     :status :error
-                     :fetched-at-ms (System/currentTimeMillis)
-                     :dynamic {:limits [] :note "OpenAI Codex usage is unavailable."}
-                     :error {:type :provider/openai-codex-usage-error
-                             :message (or (ex-message t) (.getName (class t)))}})))))
+    (if (nil? detected)
+      {:provider-id :openai-codex
+       :status :unauthenticated
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic {:limits [] :note "OpenAI Codex is not authenticated."}}
+      (authenticated-limits-report!))))
 
 (require '[com.blockether.vis.core :as vis])
 (require '[com.blockether.svar.core :as svar])

@@ -18,18 +18,24 @@
         (expect (= 3700000 (get-in report [:limits 0 :window :resets-at-ms])))
         (expect (= 2000000 (get-in report [:limits 1 :window :resets-at-ms])))))
   (it "uses ChatGPT's explicit window duration instead of assuming primary means 5h"
-      (let [report (codex/usage->dynamic-limits {:rate_limit {:allowed true
-                                                              :limit_reached false
-                                                              :primary_window
-                                                              {:used_percent 10
-                                                               :limit_window_seconds (* 7 24 60 60)
-                                                               :reset_after_seconds 3600}}}
-                                                {:id "gpt-5.3-codex"}
-                                                100000)]
-        (expect (= [:codex-7d] (mapv :id (:limits report))))
-        (expect (= "Codex 7d quota (%)" (get-in report [:limits 0 :label])))
+      (let [report (codex/usage->dynamic-limits
+                     {:rate_limit {:allowed true
+                                   :limit_reached false
+                                   :primary_window {:used_percent 10
+                                                    :limit_window_seconds (* 7 24 60 60)
+                                                    :reset_after_seconds 3600}
+                                   :secondary_window {:used_percent 20
+                                                      :limit_window_seconds (* 5 60 60)
+                                                      :reset_after_seconds 1800}}}
+                     {:id "gpt-5.3-codex"}
+                     100000)]
+        (expect (= [:codex-5h :codex-7d] (mapv :id (:limits report))))
+        (expect (= "Codex 5h quota (%)" (get-in report [:limits 0 :label])))
+        (expect (= "Codex 7d quota (%)" (get-in report [:limits 1 :label])))
+        (expect (= {:kind :rolling :unit :hour :size 5 :resets-at-ms 1900000}
+                   (get-in report [:limits 0 :window])))
         (expect (= {:kind :rolling :unit :day :size 7 :resets-at-ms 3700000}
-                   (get-in report [:limits 0 :window])))))
+                   (get-in report [:limits 1 :window])))))
   (it "selects the nested Codex Spark bucket for the Spark model"
       (let [report (codex/usage->dynamic-limits
                      {:rate_limit {:primary_window {:used_percent 99}}

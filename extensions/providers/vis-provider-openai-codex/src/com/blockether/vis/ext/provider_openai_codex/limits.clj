@@ -147,12 +147,43 @@
         (number? left-percent)
         (assoc :remaining left-percent)))))
 
+(defn- window-sort-seconds
+  [row]
+  (let [{:keys [unit size]}
+        (:window row)
+
+        seconds
+        (case unit
+          :minute
+          60
+
+          :hour
+          (* 60 60)
+
+          :day
+          (* 24 60 60)
+
+          :week
+          (* 7 24 60 60)
+
+          :month
+          (* 30 24 60 60)
+
+          :year
+          (* 365 24 60 60)
+
+          Long/MAX_VALUE)]
+
+    (* (long (or size 1)) (long seconds))))
+
 (defn usage->dynamic-limits
   "Convert ChatGPT/Codex `/wham/usage` JSON into Vis dynamic limit rows.
 
    `model-ref` may be a model id string/keyword or a map with `:id` /
    `:name`. It is used only for Codex Spark, whose bucket is nested in
-   `additional_rate_limits`, matching Codex/ChatGPT's usage payload."
+   `additional_rate_limits`, matching Codex/ChatGPT's usage payload. Rows are
+   sorted by explicit window size (5h before 7d) rather than trusting provider
+   bucket names (`primary_window` / `secondary_window`)."
   ([usage] (usage->dynamic-limits usage nil))
   ([usage model-ref] (usage->dynamic-limits usage model-ref (System/currentTimeMillis)))
   ([usage model-ref now-ms]
@@ -160,7 +191,12 @@
          (select-rate-limit-bucket usage model-ref)
 
          rows
-         (if bucket (into [] (keep #(window-row now-ms % bucket)) fallback-window-specs) [])
+         (if bucket
+           (->> fallback-window-specs
+                (keep #(window-row now-ms % bucket))
+                (sort-by window-sort-seconds)
+                vec)
+           [])
 
          limited?
          (or (true? (field bucket :limit_reached)) (false? (field bucket :allowed)))]
