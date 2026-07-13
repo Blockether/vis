@@ -94,7 +94,7 @@
                  ;; second key behind C-x. (Recenter C-l intentionally shares its letter with
                  ;; C-x C-l length — different keyspaces, like the picker-reorder reuse.)
                  (expect (nil? (keymap/prefix-action-for keymap/quit-key)))
-                 (expect (nil? (keymap/prefix-action-for keymap/abort-key))))
+                 (expect (= :open-magit (keymap/prefix-action-for keymap/abort-key))))
              (it "every C-x prefix key is distinct, including the palette's second key"
                  (let [keys (mapv :key keymap/prefix-commands)]
                    (expect (= (count keys) (count (distinct keys))))

@@ -149,7 +149,7 @@
                        "(let [x 1]\n  (println x))"
 
                        lines
-                       (ir-tui/ir->lines [:ir [:code {:lang "clj"} src]] 10)
+                       (ir-tui/ir->lines [:ir [:code {:lang "clj"} src]] 40)
 
                        ts
                        (mapv #(str/replace (or % "") #"\u001b\[[0-9;]*m" "") (texts lines))]

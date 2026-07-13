@@ -178,7 +178,7 @@
         (expect (= "m.csv" (:filename att)))
         (expect (= "text/csv" (:media-type att)))
         (expect (= "file" (:kind att)))))
-  (it "leaves a plain workspace-root write UNcaptured (only $VIS_OUTBOX is tapped)"
+  (it "captures a confined write under a system temp root too (scratch tap, not just $VIS_OUTBOX)"
       (let [root
             (temp-root)
 
@@ -194,7 +194,10 @@
                         "print('ok')\n"))]
 
         (expect (nil? (:error out)))
-        (expect (empty? (:attachments out))))))
+        ;; The outbox tap is widened to any system temp root (/tmp, $TMPDIR):
+        ;; a `temp-root` write is scratch under it, so it captures at the source.
+        (expect (= 1 (count (:attachments out))))
+        (expect (= "plain.txt" (:filename (first (:attachments out))))))))
 
 (defn- conveying-gather
   "Faithful replica of loop.clj's `gather-fn`: submit each thunk to a

@@ -259,7 +259,7 @@
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
-                      :duration-ms 12
+                      :duration_ms 12
                       :code "(patch [])"
                       :forms
                       [{:scope "t24/i1/f1"
