@@ -159,7 +159,7 @@
                           (if draft-root (abbreviate-home draft-root) "draft")
                           (when-let [bits (git-change-bits status)]
                             (str " (" bits ")"))
-                          (when chord (str "  (" chord ")"))
+                          (when chord (str " (" chord ")"))
                           " ")
                :fg t/footer-warning-fg
                :bold? true
@@ -168,7 +168,7 @@
                :tint :draft
                :kind :footer-git}]
       workspace?
-      [{:text (str " " git-label " " (git-repo-label status) (when chord (str "  (" chord ")")) " ")
+      [{:text (str " " git-label " " (git-repo-label status) (when chord (str " (" chord ")")) " ")
         :fg t/footer-fg-strong
         :bold? true
         :region :right
