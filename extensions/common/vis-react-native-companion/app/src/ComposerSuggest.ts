@@ -6,7 +6,10 @@ import type { SuggestRow } from "./VisClient";
    matching the gateway comment in server.clj. */
 export type FileMention = { start: number; end: number; q: string };
 
-export const activeFileMention = (text: string, cursor = text.length): FileMention | null => {
+export const activeFileMention = (
+  text: string,
+  cursor = text.length,
+): FileMention | null => {
   const head = text.slice(0, cursor);
   const match = /(^|\s)@([^@\s]*)$/.exec(head);
   if (!match || match.index == null) return null;
@@ -15,7 +18,11 @@ export const activeFileMention = (text: string, cursor = text.length): FileMenti
   return { start: at, end: cursor, q: match[2] ?? "" };
 };
 
-export const applyFileMention = (text: string, mention: FileMention, row: SuggestRow): string => {
+export const applyFileMention = (
+  text: string,
+  mention: FileMention,
+  row: SuggestRow,
+): string => {
   const value = row.name.trim();
   const before = text.slice(0, mention.start);
   const after = text.slice(mention.end);
@@ -23,8 +30,10 @@ export const applyFileMention = (text: string, mention: FileMention, row: Sugges
 };
 
 export const suggestLabel = (row: SuggestRow): string => {
-  const bits = [row.status, row.age, typeof row.size === "number" ? `${row.size}b` : undefined].filter(
-    Boolean
-  );
+  const bits = [
+    row.status,
+    row.age,
+    typeof row.size === "number" ? `${row.size}b` : undefined,
+  ].filter(Boolean);
   return bits.join(" · ");
 };

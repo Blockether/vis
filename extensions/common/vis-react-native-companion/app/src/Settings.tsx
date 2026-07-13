@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Pressable,
   ScrollView,
@@ -6,13 +12,18 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions
+  useWindowDimensions,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
 import { c, mono } from "./theme";
 import { ActionBtn } from "./ui";
-import type { SettingsGroup, ToggleRow, VisGatewayClient, WorkspaceInfo } from "./VisClient";
+import type {
+  SettingsGroup,
+  ToggleRow,
+  VisGatewayClient,
+  WorkspaceInfo,
+} from "./VisClient";
 
 /* ── the web channel's Settings dialog, native ──────────────────────
    VS Code-style: full-width live search + count, a left category rail,
@@ -26,7 +37,11 @@ const WORKSPACE_GROUP = "workspace";
 
 /* The web's .switch/.knob — 40×22 pill, amber when on, sliding knob. */
 const PillSwitch = ({ on, onPress }: { on: boolean; onPress: () => void }) => (
-  <Pressable onPress={onPress} hitSlop={6} style={[st.switch, on && st.switchOn]}>
+  <Pressable
+    onPress={onPress}
+    hitSlop={6}
+    style={[st.switch, on && st.switchOn]}
+  >
     <View style={[st.knob, on && st.knobOn]} />
   </Pressable>
 );
@@ -47,7 +62,7 @@ export const SettingsPane = ({
   onReconnect,
   notify,
   onNotify,
-  sessionId
+  sessionId,
 }: {
   client: VisGatewayClient;
   gatewayUrl: string;
@@ -121,7 +136,7 @@ export const SettingsPane = ({
         .catch((e) => setWsErr(e instanceof Error ? e.message : String(e)))
         .finally(() => setWsBusy(false));
     },
-    [client, sessionId]
+    [client, sessionId],
   );
 
   useEffect(() => {
@@ -152,22 +167,25 @@ export const SettingsPane = ({
           setGroups((gs) =>
             gs.map((g) => ({
               ...g,
-              toggles: g.toggles.map((t) => (t.id === row.id ? fresh : t))
-            }))
-          )
+              toggles: g.toggles.map((t) => (t.id === row.id ? fresh : t)),
+            })),
+          ),
         )
         .catch(() => setStale(true));
     },
-    [client]
+    [client],
   );
 
   const q = query.trim().toLowerCase();
   const visible = useMemo(
     () =>
       groups
-        .map((g) => ({ ...g, toggles: g.toggles.filter((t) => rowMatches(t, q)) }))
+        .map((g) => ({
+          ...g,
+          toggles: g.toggles.filter((t) => rowMatches(t, q)),
+        }))
         .filter((g) => g.toggles.length > 0),
-    [groups, q]
+    [groups, q],
   );
   const count = visible.reduce((n, g) => n + g.toggles.length, 0);
   const gatewayVisible =
@@ -178,7 +196,8 @@ export const SettingsPane = ({
   const jumpTo = (id: string) => {
     setActive(id);
     const y = sectionY.current[id];
-    if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - 4), animated: true });
+    if (y != null)
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 4), animated: true });
   };
 
   return (
@@ -224,7 +243,10 @@ export const SettingsPane = ({
             >
               <Text
                 numberOfLines={1}
-                style={[st.tocLabel, active === GATEWAY_GROUP && st.tocLabelActive]}
+                style={[
+                  st.tocLabel,
+                  active === GATEWAY_GROUP && st.tocLabelActive,
+                ]}
               >
                 Gateway
               </Text>
@@ -233,11 +255,17 @@ export const SettingsPane = ({
           {workspaceVisible ? (
             <Pressable
               onPress={() => jumpTo(WORKSPACE_GROUP)}
-              style={[st.tocItem, active === WORKSPACE_GROUP && st.tocItemActive]}
+              style={[
+                st.tocItem,
+                active === WORKSPACE_GROUP && st.tocItemActive,
+              ]}
             >
               <Text
                 numberOfLines={1}
-                style={[st.tocLabel, active === WORKSPACE_GROUP && st.tocLabelActive]}
+                style={[
+                  st.tocLabel,
+                  active === WORKSPACE_GROUP && st.tocLabelActive,
+                ]}
               >
                 Workspace
               </Text>
@@ -246,11 +274,15 @@ export const SettingsPane = ({
         </ScrollView>
 
         {/* ── grouped rows — the web's .settings-groups ── */}
-        <ScrollView ref={scrollRef} style={st.groups} contentContainerStyle={st.groupsBody}>
+        <ScrollView
+          ref={scrollRef}
+          style={st.groups}
+          contentContainerStyle={st.groupsBody}
+        >
           {stale ? (
             <Text style={st.staleNote}>
-              This gateway was started before the /v1/settings API existed — restart
-              the vis gateway to manage engine toggles here.
+              This gateway was started before the /v1/settings API existed —
+              restart the vis gateway to manage engine toggles here.
             </Text>
           ) : null}
           {visible.map((g) => (
@@ -265,14 +297,23 @@ export const SettingsPane = ({
                 <View key={row.id} style={st.row}>
                   <View style={st.rowText}>
                     <Text style={st.rowLabel}>{row.label}</Text>
-                    {row.description ? <Text style={st.rowDesc}>{row.description}</Text> : null}
+                    {row.description ? (
+                      <Text style={st.rowDesc}>{row.description}</Text>
+                    ) : null}
                   </View>
                   {row.choices?.length ? (
-                    <Pressable onPress={() => mutate(row)} hitSlop={6} style={st.cycle}>
+                    <Pressable
+                      onPress={() => mutate(row)}
+                      hitSlop={6}
+                      style={st.cycle}
+                    >
                       <Text style={st.cycleLabel}>{row.value ?? "?"}</Text>
                     </Pressable>
                   ) : (
-                    <PillSwitch on={row.enabled === true} onPress={() => mutate(row)} />
+                    <PillSwitch
+                      on={row.enabled === true}
+                      onPress={() => mutate(row)}
+                    />
                   )}
                 </View>
               ))}
@@ -291,7 +332,8 @@ export const SettingsPane = ({
                 <View style={st.rowText}>
                   <Text style={st.rowLabel}>Turn notifications</Text>
                   <Text style={st.rowDesc}>
-                    Ping me when a turn finishes while the app is in the background.
+                    Ping me when a turn finishes while the app is in the
+                    background.
                   </Text>
                 </View>
                 <PillSwitch on={notify} onPress={() => onNotify(!notify)} />
@@ -380,8 +422,8 @@ export const SettingsPane = ({
                 </>
               ) : (
                 <Text style={st.staleNote}>
-                  This gateway does not expose the session workspace (older /v1) — restart the vis
-                  gateway to manage filesystem roots here.
+                  This gateway does not expose the session workspace (older /v1)
+                  — restart the vis gateway to manage filesystem roots here.
                 </Text>
               )}
             </View>
@@ -402,14 +444,14 @@ const st = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.line
+    borderBottomColor: c.line,
   },
   searchInput: {
     flex: 1,
     minWidth: 0,
     padding: 0,
     fontSize: 13,
-    color: c.ink
+    color: c.ink,
   },
   count: { fontFamily: mono, fontSize: 9.5, color: c.dim },
   /* .settings-cols */
@@ -420,7 +462,7 @@ const st = StyleSheet.create({
     flexGrow: 0,
     flexShrink: 0,
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: c.line
+    borderRightColor: c.line,
   },
   tocBody: { padding: 6 },
   tocItem: { paddingVertical: 6, paddingHorizontal: 8 },
@@ -437,7 +479,7 @@ const st = StyleSheet.create({
     letterSpacing: 1.2,
     color: c.dim,
     marginTop: 10,
-    marginBottom: 2
+    marginBottom: 2,
   },
   /* .toggle-row */
   row: {
@@ -446,7 +488,7 @@ const st = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.lineSoft
+    borderBottomColor: c.lineSoft,
   },
   rowText: { flex: 1, minWidth: 0 },
   rowLabel: { fontSize: 12.5, fontWeight: "600", color: c.ink },
@@ -457,7 +499,7 @@ const st = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     backgroundColor: c.hair,
-    justifyContent: "center"
+    justifyContent: "center",
   },
   switchOn: { backgroundColor: c.amber },
   knob: {
@@ -472,11 +514,15 @@ const st = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 2,
     shadowOffset: { width: 0, height: 1 },
-    elevation: 2
+    elevation: 2,
   },
   knobOn: { left: 20 },
   /* .toggle-cycle */
-  cycle: { backgroundColor: c.chipBg, paddingHorizontal: 10, paddingVertical: 4 },
+  cycle: {
+    backgroundColor: c.chipBg,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
   cycleLabel: { fontFamily: mono, fontSize: 11, color: c.chipInk },
   staleNote: { fontSize: 11, color: c.dim, marginTop: 10, lineHeight: 15 },
   /* gateway fields */
@@ -487,7 +533,7 @@ const st = StyleSheet.create({
     textTransform: "uppercase",
     color: c.dim,
     marginTop: 8,
-    marginBottom: 2
+    marginBottom: 2,
   },
   field: {
     backgroundColor: c.paper,
@@ -497,9 +543,9 @@ const st = StyleSheet.create({
     paddingVertical: 6,
     fontFamily: mono,
     fontSize: 12,
-    color: c.ink
+    color: c.ink,
   },
   reconnect: { marginTop: 10 },
   wsAdd: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
-  wsField: { flex: 1 }
+  wsField: { flex: 1 },
 });

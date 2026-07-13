@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.blockether.vis",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -19,7 +19,7 @@
     "android": {
       "edgeToEdgeEnabled": true,
       "package": "com.blockether.vis",
-      "versionCode": 3
+      "versionCode": 4
     },
     "plugins": [
       [
@@ -33,7 +33,9 @@
       ],
       [
         "expo-audio",
-        { "microphonePermission": "vis records short voice prompts and transcribes them locally on your gateway." }
+        {
+          "microphonePermission": "vis records short voice prompts and transcribes them locally on your gateway."
+        }
       ],
       [
         "expo-notifications",
