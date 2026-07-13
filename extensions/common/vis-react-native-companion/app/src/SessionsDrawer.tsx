@@ -9,7 +9,6 @@ import {
   View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 
 import { GatewayProject, SessionSoul } from "./VisClient";
 import { c, mono, projectColor, relTime, shortId, tint } from "./theme";
@@ -194,7 +193,7 @@ export const SessionsDrawer = ({
               <Feather
                 name="chevron-up"
                 size={14}
-                color={active ? c.amberBright : c.dim}
+                color={active ? "#FFFFFF" : c.dim}
               />
             </Pressable>
             <Pressable
@@ -205,7 +204,7 @@ export const SessionsDrawer = ({
               <Feather
                 name="chevron-down"
                 size={14}
-                color={active ? c.amberBright : c.dim}
+                color={active ? "#FFFFFF" : c.dim}
               />
             </Pressable>
           </>
@@ -215,11 +214,7 @@ export const SessionsDrawer = ({
           onPress={() => setMoving(item)}
           style={styles.rowIcon}
         >
-          <Feather
-            name="move"
-            size={13}
-            color={active ? c.amberBright : c.dim}
-          />
+          <Feather name="move" size={13} color={active ? "#FFFFFF" : c.dim} />
         </Pressable>
         <Pressable
           hitSlop={6}
@@ -229,11 +224,7 @@ export const SessionsDrawer = ({
           }}
           style={styles.rowIcon}
         >
-          <Feather
-            name="edit-2"
-            size={13}
-            color={active ? c.amberBright : c.dim}
-          />
+          <Feather name="edit-2" size={13} color={active ? "#FFFFFF" : c.dim} />
         </Pressable>
         <Pressable
           hitSlop={6}
@@ -243,7 +234,7 @@ export const SessionsDrawer = ({
           <Feather
             name="trash-2"
             size={13}
-            color={active ? c.amberBright : c.dim}
+            color={active ? "#FFFFFF" : c.dim}
           />
         </Pressable>
       </Pressable>
@@ -337,17 +328,12 @@ export const SessionsDrawer = ({
         <Animated.View
           style={[styles.panel, { transform: [{ translateX: slide }] }]}
         >
-          <LinearGradient
-            colors={[c.amberBright, c.amber]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.titleBar}
-          >
-            <Text style={styles.title}>sessions</Text>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <Feather name="x" size={16} color={c.amberInk} />
+          <View style={styles.titleBar}>
+            <Text style={styles.title}>Sessions</Text>
+            <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn}>
+              <Feather name="x" size={16} color={c.dim} />
             </Pressable>
-          </LinearGradient>
+          </View>
 
           <FlatList
             data={rows}
@@ -377,7 +363,7 @@ export const SessionsDrawer = ({
               ]}
             >
               <Feather name="layers" size={15} color={c.ink} />
-              <Text style={styles.footLabel}>project</Text>
+              <Text style={styles.footLabel}>New project</Text>
             </Pressable>
             <Pressable
               onPress={onCreate}
@@ -387,9 +373,9 @@ export const SessionsDrawer = ({
                 pressed && { opacity: 0.7 },
               ]}
             >
-              <Feather name="plus" size={15} color={c.amberInk} />
+              <Feather name="plus" size={15} color="#FFFFFF" />
               <Text style={[styles.footLabel, styles.footLabelPrimary]}>
-                session
+                New session
               </Text>
             </Pressable>
           </View>
@@ -600,23 +586,32 @@ const styles = StyleSheet.create({
     backgroundColor: c.paper,
     borderRightWidth: 1,
     borderRightColor: c.line,
-    paddingTop: 54,
+    paddingTop: 52,
     flex: 1,
   },
   titleBar: {
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.lineSoft,
+  },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(118,118,128,0.12)",
   },
   title: {
-    fontFamily: mono,
-    fontSize: 13,
+    fontSize: 17,
     fontWeight: "700",
-    letterSpacing: 1.5,
-    textTransform: "uppercase",
-    color: c.amberInk,
+    letterSpacing: -0.2,
+    color: c.ink,
   },
   listPad: { padding: 12, gap: 7 },
   projectHead: {
@@ -683,10 +678,10 @@ const styles = StyleSheet.create({
   },
   rowActive: { backgroundColor: c.ink, borderColor: c.ink },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.line },
-  dotActive: { backgroundColor: c.amberBright },
+  dotActive: { backgroundColor: "#FFFFFF" },
   rowBody: { flex: 1, gap: 2 },
   rowTitle: { color: c.ink, fontSize: 14, fontWeight: "700" },
-  rowTitleActive: { color: c.amberBright },
+  rowTitleActive: { color: "#FFFFFF" },
   rowMeta: { fontFamily: mono, fontSize: 10.5, color: c.dim },
   rowMetaActive: { color: c.lineSoft },
   rowIcon: { padding: 4 },
@@ -711,16 +706,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: c.line,
-    borderRadius: 12,
+    borderColor: c.lineSoft,
+    borderRadius: 14,
     paddingVertical: 12,
-    backgroundColor: c.tsepBg,
+    backgroundColor: "#FFFFFF",
   },
   footBtnPrimary: {
     borderStyle: "solid",
-    backgroundColor: c.chipBg,
-    borderColor: c.amber,
+    backgroundColor: c.accent,
+    borderColor: c.accent,
   },
   footLabel: {
     fontFamily: mono,
@@ -730,7 +724,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: c.ink,
   },
-  footLabelPrimary: { color: c.amberInk },
+  footLabelPrimary: { color: "#FFFFFF" },
   confirmText: { color: c.ink, fontSize: 14, lineHeight: 20 },
   confirmRow: { flexDirection: "row", gap: 8 },
   pickRow: {
@@ -744,7 +738,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 10,
   },
-  pickRowActive: { borderColor: c.amber, backgroundColor: c.chipBg },
+  pickRowActive: { borderColor: c.accent, backgroundColor: c.accentSoft },
   pickLabel: { flex: 1, color: c.ink, fontSize: 13, fontWeight: "600" },
   renameInput: {
     borderWidth: 1,

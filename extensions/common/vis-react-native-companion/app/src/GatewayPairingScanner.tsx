@@ -45,7 +45,7 @@ export const GatewayPairingScanner = ({
   if (!permission?.granted) {
     return (
       <View style={st.wrap}>
-        <Feather name="camera" size={24} color={c.amberDeep} />
+        <Feather name="camera" size={24} color={c.accent} />
         <Text style={st.title}>Scan gateway QR</Text>
         <Text style={st.copy}>
           Allow camera access, then scan a VIS pairing QR. It may point at your
@@ -90,17 +90,17 @@ export const describePairing = (pairing: GatewayPairing): string =>
 
 const st = StyleSheet.create({
   wrap: {
-    gap: 12,
-    padding: 14,
+    gap: 14,
+    padding: 16,
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(60,60,67,0.18)",
   },
   cameraBox: {
-    height: 280,
+    height: 292,
     overflow: "hidden",
-    borderRadius: 16,
+    borderRadius: 18,
     backgroundColor: "#000",
   },
   reticle: {
@@ -110,7 +110,7 @@ const st = StyleSheet.create({
     top: "18%",
     bottom: "18%",
     borderWidth: 2,
-    borderColor: c.amberBright,
+    borderColor: "rgba(255,255,255,0.88)",
   },
   title: {
     fontSize: 16,

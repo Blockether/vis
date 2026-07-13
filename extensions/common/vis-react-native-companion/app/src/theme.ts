@@ -1,35 +1,36 @@
 import { Platform } from "react-native";
 
-/* ── the TUI's blockether-light palette (internal/theme.clj) — one flat
-   warm ground, amber accent, muted chrome. No cards, no elevation. ── */
+/* ── iOS companion palette — neutral system surfaces with a single blue
+   accent. Keep the legacy amber keys as aliases so older call-sites inherit
+   the non-yellow primary without churn. ── */
 export const c = {
-  paper: "#FAF3EB" /* :terminal-bg */,
-  field: "#FFFDF8" /* :input-field-bg */,
-  line: "#C9C1B3" /* :dialog-border */,
-  lineSoft: "#E4DCCE" /* between tsep-bg and border */,
-  hair: "#C8BFB0" /* :answer-sep-fg */,
-  tsepBg: "#F5EEE4" /* :turn-separator-bg */,
-  tsep: "#B4AC9E" /* :turn-separator-fg */,
-  border: "#8C857A" /* :border-fg */,
-  ink: "#262626" /* :box-fg */,
-  ink2: "#3F3F3F" /* :md-h2-fg */,
-  dim: "#6F6A63" /* :footer-fg-muted */,
-  amber: "#F0AD00" /* :dialog-title-bg */,
-  amberBright: "#FFC420",
-  amberInk: "#261E00" /* :dialog-title-fg */,
-  amberDeep: "#B47800" /* :header-hover-fg-ish */,
-  roleUser: "#F0AD00" /* user gutter — the accent */,
-  roleVis: "#16A34A" /* :ai-role-fg */,
-  err: "#DC2626" /* :status-bad */,
-  errBg: "#FAE2E2" /* :code-err-bg */,
-  ok: "#16A34A" /* :status-ok */,
-  codeBg: "#F2EBDF" /* :code-block-bg */,
-  codeInk: "#262626" /* :code-block-fg */,
-  chipBg: "#FAECC5" /* :md-summary-bg */,
-  chipInk: "#7A4A00" /* :md-summary-fg */,
-  accent: "#7C5CFF" /* modern violet — active / project pop */,
-  accentSoft: "#EFEAFF",
-  accentInk: "#2E1F6B",
+  paper: "#F7F7FA",
+  field: "#FFFFFF",
+  line: "#D1D1D6",
+  lineSoft: "#E5E5EA",
+  hair: "#D8D8DE",
+  tsepBg: "#F2F2F7",
+  tsep: "#9A9AA2",
+  border: "#8E8E93",
+  ink: "#111114",
+  ink2: "#2C2C2E",
+  dim: "#6E6E73",
+  accent: "#0A84FF",
+  accentSoft: "#EAF3FF",
+  accentInk: "#003A75",
+  amber: "#0A84FF",
+  amberBright: "#EAF3FF",
+  amberInk: "#FFFFFF",
+  amberDeep: "#0066CC",
+  roleUser: "#0A84FF",
+  roleVis: "#16A34A",
+  err: "#FF3B30",
+  errBg: "#FFE8E6",
+  ok: "#34C759",
+  codeBg: "#F2F2F7",
+  codeInk: "#111114",
+  chipBg: "#EAF3FF",
+  chipInk: "#003A75",
 } as const;
 
 /* ── project accents ──────────────────────────────────────────────
@@ -37,13 +38,13 @@ export const c = {
    color when set, else one picked from this palette by id hash. The drawer
    paints it on the header bar, icon, count pill and child-row indent. */
 export const projectPalette = [
-  "#F0AD00" /* amber   */,
-  "#16A34A" /* green   */,
-  "#2563EB" /* blue    */,
-  "#7C5CFF" /* violet  */,
-  "#DB2777" /* magenta */,
-  "#0891B2" /* teal    */,
-  "#EA580C" /* orange  */,
+  "#0A84FF" /* blue    */,
+  "#34C759" /* green   */,
+  "#5856D6" /* indigo  */,
+  "#AF52DE" /* purple  */,
+  "#FF2D55" /* rose    */,
+  "#00A7B5" /* teal    */,
+  "#8E8E93" /* graphite*/,
 ] as const;
 
 export const projectColor = (
