@@ -1,11 +1,15 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [clojure.test :refer [deftest is testing]]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.loop :as lp]))
+            [com.blockether.vis.internal.loop :as lp]
+            [reitit.ring :as rr]
+            [ring.middleware.params :as ring-params]))
 
 (defn- rv
   "Resolve a (possibly private) var in the server namespace for with-redefs-fn."
@@ -322,3 +326,136 @@
                 (testing "per-session dedup keeps each session's own monotonic run"
                   (is (= 2 (count (re-seq (re-pattern sid-a) s))))
                   (is (= 1 (count (re-seq (re-pattern sid-b) s)))))))))))))
+
+;; ── Resource rid rides the QUERY STRING, not a path segment (issue #14) ──
+;; A resource id can embed an absolute path — an nREPL id is `nrepl:/Users/…/ws`.
+;; Percent-encoded into a PATH SEGMENT its `/` becomes `%2F`, which Jetty rejects
+;; with "Ambiguous URI path separator" (400) — that 400 threw out of the client
+;; and wedged F4 when you clicked logs on the clojure nREPL. The fix moves rid to
+;; the `rid` query param on stop/restart/logs. These lock that in on BOTH halves.
+
+(def ^:private nrepl-rid
+  "A real-shaped nREPL resource id: the `/`-embedding absolute path that broke."
+  "nrepl:/Users/fierycod/vis")
+
+(deftest resource-client-builds-query-param-urls
+  (testing "stop/restart/logs put rid in the ?rid= query, never a path segment (no %2F in path)"
+    (let [sent (atom [])]
+      (with-redefs-fn {#'client/send-json! (fn [method path & _]
+                                             (swap! sent conj [method path])
+                                             {:result "ok" :lines ["a"]})}
+        (fn []
+          (let [sid (str (random-uuid))]
+            (client/stop-resource! sid nrepl-rid)
+            (client/restart-resource! sid nrepl-rid)
+            (client/resource-logs sid nrepl-rid)
+            (let [[[_ stop] [_ restart] [_ logs]] @sent]
+              (testing "each url ends with the rid encoded in a query param"
+                (is (= (str "/v1/sessions/"
+                            sid
+                            "/resources/stop?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
+                       stop))
+                (is (= (str "/v1/sessions/"
+                            sid
+                            "/resources/restart?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
+                       restart))
+                (is (= (str "/v1/sessions/"
+                            sid
+                            "/resources/logs?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
+                       logs)))
+              (testing
+                "the raw rid never leaks into the PATH portion (would trip the ambiguous-slash 400)"
+                (doseq [[_ path] @sent]
+                  (is (not (re-find #"resources/nrepl" path))))))))))))
+
+(deftest resource-handlers-read-rid-from-query-param
+  (testing "stop/restart/logs handlers forward the rid QUERY param to the resources ns"
+    (let [seen
+          (atom [])
+
+          sid
+          (str (random-uuid))
+
+          req
+          {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
+
+      (with-redefs-fn {#'resources/stop! (fn [_ rid]
+                                           (swap! seen conj [:stop rid])
+                                           {:result "stopped"})
+                       #'resources/restart! (fn [_ rid]
+                                              (swap! seen conj [:restart rid])
+                                              {:result "restarted"})
+                       #'resources/logs (fn [_ rid]
+                                          (swap! seen conj [:logs rid])
+                                          ["line-1"])}
+        (fn []
+          (let [stop
+                ((rv 'resource-stop-handler) req)
+
+                restart
+                ((rv 'resource-restart-handler) req)
+
+                logs
+                ((rv 'resource-logs-handler) req)]
+
+            (testing "each handler answers 200 and threads the exact slash-embedding rid through"
+              (is (= 200 (:status stop)))
+              (is (= 200 (:status restart)))
+              (is (= 200 (:status logs)))
+              (is (= [[:stop nrepl-rid] [:restart nrepl-rid] [:logs nrepl-rid]] @seen)))
+            (testing "logs handler surfaces the captured lines"
+              (is (= ["line-1"] (:lines (wire/parse-json (:body logs))))))))))))
+
+(deftest resource-handlers-404-on-unknown-session
+  (testing "a non-uuid sid is rejected before any resources call — 404, resources ns untouched"
+    (let [touched
+          (atom false)
+
+          req
+          {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
+
+      (with-redefs-fn {#'resources/stop! (fn [& _]
+                                           (reset! touched true)
+                                           {})
+                       #'resources/logs (fn [& _]
+                                          (reset! touched true)
+                                          nil)}
+        (fn []
+          (is (= 404 (:status ((rv 'resource-stop-handler) req))))
+          (is (= 404 (:status ((rv 'resource-logs-handler) req))))
+          (is (false? @touched)))))))
+
+(deftest resource-rid-survives-router-as-query-param
+  (testing
+    "the client's encoded url routes to the static handler and decodes rid back verbatim (no 400)"
+    (let [seen
+          (atom nil)
+
+          echo
+          (fn [request]
+            (reset! seen {:sid (get-in request [:path-params :sid])
+                          :rid (get-in request [:query-params "rid"])})
+            {:status 200 :body "ok"})
+
+          app
+          (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
+                                           ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
+              ring-params/wrap-params)
+
+          sid
+          (str (random-uuid))
+
+          ;; exactly the shape the client emits: rid percent-encoded into the query
+          enc
+          (fn [s]
+            (java.net.URLEncoder/encode ^String s "UTF-8"))
+
+          resp
+          (app {:request-method :get
+                :uri (str "/v1/sessions/" sid "/resources/logs")
+                :query-string (str "rid=" (enc nrepl-rid))})]
+
+      (testing "static logs route matches (a path-segment %2F would 404/400 instead)"
+        (is (= 200 (:status resp))))
+      (testing "the handler sees the sid and the FULL slash-embedding rid, decoded"
+        (is (= {:sid sid :rid nrepl-rid} @seen))))))

@@ -4,15 +4,27 @@
         :headline "Context is an environment, not a transcript."
         :sub "Other agents shovel every message into a growing window and panic-compact when it overflows. Vis keeps state in a real runtime the model talks to through code — vars, a database, query results — so the window holds only what the model needs right now. No emergency compaction. No sliding windows. Works with any text model."
         :cta {:label "Get started" :slug "token-optimization"}}
- :pages [{:file "index.md"             :title "Introduction"        :section nil          :order 0}
-         {:file "token-optimization.md" :title "Token optimization" :section "How it works" :order 10}
-         {:file "graalpython.md"        :title "GraalPython sandbox" :section "How it works" :order 20}
-         {:file "jvm-native-image.md"   :title "JVM & native-image"  :section "Runtime"      :order 30}
-         {:file "distributions.md"      :title "Custom distributions" :section "Runtime"     :order 40}
-         {:file "configuration.md"      :title "Configuration"        :section "Using Vis"   :order 50}
-         {:file "context-and-prompts.md" :title "Context files & prompts" :section "Using Vis" :order 55}
-         {:file "exporting-sessions.md" :title "Exporting sessions" :section "Using Vis" :order 58}
-         {:file "skills.md"             :title "Skills"                :section "Using Vis"   :order 60}
-         {:file "gateway.md"            :title "Gateway & pairing"    :section "Using Vis"   :order 65}
-         {:file "python-extensions.md"  :title "Python extensions"    :section "Extensions"  :order 70}
-         {:file "extending.md"          :title "Clojure extensions"   :section "Extensions"  :order 80}]}
+ :pages [{:file "index.md" :title "Introduction" :section nil :order 0
+          :blurb "What Vis is and the context-as-environment idea — start here."}
+         {:file "token-optimization.md" :title "Token optimization" :section "How it works" :order 10
+          :blurb "How Vis keeps the context window small by holding state in a live runtime instead of the transcript."}
+         {:file "graalpython.md" :title "GraalPython sandbox" :section "How it works" :order 20
+          :blurb "The GraalPython sandbox that executes the model's Python tool code."}
+         {:file "jvm-native-image.md" :title "JVM & native-image" :section "Runtime" :order 30
+          :blurb "Running Vis on the JVM and building the standalone native-image binary."}
+         {:file "distributions.md" :title "Custom distributions" :section "Runtime" :order 40
+          :blurb "Packaging your own branded Vis distribution."}
+         {:file "configuration.md" :title "Configuration" :section "Using Vis" :order 50
+          :blurb "Config files, providers, and models — how to set Vis up."}
+         {:file "context-and-prompts.md" :title "Context files & prompts" :section "Using Vis" :order 55
+          :blurb "AGENTS.md/CLAUDE.md project context files and prompt customization."}
+         {:file "exporting-sessions.md" :title "Exporting sessions" :section "Using Vis" :order 58
+          :blurb "Exporting and sharing past sessions and forensic reports."}
+         {:file "skills.md" :title "Skills" :section "Using Vis" :order 60
+          :blurb "On-demand skills the agent loads only when a task needs them."}
+         {:file "gateway.md" :title "Gateway & pairing" :section "Using Vis" :order 65
+          :blurb "The gateway server and device pairing for remote sessions."}
+         {:file "python-extensions.md" :title "Python extensions" :section "Extensions" :order 70
+          :blurb "Drop-in .py extensions that add tools, slash commands, and hooks."}
+         {:file "extending.md" :title "Clojure extensions" :section "Extensions" :order 80
+          :blurb "Writing Clojure extensions: custom tools, prompts, and doc pages."}]}

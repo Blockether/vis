@@ -397,6 +397,15 @@
                      (when (map? m) (not-empty m)))))))
          (catch Throwable _ nil))))
 
+(defn- close-session!
+  "Send a `close` op so the nREPL server reaps the cloned session's executor
+   thread. Every `eval!`/`probe!` clones a fresh session; without an explicit
+   close the server keeps a parked `nREPL-session-*` thread per call forever
+   (a real leak over a long dev session). Best-effort and bounded — swallows
+   everything so it can run safely from a `finally`."
+  [session]
+  (try (collect-op session "close" (+ (System/currentTimeMillis) 2000)) (catch Throwable _ nil)))
+
 (defn eval!
   "Evaluate `code` in the nREPL at `host:port`. Opts:
      :host        defaults to \"localhost\"
@@ -433,36 +442,40 @@
             (nrepl/client conn timeout-ms)
 
             session
-            (nrepl/client-session client)
+            (nrepl/client-session client)]
 
-            req
-            (cond-> {:op "eval" :code code}
-              (string? ns)
-              (assoc :ns ns)
+        (try (let [req
+                   (cond-> {:op "eval" :code code}
+                     (string? ns)
+                     (assoc :ns ns)
 
-              pretty?
-              (assoc :nrepl.middleware.print/print
-                "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                {:right-margin print-margin}))
+                     pretty?
+                     (assoc :nrepl.middleware.print/print
+                       "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                       {:right-margin print-margin}))
 
-            responses
-            (session req)
+                   responses
+                   (session req)
 
-            combined
-            (combine responses deadline)
+                   combined
+                   (combine responses deadline)
 
-            combined
-            (if (eval-error? combined)
-              (merge combined (fetch-stacktrace! session responses))
-              combined)
+                   combined
+                   (if (eval-error? combined)
+                     (merge combined (fetch-stacktrace! session responses))
+                     combined)
 
-            elapsed
-            (- (System/currentTimeMillis) start)]
+                   elapsed
+                   (- (System/currentTimeMillis) start)]
 
-        (assoc combined
-          "ms" elapsed
-          "port" (int port)
-          "host" host))
+               (assoc combined
+                 "ms" elapsed
+                 "port" (int port)
+                 "host" host))
+             (finally
+               ;; Reap the cloned session's server-side thread — otherwise every
+               ;; eval leaks a parked nREPL-session-* executor on the server.
+               (close-session! session))))
       (catch IOException ioe
         (evict! host port)
         (throw (ex-info (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
@@ -589,45 +602,50 @@
                           (assoc m :cwd cwd)
                           m))))]
 
-        (loop [rs
-               responses
+        (try
+          (loop [rs
+                 responses
 
-               versions
-               nil
+                 versions
+                 nil
 
-               ops
-               nil
+                 ops
+                 nil
 
-               done?
-               false]
+                 done?
+                 false]
 
-          (cond done? (up versions ops)
-                (empty? rs) (if versions (up versions ops) {:status :unresponsive})
-                (> (System/currentTimeMillis) deadline)
-                (if versions (up versions ops) {:status :unresponsive})
-                :else (let [msg
-                            (first rs)
+            (cond done? (up versions ops)
+                  (empty? rs) (if versions (up versions ops) {:status :unresponsive})
+                  (> (System/currentTimeMillis) deadline)
+                  (if versions (up versions ops) {:status :unresponsive})
+                  :else (let [msg
+                              (first rs)
 
-                            mg
-                            (fn [k]
-                              (or (get msg k) (get msg (keyword k))))
+                              mg
+                              (fn [k]
+                                (or (get msg k) (get msg (keyword k))))
 
-                            v
-                            (describe-versions (mg "versions"))
+                              v
+                              (describe-versions (mg "versions"))
 
-                            o
-                            (mg "ops")
+                              o
+                              (mg "ops")
 
-                            s
-                            (mg "status")
+                              s
+                              (mg "status")
 
-                            st
-                            (cond (nil? s) #{}
-                                  (string? s) #{s}
-                                  (coll? s) (set (map str s))
-                                  :else #{(str s)})]
+                              st
+                              (cond (nil? s) #{}
+                                    (string? s) #{s}
+                                    (coll? s) (set (map str s))
+                                    :else #{(str s)})]
 
-                        (recur (next rs) (or v versions) (or o ops) (contains? st "done"))))))
+                          (recur (next rs) (or v versions) (or o ops) (contains? st "done")))))
+          (finally
+            ;; describe clones a session too — close it so probe! stops
+            ;; leaking a server session thread per liveness check.
+            (close-session! session))))
       (catch clojure.lang.ExceptionInfo e
         (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
           {:status :down}
