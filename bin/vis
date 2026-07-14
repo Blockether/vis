@@ -380,22 +380,16 @@ if [[ -z "$dist" ]]; then
   fi
 fi
 
-# No prebuilt distribution -> run from live source. svar SSE per-line trace. ON BY DEFAULT - the per-line log is gated
-# on `gap-ms >= STREAM_LINE_TRACE_GAP_MS` OR `mod line-count
-# STREAM_LINE_TRACE_EVERY_N == 0` so a normal fast-streaming turn
-# only logs ~once per 25 lines; cost is negligible while the
-# diagnostic value (gap-ms / line-preview / content-acc-len on every
-# stuck stream, no rebuild required) is large enough that we want
-# it always on for real-user invocations.
+# No prebuilt distribution -> run from live source. svar SSE per-line trace is
+# intentionally OFF by default: when enabled it writes periodic provider SSE
+# summaries into ~/.vis/vis.log during every stream, which is useful for stuck
+# stream forensics but too chatty for normal TUI typing/streaming latency.
 #
-# Set VIS_STREAM_TRACE=0 (or false/no/off) to suppress.
-stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
-case "${VIS_STREAM_TRACE:-1}" in
-  0|false|FALSE|no|NO|off|OFF)
-    stream_trace_jvm_opts=()
-    measure_log "svar stream trace disabled"
-    ;;
-  *)
+# Set VIS_STREAM_TRACE=1 (or true/yes/on) to enable.
+stream_trace_jvm_opts=()
+case "${VIS_STREAM_TRACE:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
     measure_log "svar stream trace enabled"
     ;;
 esac

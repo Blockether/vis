@@ -969,7 +969,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private mux
-  ;; {:subs {sid {:sink fn :cursor-atom atom<long>}} :epoch long :future f :stream in}
+  ;; {:subs {sid {:sinks {sub-id fn} :cursor-atom atom<long>}}
+  ;;  :epoch long :future f :stream in}
   (atom {:subs {} :epoch 0 :future nil :stream nil}))
 
 (declare mux-unsubscribe!)
@@ -988,7 +989,12 @@
   "Deliver a synthetic connection event to EVERY live sink (shared stream =
    shared connection state), so each tab still paints a live/lost indicator."
   [type]
-  (doseq [[_ {:keys [sink]}] (:subs @mux)]
+  (doseq [[_ {:keys [sinks]}]
+          (:subs @mux)
+
+          [_ sink]
+          sinks]
+
     (try (sink {:type type}) (catch Throwable _ nil))))
 
 (defn- open-mux-events!
@@ -1039,12 +1045,13 @@
 
                            (when event
                              (let [esid (str (:session_id event))
-                                   {:keys [sink cursor-atom]} (get (:subs @mux) esid)]
+                                   {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
-                               (when sink
+                               (when (seq sinks)
                                  (when-let [s (:seq event)]
                                    (swap! cursor-atom max (long s)))
-                                 (try (sink event) (catch Throwable _ nil)))))
+                                 (doseq [[_ sink] sinks]
+                                   (try (sink event) (catch Throwable _ nil))))))
                            (recur []))
                          (if (str/starts-with? line "data: ")
                            (recur (conj data-lines (subs line 6)))
@@ -1087,24 +1094,61 @@
 (defn mux-subscribe!
   "Add `sid`'s `sink` to the ONE process-wide multiplexed event stream, starting
    at `cursor` (its `current-seq` for a live-only stream). The connection is
-   (re)opened for the new session set. Returns a zero-arg cleanup fn. Every sink
-   sees `{:type \"gateway.connected\"}` / `\".disconnected\"` on connection changes,
-   exactly like the per-session [[subscribe!]]."
+   (re)opened only when the session set changes; multiple local listeners for
+   the SAME session share one cursor and one remote subscription. Returns a
+   zero-arg cleanup fn. Every sink sees gateway.connected / gateway.disconnected
+   on connection changes, exactly like the per-session [[subscribe!]]."
   [sid sink cursor]
-  (let [sid (str sid)]
-    (swap! mux assoc-in [:subs sid] {:sink sink :cursor-atom (atom (long (or cursor 0)))})
-    (restart-mux!)
+  (let [sid
+        (str sid)
+
+        sub-id
+        (str (java.util.UUID/randomUUID))
+
+        changed-session-set?
+        (volatile! false)]
+
+    (swap! mux (fn [m]
+                 (let [existing (get-in m [:subs sid])]
+                   (when-not existing (vreset! changed-session-set? true))
+                   (assoc-in m
+                     [:subs sid]
+                     (-> (or existing {:cursor-atom (atom (long (or cursor 0))) :sinks {}})
+                         (update :sinks assoc sub-id sink))))))
+    (if @changed-session-set?
+      (restart-mux!)
+      (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
     (fn []
-      (mux-unsubscribe! sid))))
+      (mux-unsubscribe! sid sub-id))))
 
 (defn mux-unsubscribe!
-  "Drop `sid` from the multiplexed stream and reconnect for the remaining set
-   (or tear the connection down when it was the last one)."
-  [sid]
-  (let [sid (str sid)]
-    (swap! mux update :subs dissoc sid)
-    (restart-mux!)
-    nil))
+  "Drop one local listener from the multiplexed stream and reconnect only when
+   the last listener for that sid is gone (or tear the connection down when it
+   was the last watched session)."
+  ([sid] (mux-unsubscribe! sid nil))
+  ([sid sub-id]
+   (let [sid
+         (str sid)
+
+         changed-session-set?
+         (volatile! false)]
+
+     (swap! mux (fn [m]
+                  (let [path
+                        [:subs sid]
+
+                        entry
+                        (get-in m path)
+
+                        entry'
+                        (if sub-id (update entry :sinks dissoc sub-id) nil)]
+
+                    (if (seq (:sinks entry'))
+                      (assoc-in m path entry')
+                      (do (when entry (vreset! changed-session-set? true))
+                          (update m :subs dissoc sid))))))
+     (when @changed-session-set? (restart-mux!))
+     nil)))
 
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.

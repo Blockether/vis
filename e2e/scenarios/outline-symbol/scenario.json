@@ -1,6 +1,6 @@
 {
   "lang": "python",
-  "prompt": "Show me the complete source code of ONLY the compute_total function from lib.py — just that one function, nothing else.",
+  "prompt": "Use outline on lib.py to locate compute_total, then show me the complete source code of ONLY that function — just that one function, nothing else. If you use cat with outline anchors, pass {\"anchor\": [start_anchor, end_anchor]} as an array, not a quoted string.",
   "want": {},
   "wantnot": {},
   "want_answer": ["weights[i] for i"],

@@ -3198,6 +3198,16 @@
       (seq (:ranges out))
       (assoc "ranges" (mapv ->win (:ranges out))))))
 
+(defn- normalize-cat-anchor-option
+  "Accept the documented anchor shapes plus the common model mistake of passing
+  a JSON/EDN-looking anchor range as one quoted string."
+  [anchor]
+  (if (and (string? anchor) (str/starts-with? (str/trim anchor) "["))
+    (try (let [v (edn/read-string anchor)]
+           (if (vector? v) v anchor))
+         (catch Throwable _ anchor))
+    anchor))
+
 (defn- cat-tool
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
    — slice only for bigger files or a middle/tail section. Options = a dict,
@@ -3235,7 +3245,7 @@
                       (get arg "ranges")
 
                       anc
-                      (get arg "anchor")
+                      (normalize-cat-anchor-option (get arg "anchor"))
 
                       tail
                       (get arg "tail")]

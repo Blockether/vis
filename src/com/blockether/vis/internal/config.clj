@@ -175,7 +175,8 @@
                                        :interval :monthly
                                        :max-file-size 4000000
                                        :max-num-parts 8
-                                       :max-num-intervals 6}))
+                                       :max-num-intervals 6})
+                    {:min-level :info})
   (tel/call-on-shutdown! (fn []
                            (tel/stop-handlers!))))
 
@@ -214,7 +215,8 @@
                                        :interval :monthly
                                        :max-file-size 4000000
                                        :max-num-parts 8
-                                       :max-num-intervals 6})))
+                                       :max-num-intervals 6})
+                    {:min-level :info}))
 
 (defn shutdown!
   "Flush and stop all telemere handlers. Call after the TUI screen
@@ -437,6 +439,26 @@
       v)))
 
 
+(defonce
+  ^{:doc
+    "Access token last baked into a built router, keyed by provider id.
+  `->svar-provider` records the token it resolved via `:provider/get-token-fn`
+  here at router-build time. On a 401 the runtime reads it back as the REJECTED
+  token — the exact token the failing request sent — so single-flight refresh
+  reuse won't hand that same dead token straight back (see loop.clj OAuth 401
+  recovery). Correct across multi-tab/multi-process rotation, where the current
+  ON-FILE token may already be a peer's fresh one."}
+  router-baked-tokens
+  (atom {}))
+
+(defn baked-token
+  "The access token `->svar-provider` last baked into a router for provider `pid`
+   (nil if none). This is the token the live router's requests actually send, so
+   it's the correct REJECTED token on a 401 — unlike the current on-file token,
+   which a peer tab/process may already have rotated to something fresh."
+  [pid]
+  (get @router-baked-tokens pid))
+
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
@@ -516,6 +538,9 @@
             merged-response
             (or explicit-responses responses-path)]
 
+        ;; Remember the token this router bakes in, so a later 401 can hand the
+        ;; single-flight refresh the EXACT token that failed as `rejected`.
+        (swap! router-baked-tokens assoc pid token)
         (cond-> {:id pid :models models :api-key token}
           url
           (assoc :base-url url)

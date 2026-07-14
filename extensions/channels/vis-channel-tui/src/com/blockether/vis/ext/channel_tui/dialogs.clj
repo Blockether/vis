@@ -2690,15 +2690,30 @@
           (let [root
                 (or (:root row) primary-root)
 
-                commit?
-                (= :commit (:kind row))
+                kind
+                (:kind row)
+
+                id
+                (case kind
+                  :commit
+                  (:sha row)
+
+                  :stash
+                  (:ref row)
+
+                  (:path row))
 
                 k
-                [root (:area row) (if commit? (:sha row) (:path row))]]
+                [root (:area row) id]]
 
             (or (get @diff-cache k)
-                (let [lines (or (not-empty (if commit?
+                (let [lines (or (not-empty (case kind
+                                             :commit
                                              (magit/commit-diff-lines root row)
+
+                                             :stash
+                                             (magit/stash-diff-lines root row)
+
                                              (magit/file-diff-lines root row)))
                                 ["(no diff)"])]
                   (swap! diff-cache assoc k lines)
@@ -2893,14 +2908,31 @@
 
               toggle-diff!
               (fn []
-                (when (contains? #{:file :commit} (:kind row))
-                  (let [id
-                        (if (= :commit (:kind row)) (:sha row) (:path row))
+                (let [kind
+                      (:kind row)
 
-                        k
-                        [(or (:root row) primary-root) (:area row) id]]
+                      root
+                      (or (:root row) primary-root)
 
-                    (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
+                      k
+                      (case kind
+                        ;; TAB on a section header folds/unfolds the whole
+                        ;; section (magit's section visibility toggle).
+                        :section
+                        (when (:collapsible? row) [root :section (:area row)])
+
+                        :commit
+                        [root (:area row) (:sha row)]
+
+                        :stash
+                        [root :stashes (:ref row)]
+
+                        :file
+                        [root (:area row) (:path row)]
+
+                        nil)]
+
+                  (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
 
           (cond (nil? key) (recur)
                 wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
@@ -4772,6 +4804,17 @@
             extra-set
             (set (keep #(norm (:trunk %)) extras))
 
+            path-within?
+            (fn [root p]
+              (boolean (and root
+                            p
+                            (or (= p root)
+                                (str/starts-with? p (str root java.io.File/separator))))))
+
+            covering-root
+            (fn [p]
+              (some #(when (path-within? % p) %) (cons base-canon extra-set)))
+
             q
             (str/lower-case (str/trim @query))
 
@@ -4789,7 +4832,7 @@
             root-of?
             (fn [n]
               (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
-                (or (= s base-canon) (contains? extra-set s))))
+                (covering-root s)))
 
             entries
             (vec (concat (when up? [{:kind :up}])
@@ -4819,6 +4862,9 @@
 
             target-base?
             (= target-str base-canon)
+
+            target-covered-by
+            (covering-root target-str)
 
             target-already?
             (or target-base? (contains? extra-set target-str))
@@ -4854,59 +4900,63 @@
             (max 1 (- inner-w 3))
 
             ;; ── Header zone ────────────────────────────────────────────────
-            ;; Manager mode promotes this session's filesystem roots to a real
-            ;; boxed section (each root a row: ● mark + abbreviated path + a
-            ;; tag), then a BROWSE line for the current folder. Non-manager
-            ;; mode is just the breadcrumb.
+            ;; Manager mode lists this session's filesystem roots as a plain
+            ;; indented ● list (bright path + dim membership tag), a single
+            ;; hairline rule, then an IN breadcrumb for the current folder.
+            ;; Non-manager mode is just the breadcrumb.
             notice-here
             (when (and manager? @notice (= (first @notice) dir-canon-str)) @notice)
 
-            tag-w
-            12
-
-            path-w
-            (max 1 (- list-w tag-w 7))
-
             roots
             (when manager?
-              (vec (concat (when base [{:path (str base) :tag "root"}])
+              (vec (concat (when base [{:path (str base) :tag "session root"}])
                            (map (fn [e]
                                   {:path (:trunk e) :tag "added"})
                                 extras))))
 
             root-row
             (fn [{:keys [path tag]}]
-              (table/boxed-row-line [path-w tag-w]
-                                    [(str "● " (abbreviate-home path)) tag]
-                                    [:left :left]))
+              (let [p
+                    (ellipsize (str "  \u25cf " (abbreviate-home path))
+                               (max 1 (- list-w (count tag) 2)))
+
+                    pad
+                    (max 1 (- list-w (count p) (count tag)))]
+
+                (str p (apply str (repeat pad \space)) tag)))
 
             filter-suffix
-            (when-not (str/blank? @query) (str "   [filter: " @query "]"))
+            (when-not (str/blank? @query) (str "   filter: " @query))
 
             header-rows
             (if manager?
               (vec
                 (concat [{:kind :blank :text ""}
-                         {:kind :section :text (str "FILESYSTEM (" (count roots) ")")}]
+                         {:kind :section
+                          :text (str "ALLOWED  "
+                                     (count roots)
+                                     (if (= 1 (count roots)) " directory" " directories"))}
+                         {:kind :blank :text ""}]
                         (if (seq roots)
-                          (concat [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
-                                  (map (fn [r]
-                                         {:kind :root :text (root-row r)})
-                                       roots)
-                                  [{:kind :box
-                                    :text (table/boxed-border-line [path-w tag-w] :bottom)}])
-                          [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
-                        [{:kind :rule :text (apply str (repeat list-w "─"))} {:kind :blank :text ""}
+                          (map (fn [r]
+                                 (assoc r
+                                   :kind :root
+                                   :text (root-row r)))
+                               roots)
+                          [{:kind :hint :text "  none yet \u2014 C-a on a folder below adds it"}])
+                        [{:kind :blank :text ""}
+                         {:kind :rule :text (apply str (repeat list-w "\u2500"))}
+                         {:kind :blank :text ""}
                          {:kind :browse
-                          :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
+                          :text (str "IN  " (abbreviate-home (.getPath dir)) "/" filter-suffix)}]
                         (when notice-here
                           [{:kind :notice
                             :text (str (case (second notice-here)
                                          :error
-                                         "✖ "
+                                         "\u2716 "
 
                                          :ok
-                                         "✔ "
+                                         "\u2714 "
 
                                          "")
                                        (nth notice-here 2))
@@ -4954,6 +5004,10 @@
                       (reset! notice
                         [dir-canon-str :error
                          "This is the session's root — C-r on another folder to change it"])
+                      (and target-covered-by (not target-already?))
+                      (reset! notice [dir-canon-str :error
+                                      (str "Already allowed by "
+                                           (abbreviate-home target-covered-by))])
                       :else
                       (try (let [updated
                                  (if target-already?
@@ -5054,16 +5108,24 @@
             (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1)
             (p/put-str! g list-x row rendered)
-            ;; Re-paint the boxed root row's side `│` in the border color so the
-            ;; vertical edges match the top/bottom chrome instead of reading
-            ;; brighter (dialog-fg) than it — same trick as `boxed-table/render!`.
+            ;; Root rows carry no box chrome: dim the trailing membership tag
+            ;; and accent the \u25cf so a bright path reads as "which dir" and the
+            ;; dim tag as "how it got here", with no borders competing for the eye.
             (when (= kind :root)
-              (p/set-colors! g t/dialog-border t/dialog-bg)
-              ;; Re-paint EVERY box glyph (outer edges AND the inner column
-              ;; separator) in the border color so none reads brighter than
-              ;; the top/bottom chrome.
-              (dotimes [ci (count rendered)]
-                (when (= (.charAt ^String rendered ci) \│) (p/put-str! g (+ list-x ci) row "│"))))))
+              (let [row-map (nth header-rows i)
+                    tag (str (:tag row-map))
+                    tag-n (count tag)
+                    tag-start (max 0 (- (count rendered) tag-n))
+                    dot-i (str/index-of rendered "\u25cf")]
+
+                (when (pos? tag-n)
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/put-str! g (+ list-x tag-start) row (subs rendered tag-start)))
+                (when dot-i
+                  (p/set-colors! g
+                                 (if (= tag "added") t/dialog-hint t/header-active-tab-accent)
+                                 t/dialog-bg)
+                  (p/put-str! g (+ list-x dot-i) row "\u25cf"))))))
         ;; Navigable list zone — subfolders only, each with a ●/○ root mark.
         (dotimes [i body-h]
           (let [idx (+ @scroll i)]
@@ -5119,8 +5181,8 @@
                         hint-row
                         inner-w
                         (if manager?
-                          [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
-                           ["C-r" "set as root"] ["C-n" "new folder"] ["Tab" "open tab"]
+                          [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove permission"]
+                           ["C-r" "set root"] ["C-n" "new folder"] ["Tab" "open tab"]
                            ["Esc" "close"]]
                           [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"] ["Tab" "open tab"]
                            ["Esc" "close"]]))

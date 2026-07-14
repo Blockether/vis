@@ -21,11 +21,12 @@
 
 (def ^:private default-git-timeout-secs 10)
 
-(defonce ^:private working-tree-status-cache (atom {:cwd nil :expires-at 0 :value nil}))
+(defonce ^:private working-tree-status-cache (atom {}))
 
-;; One in-flight refresh at a time — a CAS guard so a burst of footer repaints
-;; can't spawn N concurrent git walks.
-(defonce ^:private status-refreshing? (atom false))
+;; Set of cwds with an in-flight refresh — a CAS guard so a burst of footer
+;; repaints (or several tabs sharing a root) can't spawn N concurrent git walks
+;; for the SAME root, while still allowing distinct roots to refresh in parallel.
+(defonce ^:private status-refreshing? (atom #{}))
 
 (defn cwd-file
   "Canonical current working directory as a File. Indirected for tests."
@@ -394,40 +395,43 @@
 (defn- refresh-status-async!
   "Recompute the working-tree status for `cwd` (a path string; `start` is the
    File to walk, or nil for the process cwd) OFF the caller's thread and publish
-   it into the cache. Deduped via `status-refreshing?` so a burst of repaints
-   spawns at most one git walk. Never throws."
+   it into the per-cwd cache. Deduped PER cwd via `status-refreshing?` so a burst
+   of repaints spawns at most one git walk per root (distinct roots may refresh
+   concurrently). Never throws."
   [cwd ^File start ttl-ms]
-  (when (compare-and-set! status-refreshing? false true)
-    (future (try
-              (let [value (if start (working-tree-status start) (working-tree-status))]
-                (reset! working-tree-status-cache
-                  {:cwd cwd :expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
-              (catch Throwable t
-                (tel/log! :warn
-                          ["git: async working-tree status refresh failed"
-                           {:cwd cwd
-                            :start (some-> start
-                                           .getPath)
-                            :error (ex-message t)}]))
-              (finally (reset! status-refreshing? false))))))
+  (when (loop []
+
+          (let [in-flight @status-refreshing?]
+            (cond (contains? in-flight cwd) false
+                  (compare-and-set! status-refreshing? in-flight (conj in-flight cwd)) true
+                  :else (recur))))
+    (future (try (let [value (if start (working-tree-status start) (working-tree-status))]
+                   (swap! working-tree-status-cache assoc
+                     cwd
+                     {:expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
+                 (catch Throwable t
+                   (tel/log! :warn
+                             ["git: async working-tree status refresh failed"
+                              {:cwd cwd
+                               :start (some-> start
+                                              .getPath)
+                               :error (ex-message t)}]))
+                 (finally (swap! status-refreshing? disj cwd))))))
 
 (defn- serve-cached-status
   "Stale-while-revalidate read for the render hot path: return the cached
    status for `cwd` IMMEDIATELY (never blocks on git) and kick off an async
-   refresh when the entry is missing, expired, or for another cwd. A repo
-   switch shows blank for one refresh cycle rather than stalling the frame —
-   git status is advisory chrome, never worth a synchronous ~2ms git walk on
-   the render thread (which caused a periodic hitch every time the TTL lapsed)."
+   refresh when the entry is missing or expired. The cache is keyed PER cwd, so
+   switching between tabs pointed at different repos serves each root's last
+   resolved value instantly instead of blanking (a repo the cache has never seen
+   still shows blank for one refresh cycle rather than stalling the frame) — git
+   status is advisory chrome, never worth a synchronous ~2ms git walk on the
+   render thread (which caused a periodic hitch every time the TTL lapsed)."
   [cwd ^File start now-ms ttl-ms]
-  (let [{:keys [expires-at value] cached-cwd :cwd}
-        @working-tree-status-cache
-
-        same?
-        (= cwd cached-cwd)]
-
-    (when (or (not same?) (>= (long now-ms) (long expires-at)))
+  (let [{:keys [expires-at value]} (get @working-tree-status-cache cwd)]
+    (when (or (nil? expires-at) (>= (long now-ms) (long expires-at)))
       (refresh-status-async! cwd start ttl-ms))
-    (when same? value)))
+    value))
 
 (defn cached-working-tree-status
   "Cached `working-tree-status` for hot render paths.
@@ -464,16 +468,49 @@
                value
                (working-tree-status canon)]
 
-           ;; Honor the in-flight CAS guard: if a refresh is already running for
-           ;; this cwd, our synchronous value would race it. We publish unconditionally
-           ;; because a root switch is authoritative — our value IS the new truth.
-           (reset! working-tree-status-cache {:cwd (.getPath canon)
-                                              :expires-at (+ (System/currentTimeMillis)
-                                                             (long default-cache-ms))
-                                              :value value}))
+           ;; A root switch is authoritative — our synchronous value IS the new
+           ;; truth for this cwd, so publish it into the per-cwd cache unconditionally.
+           (swap! working-tree-status-cache assoc
+             (.getPath canon)
+             {:expires-at (+ (System/currentTimeMillis) (long default-cache-ms)) :value value}))
          (catch Throwable t
            (tel/log! :warn
                      ["git: seed-working-tree-status! failed" (.getPath start) (ex-message t)])))))
+
+(defn workspace-status
+  "Working-tree status resolved as a GATEWAY SESSION FACT — for the daemon that
+   owns the repo, keyed/cached per repo root so repeated `session-workspace-info`
+   fetches (tab switches, turn ends, footer re-syncs) NEVER re-walk git for a
+   root already resolved. Unlike the render-path `cached-working-tree-status`
+   (which returns nil on a cold cache and refreshes async — correct for a
+   per-frame repaint), this NEVER returns nil for a real root: on a cache MISS it
+   resolves SYNCHRONOUSLY (this runs server-side in the gateway, off any render
+   thread), publishes into the shared per-cwd cache, and returns the value; on a
+   warm-but-stale entry it returns the cached value immediately and refreshes in
+   the background. Keyed by canonical path. Never throws; nil only for a
+   nil/blank `root`."
+  ([root] (workspace-status root (System/currentTimeMillis) default-cache-ms))
+  ([root now-ms ttl-ms]
+   (when-let [start (some-> root
+                            str
+                            str/trim
+                            not-empty
+                            (File.))]
+     (try (let [cwd (.getPath (.getCanonicalFile start))
+                {:keys [expires-at value]} (get @working-tree-status-cache cwd)]
+
+            (if expires-at
+              (do (when (>= (long now-ms) (long expires-at))
+                    (refresh-status-async! cwd start ttl-ms))
+                  value)
+              (let [value (working-tree-status start)]
+                (swap! working-tree-status-cache assoc
+                  cwd
+                  {:expires-at (+ (long now-ms) (long ttl-ms)) :value value})
+                value)))
+          (catch Throwable t
+            (tel/log! :warn ["git: workspace-status failed" (str root) (ex-message t)])
+            nil)))))
 
 ;; =============================================================================
 ;; file-picker helper: per-path status + ignore snapshot

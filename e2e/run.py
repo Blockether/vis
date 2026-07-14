@@ -44,11 +44,12 @@ STRUCTURAL = {"struct_patch", "sexpr"}
 # Scenario roots, aggregated like the test alias's `--dir` list: the foundation
 # (language-neutral struct_patch) set lives here in the root; each language pack
 # owns the e2e scenarios that exercise ITS surface, alongside its `test/` dir.
-SCENARIO_ROOTS = [
-    os.path.join(HERE, "scenarios"),
-    os.path.join(REPO, "extensions/languages/vis-language-clojure/e2e/scenarios"),
-    os.path.join(REPO, "extensions/languages/vis-language-python/e2e/scenarios"),
-]
+SCENARIO_ROOTS = [os.path.join(HERE, "scenarios")]
+LANG_ROOT = os.path.join(REPO, "extensions/languages")
+if os.path.isdir(LANG_ROOT):
+    SCENARIO_ROOTS.extend(
+        os.path.join(LANG_ROOT, pack, "e2e/scenarios")
+        for pack in sorted(os.listdir(LANG_ROOT)))
 
 def load_scenarios(pick):
     out = []
@@ -143,7 +144,7 @@ def run_one(job):
                           else ("write" if "write" in toolset
                                 else ("repl" if (toolset & {"repl_eval","repl_start"})
                                       else "cat-only")))))
-        if path in ("cat-only","??") or not (done and correct):
+        if path in ("cat-only","??") or errs or not (done and correct):
             detail.append("tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset)))
         return dict(id=sc["id"], lang=sc["lang"], model=model, converged=done, correct=correct,
                     errors=len(errs), err_msgs=errs[:2], wall=round(wall,1),
@@ -179,15 +180,19 @@ def main():
         for d in r["detail"]: print(f"    ! {d}")
         for e in r["err_msgs"]: print(f"    err: {e[:140]}")
     n=len(results)
-    # CROSS-VALIDATION GATE: a scenario passes only if EVERY model passed it.
+    # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
+    # produced correct output, and had no loop/tool errors. `STRUCTURAL(fast)`
+    # remains a performance/adherence metric because some language surfaces
+    # legitimately fall back to patch/write.
     by_scn={}
     for r in results:
-        by_scn.setdefault(r["id"], []).append(r["converged"] and r["correct"])
+        by_scn.setdefault(r["id"], []).append(r["converged"] and r["correct"] and r["errors"]==0)
     gated=sum(1 for oks in by_scn.values() if all(oks))
+    ok_clean=sum(1 for r in results if r['converged'] and r['correct'] and r['errors']==0)
     print("-"*len(hdr))
-    print(f"RUNS converged+correct {sum(1 for r in results if r['converged'] and r['correct'])}/{n} "
+    print(f"RUNS converged+correct+clean {ok_clean}/{n} "
           f"| NO-ERROR {nclean}/{n} | STRUCTURAL(fast) {nfast}/{n}")
-    print(f"GATE (scenario passes iff ALL {len(MODELS)} model(s) pass): {gated}/{len(by_scn)}")
+    print(f"GATE (scenario passes iff ALL {len(MODELS)} model(s) pass cleanly): {gated}/{len(by_scn)}")
     sys.exit(0 if gated==len(by_scn) else 1)
 
 if __name__=="__main__":

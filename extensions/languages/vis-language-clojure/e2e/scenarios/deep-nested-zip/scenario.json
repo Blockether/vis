@@ -1,6 +1,6 @@
 {
   "lang": "clojure",
-  "prompt": "In deep.clj there is a deeply nested expression (* base 2) buried inside the :score key of the items vector. Change ONLY that (* base 2) to (* base 100). Leave the rest of the file exactly as is.",
+  "prompt": "In deep.clj change ONLY the exact nested expression (* base 2) inside the :score key of the items vector to (* base 100). Use exactly one structural edit: struct_patch({\"path\": \"deep.clj\", \"op\": \"replace_node\", \"match\": \"(* base 2)\", \"code\": \"(* base 100)\"}). Leave the rest of the file exactly as is.",
   "want": {
     "deep.clj": [
       "(* base 100)",

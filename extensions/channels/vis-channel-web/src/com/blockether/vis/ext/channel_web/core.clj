@@ -46,7 +46,8 @@
 (def ^:private HEARTBEAT_MS 15000)
 
 ;; The reasoning ticker (#thinking) shows only the LATEST thought and is
-;; transient — a long reasoning stream fires a `reasoning.delta` per token, and
+;; transient — the gateway already coalesces reasoning to sentence granularity,
+;; but a burst of short sentences still fires several `reasoning.delta` frames, and
 ;; on a Cloudflare-tunneled SSE each becomes its own write+flush. Coalesce that
 ;; burst to at most one ticker write per this window so we stop hammering the
 ;; edge; the pinned thought (`iteration.completed`) and every non-ticker frame
@@ -1714,8 +1715,9 @@
     (when-let [thought (block-thinking (:text event))]
       [{:event "thinking" :html (html thought)}])
 
-    ;; Older gateways may still send assistant prose as a final content.delta;
-    ;; current gateway builds hold all model text until iteration.completed.
+    ;; Live prose, coalesced to sentence granularity by the gateway. Only the
+    ;; `:prose-final` frames paint a prose block — DISTINCT from the #thinking
+    ;; trace above; streaming provider `:content` (no prose-final) is skipped.
     "content.delta"
     (when (:prose-final event)
       (when-let [prose (block-prose (:text event)
@@ -5389,16 +5391,30 @@
         extra
         (set (keep #(norm (:trunk %)) extras))
 
+        path-within?
+        (fn [root p]
+          (boolean
+            (and root p (or (= p root) (str/starts-with? p (str root java.io.File/separator))))))
+
+        covered-by
+        (fn [p]
+          (some #(when (path-within? % p) %) (cons base extra)))
+
         root-of?
         (fn [p]
-          (let [s (norm p)]
-            (boolean (or (= s base) (contains? extra s)))))
+          (boolean (covered-by (norm p))))
 
         workspace?
         (= canon base)
 
         already?
         (contains? extra canon)
+
+        covered-root
+        (covered-by canon)
+
+        covered-inside?
+        (and covered-root (not workspace?) (not already?))
 
         roots-total
         (+ (if base 1 0) (count extras))
@@ -5485,13 +5501,19 @@
                     [:span.fs-add-text
                      [:span.fs-add-main "Already a filesystem root for this session"]
                      [:span.fs-add-sub (abbrev-home canon)]]] set-root-form]
+         ;; a parent directory already grants access — adding an inner dir would be redundant
+         covered-inside? [:div.fs-actions
+                          [:div.fs-add-form.dir-already (icon "check")
+                           [:span.fs-add-text
+                            [:span.fs-add-main "Already covered by an allowed directory"]
+                            [:span.fs-add-sub (abbrev-home covered-root)]]] set-root-form]
          :else [:div.fs-actions
                 [:form.fs-add-form
                  {:hx-post (str "/ui/session/" sid "/fs-add?frag=1")
                   :hx-target "#dir-browser"
                   :hx-swap "outerHTML"} [:input {:type "hidden" :name "path" :value canon}]
                  [:button.fs-add-btn {:type "submit"} (icon "check")
-                  [:span "Add this folder as a root"]]] set-root-form]))]))
+                  [:span "Add permission for this folder"]]] set-root-form]))]))
 
 (defn- fs-picker-modal
   "Filesystem picker overlay rooted at `dir`. SCOPED to this session —

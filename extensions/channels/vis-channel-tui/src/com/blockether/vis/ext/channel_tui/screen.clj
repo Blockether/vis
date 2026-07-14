@@ -102,6 +102,27 @@
   "Wall-clock budget for synchronous tail warm-up. Keeps startup and
    workspace-switch responsive while eliminating first-scroll cold stalls."
   120)
+(def ^:private slow-live-frame-threshold-ms
+  "Log live/streaming TUI frames at or above this wall-clock duration.
+
+   The normal live path runs at most every ~80ms; logging only slow frames keeps
+   the default log quiet while surfacing stutter candidates in Lanterna/layout."
+  35)
+(def ^:private slow-refresh-threshold-ms
+  "Log frames whose Lanterna DELTA refresh alone crosses this duration."
+  20)
+(defn- nanos->ms [start-ns end-ns] (/ (double (- (long end-ns) (long start-ns))) 1000000.0))
+(defn- log-slow-live-frame!
+  [data]
+  (let [total-ms
+        (double (:total-ms data 0.0))
+
+        refresh-ms
+        (double (:refresh-ms data 0.0))]
+
+    (when (or (>= total-ms slow-live-frame-threshold-ms) (>= refresh-ms slow-refresh-threshold-ms))
+      (tel/log! {:level :warn :id ::slow-live-frame :data data}
+                (format "slow TUI live frame: %.1fms total, %.1fms refresh" total-ms refresh-ms)))))
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
    :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
@@ -1769,7 +1790,10 @@
   [^TerminalScreen screen cols rows
    {:keys [messages input progress loading? cancelling? turn-start-ms settings slash-command-index]
     :as db} now-ms previous-layout]
-  (let [g
+  (let [frame-start-ns
+        (System/nanoTime)
+
+        g
         (.newTextGraphics screen)
 
         text-rows
@@ -1849,6 +1873,9 @@
                          ;; This partial path doesn't republish `:offsets`, so
                          ;; the next full frame persists the corrected scroll.
                          :prev-offsets (get-in db [:layout :offsets])})
+
+        layout-end-ns
+        (System/nanoTime)
 
         ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
@@ -2020,7 +2047,28 @@
     ;; Search hit highlights: painted on the live path too so they survive
     ;; streaming ticks instead of only appearing on full frames.
     (paint-search-hits! screen layout text-top inner-h cols db)
-    (.refresh screen Screen$RefreshType/DELTA)
+    (let [refresh-start-ns (System/nanoTime)]
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [refresh-end-ns (System/nanoTime)]
+        (log-slow-live-frame!
+          {:total-ms (nanos->ms frame-start-ns refresh-end-ns)
+           :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+           :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+           :refresh-ms (nanos->ms refresh-start-ns refresh-end-ns)
+           :cols cols
+           :rows rows
+           :messages (count messages)
+           :visible (count (:visible layout))
+           :live-top (some-> live-entry
+                             :top
+                             long)
+           :live-h (some-> live-entry
+                           :height
+                           long)
+           :total-h (long (:total-h layout))
+           :inner-h inner-h
+           :eff-scroll (long (:eff-scroll layout))
+           :search-active? (boolean (get-in db [:search :active?]))})))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -3557,8 +3605,15 @@
                                  ;; inside the picker; re-sync the workspace so the footer
                                  ;; dir count and header reflect it immediately.
                                  (when sid
-                                   (try (state/dispatch [:set-workspace (session-workspace sid)])
-                                        (catch Throwable _ nil))))))
+                                   (try (when-let [ws (session-workspace sid)]
+                                          (state/dispatch [:set-workspace ws]))
+                                        (catch Throwable _ nil))
+                                   ;; The footer's `filesystem N` / git / resources chips read
+                                   ;; EXTERNAL caches (filesystem roots, git status) that aren't
+                                   ;; part of the active-view db slice, so a same-shaped `:workspace`
+                                   ;; wouldn't wake the painter — the change then only appeared on
+                                   ;; the next keystroke. Force exactly one repaint so it lands now.
+                                   (state/dispatch [:bump-render-version])))))
                  ;; Managed-resources dialog (C-x s + the footer's `res N`
                  ;; Magit-style status buffer (C-x g + the footer's git button).
                  ;; Same one-dialog-at-a-time discipline as the resources modal;

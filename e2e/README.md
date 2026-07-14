@@ -18,6 +18,7 @@ e2e/
   scenarios/<id>/                                     foundation editing, any language
 extensions/languages/vis-language-clojure/e2e/scenarios/<id>/   clj editing + repair/format hook
 extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python REPL
+extensions/languages/vis-language-typescript-bun/e2e/scenarios/<id>/ managed Bun/TS REPL
 
   <id>/
     scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?}

@@ -337,37 +337,49 @@
 
 (defdescribe
   filesystem-roots-test
-  (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
-      (with-store
-        (fn [store]
-          (let [ws
-                (ps/db-workspace-insert!
-                  store
-                  {:id (str (random-uuid)) :repo-id "r" :repo-root "/tmp" :root "/tmp"})
+  (it
+    "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
+    (with-store
+      (fn [store]
+        (let [base
+              (temp-dir "ctx-root")
 
-                wid
-                (:id ws)
+              ws
+              (ps/db-workspace-insert!
+                store
+                {:id (str (random-uuid)) :repo-id "r" :repo-root base :root base})
 
-                a
-                (temp-dir "ctx-a")
+              wid
+              (:id ws)
 
-                b
-                (temp-dir "ctx-b")]
+              a
+              (temp-dir "ctx-a")
 
-            (try (ws/add-filesystem-root! store wid a)
-                 (ws/add-filesystem-root! store wid b)
-                 (ws/add-filesystem-root! store wid b) ;; duplicate -> no-op
-                 (let [roots (ws/filesystem-roots (ws/get store wid))]
-                   (expect (= [a b] (mapv :trunk roots)))
-                   ;; trunk session → live, NOT cloned
-                   (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
-                 (ws/remove-filesystem-root! store wid a)
-                 (expect (= [b] (mapv :trunk (ws/filesystem-roots (ws/get store wid)))))
-                 (expect (= :threw
-                            (try (ws/add-filesystem-root! store wid "/no/such/dir/zzz")
-                                 :no-throw
-                                 (catch clojure.lang.ExceptionInfo _ :threw))))
-                 (finally (delete-tree! a) (delete-tree! b)))))))
+              b
+              (temp-dir "ctx-b")
+
+              inner
+              (.getCanonicalPath (io/file a "inner"))]
+
+          (try (ws/add-filesystem-root! store wid a)
+               (ws/add-filesystem-root! store wid b)
+               (ws/add-filesystem-root! store wid b) ;; duplicate -> no-op
+               (.mkdirs (io/file inner))
+               (expect (= :workspace/already-covered
+                          (try (ws/add-filesystem-root! store wid inner)
+                               :no-throw
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+               (let [roots (ws/filesystem-roots (ws/get store wid))]
+                 (expect (= [a b] (mapv :trunk roots)))
+                 ;; trunk session → live, NOT cloned
+                 (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
+               (ws/remove-filesystem-root! store wid a)
+               (expect (= [b] (mapv :trunk (ws/filesystem-roots (ws/get store wid)))))
+               (expect (= :threw
+                          (try (ws/add-filesystem-root! store wid "/no/such/dir/zzz")
+                               :no-throw
+                               (catch clojure.lang.ExceptionInfo _ :threw))))
+               (finally (delete-tree! base) (delete-tree! a) (delete-tree! b)))))))
   (it
     "on a DRAFT session: a filesystem root is auto-cloned, edits land on apply!, clones trashed on abandon!"
     (let [base

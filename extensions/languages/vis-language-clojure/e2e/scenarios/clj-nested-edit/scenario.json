@@ -1,6 +1,6 @@
 {
   "lang": "clojure",
-  "prompt": "In n.clj change ONLY the then-branch of the if inside f from (+ x 1) to (* x 2). Leave the else-branch alone.",
+  "prompt": "In n.clj change ONLY the then-branch expression (+ x 1) inside f to (* x 2). Use exactly one structural edit: struct_patch({\"path\": \"n.clj\", \"op\": \"replace_node\", \"match\": \"(+ x 1)\", \"code\": \"(* x 2)\"}). Leave the else-branch (- x 1) alone.",
   "want": {
     "n.clj": [
       "(* x 2)",

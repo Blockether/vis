@@ -3,7 +3,9 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.providers :as providers]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- jwt
@@ -227,8 +229,37 @@
                    (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/limits-fn provider)))
-                   (expect (contains? (set (get-in provider [:provider/preset :default-models]))
-                                      "gpt-5.6-sol")))))
+                   (let [defaults (get-in provider [:provider/preset :default-models])
+                         by-name (into {}
+                                       (map (fn [m]
+                                              [(config/model-name m) m]))
+                                       defaults)]
+
+                     ;; svar-catalog models ride as bare strings.
+                     (expect (contains? by-name "gpt-5.6-sol"))
+                     ;; gpt-5.6-terra rides as a bare name; svar's catalog
+                     ;; (>= 0.7.59) supplies its 272k window, so it is no longer
+                     ;; declared inline here (no enrich hook, no 8192 fallback).
+                     (expect (contains? by-name "gpt-5.6-terra"))
+                     ;; and rides BARE (no inline :context map) — svar's catalog supplies its window.
+                     (expect (string? (get by-name "gpt-5.6-terra")))))))
+
+(defdescribe default-model-context-declaration-test
+             (it "an inline-map default-model survives default-model-configs with :context"
+                 ;; This is the seam that used to drop everything but :name — the reason
+                 ;; a provider couldn't declare a context window before.
+                 (let [cfgs
+                       (providers/default-model-configs
+                         {:default-models ["gpt-5.6-sol" {:name "gpt-5.6-terra" :context 272000}]})
+
+                       by-name
+                       (into {}
+                             (map (fn [m]
+                                    [(:name m) m]))
+                             cfgs)]
+
+                   (expect (= {:name "gpt-5.6-sol"} (get by-name "gpt-5.6-sol")))
+                   (expect (= 272000 (:context (get by-name "gpt-5.6-terra")))))))
 
 (defdescribe codex-extension-settings-test
              (it "does not declare legacy TUI settings metadata"

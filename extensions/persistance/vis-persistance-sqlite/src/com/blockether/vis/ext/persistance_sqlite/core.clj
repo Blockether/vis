@@ -2374,6 +2374,85 @@
                   (session-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
 
+(defn db-list-orphaned-running-turns
+  "Every `:running` turn joined to its OWNING session soul id, for daemon-boot
+   auto-resume. Each row is `{:session-id <uuid> :turn-id <uuid> :user-request s}`
+   — `:session-id` is the conversation id `submit-turn!`/`by-id` key on, so the
+   daemon can re-run the turn from its persisted request without a separate
+   state->session lookup. `[]` when none / no datasource."
+  [db-info]
+  (if (ds db-info)
+    (mapv (fn [r]
+            {:session-id (->uuid (:session_soul_id r))
+             :turn-id (->uuid (:soul_id r))
+             :user-request (:user_request r)})
+          (query! db-info
+                  {:select [[:qs.id :soul_id] :qs.user_request :ss.session_soul_id]
+                   :from [[:session_turn_soul :qs]]
+                   :join [[:session_state :ss] [:= :ss.id :qs.session_state_id]
+                          [:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
+                   :where [:and [:= :qst.status (normalize-status :running)]
+                           [:= :qst.version
+                            {:select [[[:max :version]]]
+                             :from [[:session_turn_state :qst2]]
+                             :where [:= :qst2.session_turn_soul_id :qs.id]}]]}))
+    []))
+
+(defn db-enqueue-turn!
+  "Persist ONE queued turn (gateway scheduling intent) so a daemon restart can
+   re-run it. `opts` = `{:id <gateway-tid> :session-soul-id :request :position
+   :queued-at}`. Idempotent on `:id` - a re-enqueue REPLACEs the row. Returns
+   `:id`, or nil with no datasource / missing keys."
+  [db-info {:keys [id session-soul-id request position queued-at]}]
+  (when (and (ds db-info) id session-soul-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:delete-from :session_turn_queue :where [:= :id (str id)]})
+                        (execute! tx-info
+                                  {:insert-into :session_turn_queue
+                                   :values [{:id (str id)
+                                             :session_soul_id (->ref session-soul-id)
+                                             :request (or request "")
+                                             :position (long (or position (now-ms)))
+                                             :queued_at (long (or queued-at (now-ms)))}]})
+                        id))))
+
+(defn db-update-queued-turn!
+  "Replace the prompt text of a persisted queued turn (in-place edit). No-op when
+   the row is gone (already drained / cancelled). Returns `id`."
+  [db-info id request]
+  (when (and (ds db-info) id)
+    (execute!
+      db-info
+      {:update :session_turn_queue :set {:request (or request "")} :where [:= :id (str id)]})
+    id))
+
+(defn db-dequeue-turn!
+  "Delete a persisted queued turn by its gateway id (drained / cancelled)."
+  [db-info id]
+  (when (and (ds db-info) id)
+    (execute! db-info {:delete-from :session_turn_queue :where [:= :id (str id)]})
+    id))
+
+(defn db-list-queued-turns
+  "Every persisted queued turn joined to its owning session soul id, FIFO-ordered
+   (per session by `position`, then `queued_at`). Each row is
+   `{:session-id <uuid> :turn-id <tid-string> :request s :position n}` - the shape
+   daemon-boot auto-resume stages. `[]` when none / no datasource."
+  [db-info]
+  (if (ds db-info)
+    (mapv (fn [r]
+            {:session-id (->uuid (:session_soul_id r))
+             :turn-id (:id r)
+             :request (:request r)
+             :position (:position r)})
+          (query! db-info
+                  {:select [:id :session_soul_id :request :position :queued_at]
+                   :from :session_turn_queue
+                   :order-by [[:session_soul_id :asc] [:position :asc] [:queued_at :asc]]}))
+    []))
+
 (defn- attach-prior-outcome
   [row->turn-map]
   ;; Surface :prior-outcome on the turn map when the column has a value.

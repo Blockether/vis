@@ -213,3 +213,46 @@
                       nil
                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
           (is (true? (:kaboom ex))))))))
+
+(deftest mux-subscribe!-shares-one-remote-session-subscription
+  (testing "multiple local listeners for one sid do not reconnect/open one SSE per tab"
+    (let [mux-var
+          (rv 'mux)
+
+          restarts
+          (atom 0)
+
+          seen-a
+          (atom [])
+
+          seen-b
+          (atom [])]
+
+      (reset! @mux-var {:subs {} :epoch 0 :future nil :stream nil})
+      (with-redefs-fn {(rv 'restart-mux!) (fn []
+                                            (swap! restarts inc)
+                                            nil)}
+        (fn []
+          (let [cleanup-a
+                (client/mux-subscribe! "sid-1" #(swap! seen-a conj %) 10)
+
+                cleanup-b
+                (client/mux-subscribe! "sid-1" #(swap! seen-b conj %) 10)
+
+                entry
+                (get-in @@mux-var [:subs "sid-1"])]
+
+            (is (= 1 @restarts) "second listener for same sid should not reopen /v1/events")
+            (is (= 2 (count (:sinks entry))))
+            (doseq [[_ sink] (:sinks entry)]
+              (sink {:type "turn.started" :session_id "sid-1" :seq 11}))
+            (is (= [{:type "gateway.connected"} {:type "turn.started" :session_id "sid-1" :seq 11}]
+                   @seen-b)
+                "new same-sid listener gets connection state and live events")
+            (is (= [{:type "turn.started" :session_id "sid-1" :seq 11}] @seen-a))
+            (cleanup-a)
+            (is (= 1 @restarts) "dropping one of two listeners leaves the remote mux alone")
+            (is (= 1 (count (get-in @@mux-var [:subs "sid-1" :sinks]))))
+            (cleanup-b)
+            (is (= 2 @restarts) "only the last listener removal changes the remote session set")
+            (is (empty? (:subs @@mux-var)))))))))

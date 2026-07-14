@@ -21,6 +21,12 @@
             [com.blockether.vis.internal.test-contract :as contract]
             [com.blockether.vis.internal.extension :as extension]))
 
+(def ^:private default-test-timeout-ms
+  "Default budget for run_tests. Keep just below the native tool's 5-minute
+   wall-clock budget so nREPL timeouts surface as structured test results
+   instead of opaque harness kills."
+  290000)
+
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each requested namespace, selecting
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
@@ -486,10 +492,11 @@
         (str/join " " ns-strs)
 
         r
-        ;; Keep BELOW the run_tests tool budget (~120s) so a slow / wedged nREPL
-        ;; surfaces as a real timeout ERROR (with nREPL err/tail) instead of an
-        ;; opaque harness kill. It must never exceed the caller's tool budget.
-        (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 110000})
+        ;; Keep BELOW the run_tests native-tool budget (5m) so a slow / wedged
+        ;; nREPL surfaces as a real timeout ERROR (with nREPL err/tail) instead
+        ;; of an opaque harness kill. It must never exceed the caller's tool budget.
+        (nrepl-client/eval!
+          {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
 
         parsed
         (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
