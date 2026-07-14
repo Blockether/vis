@@ -1702,6 +1702,30 @@
 
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
+(def ^:private view-churn-keys
+  "app-db keys the render thread mutates as bookkeeping only — never part of the
+   ACTIVE view, so every fast-path predicate ignores them. Mirrors
+   `state/active-view-slice`; keep the two in sync."
+  [:tab-locals :render-version :layout])
+
+(defn- differ-only-in?
+  "True when app-db snapshots `a` and `b` differ ONLY in the keys `ignore` —
+   every OTHER key holds an `identical?` value in both.
+
+   Reference equality per key makes this O(#keys) and, crucially, it NEVER
+   deep-walks a large value like `:messages`: a fresh-but-structurally-equal
+   vector reads as CHANGED and correctly falls through to the full painter. That
+   is what makes these fast-path predicates immune to the `dissoc`+`=`
+   O(transcript) blow-up on a message-boundary tick — every dispatch reducer
+   `assoc`s only the keys it touches and structurally shares the rest, so an
+   untouched key is always identical? across frames."
+  [a b ignore]
+  (let [ignore (set ignore)]
+    (and (= (count a) (count b))
+         (reduce-kv (fn [_ k v]
+                      (if (or (contains? ignore k) (identical? v (get b k))) true (reduced false)))
+                    true
+                    a))))
 (defn- live-progress-only-change?
   "True when the next frame only changed live progress bookkeeping.
    Those frames should keep the 80ms heartbeat but not repaint the header,
@@ -1716,8 +1740,7 @@
        ;; 80ms tick instead of the cheap partial-live path. partial-live still
        ;; repaints the header, so the background tab's spinner keeps animating.
        ;; Mirrors `active-view-unchanged?` / `scroll-only-change?`.
-       (= (dissoc previous-db :progress :tab-locals :render-version :layout)
-          (dissoc db :progress :tab-locals :render-version :layout))))
+       (differ-only-in? previous-db db (conj view-churn-keys :progress))))
 (defn- partial-live-frame?
   "True when the render loop may use the live-bubble-only repaint path."
   [previous-db db same-size? last-layout]
@@ -1757,8 +1780,7 @@
        ;; per-background-tab state (spinners, cursor blink) that ticks every frame
        ;; and never affects the active scroll view; :render-version / :layout are
        ;; render-thread bookkeeping. Mirrors `active-view-unchanged?`.
-       (= (dissoc prev-db :scroll :tab-locals :render-version :layout)
-          (dissoc db :scroll :tab-locals :render-version :layout))))
+       (differ-only-in? prev-db db (conj view-churn-keys :scroll))))
 
 (defn- input-only-change?
   "True when the ONLY thing that changed vs the last painted frame is the input
@@ -1790,8 +1812,7 @@
        ;; that grows/shrinks the box moves `messages-bottom` and MUST take the
        ;; full painter so the transcript re-lays-out against the new `inner-h`.
        (= (input-text-rows (:input prev-db) cols) (input-text-rows (:input db) cols))
-       (= (dissoc prev-db :input :tab-locals :render-version :layout)
-          (dissoc db :input :tab-locals :render-version :layout))))
+       (differ-only-in? prev-db db (conj view-churn-keys :input))))
 
 (defn- active-view-unchanged?
   "True when two app-db snapshots paint the SAME active view — they differ only
@@ -1803,7 +1824,7 @@
    the header and leaving the previous tab's body frozen on screen. Mirrors
    `state/active-view-slice` — keep the excluded keys in sync."
   [a b]
-  (= (dissoc a :tab-locals :render-version :layout) (dissoc b :tab-locals :render-version :layout)))
+  (differ-only-in? a b view-churn-keys))
 (def ^:private header-hover-kinds
   #{:copy-id :workspace-entry :header-help :header-tasks :header-search :header-new-session})
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
@@ -1817,7 +1838,7 @@
    inside the virtualized transcript."
   [previous-db db previous-hover current-hover]
   (and previous-db
-       (= (dissoc previous-db :render-version :layout) (dissoc db :render-version :layout))
+       (differ-only-in? previous-db db [:render-version :layout])
        (or (header-hover-region? current-hover)
            (and (nil? current-hover) (header-hover-region? previous-hover)))))
 (defn- live-loading-idx
@@ -3971,7 +3992,23 @@
                                                 idle-ms
                                                 "ms idle")})
                            (vreset! scroll-momentum 0)))
-                       (Thread/sleep 16)
+                       ;; Idle wait. With no wheel gesture still coasting, the
+                       ;; input thread has NOTHING to do until the next event —
+                       ;; the render thread owns every repaint / spinner tick /
+                       ;; resize poll. So BLOCK on `.readInput` (parks the
+                       ;; thread → zero idle CPU) instead of busy-polling
+                       ;; `.pollInput` + `(Thread/sleep 16)` (~62 wakeups/sec of
+                       ;; pure idle churn — the FileInputStream.available poll
+                       ;; the JFR flagged). Consistent with modal dialogs, which
+                       ;; already block on `.readInput`. The blocking read is
+                       ;; stashed for the next iteration so it flows through the
+                       ;; normal `read-chat-input!` coalescing / escape path.
+                       ;; While a gesture is still decaying, keep the 16ms tick
+                       ;; so its directional-lock hold window can expire.
+                       (if (zero? (long @scroll-momentum))
+                         (when-let [k (.readInput ^TerminalScreen screen)]
+                           (vswap! pending-input-key conj k))
+                         (Thread/sleep 16))
                        (recur))
                    ;; ── Bracketed paste ───────────────────────────────────────────────────
                    ;; Three-state machine sitting BEFORE the regular key dispatch:

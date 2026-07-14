@@ -4017,13 +4017,13 @@
   2)
 
 (def ^:private MAX_AUTH_REFRESH_RETRIES
-  "Max transparent retries for a provider auth 401/403 per iteration. One
-   retry: on the first auth rejection we force an OAuth refresh-token
-   exchange (the stored access token was locally-unexpired but invalidated
-   server-side, e.g. refresh-token rotation by another client), rebuild
-   the router with the fresh token, and re-send once. A second 401 means
-   the refresh itself is bad — surface the provider error."
-  1)
+  "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
+   refresh-token exchange (the stored access token was invalidated server-side,
+   e.g. refresh-token rotation) + router rebuild and re-sends. If that fresh
+   token 401s AGAIN it is almost always PROPAGATION LAG at the provider edge,
+   not a dead credential — so the remaining attempts back off and retry the
+   SAME token (no re-mint) to let it settle, per [[auth-propagation-backoff-ms]]."
+  4)
 
 (defn- stream-truncated-error?
   "True when an exception represents a provider stream that was cut
@@ -4378,6 +4378,18 @@
    times a minute; more than this is a flap, not real rotation."
   6)
 
+(def ^:private AUTH_PROPAGATION_BACKOFF_MS
+  "Base backoff (ms) before retrying the SAME just-refreshed token after a
+   post-refresh auth 401. A freshly-minted OAuth token is briefly not-yet-valid
+   at the provider edge; a short wait lets propagation settle instead of
+   re-minting — which only spawns another not-yet-valid token (the 401 storm)."
+  1200)
+
+(defn- auth-propagation-backoff-ms
+  "Backoff (ms) for the Nth (0-based) post-refresh propagation retry, capped 5s."
+  [attempt]
+  (min 5000 (* AUTH_PROPAGATION_BACKOFF_MS (long (inc attempt)))))
+
 (defonce ^:private auth-refresh-events
   ;; provider-id -> vector of epoch-ms timestamps of recent forced refreshes.
   (atom {}))
@@ -4386,16 +4398,6 @@
   ;; provider-id -> {:minted <access token the last FORCED refresh baked into
   ;; the router> :at epoch-ms}. Lets the retry path tell "the token we just
   ;; minted also 401'd" (dead credential) from "a stale token a peer rotated".
-  (atom {}))
-
-(defonce ^:private auth-dead-credentials
-  ;; provider-id -> {:token <dead baked token> :at epoch-ms}. A provider whose
-  ;; FRESHLY force-refreshed token STILL returned an auth 401 — the refresh
-  ;; token is revoked or the plan entitlement lapsed, so minting more access
-  ;; tokens is pointless. While latched, every session/turn owned by THIS
-  ;; gateway surfaces the provider's auth error IMMEDIATELY (no refresh, no
-  ;; storm); the latch self-clears the instant the on-file token rotates (the
-  ;; user re-authenticated).
   (atom {}))
 
 (defn- auth-refresh-allowed?
@@ -4450,16 +4452,7 @@
      :breaker-open (into #{}
                          (keep (fn [[pid n]]
                                  (when (> n AUTH_REFRESH_WINDOW_MAX) pid)))
-                         in-window)
-     :dead-credentials (set (keys @auth-dead-credentials))}))
-
-(defn- current-provider-token
-  "Current ON-FILE access token for `pid` via its normal (non-forcing)
-   get-token-fn, or nil. Cheap: reads cached/on-file creds, NEVER forces a
-   refresh — the read used to decide whether a dead-credential latch has since
-   been cleared by a re-auth."
-  [pid]
-  (try (:token ((:provider/get-token-fn (registry/provider-by-id pid)))) (catch Throwable _ nil)))
+                         in-window)}))
 
 (defn- auth-error-shaped?
   "True when `e` looks like a provider auth rejection (401/403 or an auth-shaped
@@ -4471,36 +4464,11 @@
                                                                    str))
                                (ex-message e))))
 
-(defn auth-credential-dead?
-  "True while provider `pid` is latched DEAD — a force-refresh minted a token
-   that ALSO auth-failed, so refreshing again is pointless. Self-clears the
-   moment the on-file token has rotated (a fresh re-auth) so the daemon
-   recovers WITHOUT a restart."
-  [pid]
-  (when-let [{:keys [token]} (get @auth-dead-credentials pid)]
-    (let [current (current-provider-token pid)]
-      (if (and current (not= current token))
-        (do (swap! auth-dead-credentials dissoc pid) (swap! auth-last-refreshed dissoc pid) false)
-        true))))
-
-(defn- mark-auth-credential-dead!
-  "Latch provider `pid` DEAD: a force-refresh minted a new token that STILL
-   auth-failed. Records the dead token so [[auth-credential-dead?]] can
-   self-clear on re-auth. Idempotent."
-  [pid]
-  (swap! auth-dead-credentials assoc
-    pid
-    {:token (config/baked-token pid) :at (System/currentTimeMillis)})
-  (tel/log! {:level :error :id ::auth-credential-dead :data {:provider pid}}
-            (str "Auth 401 — force-refreshed OAuth token for " pid
-                 " STILL rejected; latching credential DEAD. Surfacing provider"
-                 " error to every session (no more refreshes) until re-auth")))
-
 (defn- refresh-just-failed?
   "True when the token that just auth-failed is the SAME one our last FORCED
-   refresh minted for this provider — proof the refresh did not help (revoked
-   refresh token / lapsed plan), so the credential is dead. Distinct from a
-   stale token a peer already rotated, where the baked token differs."
+   refresh minted for this provider — i.e. re-minting did NOT clear the 401.
+   Signals PROPAGATION LAG (retry the same token with backoff), NOT a stale
+   token a peer already rotated (that has a different baked token → refresh)."
   [^Throwable e resolved-model]
   (let [pid (:provider resolved-model)]
     (and (auth-error-shaped? e)
@@ -4526,7 +4494,6 @@
         (:provider resolved-model)]
 
     (boolean (and (perr/auth-provider-error? status provider-message (ex-message e))
-                  (not (auth-credential-dead? pid))
                   (some-> (registry/provider-by-id pid)
                           :provider/refresh-token-fn)))))
 
@@ -4594,8 +4561,8 @@
                  (ensure-router-has-current-token! pid)
                  ;; Remember the token this refresh minted. If the very next
                  ;; re-send with it ALSO 401s, `refresh-just-failed?` sees the
-                 ;; baked token == this minted token and latches the credential
-                 ;; dead — collapsing the dead-credential storm to ONE exchange.
+                 ;; baked token == this minted token and treats it as PROPAGATION
+                 ;; LAG — backoff-retrying the SAME token instead of re-minting.
                  (swap! auth-last-refreshed assoc
                    pid
                    {:minted (config/baked-token pid) :at (System/currentTimeMillis)})
@@ -5636,22 +5603,18 @@
                                         ;; subsequent stream-truncated still has its own
                                         ;; quota.
                                         {::retry-max-tokens bumped})
-                                      ;; Post-refresh identical auth 401: the
-                                      ;; token we JUST force-refreshed for this
-                                      ;; provider also 401'd. The refresh token
-                                      ;; is revoked / the plan lapsed, so minting
-                                      ;; more is pointless. Latch the credential
-                                      ;; DEAD (gateway-wide) and surface the
-                                      ;; provider error at once; every other
-                                      ;; session short-circuits too (no storm).
-                                      (refresh-just-failed? e resolved-model)
-                                      (do (mark-auth-credential-dead! (:provider resolved-model))
-                                          (handle-iteration-exception! e
-                                                                       {:iteration iteration
-                                                                        :messages effective-messages
-                                                                        :routing effective-routing
-                                                                        :reasoning-level
-                                                                        reasoning-level}))
+                                      ;; Post-refresh auth 401: the token we
+                                      ;; JUST force-refreshed 401'd AGAIN. Almost
+                                      ;; always OAuth PROPAGATION LAG at the
+                                      ;; provider edge (a freshly-minted token is
+                                      ;; briefly not-yet-valid), NOT a dead
+                                      ;; credential — the same token succeeds
+                                      ;; seconds later. Re-minting is what CAUSES
+                                      ;; the storm, so DON'T refresh: back off and
+                                      ;; retry the SAME token until it settles.
+                                      (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                           (refresh-just-failed? e resolved-model))
+                                      ::retry-auth-backoff
                                       ;; Auth 401/403 from a refreshable
                                       ;; provider: force an OAuth refresh +
                                       ;; router rebuild, then re-send once.
@@ -5681,6 +5644,13 @@
                                  max-tokens-attempt
                                  current-extra-body
                                  (assoc env :router (get-router)))
+                          (= result ::retry-auth-backoff)
+                          ;; Same just-refreshed token 401'd (propagation lag):
+                          ;; wait, then re-send the SAME token — no re-mint, no
+                          ;; router rebuild. `attempt` grows so backoff widens and
+                          ;; the retry budget still bounds it.
+                          (do (Thread/sleep (auth-propagation-backoff-ms attempt))
+                              (recur (inc attempt) max-tokens-attempt current-extra-body env))
                           :else result)))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
