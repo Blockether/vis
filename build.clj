@@ -322,6 +322,30 @@
   (str "target/vis"
        (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
 
+(defn- native-image-command
+  "The native-image launcher to invoke via `b/process` (Java ProcessBuilder).
+   On Windows the GraalVM launcher is a `native-image.cmd` batch script, and
+   ProcessBuilder does NOT apply PATHEXT resolution to a bare `native-image` —
+   it dies with `CreateProcess error=2, The system cannot find the file
+   specified` (exactly why every Windows native build failed while Linux/macOS
+   — which have a real `native-image` binary — succeeded). Resolve the concrete
+   launcher from GRAALVM_HOME / JAVA_HOME (…/bin/native-image[.cmd]); fall back
+   to the platform-correct bare name."
+  []
+  (let [windows?
+        (str/includes? (str/lower-case (System/getProperty "os.name")) "windows")
+
+        exe
+        (if windows? "native-image.cmd" "native-image")
+
+        home
+        (or (System/getenv "GRAALVM_HOME") (System/getenv "JAVA_HOME"))
+
+        launcher
+        (when home (io/file home "bin" exe))]
+
+    (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) exe)))
+
 ;; ── Distribution profiles ───────────────────────────────────────────────────
 ;; Three shipped distributions, selected with `:profile` on `native` / `uber`:
 ;;   :tui   — MINIMAL: the TUI channel only. Web + Telegram channels and voice
@@ -953,7 +977,7 @@
     (println "native-image (reusing target/native-classes)…")
     (let [{:keys [exit]}
           (b/process {:command-args
-                      (into ["native-image"]
+                      (into [(native-image-command)]
                             (native-image-args basis (boolean (:with-assets opts)) profile))})]
       (if (zero? exit)
         (println "-> built" native-bin)
@@ -1008,7 +1032,7 @@
              (str "(profile " (name profile) (when with-assets? " +assets") ")")
              "(this takes several minutes)…")
     (let [{:keys [exit]} (b/process {:command-args
-                                     (into ["native-image"]
+                                     (into [(native-image-command)]
                                            (native-image-args basis with-assets? profile))})]
       (if (zero? exit)
         (println "-> built" native-bin)

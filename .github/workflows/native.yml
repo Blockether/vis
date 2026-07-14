@@ -1,19 +1,20 @@
 name: Native Image
 
-# Gated on CI: native-image only builds AFTER the CI workflow (tests on every
-# OS + per-extension classpath + the AOT uberjar compile) succeeds for a commit,
-# so tests pass and every namespace compiles BEFORE the heavy, slow
-# native-image build runs. A red CI never reaches native-image.
-# Manual runs (workflow_dispatch) bypass the gate.
+# Runs on EVERY commit: every push to main and every pull-request update, plus
+# manual dispatch. Deliberately NOT gated behind the CI workflow — native-image
+# is the real shippable artifact, so we prove it builds on all three OSes on
+# every commit rather than discovering a platform break only at release time.
+# native-image of a GraalPy-embedding Clojure app is heavy (RAM + minutes);
+# fail-fast false so one OS failing still reports the rest.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: native-${{ github.event.workflow_run.head_sha || github.ref }}
+  group: native-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,8 +23,7 @@ jobs:
   # heavy (RAM + minutes); fail-fast false so one OS failing still reports the rest.
   native:
     name: native / ${{ matrix.os }}
-    # Build only when the gating CI run passed (or a manual dispatch).
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # (no CI gate — we build native on every commit, all platforms.)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -33,18 +33,18 @@ jobs:
           - os: ubuntu-latest
             bin: target/vis
             artifact: vis-linux-x64
-          - os: macos-latest
+          # macos-15-xlarge is the arm64 (Apple silicon) larger runner with
+          # 14 GB RAM. The default macos-latest (M1, 7 GB) cannot host the
+          # native-image builder — GraalPy forces -Xms14g, so 7 GB swaps into a
+          # DeadlockWatchdog kill (exit 30). 14 GB clears that.
+          - os: macos-15-xlarge
             bin: target/vis
             artifact: vis-macos-arm64
           - os: windows-latest
             bin: target/vis.exe
             artifact: vis-windows-x64
     steps:
-      # Build the exact commit CI validated (workflow_run checks out the default
-      # branch by default, not the triggering SHA).
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
       # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
       # the distributed binary, so the redistribution/license story stays FOSS.
