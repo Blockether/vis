@@ -47,6 +47,35 @@
 ;; REAL boot error. Cleared on a successful start and on `stop!`.
 (defonce ^:private last-failures (atom {}))
 
+;; ── Idle reaping ────────────────────────────────────────────────────────────
+;; A managed REPL is a FULL project JVM (0.5–2 GB resident: the whole :dev:test
+;; classpath + every loaded namespace). ONE is spawned per distinct working `dir`
+;; an eval/test targets and — without this — lived for the ENTIRE session, so a
+;; long agent run touching several monorepo subdirs piled up several idle GB of
+;; heavyweight JVMs. Each REPL carries a `:last-touch` ms stamp, bumped on every
+;; eval/test that targets it; a single daemon thread stops any REPL untouched for
+;; `idle-reap-ms`. Reaping is transparent — the next eval autostarts a fresh REPL
+;; on demand. Set VIS_CLJ_REPL_IDLE_MS=0 to disable (or to a custom ms budget).
+(def ^:private idle-reap-ms
+  (let [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
+                    str/trim
+                    not-empty)]
+    (or (when env (try (Long/parseLong env) (catch Exception _ nil))) (* 20 60 1000))))
+
+(def ^:private reaper-tick-ms 60000)
+
+(defn- touch!
+  "Stamp `[session-id dir]`'s REPL as used just now, so the idle reaper spares an
+   actively-worked REPL. No-op when the session owns no REPL for `dir`."
+  [session-id dir]
+  (let [k [session-id dir]]
+    (swap! processes (fn [m]
+                       (cond-> m
+                         (contains? m k)
+                         (assoc-in [k :last-touch] (System/currentTimeMillis)))))))
+
+(declare ensure-reaper!)
+
 (defn last-failure
   "The last UNEXPECTED launcher death recorded for `[session-id dir]`, or nil.
    STRING-keyed (\"exit\" \"at\" \"log\" \"log_tail\") — safe to splice into
@@ -378,9 +407,11 @@
                          :pid pid
                          :dir dir
                          :log (.getAbsolutePath log)
-                         :started-at (System/currentTimeMillis)}]
+                         :started-at (System/currentTimeMillis)
+                         :last-touch (System/currentTimeMillis)}]
 
                (swap! processes assoc k info)
+               (ensure-reaper!)
                (watch-process! session-id dir proc (.getAbsolutePath log))
                (let [st (wait-until-up proc port start-deadline-ms)]
                  ;; We passed --port explicitly; never depend on the file the tool
@@ -471,6 +502,50 @@
        "dir" dir
        "message" "No Vis-managed nREPL for this directory in this session."})))
 
+(defonce ^:private reaper (atom nil))
+
+(defn- reap-idle!
+  "Stop every managed REPL untouched for `idle-reap-ms`. Best-effort per entry —
+   one wedged stop never blocks reaping the rest. The session's resource mirror
+   self-prunes once `stop!` drops the process (its `:alive-fn` flips to false)."
+  []
+  (when (pos? idle-reap-ms)
+    (let [now
+          (System/currentTimeMillis)
+
+          stale
+          (for [[[sid dir] info]
+                @processes
+
+                :let [t
+                      (or (:last-touch info) (:started-at info) 0)]
+                :when (> (- now t) idle-reap-ms)]
+
+            [sid dir])]
+
+      (doseq [[sid dir] stale]
+        (try (stop! sid dir) (catch Throwable _ nil))))))
+
+(defn- ensure-reaper!
+  "Lazily start the ONE daemon thread that idle-reaps managed REPLs. Idempotent;
+   a no-op when idle reaping is disabled (`idle-reap-ms` <= 0). The thread is a
+   daemon so it never keeps the JVM alive on shutdown."
+  []
+  (when (and (pos? idle-reap-ms) (compare-and-set! reaper nil ::starting))
+    (let [t (Thread. ^Runnable
+                     (fn []
+                       (loop []
+
+                         (try (Thread/sleep (long reaper-tick-ms))
+                              (reap-idle!)
+                              (catch InterruptedException _ nil)
+                              (catch Throwable _ nil))
+                         (recur)))
+                     "vis-clj-repl-idle-reaper")]
+      (.setDaemon t true)
+      (.start t)
+      (reset! reaper t))))
+
 (defn- prune-dead!
   "Drop this session's dead entries from the process atom, best-effort."
   [session-id]
@@ -528,7 +603,7 @@
     (if (and (proc-alive? info)
              (:port info)
              (= :up (wait-until-up (:process info) (:port info) 5000)))
-      info
+      (do (touch! session-id dir) info)
       ;; Dead, or alive-but-wedged (port never answers): drop the stale process
       ;; first, then autostart — surfacing start!'s lifecycle result when no live
       ;; process results, exactly as the plain-autostart path does.
@@ -584,12 +659,12 @@
           id)]
 
     (if id
-      (or (repl-by-id session-id id)
-          (throw (ex-info (str
-                            "no nREPL registered under id '"
-                            id
-                            "' in this session — check ctx / session_resources for live REPL ids")
-                          {:type :clj/unknown-repl-id :id id})))
+      (if-let [r (repl-by-id session-id id)]
+        (do (touch! session-id (:dir r)) r)
+        (throw (ex-info (str "no nREPL registered under id '"
+                             id
+                             "' in this session — check ctx / session_resources for live REPL ids")
+                        {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (let [r (ensure-repl-for-dir! session-id default-dir)]
@@ -617,5 +692,6 @@
                                    :log (get r "log")}))))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
           ;; (the workspace root) when live, else the first (dir-sorted).
-          (-> (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))
-              (select-keys [:id :dir :port])))))))
+          (let [r (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))]
+            (touch! session-id (:dir r))
+            (select-keys r [:id :dir :port])))))))

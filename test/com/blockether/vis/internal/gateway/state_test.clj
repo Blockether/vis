@@ -19,9 +19,14 @@
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
    consumers in sync. The web channel may still render defensively, but it must
    not be the first place where blank-line runs disappear."
-  (it "does not emit streamed reasoning deltas over the gateway"
-      (expect (nil? (#'state/chunk->event
-                     {:phase :reasoning :text " first  \n\n\t\nsecond\r\n\r\nthird  "}))))
+  (it "streams reasoning deltas with normalized thinking over the gateway"
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :reasoning
+                                    :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "})]
+        (expect (= "reasoning.delta" type))
+        ;; transient live frame — the canonical text persists on iteration.completed
+        (expect (not store?))
+        (expect (= "first\nsecond\nthird" (:text payload)))))
   (it "normalizes iteration-boundary thinking for pinned session history"
       (let [[type store? payload]
             (#'state/chunk->event
@@ -104,8 +109,13 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))))
-  (it "reasoning.delta is not emitted on the gateway wire"
-      (expect (nil? (#'state/chunk->event {:phase :reasoning :iteration 2 :text "hmm"}))))
+  (it "reasoning.delta streams live on the wire (transient, iteration-tagged)"
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :reasoning :iteration 2 :thinking "hmm"})]
+        (expect (= "reasoning.delta" type))
+        (expect (not store?))
+        (expect (= 2 (:iteration payload)))
+        (expect (= "hmm" (:text payload)))))
   (it "iteration-final carries :iteration and complete assistant prose on the wire"
       (let [[type _ payload] (#'state/chunk->event
                               {:phase :iteration-final
@@ -450,30 +460,44 @@
 
 (defdescribe
   delta-coalesce-test
-  ;; model text phases are withheld from the gateway wire; coalescing still
-  ;; guards the internal skip path from doing repeated work inside the window.
+  ;; Model text phases stream LIVE but coalesced to SENTENCE granularity: a frame
+  ;; is skipped only while still mid-sentence AND within the time cap. A closed
+  ;; sentence, the cap, a `:done?` frame, and the first frame of a phase all pass.
+  ;; `last-emit` is phase -> {:ms emit-epoch :len emitted-text-length}.
   (let [coalesce? @#'state/coalesce-delta?]
-    (it "skips a reasoning delta inside the window"
-        (expect (true? (coalesce? {:reasoning 1000} {:phase :reasoning} 1050))))
-    (it "passes a reasoning delta once the window elapsed"
-        (expect (false? (coalesce? {:reasoning 1000} {:phase :reasoning} 1101))))
+    (it "skips a mid-sentence reasoning delta inside the time cap"
+        (expect (true? (coalesce? {:reasoning {:ms 1000 :len 0}}
+                                  {:phase :reasoning :thinking "still going"}
+                                  1500))))
+    (it "passes once a sentence closes, even inside the time cap"
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+                                   {:phase :reasoning :thinking "done here. "}
+                                   1500))))
+    (it "passes once the time cap elapses, even mid-sentence"
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+                                   {:phase :reasoning :thinking "still going"}
+                                   3001))))
     (it "a :done? frame always passes"
-        (expect (false? (coalesce? {:reasoning 1000} {:phase :reasoning :done? true} 1050))))
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+                                   {:phase :reasoning :thinking "x" :done? true}
+                                   1500))))
+    (it "the FIRST frame of a phase always passes (no prior emit)"
+        (expect (false? (coalesce? {} {:phase :reasoning :thinking "still going"} 1500))))
+    (it "only a sentence in the NEW suffix (past :len) flushes"
+        ;; the '.' sits BEFORE :len — already emitted — so the fresh tail is
+        ;; mid-sentence and coalesces inside the cap.
+        (expect (true? (coalesce? {:reasoning {:ms 1000 :len 5}}
+                                  {:phase :reasoning :thinking "done. more"}
+                                  1500)))
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 5}}
+                                   {:phase :reasoning :thinking "done. more!"}
+                                   1500))))
     (it "phases track independent clocks"
-        (expect (false? (coalesce? {:reasoning 1000} {:phase :content} 1050))))
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}}
+                                   {:phase :content :content "fresh"}
+                                   1050))))
     (it "tool phases always pass"
-        (expect (false? (coalesce? {:reasoning 1000} {:phase :form-result} 1050))))
-    (it "the window grows with the cumulative text size"
-        ;; ~60KB of thinking -> ~234ms window: a frame at +150ms is
-        ;; still coalesced, where a small frame (100ms floor) passes.
-        (let [big (apply str (repeat 60000 "x"))]
-          (expect (true? (coalesce? {:reasoning 1000} {:phase :reasoning :thinking big} 1150)))
-          (expect (false?
-                    (coalesce? {:reasoning 1000} {:phase :reasoning :thinking "tiny"} 1150)))))
-    (it "the adaptive window caps at 1s so huge streams still tick"
-        (let [huge (apply str (repeat 1000000 "x"))]
-          (expect (false?
-                    (coalesce? {:reasoning 1000} {:phase :reasoning :thinking huge} 2001)))))))
+        (expect (false? (coalesce? {:reasoning {:ms 1000 :len 0}} {:phase :form-result} 1050))))))
 
 (defdescribe
   turn-stall-watchdog-test
