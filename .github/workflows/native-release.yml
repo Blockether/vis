@@ -33,7 +33,10 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64 }
-          - { os: macos-latest,   bin: target/vis,     asset: vis-macos-arm64 }
+          # macos-15-xlarge: arm64 larger runner (14 GB RAM). The default
+          # macos-latest (M1, 7 GB) deadlocks the native-image builder because
+          # GraalPy forces -Xms14g — 7 GB swaps into a DeadlockWatchdog kill.
+          - { os: macos-15-xlarge, bin: target/vis,     asset: vis-macos-arm64 }
           - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe }
     steps:
       - uses: actions/checkout@v4
