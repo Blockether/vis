@@ -112,17 +112,37 @@
   "Log frames whose Lanterna DELTA refresh alone crosses this duration."
   20)
 (defn- nanos->ms [start-ns end-ns] (/ (double (- (long end-ns) (long start-ns))) 1000000.0))
-(defn- log-slow-live-frame!
+(defn- log-slow-frame!
+  "Warn-log a TUI frame whose wall-clock total OR Lanterna DELTA refresh crosses
+   the stutter thresholds. `:path` (\"live\" / \"full\" / \"scroll\") tags WHICH
+   render path produced it, and the message spells out the layout/paint/refresh
+   split so a stutter report says where the time actually went instead of
+   guessing (the raw `:data` map carries the rest). Only slow frames log, so the
+   default file handler stays quiet during smooth playback."
   [data]
   (let [total-ms
         (double (:total-ms data 0.0))
 
         refresh-ms
-        (double (:refresh-ms data 0.0))]
+        (double (:refresh-ms data 0.0))
+
+        layout-ms
+        (double (:layout-ms data 0.0))
+
+        paint-ms
+        (double (:paint-ms data 0.0))
+
+        path
+        (:path data "live")]
 
     (when (or (>= total-ms slow-live-frame-threshold-ms) (>= refresh-ms slow-refresh-threshold-ms))
-      (tel/log! {:level :warn :id ::slow-live-frame :data data}
-                (format "slow TUI live frame: %.1fms total, %.1fms refresh" total-ms refresh-ms)))))
+      (tel/log! {:level :warn :id ::slow-frame :data data}
+                (format "slow TUI %s frame: %.1fms total (layout %.1f, paint %.1f, refresh %.1f)"
+                        path
+                        total-ms
+                        layout-ms
+                        paint-ms
+                        refresh-ms)))))
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
    :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
@@ -1331,6 +1351,9 @@
   (let [now-ms
         (long now-ms)
 
+        frame-start-ns
+        (System/nanoTime)
+
         g
         (.newTextGraphics screen)
 
@@ -1424,6 +1447,9 @@
                          ;; corrections (which move `total-h`) don't lurch the
                          ;; viewport / scrollbar thumb mid-scroll.
                          :prev-offsets (get-in db [:layout :offsets])})
+
+        layout-end-ns
+        (System/nanoTime)
 
         ;; Persist the anchor-corrected scroll so the input thread's
         ;; wheel/drag math and the next layout share the same offset.
@@ -1606,7 +1632,17 @@
       ;; each letter badge lands on the chevron the user sees. No-op when off.
       (render/draw-detail-labels! g (:detail-labels-active? db) (:detail-labels db))
       (when-not *skip-frame-refresh?*
-        (.refresh screen Screen$RefreshType/DELTA)
+        (let [refresh-start-ns (System/nanoTime)]
+          (.refresh screen Screen$RefreshType/DELTA)
+          (log-slow-frame! {:path "full"
+                            :total-ms (nanos->ms frame-start-ns (System/nanoTime))
+                            :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+                            :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+                            :refresh-ms (nanos->ms refresh-start-ns (System/nanoTime))
+                            :cols cols
+                            :rows rows
+                            :messages (count messages)
+                            :visible (count (:visible layout))}))
         ;; Inline images ride the terminal's graphics layer, which Lanterna
         ;; doesn't model. Draw them AFTER the delta so they sit on top of the
         ;; blank cells the renderer reserved for each expanded `vis-image`.
@@ -1711,6 +1747,40 @@
        ;; render-thread bookkeeping. Mirrors `active-view-unchanged?`.
        (= (dissoc prev-db :scroll :tab-locals :render-version :layout)
           (dissoc db :scroll :tab-locals :render-version :layout))))
+
+(defn- input-only-change?
+  "True when the ONLY thing that changed vs the last painted frame is the input
+   TEXT, AND the input box's rendered height is unchanged. The transcript
+   viewport is a function of the input box height (`input-box-h` ⇒ `input-top`
+   ⇒ `echo-row`/`messages-bottom` ⇒ `inner-h`), so as long as the box still
+   occupies the same number of visual rows, the whole band ABOVE the input —
+   transcript, scrollbar, header — is byte-identical to the previous full frame.
+   In that state a full frame would repaint every bubble to identical cells and
+   re-run the O(N) `virtual/layout`; a bottom-chrome-only repaint is pixel-
+   identical at a fraction of the cost, and skips `virtual/layout` entirely.
+
+   Anything that could make the fast path diverge — loading (the live bubble
+   grows), a mouse selection, an open overlay / find bar / jump-label mode, or a
+   keystroke that WRAPS/UNWRAPS the input to a different number of visual rows
+   (which resizes the transcript band) — fails the test and falls through to the
+   full painter. The `:input` value itself is diffed out; every other db key
+   must be equal (same churn keys excluded as `scroll-only-change?`)."
+  [prev-db db cols]
+  (and prev-db
+       (not= (:input prev-db) (:input db))
+       (not (:loading? db))
+       (not (:mouse-selection db))
+       (not (:tasks-open? db))
+       (not (:help-open? db))
+       (not (:detail-labels-active? db))
+       (not (get-in db [:search :active?]))
+       ;; Box height unchanged ⇒ transcript viewport geometry unchanged. A wrap
+       ;; that grows/shrinks the box moves `messages-bottom` and MUST take the
+       ;; full painter so the transcript re-lays-out against the new `inner-h`.
+       (= (input-text-rows (:input prev-db) cols) (input-text-rows (:input db) cols))
+       (= (dissoc prev-db :input :tab-locals :render-version :layout)
+          (dissoc db :input :tab-locals :render-version :layout))))
+
 (defn- active-view-unchanged?
   "True when two app-db snapshots paint the SAME active view — they differ only
    in background tab state (`:tab-locals`), the dirty counter
@@ -2050,8 +2120,9 @@
     (let [refresh-start-ns (System/nanoTime)]
       (.refresh screen Screen$RefreshType/DELTA)
       (let [refresh-end-ns (System/nanoTime)]
-        (log-slow-live-frame!
-          {:total-ms (nanos->ms frame-start-ns refresh-end-ns)
+        (log-slow-frame!
+          {:path "live"
+           :total-ms (nanos->ms frame-start-ns refresh-end-ns)
            :layout-ms (nanos->ms frame-start-ns layout-end-ns)
            :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
            :refresh-ms (nanos->ms refresh-start-ns refresh-end-ns)
@@ -2099,7 +2170,10 @@
    `render-frame!` for this state; force it off with `force-full-frame?`."
   [^TerminalScreen screen cols rows {:keys [messages input progress settings] :as db} now-ms
    previous-layout]
-  (let [g
+  (let [frame-start-ns
+        (System/nanoTime)
+
+        g
         (.newTextGraphics screen)
 
         ;; Geometry MUST match render-frame! / render-live-bubble-frame!
@@ -2156,6 +2230,9 @@
                          :detail-expansions (:detail-expansions db)
                          :prev-offsets (get-in db [:layout :offsets])})
 
+        layout-end-ns
+        (System/nanoTime)
+
         anchored-scroll
         (:anchored-scroll layout)]
 
@@ -2179,7 +2256,17 @@
     (cr/commit-frame!)
     ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)
-    (.refresh screen Screen$RefreshType/DELTA)
+    (let [refresh-start-ns (System/nanoTime)]
+      (.refresh screen Screen$RefreshType/DELTA)
+      (log-slow-frame! {:path "scroll"
+                        :total-ms (nanos->ms frame-start-ns (System/nanoTime))
+                        :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+                        :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+                        :refresh-ms (nanos->ms refresh-start-ns (System/nanoTime))
+                        :cols cols
+                        :rows rows
+                        :messages (count messages)
+                        :visible (count (:visible layout))}))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -2191,6 +2278,59 @@
             :heights (:heights layout)
             :offsets (:offsets layout)
             :visible (:visible layout)})))
+
+(defn- render-input-frame!
+  "Fast path for a pure input-text edit (see `input-only-change?`): the user is
+   typing and NOTHING but `:input` changed, AND the input box height is unchanged
+   — so the transcript band, scrollbar, header and footer are all byte-identical
+   to the previous full frame. Repaint ONLY the bottom chrome (input box + echo
+   row + footer + slash suggestions) and re-place the cursor via the SAME
+   `draw-bottom-chrome!` the full painter uses, so geometry is guaranteed to
+   match. Everything above the input is left exactly as the previous frame
+   painted it; the Lanterna delta emits nothing for it. Skips `virtual/layout`
+   entirely.
+
+   Like `render-header-hover-frame!` this does NOT begin/commit a click-region
+   pass: the transcript / header / footer rows are unchanged, so the previous
+   full frame's published regions remain authoritative (the footer buttons
+   re-register into the staging buffer, which the next `begin-frame!` drops).
+   The caller reuses `previous-layout` verbatim (returned as `[last-layout
+   false]`), so no layout is republished."
+  [^TerminalScreen screen cols rows {:keys [input slash-command-index] :as db} now-ms]
+  (let [g
+        (.newTextGraphics screen)
+
+        text-rows
+        (input-text-rows input cols)
+
+        input-box-h
+        (+ text-rows 2 (* 2 render/input-pad-y))
+
+        input-top
+        (- rows input-box-h 2)
+
+        echo-row
+        (- input-top 1)
+
+        footer-row
+        (- rows 2)
+
+        slash-suggestions
+        (slash-suggestions-for-input screen input slash-command-index)]
+
+    (draw-bottom-chrome! screen
+                         g
+                         db
+                         {:input input
+                          :input-top input-top
+                          :text-rows text-rows
+                          :cols cols
+                          :now-ms now-ms
+                          :echo-row echo-row
+                          :footer-row footer-row
+                          :slash-suggestions slash-suggestions
+                          :slash-command-index slash-command-index})
+    (.refresh screen Screen$RefreshType/DELTA)))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 (def ^:private spinner-tick-ms
@@ -2363,7 +2503,20 @@
                                            last-layout
                                            (not was-blocked?)
                                            (not (:has-images? last-layout))
-                                           (scroll-only-change? last-db db))]
+                                           (scroll-only-change? last-db db))
+                        ;; Pure input-text edit: the user typed and NOTHING but
+                        ;; :input changed AND the box height held, so the whole
+                        ;; band above the input is byte-identical — repaint only
+                        ;; the bottom chrome, skip virtual/layout. Gated on (not
+                        ;; animate?) so a background spinner tick still takes a
+                        ;; path that repaints the header.
+                        input-only? (and (not force-full-frame?)
+                                         (not overlay-open?)
+                                         same-size?
+                                         last-layout
+                                         (not animate?)
+                                         (not was-blocked?)
+                                         (input-only-change? last-db db cols))]
 
                     (if (and (not (:shutdown? db))
                              (not (:dialog-open? db))
@@ -2385,6 +2538,8 @@
                                   [last-layout false])
                               scroll-frame?
                               [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
+                              input-only? (do (render-input-frame! screen cols rows db now-ms)
+                                              [last-layout false])
                               :else [(render-frame! screen cols rows db now-ms) true])]
                         ;; Publish layout back to app-db without bumping the version (see
                         ;; no-render-bump-events).
