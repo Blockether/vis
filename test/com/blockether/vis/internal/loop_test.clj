@@ -33,6 +33,15 @@
 (def ^:private ask-result->api-usage (deref #'lp/ask-result->api-usage))
 
 (def ^:private ask-code-block-observation (deref #'lp/ask-code-block-observation))
+(def ^:private log-stage-level (deref #'lp/log-stage-level))
+
+(defdescribe loop-stage-logging-test
+             (it "keeps routine telemetry debug-only but logs failed turns at error level"
+                 (expect (= :debug (log-stage-level :provider-call/stop {:duration-ms 12})))
+                 (expect (= :error (log-stage-level :error {:reason :provider-failed})))
+                 (expect (= :error (log-stage-level :turn/complete {:status :error})))
+                 (expect (= :info (log-stage-level :error {:reason :cancelled})))
+                 (expect (= :info (log-stage-level :turn/complete {:status :cancelled})))))
 
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
@@ -96,6 +105,10 @@
 (def ^:private previous-request-usage (deref #'lp/previous-request-usage))
 
 (def ^:private call-provider-with-interrupt-retry! (deref #'lp/call-provider-with-interrupt-retry!))
+
+(def ^:private retryable-provider-interrupt? (deref #'lp/retryable-provider-interrupt?))
+
+(def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS (deref #'lp/INTERRUPT_RETRY_MAX_ELAPSED_MS))
 
 (def ^:private call-provider-with-stream-rewind-retry!
   (deref #'lp/call-provider-with-stream-rewind-retry!))
@@ -252,7 +265,19 @@
                                                                (throw (InterruptedException.
                                                                         "cancel"))))
                         (expect false)
-                        (catch InterruptedException _ (expect (= 1 @calls)))))))
+                        (catch InterruptedException _ (expect (= 1 @calls))))))
+             (it "retries a spurious interrupt that fired before the TTFT budget"
+                 (expect (retryable-provider-interrupt? (InterruptedException.
+                                                          "java.lang.InterruptedException")
+                                                        {:cancel-atom (atom false)}
+                                                        500)))
+             (it "does NOT retry a watchdog interrupt that fired past the TTFT budget"
+                 ;; svar idle/semantic watchdog: the call already burned its full
+                 ;; budget, so retrying just doubles the wall-clock hang. Surface it.
+                 (expect (not (retryable-provider-interrupt?
+                                (InterruptedException. "java.lang.InterruptedException")
+                                {:cancel-atom (atom false)}
+                                (inc (long INTERRUPT_RETRY_MAX_ELAPSED_MS)))))))
 
 (defdescribe
   previous-turn-context-test
@@ -1153,7 +1178,7 @@
         (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
         ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
-        ;; (default 4min, catches transport-alive-but-model-silent stalls).
+        ;; (default 185s, catches transport-alive-but-model-silent stalls).
         (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
       (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
@@ -1162,13 +1187,13 @@
       (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
       (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
       (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))
-  (it "uses a four-minute semantic timeout by default and accepts overrides"
+  (it "uses a 185-second semantic timeout by default and accepts overrides"
       ;; Codex/Claude over Copilot can sit silent for minutes while the
       ;; model reasons server-side; idle-timeout-ms keeps resetting on
       ;; SSE pings. The semantic watchdog surfaces \"transport alive but
-      ;; no model events\" inside 4 minutes (a transport-alive stream with
+      ;; no model events\" inside 185 seconds (a transport-alive stream with
       ;; zero events could otherwise stall for many minutes).
-      (expect (= (* 4 60 1000) rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+      (expect (= 185000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
         (expect (= 180000 (:semantic-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))

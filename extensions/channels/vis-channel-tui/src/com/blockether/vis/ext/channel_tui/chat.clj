@@ -657,9 +657,10 @@
         (event-get event :text)]
 
     (case type
-      ;; Older gateways may still send these partial model-text frames; accept
-      ;; them for backward compatibility. Current gateway builds hold reasoning
-      ;; and prose until iteration.completed.
+      ;; Live model-text deltas, coalesced to sentence granularity by the gateway.
+      ;; `reasoning.delta` paints the THINKING trace; `content.delta` paints PROSE
+      ;; (`:prose-final`) or streaming provider content — DISTINCT blocks. The
+      ;; complete, persisted text still lands on iteration.completed.
       "reasoning.delta"
       {:phase :reasoning :iteration iteration :thinking text}
 

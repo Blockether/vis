@@ -1362,13 +1362,20 @@
               ;; `:tab-locals`) instead of stomping the active tab's footer with the
               ;; wrong repo. Nil `workspace-id` (e.g. the /root picker on the active
               ;; session) targets the active tab, as before.
+              ;; A nil/blank workspace (a transient gateway miss on the picker-close
+              ;; re-sync, or a caught error yielding nil) must NEVER stomp a good root:
+              ;; nulling `:workspace/root` flips the footer's git chip to the vis process
+              ;; cwd (the ENGINE's own repo) for a frame — the visible "flicker". Keep the
+              ;; last-known-good workspace when the incoming one carries no root.
               (fn [db [_ ws workspace-id]]
-                (update-tab db
-                            workspace-id
-                            (fn [d]
-                              (assoc d
-                                :workspace ws
-                                :workspace/root (:root ws))))))
+                (if-not (:root ws)
+                  db
+                  (update-tab db
+                              workspace-id
+                              (fn [d]
+                                (assoc d
+                                  :workspace ws
+                                  :workspace/root (:root ws)))))))
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token
    :gateway-turn-id])

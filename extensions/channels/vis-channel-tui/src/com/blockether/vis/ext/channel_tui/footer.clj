@@ -460,10 +460,20 @@
         in-draft?
         (some? (:fork-ms ws))
 
+        ;; Git status is a GATEWAY-computed session fact (`:git` on the
+        ;; workspace record, resolved by the daemon that owns the repo and
+        ;; cached per root). Read it straight off `ws` so a remote TUI gets
+        ;; correct git without touching a filesystem it can't see, and tab
+        ;; switches never re-walk git. Fall back to a LOCAL walk only when the
+        ;; fact is absent (older gateway / no workspace record) — colocated only.
+        git-status
+        (or (:git ws)
+            (if ws-root
+              (git/cached-working-tree-status (File. (str ws-root)))
+              (git/cached-working-tree-status)))
+
         git-spans
-        (git-footer-spans (cond-> (if ws-root
-                                    (git/cached-working-tree-status (File. (str ws-root)))
-                                    (git/cached-working-tree-status))
+        (git-footer-spans (cond-> git-status
                             in-draft?
                             (assoc :draft?
                               true :draft-root
@@ -572,7 +582,7 @@
       (conj {:text tok-text :fg t/footer-fg-muted :bold? false :region :right :priority 2})
 
       cost-text
-      (conj {:text cost-text :fg t/footer-fg-strong :bold? false :region :right :priority 3}))))
+      (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
 (defn- build-limits-segments
   [db now-ms]
   ;; Limits/usage belong to the provider the SESSION actually routes through —

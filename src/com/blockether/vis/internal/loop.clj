@@ -184,22 +184,44 @@
                    :cancel-atom
                    deref)))
 
+(def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS
+  "Ceiling on how long a provider call may have run and still have its interrupt
+   treated as a retryable spurious blip. svar's TTFT watchdog (~60s) can surface
+   a naked `InterruptedException` on a cold-start / queue spike — worth ONE retry.
+   But an interrupt that lands well AFTER the TTFT budget is svar's idle/semantic
+   watchdog firing on a genuinely wedged stream: the provider already got its full
+   budget, so retrying just RESETS every stall clock and doubles the wall-clock
+   hang (2×semantic ≈ 8min) before the failure finally surfaces — and it surfaces
+   as a bare interrupt that reads downstream like an Esc cancel. Past this ceiling
+   we do NOT retry; let the timeout propagate as a real error fast."
+  (+ (long rt/ASK_CODE_TTFT_TIMEOUT_MS) 30000))
+
 (defn- retryable-provider-interrupt?
-  "True for provider-thread interrupts that were not caused by Vis user cancel.
-   svar's TTFT watchdog currently can surface as a naked InterruptedException;
-   retry once instead of letting router treat it like Esc cancellation."
-  [^Throwable t environment]
-  (and (interrupted-cause? t) (not (provider-call-cancelled? environment))))
+  "True for provider-thread interrupts that were not caused by Vis user cancel
+   AND arrived early enough to be a spurious blip rather than a stream-watchdog
+   timeout. svar's TTFT watchdog currently can surface as a naked
+   InterruptedException; retry once instead of letting router treat it like Esc
+   cancellation — but only when the call had not already burned past the TTFT
+   budget (see [[INTERRUPT_RETRY_MAX_ELAPSED_MS]]), so a genuinely stalled stream
+   fails fast instead of being re-sent into another multi-minute wedge."
+  [^Throwable t environment elapsed-ms]
+  (and (interrupted-cause? t)
+       (not (provider-call-cancelled? environment))
+       (< (long elapsed-ms) INTERRUPT_RETRY_MAX_ELAPSED_MS)))
 
 (defn- call-provider-with-interrupt-retry!
   [environment iteration-position f]
   (loop [attempt 0]
-    (let [outcome (try {:ok? true :value (f)} (catch Throwable t {:ok? false :throwable t}))]
+    (let [start-ns (System/nanoTime)
+          outcome (try {:ok? true :value (f)} (catch Throwable t {:ok? false :throwable t}))]
+
       (if (:ok? outcome)
         (:value outcome)
-        (let [t (:throwable outcome)]
+        (let [t (:throwable outcome)
+              elapsed-ms (long (/ (- (System/nanoTime) start-ns) 1000000))]
+
           (if (and (< attempt PROVIDER_INTERRUPT_RETRIES)
-                   (retryable-provider-interrupt? t environment))
+                   (retryable-provider-interrupt? t environment elapsed-ms))
             (do
               ;; Router restores interrupt status before rethrowing. Clear it
               ;; before retry or next HTTP call can fail immediately.
@@ -208,6 +230,7 @@
                          :data (assoc (format-exception-short t)
                                  :iteration iteration-position
                                  :attempt (inc attempt)
+                                 :elapsed-ms elapsed-ms
                                  :max-retries PROVIDER_INTERRUPT_RETRIES
                                  :cancelled? (provider-call-cancelled? environment))}
                         "Provider call interrupted without user cancel; retrying")
@@ -357,9 +380,25 @@
 
 ;; ---------------------------------------------------------------------------
 
+(defn- log-stage-level
+  "Severity for loop-stage telemetry.
+
+   Routine stage breadcrumbs are debug-only to keep ~/.vis/vis.log cheap.  Actual
+   failed turns must still survive the default :info file handler, otherwise the
+   first post-mortem clue disappears exactly when the user needs it.  User
+   cancellation is an intentional stop, not an error."
+  [stage data]
+  (cond (and (= stage :error) (= :cancelled (:reason data))) :info
+        (= stage :error) :error
+        (and (= stage :turn/complete) (= :error (:status data))) :error
+        (and (= stage :turn/complete) (= :cancelled (:status data))) :info
+        :else :debug))
+
 (defn log-stage!
   [stage iteration data]
-  (tel/log! {:level :info :data (merge {:stage stage :iteration iteration} data)}))
+  (tel/log! {:level (log-stage-level stage data)
+             :id ::loop-stage
+             :data (merge {:stage stage :iteration iteration} data)}))
 
 (defn- elapsed-ms [started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
 
@@ -4129,6 +4168,8 @@
          (catch Throwable _ svar-provider))
     svar-provider))
 
+(declare auth-refresh-allowed?)
+
 (defn- boot-refresh-provider-token!
   "Build-time sibling of `try-refresh-provider-token!`. When a provider's
    router build fails with an AUTH-shaped error (401/403 or an auth-worded
@@ -4155,8 +4196,10 @@
         (:provider/refresh-token-fn provider)]
 
     (boolean
-      (when (and f (perr/auth-provider-error? (:status d) provider-message (ex-message t)))
-        (let [rejected (try (:token ((:provider/get-token-fn provider))) (catch Throwable _ nil))]
+      (when (and f
+                 (perr/auth-provider-error? (:status d) provider-message (ex-message t))
+                 (auth-refresh-allowed? pid))
+        (let [rejected (config/baked-token pid)]
           (try
             ;; force refresh-token exchange + persist; pass the rejected token
             ;; so reuse can't hand it straight back. Fall back to 0-arity for
@@ -4302,6 +4345,83 @@
 
 (declare refresh-cached-routers!)
 
+;; ── auth-refresh circuit breaker ─────────────────────────────────────────
+;; The convergence fix (feed the real baked token) collapses the normal
+;; 401→refresh→401 storm to a single exchange. This breaker is the HARD
+;; backstop: if a future regression (a new provider, a change in a provider's
+;; rotation semantics) makes refreshes flap anyway, STOP hammering the token
+;; endpoint — trip after N forced refreshes inside a rolling window and surface
+;; the provider's own auth error (which already says "re-authenticate") instead
+;; of the daemon flapping forever and starving every other gateway call.
+
+(def ^:private AUTH_REFRESH_WINDOW_MS
+  "Rolling window (ms) for the forced-OAuth-refresh circuit breaker."
+  60000)
+
+(def ^:private AUTH_REFRESH_WINDOW_MAX
+  "Max forced OAuth refreshes for one provider inside `AUTH_REFRESH_WINDOW_MS`
+   before the breaker trips. Legitimate rotation refreshes at most a handful of
+   times a minute; more than this is a flap, not real rotation."
+  6)
+
+(defonce ^:private auth-refresh-events
+  ;; provider-id -> vector of epoch-ms timestamps of recent forced refreshes.
+  (atom {}))
+
+(defn- auth-refresh-allowed?
+  "Circuit breaker for forced OAuth refreshes. Atomically records this attempt
+   for `pid`, prunes timestamps older than the rolling window, and returns true
+   while the provider is still under the per-window budget. When it returns
+   false the breaker is OPEN: the caller must NOT refresh and should surface the
+   provider's auth error, so the user re-authenticates once instead of the
+   daemon flapping the token endpoint."
+  [pid]
+  (let [now
+        (System/currentTimeMillis)
+
+        cutoff
+        (- now AUTH_REFRESH_WINDOW_MS)
+
+        recent
+        (-> (swap! auth-refresh-events
+              update
+              pid
+              (fn [ts]
+                (conj (filterv #(> % cutoff) (or ts [])) now)))
+            (get pid))]
+
+    (<= (count recent) AUTH_REFRESH_WINDOW_MAX)))
+
+(defn auth-refresh-metrics
+  "Observability snapshot of the OAuth-refresh circuit breaker. Returns the
+   rolling window, the trip threshold, the per-provider count of forced
+   refreshes still inside the window, and the set of providers currently OVER
+   budget (breaker OPEN). Surfaced by the gateway `/metrics` endpoint so an
+   auth-refresh flap is visible at a glance instead of needing a `vis.log`
+   grep."
+  []
+  (let [cutoff
+        (- (System/currentTimeMillis) AUTH_REFRESH_WINDOW_MS)
+
+        in-window
+        (into {}
+              (for [[pid ts]
+                    @auth-refresh-events
+
+                    :let [n
+                          (count (filter #(> % cutoff) ts))]
+                    :when (pos? n)]
+
+                [pid n]))]
+
+    {:window-ms AUTH_REFRESH_WINDOW_MS
+     :max-per-window AUTH_REFRESH_WINDOW_MAX
+     :refreshes-in-window in-window
+     :breaker-open (into #{}
+                         (keep (fn [[pid n]]
+                                 (when (> n AUTH_REFRESH_WINDOW_MAX) pid)))
+                         in-window)}))
+
 (defn- auth-refreshable-error?
   "True when exception `e` is a provider auth rejection (401/403 or an
    auth-shaped message) AND the failing provider exposes a force-refresh
@@ -4324,18 +4444,35 @@
                   (some-> (registry/provider-by-id pid)
                           :provider/refresh-token-fn)))))
 
+(defn- ensure-router-has-current-token!
+  "Rebuild the global router + reseat cached envs so provider `pid`'s freshly
+   rotated/reused token goes live — but COALESCE a 401 storm: if the live router
+   already bakes the current on-file token (a peer tab just rebuilt after the
+   same refresh), skip the process-global rebuild+reseat entirely. Only the
+   first tab through pays for the global work; the rest ride its result (the
+   retry path reseats this turn's env from the now-fresh global router). This is
+   what turns N concurrent 401s into ONE rebuild instead of N."
+  [pid]
+  (let [current (try (:token ((:provider/get-token-fn (registry/provider-by-id pid))))
+                     (catch Throwable _ nil))]
+    (when (or (nil? current) (not= current (config/baked-token pid)))
+      (let [r (rebuild-router! (config/resolve-config))]
+        (refresh-cached-routers! r)))))
+
 (defn- try-refresh-provider-token!
   "Force an OAuth refresh for the failing provider, then rebuild + reseat
    routers so the fresh token is live. Returns true when a refresh actually
    happened (caller may retry), false otherwise (caller surfaces the error).
 
-   Threads the REJECTED access token — the one the router baked in and the
-   server just 401'd — into the force-refresh hook. It's read back via
-   `:provider/get-token-fn`, which for a locally-valid token returns it WITHOUT
-   refreshing, so it's the very token that failed. The hook's single-flight
-   reuse step then refuses to hand that dead token straight back, closing the
-   timing bug where a locally-fresh but server-rotated token was re-used and
-   401'd again."
+   Threads the REJECTED access token — the one THIS router baked in at build
+   time and the server just 401'd (`config/baked-token`), NOT the current
+   on-file token — into the force-refresh hook. The distinction matters under
+   concurrency: a peer tab/process may already have rotated the on-file token to
+   a fresh one, so re-reading it would hand the single-flight reuse a token that
+   is NOT the one that failed — it would then refuse a perfectly good peer token
+   and force yet another rotation, and the 401 storm never converges. Feeding the
+   real rejected token lets reuse hand back the peer's fresh token instead,
+   collapsing the storm to a single exchange."
   [resolved-model]
   (let [pid
         (:provider resolved-model)
@@ -4347,29 +4484,41 @@
         (:provider/refresh-token-fn provider)
 
         rejected
-        (try (:token ((:provider/get-token-fn provider))) (catch Throwable _ nil))]
+        (config/baked-token pid)]
 
     (boolean
-      (when f
-        ;; force refresh-token exchange + persist; pass the rejected token so
-        ;; reuse can't return it. Fall back to 0-arity for older/third-party
-        ;; hooks that don't accept it.
-        (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-             (let [r (rebuild-router! (config/resolve-config))]
-               (refresh-cached-routers! r))
-             (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                       (str "Auth 401 — force-refreshed OAuth token for "
-                            pid
-                            " and rebuilt router; retrying turn"))
-             true
-             (catch Throwable t
-               (tel/log! {:level :error
-                          :id ::auth-token-refresh-failed
-                          :data {:provider pid :error (ex-message t)}}
-                         (str "Auth 401 — OAuth token refresh FAILED for "
-                              pid
-                              "; surfacing provider error"))
-               false))))))
+      (cond (not f) false
+            (not (auth-refresh-allowed? pid))
+            (do (tel/log! {:level :error
+                           :id ::auth-refresh-circuit-open
+                           :data {:provider pid
+                                  :window-ms AUTH_REFRESH_WINDOW_MS
+                                  :max AUTH_REFRESH_WINDOW_MAX}}
+                          (str "Auth 401 — OAuth refresh circuit OPEN for " pid
+                               " (> " AUTH_REFRESH_WINDOW_MAX
+                               " refreshes in " (quot AUTH_REFRESH_WINDOW_MS 1000)
+                               "s); NOT refreshing — surfacing provider error,"
+                               " re-authenticate this provider"))
+                false)
+            :else
+            ;; force refresh-token exchange + persist; pass the rejected token so
+            ;; reuse can't return it. Fall back to 0-arity for older/third-party
+            ;; hooks that don't accept it.
+            (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                 (ensure-router-has-current-token! pid)
+                 (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+                           (str "Auth 401 — force-refreshed OAuth token for "
+                                pid
+                                " and rebuilt router; retrying turn"))
+                 true
+                 (catch Throwable t
+                   (tel/log! {:level :error
+                              :id ::auth-token-refresh-failed
+                              :data {:provider pid :error (ex-message t)}}
+                             (str "Auth 401 — OAuth token refresh FAILED for "
+                                  pid
+                                  "; surfacing provider error"))
+                   false))))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
@@ -6982,7 +7131,7 @@
      - :model - Override config's default model.
       - :max-context-tokens - Token budget for context.
       - :debug? - Enable verbose debug logging (default: false). Logs iteration details,
-        code evaluation, LLM responses at :info level with :rlm-phase context.
+        code evaluation, LLM responses at :debug level with :rlm-phase context.
       - :reasoning-default - Optional base reasoning effort for reasoning-capable models.
         Accepts :low/:medium/:high or low/medium/high strings. Adaptive escalation still applies.
       - :extra-body - Optional provider-specific request-body params merged into the

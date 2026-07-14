@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -274,6 +275,8 @@
         (fan-out! sid ev))))
   nil)
 
+(declare maybe-resume-pending!)
+
 (defn subscribe!
   "Register an SSE sink and return the replay vector (events with
    `:seq` > `cursor`) ATOMICALLY with the registration, so no event can
@@ -303,6 +306,9 @@
         (let [entry (or entry (fresh-entry sid))]
           (vreset! replay (filterv #(> (:seq %) (or cursor 0)) (:events entry)))
           (assoc-in entry [:subscribers sub-id] sink))))
+    ;; Lazy daemon-boot auto-resume: a client just attached, so re-run its
+    ;; orphaned turn if one was staged at boot (no-op otherwise).
+    (maybe-resume-pending! sid)
     @replay))
 
 (defn unsubscribe! [sid sub-id] (swap! registry update-in [sid :subscribers] dissoc sub-id) nil)
@@ -376,7 +382,14 @@
               :repo-root (:repo-root ws)
               :label (:label ws)
               :fork-ms (:fork-ms ws)
-              :filesystem-roots (workspace/filesystem-roots ws)})))
+              :filesystem-roots (workspace/filesystem-roots ws)
+              ;; Git working-tree status resolved HERE, in the gateway/daemon
+              ;; that owns the repo on disk — streamed to channels as a cached
+              ;; session fact instead of each client re-walking git locally (a
+              ;; remote TUI has no access to the repo's filesystem, and even
+              ;; colocated it stops every tab switch from recomputing). Cached
+              ;; per repo root, so repeated fetches never re-walk a warm root.
+              :git (git/workspace-status (:root ws))})))
        (catch Throwable _ nil)))
 
 (defn- session-state-id
@@ -1354,6 +1367,9 @@
       ;; event log nets to zero (turn.queued … turn.queued.drained). The
       ;; turn.started that follows carries :queued? true for attach flows.
       (append-event! sid "turn.queued.drained" {:turn_id tid})
+      ;; The queued turn is now becoming a real running turn - drop its durable
+      ;; queue row so daemon-boot resume never re-runs an already-started turn.
+      (try (persistance/db-dequeue-turn! (lp/db-info) tid) (catch Throwable _ nil))
       (launch-turn-worker! sid
                            tid
                            request
@@ -1475,6 +1491,15 @@
 
           :queued
           (do (append-event! sid "turn.queued" {:turn_id tid :request request})
+              (try (persistance/db-enqueue-turn!
+                     (lp/db-info)
+                     {:id tid
+                      :session-soul-id sid
+                      :request request
+                      :position (get-in @registry [sid :turns tid :queued_at])
+                      :queued-at (get-in @registry [sid :turns tid :queued_at])})
+                   (catch Throwable t
+                     (tel/log! :warn ["gateway: enqueue persist failed" (str sid) (ex-message t)])))
               {:turn (get-turn sid tid)})
 
           :accepted
@@ -1492,6 +1517,126 @@
                                   :engine-opts engine-opts
                                   :attachments attachments})
             {:turn turn}))))))
+
+(defonce ^:private pending-resumes
+  ;; sid -> VECTOR of persisted user-requests (the interrupted running orphan
+  ;; first, then durable queued turns FIFO) staged at boot for LAZY resume.
+  ;; `resume-orphaned-turns!` populates it and NEVER re-submits at boot (that
+  ;; would stampede N concurrent LLM turns before Jetty is up); the first client
+  ;; to `subscribe!` a staged session re-runs its requests via
+  ;; `maybe-resume-pending!`, so token cost tracks the sessions the user opens.
+  (atom {}))
+
+(def ^:private MAX_AUTO_RESUME_ATTEMPTS
+  "Crash-loop guard for daemon-boot auto-resume: once a session's history tail
+   already carries this many consecutive `:interrupted` turns, stop re-running
+   it — the daemon keeps dying on that request, so re-running forever just burns
+   tokens. A genuine one-off restart never gets near this."
+  3)
+
+(defn- auto-resume-enabled?
+  "Auto-resume is on by default; set VIS_GATEWAY_AUTO_RESUME=false to disable."
+  []
+  (not= "false"
+        (some-> (System/getenv "VIS_GATEWAY_AUTO_RESUME")
+                str/trim
+                str/lower-case)))
+
+(defn- trailing-interrupted-count
+  "How many turns at the END of `sid`'s history are `:interrupted` in a row."
+  [sid]
+  (->> (try (persistance/db-list-session-turns (lp/db-info) sid) (catch Throwable _ []))
+       reverse
+       (take-while #(= :interrupted (:status %)))
+       count))
+
+(defn resume-orphaned-turns!
+  "Daemon boot self-heal for turns left `:running` when the previous daemon died.
+
+   Two steps, both crash-safe:
+   1. SWEEP — flip every stale `:running` turn to `:interrupted` so no client
+      renders a phantom \"thinking\" spinner for a turn no engine is running. Runs
+      UNCONDITIONALLY (even with resume disabled) so the DB is always consistent.
+   2. STAGE — for each orphan whose session is healthy and under the crash-loop
+      guard, record its persisted user request in `pending-resumes`. We do NOT
+      re-submit here: firing one interrupted turn per live session at boot would
+      stampede the provider with N concurrent LLM calls before Jetty is even up.
+      Instead the turn is re-run LAZILY the moment a client attaches to that
+      session (`subscribe!` -> `maybe-resume-pending!`), so the resume rides the
+      gateway's normal per-session queue, staggers naturally, and only spends
+      tokens on sessions the user actually opens.
+
+   The crash-loop guard is evaluated BEFORE the sweep: while the orphan is still
+   `:running` its session's trailing-`:interrupted` count reflects only PRIOR
+   failed attempts, so it trips at exactly `MAX_AUTO_RESUME_ATTEMPTS` (the earlier
+   post-sweep count was off by one). Gated by `auto-resume-enabled?`. Returns the
+   number of turns staged for resume."
+  []
+  (let [orphans
+        (try (persistance/db-list-orphaned-running-turns (lp/db-info)) (catch Throwable _ []))
+
+        eligible
+        (if-not (auto-resume-enabled?)
+          []
+          (filterv (fn [{:keys [session-id user-request]}]
+                     (and session-id
+                          (string? user-request)
+                          (not (str/blank? user-request))
+                          (lp/by-id session-id)
+                          (< (trailing-interrupted-count session-id) MAX_AUTO_RESUME_ATTEMPTS)))
+            orphans))]
+
+    ;; Clean the stale :running flags exactly as the plain sweep did.
+    (try (lp/db-sweep-orphaned-running-turns!) (catch Throwable _ nil))
+    ;; Stage running orphans (append) - never submit, so boot cannot herd.
+    (doseq [{:keys [session-id user-request]} eligible]
+      (swap! pending-resumes update session-id (fnil conj []) user-request))
+    ;; Durable QUEUE: persisted queued turns that never got to run. Stage them
+    ;; behind the running orphan (FIFO), then DROP the durable rows so the lazy
+    ;; re-run (which re-queues its own tail) cannot double them up next boot.
+    (let [queued
+          (try (persistance/db-list-queued-turns (lp/db-info)) (catch Throwable _ []))
+
+          queued-eligible
+          (if-not (auto-resume-enabled?)
+            []
+            (filterv (fn [{:keys [session-id request]}]
+                       (and session-id
+                            (string? request)
+                            (not (str/blank? request))
+                            (lp/by-id session-id)
+                            (< (trailing-interrupted-count session-id) MAX_AUTO_RESUME_ATTEMPTS)))
+              queued))]
+
+      (doseq [{:keys [session-id request]} queued-eligible]
+        (swap! pending-resumes update session-id (fnil conj []) request))
+      ;; Only reap the durable rows when resume is ON; the kill-switch parks them
+      ;; in the DB for a future enabled boot instead of silently discarding.
+      (when (auto-resume-enabled?)
+        (doseq [{:keys [turn-id]} queued]
+          (try (persistance/db-dequeue-turn! (lp/db-info) turn-id) (catch Throwable _ nil))))
+      (+ (count eligible) (count queued-eligible)))))
+
+(defn- maybe-resume-pending!
+  "Lazy leg of daemon-boot auto-resume. When a client attaches to `sid` via
+   `subscribe!`, re-run the turn (if any) that `resume-orphaned-turns!` staged for
+   it — the `:running` turn the previous daemon died mid-flight. The staged
+   request is claimed ATOMICALLY (CAS) so concurrent subscribers resume it exactly
+   once; `submit-turn!` then routes it through the session's normal queue (runs
+   immediately when idle, else queues behind the live turn). No-op — and cheap —
+   when nothing is staged, so it is safe on every subscribe."
+  [sid]
+  (loop []
+
+    (let [m @pending-resumes]
+      (when-let [requests (seq (get m sid))]
+        (if (compare-and-set! pending-resumes m (dissoc m sid))
+          (doseq [request requests]
+            (try (submit-turn! sid {:request request})
+                 (tel/log! :info ["gateway: auto-resumed pending turn on attach" (str sid)])
+                 (catch Throwable t
+                   (tel/log! :warn ["gateway: auto-resume failed" (str sid) (ex-message t)]))))
+          (recur))))))
 
 (defn- terminal-event->result
   "Build the engine-shaped blocking result shared by `submit-turn-sync!` and
@@ -1690,7 +1835,9 @@
                 (let [[kind status] @decision]
                   (case kind
                     :updated
-                    (do (append-event! sid "turn.queued.updated" {:turn_id tid :request request})
+                    (do (try (persistance/db-update-queued-turn! (lp/db-info) tid request)
+                             (catch Throwable _ nil))
+                        (append-event! sid "turn.queued.updated" {:turn_id tid :request request})
                         {:turn (get-turn sid tid)})
 
                     :missing
@@ -1722,7 +1869,9 @@
     (let [[kind status] @decision]
       (case kind
         :deleted
-        (do (append-event! sid "turn.queued.deleted" {:turn_id tid}) {:status "deleted"})
+        (do (try (persistance/db-dequeue-turn! (lp/db-info) tid) (catch Throwable _ nil))
+            (append-event! sid "turn.queued.deleted" {:turn_id tid})
+            {:status "deleted"})
 
         :missing
         {:error :turn-not-found}
@@ -1967,7 +2116,8 @@
   (let [reg @registry]
     (assoc @metrics
       :sessions-tracked (count reg)
-      :turns-running (count (keep :current-turn (vals reg))))))
+      :turns-running (count (keep :current-turn (vals reg)))
+      :auth-refresh (lp/auth-refresh-metrics))))
 
 (defn warm-db!
   "Force the persistence backend + shared connection on the CALLER's

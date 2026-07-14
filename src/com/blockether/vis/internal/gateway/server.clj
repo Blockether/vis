@@ -1545,15 +1545,19 @@
          _
          (state/warm-db!)
 
-         ;; Re-stamp turns left :running by a PREVIOUS process (a daemon
-         ;; restart / crash mid-turn) as :interrupted. Without this the web
-         ;; renders a permanent Stop button + thinking dots for a turn that
-         ;; is no longer executing. The TUI already sweeps at its startup;
-         ;; the gateway must too (it didn't, hence the stuck "running" turns).
+         ;; Self-heal turns left :running by a PREVIOUS process (a daemon
+         ;; restart / crash mid-turn). The stale :running flags are cleared
+         ;; (otherwise the web renders a permanent Stop button + thinking dots
+         ;; for a turn that is no longer executing). Because streaming lives in
+         ;; the dead engine (not the DB) an interrupted turn is re-run from its
+         ;; persisted request, but LAZILY: `resume-orphaned-turns!` only STAGES
+         ;; each orphan here and the actual re-submit fires when a client next
+         ;; attaches to that session, so boot never stampedes the provider with
+         ;; one concurrent LLM turn per live session. Bounded + gated inside.
          _
-         (try ((requiring-resolve 'com.blockether.vis.core/db-sweep-orphaned-running-turns!))
+         (try (state/resume-orphaned-turns!)
               (catch Throwable t
-                (tel/log! :warn ["gateway: orphan-running-turn sweep failed" (ex-message t)])))
+                (tel/log! :warn ["gateway: orphan-running-turn resume failed" (ex-message t)])))
 
          ;; Hydrate persisted toggles + install the config.edn save
          ;; listener so web/gateway-driven flips survive restarts.
@@ -1596,6 +1600,25 @@
       :require-token? require-token?
       :managed? (boolean managed?)})))
 
+(def ^:private GRACEFUL_DRAIN_MS
+  "Max time `stop!` waits for in-flight turns to finish before forcing Jetty
+   down, so a SIGTERM / `vis gateway restart` landing mid-turn lets active work
+   complete instead of being cut off. Only ever waits when turns are actually
+   running (the refcount-idle stop path already has zero)."
+  8000)
+
+(defn- await-turns-drained!
+  "Block up to `GRACEFUL_DRAIN_MS` for running turns to reach zero, polling
+   every 100ms. Returns the residual running-turn count (0 = fully drained)."
+  []
+  (let [deadline (+ (System/currentTimeMillis) GRACEFUL_DRAIN_MS)]
+    (loop []
+
+      (let [n (running-turn-count)]
+        (if (or (zero? n) (>= (System/currentTimeMillis) deadline))
+          n
+          (do (Thread/sleep 100) (recur)))))))
+
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
@@ -1609,6 +1632,17 @@
     ;; with "gateway daemon did not become ready". SO_REUSEADDR can't rescue
     ;; this — it never lets a bind win over an ACTIVE listener, only a closed
     ;; one, so the fix is to close the socket before the reap, not to retry.
+    ;; Graceful drain: give in-flight turns a bounded window to finish before we
+    ;; tear the socket + runtime down, so a SIGTERM / restart mid-turn doesn't
+    ;; guillotine active work. No-op when nothing is running (refcount-idle stop).
+    (let [pending (running-turn-count)]
+      (when (pos? pending)
+        (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
+        (let [residual (await-turns-drained!)]
+          (when (pos? residual)
+            (tel/log! :warn
+                      ["gateway: drain timed out; forcing stop" residual
+                       "turn(s) still running"])))))
     (try (.stop server) (catch Throwable _ nil))
     ;; Kill every session's background resources (shell_bg children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
