@@ -2216,31 +2216,163 @@
         (= :file kind) {:ok? false :msg "Not staged"}
         :else nil))
 
+;;; ── Magit inline minibuffer ─────────────────────────────────────────────────
+;; magit's prompts live in the buffer's OWN bottom row (the hint-bar line), the
+;; way `y-or-n-p` / `completing-read` do in Emacs — NOT as centered modal boxes.
+;; Each primitive overlays the already-painted status buffer's hint row and runs
+;; a tiny read loop; on return the caller repaints and the hint bar comes back.
+
+(defn- magit-mini-confirm!
+  "Inline y/n confirmation painted over the magit hint-bar row. Returns
+   true / false / nil (Esc or q)."
+  [^TerminalScreen screen g left inner-w hint-row text-w prompt]
+  (let [full (str prompt " (y or n)")]
+    (loop []
+
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc left) hint-row inner-w 1)
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/put-str! g (+ left 2) hint-row (ellipsize full text-w))
+      (.setCursorPosition screen nil)
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [key (read-modal-key! screen)]
+        (if (nil? key)
+          (recur)
+          (condp = (key-type key)
+            KeyType/Escape nil
+            KeyType/Character (case (lower-key-character key)
+                                \y
+                                true
+
+                                \n
+                                false
+
+                                \q
+                                nil
+
+                                (recur))
+            (recur)))))))
+
+(defn- magit-mini-read!
+  "Inline editable minibuffer painted over the magit hint-bar row:
+   `<label> <text>` with a live cursor. Enter submits the trimmed string (may
+   be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo char)."
+  [^TerminalScreen screen g left inner-w hint-row text-w label {:keys [initial mask]}]
+  (let [prefix
+        (str label " ")
+
+        pw
+        (p/display-width prefix)
+
+        text
+        (atom (vec (or initial "")))
+
+        cursor
+        (atom (count (or initial "")))]
+
+    (loop []
+
+      (let [txt
+            (apply str @text)
+
+            display
+            (if mask (apply str (repeat (count txt) mask)) txt)
+
+            field-w
+            (max 1 (- text-w pw))
+
+            cx
+            (min (+ left 2 pw @cursor) (+ left inner-w))]
+
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) hint-row inner-w 1)
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/put-str! g (+ left 2) hint-row prefix)
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/put-str! g (+ left 2 pw) hint-row (ellipsize display field-w))
+        (.setCursorPosition screen (p/cursor-pos cx hint-row))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (if (nil? key)
+            (recur)
+            (condp = (key-type key)
+              KeyType/Escape nil
+              KeyType/Enter (str/trim (apply str @text))
+              KeyType/Character (let [c (key-character key)]
+                                  (swap! text #(into (subvec % 0 @cursor)
+                                                     (cons c (subvec % @cursor))))
+                                  (swap! cursor inc)
+                                  (recur))
+              KeyType/Backspace (do (when (pos? @cursor)
+                                      (swap! text #(into (subvec % 0 (dec @cursor))
+                                                         (subvec % @cursor)))
+                                      (swap! cursor dec))
+                                    (recur))
+              KeyType/ArrowLeft (do (swap! cursor #(max 0 (dec %))) (recur))
+              KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
+              (recur))))))))
+
+(defn- magit-mini-choose!
+  "Inline single-key chooser painted over the magit hint-bar row. `choices` is a
+   vec of {:key char :label str :id kw}; renders `<title>  [k] label …` and
+   returns the chosen :id, or nil on Esc."
+  [^TerminalScreen screen g left inner-w hint-row text-w title choices]
+  (let [by-key
+        (into {}
+              (map (fn [{:keys [key] :as it}]
+                     [(Character/toLowerCase (char key)) it]))
+              choices)
+
+        full
+        (str title
+             "  "
+             (str/join "   "
+                       (map (fn [{:keys [key label]}]
+                              (str "[" key "] " label))
+                            choices)))]
+
+    (loop []
+
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc left) hint-row inner-w 1)
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/put-str! g (+ left 2) hint-row (ellipsize full text-w))
+      (.setCursorPosition screen nil)
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [key (read-modal-key! screen)]
+        (if (nil? key)
+          (recur)
+          (condp = (key-type key)
+            KeyType/Escape nil
+            KeyType/Character (if-let [it (get by-key (lower-key-character key))]
+                                (:id it)
+                                (recur))
+            (recur)))))))
+
 (defn- magit-discard-flow!
-  [^TerminalScreen screen root {:keys [kind area path] :as row}]
+  [mini root {:keys [kind area path] :as row}]
   (when (= :file kind)
-    (when (confirm-dialog! screen
-                           "Discard"
-                           (if (= :untracked area)
-                             (str "Delete untracked file " path "?")
-                             (str "Discard changes in " path "?")))
+    (when ((:confirm! mini)
+            (if (= :untracked area)
+              (str "Delete untracked file " path "?")
+              (str "Discard changes in " path "?")))
       (magit/discard-file! root row))))
 
 (defn- magit-commit-flow!
-  [^TerminalScreen screen root model]
-  (when-let [choice (select-dialog! screen
-                                    "Commit"
-                                    [{:label "Commit staged changes" :id :commit}
-                                     {:label "Amend last commit" :id :amend}])]
-    (let [amend? (= :amend (:id choice))]
+  [mini root model]
+  (when-let [id ((:choose! mini)
+                  "Commit:"
+                  [{:key \c :label "commit staged" :id :commit}
+                   {:key \a :label "amend last commit" :id :amend}])]
+    (let [amend? (= :amend id)]
       (if (and (not amend?) (empty? (:staged model)))
         {:ok? false :msg "Nothing staged — stage with s/S first"}
-        (when-let [msg (text-input-dialog! screen
-                                           (if amend? "Amend commit" "Commit")
-                                           "Message"
-                                           :initial
-                                           (if amend? (or (magit/last-commit-message root) "") ""))]
-          (magit/commit! root msg {:amend? amend?}))))))
+        (when-let [msg ((:read! mini)
+                         (if amend? "Amend message:" "Commit message:")
+                         {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
+          (if (str/blank? msg)
+            {:ok? false :msg "Empty message — commit aborted"}
+            (magit/commit! root msg {:amend? amend?})))))))
 
 (defn transient-item-by-key
   "PURE: the transient spec item bound to single character `ch` (a Character or
@@ -2522,58 +2654,51 @@
               :else nil)))))
 
 (defn- magit-branch-flow!
-  [^TerminalScreen screen root]
-  (when-let [c (select-dialog! screen
-                               "Branch"
-                               [{:label "Checkout…" :id :checkout}
-                                {:label "Create & checkout…" :id :create}
-                                {:label "Delete…" :id :delete}])]
-    (case (:id c)
+  [mini root]
+  (when-let [id ((:choose! mini)
+                  "Branch:"
+                  [{:key \b :label "checkout" :id :checkout}
+                   {:key \c :label "create & checkout" :id :create}
+                   {:key \k :label "delete" :id :delete}])]
+    (case id
       :checkout
-      (when-let [b (select-dialog! screen
-                                   "Checkout branch"
-                                   (mapv (fn [{:keys [name current?]}]
-                                           {:label (str name (when current? "  (current)"))
-                                            :name name})
-                                         (magit/local-branches root)))]
-        (magit/checkout-branch! root (:name b)))
+      (when-let [nm ((:read! mini) "Checkout branch:" {})]
+        (when-not (str/blank? nm) (magit/checkout-branch! root (str/trim nm))))
 
       :create
-      (when-let [nm (text-input-dialog! screen "Create branch" "Name")]
+      (when-let [nm ((:read! mini) "Create branch:" {})]
         (when-not (str/blank? nm) (magit/create-branch! root (str/trim nm))))
 
       :delete
-      (when-let [b (select-dialog! screen
-                                   "Delete branch"
-                                   (into []
-                                         (keep (fn [{:keys [name current?]}]
-                                                 (when-not current? {:label name :name name})))
-                                         (magit/local-branches root)))]
-        (when (confirm-dialog! screen "Delete branch" (str "Delete " (:name b) "?"))
-          (let [r (magit/delete-branch! root (:name b) {})]
+      (when-let [nm ((:read! mini) "Delete branch:" {})]
+        (when-not (str/blank? nm)
+          (let [nm (str/trim nm)
+                r (magit/delete-branch! root nm {})]
+
             (if (:ok? r)
               r
-              (if (confirm-dialog! screen
-                                   "Force delete?"
-                                   [(str (:msg r)) (str "Force delete " (:name b) "?")])
-                (magit/delete-branch! root (:name b) {:force? true})
+              (if ((:confirm! mini) (str (:msg r) " — force delete " nm "?"))
+                (magit/delete-branch! root nm {:force? true})
                 r))))))))
 
 (defn- magit-stash-flow!
   "`selected-ref` is the stash under the cursor (when the cursor sits on a
    stash row), else the newest stash is the target of pop/apply/drop."
-  [^TerminalScreen screen root selected-ref model]
-  (let [ref (or selected-ref (:ref (first (:stashes model))))]
-    (when-let [c (select-dialog! screen
-                                 "Stash"
-                                 (cond-> [{:label "Stash working tree…" :id :push}]
-                                   ref
-                                   (into [{:label (str "Pop " ref) :id :pop}
-                                          {:label (str "Apply " ref) :id :apply}
-                                          {:label (str "Drop " ref) :id :drop}])))]
-      (case (:id c)
+  [mini root selected-ref model]
+  (let [ref
+        (or selected-ref (:ref (first (:stashes model))))
+
+        choices
+        (cond-> [{:key \z :label "stash working tree" :id :push}]
+          ref
+          (into [{:key \p :label (str "pop " ref) :id :pop}
+                 {:key \a :label (str "apply " ref) :id :apply}
+                 {:key \k :label (str "drop " ref) :id :drop}]))]
+
+    (when-let [id ((:choose! mini) "Stash:" choices)]
+      (case id
         :push
-        (when-some [m (text-input-dialog! screen "Stash" "Message (optional)")]
+        (when-some [m ((:read! mini) "Stash message:" {})]
           (magit/stash-push! root m))
 
         :pop
@@ -2583,14 +2708,14 @@
         (magit/stash-apply! root ref)
 
         :drop
-        (when (confirm-dialog! screen "Drop stash" (str "Drop " ref "?"))
-          (magit/stash-drop! root ref))))))
+        (when ((:confirm! mini) (str "Drop " ref "?")) (magit/stash-drop! root ref))))))
 
 (defn- magit-char-action!
   "Run the magit verb for character `c` against the row under the cursor.
    Returns an action result `{:ok? :msg}`, or nil when the key did nothing.
-   Case-SENSITIVE — `s`≠`S`, `u`≠`U`, `f`≠`F`, exactly like magit."
-  [^TerminalScreen screen busy! root model rows idx row c]
+   Case-SENSITIVE — `s`≠`S`, `u`≠`U`, `f`≠`F`, exactly like magit. All prompts
+   render inline in the buffer's bottom row via `mini` (never a modal box)."
+  [^TerminalScreen screen busy! mini root model rows idx row c]
   (case c
     \s
     (magit-stage-action! root rows idx row)
@@ -2605,10 +2730,10 @@
     (magit/unstage-all! root)
 
     (\x \k)
-    (magit-discard-flow! screen root row)
+    (magit-discard-flow! mini root row)
 
     \c
-    (magit-commit-flow! screen root model)
+    (magit-commit-flow! mini root model)
 
     \P
     (magit-push-flow! screen busy! root)
@@ -2620,10 +2745,10 @@
     (run-network! busy! "Fetching" #(magit/fetch! root))
 
     \b
-    (magit-branch-flow! screen root)
+    (magit-branch-flow! mini root)
 
     \z
-    (magit-stash-flow! screen root (when (= :stash (:kind row)) (:ref row)) model)
+    (magit-stash-flow! mini root (when (= :stash (:kind row)) (:ref row)) model)
 
     (\g \r)
     {:ok? true :msg "Refreshed"}
@@ -2761,18 +2886,14 @@
                            (:detached? model) "detached HEAD"
                            :else (:branch model)))))
 
+            ;; FULLSCREEN: fill the whole terminal (the shared chrome centers a
+            ;; box clamped to cols-4 × rows-4, so this maxes the magit buffer to
+            ;; the biggest footprint the dialog frame allows).
             content-w
-            (max (footer-content-width cols magit-hints)
-                 (default-content-width cols)
-                 (min 110 (max 40 (- cols 10))))
+            (max (footer-content-width cols magit-hints) (- cols 4))
 
             bounds
-            (draw-dialog-chrome! g
-                                 cols
-                                 term-rows
-                                 title
-                                 content-w
-                                 (default-content-height term-rows))
+            (draw-dialog-chrome! g cols term-rows title content-w (max 1 (- term-rows 4)))
 
             {:keys [left inner-w]}
             bounds
@@ -2825,7 +2946,15 @@
                        text-w))
                    (.setCursorPosition screen nil)
                    (.refresh screen Screen$RefreshType/DELTA)
-                   (catch Throwable _ nil)))]
+                   (catch Throwable _ nil)))
+
+            mini
+            {:confirm! (fn [prompt]
+                         (magit-mini-confirm! screen g left inner-w hint-row text-w prompt))
+             :read! (fn [label opts]
+                      (magit-mini-read! screen g left inner-w hint-row text-w label opts))
+             :choose! (fn [title choices]
+                        (magit-mini-choose! screen g left inner-w hint-row text-w title choices))}]
 
         (dotimes [i visible]
           (let [idx (+ start i)
@@ -2966,6 +3095,7 @@
                                         (do (reset! echo nil)
                                             (run-action! (magit-char-action! screen
                                                                              busy!
+                                                                             mini
                                                                              row-root
                                                                              (model-for row-root)
                                                                              buf-rows
@@ -4422,7 +4552,7 @@
             ;; nil content-h -> shared full-height footprint, matching the
             ;; directory picker (both are long, scrollable browsers)
             bounds
-            (draw-dialog-chrome! g cols rows "Sessions" nil)
+            (draw-dialog-chrome! g cols rows "Sessions" (- cols 4) (- rows 4))
 
             {:keys [left inner-w]}
             bounds
@@ -5293,12 +5423,7 @@
             (.newTextGraphics screen)
 
             bounds
-            (draw-dialog-chrome! g
-                                 cols
-                                 rows-n
-                                 "Sessions"
-                                 (navigator-content-w cols)
-                                 (default-content-height rows-n))
+            (draw-dialog-chrome! g cols rows-n "Sessions" (- cols 4) (- rows-n 4))
 
             {:keys [left right inner-w]}
             bounds

@@ -4890,6 +4890,10 @@
          elapsed-str
          (or (vis/format-duration elapsed-ms) "0ms")
 
+         ;; The ONLY per-tick-volatile row: it embeds the animated spinner
+         ;; glyph + elapsed clock, both a pure function of `now-ms`. Always
+         ;; non-blank (glyph + phase text), which is what lets the body split
+         ;; below stay byte-identical to a single-pass coalesce.
          spinner-line
          (str (spinner-frame now-ms)
               "  "
@@ -4902,42 +4906,93 @@
          (fn [line]
            {:line line :meta nil})
 
-         trace-entries
-         (trace-render-entries {:iterations iterations
-                                :content-w content-w
-                                :settings settings
-                                :now-ms now-ms
-                                :viewport-rows viewport-rows
-                                :session-id session-id
-                                :session-turn-id session-turn-id
-                                :detail-expansions detail-expansions
-                                :live? true})
+         ;; --- Content body cache (everything EXCEPT the spinner row) ----------
+         ;; The heavy per-tick work — `trace-render-entries` (re-walks every
+         ;; iteration), `queued-progress-entries`, `coalesce-bubble-blanks`, and
+         ;; the per-line `strip-paint-markers-line` that builds `:text` — all
+         ;; scale with the WHOLE bubble and dominated the 80ms live-frame
+         ;; profile as a stream grows. NONE of it depends on the spinner clock:
+         ;; `trace-render-entries` ignores `:now-ms`, so the body only changes
+         ;; when the ITERATIONS / queue / geometry / settings / expansions
+         ;; change. Memoize it by CONTENT and splice the freshly-animated
+         ;; spinner row in below, so a bare spinner tick is O(1) + one stripped
+         ;; line instead of O(bubble).
+         ;;
+         ;; Coalesce equivalence: `coalesce-bubble-blanks` is a forward fold and
+         ;; the spinner row is always non-blank, so it forms a fold boundary.
+         ;; Coalescing the prefix (trace + one blank) and the queue
+         ;; INDEPENDENTLY, then splicing the spinner between them, produces the
+         ;; exact same rows as coalescing the whole `(concat prefix [spinner]
+         ;; queued)` in one pass (a following element never changes an earlier
+         ;; element's keep/drop decision).
+         body
+         (cached*
+           [::progress-body (long content-w) (mapv iteration-fingerprint iterations)
+            (boolean (get settings :show-thinking true))
+            (boolean (get settings :show-iterations true))
+            (boolean (get settings :show-silent false)) session-id session-turn-id
+            (turn-detail-expansions-key {:section :iteration
+                                         :session-id session-id
+                                         :session-turn-id session-turn-id
+                                         :detail-expansions detail-expansions})
+            (mapv :text (vec (or pending-sends [])))]
+           (fn []
+             (let [trace-entries
+                   (trace-render-entries {:iterations iterations
+                                          :content-w content-w
+                                          :settings settings
+                                          :now-ms now-ms
+                                          :viewport-rows viewport-rows
+                                          :session-id session-id
+                                          :session-turn-id session-turn-id
+                                          :detail-expansions detail-expansions
+                                          :live? true})
 
-         queued-entries
-         (queued-progress-entries pending-sends content-w)
+                   queued-entries
+                   (queued-progress-entries pending-sends content-w)
 
-         ;; Top margin invariant: the spinner row always has ONE blank
-         ;; line above it inside the bubble, regardless of whether any
-         ;; iterations have been recorded yet. Without this the iter-0
-         ;; "Vis is calling the provider" state sits flush against the
-         ;; bubble's top border while every subsequent state (iter≥1,
-         ;; where trace-entries naturally end with a blank) gets a row
-         ;; of breathing room — a visible jump the moment the first
-         ;; iteration lands. Keeping the blank in both branches makes
-         ;; the bubble height transition smooth and the spinner
-         ;; vertically anchored.
-         base-entries
-         (if (seq trace-entries)
-           (conj (conj trace-entries (line-entry "")) (line-entry spinner-line))
-           [(line-entry "") (line-entry spinner-line)])
+                   ;; Top margin invariant: the spinner row always has ONE blank
+                   ;; line above it inside the bubble, whether or not any
+                   ;; iterations have been recorded yet. Without this the iter-0
+                   ;; "Vis is calling the provider" state sits flush against the
+                   ;; bubble's top border while every subsequent state (iter>=1,
+                   ;; where trace-entries naturally end with a blank) gets a row
+                   ;; of breathing room - a visible jump the moment the first
+                   ;; iteration lands. Keeping the blank in both branches makes
+                   ;; the bubble height transition smooth and the spinner
+                   ;; vertically anchored.
+                   prefix-entries
+                   (if (seq trace-entries)
+                     (conj (vec trace-entries) (line-entry ""))
+                     [(line-entry "")])
 
-         ;; Coalesce across the whole bubble (trace + queued).
-         ;; Same exempt for THINKING pad rows; everything else
-         ;; collapses to one blank between bands.
-         entries
-         (vec (coalesce-bubble-blanks (concat base-entries queued-entries)))]
+                   prefix
+                   (vec (coalesce-bubble-blanks prefix-entries))
 
-     (entries->payload entries))))
+                   queued
+                   (vec (coalesce-bubble-blanks queued-entries))]
+
+               {:prefix-lines (mapv :line prefix)
+                :prefix-meta (mapv :meta prefix)
+                :prefix-text (mapv (comp strip-paint-markers-line :line) prefix)
+                :queued-lines (mapv :line queued)
+                :queued-meta (mapv :meta queued)
+                :queued-text (mapv (comp strip-paint-markers-line :line) queued)})))]
+
+     ;; Splice the fresh spinner row between the cached prefix and queue. This
+     ;; mirrors `entries->payload` exactly: `:text` is the newline-join of the
+     ;; per-line `strip-paint-markers-line` outputs, in the same order as
+     ;; `:lines`.
+     {:lines (-> (:prefix-lines body)
+                 (conj spinner-line)
+                 (into (:queued-lines body)))
+      :line-meta (-> (:prefix-meta body)
+                     (conj nil)
+                     (into (:queued-meta body)))
+      :text (str/join "\n"
+                      (-> (:prefix-text body)
+                          (conj (strip-paint-markers-line spinner-line))
+                          (into (:queued-text body))))})))
 (defn progress->text
   "Build the text body of the live progress placeholder bubble."
   ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
