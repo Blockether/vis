@@ -421,17 +421,17 @@
   "Run the resource's stop-fn in the daemon and unregister it. Returns the
    daemon's stop result map (`{:result \"stopped\"|\"unknown\"|… :id …}`)."
   [sid rid]
-  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/stop")))
+  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/stop?rid=" (enc rid))))
 
 (defn restart-resource!
   "Run the resource's restart-fn in the daemon. Returns the restart result map."
   [sid rid]
-  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/restart")))
+  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/restart?rid=" (enc rid))))
 
 (defn resource-logs
   "Captured output lines for a background via its daemon-side logs-fn, or nil."
   [sid rid]
-  (:lines (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/" (enc rid) "/logs"))))
+  (:lines (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/logs?rid=" (enc rid)))))
 
 (defn list-startables
   "Declarative startables the session can offer, each with the options the daemon

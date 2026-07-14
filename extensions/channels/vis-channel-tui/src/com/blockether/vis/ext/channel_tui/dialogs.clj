@@ -1468,13 +1468,23 @@
                               [rid (get r "id")
                                ;; logs-fn runs OFF the UI thread under a hard
                                ;; deadline — a wedged resource can never hang F4.
+                               ;; A THROWN logs-fn (daemon error / non-2xx) is
+                               ;; caught here too: deref of a failed future
+                               ;; re-raises on the UI thread, which would wedge
+                               ;; the dialog — surface it as an inline line.
                                fetch
-                               #(let [f (future (vis/gateway-resource-logs session-id rid))
+                               #(let [f (future (try (vis/gateway-resource-logs session-id rid)
+                                                     (catch Throwable t {::log-fetch-error t})))
                                       v (deref f 3000 ::log-fetch-timeout)]
 
-                                  (if (= ::log-fetch-timeout v)
+                                  (cond
+                                    (= ::log-fetch-timeout v)
                                     ["… log fetch timed out (3s) — the resource's logs-fn is stuck …"]
-                                    (seq v)))
+                                    (and (map? v) (contains? v ::log-fetch-error))
+                                    [(str "… log fetch failed — "
+                                          (ex-message (::log-fetch-error v))
+                                          " …")]
+                                    :else (seq v)))
                                lines (fetch)]
 
                               (if lines

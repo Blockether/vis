@@ -918,7 +918,13 @@
     (json-response {:iterations (state/turn-trace (get-in request [:path-params :tid]))})
     (session-404 (get-in request [:path-params :sid]))))
 
-(defn- path-rid [request] (get-in request [:path-params :rid]))
+(defn- req-rid
+  "Resource id from the request. It rides as the `rid` QUERY PARAM (not a path
+   segment) because resource ids can embed absolute paths (e.g. an nREPL id
+   `nrepl:/Users/.../ws`); an encoded `/` in a path segment trips Jetty's
+   \"Ambiguous URI path separator\" 400."
+  [request]
+  (get-in request [:query-params "rid"]))
 
 (defn- resources-handler
   "GET /v1/sessions/:sid/resources — the session's live vis-managed resources
@@ -933,28 +939,29 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- resource-stop-handler
-  "POST /v1/sessions/:sid/resources/:rid/stop — run the resource's stop-fn in
+  "POST /v1/sessions/:sid/resources/stop?rid=… — run the resource's stop-fn in
    the daemon (the single canonical stop path) and unregister it."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response (resources/stop! sid (path-rid request)))
+    (json-response (resources/stop! sid (req-rid request)))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- resource-restart-handler
-  "POST /v1/sessions/:sid/resources/:rid/restart — run the resource's restart-fn
+  "POST /v1/sessions/:sid/resources/restart?rid=… — run the resource's restart-fn
    in the daemon (it owns re-registration of any changed DATA)."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response (resources/restart! sid (path-rid request)))
+    (json-response (resources/restart! sid (req-rid request)))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- resource-logs-handler
-  "GET /v1/sessions/:sid/resources/:rid/logs — captured output lines for a
+  "GET /v1/sessions/:sid/resources/logs?rid=… — captured output lines for a
    background via its logs-fn (nil when the resource has none)."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:lines (resources/logs sid (path-rid request))})
+    (json-response {:lines (resources/logs sid (req-rid request))})
     (session-404 (get-in request [:path-params :sid]))))
+
 (defn- startable->wire
   "Serializable descriptor of ONE startable for a remote Resources UI: identity +
    declared inputs, PLUS the options proposed by running its `:options-fn` with
@@ -1450,9 +1457,9 @@
         ["/sessions/:sid/resources" {:get resources-handler}]
         ["/sessions/:sid/resources/startables" {:get startables-handler}]
         ["/sessions/:sid/resources/start" {:post resource-start-handler}]
-        ["/sessions/:sid/resources/:rid/stop" {:post resource-stop-handler}]
-        ["/sessions/:sid/resources/:rid/restart" {:post resource-restart-handler}]
-        ["/sessions/:sid/resources/:rid/logs" {:get resource-logs-handler}]
+        ["/sessions/:sid/resources/stop" {:post resource-stop-handler}]
+        ["/sessions/:sid/resources/restart" {:post resource-restart-handler}]
+        ["/sessions/:sid/resources/logs" {:get resource-logs-handler}]
         ["/sessions/:sid/iterations/:iid/attachments/:idx" {:get attachment-bytes-handler}]
         ["/sessions/:sid/model" {:get session-model-handler :patch set-session-model-handler}]
         ["/sessions/:sid/workspace" {:get workspace-handler}]

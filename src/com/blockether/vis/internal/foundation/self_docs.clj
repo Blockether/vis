@@ -26,18 +26,21 @@
   (:pages (docs/collect)))
 
 (defn- listing
-  "Lean model-facing page index: slug/title/section only — never the
-   content, so listing stays cheap. Returned directly across the Python
-   boundary, so keys are strings."
+  "Lean model-facing page index: slug/title/section + a one-line blurb,
+   never the content, so listing stays cheap. Returned directly across the
+   Python boundary, so keys are strings."
   [ps]
-  (mapv (fn [{:keys [slug title section]}]
+  (mapv (fn [{:keys [slug title section blurb]}]
           (cond-> {"slug" slug "title" title}
             section
-            (assoc "section" section)))
+            (assoc "section" section)
+
+            blurb
+            (assoc "blurb" blurb)))
         ps))
 
 (defn- vis-docs-tool
-  "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\"}, ...]} — list vis's own embedded doc pages.
+  "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\", \"blurb\"}, ...]} — list vis's own embedded doc pages, each with a one-line blurb of what it covers.
 await vis_docs(slug)  -> {\"slug\", \"title\", \"section\", \"content\"} — one page's full markdown.
 Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
   ([] (extension/success {:result {"pages" (listing (pages))}}))
@@ -71,7 +74,8 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
        "the user asks about vis ITSELF — what it is, its features, how to configure "
        "it, or how to extend it (write an extension, add tools or doc pages) — look "
        "the answer up instead of guessing: `await vis_docs()` lists the pages "
-       "(slug/title/section); `await vis_docs(\"<slug>\")` returns that page's full "
+       "(slug/title/section + a one-line blurb of what each covers); "
+       "`await vis_docs(\"<slug>\")` returns that page's full "
        "markdown. Key slugs: \"extending\" (create Clojure extensions), "
        "\"python-extensions\" (drop-in .py extensions: tools/slash/hooks), "
        "\"configuration\" (config files/providers), \"index\" (overview/features). "
