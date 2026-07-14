@@ -390,8 +390,9 @@
         {:summary label}))))
 
 (defn- render-lint-result
-  "lint_code → `N files — E errors, W warnings` headline (the LINT_CODE badge
-   already names the tool); the findings (`file:row:col level message`) in the body."
+  "lint_code → `` `path` — clean `` / `N files — E errors, W warnings` headline
+   (the LINT_CODE badge already names the tool, and the headline names the linted
+   target(s) when given); the findings (`file:row:col level message`) in the body."
   [r]
   (let [errors
         (or (get r "error") 0)
@@ -414,21 +415,35 @@
                ":" (get f "row")
                ":" (get f "col")
                " " (get f "level")
-               ": " (get f "message")))]
+               ": " (get f "message")))
 
-    {:summary (not-empty (str (when-let [n (get r "files")]
-                                (str n " file" (when (not= 1 n) "s")))
-                              (if clean?
-                                (when (get r "files") " — clean")
-                                (str " — "
-                                     errors
-                                     " error"
-                                     (when (not= 1 errors) "s")
-                                     ", "
-                                     warnings
-                                     " warning"
-                                     (when (not= 1 warnings) "s")
-                                     (when (pos? infos) (str ", " infos " info"))))))
+        targets
+        (get r "targets")
+
+        n
+        (get r "files")
+
+        head
+        (cond (= 1 (count targets)) (str "`" (first targets)
+                                         "`" (when (and n (> n 1)) (str " (" n " files)")))
+              (seq targets) (str (count targets)
+                                 " targets"
+                                 (when (and n (> n (count targets))) (str " (" n " files)")))
+              n (str n " file" (when (not= 1 n) "s")))]
+
+    {:summary (not-empty (str head
+                              (when head
+                                (if clean?
+                                  " — clean"
+                                  (str " — "
+                                       errors
+                                       " error"
+                                       (when (not= 1 errors) "s")
+                                       ", "
+                                       warnings
+                                       " warning"
+                                       (when (not= 1 warnings) "s")
+                                       (when (pos? infos) (str ", " infos " info")))))))
      :body (when (seq lines) (fence nil (str/join "\n" lines)))}))
 
 (defn- render-test-result
@@ -791,6 +806,10 @@
     {:symbol 'run_tests
      :native-tool? true
      :call {:lead-opt "language" :rest :always}
+     ;; run_tests can exceed the generic Python eval watchdog; dispatch it
+     ;; directly in Clojure so the language pack's own timeout budget wins.
+     :handler (fn [env input]
+                (run-tests env input))
      :render render-test-result
      :color-role :tool-color/test
      :schema

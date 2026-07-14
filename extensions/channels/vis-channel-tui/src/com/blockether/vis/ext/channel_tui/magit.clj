@@ -213,6 +213,16 @@
              (drop-while str/blank?)
              vec)))
 
+(defn stash-diff-lines
+  "Diff body for one stash row, as plain lines (for the TAB fold): the patch
+   `git stash show -p` produces for `ref`, from the first `diff --git` header
+   down so every file the stash touched is named."
+  [root {:keys [ref]}]
+  (when ref
+    (some->> (ok-lines root ["stash" "show" "-p" "--no-color" ref])
+             (drop-while str/blank?)
+             vec)))
+
 ;; =============================================================================
 ;; Actions — all return {:ok? bool :msg str}
 ;; =============================================================================
@@ -443,6 +453,21 @@
 ;; Pure status-buffer rows
 ;; =============================================================================
 
+(def ^:private default-collapsed-sections
+  "Sections magit folds shut on entry, shown as a header only until TAB opens
+   them: the stash list and the commit log. Working-tree sections (untracked/
+   unstaged/staged/unmerged) stay open so pending changes are always visible."
+  #{:stashes :commits :unpushed :unpulled})
+
+(defn section-open?
+  "Is `area`'s section currently expanded? `expanded` carries `[:section area]`
+   toggle keys that FLIP a section from its default — a default-collapsed
+   section (stash list, commit log) opens when its key is present; a
+   default-open working-tree section closes when its key is present."
+  [expanded area]
+  (let [flipped? (contains? (or expanded #{}) [:section area])]
+    (if (contains? default-collapsed-sections area) flipped? (not flipped?))))
+
 (def ^:private code-labels
   "Porcelain status letter → magit-style row label."
   {"M" "modified"
@@ -472,18 +497,31 @@
 (defn- untracked-row [path] {:kind :file :area :untracked :path path :text (str "  " path)})
 
 (defn- section-rows
-  "One section: a `:section` header + its member rows + expanded diff rows."
+  "One section: a `:section` header + its member rows + expanded diff rows.
+   Collapsed (see `section-open?`) it renders as the header alone."
   [{:keys [area title rows expanded diff-fn]}]
   (when (seq rows)
-    (into [{:kind :section :area area :text (str title " (" (count rows) ")")}]
-          (mapcat (fn [row]
-                    (if (and expanded (contains? expanded [(:area row) (:path row)]))
-                      (into [row]
-                            (map (fn [l]
-                                   {:kind :diff :text (str "    " l)}))
-                            (or (when diff-fn (diff-fn row)) ["(no diff)"]))
-                      [row])))
-          rows)))
+    (let [open?
+          (section-open? expanded area)
+
+          header
+          {:kind :section
+           :area area
+           :collapsible? true
+           :collapsed? (not open?)
+           :text (str title " (" (count rows) ")")}]
+
+      (if-not open?
+        [header]
+        (into [header]
+              (mapcat (fn [row]
+                        (if (and expanded (contains? expanded [(:area row) (:path row)]))
+                          (into [row]
+                                (map (fn [l]
+                                       {:kind :diff :text (str "    " l)}))
+                                (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                          [row])))
+              rows)))))
 
 (defn- blank-row [] {:kind :blank :text ""})
 
@@ -530,18 +568,31 @@
    (let [commit-rows
          (fn [area title commits*]
            (when (seq commits*)
-             (into
-               [{:kind :section :area area :text title}]
-               (mapcat (fn [{:keys [sha subject]}]
-                         (let [row
-                               {:kind :commit :area area :sha sha :text (str "  " sha " " subject)}]
-                           (if (and expanded (contains? expanded [area sha]))
-                             (into [row]
-                                   (map (fn [l]
-                                          {:kind :diff :text (str "    " l)}))
-                                   (or (when diff-fn (diff-fn row)) ["(no diff)"]))
-                             [row]))))
-               commits*)))
+             (let [open?
+                   (section-open? expanded area)
+
+                   header
+                   {:kind :section
+                    :area area
+                    :collapsible? true
+                    :collapsed? (not open?)
+                    :text title}]
+
+               (if-not open?
+                 [header]
+                 (into [header]
+                       (mapcat (fn [{:keys [sha subject]}]
+                                 (let [row {:kind :commit
+                                            :area area
+                                            :sha sha
+                                            :text (str "  " sha " " subject)}]
+                                   (if (and expanded (contains? expanded [area sha]))
+                                     (into [row]
+                                           (map (fn [l]
+                                                  {:kind :diff :text (str "    " l)}))
+                                           (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                                     [row]))))
+                       commits*)))))
 
          upstream-label
          (or upstream "@{upstream}")
@@ -568,10 +619,31 @@
                          :expanded expanded
                          :diff-fn diff-fn})
           (when (seq stashes)
-            (into [{:kind :section :area :stashes :text (str "Stashes (" (count stashes) ")")}]
-                  (map (fn [{:keys [ref message]}]
-                         {:kind :stash :ref ref :text (str "  " ref ": " message)}))
-                  stashes))
+            (let [open?
+                  (section-open? expanded :stashes)
+
+                  header
+                  {:kind :section
+                   :area :stashes
+                   :collapsible? true
+                   :collapsed? (not open?)
+                   :text (str "Stashes (" (count stashes) ")")}]
+
+              (if-not open?
+                [header]
+                (into [header]
+                      (mapcat (fn [{:keys [ref message]}]
+                                (let [row {:kind :stash
+                                           :area :stashes
+                                           :ref ref
+                                           :text (str "  " ref ": " message)}]
+                                  (if (and expanded (contains? expanded [:stashes ref]))
+                                    (into [row]
+                                          (map (fn [l]
+                                                 {:kind :diff :text (str "    " l)}))
+                                          (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                                    [row]))))
+                      stashes))))
           (if (seq unpushed)
             (commit-rows :unpushed
                          (str "Unmerged into " upstream-label " (" (count unpushed) ")")

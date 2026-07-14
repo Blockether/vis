@@ -748,6 +748,12 @@
           (let [f (io/file (str p))]
             (str (if (.isAbsolute f) f (io/file root (str p))))))
 
+        targets
+        (cond code nil
+              path [(relativize-path root (under path))]
+              (seq paths) (mapv #(relativize-path root (under %)) paths)
+              :else nil)
+
         base
         (cond code (lint/lint-code code)
               path (lint-grouped (expand-clj-source-files root [(under path)]))
@@ -756,11 +762,14 @@
                                                            (discover-project-source-paths root))))]
 
     (extension/success
-      {:result (assoc (update base
-                              "findings"
-                              (fn [fs]
-                                (mapv #(update % "file" (partial relativize-path root)) fs)))
-                 "language" "clojure")})))
+      {:result (cond-> (assoc (update base
+                                      "findings"
+                                      (fn [fs]
+                                        (mapv #(update % "file" (partial relativize-path root))
+                                              fs)))
+                         "language" "clojure")
+                 (seq targets)
+                 (assoc "targets" (vec targets)))})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 

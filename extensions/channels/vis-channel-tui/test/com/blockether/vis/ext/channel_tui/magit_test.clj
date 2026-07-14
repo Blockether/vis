@@ -424,7 +424,7 @@
   status-rows-test
   (it "renders head facts, sections with counts, stashes and commits in order"
       (let [rows
-            (magit/status-rows sample-model #{})
+            (magit/status-rows sample-model #{[:section :stashes] [:section :commits]})
 
             texts
             (mapv :text rows)
@@ -446,6 +446,37 @@
         (expect (some #(and (= :file (:kind %)) (str/includes? (:text %) "deleted")) rows))
         (expect (some #(and (= :stash (:kind %)) (= "stash@{0}" (:ref %))) rows))
         (expect (some #(and (= :commit (:kind %)) (= "abc1234" (:sha %))) rows))))
+  (it "folds the stash list and commit log shut by default (magit fold)"
+      (let [rows (magit/status-rows sample-model #{})]
+        (expect (not-any? #(= :stash (:kind %)) rows))
+        (expect (not-any? #(= :commit (:kind %)) rows))
+        ;; the section HEADERS still render so the counts stay visible
+        (expect (some #(and (= :section (:kind %)) (= :stashes (:area %))) rows))
+        (expect (some #(and (= :section (:kind %)) (= :commits (:area %))) rows))))
+  (it "section-open? flips a section from its default (working open, log closed)"
+      (expect (magit/section-open? #{} :unstaged))
+      (expect (magit/section-open? #{} :staged))
+      (expect (not (magit/section-open? #{} :stashes)))
+      (expect (not (magit/section-open? #{} :commits)))
+      (expect (magit/section-open? #{[:section :stashes]} :stashes))
+      (expect (not (magit/section-open? #{[:section :unstaged]} :unstaged))))
+  (it "expands a stash's diff lines directly under its row"
+      (let [diff-fn
+            (fn [{:keys [ref]}]
+              [(str "@@ " ref " @@") "+stashed"])
+
+            rows
+            (magit/status-rows sample-model #{[:section :stashes] [:stashes "stash@{0}"]} diff-fn)
+
+            idx
+            (first (keep-indexed #(when (= :stash (:kind %2)) %1) rows))
+
+            after
+            (subvec rows (inc idx) (+ idx 3))]
+
+        (expect (= [:diff :diff] (mapv :kind after)))
+        (expect (str/includes? (:text (first after)) "stash@{0}"))
+        (expect (str/includes? (:text (second after)) "+stashed"))))
   (it "renders unpushed as Unmerged-into and hides Recent commits (magit order)"
       (let [rows
             (magit/status-rows (assoc sample-model
@@ -501,7 +532,7 @@
               [(str "@@ " sha " @@") "+added"])
 
             rows
-            (magit/status-rows sample-model #{[:commits "abc1234"]} diff-fn)
+            (magit/status-rows sample-model #{[:section :commits] [:commits "abc1234"]} diff-fn)
 
             idx
             (first (keep-indexed #(when (= "abc1234" (:sha %2)) %1) rows))

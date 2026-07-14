@@ -41,15 +41,15 @@
    `message.*` events ever arrive. Without this watchdog the iteration
    loop blocks on `.readLine` until the model finally streams output.
 
-   4 minutes (240000 ms) is the considered ceiling: > Anthropic's
-   documented 185s worst case for legitimate extended thinking on
-   Opus 4.5 (anthropics/claude-agent-sdk-typescript#44), high enough
-   that a deep reasoning model with a real long pre-token phase still
-   succeeds, low enough that a stuck provider surfaces a real error
-   in under 5 minutes instead of stalling the whole turn.
+   185s (185000 ms) matches Anthropic's documented worst case for
+   legitimate extended thinking on Opus 4.5
+   (anthropics/claude-agent-sdk-typescript#44): a genuinely deep
+   pre-token reasoning phase stays under the budget, while a
+   stuck/keepalive-only provider still surfaces a real error in ~3min
+   instead of stalling the turn indefinitely.
 
    Disable per call with `:semantic-timeout-ms nil`."
-  (* 4 60 1000))
+  185000)
 
 (defn with-default-ask-code-idle-timeout
   [opts]

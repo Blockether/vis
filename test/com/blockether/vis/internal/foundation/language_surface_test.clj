@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.language-surface-test
-  (:require [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+  (:require [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.resources :as resources]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -304,4 +305,10 @@
                                [:ext.symbol/schema :properties "paths" :description])]
 
                    (expect (str/includes? lint-paths "files/dirs"))
-                   (expect (re-find #"(?i)dirs/files" test-paths)))))
+                   (expect (re-find #"(?i)dirs/files" test-paths))))
+             (it "run_tests is a direct native handler, not Python-watchdog-bound"
+                 (let [handlers (extension/native-tool-handlers [{:ext/engine
+                                                                  {:ext.engine/symbols
+                                                                   [language-surface/test-symbol]}}]
+                                                                (fake-env []))]
+                   (expect (contains? handlers "run_tests")))))

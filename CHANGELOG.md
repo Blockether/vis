@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- fix(openai-codex): give new Codex models svar's pinned catalog doesn't know
+  yet (e.g. `gpt-5.6-terra`) their real context window via a
+  `:provider/enrich-models-fn` hook, instead of svar's 8192 default that
+  rejected normal turns with "Context overflow … has 8192 context". Only fills
+  the gap — models svar knows keep their catalog window and explicit config
+  `:context` still wins. `gpt-5.6-terra` also added to the provider's
+  default-models.
+
 ## [v0.1.3] - 2026-07-12
 
 ### Changed

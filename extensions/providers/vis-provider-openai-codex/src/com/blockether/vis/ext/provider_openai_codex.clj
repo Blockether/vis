@@ -511,6 +511,15 @@
 (require '[com.blockether.vis.core :as vis])
 (require '[com.blockether.svar.core :as svar])
 
+;; ---------------------------------------------------------------------------
+;; A new Codex model svar's pinned catalog doesn't know yet can still be offered
+;; with its real window declared INLINE on `:default-models` as
+;; `{:name "…" :context N}`: `default-model-configs` carries the map through,
+;; `->svar-model` forwards `:context` to svar, and svar's `provider-model-context`
+;; honors a caller-supplied `:context` over its own catalog / the 8192
+;; `DEFAULT_CONTEXT_LIMIT`. gpt-5.6-terra now rides as a BARE name — svar's
+;; catalog (>= 0.7.59) supplies its 272k window, so no inline `:context` needed.
+
 ;; Provider-specific Settings knob — registered HERE, next to the
 ;; backend it tunes (not in internal/toggles.clj), and visible in the
 ;; settings dialogs only while a Codex provider is actually configured.
@@ -538,8 +547,10 @@
      :ext/license "Apache-2.0"
      :ext/providers [{:provider/id :openai-codex
                       :provider/label "OpenAI Codex (ChatGPT OAuth)"
-                      :provider/preset {:default-models (svar/provider-default-models
-                                                          :openai-codex)}
+                      :provider/preset {:default-models (distinct (concat
+                                                                    (svar/provider-default-models
+                                                                      :openai-codex)
+                                                                    ["gpt-5.6-terra"]))}
                       :provider/status-fn #'status
                       :provider/logout-fn #'logout!
                       :provider/detect-fn #'detect-credentials

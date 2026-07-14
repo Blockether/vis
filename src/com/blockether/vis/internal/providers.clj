@@ -533,15 +533,20 @@
   (ensure-base-url provider))
 
 (defn default-model-configs
-  "Preset `:default-models` as persisted `{:name str}` model maps."
+  "Preset `:default-models` as persisted model maps. A bare-string entry
+   becomes `{:name str}`; a MAP entry is carried through verbatim (name
+   normalized) so a provider can declare `:context` / `:output-limit` / … for
+   a model svar's pinned catalog doesn't know yet — no svar release, no
+   enrich hook. `->svar-model` whitelists which of those keys svar honors, so
+   extra keys are harmless."
   [preset]
   (->> (:default-models preset)
        (keep (fn [model]
-               (when-let [name (some-> model
+               (when-let [name (some-> (config/model-name model)
                                        str
                                        str/trim
                                        not-empty)]
-                 {:name name})))
+                 (if (map? model) (assoc model :name name) {:name name}))))
        distinct
        vec))
 

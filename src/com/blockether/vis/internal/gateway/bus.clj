@@ -32,7 +32,8 @@
   (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent ArrayBlockingQueue]))
 
 (def ^:private POLL_MS
   "Sleep between tail polls while a sibling process is actively streaming."
@@ -96,37 +97,97 @@
 
 (declare start!)
 
+(def ^:private WRITE_QUEUE_SIZE
+  "Bounded async journal backlog. Transient live deltas may be dropped when disk
+   is behind; durable/store? events block until there is room and are flushed
+   before `publish!` returns."
+  4096)
+
+(defonce ^:private writer-queue (ArrayBlockingQueue. WRITE_QUEUE_SIZE))
+
+(defonce ^:private writer (atom nil))
+
+(defn- write-event!
+  "Write one already-shaped event to the shared journal. Never throws."
+  [sid event {:keys [store? truncate?]}]
+  (try (ensure-dir!)
+       (let [f
+             (session-file sid)
+
+             line
+             (str (wire/json-str (assoc event
+                                   :_producer producer-id
+                                   :_pid producer-pid
+                                   :_store (boolean store?)))
+                  "\n")]
+
+         (locking f
+           (with-open [raf (RandomAccessFile. f "rw")]
+             (let [len (.length raf)]
+               (cond truncate? (.setLength raf 0)
+                     (> len MAX_FILE_BYTES) (.setLength raf 0)))
+             (.seek raf (.length raf))
+             (.write raf (.getBytes ^String line StandardCharsets/UTF_8)))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
+  nil)
+
+(defn- start-writer!
+  "Start the single async journal writer. Idempotent. The gateway hot path can now
+   fan out to local subscribers without waiting for ndjson I/O; cross-process
+   ordering is preserved by this one FIFO writer thread."
+  []
+  (when (compare-and-set! writer nil ::starting)
+    (let [t (Thread. ^Runnable
+                     (fn []
+                       (while (not (Thread/interrupted))
+                         (try (let [{:keys [sid event opts done]} (.take writer-queue)]
+                                (write-event! sid event opts)
+                                (when done (deliver done true)))
+                              (catch InterruptedException _ (.interrupt (Thread/currentThread)))
+                              (catch Throwable t
+                                (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
+                     "gateway-bus-writer")]
+      (.setDaemon t true)
+      (.start t)
+      (reset! writer t)))
+  nil)
+
+(defn- enqueue-write!
+  [sid event {:keys [store?] :as opts}]
+  (start-writer!)
+  (if store?
+    ;; Durable events are correctness boundaries (turn.started/completed/failed,
+    ;; queue mutations, titles). Put them behind any already-enqueued transient
+    ;; deltas and wait, so the file is ordered and tests/hydration see them.
+    (let [done (promise)]
+      (.put writer-queue {:sid sid :event event :opts opts :done done})
+      (deref done 5000 false)
+      nil)
+    ;; Transient deltas are live hints. Never block provider/input threads on disk;
+    ;; if the queue is saturated, sibling processes will catch the final canonical
+    ;; text from the durable completion event instead of making the active TUI stutter.
+    (when-not (.offer writer-queue {:sid sid :event event :opts opts})
+      (tel/log! :debug ["gateway-bus: dropped transient event; writer queue full" (:type event)])))
+  nil)
+
 (defn publish!
   "Append one locally-produced `event` to the shared journal for `sid`.
    `truncate?` (true on `turn.started`) resets the file first, bounding it
-   to the current turn. Never throws."
+   to the current turn. Never throws. Transient (`store? false`) live deltas are
+   queued to a writer thread so ndjson I/O cannot stall the gateway hot path;
+   durable events are flushed before this fn returns."
   ([sid event] (publish! sid event {:store? true}))
-  ([sid event {:keys [store? truncate?]}]
+  ([sid event {:keys [store?] :as opts}]
    (try
-     ;; Lazily start the tailer on first publish so the native binary (whose
-     ;; ns-load ran at BUILD time, where a started thread can't be baked into
-     ;; the image heap) still gets a live consumer at RUNTIME. Idempotent.
+     ;; Lazily start the tailer/writer on first publish so the native binary
+     ;; (whose ns-load ran at BUILD time, where started threads can't be baked
+     ;; into the image heap) still gets live runtime workers. Idempotent.
      (start!)
-     (ensure-dir!)
-     (let [f
-           (session-file sid)
-
-           line
-           (str (wire/json-str (assoc event
-                                 :_producer producer-id
-                                 :_pid producer-pid
-                                 :_store (boolean store?)))
-                "\n")]
-
-       (locking f
-         (with-open [raf (RandomAccessFile. f "rw")]
-           (let [len (.length raf)]
-             (cond truncate? (.setLength raf 0)
-                   (> len MAX_FILE_BYTES) (.setLength raf 0)))
-           (.seek raf (.length raf))
-           (.write raf (.getBytes ^String line StandardCharsets/UTF_8)))))
-     nil
-     (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))))
+     (enqueue-write! sid event (assoc opts :store? store?))
+     (catch Throwable t
+       (tel/log! :debug ["gateway-bus: publish enqueue failed" (ex-message t)])
+       nil))
+   nil))
 
 (defn forget!
   "Drop a session's journal (on session close). Never throws."

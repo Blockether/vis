@@ -426,6 +426,10 @@
              (expect (= "(defn f [x]\n        (+ x 1))\n" (slurp f)))
              (finally (cleanup dir))))))
 
+(defdescribe test-runner-timeout-test
+             (it "defaults run_tests to just under the 5 minute native tool budget"
+                 (expect (= 290000 @#'test-runner/default-test-timeout-ms))))
+
 (defdescribe test-runner-fallback-test
              (it "falls back to the project test CLI when the live nREPL lacks lazytest"
                  (let [called

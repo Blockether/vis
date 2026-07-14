@@ -1,11 +1,11 @@
 {
   "lang": "clojure",
-  "prompt": "Rename the Clojure namespace foo.bar to foo.core ACROSS THE WHOLE PROJECT — the ns declaration, the :require target, and every qualified usage — while keeping the local :as alias. Use the project_rename tool.",
+  "prompt": "Rename the Clojure namespace foo.bar to foo.core ACROSS THE WHOLE PROJECT — the ns declaration, the :require target, and every qualified usage — while keeping the local :as alias. Use symbol_rename first, then move src/foo/bar.clj to src/foo/core.clj; do not read src/foo/core.clj until after the move.",
   "want": {
     "src/app.clj": ["foo.core/h 1", "fb/h 2", "[foo.core :as fb]"]
   },
   "wantnot": {
     "src/app.clj": ["foo.bar"]
   },
-  "want_tools": ["project_rename"]
+  "want_tools": ["symbol_rename"]
 }

@@ -57,6 +57,13 @@
                   str/trim)]
     (when (seq s) (.getCanonicalPath (io/file s)))))
 
+(defn- path-within-root?
+  "True when `path` is the same directory as `root`, or lives below it."
+  [root path]
+  (when-let [root (normalize-root root)]
+    (when-let [path (normalize-root path)]
+      (.startsWith (.toPath (io/file path)) (.toPath (io/file root))))))
+
 (defn workspace-root
   "Extract a canonical :workspace/root from an env map or raw root value."
   [env-or-root]
@@ -531,13 +538,18 @@
     (let [canon (normalize-root path)
           dir (some-> canon
                       io/file)
-          roots (filesystem-roots ws)]
+          roots (filesystem-roots ws)
+          covering (some #(when (path-within-root? (:trunk %) canon) %)
+                         (cons {:trunk (:root ws)} roots))]
 
       (cond (nil? canon) (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path}))
             (not (.isDirectory ^File dir)) (throw (ex-info (str "Not a directory: " path)
                                                            {:type :workspace/not-a-directory
                                                             :path path}))
-            (some #(= canon (:trunk %)) roots) ws ;; idempotent — already a filesystem root
+            (and covering (= canon (:trunk covering))) ws ;; idempotent — already a filesystem root
+            covering
+            (throw (ex-info (str "Already allowed by " (:trunk covering))
+                            {:type :workspace/already-covered :path path :root (:trunk covering)}))
             :else
             (let [entry (if (draft? ws)
                           (let [nm (free-workspace-name canon "ctx")
