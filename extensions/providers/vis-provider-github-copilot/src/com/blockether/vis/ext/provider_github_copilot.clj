@@ -400,6 +400,31 @@
 ;; Cached Copilot API token. Shape: {:token str :expires-at-ms long :oauth-token str}
 (defonce ^:private token-cache (atom nil))
 
+(defn- cached-token-usable?
+  "True when a cached Copilot token map may still be SERVED for `account-type`:
+   it carries a token, matches the account, its hard expiry is still in the
+   future, and we are BEFORE its proactive-refresh deadline.
+
+   `:refresh-at-ms` honors GitHub's `refresh_in` (refresh after N seconds) — the
+   AUTHORITATIVE refresh signal — instead of holding the token until `expires_at`.
+   Accounts whose `refresh_in` is far shorter than `expires_at - now` otherwise
+   keep a token the LLM proxy already rejects (`IDE token expired`), and the 401
+   recovery loop, trusting `expires_at`, re-serves/re-mints it forever without
+   converging. Falls back to `expires_at - REFRESH_MARGIN_MS` for caches minted
+   before `:refresh-at-ms` existed."
+  [cached account-type now]
+  (let [hard
+        (long (or (:expires-at-ms cached) 0))
+
+        refresh-at
+        (long (or (:refresh-at-ms cached) (- hard REFRESH_MARGIN_MS)))]
+
+    (boolean (and cached
+                  (:token cached)
+                  (= account-type (or (normalize-account-type (:account-type cached)) :individual))
+                  (> hard now)
+                  (< now refresh-at)))))
+
 (defn- exchange-for-copilot-token!
   "Exchange an OAuth token for a short-lived Copilot API token.
    Returns {:token str :expires-at-ms long :api-url str}. `:api-url` is the LLM
@@ -419,9 +444,28 @@
     (when-not (:token resp)
       (throw (ex-info "Copilot token exchange failed - no token in response"
                       {:response resp :url url})))
-    (let [token (:token resp)]
+    (let [token
+          (:token resp)
+
+          now
+          (System/currentTimeMillis)
+
+          hard-ms
+          (* (long (:expires_at resp)) 1000)
+
+          refresh-in
+          (:refresh_in resp)]
+
       {:token token
-       :expires-at-ms (* (long (:expires_at resp)) 1000)
+       :expires-at-ms hard-ms
+       ;; `refresh_in` (seconds) is GitHub's AUTHORITATIVE proactive-refresh
+       ;; signal — refresh once it elapses, NOT at `expires_at`. Accounts whose
+       ;; `refresh_in` is far shorter than `expires_at - now` otherwise keep a
+       ;; token the proxy already rejects ("IDE token expired"), storming the 401
+       ;; recovery loop. Clamp to the hard expiry; fall back to the fixed margin.
+       :refresh-at-ms (if refresh-in
+                        (min hard-ms (+ now (* (long refresh-in) 1000)))
+                        (- hard-ms REFRESH_MARGIN_MS))
        :api-url (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
        :account-type account-type
        :sku (or (response-field resp :sku) (response-field resp :access_type_sku))
@@ -445,10 +489,7 @@
          now
          (System/currentTimeMillis)]
 
-     (if (and cached
-              (:token cached)
-              (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
-              (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+     (if (cached-token-usable? cached account-type now)
        ;; Cached token is still valid. Reuse the LLM base captured at exchange
        ;; (the token's authoritative `endpoints.api` + `/v1`). Only re-derive
        ;; when an older cache lacks it — and even then via `copilot-llm-base-url`
@@ -689,12 +730,7 @@
             now
             (System/currentTimeMillis)]
 
-        (when (and cached
-                   (:token cached)
-                   (not= rejected (:token cached))
-                   (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
-                   (= account-type
-                      (or (normalize-account-type (:account-type cached)) :individual)))
+        (when (and (cached-token-usable? cached account-type now) (not= rejected (:token cached)))
           (get-copilot-token! {:account-type account-type}))))
     ;; REFRESH: drop the cache and force one fresh exchange.
     (fn []

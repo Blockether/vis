@@ -69,6 +69,34 @@
         (expect (= "https://api.individual.githubcopilot.com/v1" (:api-url token)))
         (expect (= "GitHubCopilotChat/0.26.7" (get-in token [:llm-headers "User-Agent"])))
         (expect (= "vscode-chat" (get-in token [:llm-headers "Copilot-Integration-Id"]))))))
+(it "honors refresh_in: a token past its proactive-refresh deadline is NOT re-served (issue #16)"
+    ;; refresh_in expired but hard expires_at far in the future. The old code
+    ;; trusted expires_at and re-served the proxy-rejected token forever (401
+    ;; "IDE token expired" storm). cached-token-usable? must now say unusable so
+    ;; get-copilot-token! re-mints instead of looping.
+    (let [usable?
+          @#'sut/cached-token-usable?
+
+          now
+          (System/currentTimeMillis)]
+
+      (expect (false? (usable? {:token "t"
+                                :account-type :individual
+                                :expires-at-ms (+ now 1500000)
+                                :refresh-at-ms (- now 1000)}
+                               :individual
+                               now)))
+      ;; before refresh_in elapses the token is still served (no needless churn)
+      (expect (true? (usable? {:token "t"
+                               :account-type :individual
+                               :expires-at-ms (+ now 1800000)
+                               :refresh-at-ms (+ now 1200000)}
+                              :individual
+                              now)))
+      ;; legacy cache with no :refresh-at-ms falls back to expires - margin
+      (expect (true? (usable? {:token "t" :account-type :individual :expires-at-ms (+ now 1800000)}
+                              :individual
+                              now)))))
 
 (defdescribe
   copilot-base-url-test
