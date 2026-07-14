@@ -37,7 +37,6 @@ jobs:
           # macos-latest (M1, 7 GB) deadlocks the native-image builder because
           # GraalPy forces -Xms14g — 7 GB swaps into a DeadlockWatchdog kill.
           - { os: macos-15-xlarge, bin: target/vis,     asset: vis-macos-arm64 }
-          - { os: windows-latest, bin: target/vis.exe, asset: vis-windows-x64.exe }
     steps:
       - uses: actions/checkout@v4
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
@@ -46,11 +45,6 @@ jobs:
       # Bump the version inside the action together with deps.edn's org.graalvm.*
       # pins — Truffle/SVM refuse mismatches.
       - uses: ./.github/actions/setup-graalvm-25
-      # native-image links through the platform C toolchain; on Windows that's
-      # MSVC, which graalvm/setup-graalvm used to configure for us. The CE
-      # composite doesn't, so set the MSVC dev environment up explicitly.
-      - if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest

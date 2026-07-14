@@ -11,16 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Full test suite on every OS. vis embeds GraalPy (Truffle) + rift FFM, so
-  # tests run on Oracle GraalVM 25 (the runtime the app targets). fail-fast
-  # false so each OS reports independently — Windows GraalPy/FFM is the riskiest.
+  # Full test suite on Linux + macOS only. vis embeds GraalPy (Truffle) + rift
+  # FFM, so tests run on Oracle GraalVM 25 (the runtime the app targets).
+  # fail-fast false so each OS reports independently. Windows is not supported.
   tests:
     name: tests / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free

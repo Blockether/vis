@@ -63,9 +63,8 @@
                         (.addInput terminal (KeyStroke. KeyType/Enter))
                         (expect (= {:scroll-delta 300} (read-modal-input! screen)))
                         (expect (= KeyType/Enter
-                                   (-> (read-modal-input! screen)
-                                       :key
-                                       .getKeyType)))
+                                   (.getKeyType ^com.googlecode.lanterna.input.KeyStroke
+                                                (:key (read-modal-input! screen)))))
                         (finally (.stopScreen screen))))))
 
 (defdescribe select-dialog-wheel-test

@@ -16,8 +16,14 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input InputDecoder KeyDecodingProfile KeyStroke KeyType]
+  (:import [com.googlecode.lanterna.input CharacterPattern InputDecoder KeyDecodingProfile KeyStroke
+            KeyType]
            [java.io StringReader]))
+
+(defn- pat-match
+  "Typed `.match` so the CharacterPattern (and its Matching result) don't reflect."
+  ^com.googlecode.lanterna.input.CharacterPattern$Matching [^CharacterPattern p chars]
+  (.match p chars))
 
 (defdescribe input-buffer-test
              (it "empty-input is one empty line, cursor at 0,0"
@@ -82,15 +88,15 @@
 
 (defn- ctrl-key [^Character ch] (KeyStroke. ch true false))
 
-(defn- special-key [ktype] (KeyStroke. ktype false false))
+(defn- special-key [^KeyType ktype] (KeyStroke. ktype false false))
 
 (defn- alt-key [^Character ch] (KeyStroke. ch false true))
 
-(defn- alt-special-key [ktype] (KeyStroke. ktype false true))
+(defn- alt-special-key [^KeyType ktype] (KeyStroke. ktype false true))
 
-(defn- ctrl-special-key [ktype] (KeyStroke. ktype true false))
+(defn- ctrl-special-key [^KeyType ktype] (KeyStroke. ktype true false))
 
-(defn- alt-shift-special-key [ktype] (KeyStroke. ktype false true true))
+(defn- alt-shift-special-key [^KeyType ktype] (KeyStroke. ktype false true true))
 
 (defdescribe
   handle-key-test
@@ -206,7 +212,7 @@
             @#'input/ctrl-h-pattern
 
             m
-            (.match ctrl-h-pattern [(Character. (char 0x08))])
+            (pat-match ctrl-h-pattern [(Character. (char 0x08))])
 
             ks
             (.fullMatch m)]
@@ -336,7 +342,7 @@
         (expect (= {:action :continue :state line-gone}
                    (input/handle-key (ctrl-key (Character. \u)) state))))))
 
-(defn- custom-decoder
+(defn- ^InputDecoder custom-decoder
   [s]
   (let [decoder (InputDecoder. (StringReader. s))]
     (.addProfile decoder
@@ -388,8 +394,7 @@
 (defdescribe alt-backspace-pattern-test
              (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"
                  (doseq [ch [(Character. (char 0x7f)) (Character. (char 0x08))]]
-                   (let [match (.match input/alt-backspace-pattern
-                                       (java.util.ArrayList. [(Character. (char 0x1b)) ch]))
+                   (let [match (pat-match input/alt-backspace-pattern [(Character. (char 0x1b)) ch])
                          key (.-fullMatch match)]
 
                      (expect (= KeyType/Backspace (.getKeyType key)))
@@ -636,19 +641,19 @@
 (defdescribe
   sgr-mouse-pattern-test
   (it "NOT_YET on empty / partial prefixes"
-      (let [m (.match input/sgr-mouse-pattern (mk-chars ""))]
+      (let [m (pat-match input/sgr-mouse-pattern (mk-chars ""))]
         (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
-      (let [m (.match input/sgr-mouse-pattern (mk-chars "\u001B"))]
+      (let [m (pat-match input/sgr-mouse-pattern (mk-chars "\u001B"))]
         (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
-      (let [m (.match input/sgr-mouse-pattern (mk-chars "\u001B[<0;1"))]
+      (let [m (pat-match input/sgr-mouse-pattern (mk-chars "\u001B[<0;1"))]
         (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m))))
   (it "nil on shape violation (third byte is not '<')"
       ;; Plain CSI sequences (no '<') belong to other patterns -
       ;; sgr-mouse-pattern must reject them so Lanterna keeps trying.
-      (expect (nil? (.match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
+      (expect (nil? (pat-match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
   (it "left-button press at column 50, row 1 decodes correctly"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
 
             ks
             (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
@@ -666,7 +671,7 @@
                      (.getActionType ma))))))
   (it "left-button release uses lowercase 'm' as terminator"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -678,7 +683,7 @@
         (expect (= 111 (.getColumn (.getPosition ma))))))
   (it "wheel-up button (64) maps to SCROLL_UP"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -687,7 +692,7 @@
         (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_UP (.getActionType ma)))))
   (it "wheel-down button (65) maps to SCROLL_DOWN without reflection warnings"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -702,7 +707,7 @@
         (expect (not (str/includes? (str err) "input.clj")))))
   (it "drag with button held (32) maps to DRAG"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -711,7 +716,7 @@
         (expect (= com.googlecode.lanterna.input.MouseActionType/DRAG (.getActionType ma)))))
   (it "plain motion (35: bits=3 + drag bit) maps to MOVE"
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -722,7 +727,7 @@
       ;; The whole point of switching to SGR: legacy X10 corrupted
       ;; this case to mx=65500. SGR is ASCII text so col 200 stays 200.
       (let [m
-            (.match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
+            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
 
             ma
             ^com.googlecode.lanterna.input.MouseAction
@@ -787,7 +792,9 @@
 
         act
         (fn [ch ctrl? alt?]
-          (:action (input/handle-key (KeyStroke. (Character/valueOf ch) ctrl? alt?) st)))]
+          (:action (input/handle-key
+                     (KeyStroke. (Character/valueOf ch) (boolean ctrl?) (boolean alt?))
+                     st)))]
 
     (it "M-> jumps to the bottom (end-of-buffer → :recenter)"
         (expect (= :recenter (act \> false true))))

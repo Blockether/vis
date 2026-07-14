@@ -447,7 +447,7 @@
                            wav-file)]
 
              (expect (= "raw transcript" (transcribe-file! input)))
-             (let [wav (deref transcribed 1000 :timeout)]
+             (let [^java.io.File wav (deref transcribed 1000 :timeout)]
                (expect (= @converted-file wav))
                (expect (str/ends-with? (.getName wav) ".wav"))
                (expect (false? (.exists wav)))))

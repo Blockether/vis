@@ -18,7 +18,7 @@
 (defn- run-in!
   [root & args]
   (let [pb (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String args))]
-    (.directory pb (java.io.File. root))
+    (.directory pb (java.io.File. ^String root))
     (let [proc (.start pb)
           exit (.waitFor proc)]
 

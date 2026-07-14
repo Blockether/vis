@@ -22,12 +22,12 @@
   "Run `f` with a freshly-created temp dir (as `java.io.File`); always
    delete the tree on exit. Function-based to keep clj-kondo happy."
   [f]
-  (let [tmp (fs/create-temp-dir {:prefix "vis-agents-test-"})]
+  (let [^java.nio.file.Path tmp (fs/create-temp-dir {:prefix "vis-agents-test-"})]
     (try (f (.toFile tmp)) (finally (fs/delete-tree tmp)))))
 
 (defdescribe scan-in-test
              (it "AGENTS.md present -> :found? true, :source :repo"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (spit (java.io.File. root "AGENTS.md") "# rules\nuse honeysql\n")
                               (let [{:keys [result warnings]} (agents/scan-in root)]
                                 (expect (:found? result))
@@ -36,7 +36,7 @@
                                 (expect (= "# rules\nuse honeysql\n" (:content result)))
                                 (expect (empty? warnings))))))
              (it "AGENTS.md absent + CLAUDE.md present -> :repo:claude-md-fallback"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (spit (java.io.File. root "CLAUDE.md") "# claude rules\n")
                               (let [{:keys [result]} (agents/scan-in root)]
                                 (expect (:found? result))
@@ -44,14 +44,14 @@
                                 (expect (str/ends-with? (:path result) "CLAUDE.md"))
                                 (expect (= "# claude rules\n" (:content result)))))))
              (it "AGENTS.md wins over CLAUDE.md when both exist"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (spit (java.io.File. root "AGENTS.md") "# agents wins\n")
                               (spit (java.io.File. root "CLAUDE.md") "# claude loses\n")
                               (let [{:keys [result]} (agents/scan-in root)]
                                 (expect (= :repo (:source result)))
                                 (expect (= "# agents wins\n" (:content result)))))))
              (it "neither file present -> :found? false, no warnings"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (let [{:keys [result warnings]} (agents/scan-in root)]
                                 (expect (false? (:found? result)))
                                 (expect (empty? warnings))))))
@@ -60,7 +60,7 @@
                  ;; block; provider prompt caching covers the cost. The reader
                  ;; must never silently drop bytes.
                  (with-tmp*
-                   (fn [root]
+                   (fn [^java.io.File root]
                      (let [f
                            (java.io.File. root "AGENTS.md")
 
@@ -79,7 +79,7 @@
 
 (defdescribe instructions-shape-test
              (it "instructions uses active workspace root instead of JVM cwd"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (spit (java.io.File. root "AGENTS.md") "# workspace rules\n")
                               (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                                 (let [result (:result (agents/reload!))]
@@ -89,13 +89,13 @@
                               (binding [workspace/*workspace-root* nil]
                                 (agents/reload!)))))
              (it "instructions returns a map even when nothing found"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (let [{:keys [result]} (agents/scan-in root)]
                                 (expect (map? result))
                                 (expect (false? (:found? result)))
                                 (expect (some? result))))))
              (it "conditional reload rereads only when guidance file marker changes"
-                 (with-tmp* (fn [root]
+                 (with-tmp* (fn [^java.io.File root]
                               (let [file (java.io.File. root "AGENTS.md")]
                                 (spit file "# first\n")
                                 (binding [workspace/*workspace-root* (.getCanonicalPath root)]

@@ -524,7 +524,7 @@
   ;; for an absolute path, so name it explicitly per-OS.
   (str (fs/file (System/getProperty "java.home") "bin" (if (fs/windows?) "java.exe" "java"))))
 
-(defn- start-multiprocess-writer!
+(defn- ^Process start-multiprocess-writer!
   ([dir marker] (start-multiprocess-writer! dir marker "child"))
   ([dir marker title]
    (let [norm
@@ -542,11 +542,13 @@
          _
          (spit script multiprocess-child-code)
 
+         ^java.util.List cmd
+         [(java-command) (str "-Dvis.test.db-dir=" (norm dir))
+          (str "-Dvis.test.marker=" (norm (or marker ""))) (str "-Dvis.test.title=" title)
+          "clojure.main" (norm (str script))]
+
          pb
-         (ProcessBuilder. ^java.util.List
-                          [(java-command) (str "-Dvis.test.db-dir=" (norm dir))
-                           (str "-Dvis.test.marker=" (norm (or marker "")))
-                           (str "-Dvis.test.title=" title) "clojure.main" (norm (str script))])]
+         (ProcessBuilder. cmd)]
 
      ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: the full
      ;; classpath blows past Windows' ~32k command-line limit, so CreateProcess
@@ -633,7 +635,7 @@
                                                            {:select [:title]
                                                             :from [:session_state]})))))
                            (finally (vis/db-dispose-connection! s))))
-                    (finally (doseq [child [child-a child-b]]
+                    (finally (doseq [^Process child [child-a child-b]]
                                (when (.isAlive child) (.destroyForcibly child))))))
              (finally (fs/delete-tree dir))))))
 
@@ -715,11 +717,12 @@
           (.setAutoCommit c1 false)
           (jdbc/execute! c1 (sql/format {:select [:*] :from [:snapshot_probe] :where [:= :id 1]}))
           (jdbc/execute! c2 (sql/format {:update :snapshot_probe :set {:v 1} :where [:= :id 1]}))
-          (let [thrown (try (jdbc/execute!
-                              c1
-                              (sql/format {:update :snapshot_probe :set {:v 2} :where [:= :id 1]}))
-                            nil
-                            (catch Throwable t t))]
+          (let [^Throwable thrown (try (jdbc/execute! c1
+                                                      (sql/format {:update :snapshot_probe
+                                                                   :set {:v 2}
+                                                                   :where [:= :id 1]}))
+                                       nil
+                                       (catch Throwable t t))]
             (expect (some? thrown))
             (expect (str/includes? (.getMessage thrown) "SQLITE_BUSY_SNAPSHOT")))
           (finally (.close c1) (.close c2) (fs/delete-if-exists db-file)))))

@@ -121,7 +121,8 @@
       (try
         ;; read inside the root works
         (expect (= "ROOT-DATA"
-                   (.asString (ev (str "open(" (pr-str (str root "/inside.txt")) ").read()")))))
+                   (.asString ^org.graalvm.polyglot.Value
+                              (ev (str "open(" (pr-str (str root "/inside.txt")) ").read()")))))
         ;; write inside the root works
         (ev (str "open(" (pr-str (str root "/w.txt")) ",\"w\").write(\"x\")"))
         ;; read OUTSIDE the root is denied (PermissionError on the guest side)
@@ -129,12 +130,14 @@
         ;; listing outside is denied (no leak)
         (expect (try (ev "__import__(\"os\").listdir(\"/etc\")") false (catch Throwable _ true)))
         ;; GraalPy's own stdlib (outside the roots) still imports
-        (expect (str/includes? (.asString (ev "__import__(\"json\").dumps({\"ok\":1})")) "ok"))
+        (expect (str/includes? (.asString ^org.graalvm.polyglot.Value
+                                          (ev "__import__(\"json\").dumps({\"ok\":1})"))
+                               "ok"))
         (finally (.close ctx true))))))
 
 (defn- write-channel!
   "Open `path` for write through `fs`, write `s`, close — driving the outbox tap."
-  [fs ^java.nio.file.Path path ^String s]
+  [^org.graalvm.polyglot.io.FileSystem fs ^java.nio.file.Path path ^String s]
   (let [ch (.newByteChannel fs
                             path
                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE

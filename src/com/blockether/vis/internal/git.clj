@@ -17,7 +17,12 @@
   (:import [java.io File]
            [java.util.concurrent TimeUnit]))
 
-(def ^:private default-cache-ms 15000)
+;; Kept in lockstep with the TUI workspace poll (screen.clj `workspace-refresh-ms`,
+;; 4s): a shorter TTL is pointless (the poll can't surface a change faster than it
+;; ticks) and a longer one is the whole reason the footer used to lag magit by
+;; ~15s. Stale-while-revalidate, so a poll on a stale entry returns instantly and
+;; the refreshed value lands on the next tick — worst-case footer latency ~4-8s.
+(def ^:private default-cache-ms 4000)
 
 (def ^:private default-git-timeout-secs 10)
 
@@ -418,64 +423,7 @@
                                :error (ex-message t)}]))
                  (finally (swap! status-refreshing? disj cwd))))))
 
-(defn- serve-cached-status
-  "Stale-while-revalidate read for the render hot path: return the cached
-   status for `cwd` IMMEDIATELY (never blocks on git) and kick off an async
-   refresh when the entry is missing or expired. The cache is keyed PER cwd, so
-   switching between tabs pointed at different repos serves each root's last
-   resolved value instantly instead of blanking (a repo the cache has never seen
-   still shows blank for one refresh cycle rather than stalling the frame) — git
-   status is advisory chrome, never worth a synchronous ~2ms git walk on the
-   render thread (which caused a periodic hitch every time the TTL lapsed)."
-  [cwd ^File start now-ms ttl-ms]
-  (let [{:keys [expires-at value]} (get @working-tree-status-cache cwd)]
-    (when (or (nil? expires-at) (>= (long now-ms) (long expires-at)))
-      (refresh-status-async! cwd start ttl-ms))
-    value))
 
-(defn cached-working-tree-status
-  "Cached `working-tree-status` for hot render paths.
-
-   Stale-while-revalidate: the TUI footer repaints often, so this NEVER shells
-   out to git on the caller's (render) thread. It returns the last resolved
-   value instantly and refreshes in the background when the 15s TTL lapses, so
-   a footer repaint costs a cache read, not a git walk. Keyed by cwd so every
-   UI namespace shares one resolved view."
-  ([] (cached-working-tree-status (System/currentTimeMillis) default-cache-ms))
-  ([^File start] (cached-working-tree-status start (System/currentTimeMillis) default-cache-ms))
-  ([now-ms ttl-ms] (serve-cached-status (.getPath (cwd-file)) nil now-ms ttl-ms))
-  ([^File start now-ms ttl-ms]
-   (serve-cached-status (.getPath (.getCanonicalFile start)) start now-ms ttl-ms)))
-(defn seed-working-tree-status!
-  "Synchronously resolve and publish the working-tree status for `start` into
-   the shared cache, so the FIRST render after a root switch shows the NEW
-   repo instead of a blank/\"No git\" frame.
-
-   `cached-working-tree-status` is stale-while-revalidate: on a cache MISS
-   (a cwd it hasn't seen) it returns nil immediately and refreshes in the
-   background — correct for the hot repaint path, but it means a `/root`
-   switch paints the wrong repo (or \"No git\") for one refresh cycle. A root
-   switch is a rare, user-initiated event (not per-frame), so paying one
-   synchronous ~2ms git walk HERE — on the dispatch thread, never the render
-   thread — is the right trade: the next footer paint is already warm.
-
-   No-op outside a git repo (publishes `{:workspace? false}`). Never throws."
-  [^File start]
-  (when start
-    (try (let [canon
-               (.getCanonicalFile start)
-
-               value
-               (working-tree-status canon)]
-
-           ;; A root switch is authoritative — our synchronous value IS the new
-           ;; truth for this cwd, so publish it into the per-cwd cache unconditionally.
-           (swap! working-tree-status-cache assoc
-             (.getPath canon)
-             {:expires-at (+ (System/currentTimeMillis) (long default-cache-ms)) :value value}))
-         (catch Throwable t
-           (tel/log! :warn
-                     ["git: seed-working-tree-status! failed" (.getPath start) (ex-message t)])))))
 
 (defn workspace-status
   "Working-tree status resolved as a GATEWAY SESSION FACT — for the daemon that
