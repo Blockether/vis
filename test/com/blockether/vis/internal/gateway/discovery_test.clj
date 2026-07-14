@@ -76,7 +76,7 @@
   (let [base
         ["/opt/vis"]
 
-        argv
+        ^java.util.List argv
         (disco/spawn-argv {:db "/x/vis.db" :port 7890 :host "127.0.0.1" :base base})]
 
     (testing "--db is a start flag"
@@ -88,7 +88,7 @@
       (is (= "7890" (nth argv (inc (.indexOf argv "--port"))))))
     (is (= "/opt/vis" (first argv))))
   (testing "memory db omits --db"
-    (let [argv (disco/spawn-argv {:db :memory :port 1 :base ["v"]})]
+    (let [^java.util.List argv (disco/spawn-argv {:db :memory :port 1 :base ["v"]})]
       (is (= -1 (.indexOf argv "--db")))
       (is (some #{"gateway"} argv))
       (is (some #{"start"} argv))))

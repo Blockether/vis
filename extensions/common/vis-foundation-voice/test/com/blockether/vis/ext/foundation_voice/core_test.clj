@@ -28,7 +28,7 @@
              ;; model-files returns `/`-separated paths on EVERY OS.
              (expect (= (.replace (str (.resolve dir "en_US-ryan-high.onnx")) "\\" "/")
                         (:model (voice/model-files (str dir)))))
-             (finally (doseq [path (reverse (file-seq (.toFile dir)))]
+             (finally (doseq [^java.io.File path (reverse (file-seq (.toFile dir)))]
                         (.delete path))))))
   (it "synthesizes with the default model directory when :model-dir is omitted"
       (let [out
@@ -146,8 +146,10 @@
                         {:out-file (str out-file)})
                       voice/play-file! (fn [wav]
                                          (swap! calls conj [:play (str wav)])
-                                         {:process (.start (ProcessBuilder. ^java.util.List
-                                                                            ["sh" "-c" "true"]))})]
+                                         {:process (.start (ProcessBuilder.
+                                                             ^"[Ljava.lang.String;"
+                                                             (into-array String
+                                                                         ["sh" "-c" "true"])))})]
 
           @(voice/speak-answer-async! "hello")
           (expect (some #(= [:worker "hello"] (subvec % 0 2)) @calls))

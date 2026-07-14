@@ -11,8 +11,9 @@
 
 (defmacro with-python-context
   [& body]
-  `(let [~'python-context (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ^Context ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
+                                                                         {}))]
+     (try ~@body (finally (.close ~'python-context)))))
 
 (defdescribe
   sqlite3-module-test

@@ -42,10 +42,8 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.git :as git])
-  (:import [java.io File]
-           [java.time Instant ZoneId]
+            [com.blockether.vis.internal.format :as fmt])
+  (:import [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]
            [java.util Locale]))
 
@@ -460,25 +458,15 @@
         in-draft?
         (some? (:fork-ms ws))
 
-        ;; Git status. Prefer the LIVE, per-cwd cache (stale-while-revalidate,
-        ;; 15s TTL) whenever the repo is locally readable — a colocated TUI must
-        ;; never show a FROZEN turn-end snapshot. The gateway `:git` fact on the
-        ;; workspace record is only refetched at turn end / root switch
-        ;; (`:set-workspace`), so between turns it drifts from reality and from
-        ;; the magit buffer (which always reads live). The local cache is cheap
-        ;; on the render thread (a cache read, never a git walk) and stays fresh.
-        ;; Fall back to the gateway-computed `:git` fact ONLY when the local walk
-        ;; sees no repo — i.e. a REMOTE gateway owns a filesystem this TUI can't
-        ;; touch (cold local cache returns nil → also uses the fact until warm).
-        local-git
-        (if ws-root
-          (git/cached-working-tree-status (File. (str ws-root)))
-          (git/cached-working-tree-status))
-
+        ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
+        ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
+        ;; the repo — the single source of truth every channel reads (web footer,
+        ;; TUI footer, magit). NO client-side git walk here: the TUI keeps the fact
+        ;; fresh between turns via the workspace-refresh poller
+        ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
+        ;; the render thread ever shelling out to git.
         git-status
-        (cond (:workspace? local-git) local-git
-              (:git ws) (:git ws)
-              :else local-git)
+        (:git ws)
 
         git-spans
         (git-footer-spans (cond-> git-status

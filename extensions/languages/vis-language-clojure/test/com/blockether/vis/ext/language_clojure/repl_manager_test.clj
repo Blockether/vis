@@ -264,7 +264,8 @@
 (defdescribe
   wait-until-up-test
   (it "returns :died immediately when the process exits before binding — never burns the deadline"
-      (let [p (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "exit 3"]))]
+      (let [p (.start (ProcessBuilder. ^"[Ljava.lang.String;"
+                                       (into-array String ["sh" "-c" "exit 3"])))]
         (.waitFor p)
         (let [t0 (System/currentTimeMillis)
               st (#'rm/wait-until-up p 59871 60000)]
@@ -272,7 +273,8 @@
           (expect (= :died st))
           (expect (< (- (System/currentTimeMillis) t0) 5000)))))
   (it "returns :starting when the deadline passes with the process still alive"
-      (let [p (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "sleep 30"]))]
+      (let [p (.start (ProcessBuilder. ^"[Ljava.lang.String;"
+                                       (into-array String ["sh" "-c" "sleep 30"])))]
         (try (expect (= :starting (#'rm/wait-until-up p 59872 600)))
              (finally (.destroyForcibly p)))))
   (it "tolerates a nil process (pure port probe)"
