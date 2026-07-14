@@ -206,7 +206,7 @@
    on the worker), then `.get` in submission order. This IS the conveyance
    under test: an artifact produced inside `await gather(...)` runs on a virtual
    thread yet must still reach the block's `:attachments`."
-  [executor]
+  [^java.util.concurrent.ExecutorService executor]
   (fn [& thunks]
     (let [thunks
           (if (and (= 1 (count thunks)) (sequential? (first thunks)))

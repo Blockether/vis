@@ -203,12 +203,12 @@
   (it "move_after relocates the node below its dependency (forward-ref fix)"
       (let [r (edit "demo.clj" fwd-src {:op :move-after :target "user" :anchor "norm"})]
         ;; norm now comes BEFORE user
-        (expect (< (.indexOf r "defn norm") (.indexOf r "defn user")))
+        (expect (< (.indexOf ^String r "defn norm") (.indexOf ^String r "defn user")))
         ;; the moved body is intact
         (expect (str/includes? r "(defn user [s]\n  (norm s))"))))
   (it "move_before relocates above the anchor"
       (let [r (edit "demo.clj" clj-src {:op :move-before :target "sub" :anchor "add"})]
-        (expect (< (.indexOf r "defn sub") (.indexOf r "defn add")))))
+        (expect (< (.indexOf ^String r "defn sub") (.indexOf ^String r "defn add")))))
   (it "leaves whitespace ELSEWHERE in the file untouched (no file-wide rewrite)"
       (let [src
             (str "(ns demo)\n\n(defn a [x] x)\n\n\n\n(defn far [x] x)\n\n"
@@ -230,7 +230,7 @@
             r
             (edit "m.py" src {:op :move-after :target "user" :anchor "norm"})]
 
-        (expect (< (.indexOf r "def norm") (.indexOf r "def user"))))))
+        (expect (< (.indexOf ^String r "def norm") (.indexOf ^String r "def user"))))))
 
 (defdescribe
   replace-node-test

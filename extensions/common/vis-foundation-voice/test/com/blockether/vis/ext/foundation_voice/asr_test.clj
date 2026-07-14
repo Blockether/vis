@@ -6,7 +6,7 @@
            [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]))
 
 (defn- write-silence-wav!
-  [file seconds]
+  [^java.io.File file seconds]
   (let [format
         (AudioFormat. 16000.0 16 1 true false)
 
@@ -58,7 +58,10 @@
         (let [bytes (java.nio.file.Files/readAllBytes (.toPath wav))
               cut (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
-          (java.nio.file.Files/write (.toPath wav) cut (make-array java.nio.file.OpenOption 0)))
+          (java.nio.file.Files/write (.toPath wav)
+                                     cut
+                                     ^"[Ljava.nio.file.OpenOption;"
+                                     (make-array java.nio.file.OpenOption 0)))
         (try (asr/validate-wav-file! (str wav))
              (expect false)
              (catch clojure.lang.ExceptionInfo e
@@ -106,7 +109,10 @@
               cut
               (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
-          (java.nio.file.Files/write (.toPath wav) cut (make-array java.nio.file.OpenOption 0)))
+          (java.nio.file.Files/write (.toPath wav)
+                                     cut
+                                     ^"[Ljava.nio.file.OpenOption;"
+                                     (make-array java.nio.file.OpenOption 0)))
         (with-redefs [asr/ensure-model! identity]
           (try (asr/transcribe-file! (str dir) (str wav))
                (expect false)

@@ -9,15 +9,16 @@
      - default denylist     ⇒ cloud-metadata SSRF endpoints blocked even under `*`.
      - explicit denylist    ⇒ wins over the allowlist (even `*`)."
   (:require [com.blockether.vis.internal.env-python :as env]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [org.graalvm.polyglot Context]))
+
+(defn- ^Context pctx [ctx] (get ctx :python-context))
 
 (defn- outcome
   "Eval a DNS resolution for `host` in `ctx` and classify: `:ok`, `:blocked`
    (guard refused), or `:no-socket` (capability denied / unresolvable)."
   [ctx host]
-  (try (.eval (:python-context ctx)
-              "python"
-              (str "import socket; socket.gethostbyname(" (pr-str host) ")"))
+  (try (.eval (pctx ctx) "python" (str "import socket; socket.gethostbyname(" (pr-str host) ")"))
        :ok
        (catch Throwable e (if (re-find #"is blocked" (str (.getMessage e))) :blocked :no-socket))))
 
@@ -31,7 +32,7 @@
                   "        s.connect((" (pr-str host)
                   ", 9)); return 'connected'\n" "    except PermissionError: return 'blocked'\n"
                   "    except Exception: return 'reached'\n" "_p()")]
-    (case (.asString (.eval (:python-context ctx) "python" code))
+    (case (.asString (.eval (pctx ctx) "python" code))
       "blocked"
       :blocked
 
@@ -41,20 +42,19 @@
   network-guard-test
   (it "OFF ⇒ no sockets at all (DNS denied)"
       (let [off (env/create-python-context {} nil nil)]
-        (try (expect (= :no-socket (outcome off "localhost")))
-             (finally (.close (:python-context off) true)))))
+        (try (expect (= :no-socket (outcome off "localhost"))) (finally (.close (pctx off) true)))))
   (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
       (let [star (env/create-python-context {} nil {:enabled? true :allowed-domains ["*"]})]
         (try (expect (= :ok (outcome star "localhost")))
              ;; cloud-metadata SSRF endpoint is denied by default even under `*`
              (expect (= :blocked (outcome star "169.254.169.254")))
-             (finally (.close (:python-context star) true)))))
+             (finally (.close (pctx star) true)))))
   (it "allowlist ⇒ confines to listed hosts (subdomain ok, others blocked)"
       (let [conf
             (env/create-python-context {} nil {:enabled? true :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome conf "www.example.com")))
              (expect (= :blocked (outcome conf "evil.com")))
-             (finally (.close (:python-context conf) true)))))
+             (finally (.close (pctx conf) true)))))
   (it "denied `*` + allow some ⇒ deny everything EXCEPT the allowlist"
       (let [d (env/create-python-context
                 {}
@@ -62,7 +62,7 @@
                 {:enabled? true :denied-domains ["*"] :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome d "www.example.com"))) ; specific allow beats deny `*`
              (expect (= :blocked (outcome d "evil.com"))) ; deny `*` blocks the rest
-             (finally (.close (:python-context d) true)))))
+             (finally (.close (pctx d) true)))))
   (it "allow `*` + deny some ⇒ allow everything EXCEPT the denylist"
       (let [a (env/create-python-context
                 {}
@@ -70,7 +70,7 @@
                 {:enabled? true :allowed-domains ["*"] :denied-domains ["example.com"]})]
         (try (expect (= :blocked (outcome a "example.com"))) ; specific deny beats allow `*`
              (expect (= :ok (outcome a "localhost")))
-             (finally (.close (:python-context a) true)))))
+             (finally (.close (pctx a) true)))))
   (it "enforces at connect() too — a raw-IP socket can't skip DNS to a denied IP"
       ;; The default denylist's headline target (the metadata IP 169.254.169.254) is
       ;; an IP literal; a raw `socket.connect((ip, port))` never hits DNS, so guarding
@@ -81,4 +81,4 @@
                 {:enabled? true :allowed-domains ["*"] :denied-domains ["127.0.0.1"]})]
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
-             (finally (.close (:python-context c) true))))))
+             (finally (.close (pctx c) true))))))

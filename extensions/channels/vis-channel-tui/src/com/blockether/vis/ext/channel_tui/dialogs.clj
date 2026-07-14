@@ -11,7 +11,6 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
@@ -5167,29 +5166,18 @@
                                    [dir-canon-str :error
                                     "No session yet — send a message first, then set a root"])
                       target-base? (reset! notice [dir-canon-str :ok "Already the session's root"])
-                      :else
-                      (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
-                             (reset! ws-info new-ws)
-                             (reset! wid (:id new-ws))
-                             ;; Synchronously warm the git status cache for the
-                             ;; NEW root so the footer paints the new repo on
-                             ;; the very next frame instead of "No git" for a
-                             ;; refresh cycle (stale-while-revalidate miss on
-                             ;; the unseen cwd). The TUI C-r path bypasses
-                             ;; turns, so the turn-completion seed can't cover
-                             ;; it — seed right here, at the change site.
-                             (when-let [nr (:root new-ws)]
-                               (try (git/seed-working-tree-status! (java.io.File. (str nr)))
-                                    (catch Throwable t
-                                      (tel/log! :warn
-                                                ["dialogs: git seed-working-tree-status! failed" nr
-                                                 (ex-message t)])
-                                      nil)))
-                             (reset! notice [dir-canon-str :ok
-                                             (str "Root changed — session now works in "
-                                                  target-name)]))
-                           (catch Throwable t
-                             (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
+                      :else (try (let [new-ws (vis/gateway-change-root! sid (.getPath target-dir))]
+                                   (reset! ws-info new-ws)
+                                   (reset! wid (:id new-ws))
+                                   ;; The footer reads the gateway `:git` fact (kept
+                                   ;; fresh by the workspace-refresh poller), so no
+                                   ;; client-side git walk is needed on the root switch.
+                                   (reset! notice [dir-canon-str :ok
+                                                   (str "Root changed — session now works in "
+                                                        target-name)]))
+                                 (catch Throwable t
+                                   (reset! notice [dir-canon-str :error
+                                                   (or (ex-message t) (str t))]))))))
 
             enter!
             (fn []

@@ -23,7 +23,9 @@
         f
         (File/createTempFile "test-fig-" ".png" dir)]
 
-    (Files/write (.toPath f) ^bytes png-bytes (make-array java.nio.file.OpenOption 0))
+    (Files/write (.toPath f)
+                 ^bytes png-bytes
+                 ^"[Ljava.nio.file.OpenOption;" (make-array java.nio.file.OpenOption 0))
     (.getAbsolutePath f)))
 
 (defn- fence

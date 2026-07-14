@@ -8,7 +8,7 @@
 
 (defn- with-tmp-dir*
   [f]
-  (let [tmp (fs/create-temp-dir {:prefix "vis-prompt-templates-"})]
+  (let [^java.nio.file.Path tmp (fs/create-temp-dir {:prefix "vis-prompt-templates-"})]
     (try (f (.toFile tmp)) (finally (fs/delete-tree tmp)))))
 
 (defdescribe parse-invocation-test

@@ -71,12 +71,32 @@
                       ;; never hands the pages back, so idle RSS balloons. A
                       ;; periodic idle GC + tight free-ratios make G1 shrink
                       ;; committed toward the live set and uncommit to the OS;
-                      ;; it re-commits smoothly under load. No -Xmx cap so heavy
-                      ;; GraalPy user code can still burst.
+                      ;; it re-commits smoothly under load.
                       "-XX:+G1PeriodicGCInvokesConcurrent"
                       "-XX:G1PeriodicGCInterval=10000"
                       "-XX:MinHeapFreeRatio=10"
                       "-XX:MaxHeapFreeRatio=25"
+                      ;; Raise the heap CEILING. There is no explicit -Xmx, but the
+                      ;; JVM STILL caps the heap at an ergonomic default
+                      ;; MaxHeapSize of 25% of physical RAM (~2 GB on an 8 GB box)
+                      ;; — THAT is the "2 GB limit". GraalPy/Truffle warmup plus a
+                      ;; long transcript can want much more, so lift the ceiling to
+                      ;; 75% of RAM. This is a CAP, not a reservation: the
+                      ;; free-ratio + periodic-GC flags above still uncommit idle
+                      ;; pages, so steady-state RSS stays small while bursts get
+                      ;; the headroom. Percentage scales across machines instead of
+                      ;; a hardcoded number.
+                      "-XX:MaxRAMPercentage=75.0"
+                      ;; String dedup runs a concurrent G1 pass that folds
+                      ;; byte-identical LONG-LIVED strings (the retained transcript
+                      ;; text kept across renders) onto ONE shared backing array,
+                      ;; shrinking the retained live set / RSS. Note: it targets
+                      ;; survivor strings, not the short-lived per-render churn
+                      ;; (those die young, before the dedup age threshold), so its
+                      ;; win is lower retained heap, not fewer GCs. G1 is JDK 21's
+                      ;; default GC, so this is active without an explicit
+                      ;; -XX:+UseG1GC.
+                      "-XX:+UseStringDeduplication"
                       "-Djava.awt.headless=true"
                       "-Dapple.awt.UIElement=true"]
           :main-opts ["-m" "com.blockether.vis.core"]}

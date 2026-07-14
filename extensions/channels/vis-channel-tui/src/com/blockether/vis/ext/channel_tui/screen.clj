@@ -23,7 +23,6 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
@@ -2780,6 +2779,47 @@
     (.setDaemon t true)
     (.start t)
     t))
+
+(def ^:private workspace-refresh-ms 4000)
+
+(defn- start-workspace-refresh-thread!
+  "Keep the gateway workspace fact (root + git status) fresh between turns.
+   Git status is a SERVER-SIDE session fact — `git/workspace-status`, a
+   stale-while-revalidate cache in the daemon that OWNS the repo — and the footer
+   reads ONLY that fact (no client-side git walk, no fallback). Refetch it on a
+   slow cadence so the footer's changed-file count tracks reality (and agrees with
+   magit) instead of freezing at the last turn-end `:set-workspace` snapshot.
+   Dispatches only when the `:git` fact actually changes, so an idle session costs
+   one cheap gateway read per tick and never churns the render loop."
+  ^Thread []
+  (let [t (Thread. ^Runnable
+                   (fn []
+                     (loop [last-git ::init]
+                       (when-not (:shutdown? @state/app-db)
+                         (let [ws (try (when-let [sid (get-in @state/app-db [:session :id])]
+                                         (when-let [ws (vis/gateway-session-workspace sid)]
+                                           (when (:root ws) ws)))
+                                       (catch Throwable t
+                                         (tel/log! {:level :warn
+                                                    :id ::workspace-refresh-failed
+                                                    :data {:error (or (ex-message t) (str t))}
+                                                    :msg "Workspace refresh failed"})
+                                         nil))
+                               next-git (if ws
+                                          (let [g (:git ws)]
+                                            (when (not= g last-git)
+                                              (state/dispatch [:set-workspace ws]))
+                                            g)
+                                          last-git)]
+
+                           (try (Thread/sleep (long workspace-refresh-ms))
+                                (catch InterruptedException _ nil))
+                           (recur next-git)))))
+                   "vis-channel-tui-workspace-refresh")]
+    (.setDaemon t true)
+    (.start t)
+    t))
+
 (defn- format-session-not-found
   "Build a friendly multi-line message for `--session-id` misses,
    listing the most recent sessions so the user has
@@ -3347,6 +3387,7 @@
            ;; one managed worker process-wide; see its ns comment for the
            ;; invalidation events that restart it.
            provider-limits-thread (volatile! nil)
+           workspace-refresh-thread (volatile! nil)
            terminal-signal-cleanup (volatile! nil)]
 
        (.startScreen screen)
@@ -3495,6 +3536,7 @@
            (future (try (slash-suggestions-for-input screen (input-state-from-text "/"))
                         (catch Throwable _ nil)))
            (vreset! provider-limits-thread (start-provider-limits-thread!))
+           (vreset! workspace-refresh-thread (start-workspace-refresh-thread!))
            ;; Local UI state that lives only in the input thread.
            ;;
            ;; `scrollbar-drag-offset` is `nil` when no drag is in
@@ -3909,10 +3951,7 @@
                                        ;; draft's git state, never the trunk's.
                                        repos (magit/workspace-roots (:workspace db) fallback)]
 
-                                   (with-dialog-lock #(dlg/magit-dialog! screen repos))
-                                   (try (git/seed-working-tree-status!
-                                          (java.io.File. (str (or (:root (first repos)) fallback))))
-                                        (catch Throwable _ nil)))))
+                                   (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
                  ;; button). One dialog at a time: drop the F2/help overlays and
                  ;; any active search before the modal so nothing bleeds around it.
                  open-resources! (fn open-resources! []
@@ -5512,6 +5551,8 @@
              (when-let [t @render-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @provider-limits-thread]
+               (try (.join ^Thread t 500) (catch Throwable _ nil)))
+             (when-let [t @workspace-refresh-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (doseq [[_ cleanup] @title-listeners]
                (try (cleanup) (catch Throwable _ nil)))

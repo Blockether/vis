@@ -22,7 +22,7 @@
   root-help-test
   (it
     "describes Vis and root one-shot flags"
-    (let [help (commandline/render-tree (#'main/root-command))]
+    (let [^String help (commandline/render-tree (#'main/root-command))]
       (expect
         (.contains
           help
@@ -134,7 +134,7 @@
                  (let [{:keys [command]}
                        (commandline/find-leaf (#'main/root-command) ["vis" "sessions"])
 
-                       help
+                       ^String help
                        (commandline/render-command command ["vis" "sessions"])]
 
                    (expect (.contains help "vis sessions <list|show|fork|delete|search|export>"))

@@ -13,6 +13,11 @@
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
+(defn- rgb-tuple
+  "[r g b] of a Lanterna RGB colour (typed to avoid reflection)."
+  [^TextColor$RGB c]
+  [(.getRed c) (.getGreen c) (.getBlue c)])
+
 (defn- channel
   "Linearise an sRGB component per WCAG 2.x."
   ^double [^long c]
@@ -41,18 +46,13 @@
 
 (defdescribe
   heading-colours-test
-  (describe
-    "Markdown heading SLATE ladder exists and has the documented values"
-    ;; Premium palette (2026-07-02): headings are an editorial slate ladder
-    ;; — near-black H1 down to slate H3 — weight/contrast carries hierarchy,
-    ;; no gold/amber ink (chrome recedes; color is for semantic states).
-    (it "H1 is near-black slate"
-        (expect (= [38 38 38] [(.getRed t/md-h1-fg) (.getGreen t/md-h1-fg) (.getBlue t/md-h1-fg)])))
-    (it "H2 is dark slate"
-        (expect (= [63 63 63] [(.getRed t/md-h2-fg) (.getGreen t/md-h2-fg) (.getBlue t/md-h2-fg)])))
-    (it "H3 is mid slate"
-        (expect (= [90 84 74]
-                   [(.getRed t/md-h3-fg) (.getGreen t/md-h3-fg) (.getBlue t/md-h3-fg)]))))
+  (describe "Markdown heading SLATE ladder exists and has the documented values"
+            ;; Premium palette (2026-07-02): headings are an editorial slate ladder
+            ;; — near-black H1 down to slate H3 — weight/contrast carries hierarchy,
+            ;; no gold/amber ink (chrome recedes; color is for semantic states).
+            (it "H1 is near-black slate" (expect (= [38 38 38] (rgb-tuple t/md-h1-fg))))
+            (it "H2 is dark slate" (expect (= [63 63 63] (rgb-tuple t/md-h2-fg))))
+            (it "H3 is mid slate" (expect (= [90 84 74] (rgb-tuple t/md-h3-fg)))))
   (describe
     "Headings are readable on every surface they're painted on (contrast >= AA 4.5)"
     (it "H1 on white assistant bg" (expect (>= (contrast-ratio t/md-h1-fg t/ai-bubble-bg) 4.5)))
@@ -86,10 +86,7 @@
                (it "user-bubble-bg RGB matches terminal-bg exactly"
                    ;; Per user request: the user prompt should not paint a yellow
                    ;; block. Pinning equality keeps that tint from coming back.
-                   (expect (= [(.getRed t/terminal-bg) (.getGreen t/terminal-bg)
-                               (.getBlue t/terminal-bg)]
-                              [(.getRed t/user-bubble-bg) (.getGreen t/user-bubble-bg)
-                               (.getBlue t/user-bubble-bg)])))
+                   (expect (= (rgb-tuple t/terminal-bg) (rgb-tuple t/user-bubble-bg))))
                (it "user-bubble-fg on user-bubble-bg still passes WCAG AAA (>= 7)"
                    (expect (>= (contrast-ratio t/user-bubble-fg t/user-bubble-bg) 7.0)))))
 
@@ -101,10 +98,7 @@
                            ;; + heading colours, nothing else. Pinning the equality keeps
                            ;; the renderer honest - if anyone re-introduces a tint, this
                            ;; test fails immediately.
-                           (expect (= [(.getRed t/terminal-bg) (.getGreen t/terminal-bg)
-                                       (.getBlue t/terminal-bg)]
-                                      [(.getRed t/answer-bg) (.getGreen t/answer-bg)
-                                       (.getBlue t/answer-bg)])))
+                           (expect (= (rgb-tuple t/terminal-bg) (rgb-tuple t/answer-bg))))
                        (it "answer-fg on answer-bg still passes WCAG AAA (>= 7)"
                            (expect (>= (contrast-ratio t/answer-fg t/answer-bg) 7.0)))))
 

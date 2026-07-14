@@ -36,7 +36,7 @@
 
         (try (spit keep "keep")
              (with-redefs [com.blockether.vis.ext.workspace-rift/delete-path!
-                           (fn [path]
+                           (fn [^java.nio.file.Path path]
                              (if (= "keep.txt"
                                     (some-> path
                                             .getFileName

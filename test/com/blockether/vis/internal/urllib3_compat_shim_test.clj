@@ -10,8 +10,9 @@
 
 (defmacro with-python-context
   [& body]
-  `(let [~'python-context (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ^Context ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
+                                                                         {}))]
+     (try ~@body (finally (.close ~'python-context)))))
 
 ;; Deterministic offline harness: monkeypatch the requests shim (which httpx and
 ;; urllib3 delegate to) with a canned echo Response, so the wrapper logic is

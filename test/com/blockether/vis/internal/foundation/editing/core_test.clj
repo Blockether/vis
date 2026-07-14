@@ -2532,8 +2532,8 @@
             clone
             (mk-tmp-dir "vis-clone")]
 
-        (spit (java.io.File. clone "x.txt") "in-clone")
-        (spit (java.io.File. trunk "x.txt") "in-trunk")
+        (spit (java.io.File. ^String clone "x.txt") "in-clone")
+        (spit (java.io.File. ^String trunk "x.txt") "in-trunk")
         (binding [workspace/*workspace-root*
                   primary
 

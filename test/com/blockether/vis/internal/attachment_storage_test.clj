@@ -188,39 +188,39 @@
         (clear-registry!)
         (let [row {:id "r" :storage-uri "gone://x" :media-type "text/csv"}]
           (expect (= row (as/hydrate row))))))
-  (describe "file-backend — reference local-disk implementation"
-            (it "round-trips bytes through file:// PUT then GET"
-                (let [dir
-                      (temp-dir)
+  (describe
+    "file-backend — reference local-disk implementation"
+    (it "round-trips bytes through file:// PUT then GET"
+        (let [dir
+              (temp-dir)
 
-                      backend
-                      (as/file-backend {:dir dir})
+              backend
+              (as/file-backend {:dir dir})
 
-                      uri
-                      ((:storage/put-fn backend) {:bytes (.getBytes "payload-123" "UTF-8")})]
+              uri
+              ((:storage/put-fn backend) {:bytes (.getBytes "payload-123" "UTF-8")})]
 
-                  (expect (= "file" (:storage/scheme backend)))
-                  (expect (as/scheme-of uri))
-                  (expect (= "file" (as/scheme-of uri)))
-                  (expect (= "payload-123" (String. ((:storage/get-fn backend) uri) "UTF-8")))))
-            (it "requires :dir" (expect (throws? clojure.lang.ExceptionInfo #(as/file-backend {}))))
-            (it "offloads + hydrates a cold artifact end-to-end via the registry"
-                (clear-registry!)
-                (try (as/register-backend! (as/file-backend {:dir (temp-dir)}))
-                     (let [off
-                           (as/offload-attachment big-cold)
+          (expect (= "file" (:storage/scheme backend)))
+          (expect (as/scheme-of uri))
+          (expect (= "file" (as/scheme-of uri)))
+          (expect (= "payload-123" (String. ^bytes ((:storage/get-fn backend) uri) "UTF-8")))))
+    (it "requires :dir" (expect (throws? clojure.lang.ExceptionInfo #(as/file-backend {}))))
+    (it "offloads + hydrates a cold artifact end-to-end via the registry"
+        (clear-registry!)
+        (try (as/register-backend! (as/file-backend {:dir (temp-dir)}))
+             (let [off
+                   (as/offload-attachment big-cold)
 
-                           hyd
-                           (as/hydrate {:storage-uri (:storage-uri off) :media-type "text/csv"})]
+                   hyd
+                   (as/hydrate {:storage-uri (:storage-uri off) :media-type "text/csv"})]
 
-                       (expect (not (contains? off :base64)))
-                       (expect (= (unb64 (:base64 big-cold)) (unb64 (:base64 hyd)))))
-                     (finally (clear-registry!))))
-            (it "honors an :offload? override on the backend descriptor"
-                (clear-registry!)
-                (try (as/register-backend! (as/file-backend {:dir (temp-dir)
-                                                             :offload? (constantly true)}))
-                     (let [off (as/offload-attachment small-inline)] ; small, but override forces external
-                       (expect (string? (:storage-uri off)))
-                       (expect (not (contains? off :base64))))
-                     (finally (clear-registry!))))))
+               (expect (not (contains? off :base64)))
+               (expect (= (unb64 (:base64 big-cold)) (unb64 (:base64 hyd)))))
+             (finally (clear-registry!))))
+    (it "honors an :offload? override on the backend descriptor"
+        (clear-registry!)
+        (try (as/register-backend! (as/file-backend {:dir (temp-dir) :offload? (constantly true)}))
+             (let [off (as/offload-attachment small-inline)] ; small, but override forces external
+               (expect (string? (:storage-uri off)))
+               (expect (not (contains? off :base64))))
+             (finally (clear-registry!))))))

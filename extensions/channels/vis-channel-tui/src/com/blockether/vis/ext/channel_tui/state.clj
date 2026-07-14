@@ -13,7 +13,6 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.vis.internal.git :as git]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 ;;; ── Framework ──────────────────────────────────────────────────────────────
@@ -3366,20 +3365,13 @@
                                      :client-turn-id client-turn-id)])
                         ;; A turn may have switched the session's workspace
                         ;; (`/draft new | apply | abandon`, `/root <path>`).
-                        ;; Re-sync so header/footer reflect it. When the PRIMARY
-                        ;; ROOT changed (`/root`), synchronously seed the git
-                        ;; status cache for the NEW root so the footer paints the
-                        ;; new repo on the very next frame — otherwise the
-                        ;; stale-while-revalidate cache misses (new cwd) and the
-                        ;; footer shows "No git" for a refresh cycle.
+                        ;; Re-sync so header/footer reflect it. The gateway ws
+                        ;; fact already carries the server-resolved :git status,
+                        ;; so re-dispatch it — no client-side git walk here.
                         (try (let [sid (some-> session
                                                :id)
-                                   ws (when sid (vis/gateway-session-workspace sid))
-                                   old-root (:root workspace)
-                                   new-root (:root ws)]
+                                   ws (when sid (vis/gateway-session-workspace sid))]
 
-                               (when (and new-root (not= new-root old-root))
-                                 (git/seed-working-tree-status! (java.io.File. (str new-root))))
                                (dispatch [:set-workspace ws workspace-id]))
                              (catch Throwable _ nil))
                         ;; W3: refresh the F2 context panel's snapshot from the

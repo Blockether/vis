@@ -23,7 +23,7 @@
 
     [ca
      (fn [^String code]
-       (.asString (.eval ctx "python" code)))]))
+       (.asString (.eval ^org.graalvm.polyglot.Context ctx "python" code)))]))
 
 (defdescribe
   compaction-verbs-python-test

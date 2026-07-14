@@ -12,7 +12,7 @@
 
 (defn- with-tmp-root*
   [f]
-  (let [tmp (fs/create-temp-dir {:prefix "vis-internal-agents-"})]
+  (let [^java.nio.file.Path tmp (fs/create-temp-dir {:prefix "vis-internal-agents-"})]
     (try (f (.toFile tmp)) (finally (fs/delete-tree tmp)))))
 
 (defdescribe scan-in-test

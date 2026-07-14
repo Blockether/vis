@@ -6,7 +6,6 @@
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fixture-seg?
@@ -104,8 +103,6 @@
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-5" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? false})
                          #'vis/list-resources (fn [_]
                                                 [{:id :nrepl}])}
           (fn []
@@ -135,46 +132,41 @@
   (it "leaves cancelling status out of the footer because notifications own it"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? false})}
+                                                      {:name "gpt-5" :provider :openai})}
           (fn []
             (expect (not-any? #(= "cancelling..." (:text %))
                               (build-segments {:messages [] :settings {} :cancelling? true} 0)))))))
-  (it
-    "shows Codex dynamic quota windows on the second footer line"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
+  (it "shows Codex dynamic quota windows on the second footer line"
+      (let [build-limits-segments
+            @#'footer/build-limits-segments
 
-          now-ms
-          1000000000000
+            now-ms
+            1000000000000
 
-          report
-          {:dynamic {:limits [{:id :codex-5h
-                               :label "Codex 5h quota (%)"
-                               :remaining 76.0
-                               :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
-                              {:id :codex-7d
-                               :label "Codex 7d quota (%)"
-                               :remaining 85.0
-                               :window {:resets-at-ms (+ now-ms
-                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+            report
+            {:dynamic {:limits [{:id :codex-5h
+                                 :label "Codex 5h quota (%)"
+                                 :remaining 76.0
+                                 :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
+                                {:id :codex-7d
+                                 :label "Codex 7d quota (%)"
+                                 :remaining 85.0
+                                 :window {:resets-at-ms (+ now-ms
+                                                           (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
 
-      (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                    {:name "gpt-5.5" :provider :openai-codex})
-                       #'git/cached-working-tree-status (fn []
-                                                          {:workspace? false})}
-        (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :openai-codex
-                                                                    :report report}}
-                                                 now-ms)
-                          (filter #(= :left (:region %)))
-                          first
-                          :text)]
-            (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
-            (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "gpt-5.5" :provider :openai-codex})}
+          (fn []
+            (let [text (->> (build-limits-segments {:messages []
+                                                    :settings {}
+                                                    :provider-limits {:provider-id :openai-codex
+                                                                      :report report}}
+                                                   now-ms)
+                            (filter #(= :left (:region %)))
+                            first
+                            :text)]
+              (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
+              (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let [build-limits-segments
@@ -254,95 +246,15 @@
                           first
                           :text)]
             (expect (re-find #"Premium interactions 60/300 used \(240 left\) ↺2d0h" text)))))))
-  (it "uses active workspace root for footer git status"
-      (let [build-segments
-            @#'footer/build-segments
-
-            seen-root
-            (atom nil)]
-
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status
-                         (fn ([] {:workspace? false}) ([root] (reset! seen-root (.getPath root))
-                                                       {:workspace? true
-                                                        :repo "vis"
-                                                        :branch "feature/ws"
-                                                        :modified 0
-                                                        :created 0
-                                                        :deleted 0
-                                                        :upstream? false
-                                                        :ahead 0
-                                                        :behind 0}))}
-          (fn []
-            (expect
-              (= [" git ~/vis (feature/ws ∅) (C-x g) "]
-                 (->> (build-segments {:messages [] :settings {} :workspace/root "/tmp/vis-ws"} 0)
-                      (filter #(= :right (:region %)))
-                      (remove fixture-seg?)
-                      (mapv :text))))
-            ;; `.getPath` yields the OS separator; the logical root is `/`-based.
-            (expect (= "/tmp/vis-ws"
-                       (some-> @seen-root
-                               (.replace "\\" "/"))))))))
-  (it
-    "falls back to the active tab's workspace root when the top-level root was lost"
-    (let [build-segments
-          @#'footer/build-segments
-
-          seen-root
-          (atom nil)]
-
-      (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                    {:name "gpt-4o" :provider :openai})
-                       #'git/cached-working-tree-status
-                       (fn ([] {:workspace? false}) ([root] (reset! seen-root (.getPath root))
-                                                     {:workspace? true
-                                                      :repo "spel"
-                                                      :branch "main"
-                                                      :modified 0
-                                                      :created 0
-                                                      :deleted 0
-                                                      :upstream? true
-                                                      :ahead 0
-                                                      :behind 0}))}
-        (fn []
-          ;; Top-level :workspace/root is nil (a stale snapshot dropped it), but
-          ;; the active tab entry still carries it: the footer must render the
-          ;; SESSION's repo from the tab root, never the no-arg process cwd.
-          (let [db
-                {:messages []
-                 :settings {}
-                 :active-tab-id :tab-1
-                 :tabs [{:id :tab-1 :active? true :workspace/root "/home/u/spel"}]}
-
-                spans
-                (->> (build-segments db 0)
-                     (filter #(= :right (:region %)))
-                     (remove fixture-seg?)
-                     (mapv :text))]
-
-            (expect (= [" git ~/spel (main) (C-x g) "] spans))
-            (expect (= "/home/u/spel"
-                       (some-> @seen-root
-                               (.replace "\\" "/")))))))))
-  (it "prefers the LIVE git cache over a stale gateway :git snapshot"
-      ;; The gateway `:git` fact is only refetched at turn end, so between turns
-      ;; it goes stale (e.g. a session frozen at 7 while the tree now has 34).
-      ;; A colocated TUI must render the live count, matching the magit buffer.
+  (it "renders the gateway :git fact for the active workspace"
+      ;; Git status is a GATEWAY SESSION FACT — resolved server-side by
+      ;; `git/workspace-status` and carried on the workspace record as `:git`. The
+      ;; footer reads ONLY that fact (no client-side git walk, no fallback), so the
+      ;; map the daemon computed is exactly what paints — the single source of
+      ;; truth every channel (web footer, TUI footer, magit) shares.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status
-                         (fn ([] {:workspace? false}) ([_root] {:workspace? true
-                                                                :repo "vis"
-                                                                :branch "main"
-                                                                :modified 34
-                                                                :created 0
-                                                                :deleted 0
-                                                                :upstream? true
-                                                                :ahead 0
-                                                                :behind 0}))}
+                                                      {:name "gpt-4o" :provider :openai})}
           (fn []
             (let [db {:messages []
                       :settings {}
@@ -351,72 +263,51 @@
                                   :git {:workspace? true
                                         :repo "vis"
                                         :branch "main"
-                                        :modified 7
-                                        :created 0
-                                        :deleted 0
+                                        :modified 2
+                                        :created 3
+                                        :deleted 1
                                         :upstream? true
-                                        :ahead 0
+                                        :ahead 4
                                         :behind 0}}}]
-              (expect (= [" git ~/vis (main ~34) (C-x g) "]
+              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
                               (mapv :text)))))))))
-  (it "falls back to the gateway :git fact when the repo is not locally readable"
-      ;; Remote gateway: the TUI can't walk a filesystem it doesn't own, so the
-      ;; local cache reports no workspace — use the daemon-computed `:git` fact.
+  (it "renders the gateway :git fact even when the top-level root was lost"
+      ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
+      ;; git fact still rides on the session's `:workspace` record — the footer
+      ;; renders straight from it, never falling back to the vis process cwd.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status
-                         (fn ([] {:workspace? false}) ([_root] {:workspace? false}))}
+                                                      {:name "gpt-4o" :provider :openai})}
           (fn []
             (let [db {:messages []
                       :settings {}
-                      :workspace/root "/tmp/vis"
-                      :workspace {:root "/tmp/vis"
-                                  :git {:workspace? true
-                                        :repo "vis"
+                      :workspace {:git {:workspace? true
+                                        :repo "spel"
                                         :branch "main"
-                                        :modified 5
+                                        :modified 0
                                         :created 0
                                         :deleted 0
                                         :upstream? true
                                         :ahead 0
                                         :behind 0}}}]
-              (expect (= [" git ~/vis (main ~5) (C-x g) "]
+              (expect (= [" git ~/spel (main) (C-x g) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
                               (mapv :text)))))))))
-  (it "shows git repository state with one changed-file count on the first footer line right side"
+  (it "shows when the session is outside a git workspace"
+      ;; No `:git` fact (or a non-workspace one) → the footer shows the muted
+      ;; "No git" chip; it never shells out to git to decide.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 2
-                                                             :created 3
-                                                             :deleted 1
-                                                             :upstream? true
-                                                             :ahead 4
-                                                             :behind 0})}
+                                                      {:name "gpt-4o" :provider :openai})}
           (fn []
-            (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
-                       (->> (build-segments {:messages [] :settings {}} 0)
-                            (filter #(= :right (:region %)))
-                            (remove fixture-seg?)
-                            (mapv :text))))))))
-  (it "shows when the current directory is outside a git workspace on the first footer line"
-      (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? false})}
-          (fn []
-            (let [spans (->> (build-segments {:messages [] :settings {}} 0)
+            (let [spans (->> (build-segments
+                               {:messages [] :settings {} :workspace {:git {:workspace? false}}}
+                               0)
                              (filter #(= :right (:region %)))
                              (remove fixture-seg?))]
               (expect (= ["No git"] (mapv :text spans)))
@@ -425,43 +316,49 @@
   (it "collapses clean file and synced commit state"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 0
-                                                             :created 0
-                                                             :deleted 0
-                                                             :upstream? true
-                                                             :ahead 0
-                                                             :behind 0})}
+                                                      {:name "gpt-4o" :provider :openai})}
           (fn []
-            (expect (= [" git ~/vis (main) (C-x g) "]
-                       (->> (build-segments {:messages [] :settings {}} 0)
-                            (filter #(= :right (:region %)))
-                            (remove fixture-seg?)
-                            (mapv :text))))))))
+            (expect
+              (= [" git ~/vis (main) (C-x g) "]
+                 (->> (build-segments {:messages []
+                                       :settings {}
+                                       :workspace {:root "/tmp/vis"
+                                                   :git {:workspace? true
+                                                         :repo "vis"
+                                                         :branch "main"
+                                                         :modified 0
+                                                         :created 0
+                                                         :deleted 0
+                                                         :upstream? true
+                                                         :ahead 0
+                                                         :behind 0}}}
+                                      0)
+                      (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
+                      (mapv :text))))))))
   (it "shows missing upstream distinctly from up-to-date commits"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})
-                         #'git/cached-working-tree-status (fn []
-                                                            {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 0
-                                                             :created 0
-                                                             :deleted 0
-                                                             :upstream? false
-                                                             :ahead 0
-                                                             :behind 0})}
+                                                      {:name "gpt-4o" :provider :openai})}
           (fn []
-            (expect (= [" git ~/vis (main ∅) (C-x g) "]
-                       (->> (build-segments {:messages [] :settings {}} 0)
-                            (filter #(= :right (:region %)))
-                            (remove fixture-seg?)
-                            (mapv :text))))))))
+            (expect
+              (= [" git ~/vis (main ∅) (C-x g) "]
+                 (->> (build-segments {:messages []
+                                       :settings {}
+                                       :workspace {:root "/tmp/vis"
+                                                   :git {:workspace? true
+                                                         :repo "vis"
+                                                         :branch "main"
+                                                         :modified 0
+                                                         :created 0
+                                                         :deleted 0
+                                                         :upstream? false
+                                                         :ahead 0
+                                                         :behind 0}}}
+                                      0)
+                      (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
+                      (mapv :text))))))))
   (it "shows cumulative token usage + price on the second footer row right side"
       ;; The old context-window pct gauge is retired. The `:right` region now
       ;; carries the billing-relevant cumulative numbers: tokens in→out and the

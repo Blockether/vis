@@ -143,7 +143,7 @@
                            ;; "x📁y" -> max-cols=2 should yield "x" only (the emoji is 2 cols and would overflow).
                            (expect (= 1 (p/col-prefix-end (str "x" EMOJI_SMP "y") 2))))
                        (it "Returns full length when string fits"
-                           (expect (= (.length CJK) (p/col-prefix-end CJK 99))))
+                           (expect (= (.length ^String CJK) (p/col-prefix-end CJK 99))))
                        (it "Returns 0 for nil / non-positive max-cols"
                            (expect (= 0 (p/col-prefix-end nil 5)))
                            (expect (= 0 (p/col-prefix-end CJK 0)))

@@ -14,7 +14,7 @@
 
 (defn- with-tmp-root*
   [f]
-  (let [tmp (fs/create-temp-dir {:prefix "vis-digest-test-"})]
+  (let [^java.nio.file.Path tmp (fs/create-temp-dir {:prefix "vis-digest-test-"})]
     (try (f (.toFile tmp)) (finally (fs/delete-tree tmp)))))
 
 (defdescribe

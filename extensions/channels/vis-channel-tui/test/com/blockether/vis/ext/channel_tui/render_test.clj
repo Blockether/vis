@@ -1325,7 +1325,7 @@
                                                 1
                                                 {:show-header? true})
 
-                        body
+                        ^String body
                         (strip-ansi (str/join "\n" (map body-of lines)))]
 
                     (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
@@ -2727,10 +2727,10 @@
               this)
             (fillRectangle [pos size _ch]
               (swap! fills conj
-                {:row (.getRow pos)
-                 :col (.getColumn pos)
-                 :w (.getColumns size)
-                 :h (.getRows size)
+                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
                  :fg @fg
                  :bg @bg})
               this)
