@@ -479,40 +479,47 @@
 
 (defn- run-via-repl
   [root ns-strs sel port]
-  (let [ns-files
-        (test-files-for root ns-strs)
-
-        ns-deps
-        (reload-plan root ns-strs ns-files)
-
-        code
-        (build-eval-code ns-strs sel ns-files ns-deps)
-
-        ns-disp
-        (str/join " " ns-strs)
-
-        r
-        ;; Keep BELOW the run_tests native-tool budget (5m) so a slow / wedged
-        ;; nREPL surfaces as a real timeout ERROR (with nREPL err/tail) instead
-        ;; of an opaque harness kill. It must never exceed the caller's tool budget.
-        (nrepl-client/eval!
-          {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
-
-        parsed
-        (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
-
-    (if (map? parsed)
-      (-> parsed
-          (update "output" strip-ansi)
-          (assoc "mode" "repl"
-                 "ns" ns-disp
-                 "port" port))
+  (let [;; Cheap pre-flight: a single `describe` under a short timeout. A dead or
+        ;; wedged nREPL is caught here in ~2s instead of blocking the whole test
+        ;; eval for the multi-minute `default-test-timeout-ms` budget. `probe!`
+        ;; never throws and reuses the same cached connection `eval!` warms, so
+        ;; the healthy path pays only one fast round-trip. It can't recurse into
+        ;; `eval!` from THIS layer (it does from inside `eval!`, which is why the
+        ;; guard lives here at the entry point rather than in the client).
+        probe (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 2000})]
+    (if (not= :up (:status probe))
       {"mode" "repl"
-       "ns" ns-disp
+       "ns" (str/join " " ns-strs)
        "port" port
-       "error" (str "could not parse test result"
-                    (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
-       "raw_value" (get r "value")})))
+       "error" (str "nREPL at localhost:"
+                    port
+                    " is not ready to run tests (status "
+                    (name (or (:status probe) :unknown))
+                    ") — the server is down or unresponsive. Restart it and retry.")}
+      (let [ns-files (test-files-for root ns-strs)
+            ns-deps (reload-plan root ns-strs ns-files)
+            code (build-eval-code ns-strs sel ns-files ns-deps)
+            ns-disp (str/join " " ns-strs)
+            r
+            ;; Keep BELOW the run_tests native-tool budget (5m) so a slow / wedged
+            ;; nREPL surfaces as a real timeout ERROR (with nREPL err/tail) instead
+            ;; of an opaque harness kill. It must never exceed the caller's tool budget.
+            (nrepl-client/eval!
+              {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
+            parsed (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
+
+        (if (map? parsed)
+          (-> parsed
+              (update "output" strip-ansi)
+              (assoc "mode" "repl"
+                     "ns" ns-disp
+                     "port" port))
+          {"mode" "repl"
+           "ns" ns-disp
+           "port" port
+           "error" (str "could not parse test result"
+                        (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
+           "raw_value" (get r "value")})))))
 
 (defn- cli-tail
   "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the
@@ -729,12 +736,17 @@
          eff-root
          (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
 
-         ;; Autostart (or reuse) THIS session's nREPL for the tests' project root —
-         ;; the fast inner loop. nil only when there's no launchable build file, then
-         ;; we fall back to the CLI suite gate below.
+         ;; Autostart / reuse THIS session's nREPL. `ensure-repl-for-dir!` already
+         ;; verifies liveness (wait-until-up) and stops+replaces a dead/wedged process,
+         ;; so a keyword-keyed result carrying :port is a VERIFIED-up server. When it
+         ;; can't hand back a live port it returns start!'s STRING-keyed lifecycle map
+         ;; ("no-launcher"/"failed"/"starting"…) instead — the two cases are gated apart
+         ;; below so a boot failure is surfaced, not swallowed into a bare CLI fallback.
+         repl
+         (repl-manager/ensure-repl-for-dir! (:session-id env) eff-root)
+
          port
-         (some-> (repl-manager/ensure-repl-for-dir! (:session-id env) eff-root)
-                 :port)]
+         (:port repl)]
 
      (when (empty? nses)
        (throw (ex-info
@@ -743,7 +755,31 @@
                   "clj_test found no *_test.clj namespaces anywhere under the workspace root")
                 {:type :clj/bad-args :got arg})))
      (let [result
-           (if port (run-via-repl eff-root nses sel port) (run-via-cli eff-root norm))
+           (cond
+             ;; nREPL is up and verified — the fast inner loop.
+             port (run-via-repl eff-root nses sel port)
+             ;; No launchable Clojure build file at all → the CLI suite is the
+             ;; correct path (it shells the build tool's own test command).
+             (= "no-launcher" (get repl "result")) (run-via-cli eff-root norm)
+             ;; A build file EXISTS but the nREPL did NOT come up ("failed" /
+             ;; still "starting" / wedged past its grace window). Do NOT silently
+             ;; CLI-fall-back onto a project whose REPL just crashed — surface the
+             ;; launcher's own story (result + message + log tail) so the boot
+             ;; failure IS the reported error instead of a confusing CLI miss.
+             (map? repl) (cond-> {"mode" "repl"
+                                  "ns" (str/join " " nses)
+                                  "port" (get repl "port")
+                                  "error" (str "nREPL for "
+                                               eff-root
+                                               " is not running (status "
+                                               (get repl "result" "unknown")
+                                               ") — "
+                                               (get repl "message" "the server failed to start")
+                                               ". Fix the boot error (see log_tail) and retry.")}
+                           (get repl "log_tail")
+                           (assoc "log_tail" (get repl "log_tail")))
+             ;; Defensive last resort (nil / unexpected shape): the CLI suite.
+             :else (run-via-cli eff-root norm))
 
            result'
            (if (and (get result "error")

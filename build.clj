@@ -442,14 +442,19 @@
 
         files
         (->> (file-seq (io/file "extensions"))
-             (filter #(and (= "vis.edn" (.getName ^java.io.File %))
-                           (str/includes? (str %) "META-INF/vis-extension")
-                           ;; profile-dropped extensions are off the classpath,
-                           ;; so their manifests must not be merged — discovery
-                           ;; would `require` namespaces not in the image.
-                           (not-any? (fn [root]
-                                       (str/includes? (str %) (str root "/")))
-                                     dropped))))
+             (filter (fn [^java.io.File f]
+                       ;; normalize separators: on Windows File/toString uses
+                       ;; `\`, so a forward-slash substring check would match
+                       ;; nothing and silently merge zero manifests.
+                       (let [p (str/replace (str f) "\\" "/")]
+                         (and (= "vis.edn" (.getName f))
+                              (str/includes? p "META-INF/vis-extension")
+                              ;; profile-dropped extensions are off the classpath,
+                              ;; so their manifests must not be merged — discovery
+                              ;; would `require` namespaces not in the image.
+                              (not-any? (fn [root]
+                                          (str/includes? p (str root "/")))
+                                        dropped))))))
 
         merged
         (reduce (fn [m f]
