@@ -2636,12 +2636,11 @@
                              (expect (= true (deref child-interrupted 2000 ::timeout))))
                            (finally (Thread/interrupted)))))))
 
-;; ── dead-credential latch (gateway-wide OAuth-401 storm guard) ──────────────
-(def ^:private auth-dead-credentials (deref #'lp/auth-dead-credentials))
+;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
 (def ^:private refresh-just-failed? (deref #'lp/refresh-just-failed?))
-(def ^:private mark-auth-credential-dead! (deref #'lp/mark-auth-credential-dead!))
 (def ^:private auth-refreshable-error? (deref #'lp/auth-refreshable-error?))
+(def ^:private auth-propagation-backoff-ms (deref #'lp/auth-propagation-backoff-ms))
 
 (defn- auth-401
   []
@@ -2649,71 +2648,37 @@
            {:status 401 :body "{\"error\":{\"message\":\"Invalid authentication credentials\"}}"}))
 
 (defdescribe
-  dead-credential-latch-test
-  (describe "a force-refreshed token that STILL 401s latches the provider dead"
-            (it "detects a post-refresh identical 401 (minted token == baked token)"
-                (with-redefs [config/baked-token
-                              (fn [_]
-                                "T-dead")
+  post-refresh-propagation-backoff-test
+  (describe
+    "a token we JUST refreshed that 401s again is treated as propagation lag, not dead"
+    (it "refresh-just-failed? fires when the failing token == the one we just minted"
+        (with-redefs [config/baked-token (fn [_]
+                                           "T-fresh")]
+          (reset! auth-last-refreshed {:ap {:minted "T-fresh" :at 0}})
+          (expect (true? (boolean (refresh-just-failed? (auth-401) {:provider :ap}))))))
+    (it "does NOT fire when the failing token differs from the minted one (peer rotation → refresh)"
+        (with-redefs [config/baked-token (fn [_]
+                                           "T-baked")]
+          (reset! auth-last-refreshed {:ap {:minted "T-different" :at 0}})
+          (expect (not (refresh-just-failed? (auth-401) {:provider :ap})))))
+    (it "a post-refresh 401 stays REFRESHABLE-shaped but routes to backoff, never a dead latch"
+        ;; No dead-credential latch exists any more: the provider is
+        ;; always eligible to recover; the classifier just prefers the
+        ;; SAME-token backoff over another re-mint while lag settles.
+        (with-redefs [config/baked-token
+                      (fn [_]
+                        "T-fresh")
 
-                              registry/provider-by-id
-                              (fn [_]
-                                {:provider/get-token-fn (fn []
-                                                          {:token "T-dead"})
-                                 :provider/refresh-token-fn (fn [& _]
-                                                              :ok)})]
+                      registry/provider-by-id
+                      (fn [_]
+                        {:provider/get-token-fn (fn []
+                                                  {:token "T-fresh"})
+                         :provider/refresh-token-fn (fn [& _]
+                                                      :ok)})]
 
-                  (reset! auth-dead-credentials {})
-                  (reset! auth-last-refreshed {:ap {:minted "T-dead" :at 0}})
-                  (expect (true? (boolean (refresh-just-failed? (auth-401) {:provider :ap}))))))
-            (it "does NOT fire when the failing token differs from the minted one (peer rotation)"
-                (with-redefs [config/baked-token
-                              (fn [_]
-                                "T-baked")
-
-                              registry/provider-by-id
-                              (fn [_]
-                                {:provider/get-token-fn (fn []
-                                                          {:token "T-baked"})
-                                 :provider/refresh-token-fn (fn [& _]
-                                                              :ok)})]
-
-                  (reset! auth-dead-credentials {})
-                  (reset! auth-last-refreshed {:ap {:minted "T-different" :at 0}})
-                  (expect (not (refresh-just-failed? (auth-401) {:provider :ap})))))
-            (it "once latched, the same 401 is NO LONGER refreshable (no more storm)"
-                (with-redefs [config/baked-token
-                              (fn [_]
-                                "T-dead")
-
-                              registry/provider-by-id
-                              (fn [_]
-                                {:provider/get-token-fn (fn []
-                                                          {:token "T-dead"})
-                                 :provider/refresh-token-fn (fn [& _]
-                                                              :ok)})]
-
-                  (reset! auth-dead-credentials {})
-                  (reset! auth-last-refreshed {})
-                  (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap})))
-                  (mark-auth-credential-dead! :ap)
-                  (expect (true? (boolean (lp/auth-credential-dead? :ap))))
-                  (expect (false? (auth-refreshable-error? (auth-401) {:provider :ap})))))
-            (it "self-clears the latch when the on-file token rotates (a re-auth)"
-                (let [tok (atom "T-dead")]
-                  (with-redefs [config/baked-token (fn [_]
-                                                     "T-dead")
-                                registry/provider-by-id (fn [_]
-                                                          {:provider/get-token-fn (fn []
-                                                                                    {:token @tok})
-                                                           :provider/refresh-token-fn (fn [& _]
-                                                                                        :ok)})]
-
-                    (reset! auth-dead-credentials {})
-                    (reset! auth-last-refreshed {})
-                    (mark-auth-credential-dead! :ap)
-                    (expect (true? (boolean (lp/auth-credential-dead? :ap))))
-                    (reset! tok "T-fresh")
-                    (expect (not (lp/auth-credential-dead? :ap)))
-                    (expect (not (contains? @auth-dead-credentials :ap)))
-                    (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap}))))))))
+          (reset! auth-last-refreshed {:ap {:minted "T-fresh" :at 0}})
+          (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap})))))
+    (it "backoff widens with the attempt count and is capped at 5s"
+        (expect (= 1200 (auth-propagation-backoff-ms 0)))
+        (expect (= 3600 (auth-propagation-backoff-ms 2)))
+        (expect (= 5000 (auth-propagation-backoff-ms 10))))))
