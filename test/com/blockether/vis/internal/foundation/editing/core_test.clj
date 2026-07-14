@@ -3406,3 +3406,186 @@
                                  (catch InterruptedException e e))]
                  (expect (some? thrown)))
                (finally (Thread/interrupted)))))))
+
+(defdescribe
+  is-respect-gitignore-override-test
+  ;; `.gitignore`d files are hidden from rg/find_files by default, but a caller
+  ;; must be able to reach vendored / corporate repos the project ignores by
+  ;; passing is_respect_gitignore=false. rg walks the tree manually (skipping the
+  ;; fff candidate-narrowing, whose index also honors .gitignore); find_files
+  ;; swaps its fff scan for a direct filesystem walk.
+  (let [grep
+        (private-fn "rg-search")
+
+        core-var
+        (fn [n]
+          (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
+
+        find-search
+        (private-fn "find-search")
+
+        fixture!
+        (fn [dir]
+          (write-temp! (str dir "/.gitignore") "vendor/\n")
+          (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+          (temp-dir-path dir))]
+
+    (it "rg hides the ignored file by default and reveals it with the override"
+        (let [path (fixture! "gitignore-override-rg")]
+          (expect (zero? (:total-file-count (grep {"query" ["NEEDLE_TOKEN"] "paths" [path]}))))
+          (let [r (grep {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_respect_gitignore" false})]
+            (expect (= 1 (:total-file-count r)))
+            (expect (some #(string/includes? (:path %) "vendor/corp/secret.txt") (:hits r))))))
+    (it
+      "is_respect_gitignore=false walks each root's tree ONCE across the strict + fallback token scans"
+      ;; "secret token" strict-matches nothing (no single path holds BOTH
+      ;; words), so the relaxed fallback fires a per-token scan for "secret"
+      ;; AND "token" — 3 find-scan passes total. The shared walk-cache must
+      ;; collapse those to a SINGLE find-walk-files traversal, not one walk
+      ;; per pass (the up-to-6x perf bug).
+      (let [path
+            (fixture! "gitignore-override-walkonce")
+
+            orig
+            (private-fn "find-walk-files")
+
+            calls
+            (atom 0)]
+
+        (with-redefs-fn {(core-var "find-walk-files") (fn [& args]
+                                                        (swap! calls inc)
+                                                        (apply orig args))}
+          #(let [r
+                 (find-search
+                   [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
+
+             ;; the fallback still surfaces the file via the "secret" token
+             (expect (some (fn [p]
+                             (string/includes? p "vendor/corp/secret.txt"))
+                           (get r "paths")))))
+        (expect (= 1 @calls))))
+    (it "the default (respect-gitignore) path never triggers a direct filesystem walk"
+        ;; With the flag left on, find_files stays on the fff index — the direct
+        ;; walk (find-walk-files) is the OPT-OUT branch only and must not run.
+        (let [path
+              (fixture! "gitignore-override-nowalk")
+
+              orig
+              (private-fn "find-walk-files")
+
+              calls
+              (atom 0)]
+
+          (with-redefs-fn {(core-var "find-walk-files") (fn [& args]
+                                                          (swap! calls inc)
+                                                          (apply orig args))}
+            #(find-search [{"query" "secret" "paths" [path]}]))
+          (expect (zero? @calls))))
+    (it "is_respect_gitignore=false still skips hidden .git metadata (is_hidden default false)"
+        ;; Opting out of .gitignore must not drag VCS internals in: a file buried
+        ;; in a dot-prefixed .git dir stays invisible because the is_hidden gate
+        ;; (default false) prunes hidden dirs during the walk.
+        (let [dir
+              "gitignore-override-gitdir"
+
+              path
+              (fixture! dir)
+
+              _
+              (write-temp! (str dir "/vendor/corp/.git/config_secret.txt") "x\n")
+
+              paths-of
+              (fn [spec]
+                (get (find-search [spec]) "paths"))]
+
+          ;; the tracked (gitignored) file IS reachable with the override ...
+          (expect (some #(string/includes? % "vendor/corp/secret.txt")
+                        (paths-of {"query" "secret" "paths" [path] "is_respect_gitignore" false})))
+          ;; ... but the .git-buried file stays hidden even with the override
+          (expect (empty? (paths-of
+                            {"query" "config" "paths" [path] "is_respect_gitignore" false})))))
+    (it "find_files hides the ignored file by default and reveals it with the override"
+        (let [path
+              (fixture! "gitignore-override-find")
+
+              paths-of
+              (fn [spec]
+                (get (find-search [spec]) "paths"))]
+
+          (expect (empty? (paths-of {"query" "secret" "paths" [path]})))
+          (let [hit (paths-of {"query" "secret" "paths" [path] "is_respect_gitignore" false})]
+            (expect (some #(string/includes? % "vendor/corp/secret.txt") hit)))))))
+
+(defdescribe
+  tool-ignore-negation-layering-test
+  ;; `.gitignore` still hides a path from git AND our tools by default, but a
+  ;; `!`-negation in a TOOL-ONLY `.ignore`/`.rgignore` (files git never reads)
+  ;; re-includes it for rg/find_files while is_respect_gitignore stays at its
+  ;; DEFAULT true. Precedence (LOW→HIGH): .gitignore < .ignore < .rgignore, so a
+  ;; higher-precedence rule (incl. a re-ignore) wins. fff's index only knows
+  ;; .gitignore, so both tools must bypass it when a tool-only ignore file is
+  ;; present or the `!` would never surface.
+  (let [grep
+        (private-fn "rg-search")
+
+        find-search
+        (private-fn "find-search")
+
+        rg-files
+        (fn [path]
+          (:files (grep {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true})))
+
+        find-paths
+        (fn [path]
+          (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
+
+        has?
+        (fn [coll frag]
+          (boolean (some #(string/includes? % frag) coll)))]
+
+    (it "a `!` in .ignore re-includes a .gitignore'd dir for rg AND find_files (default flag)"
+        (let [dir
+              "tool-ignore-neg-include"
+
+              _
+              (write-temp! (str dir "/.gitignore") "vendor/\n")
+
+              _
+              (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+
+              _
+              (write-temp! (str dir "/tracked.txt") "NEEDLE_TOKEN here\n")
+
+              path
+              (temp-dir-path dir)]
+
+          ;; default: no tool-only ignore file yet, so .gitignore hides corp
+          (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
+          (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))
+          ;; drop a tool-only `.ignore` with a `!` — re-included WITHOUT any flag
+          (write-temp! (str dir "/.ignore") "!vendor/\n")
+          (expect (has? (rg-files path) "vendor/corp/secret.txt"))
+          (expect (has? (find-paths path) "vendor/corp/secret.txt"))
+          ;; the tracked, never-ignored file is reachable the whole time
+          (expect (has? (rg-files path) "tracked.txt"))))
+    (it ".rgignore outranks .ignore — a higher-precedence re-ignore wins"
+        (let [dir
+              "tool-ignore-neg-precedence"
+
+              _
+              (write-temp! (str dir "/.gitignore") "vendor/\n")
+
+              _
+              (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+
+              _
+              (write-temp! (str dir "/.ignore") "!vendor/\n")
+
+              _
+              (write-temp! (str dir "/.rgignore") "vendor/\n")
+
+              path
+              (temp-dir-path dir)]
+
+          (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
+          (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))))))

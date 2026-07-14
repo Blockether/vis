@@ -13,7 +13,8 @@
    client renders (§4.1). Any host process (the `vis gateway start` daemon, a
    TUI run, an embedded caller) can start it alongside whatever else it
    is doing via `start!`."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
@@ -282,23 +283,40 @@
   "Parse the `sids` query param of the multiplexed events endpoint: a comma
    list of `sid` or `sid:cursor` tokens (cursor defaults to 0). Returns
    `[[sid cursor] …]` keeping only sids that resolve to a live soul, so a
-   stale/unknown sid can't wedge the whole fan-out."
-  [request]
-  (let [raw (get-in request [:query-params "sids"])]
-    (when (seq raw)
-      (->> (str/split raw #",")
-           (keep (fn [tok]
-                   (let [[sid c] (str/split (str/trim tok) #":" 2)
-                         sid (str/trim (str sid))]
+   stale/unknown sid can't wedge the whole fan-out.
 
-                     (when (and (seq sid) (state/soul sid))
-                       [sid
-                        (or (some-> c
-                                    str/trim
-                                    parse-long)
-                            0)]))))
-           (distinct)
-           (vec)))))
+   When the request carries a `Last-Event-ID` header AND resolves to exactly
+   ONE sid, that header overrides the sole sid's cursor. This lets a NATIVE
+   EventSource (browser / react-native-sse) whose reconnect carries only a
+   single `Last-Event-ID` resume losslessly against the multiplexed endpoint —
+   so `/v1/events?sids=<sid>` is a strict superset of `/v1/sessions/:sid/events`.
+   Multi-sid callers (the hand-rolled TUI mux) manage per-session cursors in the
+   `sids=` param and never send `Last-Event-ID`, so they are unaffected: a single
+   header cannot disambiguate N independent per-session seq counters."
+  [request]
+  (let [parsed
+        (let [raw (get-in request [:query-params "sids"])]
+          (when (seq raw)
+            (->> (str/split raw #",")
+                 (keep (fn [tok]
+                         (let [[sid c] (str/split (str/trim tok) #":" 2)
+                               sid (str/trim (str sid))]
+
+                           (when (and (seq sid) (state/soul sid))
+                             [sid
+                              (or (some-> c
+                                          str/trim
+                                          parse-long)
+                                  0)]))))
+                 (distinct)
+                 (vec))))
+
+        last-event-id
+        (some-> (get-in request [:headers "last-event-id"])
+                str/trim
+                parse-long)]
+
+    (if (and last-event-id (= 1 (count parsed))) [[(ffirst parsed) last-event-id]] parsed)))
 
 (defn- multi-sse-body
   "SSE body fanning MANY sessions down ONE connection — the multiplexed twin
@@ -1112,6 +1130,117 @@
     (json-response {:events (state/events-since sid (sse-cursor request))})
     (session-404 (get-in request [:path-params :sid]))))
 
+;; =============================================================================
+;; Voice — canonical transcription through the LOCAL Parakeet model
+;; (vis-foundation-voice / sherpa-onnx, soft-resolved so a build without the
+;; extension answers 501 instead of failing to load). Lives on the GATEWAY so
+;; every client — web, iOS, TUI — hits the SAME canonical /v1 route.
+;; =============================================================================
+
+(defn- voice-asr-resolve
+  "Soft-resolve a `foundation-voice.asr` fn (nil when the voice extension is not
+   on the classpath)."
+  [fn-name]
+  (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" fn-name))
+       (catch Throwable _ nil)))
+
+(defn- voice-state->json
+  [st]
+  (cond-> {:status (name (:state st))}
+    (:progress st)
+    (assoc :progress (:progress st))
+
+    (:error st)
+    (assoc :error (:error st))))
+
+(defn- wav-file?
+  "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns an
+   obviously-not-audio body into a clear 400 without waking the ASR. sherpa-onnx's
+   native WaveReader ABORTS THE WHOLE JVM on malformed input, so the header is
+   verified in JVM code before the native reader ever runs."
+  [^java.io.File f]
+  (and (>= (.length f) 44)
+       (with-open [in (io/input-stream f)]
+         (let [head (byte-array 12)]
+           (and (= 12 (.read in head))
+                (= "RIFF" (String. head 0 4 "US-ASCII"))
+                (= "WAVE" (String. head 8 4 "US-ASCII")))))))
+
+(defn- voice-model-handler
+  "GET  /v1/sessions/:sid/voice/model — current voice-model state (clients poll
+        this before recording).
+   POST /v1/sessions/:sid/voice/model — start the background download if the model
+        is absent (idempotent; returns immediately).
+   JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100? :error \"…\"?}."
+  [request]
+  (let [sid
+        (path-sid request)
+
+        model-state
+        (voice-asr-resolve "model-state")
+
+        start-dl
+        (voice-asr-resolve "start-download!")]
+
+    (cond (not (and sid (state/soul sid)))
+          (json-response 404 {:status "unavailable" :error "unknown session"})
+          (or (nil? model-state) (nil? start-dl))
+          (json-response 501
+                         {:status "unavailable" :error "voice extension is not on the classpath"})
+          :else (json-response 200
+                               (voice-state->json (if (= :post (:request-method request))
+                                                    (start-dl)
+                                                    (model-state)))))))
+
+(defn- voice-handler
+  "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. Transcribes through
+   the LOCAL Parakeet model; soft-resolved so a build without vis-foundation-voice
+   answers 501. The model must already be installed — the client drives the download
+   via /voice/model; a not-ready model answers 425 (Too Early) with the model state,
+   NEVER blocking the request thread on the ~465MB download."
+  [request]
+  (let [sid
+        (path-sid request)
+
+        transcribe
+        (voice-asr-resolve "transcribe-file!")
+
+        clean
+        (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
+                                        "clean-transcript"))
+             (catch Throwable _ nil))
+
+        model-state
+        (voice-asr-resolve "model-state")]
+
+    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+          (or (nil? transcribe) (nil? model-state))
+          (json-response 501 {:error "voice extension is not on the classpath"})
+          (not= :ready (:state (model-state))) (json-response 425 (voice-state->json (model-state)))
+          :else (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
+                  (try (with-open [in ^java.io.InputStream (:body request)
+                                   out (io/output-stream tmp)]
+
+                         (io/copy in out))
+                       (if-not (wav-file? tmp)
+                         (json-response 400 {:error "body must be a RIFF/WAVE audio file"})
+                         (json-response 200
+                                        {:text (let [raw (str/trim (str (transcribe (str tmp))))]
+                                                 (if clean (clean raw) raw))}))
+                       (catch Throwable t
+                         (tel/log!
+                           {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
+                         (json-response 400
+                                        {:error (or (ex-message t)
+                                                    (->> (iterate (fn [^Throwable x]
+                                                                    (some-> x
+                                                                            .getCause))
+                                                                  t)
+                                                         (take-while some?)
+                                                         (map str)
+                                                         (str/join " <- ")))}))
+                       (finally (.delete tmp)))))))
+
 (defn- suggest-handler
   "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
    service behind every composer sigil (the `@` file picker today). It is a
@@ -1313,6 +1442,8 @@
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         ["/sessions/:sid/release" {:post release-session-handler}]
         ["/sessions/:sid/events" {:get events-handler}]
+        ["/sessions/:sid/voice" {:post voice-handler}]
+        ["/sessions/:sid/voice/model" {:get voice-model-handler :post voice-model-handler}]
         ["/sessions/:sid/events-since" {:get events-since-handler}]
         ["/sessions/:sid/seq" {:get seq-handler}] ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/transcript" {:get transcript-handler}]

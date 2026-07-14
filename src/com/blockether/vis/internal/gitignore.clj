@@ -79,14 +79,40 @@
 
         {:neg? neg? :dir? dir? :anchored? anchored? :self self :under under}))))
 
+(def ^:private ignore-file-names
+  "Ignore files layered in ripgrep precedence order (LOW→HIGH). Later files' rules
+   win under `ignored?`'s last-match-wins reduce, so a `!` negation in a
+   higher-precedence file re-includes a path a lower one ignored. Only `.gitignore`
+   is read by git; `.ignore`/`.rgignore` are tool-only."
+  [".gitignore" ".ignore" ".rgignore"])
+
 (defn load-matcher
-  "Parse `root`/.gitignore into an ordered rule vector, or nil when absent.
-   The returned value is opaque; pass it to `ignored?`."
+  "Parse the ignore files at `root` into ONE ordered rule vector, or nil when none
+   exist. Layers `.gitignore` < `.ignore` < `.rgignore` (ripgrep precedence): rules
+   are concatenated in that order so the later file's rules win, and a `!` negation
+   in a higher-precedence file un-ignores what a lower one ignored. Because git
+   never reads `.ignore`/`.rgignore`, a `!corp/` there makes our tools descend into
+   `corp/` while `.gitignore` keeps git ignoring it. The returned value is opaque;
+   pass it to `ignored?`."
   [^File root]
-  (let [gi (io/file root ".gitignore")]
-    (when (.exists gi)
-      (let [rules (into [] (keep compile-rule) (str/split-lines (slurp gi)))]
-        (when (seq rules) rules)))))
+  (let [rules (into []
+                    (comp (map #(io/file root ^String %))
+                          (filter (fn [^File f]
+                                    (.exists f)))
+                          (mapcat #(keep compile-rule (str/split-lines (slurp %)))))
+                    ignore-file-names)]
+    (when (seq rules) rules)))
+
+(defn tool-ignore-present?
+  "True when `root` has a tool-only ignore file (`.ignore` or `.rgignore`) — the
+   ones git never reads. Their `!` rules can RE-INCLUDE paths `.gitignore` hid, so
+   an index/cache that only knows `.gitignore` (e.g. fff) can't be trusted: a
+   caller that finds this true must walk the tree directly and evaluate the full
+   layered `load-matcher` instead."
+  [^File root]
+  (boolean (some (fn [^String n]
+                   (.exists (io/file root ^String n)))
+                 (rest ignore-file-names))))
 
 (defn ignored?
   "True when the `/`-separated relative path `rel` (with `path-dir?` telling

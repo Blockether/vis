@@ -325,9 +325,9 @@ describe("streamEvents SSE dispatch", () => {
     return { events, errors, close, es, opened: () => opened };
   };
 
-  it("opens against the session events endpoint with cursor", () => {
+  it("opens against the canonical multiplexed events endpoint with cursor", () => {
     const { es } = open();
-    expect(es.url).toBe("http://gw:7890/v1/sessions/s1/events?cursor=0");
+    expect(es.url).toBe("http://gw:7890/v1/events?sids=s1:0");
   });
 
   it("parses a typed data frame into onEvent", () => {
