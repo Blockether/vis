@@ -36,8 +36,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [hiccup2.core :as h]
-            [ring.core.protocols :as ring-protocols]
-            [taoensso.telemere :as tel])
+            [ring.core.protocols :as ring-protocols])
   (:import [java.io OutputStream]
            [java.nio.charset StandardCharsets]
            [java.time Instant LocalDateTime ZoneId]
@@ -2510,7 +2509,7 @@
             [:button.mic
              {:type "button"
               :aria-label "Dictate"
-              :data-voice-url (str "/ui/session/" sid "/voice")} (icon "mic")]
+              :data-voice-url (str "/v1/sessions/" sid "/voice")} (icon "mic")]
             [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]]
          [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"} (footer-content sid)]]
         (context-rail sid snapshot)]])))
@@ -4988,135 +4987,6 @@
           (vis/update-config-provider! pid #(assoc % :api-key api-key) :web-provider-key))
         (providers-modal sid)))))
 
-(defn- wav-file?
-  "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns
-   an obviously-not-audio body into a clear 400 without waking the ASR. The
-   guard that actually protects the process is `asr/validate-wav-file!`
-   inside `transcribe-file!`: sherpa-onnx's native WaveReader ABORTS THE
-   WHOLE JVM on malformed input (garbage body: Abort trap 6; valid magic
-   with truncated data: SIGSEGV — both observed live), so the full chunk
-   table is verified in JVM code before the native reader ever runs."
-  [^java.io.File f]
-  (and (>= (.length f) 44)
-       (with-open [in (io/input-stream f)]
-         (let [head (byte-array 12)]
-           (and (= 12 (.read in head))
-                (= "RIFF" (String. head 0 4 "US-ASCII"))
-                (= "WAVE" (String. head 8 4 "US-ASCII")))))))
-
-(defn- voice-asr-resolve
-  "Soft-resolve a `foundation-voice.asr` fn (nil when the voice extension is not
-   on the classpath, so the web answers gracefully instead of failing to load)."
-  [fn-name]
-  (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" fn-name))
-       (catch Throwable _ nil)))
-
-(defn- voice-state->json
-  [st]
-  (cond-> {:status (name (:state st))}
-    (:progress st)
-    (assoc :progress (:progress st))
-
-    (:error st)
-    (assoc :error (:error st))))
-
-(defn- voice-model-handler
-  "GET  /ui/session/:sid/voice/model — current voice-model state (the UI polls
-        this before recording).
-   POST /ui/session/:sid/voice/model — start the background download if the
-        model is absent (idempotent; returns immediately).
-   JSON: {:status \"ready|downloading|failed|absent|unavailable\"
-          :progress 0..100?  :error \"…\"?}."
-  [request]
-  (let [sid
-        (some-> (get-in request [:path-params :sid])
-                parse-uuid)
-
-        model-state
-        (voice-asr-resolve "model-state")
-
-        start-dl
-        (voice-asr-resolve "start-download!")]
-
-    (cond (not (and sid (vis/gateway-soul sid)))
-          {:status 404
-           :headers {"Content-Type" "application/json; charset=utf-8"}
-           :body (json-text {:status "unavailable" :error "unknown session"})}
-          (or (nil? model-state) (nil? start-dl))
-          {:status 501
-           :headers {"Content-Type" "application/json; charset=utf-8"}
-           :body (json-text {:status "unavailable"
-                             :error "voice extension is not on the classpath"})}
-          :else (let [st (if (= :post (:request-method request)) (start-dl) (model-state))]
-                  {:status 200
-                   :headers {"Content-Type" "application/json; charset=utf-8"}
-                   :body (json-text (voice-state->json st))}))))
-
-(defn- voice-handler
-  "POST /ui/session/:sid/voice — body is a WAV blob recorded+encoded in the
-   browser (ui.js). Transcribes through the LOCAL Parakeet model (vis-foundation-
-   voice / sherpa-onnx; soft-resolved so a build without the extension answers
-   501). The model must already be installed — the UI drives the download via
-   `/voice/model`; if it isn't ready this answers 425 (Too Early) with the model
-   state, NEVER blocking the request thread on a ~465MB download."
-  [request]
-  (let [sid
-        (some-> (get-in request [:path-params :sid])
-                parse-uuid)
-
-        transcribe
-        (voice-asr-resolve "transcribe-file!")
-
-        clean
-        (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
-                                        "clean-transcript"))
-             (catch Throwable _ nil))
-
-        model-state
-        (voice-asr-resolve "model-state")]
-
-    (cond (not (and sid (vis/gateway-soul sid))) {:status 404
-                                                  :headers {"Content-Type" "application/json"}
-                                                  :body (json-text {:error "unknown session"})}
-          (or (nil? transcribe) (nil? model-state))
-          {:status 501
-           :headers {"Content-Type" "application/json"}
-           :body (json-text {:error "voice extension is not on the classpath"})}
-          (not= :ready (:state (model-state))) {:status 425
-                                                :headers {"Content-Type"
-                                                          "application/json; charset=utf-8"}
-                                                :body (json-text (voice-state->json (model-state)))}
-          :else (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
-                  (try (with-open [in ^java.io.InputStream (:body request)
-                                   out (io/output-stream tmp)]
-
-                         (io/copy in out))
-                       (if-not (wav-file? tmp)
-                         {:status 400
-                          :headers {"Content-Type" "application/json; charset=utf-8"}
-                          :body (json-text {:error "body must be a RIFF/WAVE audio file"})}
-                         {:status 200
-                          :headers {"Content-Type" "application/json; charset=utf-8"}
-                          :body (json-text {:text (let [raw (str/trim (str (transcribe (str tmp))))]
-                                                    (if clean (clean raw) raw))})})
-                       (catch Throwable t
-                         (tel/log!
-                           {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
-                         {:status 400
-                          :headers {"Content-Type" "application/json; charset=utf-8"}
-                          ;; null-message throwables (ExceptionInInitializerError, NPE — the
-                          ;; native-image failure shapes) used to collapse into a blind
-                          ;; "transcription failed"; surface the class + cause chain instead.
-                          :body (json-text {:error (or (ex-message t)
-                                                       (->> (iterate (fn [^Throwable x]
-                                                                       (some-> x
-                                                                               .getCause))
-                                                                     t)
-                                                            (take-while some?)
-                                                            (map str)
-                                                            (str/join " <- ")))})})
-                       (finally (.delete tmp)))))))
-
 ;; =============================================================================
 ;; CSS - the whole theme, one file, no inline styles.
 ;; vis-light tokens (internal/theme.clj -> theme->web-css-vars):
@@ -5765,8 +5635,6 @@
    ["/ui/session/:sid/queued/:tid/delete" {:post #'queued-delete-handler}]
    ["/ui/session/:sid/queued/clear" {:post #'queued-clear-handler}]
    ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
-   ["/ui/session/:sid/voice" {:post #'voice-handler}]
-   ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
    ["/ui/session/:sid/fs-remove" {:post #'fs-remove-handler}]

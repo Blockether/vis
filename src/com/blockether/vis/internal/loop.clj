@@ -179,10 +179,24 @@
 (def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000 4000])
 
 (defn- provider-call-cancelled?
+  "True when the in-flight provider call was cancelled by the user.
+
+   Reads TWO signals because on Esc they race:
+     1. `:cancel-atom` - the cooperative flag `vis/cancel!` flips.
+     2. the worker thread's own interrupt status - set synchronously when
+        the SSE read is aborted / the worker future is interrupted.
+
+   The interrupt (2) can land BEFORE the atom write (1) becomes visible, so
+   reading the atom alone yields a false negative and a genuine user Esc gets
+   misclassified as a retryable spurious blip (issue #13). A real cancel
+   leaves the thread interrupted; a spurious TTFT-watchdog blip surfaces as a
+   NAKED InterruptedException (interrupt flag clear), so consulting the thread
+   status closes the race without suppressing the legitimate retry."
   [environment]
-  (boolean (some-> environment
-                   :cancel-atom
-                   deref)))
+  (or (boolean (some-> environment
+                       :cancel-atom
+                       deref))
+      (.isInterrupted (Thread/currentThread))))
 
 (def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS
   "Ceiling on how long a provider call may have run and still have its interrupt

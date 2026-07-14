@@ -23,7 +23,7 @@ import { VisGatewayClient } from "./VisClient";
 import { c, mono } from "./theme";
 
 /* 16-bit PCM WAV @16kHz mono — what the gateway's Parakeet endpoint
-   (`/ui/session/:sid/voice`, sherpa-onnx WaveReader) accepts. Android's
+   (`/v1/sessions/:sid/voice`, sherpa-onnx WaveReader) accepts. Android's
    MediaRecorder cannot produce WAV, so voice is iOS-first for now. */
 const WAV_RECORDING: RecordingOptions = {
   extension: ".wav",
