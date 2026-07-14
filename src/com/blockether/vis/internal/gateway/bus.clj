@@ -161,6 +161,17 @@
   [f]
   (reset! relevant-sid-fn f))
 
+(defonce ^:private relevant-sids-fn (atom nil))
+
+(defn set-relevant-sids-fn!
+  "Register a 0-arg fn returning the COLLECTION of sids this process has a local
+   consumer for. When wired, the tailer drains ONLY those sessions' journal files
+   directly — it never lists/stats the whole events dir on a poll, so an idle
+   daemon (empty set) does zero per-poll directory work. Falls back to the
+   `relevant-sid?` directory scan when this is not wired (tests)."
+  [f]
+  (reset! relevant-sids-fn f))
+
 (defn- relevant-sid?
   "Whether the tailer should drain `sid`'s journal — true unless a wired predicate
    says this process has no local consumer for it. Never throws: a predicate error
@@ -369,29 +380,45 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!
-  "Drain every journal with a LOCAL consumer once. Returns true when any line was
-   delivered, so the tailer can poll fast under load and back off when the tail is
-   quiet. Journals for sessions this process isn't tracking are skipped up front
-   (see `relevant-sid?`) — their foreign events would be dropped on delivery
-   anyway — so an idle daemon no longer opens and stats every sibling's journal on
-   every poll."
+  "Drain the journals with a LOCAL consumer once. Returns true when any line was
+   delivered, so the tailer can poll fast under load and back off when quiet.
+
+   Fast path (production): when `set-relevant-sids-fn!` is wired, drain ONLY the
+   sessions this process tracks by resolving each sid's journal file directly —
+   no `.listFiles`, no stat of every sibling's journal on every poll. An idle
+   daemon (no local consumers) therefore does zero directory work per poll, which
+   was the dominant CPU/allocation cost of the tailer (a File per journal, twice
+   a second, forever).
+
+   Fallback: no sids-fn wired (tests) — scan the events dir and drain every
+   journal whose sid passes `relevant-sid?`, exactly as before."
   []
-  (try (let [dir (.toFile (events-dir))]
-         (if (.isDirectory dir)
-           (reduce (fn [busy ^File f]
-                     (let [sid (journal-sid (.getName f))]
-                       (if (and sid (relevant-sid? sid))
-                         (or (try (boolean (drain-file! f))
-                                  (catch Throwable t
-                                    (tel/log! :debug
-                                              ["gateway-bus: drain failed" (.getName f)
-                                               (ex-message t)])
-                                    false))
-                             busy)
-                         busy)))
-                   false
-                   (.listFiles dir))
-           false))
+  (try (if-let [sids-fn @relevant-sids-fn]
+         (reduce (fn [busy sid]
+                   (or (try (boolean (drain-file! (session-file sid)))
+                            (catch Throwable t
+                              (tel/log! :debug
+                                        ["gateway-bus: drain failed" (str sid) (ex-message t)])
+                              false))
+                       busy))
+                 false
+                 (try (seq (sids-fn)) (catch Throwable _ nil)))
+         (let [dir (.toFile (events-dir))]
+           (if (.isDirectory dir)
+             (reduce (fn [busy ^File f]
+                       (let [sid (journal-sid (.getName f))]
+                         (if (and sid (relevant-sid? sid))
+                           (or (try (boolean (drain-file! f))
+                                    (catch Throwable t
+                                      (tel/log! :debug
+                                                ["gateway-bus: drain failed" (.getName f)
+                                                 (ex-message t)])
+                                      false))
+                               busy)
+                           busy)))
+                     false
+                     (.listFiles dir))
+             false)))
        (catch Throwable t (tel/log! :debug ["gateway-bus: poll failed" (ex-message t)]) false)))
 
 (defn start!
