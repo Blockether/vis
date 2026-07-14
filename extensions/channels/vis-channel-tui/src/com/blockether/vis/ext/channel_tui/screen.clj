@@ -526,9 +526,21 @@
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
-   (let [slash (slash/suggestions (input/input->text input-state)
-                                  (menu-commands screen)
-                                  {:limit Integer/MAX_VALUE :selected-index selected-index})]
+   (let [text
+         (input/input->text input-state)
+
+         ;; `slash/suggestions` returns nil unless the text is a slash query
+         ;; (`slash-query` ⇒ starts with a single `/`). Guard on that FIRST so
+         ;; non-slash input — the overwhelmingly common case, every streaming
+         ;; tick and every plain keystroke — never pays `(menu-commands screen)`,
+         ;; which rebuilds `template-slash-commands` (prompt-template scan +
+         ;; dedup) unconditionally. That eager arg was a per-tick hot-path cost.
+         slash
+         (when (slash/slash-query text)
+           (slash/suggestions text
+                              (menu-commands screen)
+                              {:limit Integer/MAX_VALUE :selected-index selected-index}))]
+
      ;; When no slash command matches, the same overlay + key handling drive
      ;; the inline `@` file picker (shared with the web; see file-suggest).
      (if (seq slash) slash (file-suggest/suggestions input-state selected-index)))))

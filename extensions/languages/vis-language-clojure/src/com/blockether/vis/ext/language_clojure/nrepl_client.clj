@@ -434,59 +434,72 @@
         deadline
         (+ start (long timeout-ms))]
 
-    (try
-      (let [conn
-            (connection-for host port timeout-ms)
+    (letfn
+      [(attempt []
+         (let [conn
+               (connection-for host port timeout-ms)
 
-            client
-            (nrepl/client conn timeout-ms)
+               client
+               (nrepl/client conn timeout-ms)
 
-            session
-            (nrepl/client-session client)]
+               session
+               (nrepl/client-session client)]
 
-        (try (let [req
-                   (cond-> {:op "eval" :code code}
-                     (string? ns)
-                     (assoc :ns ns)
+           (try (let [req
+                      (cond-> {:op "eval" :code code}
+                        (string? ns)
+                        (assoc :ns ns)
 
-                     pretty?
-                     (assoc :nrepl.middleware.print/print
-                       "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                       {:right-margin print-margin}))
+                        pretty?
+                        (assoc :nrepl.middleware.print/print
+                          "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                          {:right-margin print-margin}))
 
-                   responses
-                   (session req)
+                      responses
+                      (session req)
 
-                   combined
-                   (combine responses deadline)
+                      combined
+                      (combine responses deadline)
 
-                   combined
-                   (if (eval-error? combined)
-                     (merge combined (fetch-stacktrace! session responses))
-                     combined)
+                      combined
+                      (if (eval-error? combined)
+                        (merge combined (fetch-stacktrace! session responses))
+                        combined)
 
-                   elapsed
-                   (- (System/currentTimeMillis) start)]
+                      elapsed
+                      (- (System/currentTimeMillis) start)]
 
-               (assoc combined
-                 "ms" elapsed
-                 "port" (int port)
-                 "host" host))
-             (finally
-               ;; Reap the cloned session's server-side thread — otherwise every
-               ;; eval leaks a parked nREPL-session-* executor on the server.
-               (close-session! session))))
-      (catch IOException ioe
-        (evict! host port)
-        (throw (ex-info (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
-                        {:type :clj/nrepl-io :host host :port port :cause (.getMessage ioe)})))
-      (catch Throwable t
-        (if (= :clj/nrepl-connect-failed (:type (ex-data t)))
-          (throw t)
-          (throw
-            (ex-info
-              (str "nREPL eval failed: " (.getMessage t))
-              {:type :clj/nrepl-eval-failed :host host :port port :cause (.getMessage t)})))))))
+                  (assoc combined
+                    "ms" elapsed
+                    "port" (int port)
+                    "host" host))
+                (finally
+                  ;; Reap the cloned session's server-side thread — otherwise every
+                  ;; eval leaks a parked nREPL-session-* executor on the server.
+                  (close-session! session)))))]
+      (try (try (attempt)
+                (catch IOException _ioe
+                  ;; A cached keep-alive socket the server has since reaped fails the FIRST
+                  ;; write with an IOException. Drop the dead entry and reconnect ONCE with a
+                  ;; fresh connection so a transient eviction self-heals here — instead of
+                  ;; bubbling a "retry." error the caller has to notice and re-issue by hand
+                  ;; (which stalled run_tests / repl_eval).
+                  (evict! host port)
+                  (attempt)))
+           (catch IOException ioe
+             ;; The reconnect also failed on I/O — the socket is genuinely down.
+             (evict! host port)
+             (throw (ex-info
+                      (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
+                      {:type :clj/nrepl-io :host host :port port :cause (.getMessage ioe)})))
+           (catch Throwable t
+             (if (= :clj/nrepl-connect-failed (:type (ex-data t)))
+               (throw t)
+               (throw (ex-info (str "nREPL eval failed: " (.getMessage t))
+                               {:type :clj/nrepl-eval-failed
+                                :host host
+                                :port port
+                                :cause (.getMessage t)}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; probe — cheap liveness check (no code execution)

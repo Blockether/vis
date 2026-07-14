@@ -1196,6 +1196,110 @@
             (expect (< per-call-us 5000.0)))))))
 
 (defdescribe
+  progress-body-cache-test
+  ;; The 80ms live tick used to re-walk the WHOLE bubble every frame
+  ;; (trace-render-entries + coalesce-bubble-blanks + per-line
+  ;; strip-paint-markers-line for `:text`) even when only the spinner clock
+  ;; advanced. `progress->lines-data` now memoizes that content body and
+  ;; splices only the animated spinner row in per tick. These tests pin both
+  ;; halves: a spinner-only tick must NOT recompute the body, and the spliced
+  ;; output must stay byte-identical to the body except for the spinner row.
+  (let [mk-iter
+        (fn [i]
+          {:thinking (str "reason-" i)
+           :forms [{:code (str "(+ " i " 1)")
+                    :comment nil
+                    :render-segments nil
+                    :stdout (str "out-" i)
+                    :error nil
+                    :started-at-ms nil
+                    :duration-ms 10
+                    :success? true
+                    :silent? false}]})
+
+        settings
+        {:show-thinking true :show-iterations true}
+
+        extra
+        (fn [now]
+          {:now-ms now
+           :turn-start-ms 1699999900000
+           :session-id "s1"
+           :session-turn-id "turn-abc12345"
+           :viewport-rows 40})]
+
+    (it
+      "spinner-only tick reuses the cached body (no re-walk); only the spinner row changes"
+      (let [iters (mapv mk-iter (range 3))]
+        (render/invalidate-cache!)
+        (let [a (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000000000))
+              size-after-first (render/cache-size)
+              ;; +5s: identical content, only the spinner clock advances.
+              b (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000005000))
+              size-after-tick (render/cache-size)]
+
+          ;; No new body entry ⇒ the O(bubble) trace/coalesce/strip walk was skipped.
+          (expect (= size-after-first size-after-tick))
+          (expect (= (count (:lines a)) (count (:lines b))))
+          (expect (= (:line-meta a) (:line-meta b)))
+          ;; ONLY the final spinner row differs between the two ticks.
+          (let [diff (keep-indexed (fn [i [x y]]
+                                     (when (not= x y) i))
+                                   (map vector (:lines a) (:lines b)))]
+            (expect (= [(dec (count (:lines a)))] (vec diff))))
+          ;; `:text` mirrors `:lines`: same body, different last (spinner) line.
+          (expect (not= (:text a) (:text b))))))
+    (it "a content change busts the body cache and grows the trace"
+        (render/invalidate-cache!)
+        (let [three
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 3))}
+                                           130
+                                           settings
+                                           (extra 1700000005000))
+
+              size3
+              (render/cache-size)
+
+              four
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 4))}
+                                           130
+                                           settings
+                                           (extra 1700000005000))
+
+              size4
+              (render/cache-size)]
+
+          (expect (> size4 size3))
+          (expect (> (count (:lines four)) (count (:lines three))))))
+    (it "queued sends still render after the spinner with the body split path"
+        (render/invalidate-cache!)
+        (let [payload
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 2))}
+                                           130
+                                           settings
+                                           (assoc (extra 1700000005000)
+                                             :pending-sends [{:text "first queued message"}
+                                                             {:text "second queued message"}]))
+
+              lines
+              (:lines payload)
+
+              spinner-idx
+              (first (keep-indexed (fn [i l]
+                                     (when (str/includes? (str l) "Esc to cancel") i))
+                                   lines))
+
+              queued-idx
+              (first (keep-indexed (fn [i l]
+                                     (when (str/includes? (str l) "Queued") i))
+                                   lines))]
+
+          (expect (some? spinner-idx))
+          (expect (some? queued-idx))
+          ;; Queue block renders AFTER the spinner row (order preserved).
+          (expect (< (long spinner-idx) (long queued-idx)))))))
+
+(defdescribe
   iteration-live-ordering-test
   (describe "ordered live progress events"
             (it "renders reasoning before code in the post-:events flat layout"

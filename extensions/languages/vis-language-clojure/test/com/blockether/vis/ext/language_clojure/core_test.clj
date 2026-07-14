@@ -3,6 +3,7 @@
    the extension activates on Clojure workspaces and stays dark on
    plain ones."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-clojure.core :as core]
             [com.blockether.vis.ext.language-clojure.format :as fmt]
@@ -450,6 +451,42 @@
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))
                    (expect (= "clojure" (get-in result [:result "language"]))))))
+
+(defdescribe test-runner-repl-gate-test
+             (it "runs via the CLI suite when there is no launchable build file (no-launcher)"
+                 (let [called
+                       (atom false)
+
+                       result
+                       (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
+                                        (constantly {"result" "no-launcher" "status" "down"})
+                                        #'test-runner/run-via-cli
+                                        (fn [_root norm]
+                                          (reset! called true)
+                                          {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
+                         #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+                   (expect @called)
+                   (expect (= "cli" (get-in result [:result "mode"])))))
+
+             (it "surfaces the launcher's boot-failure story instead of silently CLI-falling-back"
+                 (let [cli-called
+                       (atom false)
+
+                       result
+                       (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
+                                        (constantly {"result" "failed"
+                                                     "status" "failed"
+                                                     "message" "nREPL launcher exited before accepting connections (exit 1)"
+                                                     "log_tail" "Syntax error compiling."})
+                                        #'test-runner/run-via-cli
+                                        (fn [& _] (reset! cli-called true) {"mode" "cli"})}
+                         #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))
+                       r (:result result)]
+                   (expect (not @cli-called))
+                   (expect (= "repl" (get r "mode")))
+                   (expect (str/includes? (get r "error") "not running (status failed)"))
+                   (expect (str/includes? (get r "error") "exited before accepting connections"))
+                   (expect (= "Syntax error compiling." (get r "log_tail"))))))
 
 (defdescribe
   test-runner-nested-root-test

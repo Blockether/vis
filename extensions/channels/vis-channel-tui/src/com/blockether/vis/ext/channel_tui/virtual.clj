@@ -929,18 +929,6 @@
         eff-1
         (long (min scroll-1 (max 0 (- est-tot inner-h))))
 
-        ;; Pass 1b ── candidate visible idxs from estimates.
-        cand-idxs
-        (filterv (fn [^long i]
-                   (let [top
-                         (- (long (nth est-off i)) eff-1)
-
-                         h
-                         (long (nth est i))]
-
-                     (visible? top h inner-h)))
-          (range n))
-
         ;; Pass 2 ── project + REAL height for candidates only.
         ;; Loading bubble gets live progress only if it is already visible.
         loading-last-idx
@@ -1096,7 +1084,23 @@
              :offsets offsets'
              :visible visible-set})
           ;; ── Explicit scroll: estimate-anchored multi-pass ────────────
-          (let [projected
+          (let [;; Pass 1b ── candidate visible idxs from estimates. ONLY the
+                ;; explicit-scroll path needs them; auto-bottom uses the real-
+                ;; tail back-walk and discarded these, so computing them in the
+                ;; outer let made every live/auto-bottom tick pay an O(n)
+                ;; `filterv`. Scoped here → skipped on the hot streaming path.
+                cand-idxs
+                (filterv (fn [^long i]
+                           (let [top
+                                 (- (long (nth est-off i)) eff-1)
+
+                                 h
+                                 (long (nth est i))]
+
+                             (visible? top h inner-h)))
+                  (range n))
+
+                projected
                 (mapv #(project-idx! % eff-1) cand-idxs)
 
                 ;; Refine heights vec with real measurements.
