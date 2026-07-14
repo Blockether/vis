@@ -256,3 +256,58 @@
                                            [])]
 
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
+
+(deftest parse-multi-sids-parses-and-filters
+  (testing "sid[:cursor] comma list — cursor defaults to 0, unknown sids dropped"
+    (with-redefs-fn {#'state/soul (fn [sid]
+                                    (contains? #{"a" "b"} sid))}
+      (fn []
+        (let [parse (rv 'parse-multi-sids)]
+          (is (= [["a" 10] ["b" 0]] (parse {:query-params {"sids" "a:10, b , zzz:3"}})))
+          (is (nil? (parse {:query-params {}})))
+          (is (nil? (parse {:query-params {"sids" ""}}))))))))
+
+(deftest multi-sse-fans-many-sessions-down-one-stream
+  (testing
+    "every listed session's events ride ONE connection, tagged by :session_id, deduped per session"
+    (with-redefs-fn {#'server/stop! (fn []
+                                      nil)}
+      (fn []
+        (with-server-state!
+          {}
+          (fn []
+            (let [multi-sse-body
+                  (rv 'multi-sse-body)
+
+                  write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+                  sid-a
+                  (str (java.util.UUID/randomUUID))
+
+                  sid-b
+                  (str (java.util.UUID/randomUUID))
+
+                  baos
+                  (java.io.ByteArrayOutputStream.)
+
+                  body
+                  (multi-sse-body [[sid-a 0] [sid-b 0]] false)
+
+                  fut
+                  (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+
+              (Thread/sleep 150)
+              (state/append-event! sid-a "test.alpha" {:n 1})
+              (state/append-event! sid-b "test.beta" {:n 2})
+              (state/append-event! sid-a "test.alpha2" {:n 3})
+              (Thread/sleep 200)
+              (future-cancel fut)
+              (let [s (String. (.toByteArray baos) "UTF-8")]
+                (testing "both sessions surfaced on the single stream"
+                  (is (re-find (re-pattern sid-a) s))
+                  (is (re-find (re-pattern sid-b) s))
+                  (is (re-find #"test.alpha2" s)))
+                (testing "per-session dedup keeps each session's own monotonic run"
+                  (is (= 2 (count (re-seq (re-pattern sid-a) s))))
+                  (is (= 1 (count (re-seq (re-pattern sid-b) s)))))))))))))

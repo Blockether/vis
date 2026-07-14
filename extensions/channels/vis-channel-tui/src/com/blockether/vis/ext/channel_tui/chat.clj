@@ -803,21 +803,22 @@
   (let [sid
         (str session-id)
 
-        sub-id
-        (str "tui-events-" (java.util.UUID/randomUUID))
-
         cursor
-        (try (vis/gateway-current-seq sid) (catch Throwable _ 0))]
+        (try (vis/gateway-current-seq sid) (catch Throwable _ 0))
 
-    (vis/gateway-subscribe! sid
-                            sub-id
-                            (fn [event]
-                              (try (when-let [chunk (gateway-event->chunk event)]
-                                     (on-chunk chunk))
-                                   (catch Throwable _ nil)))
-                            cursor)
+        ;; ONE process-wide multiplexed SSE connection carries every open tab's
+        ;; session (demuxed by :session_id), so N tabs = 1 socket + 1 server
+        ;; heartbeat thread, not N. Returns this tab's cleanup fn.
+        cleanup
+        (vis/gateway-mux-subscribe! sid
+                                    (fn [event]
+                                      (try (when-let [chunk (gateway-event->chunk event)]
+                                             (on-chunk chunk))
+                                           (catch Throwable _ nil)))
+                                    cursor)]
+
     (fn []
-      (try (vis/gateway-unsubscribe! sid sub-id) (catch Throwable _ nil)))))
+      (try (cleanup) (catch Throwable _ nil)))))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root prewarm?]}]
