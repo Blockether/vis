@@ -2372,12 +2372,127 @@
    mis-paints on some terminal, this restores the always-full-repaint behaviour
    without a rebuild."
   (some? (System/getenv "VIS_FORCE_FULL_FRAME")))
+
+(defn- ease-step!
+  "Advance the smooth-scroll / follow ease at most once per animation tick.
+   One `:ease-scroll` covers BOTH smooth wheel/key animation AND stick-to-bottom
+   follow: in FOLLOW the desired row is the growing bottom, so streamed content
+   eases in; in AT the user's parked row is fixed, so they're never yanked.
+   Pulse it while a turn streams (content grows every frame) OR whenever an ease
+   is still in flight; idle + settled dispatches nothing, so the view stops
+   repainting instead of livelocking on render-version bumps.
+
+   THROTTLED to `scroll-anim-tick-ms`: each ease step bumps `:render-version`,
+   which forces an immediate repaint AND an immediate re-loop (the loop never
+   parks after a paint). Without this clock the ease re-fires every raw iteration
+   while a turn streams — chasing the growing bottom flat-out — and pegs a core.
+   Returns the new last-ease timestamp (unchanged when nothing was dispatched)."
+  [db now-top last-ease-ms]
+  (let [ly
+        (:layout db)
+
+        ease?
+        (and ly
+             (:total-h ly)
+             (:inner-h ly)
+             (or (:loading? db) (scroll-anim-active? db))
+             (>= (- now-top (long last-ease-ms)) scroll-anim-tick-ms))]
+
+    (when ease? (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)]))
+    (if ease? now-top last-ease-ms)))
+
+(defn- frame-change-flags
+  "Classify what changed since the last painted frame into the cheap
+   repaint-path booleans the render loop chooses between. Pure given the
+   supplied snapshots — extracted from `render-loop!` so the CPU-critical
+   path decision is unit-testable in isolation. `eligible?` is the shared
+   guard (no forced full frame, no locking overlay, not recovering from a
+   dialog block); `with-layout?` additionally needs a stable size + a prior
+   published layout to diff against."
+  [{:keys [last-db db last-layout last-hover current-hover cols same-size? animate? loading?
+           scroll-anim? overlay-open? was-blocked?]}]
+  (let [eligible?
+        (and (not force-full-frame?) (not overlay-open?) (not was-blocked?))
+
+        with-layout?
+        (and eligible? same-size? last-layout)]
+
+    {;; Only header hover chrome changed.
+     :header-hover-only? (and with-layout?
+                              (not animate?)
+                              (header-hover-only-change? last-db db last-hover current-hover))
+     ;; Live streaming bubble tick — recompute layout but repaint only the live band.
+     :partial-live? (and eligible? (partial-live-frame? last-db db same-size? last-layout))
+     ;; ONLY a background spinner tick — the active view is byte-for-byte unchanged.
+     :header-spinner-only? (and with-layout?
+                                (not loading?)
+                                (not scroll-anim?)
+                                (active-view-unchanged? last-db db)
+                                (state/any-background-loading? db))
+     ;; Pure history scroll: repaint messages band + scrollbar, skip static chrome.
+     ;; Excludes image sessions (images ride the terminal graphics layer).
+     :scroll-frame?
+     (and with-layout? (not (:has-images? last-layout)) (scroll-only-change? last-db db))
+     ;; Pure input-text edit: only the bottom chrome changed, box height held.
+     :input-only? (and with-layout? (not animate?) (input-only-change? last-db db cols))}))
+
+(defn- choose-frame-path
+  "Pick the cheapest repaint path from the precomputed `frame-change-flags`.
+   Returns one of :header-hover :partial-live :header-spinner :scroll :input
+   :full. Order matters — earlier (cheaper) paths win ties."
+  [{:keys [header-hover-only? partial-live? header-spinner-only? scroll-frame? input-only?]}]
+  (cond header-hover-only? :header-hover
+        partial-live? :partial-live
+        header-spinner-only? :header-spinner
+        scroll-frame? :scroll
+        input-only? :input
+        :else :full))
+
+(defn- paint-frame!
+  "Run the chosen repaint `path`. Returns [layout publish-layout?]:
+   publish-layout? is true only for paths that recomputed a fresh layout
+   (which then gets published back to app-db without bumping the version)."
+  [^TerminalScreen screen path cols rows db now-ms last-layout]
+  (case path
+    :header-hover
+    (do (render-header-hover-frame! screen cols rows db) [last-layout false])
+
+    :partial-live
+    [(render-live-bubble-frame! screen cols rows db now-ms last-layout) true]
+
+    :header-spinner
+    (do (render-header-hover-frame! screen cols rows db) [last-layout false])
+
+    :scroll
+    [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
+
+    :input
+    (do (render-input-frame! screen cols rows db now-ms) [last-layout false])
+
+    :full
+    [(render-frame! screen cols rows db now-ms) true]))
+
+(defn- park-wait-ms
+  "How long the render thread should sleep before re-checking for work:
+   the fast animation tick while a scroll ease is in flight, the spinner tick
+   while a turn streams, else a defensive ~250ms idle cap on lost wakeups."
+  [db loading?]
+  (cond (scroll-anim-active? db) scroll-anim-tick-ms
+        loading? spinner-tick-ms
+        :else 250))
+
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
    only paints when `:render-version` advances, the terminal gets
    resized, or - while loading - the spinner frame advances. Skips
    painting entirely while a dialog is up by failing to acquire
-   `draw-lock`."
+   `draw-lock`.
+
+   The per-frame work is factored out so this body reads as a thin
+   read -> ease -> classify -> paint -> park sequence: `ease-step!`
+   advances the scroll ease, `frame-change-flags` + `choose-frame-path`
+   pick the cheapest repaint path, `paint-frame!` runs it, and
+   `park-wait-ms` says how long to sleep."
   [^TerminalScreen screen]
   (loop [last-v
          -1
@@ -2401,31 +2516,36 @@
          nil
 
          was-blocked?
-         false]
+         false
 
-    (let [db @state/app-db]
-      ;; Advance the scroll ease BEFORE acquiring draw-lock so the re-read
-      ;; inside the try/let below paints the freshly stepped offset. One
-      ;; `:ease-scroll` covers BOTH smooth wheel/key animation AND
-      ;; stick-to-bottom follow: in FOLLOW the desired row is the growing
-      ;; bottom, so streamed content eases in; in AT the user's parked row
-      ;; is fixed, so they're never yanked. Pulse it while a turn streams
-      ;; (content grows every frame) OR whenever an ease is still in
-      ;; flight; idle + settled dispatches nothing, so the view stops
-      ;; repainting instead of livelocking on render-version bumps.
-      (let [ly (:layout db)]
-        (when (and ly (:total-h ly) (:inner-h ly) (or (:loading? db) (scroll-anim-active? db)))
-          (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)])))
+         last-ease-ms
+         0]
+
+    (let [db
+          @state/app-db
+
+          now-top
+          (System/currentTimeMillis)
+
+          ;; Advance the scroll ease BEFORE acquiring draw-lock so the re-read
+          ;; inside the try/let below paints the freshly stepped offset.
+          new-ease-ms
+          (ease-step! db now-top last-ease-ms)]
+
       ;; STUCK-cancel self-heal: while a cancel is pending, poke the state layer on
       ;; the heartbeat (this loop wakes every spinner-tick-ms while loading) so a
       ;; dropped terminal `turn.completed` event can't wedge input for minutes.
       ;; The handler no-ops until the pending flag outlives its timeout.
       (when (:cancelling? db) (state/dispatch [:cancel-self-heal-tick]))
       (when-not (:shutdown? db)
-        (let [version (long (or (:render-version @state/app-db) 0))
+        (let [version
+              (long (or (:render-version @state/app-db) 0))
+
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
-              got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
+              got-lock?
+              (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
+
               [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover
                new-was-blocked?]
               (if-not got-lock?
@@ -2439,84 +2559,65 @@
                 (try
                   ;; Re-read AFTER acquiring the lock - dialog state
                   ;; could have flipped while we were waiting.
-                  (let [db @state/app-db
-                        size (screen-size screen)
-                        cols (.getColumns size)
-                        rows (.getRows size)
-                        now-ms (System/currentTimeMillis)
-                        loading? (boolean (:loading? db))
-                        any-loading? (or loading? (state/any-background-loading? db))
-                        scroll-anim? (scroll-anim-active? db)
+                  (let [db
+                        @state/app-db
+
+                        size
+                        (screen-size screen)
+
+                        cols
+                        (.getColumns size)
+
+                        rows
+                        (.getRows size)
+
+                        now-ms
+                        (System/currentTimeMillis)
+
+                        loading?
+                        (boolean (:loading? db))
+
+                        any-loading?
+                        (or loading? (state/any-background-loading? db))
+
+                        scroll-anim?
+                        (scroll-anim-active? db)
+
                         ;; F1 (help) / F2 (context) overlays LOCK the
                         ;; background: while one is up we suppress every
-                        ;; incremental repaint path (spinner tick, scroll
-                        ;; ease, header-hover, partial-live). The overlay
-                        ;; paints once on the version bump that opened it
-                        ;; and then sits still — no streaming bubble redraw
-                        ;; underneath flickering through it. A real change
-                        ;; (overlay toggle, live ctx update, resize) still
-                        ;; bumps :render-version and forces ONE full frame
-                        ;; that repaints the overlay cleanly on top.
-                        overlay-open? (overlay-locked? db)
-                        animate? (and (not overlay-open?)
-                                      (or (and any-loading?
-                                               (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
-                                          scroll-anim?))
-                        same-size? (and (= last-cols cols) (= last-rows rows))
-                        current-hover (cr/hovered)
-                        ;; Force a full repaint on the first iteration
-                        ;; after a dialog session held draw-lock: see
-                        ;; the no-got-lock branch above.
-                        header-hover-only?
-                        (and (not force-full-frame?)
-                             (not overlay-open?)
-                             same-size?
-                             last-layout
-                             (not animate?)
-                             (not was-blocked?)
-                             (header-hover-only-change? last-db db last-hover current-hover))
-                        partial-live? (and (not force-full-frame?)
-                                           (not overlay-open?)
-                                           (not was-blocked?)
-                                           (partial-live-frame? last-db db same-size? last-layout))
-                        header-spinner-only? (and (not force-full-frame?)
-                                                  (not overlay-open?)
-                                                  same-size?
-                                                  last-layout
-                                                  (not was-blocked?)
-                                                  (not loading?)
-                                                  (not scroll-anim?)
-                                                  ;; ONLY a background spinner tick — the active view is
-                                                  ;; byte-for-byte the last rendered one. Without this
-                                                  ;; guard a tab switch (or any version bump) while a
-                                                  ;; background tab streams would repaint just the header
-                                                  ;; and leave the previous tab's body on screen.
-                                                  (active-view-unchanged? last-db db)
-                                                  (state/any-background-loading? db))
-                        ;; Pure history scroll: repaint only the messages band
-                        ;; + scrollbar, skip the static chrome. Excludes image
-                        ;; sessions (images ride the terminal graphics layer and
-                        ;; must be re-anchored by the full painter on scroll).
-                        scroll-frame? (and (not force-full-frame?)
-                                           (not overlay-open?)
-                                           same-size?
-                                           last-layout
-                                           (not was-blocked?)
-                                           (not (:has-images? last-layout))
-                                           (scroll-only-change? last-db db))
-                        ;; Pure input-text edit: the user typed and NOTHING but
-                        ;; :input changed AND the box height held, so the whole
-                        ;; band above the input is byte-identical — repaint only
-                        ;; the bottom chrome, skip virtual/layout. Gated on (not
-                        ;; animate?) so a background spinner tick still takes a
-                        ;; path that repaints the header.
-                        input-only? (and (not force-full-frame?)
-                                         (not overlay-open?)
-                                         same-size?
-                                         last-layout
-                                         (not animate?)
-                                         (not was-blocked?)
-                                         (input-only-change? last-db db cols))]
+                        ;; incremental repaint path. The overlay paints once
+                        ;; on the version bump that opened it and then sits
+                        ;; still; a real change bumps :render-version and
+                        ;; forces ONE full frame that repaints it cleanly.
+                        overlay-open?
+                        (overlay-locked? db)
+
+                        animate?
+                        (and (not overlay-open?)
+                             (or (and any-loading?
+                                      (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
+                                 (and scroll-anim?
+                                      (>= (- now-ms (long last-frame-ms)) scroll-anim-tick-ms))))
+
+                        same-size?
+                        (and (= last-cols cols) (= last-rows rows))
+
+                        current-hover
+                        (cr/hovered)
+
+                        path
+                        (choose-frame-path (frame-change-flags {:last-db last-db
+                                                                :db db
+                                                                :last-layout last-layout
+                                                                :last-hover last-hover
+                                                                :current-hover current-hover
+                                                                :cols cols
+                                                                :same-size? same-size?
+                                                                :animate? animate?
+                                                                :loading? loading?
+                                                                :scroll-anim? scroll-anim?
+                                                                :overlay-open? overlay-open?
+                                                                :was-blocked? was-blocked?}))]
 
                     (if (and (not (:shutdown? db))
                              (not (:dialog-open? db))
@@ -2526,21 +2627,7 @@
                                  animate?
                                  was-blocked?))
                       (let [[layout publish-layout?]
-                            (cond
-                              header-hover-only? (do
-                                                   (render-header-hover-frame! screen cols rows db)
-                                                   [last-layout false])
-                              partial-live?
-                              [(render-live-bubble-frame! screen cols rows db now-ms last-layout)
-                               true]
-                              header-spinner-only?
-                              (do (render-header-hover-frame! screen cols rows db)
-                                  [last-layout false])
-                              scroll-frame?
-                              [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
-                              input-only? (do (render-input-frame! screen cols rows db now-ms)
-                                              [last-layout false])
-                              :else [(render-frame! screen cols rows db now-ms) true])]
+                            (paint-frame! screen path cols rows db now-ms last-layout)]
                         ;; Publish layout back to app-db without bumping the version (see
                         ;; no-render-bump-events).
                         (when publish-layout? (state/dispatch [:set-layout layout]))
@@ -2578,20 +2665,18 @@
 
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
-            ;; spinner needs to tick. Idle sessions sleep up to
-            ;; ~250ms (defensive cap on lost wakeups); active queries
-            ;; sleep no longer than the spinner tick so the animation
-            ;; stays smooth without spamming repaints.
+            ;; spinner needs to tick.
             (locking state/render-monitor
-              (let [v-now (long (or (:render-version @state/app-db) 0))
-                    loading? (or (boolean (:loading? @state/app-db))
-                                 (state/any-background-loading? @state/app-db))]
+              (let [v-now
+                    (long (or (:render-version @state/app-db) 0))
+
+                    loading?
+                    (or (boolean (:loading? @state/app-db))
+                        (state/any-background-loading? @state/app-db))]
 
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
-                              (long (cond (scroll-anim-active? @state/app-db) scroll-anim-tick-ms
-                                          loading? spinner-tick-ms
-                                          :else 250)))
+                              (long (park-wait-ms @state/app-db loading?)))
                        (catch InterruptedException _ nil))))))
           (recur (if rendered? version last-v)
                  (long (or new-cols last-cols))
@@ -2600,7 +2685,8 @@
                  rendered-db
                  rendered-layout
                  rendered-hover
-                 (boolean new-was-blocked?)))))))
+                 (boolean new-was-blocked?)
+                 (long new-ease-ms)))))))
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a
    bug ever traps it in the loop."
