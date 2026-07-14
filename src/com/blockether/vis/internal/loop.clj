@@ -4382,6 +4382,22 @@
   ;; provider-id -> vector of epoch-ms timestamps of recent forced refreshes.
   (atom {}))
 
+(defonce ^:private auth-last-refreshed
+  ;; provider-id -> {:minted <access token the last FORCED refresh baked into
+  ;; the router> :at epoch-ms}. Lets the retry path tell "the token we just
+  ;; minted also 401'd" (dead credential) from "a stale token a peer rotated".
+  (atom {}))
+
+(defonce ^:private auth-dead-credentials
+  ;; provider-id -> {:token <dead baked token> :at epoch-ms}. A provider whose
+  ;; FRESHLY force-refreshed token STILL returned an auth 401 — the refresh
+  ;; token is revoked or the plan entitlement lapsed, so minting more access
+  ;; tokens is pointless. While latched, every session/turn owned by THIS
+  ;; gateway surfaces the provider's auth error IMMEDIATELY (no refresh, no
+  ;; storm); the latch self-clears the instant the on-file token rotates (the
+  ;; user re-authenticated).
+  (atom {}))
+
 (defn- auth-refresh-allowed?
   "Circuit breaker for forced OAuth refreshes. Atomically records this attempt
    for `pid`, prunes timestamps older than the rolling window, and returns true
@@ -4434,7 +4450,62 @@
      :breaker-open (into #{}
                          (keep (fn [[pid n]]
                                  (when (> n AUTH_REFRESH_WINDOW_MAX) pid)))
-                         in-window)}))
+                         in-window)
+     :dead-credentials (set (keys @auth-dead-credentials))}))
+
+(defn- current-provider-token
+  "Current ON-FILE access token for `pid` via its normal (non-forcing)
+   get-token-fn, or nil. Cheap: reads cached/on-file creds, NEVER forces a
+   refresh — the read used to decide whether a dead-credential latch has since
+   been cleared by a re-auth."
+  [pid]
+  (try (:token ((:provider/get-token-fn (registry/provider-by-id pid)))) (catch Throwable _ nil)))
+
+(defn- auth-error-shaped?
+  "True when `e` looks like a provider auth rejection (401/403 or an auth-shaped
+   message), regardless of whether the provider can refresh."
+  [^Throwable e]
+  (let [d (ex-data e)]
+    (perr/auth-provider-error? (:status d)
+                               (perr/provider-body-message (some-> (:body d)
+                                                                   str))
+                               (ex-message e))))
+
+(defn auth-credential-dead?
+  "True while provider `pid` is latched DEAD — a force-refresh minted a token
+   that ALSO auth-failed, so refreshing again is pointless. Self-clears the
+   moment the on-file token has rotated (a fresh re-auth) so the daemon
+   recovers WITHOUT a restart."
+  [pid]
+  (when-let [{:keys [token]} (get @auth-dead-credentials pid)]
+    (let [current (current-provider-token pid)]
+      (if (and current (not= current token))
+        (do (swap! auth-dead-credentials dissoc pid) (swap! auth-last-refreshed dissoc pid) false)
+        true))))
+
+(defn- mark-auth-credential-dead!
+  "Latch provider `pid` DEAD: a force-refresh minted a new token that STILL
+   auth-failed. Records the dead token so [[auth-credential-dead?]] can
+   self-clear on re-auth. Idempotent."
+  [pid]
+  (swap! auth-dead-credentials assoc
+    pid
+    {:token (config/baked-token pid) :at (System/currentTimeMillis)})
+  (tel/log! {:level :error :id ::auth-credential-dead :data {:provider pid}}
+            (str "Auth 401 — force-refreshed OAuth token for " pid
+                 " STILL rejected; latching credential DEAD. Surfacing provider"
+                 " error to every session (no more refreshes) until re-auth")))
+
+(defn- refresh-just-failed?
+  "True when the token that just auth-failed is the SAME one our last FORCED
+   refresh minted for this provider — proof the refresh did not help (revoked
+   refresh token / lapsed plan), so the credential is dead. Distinct from a
+   stale token a peer already rotated, where the baked token differs."
+  [^Throwable e resolved-model]
+  (let [pid (:provider resolved-model)]
+    (and (auth-error-shaped? e)
+         (when-let [{:keys [minted]} (get @auth-last-refreshed pid)]
+           (= minted (config/baked-token pid))))))
 
 (defn- auth-refreshable-error?
   "True when exception `e` is a provider auth rejection (401/403 or an
@@ -4455,6 +4526,7 @@
         (:provider resolved-model)]
 
     (boolean (and (perr/auth-provider-error? status provider-message (ex-message e))
+                  (not (auth-credential-dead? pid))
                   (some-> (registry/provider-by-id pid)
                           :provider/refresh-token-fn)))))
 
@@ -4520,6 +4592,13 @@
             ;; hooks that don't accept it.
             (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
                  (ensure-router-has-current-token! pid)
+                 ;; Remember the token this refresh minted. If the very next
+                 ;; re-send with it ALSO 401s, `refresh-just-failed?` sees the
+                 ;; baked token == this minted token and latches the credential
+                 ;; dead — collapsing the dead-credential storm to ONE exchange.
+                 (swap! auth-last-refreshed assoc
+                   pid
+                   {:minted (config/baked-token pid) :at (System/currentTimeMillis)})
                  (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
                            (str "Auth 401 — force-refreshed OAuth token for "
                                 pid
@@ -5557,6 +5636,22 @@
                                         ;; subsequent stream-truncated still has its own
                                         ;; quota.
                                         {::retry-max-tokens bumped})
+                                      ;; Post-refresh identical auth 401: the
+                                      ;; token we JUST force-refreshed for this
+                                      ;; provider also 401'd. The refresh token
+                                      ;; is revoked / the plan lapsed, so minting
+                                      ;; more is pointless. Latch the credential
+                                      ;; DEAD (gateway-wide) and surface the
+                                      ;; provider error at once; every other
+                                      ;; session short-circuits too (no storm).
+                                      (refresh-just-failed? e resolved-model)
+                                      (do (mark-auth-credential-dead! (:provider resolved-model))
+                                          (handle-iteration-exception! e
+                                                                       {:iteration iteration
+                                                                        :messages effective-messages
+                                                                        :routing effective-routing
+                                                                        :reasoning-level
+                                                                        reasoning-level}))
                                       ;; Auth 401/403 from a refreshable
                                       ;; provider: force an OAuth refresh +
                                       ;; router rebuild, then re-send once.
