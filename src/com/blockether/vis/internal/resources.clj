@@ -45,7 +45,7 @@
 ;; ---------------------------------------------------------------------------
 (defonce ^:private registry (atom {}))
 
-(def ^:private state-dir (io/file (System/getProperty "user.home") ".vis"))
+(def ^:private ^java.io.File state-dir (io/file (System/getProperty "user.home") ".vis"))
 
 (def ^:private registry-file (io/file state-dir "resources.edn"))
 

@@ -938,14 +938,15 @@
                                    :query (if (seq query) (subs query 0 (dec (count query))) query)
                                    :selected 0)
                                  state)
-             KeyType/Character (if filter?
-                                 (let [c (key-character key)]
-                                   (if (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
-                                     (assoc state
-                                       :query (str query c)
-                                       :selected 0)
-                                     state))
-                                 state)
+             KeyType/Character
+             (if filter?
+               (let [c (key-character key)]
+                 (if (and c (not (.isCtrlDown ^KeyStroke key)) (not (.isAltDown ^KeyStroke key)))
+                   (assoc state
+                     :query (str query c)
+                     :selected 0)
+                   state))
+               state)
              state))))}))
 
 (defn list-dialog!
@@ -4393,7 +4394,7 @@
 (defn- date-value
   [v]
   (when-let [ms (date->millis v)]
-    (java.util.Date. ms)))
+    (java.util.Date. (long ms))))
 
 (def ^:private session-table-headers
   ["" "ID" "Title" "Turns" "Created at" "Time" "Modified at" "Time"])
@@ -4679,11 +4680,6 @@
   [{:id :title :label "Title" :flex 1} {:id :session :label "Session" :width 8}
    {:id :draft :label "Draft" :width 8} {:id :dir :label "Project" :width 22}
    {:id :status :label "Status" :width 10}])
-(defn- navigator-content-w
-  "Navigator is wider than the default modal footprint — five columns need
-   room for the Title to breathe — but still clamps to the terminal."
-  [cols]
-  (max (default-content-width cols) (min (max 1 (- cols 6)) 104)))
 (defn- navigator-stamp
   "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent
    sessions), or `-` when absent."
@@ -4862,7 +4858,7 @@
    filesystem directory\"); the controls are identical regardless."
   [^TerminalScreen screen start-path & {:keys [sid workspace-info purpose]}]
   (let [path
-        (atom (dir-canon (java.io.File. ^String (or start-path "."))))
+        (atom (dir-canon (java.io.File. (str (or start-path ".")))))
 
         selected
         (atom 0)
@@ -5183,7 +5179,7 @@
                              ;; turns, so the turn-completion seed can't cover
                              ;; it — seed right here, at the change site.
                              (when-let [nr (:root new-ws)]
-                               (try (git/seed-working-tree-status! (java.io.File. nr))
+                               (try (git/seed-working-tree-status! (java.io.File. (str nr)))
                                     (catch Throwable t
                                       (tel/log! :warn
                                                 ["dialogs: git seed-working-tree-status! failed" nr

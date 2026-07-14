@@ -27,10 +27,8 @@
              (.getCanonicalFile dir)
 
              home
-             (some-> (System/getProperty "user.home")
-                     not-empty
-                     java.io.File.
-                     .getCanonicalFile)]
+             (when-let [h (not-empty (System/getProperty "user.home"))]
+               (.getCanonicalFile (java.io.File. ^String h)))]
 
          (boolean (or (nil? (.getParentFile ^java.io.File canon)) ; filesystem root
                       (and home (= canon home))))) ; the home directory itself

@@ -152,7 +152,9 @@
     (let [token (str (java.util.UUID/randomUUID))]
       (some-> (.getParent path)
               (Files/createDirectories (make-array FileAttribute 0)))
-      (Files/write path (.getBytes token StandardCharsets/UTF_8) (make-array OpenOption 0))
+      (Files/write path
+                   (.getBytes token StandardCharsets/UTF_8)
+                   ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
       (try (Files/setPosixFilePermissions path (PosixFilePermissions/fromString "rw-------"))
            (catch Throwable _ nil))
       token)))
@@ -1776,6 +1778,13 @@
     (let [pending (running-turn-count)]
       (when (pos? pending)
         (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
+        ;; Cancel in-flight turns FIRST. The drain below only waits for them to
+        ;; reach a terminal state; it does NOT keep the JVM's shared HttpClient
+        ;; alive — that executor is torn down concurrently on shutdown. A turn
+        ;; left looping would dispatch its next LLM iteration into the dying
+        ;; pool and die with a RejectedExecutionException surfaced to the user
+        ;; as a bogus "Provider unavailable"; cancelling makes it exit cleanly.
+        (try (state/cancel-all-running!) (catch Throwable _ nil))
         (let [residual (await-turns-drained!)]
           (when (pos? residual)
             (tel/log! :warn

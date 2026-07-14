@@ -103,7 +103,7 @@
    before `publish!` returns."
   4096)
 
-(defonce ^:private writer-queue (ArrayBlockingQueue. WRITE_QUEUE_SIZE))
+(defonce ^:private ^ArrayBlockingQueue writer-queue (ArrayBlockingQueue. WRITE_QUEUE_SIZE))
 
 (defonce ^:private writer (atom nil))
 

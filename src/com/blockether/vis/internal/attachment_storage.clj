@@ -231,10 +231,11 @@
     (cond-> {:storage/id id
              :storage/scheme "file"
              :storage/priority (long priority)
-             :storage/put-fn (fn [{:keys [^bytes bytes]}]
-                               (let [^Path p (.resolve root (str (UUID/randomUUID)))]
-                                 (Files/write p bytes (make-array OpenOption 0))
-                                 (str "file://" (.toAbsolutePath p))))
+             :storage/put-fn
+             (fn [{:keys [^bytes bytes]}]
+               (let [^Path p (.resolve root (str (UUID/randomUUID)))]
+                 (Files/write p bytes ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+                 (str "file://" (.toAbsolutePath p))))
              :storage/get-fn (fn [uri]
                                (let [path (subs (str uri) (count "file://"))
                                      ^Path p (Path/of path (make-array String 0))]

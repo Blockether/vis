@@ -323,7 +323,7 @@
   ^File [trunk]
   (io/file (drafts-home) (.getName (io/file trunk))))
 
-(def ^:private copy-opts
+(def ^:private ^"[Ljava.nio.file.CopyOption;" copy-opts
   ^"[Ljava.nio.file.CopyOption;"
   (into-array CopyOption
               [StandardCopyOption/REPLACE_EXISTING StandardCopyOption/COPY_ATTRIBUTES
@@ -744,7 +744,7 @@
 
 (defn- workspace-dir
   "Conventional backend storage path for `name` under `trunk`."
-  [trunk name]
+  ^java.io.File [trunk name]
   (io/file (draft-store-root trunk) name))
 
 (defn- free-workspace-name

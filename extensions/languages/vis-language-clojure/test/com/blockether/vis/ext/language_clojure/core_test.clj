@@ -465,23 +465,29 @@
                                           (reset! called true)
                                           {"mode" "cli" "ns" (first (:nses norm)) "pass?" true})}
                          #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))))
-
              (it "surfaces the launcher's boot-failure story instead of silently CLI-falling-back"
                  (let [cli-called
                        (atom false)
 
                        result
-                       (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
-                                        (constantly {"result" "failed"
-                                                     "status" "failed"
-                                                     "message" "nREPL launcher exited before accepting connections (exit 1)"
-                                                     "log_tail" "Syntax error compiling."})
-                                        #'test-runner/run-via-cli
-                                        (fn [& _] (reset! cli-called true) {"mode" "cli"})}
+                       (with-redefs-fn
+                         {#'repl-manager/ensure-repl-for-dir!
+                          (constantly {"result" "failed"
+                                       "status" "failed"
+                                       "message"
+                                       "nREPL launcher exited before accepting connections (exit 1)"
+                                       "log_tail" "Syntax error compiling."})
+                          #'test-runner/run-via-cli (fn [& _]
+                                                      (reset! cli-called true)
+                                                      {"mode" "cli"})}
                          #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))
-                       r (:result result)]
+
+                       r
+                       (:result result)]
+
                    (expect (not @cli-called))
                    (expect (= "repl" (get r "mode")))
                    (expect (str/includes? (get r "error") "not running (status failed)"))

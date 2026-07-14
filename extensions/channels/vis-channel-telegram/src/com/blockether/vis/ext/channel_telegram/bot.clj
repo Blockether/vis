@@ -246,7 +246,7 @@
 
 (defn- delete-pid-file!
   []
-  (try (let [file (telegram-pid-file)]
+  (try (let [^java.io.File file (telegram-pid-file)]
          (when (and (.exists file) (= (read-pid-file) (current-pid))) (.delete file)))
        (catch Throwable _ nil)))
 
@@ -262,9 +262,10 @@
                 "com.blockether.vis.core" "channels" "telegram"])))
 
 (defn- restart-process-builder
-  []
+  ^ProcessBuilder []
   (if-let [cmd (not-empty (str/trim (or (System/getenv telegram-restart-cmd-env) "")))]
-    (ProcessBuilder. ["sh" "-c" cmd])
+    (let [^java.util.List argv ["sh" "-c" cmd]]
+      (ProcessBuilder. argv))
     (ProcessBuilder. ^java.util.List (default-restart-argv))))
 
 (defn- start-fresh-telegram-process!
@@ -284,7 +285,7 @@
   [pid]
   (when (and pid (not= pid (current-pid)))
     (let [handle (ProcessHandle/of (long pid))]
-      (when (.isPresent handle) (.destroy (.get handle))))))
+      (when (.isPresent handle) (.destroy ^java.lang.ProcessHandle (.get handle))))))
 
 (defn- stop-polling!
   []
@@ -1712,8 +1713,8 @@
         (try (wav->ogg-opus! wav) (catch Throwable _ nil))]
 
     (try (if ogg (tg/send-voice! token chat-id ogg) (tg/send-audio! token chat-id wav))
-         (finally (try (.delete wav) (catch Throwable _))
-                  (when ogg (try (.delete ogg) (catch Throwable _)))))))
+         (finally (try (.delete ^java.io.File wav) (catch Throwable _))
+                  (when ogg (try (.delete ^java.io.File ogg) (catch Throwable _)))))))
 
 (defn- handle-user-text!
   ([token chat-id text sender] (handle-user-text! token chat-id text sender nil))
@@ -2032,7 +2033,7 @@
         (start-fresh-telegram-process!)
         (destroy-telegram-pid! old-pid)
         (cli-out! (str "Restarted Telegram bot in a fresh Java process. Log: "
-                       (.getAbsolutePath (telegram-log-file))))))))
+                       (.getAbsolutePath ^java.io.File (telegram-log-file))))))))
 
 (defn- telegram-restart-command
   [_parsed _residual]
@@ -2041,7 +2042,7 @@
     (start-fresh-telegram-process!)
     (destroy-telegram-pid! old-pid)
     (cli-out! (str "Restarted Telegram bot in a fresh Java process. Log: "
-                   (.getAbsolutePath (telegram-log-file))))))
+                   (.getAbsolutePath ^java.io.File (telegram-log-file))))))
 
 (defn- telegram-channel-subcommands
   []
