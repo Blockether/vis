@@ -25,6 +25,8 @@
 
 (def ^:private partial-live-frame? (deref #'screen/partial-live-frame?))
 
+(def ^:private input-only-change? (deref #'screen/input-only-change?))
+
 (def ^:private mouse-wheel-delta (deref #'screen/mouse-wheel-delta))
 
 (def ^:private coalesce-wheel-input (deref #'screen/coalesce-wheel-input))
@@ -789,3 +791,83 @@
                  (expect (user-error? #(parse-args ["--session-id" "--resume"]))))
              (it "non-flag positional arg also errors (no positional API today)"
                  (expect (user-error? #(parse-args ["stray-positional"])))))
+
+(defdescribe
+  input-only-fast-path-test
+  (it "classifies a same-height input edit as an input-only frame"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["hello"]} :scroll nil :messages [] :loading? false}
+
+            typed
+            (assoc base :input {:lines ["hello world"]})]
+
+        (expect (true? (boolean (input-only-change? base typed cols))))))
+  (it "falls through to the full painter when the input box height changes"
+      ;; A keystroke that wraps the input to a new visual row resizes the
+      ;; transcript band (input-box-h feeds inner-h), so the fast path MUST NOT
+      ;; fire — the transcript needs a real re-layout.
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["hi"]} :scroll nil :messages [] :loading? false}
+
+            wrapped
+            (assoc base :input {:lines [(apply str (repeat 400 "x"))]})]
+
+        (expect (false? (boolean (input-only-change? base wrapped cols))))))
+  (it "falls through when any non-input key differs"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+
+            edited
+            (assoc base
+              :input {:lines ["ab"]}
+              :messages [{:role :user}])]
+
+        (expect (false? (boolean (input-only-change? base edited cols))))))
+  (it "falls through while loading (the live bubble grows)"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+
+            edited
+            (assoc base
+              :input {:lines ["ab"]}
+              :loading? true)]
+
+        (expect (false? (boolean (input-only-change? base edited cols))))))
+  (it "falls through while a mouse selection / overlay / find bar is active"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}
+
+            edited
+            {:input {:lines ["ab"]} :scroll nil :messages [] :loading? false}]
+
+        (expect (false? (boolean
+                          (input-only-change? base (assoc edited :mouse-selection {:x 1}) cols))))
+        (expect (false? (boolean (input-only-change? base (assoc edited :tasks-open? true) cols))))
+        (expect (false? (boolean (input-only-change? base (assoc edited :help-open? true) cols))))
+        (expect (false? (boolean (input-only-change? base
+                                                     (assoc-in edited [:search :active?] true)
+                                                     cols))))))
+  (it "needs a real input change and a previous frame"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["a"]} :scroll nil :messages [] :loading? false}]
+
+        (expect (false? (boolean (input-only-change? base base cols))))
+        (expect (false? (boolean (input-only-change? nil base cols)))))))
