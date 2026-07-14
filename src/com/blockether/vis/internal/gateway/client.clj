@@ -958,6 +958,154 @@
     (swap! subscriptions dissoc sub-id))
   nil)
 
+;; ---------------------------------------------------------------------------
+;; Multiplexed subscription: ONE SSE connection for MANY sessions.
+;;
+;; A channel watching N sessions previously opened N SSE sockets (+N client
+;; futures +N server heartbeat threads). `mux-subscribe!` instead folds every
+;; watched session down a SINGLE process-wide connection to `/v1/events?sids=…`,
+;; demuxed by each event's `:session_id`. Opening/closing a tab just edits the
+;; session set and reconnects (resuming each session from its advanced cursor).
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private mux
+  ;; {:subs {sid {:sink fn :cursor-atom atom<long>}} :epoch long :future f :stream in}
+  (atom {:subs {} :epoch 0 :future nil :stream nil}))
+
+(declare mux-unsubscribe!)
+
+(defn- mux-sids-param
+  "Comma list of `sid:cursor` for the current session set (UUIDs are URL-safe,
+   so no encoding needed). Cursors are read live, so a reconnect resumes each
+   session from the highest seq already delivered — no replay churn, no gaps."
+  [subs]
+  (->> subs
+       (map (fn [[sid {:keys [cursor-atom]}]]
+              (str sid ":" (long @cursor-atom))))
+       (str/join ",")))
+
+(defn- mux-broadcast!
+  "Deliver a synthetic connection event to EVERY live sink (shared stream =
+   shared connection state), so each tab still paints a live/lost indicator."
+  [type]
+  (doseq [[_ {:keys [sink]}] (:subs @mux)]
+    (try (sink {:type type}) (catch Throwable _ nil))))
+
+(defn- open-mux-events!
+  "Open ONE multiplexed SSE connection for the current session set and drive
+   the raw `data:`/blank-line frame parser. Each parsed event is demuxed by
+   `:session_id`: advance that session's cursor, then call its sink. Bails with
+   `[:epoch-changed]` the moment the session set is edited (so the caller
+   reconnects with the new set) and `[:closed]` on EOF/drop. Throws with
+   `:http-status` on a non-200."
+  [my-epoch]
+  (let [entry
+        (ensure-gateway!)
+
+        _
+        (ensure-client! entry)
+
+        response
+        (gw-send! entry "GET" (str "/v1/events?sids=" (mux-sids-param (:subs @mux))) {:as :stream})]
+
+    (when-not (= 200 (:status response))
+      (throw (ex-info (str "gateway mux SSE HTTP " (:status response))
+                      {:http-status (:status response)})))
+    (with-open [^InputStream in
+                (:body response)
+
+                rdr
+                (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+
+      (swap! mux assoc :stream in)
+      (mux-broadcast! "gateway.connected")
+      (let [last-line-ns*
+            (atom (System/nanoTime))
+
+            alive?*
+            (atom true)
+
+            watchdog
+            (start-sse-idle-watchdog! in last-line-ns* alive?*)]
+
+        (try (loop [data-lines []]
+               (if (not= my-epoch (:epoch @mux))
+                 [:epoch-changed]
+                 (if-let [line (.readLine rdr)]
+                   (do (reset! last-line-ns* (System/nanoTime))
+                       (if (str/blank? line)
+                         (let [data (str/join "\n" data-lines)
+                               event (when (seq data) (wire/parse-json data))]
+
+                           (when event
+                             (let [esid (str (:session_id event))
+                                   {:keys [sink cursor-atom]} (get (:subs @mux) esid)]
+
+                               (when sink
+                                 (when-let [s (:seq event)]
+                                   (swap! cursor-atom max (long s)))
+                                 (try (sink event) (catch Throwable _ nil)))))
+                           (recur []))
+                         (if (str/starts-with? line "data: ")
+                           (recur (conj data-lines (subs line 6)))
+                           (recur data-lines))))
+                   [:closed])))
+             (finally (reset! alive?* false)
+                      (some-> ^Thread watchdog
+                              .interrupt)))))))
+
+(defn- mux-run!
+  "Background reconnect loop owning epoch `my-epoch`. Reconnects (resuming from
+   each session's advanced cursor) whenever the daemon drops the stream, and
+   stops for good once a newer epoch takes over, the session set empties, or the
+   set was edited (a fresh run already owns the new set)."
+  [my-epoch]
+  (future (loop [attempt 0]
+            (let [dropped? (try (not= [:epoch-changed] (open-mux-events! my-epoch))
+                                (catch Throwable _ true))]
+              (when (and dropped? (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
+                (mux-broadcast! "gateway.disconnected")
+                (let [interrupted? (try (Thread/sleep (long (min 5000
+                                                                 (* sse-reconnect-backoff-ms
+                                                                    (inc attempt)))))
+                                        false
+                                        (catch InterruptedException _ true))]
+                  (when-not interrupted? (recur (inc attempt)))))))))
+
+(defn- restart-mux!
+  "Bump the epoch, close the live stream (unblocking the parked reader), cancel
+   the old run, and — if any session remains — start a fresh run for the new
+   set. Called after every subscribe/unsubscribe."
+  []
+  (let [{:keys [epoch stream future]} (swap! mux update :epoch inc)]
+    (when stream (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
+    (when future (future-cancel future))
+    (if (seq (:subs @mux))
+      (swap! mux assoc :future (mux-run! epoch) :stream nil)
+      (swap! mux assoc :future nil :stream nil))))
+
+(defn mux-subscribe!
+  "Add `sid`'s `sink` to the ONE process-wide multiplexed event stream, starting
+   at `cursor` (its `current-seq` for a live-only stream). The connection is
+   (re)opened for the new session set. Returns a zero-arg cleanup fn. Every sink
+   sees `{:type \"gateway.connected\"}` / `\".disconnected\"` on connection changes,
+   exactly like the per-session [[subscribe!]]."
+  [sid sink cursor]
+  (let [sid (str sid)]
+    (swap! mux assoc-in [:subs sid] {:sink sink :cursor-atom (atom (long (or cursor 0)))})
+    (restart-mux!)
+    (fn []
+      (mux-unsubscribe! sid))))
+
+(defn mux-unsubscribe!
+  "Drop `sid` from the multiplexed stream and reconnect for the remaining set
+   (or tear the connection down when it was the last one)."
+  [sid]
+  (let [sid (str sid)]
+    (swap! mux update :subs dissoc sid)
+    (restart-mux!)
+    nil))
+
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.
    Returns `[action event']`:

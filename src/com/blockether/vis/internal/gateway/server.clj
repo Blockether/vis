@@ -278,6 +278,106 @@
                                       ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"])))}
       (session-404 (get-in request [:path-params :sid])))))
 
+(defn- parse-multi-sids
+  "Parse the `sids` query param of the multiplexed events endpoint: a comma
+   list of `sid` or `sid:cursor` tokens (cursor defaults to 0). Returns
+   `[[sid cursor] …]` keeping only sids that resolve to a live soul, so a
+   stale/unknown sid can't wedge the whole fan-out."
+  [request]
+  (let [raw (get-in request [:query-params "sids"])]
+    (when (seq raw)
+      (->> (str/split raw #",")
+           (keep (fn [tok]
+                   (let [[sid c] (str/split (str/trim tok) #":" 2)
+                         sid (str/trim (str sid))]
+
+                     (when (and (seq sid) (state/soul sid))
+                       [sid
+                        (or (some-> c
+                                    str/trim
+                                    parse-long)
+                            0)]))))
+           (distinct)
+           (vec)))))
+
+(defn- multi-sse-body
+  "SSE body fanning MANY sessions down ONE connection — the multiplexed twin
+   of [[sse-body]]. Every event already carries `:session_id`, so the client
+   demuxes by session. One shared output stream (locked); a per-session
+   `last-seq` guard dedups each session's monotonic stream independently.
+   Replays each session (events past its cursor) then goes live; the shared
+   heartbeat parks the virtual thread and turns a dead client into an IO
+   error → unsubscribe of every session."
+  [sid+cursors proxied?]
+  (reify
+    ring-protocols/StreamableResponseBody
+      (write-body-to-stream [_ _ output-stream]
+        (let [^OutputStream out
+              output-stream
+
+              sub-id
+              (str (java.util.UUID/randomUUID))
+
+              last-seqs
+              (atom {})
+
+              write!
+              (fn [event]
+                (let [esid (str (:session_id event))]
+                  (locking out
+                    (when (> (long (:seq event)) (long (get @last-seqs esid Long/MIN_VALUE)))
+                      (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                      (.flush out)
+                      (swap! last-seqs assoc esid (long (:seq event)))))))]
+
+          (swap! server-state (fn [st]
+                                (-> st
+                                    (assoc :saw-client? true)
+                                    (update :sse-clients (fnil conj #{}) sub-id))))
+          (try (locking out
+                 (when proxied?
+                   (.write out
+                           (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                      StandardCharsets/UTF_8))
+                   (.flush out)))
+               (doseq [[sid cursor] sid+cursors]
+                 ;; seed the guard at the requested cursor BEFORE registering the
+                 ;; live sink, so a live event racing replay still dedups cleanly.
+                 (swap! last-seqs assoc sid (long cursor))
+                 (doseq [event (state/subscribe! sid sub-id write! cursor)]
+                   (write! event)))
+               (loop []
+
+                 (Thread/sleep (long HEARTBEAT_MS))
+                 (locking out
+                   (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
+                   (.flush out))
+                 (recur))
+               (catch Throwable _ nil)
+               (finally (doseq [[sid _] sid+cursors]
+                          (state/unsubscribe! sid sub-id))
+                        (swap! server-state update :sse-clients disj sub-id)
+                        (maybe-stop-when-idle!)
+                        (try (.close out) (catch Throwable _ nil))))))))
+
+(defn- multi-events-handler
+  "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
+   session's events, so a client watching N sessions holds ONE connection +
+   ONE server heartbeat thread instead of N. Demuxed client-side by each
+   event's `:session_id`."
+  [request]
+  (let [sid+cursors (parse-multi-sids request)]
+    (if (seq sid+cursors)
+      {:status 200
+       :headers {"Content-Type" "text/event-stream"
+                 "Cache-Control" "no-cache, no-transform"
+                 "X-Accel-Buffering" "no"}
+       :body (multi-sse-body sid+cursors
+                             (boolean (some #(get-in request [:headers %])
+                                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for"
+                                             "via"])))}
+      (error-response 400 :bad-request "no valid sids"))))
+
 ;; =============================================================================
 ;; /metrics (§6.5)
 ;; =============================================================================
@@ -1197,7 +1297,7 @@
        ["/docs/*path"
         {:get (fn [req]
                 (or (docs/handle req) (error-response 404 :not-found "no such doc")))}]
-       ["/v1" ["/models" {:get models-handler}]
+       ["/v1" ["/models" {:get models-handler}] ["/events" {:get multi-events-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
