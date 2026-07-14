@@ -32,7 +32,7 @@
     h))
 
 (defn- conn-of
-  [h]
+  ^Connection [h]
   (or (get @db-registry (long h)) (throw (ex-info "Cannot operate on a closed database." {}))))
 
 (def ^:private blob-tag "__vis_blob__")
@@ -63,7 +63,7 @@
       (if (>= i n)
         [(.toString sb) (vec names)]
         (let [ch (.charAt sql i)]
-          (cond q (do (.append sb ch) (recur (inc i) (if (= ch q) nil q)))
+          (cond q (do (.append sb ch) (recur (inc i) (if (= ch (char q)) nil q)))
                 (or (= ch \') (= ch \")) (do (.append sb ch) (recur (inc i) ch))
                 (and (#{\: \@ \$} ch)
                      (< (inc i) n)
@@ -235,7 +235,7 @@
 
 (defn- op-close
   [conn-h]
-  (when-let [c (get @db-registry (long conn-h))]
+  (when-let [^Connection c (get @db-registry (long conn-h))]
     (.close c)
     (swap! db-registry dissoc (long conn-h)))
   nil)

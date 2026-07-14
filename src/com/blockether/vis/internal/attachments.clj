@@ -204,10 +204,10 @@
    extension, or nil. Relative candidates resolve against
    `workspace-root` (falling back to cwd)."
   ^File [candidate workspace-root]
-  (let [s (-> candidate
-              str/trim
-              strip-file-url
-              expand-home)]
+  (let [^String s (-> candidate
+                      str/trim
+                      strip-file-url
+                      expand-home)]
     (when (and (seq s) (re-find image-extension-pattern s))
       (let [f (File. s)
             f (if (.isAbsolute f)
@@ -345,7 +345,7 @@
     {:keys [max-bytes max-images] :or {max-bytes max-image-bytes max-images max-image-count}}]
    (reduce (fn [acc {:keys [base64 filename]}]
              (try
-               (let [payload
+               (let [^String payload
                      (strip-data-url-prefix (str base64))
 
                      data

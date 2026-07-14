@@ -326,6 +326,69 @@
             (expect (= "/home/u/spel"
                        (some-> @seen-root
                                (.replace "\\" "/")))))))))
+  (it "prefers the LIVE git cache over a stale gateway :git snapshot"
+      ;; The gateway `:git` fact is only refetched at turn end, so between turns
+      ;; it goes stale (e.g. a session frozen at 7 while the tree now has 34).
+      ;; A colocated TUI must render the live count, matching the magit buffer.
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "gpt-4o" :provider :openai})
+                         #'git/cached-working-tree-status
+                         (fn ([] {:workspace? false}) ([_root] {:workspace? true
+                                                                :repo "vis"
+                                                                :branch "main"
+                                                                :modified 34
+                                                                :created 0
+                                                                :deleted 0
+                                                                :upstream? true
+                                                                :ahead 0
+                                                                :behind 0}))}
+          (fn []
+            (let [db {:messages []
+                      :settings {}
+                      :workspace/root "/tmp/vis"
+                      :workspace {:root "/tmp/vis"
+                                  :git {:workspace? true
+                                        :repo "vis"
+                                        :branch "main"
+                                        :modified 7
+                                        :created 0
+                                        :deleted 0
+                                        :upstream? true
+                                        :ahead 0
+                                        :behind 0}}}]
+              (expect (= [" git ~/vis (main ~34) (C-x g) "]
+                         (->> (build-segments db 0)
+                              (filter #(= :right (:region %)))
+                              (remove fixture-seg?)
+                              (mapv :text)))))))))
+  (it "falls back to the gateway :git fact when the repo is not locally readable"
+      ;; Remote gateway: the TUI can't walk a filesystem it doesn't own, so the
+      ;; local cache reports no workspace — use the daemon-computed `:git` fact.
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "gpt-4o" :provider :openai})
+                         #'git/cached-working-tree-status
+                         (fn ([] {:workspace? false}) ([_root] {:workspace? false}))}
+          (fn []
+            (let [db {:messages []
+                      :settings {}
+                      :workspace/root "/tmp/vis"
+                      :workspace {:root "/tmp/vis"
+                                  :git {:workspace? true
+                                        :repo "vis"
+                                        :branch "main"
+                                        :modified 5
+                                        :created 0
+                                        :deleted 0
+                                        :upstream? true
+                                        :ahead 0
+                                        :behind 0}}}]
+              (expect (= [" git ~/vis (main ~5) (C-x g) "]
+                         (->> (build-segments db 0)
+                              (filter #(= :right (:region %)))
+                              (remove fixture-seg?)
+                              (mapv :text)))))))))
   (it "shows git repository state with one changed-file count on the first footer line right side"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []

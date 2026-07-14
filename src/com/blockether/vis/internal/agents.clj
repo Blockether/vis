@@ -321,7 +321,8 @@
                         str
                         str/trim
                         not-empty
-                        java.io.File.)))
+                        ((fn [^String p]
+                           (java.io.File. p))))))
         workspace/*filesystem-roots*))
 
 (defn scan

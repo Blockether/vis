@@ -945,7 +945,7 @@
    borders on low-contrast palettes (e.g. Solarized Light)."
   [bg target delta]
   (let [dl
-        (Math/abs (- (rel-luminance target) (rel-luminance bg)))
+        (Math/abs (double (- (rel-luminance target) (rel-luminance bg))))
 
         t
         (if (> dl 1.0) (min 1.0 (/ delta dl)) 1.0)]

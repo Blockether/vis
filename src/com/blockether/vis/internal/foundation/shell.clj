@@ -310,8 +310,12 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
-  (let [pb (ProcessBuilder. ^java.util.List
-                            [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])]
+  (let [^java.util.List args
+        [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
+
+        pb
+        (ProcessBuilder. args)]
+
     (.directory pb dir)
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))

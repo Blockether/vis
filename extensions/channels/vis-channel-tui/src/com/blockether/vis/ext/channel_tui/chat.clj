@@ -437,7 +437,8 @@
             (let [user-message (assoc (user-message (or (:user_request q) "")
                                                     (or (some-> (:created_at q)
                                                                 long
-                                                                (java.util.Date.))
+                                                                ((fn [^long ms]
+                                                                   (java.util.Date. ms))))
                                                         (java.util.Date.)))
                                  ;; Reloaded/persisted turns carry no :client-turn-id, so without this
                                  ;; `turn-identity` returns nil and every `[Pasted #N]` disclosure collapses
@@ -542,7 +543,9 @@
                   assistant-message (cond-> (assistant-message answer-ir
                                                                (or (some-> (:created_at q)
                                                                            long
-                                                                           (java.util.Date.))
+                                                                           ((fn [^long ms]
+                                                                              (java.util.Date.
+                                                                                ms))))
                                                                    (java.util.Date.)))
                                       true
                                       (assoc :session-turn-id (:id q))

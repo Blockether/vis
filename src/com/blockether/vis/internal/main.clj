@@ -2767,7 +2767,7 @@
 (defn- cli-update!
   [_parsed _residual]
   (config/init-cli!)
-  (let [root (source-checkout-root)]
+  (let [^java.io.File root (source-checkout-root)]
     (when-not (git-checkout? root)
       (throw (ex-info "Vis update requires a git source checkout"
                       {:type :update/not-git-checkout :path (.getPath root)})))

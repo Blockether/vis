@@ -419,7 +419,7 @@
         (let [a (str/join "\n" (drop 5 lines))]
           (when-not (str/blank? a) a))]
 
-    (when-let [f (mpl-confined-file path)]
+    (when-let [^java.io.File f (mpl-confined-file path)]
       (let [b64 (.encodeToString (java.util.Base64/getEncoder)
                                  (java.nio.file.Files/readAllBytes (.toPath f)))
             cap (html-text-escape (str/trim (str summary)))]
@@ -5678,10 +5678,12 @@
   ;; ui.js watchdog + /poll fallback covers that.)
   (let
     [pb
-     (doto (ProcessBuilder. ["cloudflared" "tunnel" "--protocol" "http2" "--url" local-url])
+     (doto (let [^java.util.List argv ["cloudflared" "tunnel" "--protocol" "http2" "--url"
+                                       local-url]]
+             (ProcessBuilder. argv))
        (.redirectErrorStream true))
 
-     process
+     ^java.lang.Process process
      (try
        (.start pb)
        (catch java.io.IOException _

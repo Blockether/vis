@@ -207,7 +207,7 @@
   (clojure.lang.Reflector/invokeInstanceMethod target method (object-array args)))
 
 (defn- static-call!
-  [class-name method & args]
+  [class-name ^String method & args]
   (clojure.lang.Reflector/invokeStaticMethod (Class/forName class-name) method (object-array args)))
 
 (defn- tts-config
@@ -396,7 +396,8 @@
 
 (defn- executable-success?
   [cmd]
-  (try (zero? (.waitFor (.start (ProcessBuilder. ["sh" "-c" (str "command -v " cmd)]))))
+  (try (zero? (.waitFor (.start (let [^java.util.List argv ["sh" "-c" (str "command -v " cmd)]]
+                                  (ProcessBuilder. argv)))))
        (catch Throwable _ false)))
 
 (defn- player-argv

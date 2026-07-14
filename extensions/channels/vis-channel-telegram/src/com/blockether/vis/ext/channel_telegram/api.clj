@@ -196,7 +196,7 @@
   (let [url (str (file-base-url token) "/" file-path)]
     (try (let [resp (http/get url {:as :stream :throw false :timeout 60000})]
            (if (<= 200 (long (:status resp 0)) 299)
-             (with-open [in (:body resp)
+             (with-open [^java.io.InputStream in (:body resp)
                          out (io/output-stream dest-file)]
 
                (io/copy in out)

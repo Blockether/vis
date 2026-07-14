@@ -185,7 +185,7 @@
         (vec (for [i
                    (range (.namedChildCount n))
 
-                   :let [c
+                   :let [^Node c
                          (.orElse (.namedChild n (int i)) nil)]
                    :when c]
 
@@ -205,7 +205,7 @@
     (let [i
           (int (first at))
 
-          child
+          ^Node child
           (.orElse (.namedChild node i) nil)]
 
       (if child
@@ -293,7 +293,7 @@
 
           (if-not new-bytes
             {:error {:reason :bad-op :message (str "unknown op " op)}}
-            (let [new-source (String. new-bytes StandardCharsets/UTF_8)]
+            (let [new-source (String. ^bytes new-bytes StandardCharsets/UTF_8)]
               (if (and (syntax-broken? lang new-source) (not (syntax-broken? lang source)))
                 {:error {:reason :syntax-broken
                          :message (str "refused: " (name op)
@@ -568,7 +568,7 @@
     (let [n (.namedChildCount node)]
       (loop [i 0]
         (when (< i n)
-          (let [child (.orElse (.namedChild node (int i)) nil)]
+          (let [^Node child (.orElse (.namedChild node (int i)) nil)]
             (if child
               (let [res (try (named-path-at-line child line (conj path (int i)))
                              (finally (.close child)))]

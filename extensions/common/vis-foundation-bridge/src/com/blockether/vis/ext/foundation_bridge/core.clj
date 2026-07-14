@@ -209,7 +209,7 @@
   (let [workspace-root*
         (workspace-root env)
 
-        pattern*
+        ^String pattern*
         (normalize-path-fragment pattern)
 
         file

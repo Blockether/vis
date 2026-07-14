@@ -109,7 +109,7 @@
   []
   (requiring-resolve 'com.blockether.vis.core/gateway-session-workspace))
 
-(defn- rgb [color] [(.getRed color) (.getGreen color) (.getBlue color)])
+(defn- rgb [^java.awt.Color color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
 (defn- capture-grid
   "Snapshot the Lanterna back-buffer as a rows×cols vector of cell maps carrying

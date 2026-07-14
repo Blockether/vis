@@ -3107,7 +3107,7 @@
   [terminal _opts]
   (when (instance? UnixTerminal terminal)
     (input/register-custom-patterns! terminal)
-    (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
+    (try (.setMouseCaptureMode ^UnixTerminal terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
          (catch Throwable _ nil))))
 (defn- enable-terminal-escape-modes!
   [_opts]
@@ -4046,7 +4046,7 @@
                                     pasted)]
 
                          (vreset! paste-buffer nil)
-                         (when-not (.isEmpty text)
+                         (when-not (.isEmpty ^String text)
                            (if-let [image (timg/probe-paste-image text
                                                                   {:workspace-root
                                                                    (try (str (workspace/cwd))

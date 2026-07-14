@@ -460,17 +460,25 @@
         in-draft?
         (some? (:fork-ms ws))
 
-        ;; Git status is a GATEWAY-computed session fact (`:git` on the
-        ;; workspace record, resolved by the daemon that owns the repo and
-        ;; cached per root). Read it straight off `ws` so a remote TUI gets
-        ;; correct git without touching a filesystem it can't see, and tab
-        ;; switches never re-walk git. Fall back to a LOCAL walk only when the
-        ;; fact is absent (older gateway / no workspace record) — colocated only.
+        ;; Git status. Prefer the LIVE, per-cwd cache (stale-while-revalidate,
+        ;; 15s TTL) whenever the repo is locally readable — a colocated TUI must
+        ;; never show a FROZEN turn-end snapshot. The gateway `:git` fact on the
+        ;; workspace record is only refetched at turn end / root switch
+        ;; (`:set-workspace`), so between turns it drifts from reality and from
+        ;; the magit buffer (which always reads live). The local cache is cheap
+        ;; on the render thread (a cache read, never a git walk) and stays fresh.
+        ;; Fall back to the gateway-computed `:git` fact ONLY when the local walk
+        ;; sees no repo — i.e. a REMOTE gateway owns a filesystem this TUI can't
+        ;; touch (cold local cache returns nil → also uses the fact until warm).
+        local-git
+        (if ws-root
+          (git/cached-working-tree-status (File. (str ws-root)))
+          (git/cached-working-tree-status))
+
         git-status
-        (or (:git ws)
-            (if ws-root
-              (git/cached-working-tree-status (File. (str ws-root)))
-              (git/cached-working-tree-status)))
+        (cond (:workspace? local-git) local-git
+              (:git ws) (:git ws)
+              :else local-git)
 
         git-spans
         (git-footer-spans (cond-> git-status
