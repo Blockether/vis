@@ -189,7 +189,7 @@
 
 (defn- save-auth-file!
   [credentials]
-  (let [dir (auth-dir)]
+  (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
     (spit auth-file
           (json/write-json-str (assoc credentials :saved-at-ms (System/currentTimeMillis))))

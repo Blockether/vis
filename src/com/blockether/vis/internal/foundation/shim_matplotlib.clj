@@ -390,9 +390,9 @@
                   (.drawLine g xp py0 xp (+ py0 ph))
                   (.drawLine g px0 yp (+ px0 pw) yp))
                 (.setColor g (Color. 90 90 90))
-                (let [xl (fmt-num (xinv xv))]
+                (let [^String xl (fmt-num (xinv xv))]
                   (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
-                (let [yl (fmt-num (yinv yv))]
+                (let [^String yl (fmt-num (yinv yv))]
                   (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
         ;; axes frame
         (.setColor g (Color. 60 60 60))
@@ -577,7 +577,7 @@
                 (.setColor g (->color (get s "color") (get s "__idx")))
                 (.fillRect g (+ lx 8) (+ yy 3) 16 6)
                 (.setColor g (Color. 40 40 40))
-                (.drawString g (str (get s "label")) (+ lx 30) (+ yy 11)))))))
+                (.drawString g (str (get s "label")) (int (+ lx 30)) (int (+ yy 11))))))))
       (png-base64 img)
       (finally (.dispose g)))))
 

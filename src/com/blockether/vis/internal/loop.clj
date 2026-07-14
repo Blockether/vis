@@ -5649,7 +5649,7 @@
                           ;; wait, then re-send the SAME token — no re-mint, no
                           ;; router rebuild. `attempt` grows so backoff widens and
                           ;; the retry budget still bounds it.
-                          (do (Thread/sleep (auth-propagation-backoff-ms attempt))
+                          (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
                               (recur (inc attempt) max-tokens-attempt current-extra-body env))
                           :else result)))]
 

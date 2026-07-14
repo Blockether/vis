@@ -194,13 +194,13 @@
                     (.header "Accept" "application/json, text/event-stream")
                     (.POST (HttpRequest$BodyPublishers/ofString body)))
 
-                b
-                (reduce-kv (fn [bb k v]
+                ^java.net.http.HttpRequest$Builder b
+                (reduce-kv (fn [^java.net.http.HttpRequest$Builder bb k v]
                              (.header bb (clj-name k) (str v)))
                            b
                            (or headers {}))
 
-                b
+                ^java.net.http.HttpRequest$Builder b
                 (if-let [s @session]
                   (.header b "Mcp-Session-Id" s)
                   b)

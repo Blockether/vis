@@ -495,7 +495,7 @@
                             str
                             str/trim
                             not-empty
-                            (File.))]
+                            io/file)]
      (try (let [cwd (.getPath (.getCanonicalFile start))
                 {:keys [expires-at value]} (get @working-tree-status-cache cwd)]
 

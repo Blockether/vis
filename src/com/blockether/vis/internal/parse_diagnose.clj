@@ -106,7 +106,7 @@
    parinfer (Clojure indent-mode) cannot be reused; this just pinpoints the
    first place the nesting goes wrong so the model can repair it."
   [^String code]
-  (let [s
+  (let [^String s
         (or code "")
 
         n
@@ -126,10 +126,11 @@
 
         triple-at?
         (fn [^long i ch]
-          (and (< (+ i 2) n)
-               (= ch (.charAt s i))
-               (= ch (.charAt s (inc i)))
-               (= ch (.charAt s (+ i 2)))))]
+          (let [ch (char ch)]
+            (and (< (+ i 2) n)
+                 (= ch (.charAt s i))
+                 (= ch (.charAt s (inc i)))
+                 (= ch (.charAt s (+ i 2))))))]
 
     (loop [i
            0
@@ -192,7 +193,7 @@
                   (= c \\) (recur (inc i) nline ncol stack :string sdelim striple? true)
                   (and striple? (triple-at? i sdelim))
                   (recur (+ i 3) line (+ col 3) stack :code nil false false)
-                  (and (not striple?) (= c sdelim))
+                  (and (not striple?) (= c (char sdelim)))
                   (recur (inc i) nline ncol stack :code nil false false)
                   ;; a non-triple string cannot span a raw newline; bail back to
                   ;; :code so a stray quote can't swallow the rest of the source.

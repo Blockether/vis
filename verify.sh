@@ -170,41 +170,29 @@ _lint() {
 GRAAL_STRICT="${GRAAL_STRICT:-false}"
 
 _graal_safety() {
-  local out
-  out=$(mktemp)
   local err
   err=$(mktemp)
 
-  # Run the compiler walk. We use plain `clojure -M -e` (no :vis alias)
-  # to keep :main-opts out of the way. Root `deps.edn` carries the merged
-  # library deps; every classpath plug-in lives in an alias (`:vis`,
-  # `:test`, `:dev`). Inject all of them via `-Sdeps` so the walker's
-  # classpath matches the production runtime (`bin/vis`) and
-  # `load-file` can resolve every `:require`.
-  clojure \
-    -Sdeps '{:deps {com.blockether/vis-common-meta             {:local/root "extensions/common/vis-common-meta"}
-                    com.blockether/vis-common-environment      {:local/root "extensions/common/vis-common-environment"}
-                    com.blockether/vis-common-editing          {:local/root "extensions/common/vis-common-editing"}
-                    com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
-                    com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
-                    com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
-                    com.blockether/vis-channel-telegram        {:local/root "extensions/channels/vis-channel-telegram"}
-                    com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
-                    com.blockether/vis-foundation-exa                     {:local/root "extensions/common/vis-foundation-exa"}}}' \
-    -M -e '
+  # Compiler walk: load EVERY project .clj/.cljc with reflection + boxed-math
+  # warnings enabled, then count what escapes.
+  #
+  # Classpath: use the project's OWN `deps.edn` (plain `clojure -M -e`, no :vis
+  # alias so :main-opts stay out of the way). deps.edn already declares every
+  # extension as a `:local/root` dep, so the walker's classpath matches the
+  # production runtime automatically. Do NOT re-declare the extensions via
+  # `-Sdeps`: that hand-maintained list ROTS the instant an extension is added,
+  # renamed, or moved, and a bad `:local/root` makes `clojure` abort building
+  # the classpath BEFORE the walk runs -- which (swallowed by `|| true`) yields
+  # an empty stderr and a silent FALSE PASS. (That is exactly the bug this
+  # replaces.) `benchmark/` is intentionally NOT walked.
+  clojure -M -e '
     (set! *warn-on-reflection* true)
     (set! *unchecked-math* :warn-on-boxed)
-    (let [;; Root `src/` carries the merged library; classpath plug-ins
-          ;; live at `extensions/<category>/<pkg>/src/`. The benchmark
-          ;; harness (`benchmarks/`) is intentionally NOT walked.
-          root-src (clojure.java.io/file "src")
+    (let [root-src (clojure.java.io/file "src")
           ext-srcs (->> (.listFiles (clojure.java.io/file "extensions"))
-                     (filter (fn [^java.io.File d]
-                               (and (some? d) (.isDirectory d))))
-                     (mapcat (fn [^java.io.File category]
-                               (.listFiles category)))
-                     (filter (fn [^java.io.File d]
-                               (and (some? d) (.isDirectory d))))
+                     (filter (fn [^java.io.File d] (and (some? d) (.isDirectory d))))
+                     (mapcat (fn [^java.io.File category] (.listFiles category)))
+                     (filter (fn [^java.io.File d] (and (some? d) (.isDirectory d))))
                      (map (fn [^java.io.File d] (clojure.java.io/file d "src"))))
           pkg-srcs (->> (concat [root-src] ext-srcs)
                      (filter (fn [^java.io.File f] (.exists f))))
@@ -216,82 +204,89 @@ _graal_safety() {
                                               (.endsWith n ".cljc")))))
                                 (file-seq r)))
                       pkg-srcs)]
+      (binding [*out* *err*] (println "WALKED" (count clj-files) "files"))
       (doseq [^java.io.File f clj-files]
         (try (load-file (.getPath f))
           (catch Throwable e
             (binding [*out* *err*]
               (println "LOAD-ERROR" (.getPath f) "-" (.getMessage e)))))))' \
-    > "$out" 2> "$err" || true
+    > /dev/null 2> "$err" || true
 
-  # Filter to project paths only (exclude warnings from third-party jars,
-  # whose paths are relative inside the jar, e.g. "clojure+/util.clj").
+  # Guard against the false-pass class of bug: if the walk did not actually
+  # load files (classpath error, crash before the loop), fail loudly instead
+  # of reporting a clean zero.
+  local walked
+  walked=$(grep -E "^WALKED [0-9]+ files" "$err" | head -1 | awk '{print $2}')
+  if [ -z "$walked" ] || [ "$walked" -lt 100 ]; then
+    echo "FAILED: compiler walk did not run (walked='${walked:-none}')."
+    echo "The classpath or walker crashed before loading source. See $err:"
+    head -20 "$err" | sed 's/^/  /'
+    return 1
+  fi
+
+  # Keep only PROJECT warnings and dedup. Every project path -- absolute
+  # (/.../vis/src/...) or classpath-relative (com/blockether/vis/...) -- contains
+  # the `com/blockether/vis/` namespace root; third-party jars (cljfmt, svar,
+  # anomaly, ...) do not. A file required transitively AND then load-file'd emits
+  # the same warning twice under two path spellings, so normalize both to the
+  # `com/blockether/vis/` form before `sort -u`.
   local filtered
-  # Match warnings from project source paths only (skip third-party
-  # jar paths). Three shapes:
-  #   /Users/.../vis/src/...                                 (vis-runtime, root)
-  #   /Users/.../vis/packages/<pkg>/src/...                  (carved-out core packages)
-  #   /Users/.../vis/extensions/<category>/<pkg>/src/...     (every classpath plug-in)
   filtered=$(grep -E "Reflection warning|Boxed math warning" "$err" \
-    | grep -E "/vis/(src|extensions/[^/]+/[^/]+/src)/" \
+    | grep "com/blockether/vis/" \
+    | sed -E 's#(Reflection warning|Boxed math warning), .*(com/blockether/vis/)#\1, \2#' \
     | sort -u)
-  # Load errors are emitted with a leading `LOAD-ERROR ` token; preserve
-  # them in $err for the dump above. Track them too so we can flag them.
-  # (Already done via `grep -c "^LOAD-ERROR" $err` later in this fn.)
-  local refl_count boxed_count load_errs total
+
+  local refl_count boxed_count load_errs
   refl_count=$( echo "$filtered" | grep -c "Reflection warning" || true)
   boxed_count=$(echo "$filtered" | grep -c "Boxed math warning" || true)
   load_errs=$(  grep -c "^LOAD-ERROR" "$err" || true)
-  total=$((refl_count + boxed_count))
 
-  echo "GraalVM safety walk:"
-  echo "  reflection warnings: $refl_count"
-  echo "  boxed-math warnings: $boxed_count"
-  echo "  total: $total"
+  echo "GraalVM safety walk: loaded $walked source files"
+  echo "  reflection warnings (project): $refl_count"
+  echo "  boxed-math warnings (project): $boxed_count"
   echo "  load errors: $load_errs"
   echo ""
 
   if [ -n "$filtered" ]; then
     echo "Per-package breakdown (reflection):"
     echo "$filtered" | grep "Reflection warning" \
-      | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
-               -e 's#.*/packages/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-runtime#' \
-      | sort | uniq -c | sort -rn \
-      | sed 's/^/  /'
+      | sed -E 's#Reflection warning, com/blockether/vis/(ext/[^/]+|internal).*#\1#' \
+      | sort | uniq -c | sort -rn | sed 's/^/  /'
     echo ""
-    echo "Per-package breakdown (boxed-math):"
-    echo "$filtered" | grep "Boxed math warning" \
-      | sed -E -e 's#.*/extensions/[^/]+/([^/]+)/src.*#\1#' \
-               -e 's#.*/packages/([^/]+)/src.*#\1#' \
-               -e 's#.*/vis/src/.*#vis-runtime#' \
-      | sort | uniq -c | sort -rn \
-      | sed 's/^/  /'
-    echo ""
-    echo "Full filtered output: $err"
-    echo "First 20 offenders:"
-    echo "$filtered" | head -20 | sed 's/^/  /'
   fi
 
-  rm -f "$out"
-
   if [ "$load_errs" -gt 0 ]; then
-    echo ""
     echo "FAILED: $load_errs file(s) failed to compile (see $err)."
+    grep "^LOAD-ERROR" "$err" | head -20 | sed 's/^/  /'
     return 1
   fi
 
-  # Strict mode: any warning is fatal.
+  # --- Reflection: HARD gate ------------------------------------------------
+  # Every reflective call is a GraalVM native-image hazard (needs an explicit
+  # reachability-metadata entry or it fails at run time). The project must carry
+  # ZERO. Fix each with a type hint; there is no ratchet here.
+  if [ "$refl_count" -gt 0 ]; then
+    echo "Reflection offenders (fix with type hints):"
+    echo "$filtered" | grep "Reflection warning" | head -50 | sed 's/^/  /'
+    echo ""
+    echo "FAILED: $refl_count project reflection warning(s). Reflection must be ZERO."
+    echo "Full walk output: $err"
+    return 1
+  fi
+
+  # --- Boxed math: advisory ratchet ----------------------------------------
+  # Boxed arithmetic is a perf smell, not a correctness/native hazard, and the
+  # repo carries a large historical backlog. Ratchet it (can only shrink);
+  # --strict demands zero.
   if [ "$GRAAL_STRICT" = "true" ]; then
-    if [ "$total" -gt 0 ]; then
-      echo ""
-      echo "FAILED (--strict): $total reflection/boxed-math warning(s)."
+    if [ "$boxed_count" -gt 0 ]; then
+      echo "FAILED (--strict): $boxed_count boxed-math warning(s)."
       return 1
     fi
-    echo "GraalVM strict: 0 warnings"
+    echo "GraalVM strict: 0 reflection, 0 boxed-math"
     return 0
   fi
 
-  # Ratchet mode: compare against baseline.
   local baseline
   if [ -f "$GRAAL_BASELINE_FILE" ]; then
     baseline=$(cat "$GRAAL_BASELINE_FILE")
@@ -300,26 +295,23 @@ _graal_safety() {
   fi
 
   if [ -z "$baseline" ]; then
-    echo "No baseline found at $GRAAL_BASELINE_FILE."
-    echo "Run with --update-baseline to snapshot the current count ($total)."
-    echo "Treating this run as PASS (no baseline to ratchet against)."
+    echo "No boxed-math baseline at $GRAAL_BASELINE_FILE."
+    echo "Reflection is 0 (good). Run --update-baseline to snapshot boxed-math ($boxed_count)."
     return 0
   fi
 
-  if [ "$total" -gt "$baseline" ]; then
-    echo ""
-    echo "FAILED: warning count grew $baseline -> $total (regression of $((total - baseline)))."
-    echo "Either fix the new warnings or, if intentional, run:"
+  if [ "$boxed_count" -gt "$baseline" ]; then
+    echo "FAILED: boxed-math grew $baseline -> $boxed_count (regression of $((boxed_count - baseline)))."
+    echo "Either fix the new boxed math or, if intentional, run:"
     echo "  ./verify.sh --update-baseline"
     return 1
   fi
 
-  if [ "$total" -lt "$baseline" ]; then
-    echo "Improvement: $baseline -> $total (-$((baseline - total))). Consider running:"
+  if [ "$boxed_count" -lt "$baseline" ]; then
+    echo "Improvement: boxed-math $baseline -> $boxed_count (-$((baseline - boxed_count))). Consider:"
     echo "  ./verify.sh --update-baseline"
-    echo "to lock in the new lower bound."
   else
-    echo "Ratchet: $total <= baseline $baseline (no regression)"
+    echo "Ratchet: boxed-math $boxed_count <= baseline $baseline (no regression); reflection 0."
   fi
   return 0
 }
@@ -403,17 +395,17 @@ verify_full() {
 update_baseline() {
   printf "\n${BOLD}Updating GraalVM warning baseline${NC}\n\n"
   step "graal" "GraalVM safety (counting only)" _graal_safety || true
-  # The step ran with the OLD baseline; re-extract the count from its log.
+  # The step ran with the OLD baseline; re-extract the boxed-math count from
+  # its log (reflection is a hard-zero gate and is NOT baselined).
   local total
-  total=$(grep -E "^  total: " "$VERIFY_DIR/graal.log" | head -1 | awk '{print $2}')
+  total=$(grep -E "^  boxed-math warnings \(project\): " "$VERIFY_DIR/graal.log" | head -1 | awk '{print $NF}')
   if [ -z "$total" ]; then
-    echo "Could not extract total count. See $VERIFY_DIR/graal.log"
+    echo "Could not extract boxed-math count. See $VERIFY_DIR/graal.log"
     exit 1
   fi
   echo "$total" > "$GRAAL_BASELINE_FILE"
   echo ""
-  echo "Baseline updated: $GRAAL_BASELINE_FILE = $total"
-  echo "Commit this file to lock in the new bound."
+  echo "Boxed-math baseline updated: $GRAAL_BASELINE_FILE = $total"
 }
 
 # =============================================================================

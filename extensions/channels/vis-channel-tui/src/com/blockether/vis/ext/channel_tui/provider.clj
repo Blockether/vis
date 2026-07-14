@@ -1403,7 +1403,7 @@
                        (do (reset! selected hit-idx) (recur))
                        :else (recur)))
                :else
-               (let [ktype (.getKeyType key)]
+               (let [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)]
                  (cond
                    (= ktype KeyType/Escape) (let [cfg (assoc (or (vis/load-config-raw) {})
                                                         :providers (->> @items
@@ -1468,8 +1468,9 @@
                              (refresh-provider-diagnostics! provider* statuses limits)))))
                      (recur))
                    (= ktype KeyType/Character)
-                   (let [c (Character/toLowerCase (.getCharacter key))
-                         ctrl (.isCtrlDown key)]
+                   (let [c (Character/toLowerCase (.getCharacter
+                                                    ^com.googlecode.lanterna.input.KeyStroke key))
+                         ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
 
                      (cond
                        ;; Ctrl+P / Ctrl+N - reorder the selected provider up / down,

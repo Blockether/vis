@@ -1282,10 +1282,10 @@
             (int (min y0 y1))
 
             rw
-            (int (Math/abs (- x1 x0)))
+            (int (Math/abs (long (- x1 x0))))
 
             rh
-            (int (Math/abs (- y1 y0)))]
+            (int (Math/abs (long (- y1 y0))))]
 
         (when (some? fill) (.setColor g (->color fill "RGB")) (.fillRect g rx ry (inc rw) (inc rh)))
         (when (some? outline) (.setColor g (->color outline "RGB")) (.drawRect g rx ry rw rh)))

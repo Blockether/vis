@@ -196,7 +196,9 @@
                  (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
         (let [^BasicFileAttributes attrs
-              (Files/readAttributes path BasicFileAttributes (make-array LinkOption 0))
+              (Files/readAttributes path
+                                    BasicFileAttributes
+                                    ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
 
               size
               (.size attrs)]

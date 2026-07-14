@@ -2934,38 +2934,68 @@
 (reg-event-fx
   :cancel-turn
   (fn [db _]
-    (if-not (:loading? db)
-      {:db db}
-      (let [sid
-            (get-in db [:session :id])
+    (cond (not (:loading? db)) {:db db}
+          ;; A SECOND cancel while one is already pending force-clears locally. The
+          ;; first press armed `:cancelling?` and now waits for the daemon's terminal
+          ;; `turn.completed` to release it — but if the daemon is gone (killed
+          ;; gateway, SSE drop) that event never arrives, and every repeated Esc/Ctrl+C
+          ;; otherwise RE-ARMS the self-heal clock (`:cancelling-at-ms` below), so
+          ;; mashing Esc to escape a dead turn wedges it forever instead of letting the
+          ;; 8s self-heal fire. Still make one best-effort gateway cancel (the turn id
+          ;; may only just have been late-bound), then tear the turn down locally now.
+          (:cancelling? db)
+          (let [sid
+                (get-in db [:session :id])
 
-            tid
-            (:gateway-turn-id db)
+                tid
+                (:gateway-turn-id db)
 
-            gateway-result
-            (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
+                gateway-result
+                (when (and sid tid)
+                  (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
 
-            gateway-terminal?
-            (contains? #{:turn-not-found :not-running} (:error gateway-result))]
+                gateway-terminal?
+                (contains? #{:turn-not-found :not-running} (:error gateway-result))]
 
-        ;; Both the cooperative flag and the hard interrupt are fired through one
-        ;; channel-agnostic call. See channels.cancellation/cancel! for the
-        ;; contract.
-        (vis/cancel! (:cancel-token db))
-        ;; An attached gateway turn runs server-side: interrupting the local
-        ;; attach waiter alone would leave the engine working, so fire the
-        ;; gateway turn's own cancel token too. If the gateway says the turn is
-        ;; already gone/terminal (for example after an orphan sweep), reconcile
-        ;; the local optimistic loading state immediately: no future gateway
-        ;; completion event will arrive to clear "Cancelling...".
-        (if gateway-terminal?
-          {:db (clear-active-turn-state db)
-           :fx [[:notify "Turn is no longer running; cleared local cancelling state." :info
-                 cancel-notification-ttl-ms]]}
-          {:db (assoc db
-                 :cancelling? true
-                 :cancelling-at-ms (System/currentTimeMillis))
-           :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]})))))
+            (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
+            {:db (clear-active-turn-state db)
+             :fx [[:notify
+                   (if gateway-terminal?
+                     "Turn is no longer running; cleared local cancelling state."
+                     "Turn force-cancelled locally.") (if gateway-terminal? :info :warn)
+                   cancel-notification-ttl-ms]]})
+          :else (let [sid
+                      (get-in db [:session :id])
+
+                      tid
+                      (:gateway-turn-id db)
+
+                      gateway-result
+                      (when (and sid tid)
+                        (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
+
+                      gateway-terminal?
+                      (contains? #{:turn-not-found :not-running} (:error gateway-result))]
+
+                  ;; Both the cooperative flag and the hard interrupt are fired through one
+                  ;; channel-agnostic call. See channels.cancellation/cancel! for the
+                  ;; contract.
+                  (vis/cancel! (:cancel-token db))
+                  ;; An attached gateway turn runs server-side: interrupting the local
+                  ;; attach waiter alone would leave the engine working, so fire the
+                  ;; gateway turn's own cancel token too. If the gateway says the turn is
+                  ;; already gone/terminal (for example after an orphan sweep), reconcile
+                  ;; the local optimistic loading state immediately: no future gateway
+                  ;; completion event will arrive to clear "Cancelling...".
+                  (if gateway-terminal?
+                    {:db (clear-active-turn-state db)
+                     :fx [[:notify "Turn is no longer running; cleared local cancelling state."
+                           :info cancel-notification-ttl-ms]]}
+                    {:db (assoc db
+                           :cancelling? true
+                           :cancelling-at-ms (System/currentTimeMillis))
+                     :fx [[:notify "Cancelling current turn..." :info
+                           cancel-notification-ttl-ms]]})))))
 (defn- cancel-self-heal-due?
   "True when a user cancel has been pending (`:cancelling?`) at least
    `cancel-self-heal-timeout-ms` without the daemon's terminal event arriving to
@@ -3349,7 +3379,7 @@
                                    new-root (:root ws)]
 
                                (when (and new-root (not= new-root old-root))
-                                 (git/seed-working-tree-status! (java.io.File. new-root)))
+                                 (git/seed-working-tree-status! (java.io.File. (str new-root))))
                                (dispatch [:set-workspace ws workspace-id]))
                              (catch Throwable _ nil))
                         ;; W3: refresh the F2 context panel's snapshot from the

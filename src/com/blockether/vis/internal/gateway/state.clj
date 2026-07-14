@@ -1890,6 +1890,26 @@
                             cancellation/cancel!)
                     {:status "cancelling"}))))
 
+(defn cancel-all-running!
+  "Fire the cancellation token of EVERY running turn across all sessions.
+   Called on gateway shutdown to break in-flight provider loops BEFORE the
+   shared HTTP executor is torn down — a looping turn would otherwise
+   redispatch its next iteration into the dying pool and die with a
+   RejectedExecutionException surfaced as a bogus \"Provider unavailable\".
+   Best-effort; returns the number of turns signalled."
+  []
+  (reduce (fn [n sess]
+            (reduce (fn [n turn]
+                      (if (and (= "running" (:status turn)) (:cancel-token turn))
+                        (do (try (cancellation/cancel! (:cancel-token turn))
+                                 (catch Throwable _ nil))
+                            (inc n))
+                        n))
+                    n
+                    (vals (:turns sess))))
+          0
+          (vals @registry)))
+
 ;; =============================================================================
 ;; Session lifecycle + souls
 ;; =============================================================================
