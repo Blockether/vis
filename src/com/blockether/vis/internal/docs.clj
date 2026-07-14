@@ -119,7 +119,7 @@
 
 (defn collect
   "Discover every vis-docs manifest on the classpath →
-   {:site {…} :pages [{:slug :title :section :order :md :html :toc} …]}, sorted
+   {:site {…} :pages [{:slug :title :section :blurb :order :md :html :toc} …]}, sorted
    by (section, order, title); slug \"index\" is always first."
   []
   (let [^Enumeration urls
@@ -138,13 +138,14 @@
                     (let [m (edn/read-string (slurp mu))]
                       (when-let [s (:site m)]
                         (swap! site merge s))
-                      (keep (fn [{:keys [file title section order]}]
+                      (keep (fn [{:keys [file title section order blurb]}]
                               (when-let [md (try (slurp (sibling-url mu file))
                                                  (catch Exception _ nil))]
                                 (let [[html toc] (anchors+toc (md->html md))]
                                   {:slug (str/replace file #"\.md$" "")
                                    :title (or title (first-h1 md) file)
                                    :section section
+                                   :blurb blurb
                                    :order (or order 100)
                                    :md md
                                    :html html

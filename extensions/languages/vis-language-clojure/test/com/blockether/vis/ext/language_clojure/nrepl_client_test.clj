@@ -7,6 +7,8 @@
    connection from a previous run dialing into a dead socket."
   (:require [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [lazytest.core :refer [defdescribe expect it]]
+            [nrepl.core :as nrepl]
+            [nrepl.middleware.session :as mw-session]
             [nrepl.server :as server]))
 
 (defn- with-server
@@ -94,3 +96,59 @@
              (it "reports :down on a closed port and never throws"
                  (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
                  (expect (= {:status :down} (nc/probe! {:port nil})))))
+
+(defn- registry-ids
+  "Set of session ids the JVM's nREPL session middleware currently holds. Each
+   id owns a parked `nREPL-session-*` executor thread, so a lingering id is a
+   leaked thread. Tracked BY ID (not by count) so the check is deterministic
+   even when other nREPL sessions churn concurrently in the same JVM."
+  []
+  (set (keys @@#'mw-session/sessions)))
+
+(defn- msg-session-id [m] (or (:session m) (get m "session")))
+
+(defdescribe session-leak-test
+             (it "close-session! removes the cloned session from the server registry"
+                 (with-server
+                   (fn [port]
+                     (let [conn
+                           (#'nc/connection-for "localhost" port 5000)
+
+                           client
+                           (nrepl/client conn 5000)
+
+                           session
+                           (nrepl/client-session client)
+
+                           resp
+                           (doall (session {:op "eval" :code "1"}))
+
+                           id
+                           (some msg-session-id resp)]
+
+                       (expect (string? id))
+                       (expect (contains? (registry-ids) id))
+                       (#'nc/close-session! session)
+                       ;; the specific session we opened must be gone
+                       (expect (not (contains? (registry-ids) id)))))))
+             (it "eval! closes the session it clones — no leaked session id"
+                 (with-server
+                   (fn [port]
+                     ;; Spy `close-session!`: capture the live session's id just
+                     ;; before it's closed (querying after close would recreate a
+                     ;; fresh id), then delegate to the real close.
+                     (let [closed-id
+                           (atom nil)
+
+                           orig
+                           @#'nc/close-session!]
+
+                       (with-redefs [nc/close-session!
+                                     (fn [session]
+                                       (reset! closed-id (some msg-session-id
+                                                               (doall (session {:op "eval"
+                                                                                :code "1"}))))
+                                       (orig session))]
+                         (nc/eval! {:port port :code "(+ 1 2)" :timeout-ms 5000}))
+                       (expect (string? @closed-id))
+                       (expect (not (contains? (registry-ids) @closed-id))))))))

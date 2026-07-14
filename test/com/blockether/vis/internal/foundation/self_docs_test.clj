@@ -15,7 +15,7 @@
   (boundary/boundary-view (:result envelope)))
 
 (defdescribe vis-docs-listing-test
-             (it "lists every manifest page as a lean slug/title/section entry"
+             (it "lists every manifest page as a lean slug/title/section/blurb entry"
                  (let [result (vis-docs-tool)]
                    (expect (extension/envelope-success? result))
                    (let [pages (get (result-of result) "pages")
@@ -27,8 +27,43 @@
                      (expect (contains? slugs "configuration"))
                      ;; lean listing: never the content
                      (expect (every? #(and (get % "slug") (get % "title")) pages))
+                     ;; every declared page carries a one-line blurb of what it covers
+                     (expect (some #(get % "blurb") pages))
+                     ;; whenever a blurb is present it is a non-blank string, never a keyword
+                     (expect (every? #(let [b (get % "blurb")]
+
+                                        (or (nil? b) (and (string? b) (not (str/blank? b)))))
+                                     pages))
+                     ;; the pages the prompt fragment advertises all carry a blurb
+                     (let [by-slug (into {} (map (juxt #(get % "slug") identity)) pages)]
+                       (doseq [slug ["index" "extending" "configuration"]]
+                         (expect (string? (get (by-slug slug) "blurb")))))
                      (expect (not-any? #(contains? % "content") pages))
                      (expect (not-any? #(contains? % "md") pages))))))
+
+(defdescribe vis-docs-blurb-test
+             (it "surfaces the manifest blurb verbatim for each declared page"
+                 (let [manifest
+                       (into {}
+                             (for [{:keys [slug blurb]}
+                                   (:pages (docs/collect))
+
+                                   :when blurb]
+
+                               [slug blurb]))
+
+                       listed
+                       (into {}
+                             (map (juxt #(get % "slug") #(get % "blurb")))
+                             (get (result-of (vis-docs-tool)) "pages"))]
+
+                   ;; the manifest declares blurbs to surface
+                   (expect (seq manifest))
+                   ;; and every one shows up unchanged in the lean listing
+                   (doseq [[slug blurb] manifest]
+                     (expect (= blurb (get listed slug))))))
+             (it "prompt fragment teaches that the listing carries a blurb"
+                 (expect (str/includes? self-docs/prompt "blurb"))))
 
 (defdescribe vis-docs-fetch-test
              (it "returns a page's full markdown by slug"
