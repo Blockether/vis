@@ -266,6 +266,21 @@
                                                                         "cancel"))))
                         (expect false)
                         (catch InterruptedException _ (expect (= 1 @calls))))))
+             (it "treats a live thread interrupt as user cancel even when the atom lost the race"
+                 ;; Issue #13: on Esc the worker-thread interrupt can land BEFORE
+                 ;; `vis/cancel!` flips the cancel-atom. The atom still reads false
+                 ;; here, but the live interrupt must classify this as a user cancel
+                 ;; (NOT a retryable blip).
+                 (let [verdict (atom nil)]
+                   (try (.interrupt (Thread/currentThread))
+                        (reset! verdict (retryable-provider-interrupt?
+                                          (InterruptedException. "java.lang.InterruptedException")
+                                          {:cancel-atom (atom false)}
+                                          500))
+                        (finally
+                          ;; clear the interrupt we set so it cannot leak into later tests
+                          (Thread/interrupted)))
+                   (expect (false? @verdict))))
              (it "retries a spurious interrupt that fired before the TTFT budget"
                  (expect (retryable-provider-interrupt? (InterruptedException.
                                                           "java.lang.InterruptedException")

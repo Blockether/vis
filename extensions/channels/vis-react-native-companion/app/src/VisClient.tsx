@@ -165,7 +165,7 @@ export type SettingsGroup = { id: string; title: string; toggles: ToggleRow[] };
    from magic bytes (images only). */
 export type OutgoingAttachment = { base64: string; filename?: string };
 
-/* /ui/session/:sid/voice/model — Parakeet model lifecycle */
+/* /v1/sessions/:sid/voice/model — Parakeet model lifecycle */
 export type VoiceModelState = {
   status: "ready" | "downloading" | "failed" | "absent" | "unavailable";
   progress?: number;
@@ -518,13 +518,16 @@ export class VisGatewayClient {
   /* Live event stream over a NATIVE Server-Sent-Events connection
      (react-native-sse's EventSource). The library owns the socket, frame
      parsing, heartbeat handling, AND reconnection: on a drop it re-requests
-     with a `Last-Event-ID` header, which the gateway honours (`sse-cursor`) to
-     resume losslessly — so NO app-level retry is needed. The gateway tags every
-     frame with an `event: <type>` line, so events dispatch by type; we bind the
-     reducer to `message` (untyped frames) AND every app event type. The 8KB
-     anti-buffer pad and `: ping` heartbeats are comment frames with no data, so
-     they never reach a listener. The first connect uses `cursor=0` to replay the
-     in-flight turn; reconnects resume from the last seen `id:`. Returns a
+     with a `Last-Event-ID` header, which the gateway honours to resume losslessly
+     — so NO app-level retry is needed. Streams over the CANONICAL multiplexed
+     endpoint `/v1/events?sids=<sid>:<cursor>` (the same one the TUI mux uses),
+     with a single sid: the gateway lets the reconnect's `Last-Event-ID` override
+     that sid's cursor, so `sids=` is a strict superset of the per-session route.
+     The gateway tags every frame with an `event: <type>` line, so events dispatch
+     by type; we bind the reducer to `message` (untyped frames) AND every app
+     event type. The 8KB anti-buffer pad and `: ping` heartbeats are comment
+     frames with no data, so they never reach a listener. The first connect uses
+     `cursor=0` to replay the in-flight turn; reconnects resume from the last seen `id:`. Returns a
      close() that tears the connection down. */
   streamEvents(
     sessionId: string,
@@ -535,9 +538,9 @@ export class VisGatewayClient {
     },
     cursor = 0,
   ): () => void {
-    const url = `${this.gatewayUrl}/v1/sessions/${encodeURIComponent(
+    const url = `${this.gatewayUrl}/v1/events?sids=${encodeURIComponent(
       sessionId,
-    )}/events?cursor=${cursor}`;
+    )}:${cursor}`;
     const es = new EventSource<GatewayEventType>(url, {
       headers: {
         Accept: "text/event-stream",
@@ -628,13 +631,13 @@ export class VisGatewayClient {
     return body.model ?? null;
   }
 
-  /* ── voice (served by the web channel: /ui/session/:sid/voice) ── */
+  /* ── voice (served by the gateway: /v1/sessions/:sid/voice) ── */
 
   async voiceModelState(
     sessionId: string,
     startDownload = false,
   ): Promise<VoiceModelState> {
-    const url = `${this.gatewayUrl}/ui/session/${encodeURIComponent(sessionId)}/voice/model`;
+    const url = `${this.gatewayUrl}/v1/sessions/${encodeURIComponent(sessionId)}/voice/model`;
     let response: Response;
     try {
       response = await fetch(url, {
@@ -661,7 +664,7 @@ export class VisGatewayClient {
   /* POST the recorded WAV; resolves to the transcribed text. */
   async transcribeVoice(sessionId: string, fileUri: string): Promise<string> {
     const blob = await (await fetch(fileUri)).blob();
-    const url = `${this.gatewayUrl}/ui/session/${encodeURIComponent(sessionId)}/voice`;
+    const url = `${this.gatewayUrl}/v1/sessions/${encodeURIComponent(sessionId)}/voice`;
     let response: Response;
     try {
       response = await fetch(url, {

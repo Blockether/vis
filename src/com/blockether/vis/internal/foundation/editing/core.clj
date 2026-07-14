@@ -1508,53 +1508,120 @@
        :is_hidden (boolean (get spec "is_hidden"))
        :is_respect_gitignore (get spec "is_respect_gitignore" true)})))
 
+(defn- find-walk-files
+  "Walk directory `base` ONCE, returning a vector of `{:path :file-name :size}`
+   for every file (honoring `is_hidden`; dotfiles — incl. every `.git` dir —
+   skipped unless set). When `ignore-node` is non-nil, prune paths it marks
+   ignored — so a gitignore-RESPECTING walk (used when `.ignore`/`.rgignore`
+   override files are present) still hides `.gitignore`'d files while surfacing the
+   ones a `!` rule re-included; pass nil for a full opt-out that walks everything.
+   Deliberately does NO scoring: `find-search` scores the strict query AND each
+   fallback token, so scoring here would re-walk the whole tree up to 6× per call.
+   Walk once, score the cached vector per query instead."
+  [^File base is_hidden ignore-node]
+  (let [out (java.util.ArrayList.)]
+    (letfn [(walk [^File f]
+              (check-interrupt!)
+              (when (and (or is_hidden (not (.isHidden f)))
+                         (not (and ignore-node (ignored? ignore-node f base))))
+                (cond (.isDirectory f) (doseq [^File c (or (.listFiles f) (into-array File []))]
+                                         (walk c))
+                      (.isFile f)
+                      (.add out {:path (rel-path f) :file-name (.getName f) :size (.length f)}))))]
+      (walk base))
+    (vec out)))
+
+(defn- score-walked-candidates
+  "Score pre-walked `find-walk-files` entries against `query`, keeping those
+   whose `find-relevance` clears `find-min-score`. Pure in-memory — no I/O — so
+   it is cheap to run once per query token over a single cached walk."
+  [entries query]
+  (into []
+        (keep (fn [{:keys [path] :as e}]
+                (let [score (find-relevance query path)]
+                  (when (>= score find-min-score)
+                    (assoc e
+                      :binary? false
+                      :score score)))))
+        entries))
+
 (defn- find-scan
-  "Scan `roots` for ONE `query` string via fff and keep candidates whose
+  "Scan `roots` for ONE `query` string and keep candidates whose
    `find-relevance` (name-weighted, order-insensitive) clears `find-min-score`.
    Returns raw item maps carrying `:score`. A direct FILE root contributes
    itself at score 1.0. The single-query building block `find-search` runs
-   once for the strict whole-query pass and once per token for the fallback."
-  [roots query is_hidden is_respect_gitignore candidate-page]
-  (->> roots
-       (mapcat
-         (fn [^File root]
-           (cond (.isFile root) [{:path (rel-path root)
-                                  :file-name (.getName root)
-                                  :size (.length root)
-                                  :binary? false
-                                  :source :direct-file
-                                  :score 1.0}]
-                 ;; skip $HOME / filesystem roots (never indexable); other
-                 ;; roots still contribute results
-                 (paths/pathological-index-root? root) nil
-                 :else
-                 (with-open [idx (rg-fff-open root)]
-                   (let [base (.getCanonicalFile root)]
-                     ;; doall: realize hits INSIDE with-open, before the
-                     ;; fresh instance is closed.
-                     (doall
-                       (->> (:items (fff/search idx {:query query :page-size candidate-page}))
-                            (keep
-                              (fn [{:keys [relative-path file-name git-status size modified
-                                           frecency-score binary?]}]
-                                (let [f (io/file base relative-path)
-                                      rel (rel-path f)
-                                      score (find-relevance query rel)]
+   once for the strict whole-query pass and once per token for the fallback.
 
-                                  (when (and (>= score find-min-score)
-                                             (or is_hidden (not (.isHidden f)))
-                                             (or (not is_respect_gitignore)
-                                                 (not (ignored? (load-ignore-node base) f base))))
-                                    {:path rel
-                                     :file-name (or file-name (.getName f))
-                                     :size size
-                                     :modified modified
-                                     :frecency-score frecency-score
-                                     :git-status git-status
-                                     :binary? (boolean binary?)
-                                     :score score})))))))))))
-       (distinct)
-       vec))
+   Directory roots go through fff (fast, frecency-ranked) — but fff's index
+   HONORS `.gitignore`, so when the caller opted OUT (`is_respect_gitignore`
+   false) we bypass fff and walk the tree directly, otherwise the ignored files
+   would never surface no matter what the flag says. `walk-cache` (a root→delay
+   atom) memoizes that direct walk so the strict + per-token passes share ONE
+   filesystem traversal instead of re-walking the whole tree each time."
+  [roots query is_hidden is_respect_gitignore candidate-page walk-cache]
+  (->>
+    roots
+    (mapcat
+      (fn [^File root]
+        (cond (.isFile root) [{:path (rel-path root)
+                               :file-name (.getName root)
+                               :size (.length root)
+                               :binary? false
+                               :source :direct-file
+                               :score 1.0}]
+              ;; skip $HOME / filesystem roots (never indexable); other
+              ;; roots still contribute results
+              (paths/pathological-index-root? root) nil
+              ;; Walk the tree directly (bypassing fff) when the caller opted
+              ;; OUT of gitignore entirely, OR when tool-only `.ignore`/`.rgignore`
+              ;; files are present: fff's index only knows `.gitignore`, so it
+              ;; would re-drop what those files' `!` rules re-included. `ignore-node`
+              ;; is the FULL layered matcher while still respecting gitignore (nil
+              ;; on full opt-out), so `find-walk-files` keeps `.gitignore`'d files
+              ;; hidden yet surfaces the `!`-negated ones.
+              (or (not is_respect_gitignore)
+                  (gitignore/tool-ignore-present? (.getCanonicalFile root)))
+              (let [base
+                    (.getCanonicalFile root)
+
+                    ignore-node
+                    (when is_respect_gitignore (load-ignore-node base))
+
+                    entries
+                    @(-> walk-cache
+                         (swap! (fn [m]
+                                  (if (contains? m base)
+                                    m
+                                    (assoc m
+                                      base (delay (find-walk-files base is_hidden ignore-node))))))
+                         (get base))]
+
+                (score-walked-candidates entries query))
+              :else (with-open [idx (rg-fff-open root)]
+                      (let [base (.getCanonicalFile root)]
+                        ;; doall: realize hits INSIDE with-open, before the
+                        ;; fresh instance is closed.
+                        (doall
+                          (->> (:items (fff/search idx {:query query :page-size candidate-page}))
+                               (keep (fn [{:keys [relative-path file-name git-status size modified
+                                                  frecency-score binary?]}]
+                                       (let [f (io/file base relative-path)
+                                             rel (rel-path f)
+                                             score (find-relevance query rel)]
+
+                                         (when (and (>= score find-min-score)
+                                                    (or is_hidden (not (.isHidden f)))
+                                                    (not (ignored? (load-ignore-node base) f base)))
+                                           {:path rel
+                                            :file-name (or file-name (.getName f))
+                                            :size size
+                                            :modified modified
+                                            :frecency-score frecency-score
+                                            :git-status git-status
+                                            :binary? (boolean binary?)
+                                            :score score})))))))))))
+    (distinct)
+    vec))
 
 (defn- find-fallback-tokens
   "Distinct alnum query tokens worth an independent per-token search: length
@@ -1587,9 +1654,14 @@
         candidate-page
         (max limit 300)
 
+        ;; ONE walk-cache shared across the strict + per-token scans so an
+        ;; is_respect_gitignore=false run walks each root's tree exactly once.
+        walk-cache
+        (atom {})
+
         scan
         (fn [q]
-          (find-scan roots q is_hidden is_respect_gitignore candidate-page))
+          (find-scan roots q is_hidden is_respect_gitignore candidate-page walk-cache))
 
         strict
         (scan query)
@@ -2116,7 +2188,15 @@
                      [(rel-path f) f]))
              (sort-by first)
              (mapv second)
-             (rg-fff-candidate-files roots needles))]
+             ;; fff's index HONORS .gitignore, so its candidate-narrowing would
+             ;; re-drop the ignored files the walk deliberately kept. Skip fff when
+             ;; the caller opted OUT of gitignore, OR when a tool-only
+             ;; `.ignore`/`.rgignore` is present (its `!` rules re-include files fff
+             ;; would never surface) — scan every walked file the matcher kept.
+             ((if (and is_respect_gitignore (not (some gitignore/tool-ignore-present? roots)))
+                (fn [fs]
+                  (rg-fff-candidate-files roots needles fs))
+                identity)))]
 
     (cond
       is_files_only (let [out
@@ -4742,7 +4822,8 @@
      (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
           "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
           "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
-          "the likely ones. Scope with `paths`.")
+          "the likely ones. Scope with `paths`. By default .gitignored files are invisible; "
+          "pass is_respect_gitignore=False to discover files inside gitignored dirs.")
      :render render-find-result
      :color-role :tool-color/search
      :schema
@@ -4752,7 +4833,13 @@
                 :description
                 "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
        "paths"
-       {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
+       {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
+       "is_hidden" {:type "boolean"
+                    :description "Also match dotfiles / hidden dirs (default false)."}
+       "is_respect_gitignore"
+       {:type "boolean"
+        :description
+        "Honor .gitignore (default true). Set FALSE to discover files inside gitignored dirs (e.g. vendored / corporate repos the project ignores)."}}
       :required ["query"]}
      :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
      :tag :observation
@@ -4764,14 +4851,16 @@
     {:symbol 'rg
      :native-tool? true
      :description
-     (str "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
-          "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
-          "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
-          "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
-          "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
-          "returns just the files that contain a match. No regex / no AND — filter the "
-          "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
-          "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
+     (str
+       "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
+       "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
+       "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
+       "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
+       "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
+       "returns just the files that contain a match. No regex / no AND — filter the "
+       "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
+       "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold. "
+       "By default .gitignored files are skipped; pass is_respect_gitignore=False to reach them.")
      :render render-rg-result
      :color-role :tool-color/search
      :schema
@@ -4791,7 +4880,13 @@
        "context" {:type "integer" :description "Lines of context around each match."}
        "is_files_only" {:type "boolean"
                         :description
-                        "Return just the distinct files that contain a match, no per-line hits."}}
+                        "Return just the distinct files that contain a match, no per-line hits."}
+       "is_hidden" {:type "boolean"
+                    :description "Also search dotfiles / hidden dirs (default false)."}
+       "is_respect_gitignore"
+       {:type "boolean"
+        :description
+        "Honor .gitignore (default true). Set FALSE to search inside gitignored dirs (e.g. vendored / corporate repos the project ignores)."}}
       :required ["query"]}
      :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
      :tag :observation

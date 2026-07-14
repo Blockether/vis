@@ -265,7 +265,18 @@
         (let [parse (rv 'parse-multi-sids)]
           (is (= [["a" 10] ["b" 0]] (parse {:query-params {"sids" "a:10, b , zzz:3"}})))
           (is (nil? (parse {:query-params {}})))
-          (is (nil? (parse {:query-params {"sids" ""}}))))))))
+          (is (nil? (parse {:query-params {"sids" ""}})))
+          (testing "Last-Event-ID overrides the cursor for the SINGLE-sid case (native reconnect)"
+            (is (= [["a" 42]]
+                   (parse {:query-params {"sids" "a:0"} :headers {"last-event-id" "42"}})))
+            (is (= [["a" 7]] (parse {:query-params {"sids" "a"} :headers {"last-event-id" "7"}}))))
+          (testing
+            "Last-Event-ID is IGNORED for multi-sid (one header can't resume N per-session seqs)"
+            (is (= [["a" 10] ["b" 0]]
+                   (parse {:query-params {"sids" "a:10,b"} :headers {"last-event-id" "42"}}))))
+          (testing "a non-numeric Last-Event-ID is ignored"
+            (is (= [["a" 3]]
+                   (parse {:query-params {"sids" "a:3"} :headers {"last-event-id" ""}})))))))))
 
 (deftest multi-sse-fans-many-sessions-down-one-stream
   (testing
