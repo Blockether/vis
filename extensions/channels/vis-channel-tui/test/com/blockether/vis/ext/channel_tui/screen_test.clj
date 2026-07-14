@@ -59,6 +59,14 @@
 
 (def ^:private open-click-target! (deref #'screen/open-click-target!))
 
+(def ^:private choose-frame-path (deref #'screen/choose-frame-path))
+
+(def ^:private frame-change-flags (deref #'screen/frame-change-flags))
+
+(def ^:private park-wait-ms (deref #'screen/park-wait-ms))
+
+(def ^:private spinner-tick-ms (deref #'screen/spinner-tick-ms))
+
 (def ^:private bubble-selectable-ranges (deref #'screen/bubble-selectable-ranges))
 
 (def ^:private selected-transcript-text (deref #'screen/selected-transcript-text))
@@ -871,3 +879,33 @@
 
         (expect (false? (boolean (input-only-change? base base cols))))
         (expect (false? (boolean (input-only-change? nil base cols)))))))
+
+(defdescribe
+  render-loop-decomposition-test
+  "Pins the pure helpers extracted from `render-loop!` — the frame-path
+   decision that caused the streaming CPU spin, now testable in isolation."
+  (it "choose-frame-path picks the cheapest path; earlier (cheaper) paths win ties"
+      (expect (= :full (choose-frame-path {})))
+      (expect (= :header-hover (choose-frame-path {:header-hover-only? true :partial-live? true})))
+      (expect (= :partial-live (choose-frame-path {:partial-live? true :scroll-frame? true})))
+      (expect (= :header-spinner
+                 (choose-frame-path {:header-spinner-only? true :scroll-frame? true})))
+      (expect (= :scroll (choose-frame-path {:scroll-frame? true :input-only? true})))
+      (expect (= :input (choose-frame-path {:input-only? true}))))
+  (it "park-wait-ms drops to the spinner cadence while loading, idle cap otherwise"
+      (expect (= spinner-tick-ms (park-wait-ms {} true)))
+      (expect (= 250 (park-wait-ms {} false))))
+  (it "frame-change-flags takes NO cheap path while recovering from a dialog block"
+      (let [flags (frame-change-flags {:last-db {}
+                                       :db {}
+                                       :last-layout {:total-h 10 :inner-h 5}
+                                       :last-hover nil
+                                       :current-hover nil
+                                       :cols 80
+                                       :same-size? true
+                                       :animate? false
+                                       :loading? false
+                                       :scroll-anim? false
+                                       :overlay-open? false
+                                       :was-blocked? true})]
+        (expect (every? false? (map boolean (vals flags)))))))
