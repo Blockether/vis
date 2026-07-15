@@ -3713,9 +3713,9 @@
                                (= mode :files-only)
                                (assoc :file-count (get result "file_count")))})))
 
-(def ^:private patch-diff-context-lines 3)
-(def ^:private patch-diff-max-render-lines 240)
-(def ^:private patch-java-diff-max-lines 5000)
+(def ^:private ^:const patch-diff-context-lines 3)
+(def ^:private ^:const patch-diff-max-render-lines 240)
+(def ^:private ^:const patch-java-diff-max-lines 5000)
 
 (defn- cap-diff-lines
   "Bound a rendered diff to `patch-diff-max-render-lines`, keeping a HEAD and a
@@ -3729,7 +3729,7 @@
         (vec lines)
 
         n
-        (count lines)]
+        (long (count lines))]
 
     (if (<= n patch-diff-max-render-lines)
       lines
@@ -3748,17 +3748,17 @@
 
 (defn- common-prefix-count
   [a b]
-  (let [limit (min (count a) (count b))]
+  (let [limit (long (min (count a) (count b)))]
     (loop [i 0]
       (if (and (< i limit) (= (a i) (b i))) (recur (inc i)) i))))
 
 (defn- common-suffix-count
-  [a b prefix-count]
+  [a b ^long prefix-count]
   (let [a-count
-        (count a)
+        (long (count a))
 
         b-count
-        (count b)
+        (long (count b))
 
         limit
         (- (min a-count b-count) prefix-count)]
@@ -3772,7 +3772,7 @@
         (vec lines)
 
         n
-        (count lines)
+        (long (count lines))
 
         shown-n
         (min n patch-diff-max-render-lines)
@@ -3793,16 +3793,16 @@
    unified hunks."
   [a b]
   (let [prefix-count
-        (common-prefix-count a b)
+        (long (common-prefix-count a b))
 
         suffix-count
-        (common-suffix-count a b prefix-count)
+        (long (common-suffix-count a b prefix-count))
 
         a-count
-        (count a)
+        (long (count a))
 
         b-count
-        (count b)
+        (long (count b))
 
         a-change-end
         (- a-count suffix-count)
