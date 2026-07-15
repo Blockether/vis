@@ -664,6 +664,26 @@ def __vis_defer_tools__():
         if __vis_n__ in g and callable(g[__vis_n__]):
             g[__vis_n__] = __vis_deferred__(g[__vis_n__], __vis_n__)
 
+# ── echo-diff strip for a printed edit result: a patch/write/struct_patch result
+# printed to stdout merely re-describes the bytes the model just authored, so drop
+# each byte-exact file summary's redundant 'diff' for DISPLAY only — mirrors the
+# model-wire `strip-echo-diffs` in loop.clj (kept whenever a fuzzy 'passes' fired or
+# 'indent_delta' auto-shifted, since then the diff is real signal). The captured
+# original is UNTOUCHED, so the host op-card still renders the full diff.
+def __vis_is_file_summary__(__m__):
+    return (isinstance(__m__, dict) and isinstance(__m__.get('path'), str)
+            and isinstance(__m__.get('op'), str) and 'changed' in __m__)
+def __vis_strip_echo_diff__(__m__):
+    if 'diff' in __m__ and not __m__.get('passes') and __m__.get('indent_delta') is None:
+        return {__k__: __v__ for __k__, __v__ in __m__.items() if __k__ != 'diff'}
+    return __m__
+def __vis_strip_echo_diffs__(__x__):
+    if isinstance(__x__, list) and __x__ and all(__vis_is_file_summary__(__e__) for __e__ in __x__):
+        return [__vis_strip_echo_diff__(__e__) for __e__ in __x__]
+    if __vis_is_file_summary__(__x__):
+        return __vis_strip_echo_diff__(__x__)
+    return __x__
+
 # ── print-capture: a printed TOOL RESULT (a dict carrying 'op', stamped by the
 # host) is recorded on the side so the host can render ONE op-card per printed
 # result. The model's stdout/context is UNCHANGED — we delegate to the real print;
@@ -694,7 +714,9 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
                 globals()['__vis_only_results__'] = False
         if not __vis_a__:                 # a bare print() (blank line) is not a result
             globals()['__vis_only_results__'] = False
-    return __vis_real_print__(*__vis_a__, **__vis_kw__)
+    # DISPLAY strips echo-diffs from a printed edit result (stdout mirrors the model
+    # wire); capture above kept the un-stripped originals for the host op-card.
+    return __vis_real_print__(*tuple(__vis_strip_echo_diffs__(__a__) for __a__ in __vis_a__), **__vis_kw__)
 print = __vis_print__
 
 # ── ntr / native_tools_results: retrieve a PRIOR native tool's result by its

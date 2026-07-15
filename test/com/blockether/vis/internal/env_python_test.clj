@@ -103,6 +103,34 @@
         (expect (= 1 (count (:printed-results mixed)))) ;; the result is still captured
         (expect (re-find #"FOUND:" (str (:stdout mixed))))))
     (it
+      "a printed patch/write/struct_patch result drops its byte-exact echo-diff from stdout but keeps a fuzzy diff"
+      ;; A patch/write/struct_patch return is a LIST of `{path op changed diff}`
+      ;; file summaries. Printed to stdout that diff merely re-describes the bytes
+      ;; the model just authored → stripped for DISPLAY, exactly like the model-wire
+      ;; `strip-echo-diffs`. A fuzzy edit (a `passes` fired / `indent_delta` shifted)
+      ;; keeps its diff — it's real signal. (A LIST result is not a `__VisResult__`
+      ;; so it's never a captured op-card; the stripped stdout is all the model sees.)
+      (ep/bind-and-bump!
+        env
+        'edit
+        [{"path" "a.clj" "op" "update" "changed" true "diff" "--- before\n+++ after\n-x\n+y"}])
+      (ep/bind-and-bump!
+        env
+        'edit_fuzzy
+        [{"path" "b.clj" "op" "update" "changed" true "passes" ["fuzzy"] "diff" "--- b\n+z"}])
+      (let [exact
+            (ep/run-python-block ctx "print(edit)")
+
+            fuzzy
+            (ep/run-python-block ctx "print(edit_fuzzy)")]
+
+        ;; byte-exact: stdout loses the diff, keeps path/op/changed
+        (expect (not (str/includes? (str (:stdout exact)) "diff")))
+        (expect (str/includes? (str (:stdout exact)) "a.clj"))
+        (expect (str/includes? (str (:stdout exact)) "'changed': True"))
+        ;; fuzzy: a real diff is signal the model can't otherwise know → survives
+        (expect (str/includes? (str (:stdout fuzzy)) "diff"))))
+    (it
       "session is a REAL dict after bind-ctx! — json.dumps(session) works (was a ForeignDict)"
       (ep/bind-ctx! ctx {"workspace" "/x" "roots" ["a" "b"] "facts" {"k" "v"}})
       (let

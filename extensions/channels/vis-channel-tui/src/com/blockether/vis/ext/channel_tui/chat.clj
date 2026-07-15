@@ -246,7 +246,7 @@
                 (or (:answer_position it) (dec (count all-blocks)))
 
                 block
-                (when (and (integer? idx) (not (neg? idx)) (< idx (count all-blocks)))
+                (when (and (integer? idx) (not (neg? (long idx))) (< (long idx) (count all-blocks)))
                   (get all-blocks idx))]
 
             (when (and block
@@ -861,7 +861,8 @@
         [old new]
         (swap-vals! prewarm-in-flight
                     (fn [n]
-                      (if (< (+ ready n) prewarm-pool-depth) (inc n) n)))]
+                      (let [n (long n)]
+                        (if (< (+ (long ready) n) (long prewarm-pool-depth)) (inc n) n))))]
 
     (not= old new)))
 

@@ -73,7 +73,7 @@
 
 (defn- fresh?
   [{:keys [idx built-at]}]
-  (and idx (< (- (System/currentTimeMillis) (long built-at)) index-ttl-ms)))
+  (and idx (< (- (System/currentTimeMillis) (long built-at)) (long index-ttl-ms))))
 
 (defn- close-later!
   "Close a superseded fff instance, but only after a grace period so no
@@ -173,7 +173,7 @@
             ccol (long ccol)
             line (nth lines crow)
             line-start (- (count head) ccol) ; head offset where the current line begins
-            col (max 0 (- at line-start)) ; column of the `@` on the current line
+            col (max 0 (- (long at) line-start)) ; column of the `@` on the current line
             before (subs line 0 col)
             after (subs line ccol)
             mention (str (input/format-file-mention path) " ")
