@@ -5222,7 +5222,7 @@
                                    :kind :root
                                    :text (root-row r)))
                                roots)
-                          [{:kind :hint :text "  none yet \u2014 C-a on a folder below adds it"}])
+                          [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
                         [{:kind :blank :text ""}
                          {:kind :rule :text (apply str (repeat list-w "\u2500"))}
                          {:kind :blank :text ""}
