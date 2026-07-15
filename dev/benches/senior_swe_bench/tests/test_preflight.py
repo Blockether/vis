@@ -80,6 +80,51 @@ def test_validate_artifact_accepts_matching_native_sha(tmp_path):
     assert result["source_dirty"] is True
 
 
+def test_pi_reasoning_effort_translation_is_provider_native():
+    assert preflight.pi_thinking_level("high") == "high"
+    assert preflight.pi_thinking_level("max") == "xhigh"
+
+
+def test_pi_reasoning_effort_translation_rejects_abstract_or_missing_values():
+    for value in ("balanced", "deep", "medium", ""):
+        try:
+            preflight.pi_thinking_level(value)
+        except preflight.PreflightError as exc:
+            assert "must be high or max" in str(exc)
+        else:
+            raise AssertionError(f"expected PreflightError for {value!r}")
+
+
+def test_pi_glm52_models_config_pins_context_output_and_only_two_efforts(tmp_path):
+    path = tmp_path / "models.json"
+    config = preflight.write_pi_glm52_models_config(path)
+    model = config["providers"]["zai"]["models"][0]
+
+    assert json.loads(path.read_text()) == config
+    assert config["providers"]["zai"]["baseUrl"] == "https://api.z.ai/api/coding/paas/v4"
+    assert config["providers"]["zai"]["api"] == "openai-completions"
+    assert model["id"] == "glm-5.2"
+    assert model["contextWindow"] == 1_000_000
+    assert model["maxTokens"] == 32_768
+    assert model["thinkingLevelMap"] == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": "high",
+        "xhigh": "max",
+    }
+    assert model["compat"] == {
+        "supportsDeveloperRole": False,
+        "supportsReasoningEffort": True,
+        "thinkingFormat": "deepseek",
+        "zaiToolStream": True,
+    }
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
+        "c8663c7d2287c51cea995b3e5c47a2c7f94dce8dc1e629ee5c89ae6682c673a9"
+    )
+
+
 def test_validate_artifact_rejects_sha_mismatch(tmp_path):
     artifact = tmp_path / "vis-agent.tar.gz"
     _artifact(artifact, _elf64_aarch64(), sha="bad")
@@ -160,6 +205,7 @@ def test_validate_config_accepts_provider_vector_without_printing_secrets(tmp_pa
         ; comments are accepted
         {:providers [{:id :openai
                       :api-key "secret-value"
+                      :base-url "https://api.openai.com/v1"
                       :models [{:name "gpt-4o-mini"}]}]
          :toggles {:x true}}
         """
@@ -167,7 +213,13 @@ def test_validate_config_accepts_provider_vector_without_printing_secrets(tmp_pa
 
     result = preflight.validate_config(config)
 
-    assert result == {"path": str(config), "providers": 1, "provider_ids": ["openai"]}
+    assert result == {
+        "path": str(config),
+        "providers": 1,
+        "provider_ids": ["openai"],
+        "provider_configs": [{"id": "openai", "base_url": "https://api.openai.com/v1"}],
+    }
+    assert "secret-value" not in str(result)
 
 
 def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(tmp_path):
@@ -182,7 +234,12 @@ def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(
 
     result = preflight.validate_config(config)
 
-    assert result == {"path": str(config), "providers": 1, "provider_ids": ["zai"]}
+    assert result == {
+        "path": str(config),
+        "providers": 1,
+        "provider_ids": ["zai"],
+        "provider_configs": [{"id": "zai", "base_url": None}],
+    }
 
 def test_validate_config_rejects_accidentally_nested_top_level_keys_in_providers(tmp_path):
     config = tmp_path / "config.edn"
