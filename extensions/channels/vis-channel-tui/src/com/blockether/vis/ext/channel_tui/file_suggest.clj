@@ -28,6 +28,8 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.internal.file-picker :as picker]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (def ^:private index-ttl-ms 30000)
 (def ^:private max-rows 20)
 

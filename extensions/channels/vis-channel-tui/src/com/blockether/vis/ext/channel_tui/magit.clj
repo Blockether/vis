@@ -23,6 +23,8 @@
             [com.blockether.vis.internal.git :as git])
   (:import [java.io File]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (def ^:private network-timeout-secs
   "push/pull/fetch cross the network — give them a longer leash than the
    default 10s local-command timeout."
@@ -803,7 +805,12 @@
   "Index of the first selectable row at-or-after `idx` (wrapping search both
    directions handled by the caller); nil when nothing is selectable."
   [rows idx]
-  (let [n (count rows) idx (long idx)]
+  (let [n
+        (count rows)
+
+        idx
+        (long idx)]
+
     (or (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n) n))
         (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n))))))
 
