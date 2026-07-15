@@ -46,10 +46,12 @@
     (.toString sb)))
 (defn- match-at?
   [lines pattern i cmp]
-  (loop [k 0]
-    (if (= k (count pattern))
-      true
-      (if (cmp (nth lines (+ i k)) (nth pattern k)) (recur (inc k)) false))))
+  (let [i (long i)
+        n (long (count pattern))]
+    (loop [k 0]
+      (if (= k n)
+        true
+        (if (cmp (nth lines (+ i k)) (nth pattern k)) (recur (inc k)) false)))))
 (def ^:private fuzzy-passes
   "Per-line fuzzy strategies. `seek-sequence-with-pass` orchestrates them
    in two phases so the structure-preserving `:relative-indent` pass can
@@ -90,7 +92,7 @@
   (let [counts (->> lines
                     (remove str/blank?)
                     (map leading-ws-count))]
-    (when (seq counts) (apply min counts))))
+    (when (seq counts) (long (apply min counts)))))
 (defn- de-indent
   "Strip `n` leading chars from `line` if it has them. Blank lines are
    left alone (mirrors Python's textwrap.dedent semantics — blank lines
@@ -111,14 +113,14 @@
    `:indent-delta` to re-indent the `replace` lines."
   [lines pattern start]
   (let [plen
-        (count pattern)
+        (long (count pattern))
 
         llen
-        (count lines)]
+        (long (count lines))]
 
     (when (and (pos? plen) (<= plen llen))
       (let [p-indent
-            (or (min-leading-indent pattern) 0)
+            (long (or (min-leading-indent pattern) 0))
 
             p-deindented
             (mapv #(de-indent p-indent %) pattern)
@@ -126,14 +128,14 @@
             end
             (- llen plen)]
 
-        (loop [i start]
+        (loop [i (long start)]
           (when (<= i end)
             (let [window (subvec lines i (+ i plen))
-                  w-indent (or (min-leading-indent window) 0)
+                  w-indent (long (or (min-leading-indent window) 0))
                   w-deindented (mapv #(de-indent w-indent %) window)]
 
               (if (= p-deindented w-deindented)
-                {:start i :indent-delta (- (long w-indent) (long p-indent))}
+                {:start i :indent-delta (- w-indent p-indent)}
                 (recur (inc i))))))))))
 (defn seek-sequence-with-pass
   "Like `seek-sequence` but returns `{:start <i> :pass <kw> :indent-delta <n>?}`
@@ -159,10 +161,10 @@
                     (- llen plen)
 
                     eof-start
-                    (when eof? (max 0 (- llen plen)))
+                    (when eof? (long (max 0 (- llen plen))))
 
                     search-start
-                    (or eof-start start)
+                    (long (or eof-start start))
 
                     run-pass
                     (fn [cmp]
@@ -237,15 +239,16 @@
    :relative-indent hit fires and the `replace` payload must follow the
    file's actual indentation rather than the SEARCH block's."
   [delta lines]
-  (cond (zero? delta) (vec lines)
-        (pos? delta) (let [pad (apply str (repeat delta \space))]
-                       (mapv (fn [^String l]
-                               (if (str/blank? l) l (str pad l)))
-                             lines))
-        :else (let [strip (- (long delta))]
-                (mapv (fn [^String l]
-                        (if (str/blank? l) l (subs l (min strip (leading-ws-count l)))))
-                      lines))))
+  (let [delta (long delta)]
+    (cond (zero? delta) (vec lines)
+          (pos? delta) (let [pad (apply str (repeat delta \space))]
+                         (mapv (fn [^String l]
+                                 (if (str/blank? l) l (str pad l)))
+                               lines))
+          :else (let [strip (- delta)]
+                  (mapv (fn [^String l]
+                          (if (str/blank? l) l (subs l (long (min strip (leading-ws-count l))))))
+                        lines)))))
 ;; =============================================================================
 ;; ws-agnostic token matcher — re-segments across newlines
 ;;
@@ -262,7 +265,7 @@
   "0-based line index of char offset `off` in `content` (count of `\n`
    before it)."
   ^long [^String content ^long off]
-  (let [lim (min off (count content))]
+  (let [lim (long (min off (count content)))]
     (loop [i 0
            ln 0]
 
@@ -271,19 +274,19 @@
   "Vec of `[token ^long start ^long end]` for every maximal non-whitespace
    run in `s`. `start`/`end` are raw char offsets (end exclusive)."
   [^String s]
-  (let [n (count s)]
-    (loop [i 0
-           acc (transient [])]
-
-      (if (>= i n)
-        (persistent! acc)
-        (if (Character/isWhitespace (.charAt s i))
-          (recur (inc i) acc)
-          (let [j (loop [k i]
-                    (if (and (< k n) (not (Character/isWhitespace (.charAt s k))))
-                      (recur (inc k))
-                      k))]
-            (recur j (conj! acc [(subs s i j) (long i) (long j)]))))))))
+  (let [n (long (count s))
+        acc (java.util.ArrayList.)]
+    (loop [i (long 0)]
+      (when (< (long i) n)
+        (if (Character/isWhitespace (.charAt s (long i)))
+          (recur (long (inc (long i))))
+          (let [j (long (loop [k (long i)]
+                          (if (and (< k n) (not (Character/isWhitespace (.charAt s k))))
+                            (recur (inc k))
+                            k)))]
+            (.add acc [(subs s (long i) j) (long i) j])
+            (recur j)))))
+    (vec acc)))
 (defn ws-agnostic-line-span
   "Whitespace-agnostic token-subsequence match. Folds `search` and
    `content` to whitespace-free token streams and looks for `search`'s
@@ -303,14 +306,14 @@
         (mapv first (tokenize-with-offsets search))
 
         slen
-        (count st-toks)]
+        (long (count st-toks))]
 
     (when (pos? slen)
       (let [ctoks
             (mapv first ct)
 
             n
-            (count ctoks)
+            (long (count ctoks))
 
             hits
             (loop [i
@@ -325,7 +328,7 @@
 
         (when (seq hits)
           (let [i
-                (first hits)
+                (long (first hits))
 
                 [_ tstart _]
                 (nth ct i)
@@ -339,7 +342,7 @@
                 line-end
                 (inc (line-index-at content (dec (long tend))))]
 
-            {:line-start line-start :line-end line-end :occurrences (count hits)}))))))
+            {:line-start line-start :line-end line-end :occurrences (long (count hits))}))))))
 ;; =============================================================================
 ;; Hashline layer — the single, reusable line+content-addressed editing surface.
 ;;
@@ -398,7 +401,7 @@
    hand loop."
   ^String [line]
   (let [h
-        (int (bit-and (.hashCode (str/trim (str line))) hash-mask))
+        (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
 
         hex
         (Integer/toHexString h)
@@ -500,8 +503,8 @@
         (vec tuples)
 
         width
-        (reduce (fn [w [ln _]]
-                  (max w (count (str ln))))
+        (reduce (fn [^long w [ln _]]
+                  (max w (long (count (str ln)))))
                 1
                 tuples)]
 
@@ -525,14 +528,15 @@
   [tuples]
   (->> tuples
        (reduce (fn [groups [ln :as t]]
-                 (let [g
-                       (peek groups)
+                 (let [ln (long ln)
+                       g
+                       (peek groups)]
 
-                       last-ln
-                       (when g (first (peek g)))]
-
-                   (if (and last-ln (= ln (inc last-ln)))
-                     (conj (pop groups) (conj g t))
+                   (if g
+                     (let [last-ln (long (first (peek g)))]
+                       (if (= ln (inc last-ln))
+                         (conj (pop groups) (conj g t))
+                         (conj groups [t])))
                      (conj groups [t]))))
                [])
        (mapv (fn [g]
@@ -621,7 +625,7 @@
           (dec (long line))
 
           n
-          (count lines)]
+          (long (count lines))]
 
       (cond (or (neg? idx0) (>= idx0 n))
             {:error {:reason :hashline-line-out-of-range :which which :line line :lines n}}
@@ -641,17 +645,17 @@
                       (let [tol (long hash-line-drift-tolerance)
                             in-win (filterv (fn [i]
                                               (<= (Math/abs (- (inc (long i)) (long line))) tol))
-                                     matches)]
+                                            matches)]
 
                         (cond
                           ;; 2. drifted — one nearby match, follow the content
-                          (= 1 (count in-win)) {:index (first in-win)}
+                          (= 1 (long (count in-win))) {:index (first in-win)}
                           ;; 4. hash matches only FAR from the stated line — WRONG-LINE guard
                           (empty? in-win) {:error {:reason :hashline-misplaced
                                                    :which which
                                                    :hash hash
                                                    :stated-line line
-                                                   :found-lines (mapv inc matches)}}
+                                                   :found-lines (mapv #(inc (long %)) matches)}}
                           ;; 3. several nearby matches — hash can't disambiguate; the
                           ;;    explicit line wins (the user's `lineno:dup-hash` case)
                           :else {:index idx0}))))))))
