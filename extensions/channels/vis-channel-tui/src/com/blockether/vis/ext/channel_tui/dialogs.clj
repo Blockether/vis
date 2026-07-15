@@ -3744,7 +3744,7 @@
                            rows))
       0))
 (defn- move-settings-selection
-  [rows selected delta]
+  [rows ^long selected ^long delta]
   (let [n (count rows)]
     (loop [idx (clamp (+ selected delta) 0 (max 0 (dec n)))]
       (cond (= idx selected) idx
@@ -4559,7 +4559,7 @@
 (defn- session-table-widths
   "Column widths for the boxed session table. Total rendered row width equals
    `table-w`, including side borders, inter-cell separators, and padding."
-  [table-w]
+  [^long table-w]
   (let [n
         (count session-table-headers)
 

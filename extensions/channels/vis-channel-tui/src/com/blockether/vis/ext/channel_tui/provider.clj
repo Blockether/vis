@@ -456,28 +456,31 @@
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
 ;; dlg/dlg/ellipsize, dlg/clamp, dlg/visible-window-start, dlg/clear-screen!
 
-(defn- priority-label [idx] (str "(" (inc idx) ")"))
+(defn- priority-label [^long idx] (str "(" (inc idx) ")"))
 
 (def ^:private url-host vis/provider-url-host)
 
-(def ^:private card-rows 3)   ;; lines per card
-(def ^:private card-gap 1)    ;; blank line between cards
+(def ^:private ^:const card-rows 3)   ;; lines per card
+(def ^:private ^:const card-gap 1)    ;; blank line between cards
 
 (defn- card-height
   "Total rows for n provider cards including gaps."
-  [n]
+  [^long n]
   (if (pos? n) (+ (* n card-rows) (* (dec n) card-gap)) 0))
 
-(defn- card-start-row "Starting row offset for card at index i." [i] (* i (+ card-rows card-gap)))
+(defn- card-start-row
+  "Starting row offset for card at index i."
+  [^long i]
+  (* i (+ card-rows card-gap)))
 
 (defn- card-visible-count
   "Number of full two-line cards visible in `content-h`, respecting the
    one-row gap between cards."
-  [content-h]
-  (max 1 (quot (+ (max 0 (long content-h)) card-gap) (+ card-rows card-gap))))
+  [^long content-h]
+  (max 1 (quot (+ (max 0 content-h) card-gap) (+ card-rows card-gap))))
 
 (defn- card-window-start
-  [selected current-start content-h total]
+  [^long selected ^long current-start ^long content-h ^long total]
   (dlg/visible-window-start selected current-start (card-visible-count content-h) total))
 
 (defn- draw-provider-card!
@@ -619,7 +622,8 @@
 
    `previous-name` and `next-name` are the names of the model just before /
    after this one in the chain (nil at the ends)."
-  [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
+  [g left row inner-w idx selected? is-root? _provider-id model
+   previous-name next-name]
   ;; Same selection-gutter convention as `draw-provider-card!`.
   (let [model-name
         (or (:name model) (str "model-" (inc idx)))
