@@ -527,6 +527,29 @@
     (svar/make-router (mapv config/->svar-provider (:providers config)) (config/router-opts config))
     (lp/get-router)))
 
+(defn- run-error-result
+  [session-id e]
+  (let [data
+        (ex-data e)
+
+        unsupported?
+        (= :vis/unsupported-reasoning-effort (:type data))]
+
+    (cond-> {:session-id session-id
+             :error (persistance/db-error->user-message e)
+             :type (str (type e))
+             :exception e}
+      unsupported?
+      (assoc :eval
+        {:valid? false
+         :invalid-reasons [{:type :unsupported-reasoning-effort
+                            :requested (:requested data)
+                            :provider (some-> (:provider data)
+                                              name)
+                            :model (:model data)
+                            :supported (vec (:supported data))}]
+         :reasoning-effort {:requested (:requested data) :iterations []}}))))
+
 (defn run!
   "Execute a one-shot agent turn.
 
@@ -550,6 +573,7 @@
    - :spec        - Output spec for structured responses
    - :provider    - Override provider (keyword or string, e.g. :openai)
    - :model       - Override model
+   - :reasoning-effort - Exact provider-native effort (`high` or `max`)
    - :on-chunk    - Streaming callback fn
    - :debug?      - Enable debug logging (default false)
    - :config      - Provider config override (skips ~/.vis/config.edn)
@@ -569,7 +593,8 @@
    the `:cli` channel. Past runs are browsable via
    `(sessions/by-channel :cli)`."
   [agent-def prompt &
-   [{:keys [spec model provider on-chunk debug? config db persist? no-persist? session-id]
+   [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
+            session-id]
      :as _opts}]]
   (let [mdl
         (or model (:model agent-def))
@@ -606,6 +631,9 @@
 
           mdl
           (assoc :model mdl)
+
+          reasoning-effort
+          (assoc :reasoning-effort reasoning-effort)
 
           on-chunk*
           (assoc :hooks {:on-chunk on-chunk*})
@@ -646,12 +674,11 @@
                  (assoc :status (:status result))
 
                  (:confidence result)
-                 (assoc :confidence (:confidence result))))
-             (catch Exception e
-               {:session-id nil
-                :error (persistance/db-error->user-message e)
-                :type (str (type e))
-                :exception e})
+                 (assoc :confidence (:confidence result))
+
+                 (:eval result)
+                 (assoc :eval (:eval result))))
+             (catch Exception e (run-error-result nil e))
              (finally (try (lp/dispose-environment! env) (catch Exception _ nil)))))
       ;; Persistent path: route through the canonical in-process gateway so
       ;; CLI, TUI, web, and transport clients share the same session/turn
@@ -710,12 +737,11 @@
                  (assoc :status (:status result))
 
                  (:confidence result)
-                 (assoc :confidence (:confidence result))))
-             (catch Exception e
-               {:session-id session-id
-                :error (persistance/db-error->user-message e)
-                :type (str (type e))
-                :exception e}))))))
+                 (assoc :confidence (:confidence result))
+
+                 (:eval result)
+                 (assoc :eval (:eval result))))
+             (catch Exception e (run-error-result session-id e)))))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
@@ -1475,6 +1501,9 @@
           "--model"
           (recur (next more) (assoc opts :model (first more)) prompt-parts)
 
+          "--reasoning-effort"
+          (recur (next more) (assoc opts :reasoning-effort (first more)) prompt-parts)
+
           "--name"
           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
 
@@ -1525,6 +1554,7 @@
   (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
   (stdout! "  --model MODEL        Override the configured model. Also accepts")
   (stdout! "                       provider/name (e.g. openai/gpt-4o).")
+  (stdout! "  --reasoning-effort E  Exact provider-native effort: high or max.")
   (stdout! "  --name NAME          Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (stdout! "  --session-id ID      Continue an existing persisted session.")
@@ -1533,6 +1563,8 @@
   (stdout! "                       no resume, no session row on disk.")
   (stdout! "")
   (stdout! "Examples:")
+  (stdout!
+    "  vis --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
   (stdout! "  vis --toggles shell/enabled=true \"Run the test suite and fix failures\"")
@@ -1646,6 +1678,19 @@
                (vector? answer) answer
                :else (render/answer->ir {:answer (pr-str answer)})))))
 
+(defn- cli-result-exit-code
+  [result]
+  (let [invalid-reasons
+        (get-in result [:eval :invalid-reasons])
+
+        unsupported?
+        (some #(= :unsupported-reasoning-effort (:type %)) invalid-reasons)]
+
+    (cond unsupported? 2
+          (or (:error result) (contains? #{:error :cancelled} (:status result))) 1
+          (false? (get-in result [:eval :valid?])) 2
+          :else 0)))
+
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1691,15 +1736,14 @@
                          (if (= db ":memory") :memory {:backend :sqlite :path db}))))
           result (call-with-toggle-overrides (parse-toggle-overrides toggles)
                                              #(run! agent-def prompt run-opts))
+          exit-code (cli-result-exit-code result)
           trace-result (select-keys result
                                     [:session-id :answer :trace :iteration-count :duration-ms
-                                     :tokens :cost :confidence :status :error :type])]
+                                     :tokens :cost :confidence :status :error :type :eval])]
 
       (cond
-        full-trace-json-stream? (do (print-full-trace-json-frame! :result trace-result)
-                                    (when (:error result) (shutdown-agents) (System/exit 1)))
-        full-trace-edn-stream? (do (print-full-trace-edn-frame! :result trace-result)
-                                   (when (:error result) (shutdown-agents) (System/exit 1)))
+        full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
+        full-trace-edn-stream? (print-full-trace-edn-frame! :result trace-result)
         full-trace-stream?
         (do (tel/log! {:level :info :id ::cli-trace :data trace-result} "CLI trace result")
             (stdout! (str "\n"
@@ -1713,16 +1757,13 @@
             (when (:error result)
               (when-let [ex (:exception result)]
                 (stdout! "\nStack trace:")
-                (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))
-              (shutdown-agents)
-              (System/exit 1)))
+                (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
         json? (stdout! (result->json result))
         edn? (stdout! (result->edn result))
         code?
         (let [blocks (render/extract-code (answer->ir-safe (:answer result)))]
           (cond
-            (:error result)
-            (do (stdout! (error/format-error (:error result))) (shutdown-agents) (System/exit 1))
+            (:error result) (stdout! (error/format-error (:error result)))
             (empty? blocks)
             (do
               (stdout!
@@ -1730,13 +1771,13 @@
               (shutdown-agents)
               (System/exit 1))
             :else (stdout! (str/join "\n\n" blocks))))
-        (:error result)
-        (do (stdout! (error/format-error (:error result))) (shutdown-agents) (System/exit 1))
+        (:error result) (stdout! (error/format-error (:error result)))
         :else (do (stdout! (render/render (answer->ir-safe (:answer result))
                                           (if effective-raw? :plain :markdown)))
                   (when (and (:duration-ms result) (not effective-raw?))
                     (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
-      (shutdown-agents))))
+      (shutdown-agents)
+      (when (pos? exit-code) (System/exit exit-code)))))
 
 ;;; ── `vis sessions` ─────────────────────────────────────────────────
 
@@ -3261,10 +3302,10 @@
     "  vis <command> --help           Show command help.\n" "\n"
     "EXAMPLES\n" "  vis \"fix failing tests\"\n"
     "  vis --json \"summarize this repo\"\n"
-    "  vis --full-trace-json-stream --db :memory \"debug startup\"\n"
-    "  vis providers status\n" "  vis sessions search sqlite\n"
-    "\n" "ONE-SHOT FLAGS\n"
-    "  --json                       Print result as JSON.\n"
+    "  vis --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\"\n"
+    "  vis --full-trace-json-stream --db :memory \"debug startup\"\n" "  vis providers status\n"
+    "  vis sessions search sqlite\n" "\n"
+    "ONE-SHOT FLAGS\n" "  --json                       Print result as JSON.\n"
     "  --edn                        Print result as EDN.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
@@ -3274,6 +3315,7 @@
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
     "  --provider PROVIDER          Override provider.\n"
     "  --model MODEL                Override model or use provider/model.\n"
+    "  --reasoning-effort E         Exact provider-native effort: high or max.\n"
     "  --name NAME                  Agent name for this run.\n"
     "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
     "  --session-id ID              Continue an existing persisted session.\n"

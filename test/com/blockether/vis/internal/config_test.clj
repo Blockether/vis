@@ -4,6 +4,7 @@
    the first-run welcome and the provider manager both rely on (a connected
    provider must survive a restart)."
   (:require [clojure.java.io :as io]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -67,6 +68,25 @@
   (it "leaves cloud presets keyless when none is configured (no catalog dummy)"
       (expect (nil? (:api-key (config/->svar-provider {:id :openrouter
                                                        :models [{:name "probe"}]}))))))
+
+(defdescribe
+  svar-model-metadata-test
+  (it "lets svar retain GLM-5.2's catalog-native effort style and values"
+      (let [provider
+            (config/->svar-provider
+              {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+
+            model
+            (-> (svar/make-router [provider])
+                :providers
+                first
+                :models
+                first)]
+
+        (expect (= :zai-effort (:reasoning-style model)))
+        (expect (= [{:type "effort" :values ["high" "max"]}] (:reasoning-options model)))))
+  (it "does not stamp a broad Z.ai reasoning override in Vis"
+      (expect (= {:name "glm-5.2"} (config/->svar-model :zai-coding-plan {:name "glm-5.2"})))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 

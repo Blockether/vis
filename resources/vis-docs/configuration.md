@@ -24,6 +24,29 @@ Per-model keys Vis honors: `:context` (window override for local servers that ca
 
 Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
 
+### Provider-native evaluation effort
+
+Use `--reasoning-effort high|max` when a controlled evaluation must send the
+provider's exact effort value instead of Vis's adaptive, provider-agnostic
+reasoning levels:
+
+```bash
+vis --provider zai-coding-plan --model glm-5.2 \
+  --reasoning-effort high --json "task"
+```
+
+Vis validates the selected provider and model before the first request. An
+unsupported model or value returns the accepted values and exits `2`. A
+completed run also exits `2` if any iteration changed provider or model;
+same-model retries remain valid. Execution failures exit `1`, and a valid run
+exits `0`.
+
+Structured output contains an `eval` object with `valid?`, `invalid-reasons`,
+and per-iteration reasoning evidence: requested/effective effort, actual
+provider and model, the emitted wire fragment, and fallback status. The same
+object appears in the final `--full-trace-json-stream` result frame. It is
+run evidence only and is not added to the session database schema.
+
 ## System prompt
 
 Append project house rules to the core prompt, or replace it outright:
