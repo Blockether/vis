@@ -132,7 +132,7 @@
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.17"}
   com.blockether/ruff {:mvn/version "0.1.2"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
-  com.blockether/fff {:mvn/version "0.9.6-8"}
+  com.blockether/fff {:mvn/version "0.9.6-9"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
