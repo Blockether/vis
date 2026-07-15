@@ -8238,31 +8238,30 @@
           ;; env_python async-runtime preamble; this is
           ;; the dispatcher they call to overlap awaitables
           ;; on real virtual threads).
-          (merge compaction
-                 {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
-                 ;; ntr[tool_id] host callbacks:
-                 ;; retrieve a PRIOR native tool's persisted result by
-                 ;; its provider tool_use id (`:svar/tool-call-id`) —
-                 ;; NO re-fetch. `prime` is the batched pre-scan load
-                 ;; (list of ids → {id → result}); `fetch` is the lazy
-                 ;; single-id fallback for a dynamic key. Both close
-                 ;; over db-info + the live session id and delegate to
-                 ;; the ONE batched persistence query.
-                 {(symbol "__vis_native_result_prime__")
-                  (fn native-result-prime [ids]
-                    (persistance/db-native-results-for-tool-ids
-                      db-info
-                      session-id
-                      (into #{} (filter some?) (or ids []))))
-                  (symbol "__vis_native_result_fetch__")
-                  (fn native-result-fetch [id]
-                    (get (persistance/db-native-results-for-tool-ids db-info session-id #{id}) id))
-                  ;; `ids` is the discovery callback: EVERY native tool_use id in the
-                  ;; session branch (newest first) so the sandbox can iterate the
-                  ;; store (keys/items/values/len) instead of needing ids up front.
-                  (symbol "__vis_native_result_ids__")
-                  (fn native-result-ids []
-                    (vec (persistance/db-native-result-ids-for-session db-info session-id)))})
+          compaction
+          {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
+          ;; ntr[tool_id] host callbacks:
+          ;; retrieve a PRIOR native tool's persisted result by
+          ;; its provider tool_use id (`:svar/tool-call-id`) —
+          ;; NO re-fetch. `prime` is the batched pre-scan load
+          ;; (list of ids → {id → result}); `fetch` is the lazy
+          ;; single-id fallback for a dynamic key. Both close
+          ;; over db-info + the live session id and delegate to
+          ;; the ONE batched persistence query.
+          {(symbol "__vis_native_result_prime__") (fn native-result-prime [ids]
+                                                    (persistance/db-native-results-for-tool-ids
+                                                      db-info
+                                                      session-id
+                                                      (into #{} (filter some?) (or ids []))))
+           (symbol "__vis_native_result_fetch__")
+           (fn native-result-fetch [id]
+             (get (persistance/db-native-results-for-tool-ids db-info session-id #{id}) id))
+           ;; `ids` is the discovery callback: EVERY native tool_use id in the
+           ;; session branch (newest first) so the sandbox can iterate the
+           ;; store (keys/items/values/len) instead of needing ids up front.
+           (symbol "__vis_native_result_ids__")
+           (fn native-result-ids []
+             (vec (persistance/db-native-result-ids-for-session db-info session-id)))}
           ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
           ;; binding map so none of the child-dispatch verbs are
           ;; bound (sub_loop + parallel/sequence/selector/retry).
@@ -8481,12 +8480,180 @@
   [id]
   (persistance/->uuid id))
 
+;; ---------------------------------------------------------------------------
+;; Idle-env reaper — authoritative backstop against unbounded GraalPy Context
+;; growth. Every cached session env pins a GraalPy `Context` (see
+;; `dispose-environment!`); the cache itself is never bounded and the tab-close
+;; release path (TUI → gateway `/release`) is best-effort and skips busy / still-
+;; open / stale-registry sessions, so Contexts leaked whenever that path missed.
+;; A background daemon thread sweeps on an interval and disposes envs that have
+;; gone idle past a TTL — guarded by each entry's `ReentrantLock` (a running
+;; turn holds it, so `tryLock` failing means "busy, skip") so an eval is never
+;; killed mid-flight. Evicting a resident env is SAFE: the transcript lives in
+;; the DB and `ensure-env!` transparently rebuilds the Context on the next touch.
+;; ---------------------------------------------------------------------------
+
+(def ^:private env-idle-ttl-ms
+  "Idle window before a cached session env's GraalPy Context is disposed by the
+   background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
+   sweep. Default 15 min."
+  (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
+              str/trim
+              parse-long)
+      (* 15 60 1000)))
+
+(def ^:private env-cache-max
+  "Soft cap on resident session envs. After the TTL sweep, if the cache still
+   exceeds this the reaper force-evicts the least-recently-active idle entries
+   (still lock-guarded) until back under the cap — a second guard for burst
+   churn (e.g. prewarm). Override with `VIS_ENV_CACHE_MAX`; <= 0 disables it.
+   Default 32."
+  (or (some-> (System/getenv "VIS_ENV_CACHE_MAX")
+              str/trim
+              parse-long)
+      32))
+
+(def ^:private env-reaper-interval-ms
+  "How often the idle-env reaper wakes to sweep. Override with
+   `VIS_ENV_REAPER_INTERVAL_MS`. Default 60 s."
+  (or (some-> (System/getenv "VIS_ENV_REAPER_INTERVAL_MS")
+              str/trim
+              parse-long)
+      (* 60 1000)))
+
+(defn- new-cache-entry
+  "Build a cache entry wrapping `env`: the environment, its per-session
+   `ReentrantLock` (one turn at a time), and an `AtomicLong` `:last-active`
+   epoch-ms stamp the reaper reads to decide idleness."
+  [env]
+  {:environment env
+   :lock (java.util.concurrent.locks.ReentrantLock.)
+   :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))})
+
+(defn- touch-entry!
+  "Bump `entry`'s `:last-active` stamp to now so the reaper treats it as warm.
+   Returns `entry` for threading."
+  [entry]
+  (when-let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
+    (.set la (System/currentTimeMillis)))
+  entry)
+
+(defn- evict-if-idle!
+  "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
+   AND it has been idle at least `min-idle-ms` (0 = force). Lock-guarded and
+   re-checked under the lock, so it never races a live turn or a concurrent
+   `close!`. Returns true iff it evicted."
+  [k min-idle-ms]
+  (let [entry
+        (get @cache k)
+
+        ^java.util.concurrent.locks.ReentrantLock lock
+        (:lock entry)]
+
+    (boolean (when (and entry lock (.tryLock lock))
+               (try (let [cur
+                          (get @cache k)
+
+                          ^java.util.concurrent.atomic.AtomicLong la
+                          (:last-active cur)
+
+                          idle
+                          (if la (- (System/currentTimeMillis) (.get la)) 0)]
+
+                      (when (and cur (>= idle min-idle-ms))
+                        (try (dispose-environment! (:environment cur)) (catch Throwable _ nil))
+                        (swap! cache dissoc k)
+                        true))
+                    (finally (.unlock lock)))))))
+
+(defn reap-idle-envs!
+  "One reaper sweep: dispose + evict cached session envs idle past
+   `env-idle-ttl-ms`, then — if the cache still exceeds `env-cache-max` — force-
+   evict the least-recently-active idle entries until back under the cap. Every
+   eviction is lock-guarded (a running turn is skipped). Returns the number of
+   entries evicted. Safe to call directly (tests / manual sweeps)."
+  []
+  (let [now
+        (System/currentTimeMillis)
+
+        age
+        (fn [entry]
+          (if-let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
+            (- now (.get la))
+            0))
+
+        ttl-evicted
+        (if (pos? env-idle-ttl-ms)
+          (->> @cache
+               (filter (fn [[_ entry]]
+                         (> (age entry) env-idle-ttl-ms)))
+               (reduce (fn [n [k _]]
+                         (if (evict-if-idle! k env-idle-ttl-ms) (inc n) n))
+                       0))
+          0)
+
+        lru-evicted
+        (if (pos? env-cache-max)
+          (let [snapshot
+                @cache
+
+                over
+                (- (count snapshot) env-cache-max)]
+
+            (if (pos? over)
+              (->> snapshot
+                   (sort-by (fn [[_ e]]
+                              (age e))
+                            >)
+                   (take over)
+                   (reduce (fn [n [k _]]
+                             (if (evict-if-idle! k 0) (inc n) n))
+                           0))
+              0))
+          0)]
+
+    (+ ttl-evicted lru-evicted)))
+
+(defn- reaper-loop
+  "Background sweep loop: sleep the interval, sweep, repeat. Exits on interrupt;
+   any sweep error is logged and swallowed so a single bad sweep never kills the
+   reaper."
+  []
+  (loop []
+
+    (let [continue? (try (Thread/sleep env-reaper-interval-ms)
+                         (reap-idle-envs!)
+                         true
+                         (catch InterruptedException _ false)
+                         (catch Throwable t
+                           (tel/log! {:level :warn :data {:error (ex-message t)}}
+                                     "env-reaper sweep failed")
+                           true))]
+      (when continue? (recur)))))
+
+(defonce ^:private env-reaper-thread (atom nil))
+
+(defn- ensure-env-reaper!
+  "Start the idle-env reaper daemon thread once, lazily, on the first cache
+   insert. Started here (not at namespace load) so a native-image build-time
+   init never spawns a thread, and only when reaping is actually enabled."
+  []
+  (when (and (pos? env-reaper-interval-ms)
+             (or (pos? env-idle-ttl-ms) (pos? env-cache-max))
+             (nil? @env-reaper-thread))
+    (locking cache
+      (when (nil? @env-reaper-thread)
+        (let [t (doto (Thread. ^Runnable reaper-loop "vis-env-reaper") (.setDaemon true))]
+          (reset! env-reaper-thread t)
+          (.start t))))))
+
 (defn cache-env!
   "Insert `env` into the cache under `session-id` (UUID, or string
    normalized via `cache-key`). Returns `{:id <UUID> :environment env}`."
   [session-id env]
   (let [k (cache-key session-id)]
-    (swap! cache assoc k {:environment env :lock (java.util.concurrent.locks.ReentrantLock.)})
+    (swap! cache assoc k (new-cache-entry env))
+    (ensure-env-reaper!)
     {:id k :environment env}))
 
 (defn refresh-cached-routers!
@@ -8593,14 +8760,11 @@
   [id]
   (let [k (cache-key id)]
     (if-let [entry (get @cache k)]
-      entry
+      (touch-entry! entry)
       (let [env (open-env! k {})]
         (swap! cache (fn [m]
-                       (if (contains? m k)
-                         m
-                         (assoc m
-                           k {:environment env
-                              :lock (java.util.concurrent.locks.ReentrantLock.)}))))
+                       (if (contains? m k) m (assoc m k (new-cache-entry env)))))
+        (ensure-env-reaper!)
         (get @cache k)))))
 
 (defn db-info
@@ -8766,7 +8930,9 @@
      ;; envs dirty; actual sandbox reset happens here, after prior IR/render is
      ;; finished and before the next user code executes.
      (.lock lock)
-     (try (turn! (:environment entry) message-vec opts) (finally (.unlock lock))))))
+     (.lock lock)
+     (try (turn! (:environment entry) message-vec opts)
+          (finally (touch-entry! entry) (.unlock lock))))))
 
 (defn close!
   [id]

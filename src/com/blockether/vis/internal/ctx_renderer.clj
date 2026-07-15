@@ -84,17 +84,14 @@
      (assoc "resources" (get view "session_resources"))
 
      (not-empty (get view "session_symbols"))
-     (assoc "symbols" (get view "session_symbols"))
-
-     (not-empty (get view "session_folds"))
-     (assoc "folds" (get view "session_folds")))))
+     (assoc "symbols" (get view "session_symbols")))))
 
 (def ^:private static-context-keys
   "The ambient session keys the model needs as STANDING context — embedded
    once in the (cached) system prompt and re-emitted per iteration ONLY when
    they change. The per-iteration churn (`\"id\"` `\"turn\"` `\"scope\"`
    `\"utilization\"`) is internal bookkeeping and never model-facing."
-  ["workspace" "env" "routing" "resources" "symbols" "folds"])
+  ["workspace" "env" "routing" "resources" "symbols"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.

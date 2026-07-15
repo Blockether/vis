@@ -108,7 +108,7 @@ vis.extension(
 ## Tools
 
 ```python
-vis.symbol(fn, name=None, tag="observation", hidden=False)
+vis.symbol(fn, name=None, tag="observation", is_hidden=False)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
@@ -119,6 +119,10 @@ vis.symbol(fn, name=None, tag="observation", hidden=False)
 - **The docstring is mandatory** — it becomes the model's `doc()` text.
   House style: `await name(args) -> shape` on the first line.
 - Parameter names are read from the real signature and shown to the model.
+- `is_hidden=True` hides the tool from the model-facing listing (still callable).
+  This follows the bridge-wide convention: a Python boolean spelled `is_<name>`
+  maps to the Clojure `:<name>?` predicate key (Python identifiers can't carry a
+  trailing `?`), so `is_hidden` → `:hidden?`, `is_authenticated` → `:authenticated?`.
 
 **Envelope semantics — Python authors never construct envelopes:**
 
@@ -330,7 +334,7 @@ def _token():
 
 def _status():
     ok = bool(os.environ.get("ACME_API_KEY"))
-    return {"authenticated?": ok, "source": "env-var", "provider_id": "acme"}
+    return {"is_authenticated": ok, "source": "env-var", "provider_id": "acme"}
 
 vis.extension(
     name="provider-acme",
@@ -342,8 +346,8 @@ vis.extension(
             preset={"base_url": "https://api.acme.ai/v1",
                     "api_style": "openai",
                     "default_models": ["acme-large", "acme-small"]},
-            get_token=_token,
-            status=_status,
+            get_token_fn=_token,
+            status_fn=_status,
         ),
     ],
 )
@@ -352,24 +356,29 @@ vis.extension(
 The `preset` flows into the router the same way a built-in provider's does, so
 adding `acme` to `~/.vis/config.edn`'s `:providers` (or the TUI *Add Provider*
 picker, which lists any labelled provider) makes the model call it. Callable
-slots — `get_token`, `detect`, `status`, `logout`, `limits`, `refresh_token`,
-`auth`, `auth_prompt`, `enrich_models`, `on_selected` — are all optional; a
-static-key provider usually just
-needs `get_token` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
-`:api-url`), and `api_style` becomes a keyword. `vis providers auth/status/limits
+slots — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`,
+`refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`,
+`on_selected_fn` — are all optional (every function-valued slot carries the
+`_fn` suffix); a static-key provider usually just
+needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
+`:api-url`), `api_style` becomes a keyword, and a Python boolean-predicate key
+written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
+returns `is_authenticated` (Python can't spell the trailing `?`), which the
+runtime consumes as `:authenticated?`. `vis providers auth/status/limits
 <id>` work against it like any other provider.
 
-For an interactive login, give `auth=` a `def login(printer): ...` — the runtime
+For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
 hands it a `printer(line)` callback to emit instructions, and its return signals
 the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
-surfaces the printed lines so the user knows what to do next). `auth_prompt=`
+surfaces the printed lines so the user knows what to do next). `auth_prompt_fn=`
 is a `() -> [line, ...]` for the static guidance shown in the API-key dialog.
 
-Two more optional hooks mirror their Clojure counterparts. `enrich_models=` is a
+Two more optional hooks mirror their Clojure counterparts. `enrich_models_fn=` is a
 `def enrich(provider, router_opts): ...` called once at router-build to resolve
 each model's real context window — return `[{"name": ..., "context": N,
-"tool_call": True}, ...]` (the host reads `context`/`tool_call`), as LM Studio's
-built-in provider does. `on_selected=` is a `def on_selected(event): ...`
+"is_tool_call": True}, ...]` (the host reads `context` and the `is_tool_call`
+predicate as `:tool-call?`), as LM Studio's
+built-in provider does. `on_selected_fn=` is a `def on_selected(event): ...`
 side-effect hook fired after this provider becomes the active one and config is
 persisted; the `event` carries `previous_provider` / `provider` / `config` /
 `source`. Both fail soft — a throw is logged and never blocks router build or

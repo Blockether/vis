@@ -579,36 +579,25 @@
                  (or (:tok g) (str (:turn g) "/" (str/join "," (:iters g))))))
          (str/join " "))))
 
-(defn- fmt-tokens
-  "Compact human token count for the ledger headline: `950 -> 950`,
-   `53537 -> 54k`, `1000000 -> 1M`, `1250000 -> 1.2M`. Pure."
-  [n]
-  (let [n (long n)]
-    (cond (>= n 1000000)
-          (let [s (format "%.1f" (/ n 1000000.0))]
-            (str (if (str/ends-with? s ".0") (subs s 0 (- (count s) 2)) s) "M"))
-
-          (>= n 1000)
-          (str (Math/round (/ n 1000.0)) "k")
-
-          :else (str n))))
-
 (defn folds-view
   "Model-facing LEDGER of what the recorded `session_fold` intents collapsed — ONE
-   canonical, COMPACT map so the model, the prompt and the `session[folds]` delta
-   all read the same small structure. String-keyed:
-     `\"saved\"`   headline `\"C/T steps (P%)\"` — how much of the wire is folded
-                  away (just `\"C steps folded\"` before a universe is stamped).
-     `\"folded\"`  one entry per SURVIVING (superseded) fold: `{\"at\" <scopes>,
-                  \"gist\"?}`, `at` the resolved + compressed scope STRING (never a
-                  raw through/from).
-     `\"live\"`    compact STRING of the scopes STILL on the wire = fold candidates.
+   compact SINGLE-LINE STRING (never a nested map/list, so the Python pretty-printer
+   can't break it across lines). Pipe-delimited sections:
+     `<saved> | <fold> | <fold> … | live <scopes>`
+   where
+     - `<saved>` is the headline `\"C/T steps (P%)\"` — how much of the wire is folded
+       away (just `\"C steps folded\"` before a universe is stamped);
+     - each `<fold>` is one SURVIVING (superseded) fold as `\"<at>: <gist>\"` (or bare
+       `\"<at>\"` when gist-less), `at` the resolved + compressed scope string
+       (`tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`, never a raw through/from);
+     - `live <scopes>` (omitted when nothing is live) lists the compressed scopes
+       STILL on the wire = fold candidates.
    With a stamped `universe` (the live `tN/iN` scopes this send) selectors are
    resolved (`expand-through`) then covered folds dropped (`supersede-summaries`) →
    concrete compressed scopes + a real live set. Without one (resume / fresh seed,
-   before the first live send) the SAME map is emitted best-effort: each fold's
-   `\"at\"` comes from `unresolved-iters` (explicit scopes compressed, ranges as
-   pending boundary markers) and `\"live\"` is empty until the next send re-stamps
+   before the first live send) the SAME string is emitted best-effort: each fold's
+   `at` comes from `unresolved-iters` (explicit scopes compressed, ranges as pending
+   boundary markers) and there is no `live` section until the next send re-stamps
    the universe. Pure."
   [summaries universe]
   (let [universe
@@ -635,9 +624,7 @@
                                    (compress-scopes (get s "scopes") universe)
                                    (unresolved-iters s))]
                         (when-let [at (join-scopes toks)]
-                          (cond-> {"at" at}
-                            (contains? s "gist")
-                            (assoc "gist" (get s "gist")))))))
+                          (if (contains? s "gist") (str at ": " (get s "gist")) at)))))
               resolved)
 
         c
@@ -648,33 +635,16 @@
         total
         (+ c (count live))
 
-        steps
+        saved
         (if (and has-uni? (pos? total))
-          (str c "/" total " steps")
+          (str c "/" total " steps (" (Math/round (* 100.0 (/ (double c) total))) "%)")
           (str c " steps folded"))
 
-        req
-        (some-> util (get "last_request_tokens") long)
+        live-str
+        (or (join-scopes (when has-uni? (compress-scopes live universe))) "")]
 
-        win
-        (some-> util (get "model_input_limit") long)
-
-        sat
-        (get util "saturation")
-
-        saved
-        (if (and req (pos? req))
-          (str (fmt-tokens req)
-               (when (and win (pos? win)) (str "/" (fmt-tokens win)))
-               " tok now"
-               (when sat (str " (" sat "%)"))
-               " · " steps)
-          (if (and has-uni? (pos? total))
-            (str steps " (" (Math/round (* 100.0 (/ (double c) total))) "%)")
-            steps))]
-    {"saved" saved
-     "folded" folded
-     "live" (or (join-scopes (when has-uni? (compress-scopes live universe))) "")}))
+    (->> (concat [saved] folded (when (seq live-str) [(str "live " live-str)]))
+         (str/join " | "))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
@@ -691,13 +661,19 @@
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
-   (cond-> (select-keys ctx model-facing-keys)
-     (get ctx "engine_utilization")
-     (assoc "session_utilization" (get ctx "engine_utilization"))
-
-     (seq (get ctx "session_summaries"))
-     (assoc "session_folds"
-       (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe"))))))
+   ;; The fold LEDGER is merged INTO `"session_utilization"` (under `"folds"`),
+   ;; not a second top-level key: tokens-now + what's-folded are ONE readout that
+   ;; rides the SAME per-iteration delta, so the ledger re-shows every iteration
+   ;; instead of being seeded once. Before any request is measured (no
+   ;; utilization) a fold still surfaces via a utilization map holding only
+   ;; `"folds"`.
+   (let [folds (when (seq (get ctx "session_summaries"))
+                 (folds-view (get ctx "session_summaries")
+                             (get ctx "engine_iter_universe")))
+         util (cond-> (or (get ctx "engine_utilization") (when folds {}))
+                folds (assoc "folds" folds))]
+     (cond-> (select-keys ctx model-facing-keys)
+       (seq util) (assoc "session_utilization" util)))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

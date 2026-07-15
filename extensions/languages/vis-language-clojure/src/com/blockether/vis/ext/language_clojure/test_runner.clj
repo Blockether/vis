@@ -631,7 +631,7 @@
   (vec
     (concat (if (seq only)
               (mapcat (fn [[ns vname]]
-                        [(str "--var") (str ns "/" vname)])
+                        ["--var" (str ns "/" vname)])
                       (for [ns
                             nses
 
@@ -640,13 +640,13 @@
 
                         [ns vname]))
               (mapcat (fn [ns]
-                        [(str "--namespace") ns])
+                        ["--namespace" ns])
                       nses))
             (mapcat (fn [tag]
-                      [(str "--include") tag])
+                      ["--include" tag])
                     include)
             (mapcat (fn [tag]
-                      [(str "--exclude") tag])
+                      ["--exclude" tag])
                     exclude))))
 
 (defn- lazytest-cli?

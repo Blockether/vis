@@ -524,9 +524,9 @@
   ;; for an absolute path, so name it explicitly per-OS.
   (str (fs/file (System/getProperty "java.home") "bin" (if (fs/windows?) "java.exe" "java"))))
 
-(defn- ^Process start-multiprocess-writer!
-  ([dir marker] (start-multiprocess-writer! dir marker "child"))
-  ([dir marker title]
+(defn- start-multiprocess-writer!
+  (^Process [dir marker] (start-multiprocess-writer! dir marker "child"))
+  (^Process [dir marker title]
    (let [norm
          (fn [s]
            (.replace (str s) "\\" "/"))

@@ -36,7 +36,7 @@
                     (let [filename (subs txt (inc slash-idx))
                           filename-w (p/display-width filename)
                           ellipsis "…"
-                          ell-w (long (p/display-width ellipsis))
+                          ell-w (p/display-width ellipsis)
                           min-needed (+ ell-w 1 filename-w)]
 
                       (if (< max-w min-needed)

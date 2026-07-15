@@ -2650,7 +2650,7 @@
       ;; carrying `\u001b[..m` SGR runs; truncation must stay ANSI-aware so the
       ;; ESC bytes survive (colours kept) and the SGR params don't leak as text.
       (let [code-line
-            (str "\u001b[36mdefn\u001b[0m qux [w] (+ w \u001b[34m3\u001b[0m))")
+            "\u001b[36mdefn\u001b[0m qux [w] (+ w \u001b[34m3\u001b[0m))"
 
             out
             (truncate-with-suffix code-line " …" 30)]
