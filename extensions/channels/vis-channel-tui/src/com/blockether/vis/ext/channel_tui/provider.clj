@@ -88,7 +88,7 @@
     (.cancel ^java.util.concurrent.Future result true)))
 
 (defn- draw-copilot-waiting!
-  [^TerminalScreen screen started-at-ms]
+  [^TerminalScreen screen ^long started-at-ms]
   (let [size
         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
@@ -107,8 +107,23 @@
         {:keys [left inner-w]}
         bounds
 
+        left
+        (long left)
+
+        inner-w
+        (long inner-w)
+
         {:keys [content-top content-h hint-row]}
         (dlg/dialog-layout bounds)
+
+        content-top
+        (long content-top)
+
+        content-h
+        (long content-h)
+
+        hint-row
+        (long hint-row)
 
         text-x
         (+ left 2)
@@ -127,7 +142,7 @@
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) content-top inner-w content-h)
     (doseq [[idx line] (map-indexed vector lines)]
-      (let [row (+ content-top idx)]
+      (let [row (+ content-top (long idx))]
         (when (< row (+ content-top content-h))
           (p/fill-rect! g (inc left) row inner-w 1)
           (p/put-str! g text-x row (dlg/ellipsize line text-w)))))
@@ -171,6 +186,11 @@
           bounds (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Authenticate" 10)
           {:keys [left inner-w]} bounds
           {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
+          left (long left)
+          inner-w (long inner-w)
+          content-top (long content-top)
+          content-h (long content-h)
+          hint-row (long hint-row)
           text-x (+ left 2)
           text-w (max 1 (- inner-w 2))
           url-label "Open this URL in your browser:"
@@ -188,7 +208,7 @@
       (doseq [[idx line] (map-indexed vector
                                       [url-label verification-uri "" code-label user-code ""
                                        (first help-lines) (second help-lines)])]
-        (let [row (+ content-top idx)]
+        (let [row (+ content-top (long idx))]
           (when (< row (+ content-top content-h))
             (p/fill-rect! g (inc left) row inner-w 1)
             (cond (= row url-row)
@@ -493,7 +513,19 @@
   ;; col). Card body text shifts right by the gutter so the marker
   ;; sits inside the dialog's inner edge with breathing room before
   ;; the priority label.
-  (let [text-w
+  (let [left
+        (long left)
+
+        row
+        (long row)
+
+        inner-w
+        (long inner-w)
+
+        idx
+        (long idx)
+
+        text-w
         (max 0 (- inner-w 2 p/SELECTION_WIDTH))
 
         text-x
@@ -565,7 +597,7 @@
     ;; — previously the inverse-on-`dialog-title-bg` path collapsed
     ;; all four colors onto `dialog-title-fg`.
     (p/set-bg! g t/dialog-bg)
-    (doseq [r (range card-rows)]
+    (dotimes [r card-rows]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
     ;; `> ` glyph in the dialog padding column, anchored to line 1.
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -622,10 +654,21 @@
 
    `previous-name` and `next-name` are the names of the model just before /
    after this one in the chain (nil at the ends)."
-  [g left row inner-w idx selected? is-root? _provider-id model
-   previous-name next-name]
+  [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
   ;; Same selection-gutter convention as `draw-provider-card!`.
-  (let [model-name
+  (let [left
+        (long left)
+
+        row
+        (long row)
+
+        inner-w
+        (long inner-w)
+
+        idx
+        (long idx)
+
+        model-name
         (or (:name model) (str "model-" (inc idx)))
 
         text-w
@@ -655,7 +698,7 @@
     ;; the normal palette and paint a `> ` cursor glyph in the dialog
     ;; padding column instead of inverting the entire card.
     (p/set-bg! g t/dialog-bg)
-    (doseq [r (range card-rows)]
+    (dotimes [r card-rows]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/draw-selection-marker! g (inc left) row selected?)
