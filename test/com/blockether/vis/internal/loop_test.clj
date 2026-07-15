@@ -35,6 +35,8 @@
 
 (def ^:private ask-result->api-usage (deref #'lp/ask-result->api-usage))
 
+(def ^:private turn-eval-evidence (deref #'lp/turn-eval-evidence))
+
 (def ^:private ask-code-block-observation (deref #'lp/ask-code-block-observation))
 (def ^:private log-stage-level (deref #'lp/log-stage-level))
 
@@ -45,6 +47,116 @@
                  (expect (= :error (log-stage-level :turn/complete {:status :error})))
                  (expect (= :info (log-stage-level :error {:reason :cancelled})))
                  (expect (= :info (log-stage-level :turn/complete {:status :cancelled})))))
+
+(defn- reasoning-effort-router
+  []
+  (svar/make-router [{:id :test-zai
+                      :api-key "test"
+                      :base-url "http://example.invalid"
+                      :api-style :anthropic
+                      :models [{:name "glm-5.2"
+                                :reasoning? true
+                                :reasoning-style :zai-effort
+                                :reasoning-options [{:type "effort" :values ["high" "max"]}]}]}]))
+
+(defdescribe
+  provider-native-reasoning-effort-preflight-test
+  (it "rejects unsupported effort before the iteration/provider phase"
+      (let [provider-calls
+            (atom 0)
+
+            env
+            {:db-info ::db :environment-id ::environment :router (reasoning-effort-router)}
+
+            thrown
+            (try (with-redefs [lp/run-turn! (fn [& _]
+                                              (swap! provider-calls inc)
+                                              (throw (ex-info "should not run" {})))]
+                   (lp/turn! env [{:role "user" :content "task"}] {:reasoning-effort "medium"}))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= 0 @provider-calls))
+        (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
+        (expect (= ["high" "max"] (:supported (ex-data thrown))))))
+  (it "builds valid evidence for same-model retries"
+      (let [iteration
+            {:iteration 1
+             :provider "zai-coding-plan"
+             :model "glm-5.2"
+             :effective "high"
+             :wire-style :zai-effort
+             :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "high"}
+             :fallback? false
+             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :requested "high"}
+
+            eval
+            (turn-eval-evidence "high" [{:reasoning-effort iteration}])]
+
+        (expect (true? (:valid? eval)))
+        (expect (= [iteration] (get-in eval [:reasoning-effort :iterations])))))
+  (it "explains invalid evidence when no iteration completed"
+      (let [eval (turn-eval-evidence "high" [])]
+        (expect (false? (:valid? eval)))
+        (expect (= :missing-reasoning-effort-evidence (get-in eval [:invalid-reasons 0 :type])))))
+  (it "a later provider/model fallback invalidates the whole eval"
+      (let [base
+            {:provider "zai-coding-plan"
+             :model "glm-5.2"
+             :effective "max"
+             :wire-style :zai-effort
+             :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "max"}
+             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :requested "max"}
+
+            eval
+            (turn-eval-evidence "max"
+                                [{:reasoning-effort (assoc base
+                                                      :iteration 1
+                                                      :fallback? false)}
+                                 {:reasoning-effort (assoc base
+                                                      :iteration 2
+                                                      :provider "zai"
+                                                      :fallback? true)}])]
+
+        (expect (false? (:valid? eval)))
+        (expect (= :provider-model-fallback (get-in eval [:invalid-reasons 0 :type])))
+        (expect (= 2 (count (get-in eval [:reasoning-effort :iterations]))))))
+  (it
+    "threads raw max unchanged and bypasses abstract quick translation"
+    (let [environment
+          (lp/create-environment ::router {:db :memory})
+
+          seen
+          (atom nil)]
+
+      (try (with-redefs [svar/ask-code! (fn [_router opts]
+                                          (reset! seen opts)
+                                          {:stop-reason :end
+                                           :tool-calls []
+                                           :content "done"
+                                           :tokens {}
+                                           :routed/reasoning-effort {:requested "max"
+                                                                     :effective "max"
+                                                                     :supported ["high" "max"]
+                                                                     :wire-style :zai-effort
+                                                                     :extra-body
+                                                                     {:thinking {:type "enabled"}
+                                                                      :reasoning_effort "max"}}})]
+             (let [result (lp/run-iteration environment
+                                            []
+                                            {:iteration 0
+                                             :reasoning-level :quick
+                                             :reasoning-effort "max"
+                                             :resolved-model {:provider :zai-coding-plan
+                                                              :name "glm-5.2"
+                                                              :reasoning? true
+                                                              :reasoning-style :zai-effort}})]
+               (expect (= "max" (:reasoning-effort @seen)))
+               (expect (not (contains? @seen :reasoning)))
+               (expect (= "max" (get-in result [:reasoning-effort-resolution :effective])))))
+           (finally (lp/dispose-environment! environment))))))
 
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
@@ -1040,7 +1152,6 @@
              (it "preserves Anthropic cache write tokens from svar token maps"
                  (expect (= {:prompt_tokens 112
                              :completion_tokens 69
-                             :completion_tokens_details {:reasoning_tokens 0}
                              :prompt_tokens_details {:cached_tokens 0 :cache_creation_tokens 8777}}
                             (ask-result->api-usage
                               {:tokens {:input 112 :output 69 :cached 0 :cache-created 8777}})))))

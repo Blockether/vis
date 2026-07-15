@@ -1217,6 +1217,7 @@
              :tokens (:tokens result)
              :cost (:cost result)
              :confidence (:confidence result)
+             :eval (:eval result)
              :iteration_count (:iteration-count result)
              :duration_ms (:duration-ms result)
              :utilization (:utilization result)
@@ -1249,6 +1250,20 @@
         (let [stalled?
               (boolean (and stall (:stalled? @stall)))
 
+              data
+              (ex-data t)
+
+              eval
+              (when (= :vis/unsupported-reasoning-effort (:type data))
+                {:valid? false
+                 :invalid-reasons [{:type :unsupported-reasoning-effort
+                                    :requested (:requested data)
+                                    :provider (some-> (:provider data)
+                                                      name)
+                                    :model (:model data)
+                                    :supported (vec (:supported data))}]
+                 :reasoning-effort {:requested (:requested data) :iterations []}})
+
               err
               (if stalled?
                 (str "provider stream stalled: no output for "
@@ -1257,10 +1272,17 @@
                 (ex-message t))]
 
           (tel/log! :error ["gateway: turn worker failed" tid err])
-          (finish-turn! sid
-                        tid
-                        {:status "failed" :error err :finished_at (System/currentTimeMillis)})
-          (append-event! sid "turn.failed" {:turn_id tid :status "failed" :error err})
+          (finish-turn!
+            sid
+            tid
+            (cond-> {:status "failed" :error err :finished_at (System/currentTimeMillis)}
+              eval
+              (assoc :eval eval)))
+          (append-event! sid
+                         "turn.failed"
+                         (cond-> {:turn_id tid :status "failed" :error err}
+                           eval
+                           (assoc :eval eval)))
           (when (or stalled? (not (cancellation/cancelled? cancel-token)))
             (drain-next-queued! sid)))))))
 
@@ -1687,6 +1709,9 @@
 
       (:confidence event)
       (assoc :confidence (:confidence event))
+
+      (:eval event)
+      (assoc :eval (:eval event))
 
       needs-input?
       (assoc :status :needs-input)

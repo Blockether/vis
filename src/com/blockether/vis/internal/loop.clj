@@ -1890,24 +1890,28 @@
 
 (defn- ask-result->api-usage
   [{:keys [tokens]}]
-  {:prompt_tokens (long (or (token-number tokens [:input]) 0))
-   :completion_tokens (long (or (token-number tokens [:output]) 0))
-   :completion_tokens_details {:reasoning_tokens (long (or (token-number tokens [:reasoning]) 0))}
-   :prompt_tokens_details
-   {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))
-    :cache_creation_tokens (long (or (token-number tokens
-                                                   [:cache-created :cache-created-input
-                                                    :cache-creation :cache-write :cache_creation])
-                                     0))}})
+  (let [reasoning (token-number tokens [:reasoning])]
+    (cond-> {:prompt_tokens (long (or (token-number tokens [:input]) 0))
+             :completion_tokens (long (or (token-number tokens [:output]) 0))
+             :prompt_tokens_details
+             {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached])
+                                       0))
+              :cache_creation_tokens (long (or (token-number tokens
+                                                             [:cache-created :cache-created-input
+                                                              :cache-creation :cache-write
+                                                              :cache_creation])
+                                               0))}}
+      (some? reasoning)
+      (assoc :completion_tokens_details {:reasoning_tokens (long reasoning)}))))
 
 (defn- reasoning-effort-configurable?
   "True when a model accepts a caller-selected reasoning effort.
 
    `:reasoning?` means the model can produce reasoning/thinking text.
    It does NOT imply that Vis may tune that thinking depth. Z.ai GLM
-   thinking is binary/preserved-thinking only, so keep the stream visible
-   but do not send `:reasoning` levels to svar. Providers can opt out
-   explicitly with `:reasoning-effort? false`."
+   binary thinking is preserved-thinking only, so keep the stream visible
+   but do not send abstract `:reasoning` levels to svar. Provider-native
+   `:reasoning-effort` is validated separately against catalog metadata."
   [resolved-model]
   (and (boolean (:reasoning? resolved-model))
        (not= false (:reasoning-effort? resolved-model))
@@ -2049,7 +2053,8 @@
         (vec (or (:llm-routing-trace iteration-result) []))
 
         fallback-ev
-        (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/format-fallback}
+        (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/model-fallback
+                                     :llm.routing/format-fallback}
                                    (:event/type %))
                        routing-trace))
 
@@ -2102,6 +2107,70 @@
 
       (:cost result)
       (update :cost merge (select-keys actual [:provider :model])))))
+
+(defn- reasoning-effort-iteration-evidence
+  [iteration requested selected-model iteration-result]
+  (let [routing
+        (llm-routing-summary selected-model iteration-result)
+
+        resolution
+        (:reasoning-effort-resolution iteration-result)
+
+        actual
+        (:actual routing)]
+
+    {:iteration (inc (long iteration))
+     :provider (:provider actual)
+     :model (:model actual)
+     :effective (:effective resolution)
+     :wire-style (:wire-style resolution)
+     :wire-fragment (:extra-body resolution)
+     :fallback? (:fallback? routing)
+     :selected (:selected routing)
+     :requested requested}))
+
+(defn- turn-eval-evidence
+  [requested trace]
+  (when requested
+    (let [iterations
+          (vec (keep :reasoning-effort trace))
+
+          missing-count
+          (- (count trace) (count iterations))
+
+          fallback-reasons
+          (for [{:keys [iteration fallback? selected provider model]}
+                iterations
+
+                :when fallback?]
+
+            {:type :provider-model-fallback
+             :iteration iteration
+             :selected selected
+             :actual {:provider provider :model model}})
+
+          mismatch-reasons
+          (for [{:keys [iteration effective provider model]}
+                iterations
+
+                :when (not= requested effective)]
+
+            {:type :reasoning-effort-mismatch
+             :iteration iteration
+             :requested requested
+             :effective effective
+             :provider provider
+             :model model})
+
+          reasons
+          (vec (concat (when (or (empty? trace) (pos? missing-count))
+                         [{:type :missing-reasoning-effort-evidence :iterations missing-count}])
+                       fallback-reasons
+                       mismatch-reasons))]
+
+      {:valid? (boolean (and (seq iterations) (empty? reasons)))
+       :invalid-reasons reasons
+       :reasoning-effort {:requested requested :iterations iterations}})))
 
 (defn- compatible-preserved-thinking-trailer-iters
   "Keep only iterations whose provider-native thinking may be replayed into
@@ -3353,24 +3422,27 @@
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages &
-   [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body llm-headers
-            active-extensions answer-validation-context]}]]
+   [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
+            llm-headers active-extensions answer-validation-context]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
           turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
           form-scope (fn [idx]
                        (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
-          effective-reasoning
-          (when (and (some? reasoning-level) (reasoning-effort-configurable? resolved-model))
-            (or (normalize-reasoning-level reasoning-level)
-                (throw (ex-info "Invalid :reasoning-level."
-                                {:type :vis/invalid-reasoning-level :got reasoning-level}))))
+          effective-reasoning (when (and (nil? reasoning-effort)
+                                         (some? reasoning-level)
+                                         (reasoning-effort-configurable? resolved-model))
+                                (or (normalize-reasoning-level reasoning-level)
+                                    (throw (ex-info "Invalid :reasoning-level."
+                                                    {:type :vis/invalid-reasoning-level
+                                                     :got reasoning-level}))))
           ;; Reasoning fallback: when the turn asked for reasoning but the model
           ;; has no native thinking channel (`:reasoning?` absent — e.g. a local
           ;; LM Studio model), give it a scratchpad in the code itself via
           ;; `;;` comments. Effort-configurable models reason natively and skip it.
-          reason-via-comments? (and (some? reasoning-level) (not (:reasoning? resolved-model)))
+          reason-via-comments?
+          (and (nil? reasoning-effort) (some? reasoning-level) (not (:reasoning? resolved-model)))
           messages (cond-> messages
                      reason-via-comments?
                      prompt/with-reasoning-comments-nudge)
@@ -3529,6 +3601,9 @@
               effective-reasoning
               (assoc :reasoning effective-reasoning)
 
+              reasoning-effort
+              (assoc :reasoning-effort reasoning-effort)
+
               streaming-fn
               (assoc :on-chunk streaming-fn)
 
@@ -3601,6 +3676,7 @@
                                 :thinking thinking}
                                code-observation))
           api-usage (ask-result->api-usage ask-result)
+          reasoning-effort-resolution (:routed/reasoning-effort ask-result)
           ;; Native tool calling: the model either CALLS `run_python`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
           ;; (`:stop-reason :end`), returns its final answer as `:content`.
@@ -4073,6 +4149,7 @@
              :llm-actual-provider provider
              :llm-actual-model model-name
              :llm-routing-trace (:routed/trace ask-result)
+             :reasoning-effort-resolution reasoning-effort-resolution
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
             {:thinking thinking
@@ -4089,6 +4166,7 @@
              :llm-actual-provider provider
              :llm-actual-model model-name
              :llm-routing-trace (:routed/trace ask-result)
+             :reasoning-effort-resolution reasoning-effort-resolution
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}))
         ;; Normal path (tool-call iteration)
@@ -4108,6 +4186,7 @@
          :llm-actual-provider (actual-llm-provider resolved-model ask-result)
          :llm-actual-model (actual-llm-model resolved-model ask-result)
          :llm-routing-trace (:routed/trace ask-result)
+         :reasoning-effort-resolution reasoning-effort-resolution
          :llm-returned-empty-code? (empty? blocks)
          :assistant-message (:assistant-message ask-result)}))))
 
@@ -5029,7 +5108,7 @@
            ;; `max-context-tokens` feeds advisory context-pressure hooks;
            ;; trailer assembly itself still owns no token trimming.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           turn-features allow-copilot-claude-deep? workspace-overrides]}]
+           reasoning-effort turn-features allow-copilot-claude-deep? workspace-overrides]}]
   (let [environment
         (cond-> environment
           (seq turn-features)
@@ -5077,7 +5156,7 @@
                 (swap! assoc :best-answer nil))
 
         has-reasoning?
-        (reasoning-effort-configurable? resolved-model)
+        (and (nil? reasoning-effort) (reasoning-effort-configurable? resolved-model))
 
         base-reasoning-level
         (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
@@ -5208,6 +5287,7 @@
         (atom {:input-tokens 0
                :output-tokens 0
                :reasoning-tokens 0
+               :reasoning-reported? false
                :cached-tokens 0
                :cache-creation-tokens 0
                :last-iter-input 0
@@ -5235,27 +5315,31 @@
                       (long (or (:prompt_tokens api-usage) 0))
 
                       iter-reason
-                      (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens])
-                                0))]
+                      (get-in api-usage [:completion_tokens_details :reasoning_tokens])]
 
-                  (-> acc
-                      (update :input-tokens + iter-in)
-                      (update :output-tokens + (or (:completion_tokens api-usage) 0))
-                      (update :reasoning-tokens + iter-reason)
-                      (update :cached-tokens
-                              +
-                              (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                  (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
-                                  0))
-                      (update :cache-creation-tokens
-                              +
-                              (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
-                                  (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
-                                  0))
-                      ;; Per-iter snapshots: overwrite, not accumulate.
-                      (assoc :last-iter-input iter-in)
-                      (assoc :last-iter-reasoning iter-reason)
-                      (update :iter-count inc)))))))
+                  (cond-> (-> acc
+                              (update :input-tokens + iter-in)
+                              (update :output-tokens + (or (:completion_tokens api-usage) 0))
+                              (update :cached-tokens
+                                      +
+                                      (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                          (get-in api-usage
+                                                  [:prompt_tokens_details :input_cached_tokens])
+                                          0))
+                              (update :cache-creation-tokens
+                                      +
+                                      (or (get-in api-usage
+                                                  [:prompt_tokens_details :cache_creation_tokens])
+                                          (get-in api-usage
+                                                  [:prompt_tokens_details :cache_write_tokens])
+                                          0))
+                              ;; Per-iter snapshots: overwrite, not accumulate.
+                              (assoc :last-iter-input iter-in)
+                              (assoc :last-iter-reasoning iter-reason)
+                              (update :iter-count inc))
+                    (some? iter-reason)
+                    (-> (update :reasoning-tokens + (long iter-reason))
+                        (assoc :reasoning-reported? true))))))))
 
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
@@ -5275,11 +5359,9 @@
                                                                     0))
 
                                                           reas
-                                                          (long (or (get-in
-                                                                      api-usage
-                                                                      [:completion_tokens_details
-                                                                       :reasoning_tokens])
-                                                                    0))
+                                                          (get-in api-usage
+                                                                  [:completion_tokens_details
+                                                                   :reasoning_tokens])
 
                                                           cach
                                                           (long (or (get-in api-usage
@@ -5331,18 +5413,20 @@
                                                         (swap! accrued-cost-atom #(merge-cost-maps
                                                                                     (or % {})
                                                                                     cost-map)))
-                                                      {:tokens {:input in
-                                                                :output out
-                                                                :reasoning reas
-                                                                :cached cach
-                                                                :cache-created cache-created}
+                                                      {:tokens (cond-> {:input in
+                                                                        :output out
+                                                                        :cached cach
+                                                                        :cache-created
+                                                                        cache-created}
+                                                                 (some? reas)
+                                                                 (assoc :reasoning (long reas)))
                                                        :cost-usd (when (number? total)
                                                                    (double total))}))))
 
         finalize-cost
         (fn []
           (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens
-                        cache-creation-tokens]}
+                        cache-creation-tokens reasoning-reported?]}
                 @usage-atom
 
                 total-tokens
@@ -5362,12 +5446,13 @@
                                          {:cached-tokens cached-tokens
                                           :cache-creation-tokens cache-creation-tokens}))]
 
-            {:tokens {:input input-tokens
-                      :output output-tokens
-                      :reasoning reasoning-tokens
-                      :cached cached-tokens
-                      :cache-created cache-creation-tokens
-                      :total total-tokens}
+            {:tokens (cond-> {:input input-tokens
+                              :output output-tokens
+                              :cached cached-tokens
+                              :cache-created cache-creation-tokens
+                              :total total-tokens}
+                       reasoning-reported?
+                       (assoc :reasoning reasoning-tokens))
              :cost cost}))
 
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
@@ -5536,6 +5621,7 @@
                                   iteration
                                   {:message-count (count messages)
                                    :reasoning reasoning-level
+                                   :reasoning-effort reasoning-effort
                                    :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment)
                                                                 (or routing {}))
@@ -5704,6 +5790,7 @@
                                              effective-messages
                                              {:iteration iteration
                                               :reasoning-level reasoning-level
+                                              :reasoning-effort reasoning-effort
                                               :routing effective-routing
                                               :resolved-model resolved-model
                                               :on-chunk on-chunk
@@ -6142,6 +6229,12 @@
                                      :thinking thinking
                                      :assistant-prose assistant-prose
                                      :blocks blocks
+                                     :reasoning-effort (when reasoning-effort
+                                                         (reasoning-effort-iteration-evidence
+                                                           iteration
+                                                           reasoning-effort
+                                                           pre-resolved-model
+                                                           iteration-result))
                                      :final? (boolean final-result)}]
 
                     (cond
@@ -7074,7 +7167,7 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec model max-context-tokens system-prompt debug? hooks cancel-token
-                eval-timeout-ms reasoning-default routing extra-body]
+                eval-timeout-ms reasoning-default reasoning-effort routing extra-body]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -7152,6 +7245,29 @@
           root-resolved-model (when env-router (resolve-effective-model env-router))
           root-model (or (:name root-resolved-model) model)
           root-provider (:provider root-resolved-model)
+          root-provider-map (some #(when (= root-provider (:id %)) %) (:providers env-router))
+          reasoning-effort-resolution (when (some? reasoning-effort)
+                                        (svar/resolve-reasoning-effort
+                                          (or (:api-style root-resolved-model)
+                                              (:api-style root-provider-map))
+                                          root-resolved-model
+                                          reasoning-effort))
+          _ (when (and (some? reasoning-effort) (nil? (:effective reasoning-effort-resolution)))
+              (throw (ex-info (str "Reasoning effort " (pr-str reasoning-effort)
+                                   " is unsupported for " (some-> root-provider
+                                                                  name)
+                                   "/" root-model
+                                   "; accepted values: "
+                                   (if (seq (:supported reasoning-effort-resolution))
+                                     (str/join ", " (:supported reasoning-effort-resolution))
+                                     "none"))
+                              {:type :vis/unsupported-reasoning-effort
+                               :vis/user-error true
+                               :requested reasoning-effort
+                               :provider root-provider
+                               :model root-model
+                               :supported (:supported reasoning-effort-resolution)
+                               :resolution reasoning-effort-resolution})))
           ;; …but vector order does NOT bind svar's actual selection (it sorts
           ;; by provider :priority). FORCE the pick into `:routing` so the call
           ;; truly lands on the chosen provider+model. A caller-supplied
@@ -7237,6 +7353,8 @@
        :hooks hooks
        :eval-timeout-ms eval-timeout-ms
        :reasoning-default reasoning-default
+       :reasoning-effort (:effective reasoning-effort-resolution)
+       :reasoning-effort-resolution reasoning-effort-resolution
        :routing routing
        :extra-body extra-body
        :turn-features (get opts :turn/features)
@@ -7251,7 +7369,8 @@
   "Runs the main iteration loop via run-turn!.
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
-           cancel-token reasoning-default routing extra-body turn-features workspace-overrides]}]
+           cancel-token reasoning-default reasoning-effort routing extra-body turn-features
+           workspace-overrides]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -7259,6 +7378,7 @@
                             :max-context-tokens max-context-tokens
                             :system-prompt system-prompt
                             :reasoning-default reasoning-default
+                            :reasoning-effort reasoning-effort
                             :hooks hooks
                             :cancel-atom cancel-atom
                             :cancel-token cancel-token}
@@ -7315,11 +7435,14 @@
    `:provider` and `:model` are both attached to the persisted cost
    map so the web footer / meta layer can render `provider/model / N
    iteration / duration / tokens / $total` after a restart."
-  [{:keys [db-info root-model root-provider]}
+  [{:keys [db-info root-model root-provider reasoning-effort]}
    {:keys [session-turn-id start-time iteration-count status status-id trace locals answer
            confidence reasoning utilization total-tokens-atom total-cost-atom]}]
   (let [duration-ms
         (util/elapsed-since start-time)
+
+        eval-evidence
+        (turn-eval-evidence reasoning-effort trace)
 
         cost-with-model
         (cond-> @total-cost-atom
@@ -7360,6 +7483,9 @@
                      :duration-ms duration-ms
                      :tokens @total-tokens-atom
                      :cost cost-with-model}
+              eval-evidence
+              (assoc :eval eval-evidence)
+
               (some? locals)
               (assoc :locals locals))))
       ;; success path
@@ -7387,6 +7513,9 @@
                    :tokens @total-tokens-atom
                    :cost cost-with-model
                    :utilization utilization}
+            eval-evidence
+            (assoc :eval eval-evidence)
+
             (some? confidence)
             (assoc :confidence confidence)
 
@@ -7413,6 +7542,8 @@
         code evaluation, LLM responses at :debug level with :rlm-phase context.
       - :reasoning-default - Optional base reasoning effort for reasoning-capable models.
         Accepts :low/:medium/:high or low/medium/high strings. Adaptive escalation still applies.
+      - :reasoning-effort - Exact provider-native effort string, `high` or `max`.
+        Catalog-gated and threaded unchanged through every iteration.
       - :extra-body - Optional provider-specific request-body params merged into the
         upstream LLM call after auto max_tokens + reasoning translation.
 

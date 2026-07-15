@@ -30,6 +30,7 @@
       (expect (.contains help "vis [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
       (expect (.contains help "--provider PROVIDER"))
+      (expect (.contains help "--reasoning-effort"))
       (expect (.contains help "COMMANDS")))))
 
 (defdescribe
@@ -82,6 +83,35 @@
                             (#'main/parse-run-args
                              ["--provider" "anthropic-coding-plan" "--model" "claude-sonnet-4-6"
                               "--session-id" "abc123" "what" "do" "I" "like?"])))))
+(defdescribe reasoning-effort-cli-parse-test
+             (it "parses exact provider-native reasoning effort separately"
+                 (expect (= {:provider "zai-coding-plan"
+                             :model "glm-5.2"
+                             :reasoning-effort "max"
+                             :json? true
+                             :prompt "task"}
+                            (#'main/parse-run-args
+                             ["--provider" "zai-coding-plan" "--model" "glm-5.2"
+                              "--reasoning-effort" "max" "--json" "task"])))))
+
+(defdescribe eval-exit-code-test
+             (it "uses 0 for valid eval evidence"
+                 (expect (= 0 (#'main/cli-result-exit-code {:eval {:valid? true}}))))
+             (it "uses 2 for a completed run invalidated by fallback"
+                 (expect (= 2
+                            (#'main/cli-result-exit-code
+                             {:answer {:answer "done"}
+                              :eval {:valid? false
+                                     :invalid-reasons [{:type :provider-model-fallback}]}}))))
+             (it "uses 2 for unsupported preflight even though the result carries an error"
+                 (expect (= 2
+                            (#'main/cli-result-exit-code
+                             {:error "unsupported"
+                              :eval {:valid? false
+                                     :invalid-reasons [{:type :unsupported-reasoning-effort}]}}))))
+             (it "uses 1 for execution failure"
+                 (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
+                 (expect (= 1 (#'main/cli-result-exit-code {:error "boom"})))))
 
 (defdescribe toggle-overrides-test
              (it "parses NAME=VALUE pairs against the registry"

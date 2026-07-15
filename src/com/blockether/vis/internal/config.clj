@@ -361,16 +361,10 @@
         (map? model) (:name model)
         :else nil))
 
-(defn- zai-provider-id? [provider-id] (contains? #{:zai :zai-coding-plan} provider-id))
-
-(defn- zai-thinking-model?
-  [model-name]
-  (boolean (re-find #"(?i)^glm-(?:5(?:[.-].*)?|4\.[5-9].*)$" (or model-name ""))))
-
 (defn ->svar-model
   "Coerce a model representation to svar-native `{:name str}`."
   ([model] (->svar-model nil model))
-  ([provider-id model]
+  ([_provider-id model]
    (when-let [n (some-> (model-name model)
                         str
                         str/trim
@@ -390,20 +384,7 @@
          (assoc :output-limit (:output-limit m))
 
          (some? (:tool-call? m))
-         (assoc :tool-call? (:tool-call? m))
-
-         ;; Copilot model wire/reasoning policy lives in svar's
-         ;; `:github-copilot` KNOWN overlay (Claude→:anthropic /v1/messages,
-         ;; GPT→:openai-compatible-responses /v1/responses), inherited by the
-         ;; account id via `:provider-model-source` and applied in
-         ;; `normalize-provider`. Don't duplicate it here — a stale per-model
-         ;; api-style would either be clobbered by the overlay or leak fields
-         ;; (e.g. `:reasoning-effort?`) onto the Anthropic wire.
-         (and (zai-provider-id? provider-id) (zai-thinking-model? n))
-         (assoc :reasoning?
-           true :reasoning-style
-           :zai-thinking :reasoning-effort?
-           false))))))
+         (assoc :tool-call? (:tool-call? m)))))))
 
 (def ^:private boot-token-timeout-ms
   "Upper bound on a synchronous boot-time token fetch (OAuth `get-token-fn`).
@@ -905,4 +886,3 @@
 (defn has-provider? [provider-id] (contains? (provider-ids) provider-id))
 
 (defn reload-config! [] (reset! active-config (load-config)))
-
