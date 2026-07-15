@@ -973,18 +973,20 @@
   [s ^long w]
   (p/word-wrap s w))
 (defn- justify-line
-  "Full-justify `s` to `w` display columns by spreading extra spaces between\n   words. Returns `s` untouched when it has fewer than two words or already\n   fills `w`."
+  "Full-justify `s` to `w` display columns by spreading extra spaces between
+   words. Returns `s` untouched when it has fewer than two words or already
+   fills `w`."
   [s ^{:tag long} w]
   (let [words
         (str/split (str/trim s) #"\s+")
 
         n
-        (count words)]
+        (long (count words))]
 
     (if (< n 2)
       s
       (let [text-w
-            (reduce + (map p/display-width words))
+            (long (reduce + (map p/display-width words)))
 
             gaps
             (dec n)
@@ -1002,7 +1004,7 @@
 
             (apply str
               (interleave words
-                          (concat (map (fn [i]
+                          (concat (map (fn [^long i]
                                          (apply str
                                            (repeat (+ 1 base (if (< i extra) 1 0)) \space)))
                                        (range gaps))
@@ -1034,7 +1036,16 @@
     [text (if accent? t/header-active-tab-accent base-color)
      (boolean (or base-bold? (contains? style :bold)))]))
 (defn- justify-segs
-  "Full-justify a row of `[text color bold?]` segments to `w` display columns by\n   widening every inter-word whitespace run across the segments. Returns the\n   segments untouched when there are no gaps or no slack (single word / already\n   full). The styled twin of `justify-line` for `md-wrapped-rows`.\n\n   `prefix-n` leading segments are STRUCTURAL — a list marker (`- `, `• `,\n   `1. `) or a continuation hanging-indent (`  `). Their widths still count\n   toward the slack budget, but their whitespace is never stretched, so a\n   bulleted line keeps a single space after the marker (`- foo bar baz`,\n   not `-    foo  bar  baz`) while the content still justifies edge-to-edge."
+  "Full-justify a row of `[text color bold?]` segments to `w` display columns by
+   widening every inter-word whitespace run across the segments. Returns the
+   segments untouched when there are no gaps or no slack (single word / already
+   full). The styled twin of `justify-line` for `md-wrapped-rows`.
+
+   `prefix-n` leading segments are STRUCTURAL — a list marker (`- `, `• `,
+   `1. `) or a continuation hanging-indent (`  `). Their widths still count
+   toward the slack budget, but their whitespace is never stretched, so a
+   bulleted line keeps a single space after the marker (`- foo bar baz`,
+   not `-    foo  bar  baz`) while the content still justifies edge-to-edge."
   ([segs ^{:tag long} w] (justify-segs segs w 0))
   ([segs ^{:tag long} w ^{:tag long} prefix-n]
    (let [texts
@@ -1044,13 +1055,13 @@
          (drop prefix-n texts)
 
          gap-count
-         (reduce +
-                 (map (fn [t]
-                        (count (re-seq #"\s+" t)))
-                      content-texts))
+         (long (reduce +
+                       (map (fn [t]
+                              (count (re-seq #"\s+" t)))
+                            content-texts)))
 
          text-w
-         (reduce + (map p/display-width texts))
+         (long (reduce + (map p/display-width texts)))
 
          slack
          (- w text-w)]
@@ -1075,14 +1086,14 @@
              idx
              (atom -1)]
 
-         (vec (map-indexed (fn [si [t color bold?]]
+         (vec (map-indexed (fn [^long si [t color bold?]]
                              (if (< si prefix-n)
                                [t color bold?]
                                [(str/replace t
                                              #"\s+"
                                              (fn [m]
                                                (let [i
-                                                     (swap! idx inc)
+                                                     (long (swap! idx inc))
 
                                                      add
                                                      (+ base (if (< i extra) 1 0))]
