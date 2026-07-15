@@ -306,7 +306,7 @@
           :id
           str))
 
-(defn- ellipsize [text max-cols] (p/truncate-cols (str text) (max 0 (long max-cols))))
+(defn- ellipsize [text max-cols] (p/ellipsize text max-cols))
 
 (defn- latest-notification
   "Most-recently-pushed active notification, or nil. We display ONE

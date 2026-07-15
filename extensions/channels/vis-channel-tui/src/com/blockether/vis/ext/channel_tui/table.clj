@@ -5,17 +5,10 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]))
 
 (defn ellipsize
+  "Right-truncate `s` to `max-w` columns with a trailing `…`.
+   Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."
   [s max-w]
-  (let [txt
-        (or s "")
-
-        max-w
-        (long max-w)]
-
-    (cond (<= max-w 0) ""
-          (<= (p/display-width txt) max-w) txt
-          (= max-w 1) "…"
-          :else (str (p/truncate-cols txt (dec max-w)) "…"))))
+  (p/ellipsize s max-w))
 
 (defn middle-ellipsize
   "Truncate `s` in the middle when it exceeds `max-w` display columns,
