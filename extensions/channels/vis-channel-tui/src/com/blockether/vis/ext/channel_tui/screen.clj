@@ -3159,7 +3159,7 @@
             (launch-root)
 
             nm
-            (.getName (java.io.File. root))
+            (.getName (java.io.File. ^String root))
 
             pid
             (try (some-> (vis/gateway-ensure-project-for-root! root nm)

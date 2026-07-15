@@ -310,13 +310,13 @@
 (defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
 (defn ensure-project-for-root!
-  "POST /v1/projects/ensure — get-or-create the project bound to canonical
+  "POST /v1/projects/actions/ensure — get-or-create the project bound to canonical
    workspace `root` (a project IS a TUI tab set). `name` seeds a fresh project.
    Returns the project."
   ([root] (ensure-project-for-root! root nil))
   ([root name]
    (send-json! "POST"
-               "/v1/projects/ensure"
+               "/v1/projects/actions/ensure"
                (cond-> {:root (str root)}
                  (not-empty (str name))
                  (assoc :name (str name))))))

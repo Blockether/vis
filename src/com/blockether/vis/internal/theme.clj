@@ -51,12 +51,12 @@
    :code {:family "monospace" :size "inherit" :weight "normal" :style "normal"}})
 
 (def common-widths
-  {:dialog-width-ratio 0.80
-   :dialog-min-width 76
-   :dialog-max-width 120
-   :dialog-height-ratio 0.86
-   :dialog-min-height 24
-   :dialog-max-height 52
+  {:dialog-width-ratio 0.90
+   :dialog-min-width 88
+   :dialog-max-width 140
+   :dialog-height-ratio 0.92
+   :dialog-min-height 30
+   :dialog-max-height 80
    :dialog-chrome-w 4
    :dialog-chrome-h 6
    :settings-option-indent 2
