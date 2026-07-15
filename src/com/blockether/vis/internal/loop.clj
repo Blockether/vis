@@ -4474,6 +4474,16 @@
    re-minting — which only spawns another not-yet-valid token (the 401 storm)."
   1200)
 
+(def ^:private AUTH_PROPAGATION_WINDOW_MS
+  "How long (ms) after a FORCED OAuth refresh a subsequent auth 401 reads as
+   PROPAGATION LAG (retry the same freshly-minted token with backoff) rather
+   than a dead credential (re-mint). Comfortably exceeds the full post-refresh
+   backoff sequence (`MAX_AUTH_REFRESH_RETRIES` retries of
+   `auth-propagation-backoff-ms`, ~11s) so the whole settling burst stays
+   classified as lag; the marker is cleared on the first accepted request so it
+   never lingers into a later genuine rotation."
+  30000)
+
 (defn- auth-propagation-backoff-ms
   "Backoff (ms) for the Nth (0-based) post-refresh propagation retry, capped 5s."
   [attempt]
@@ -4484,9 +4494,10 @@
   (atom {}))
 
 (defonce ^:private auth-last-refreshed
-  ;; provider-id -> {:minted <access token the last FORCED refresh baked into
-  ;; the router> :at epoch-ms}. Lets the retry path tell "the token we just
-  ;; minted also 401'd" (dead credential) from "a stale token a peer rotated".
+  ;; provider-id -> {:at <epoch-ms of the last FORCED refresh>}. A recency
+  ;; marker: a fresh auth 401 within AUTH_PROPAGATION_WINDOW_MS of it reads as
+  ;; PROPAGATION LAG (back off, retry the SAME token), not a dead credential.
+  ;; Cleared on the first accepted request by `note-provider-request-ok!`.
   (atom {}))
 
 (defn- auth-refresh-allowed?
@@ -4554,15 +4565,35 @@
                                (ex-message e))))
 
 (defn- refresh-just-failed?
-  "True when the token that just auth-failed is the SAME one our last FORCED
-   refresh minted for this provider — i.e. re-minting did NOT clear the 401.
-   Signals PROPAGATION LAG (retry the same token with backoff), NOT a stale
-   token a peer already rotated (that has a different baked token → refresh)."
+  "True when we FORCED an OAuth refresh for this provider very recently (within
+   [[AUTH_PROPAGATION_WINDOW_MS]]) and the token is STILL auth-failing — i.e.
+   re-minting did NOT clear the 401. Signals PROPAGATION LAG (back off and retry
+   the SAME token) rather than a genuinely dead credential.
+
+   Keyed on refresh RECENCY, not token VALUE. The earlier value-equality check
+   (`minted == baked-token`) only held for providers that keep the same access
+   token across a router rebuild; providers like GitHub Copilot mint a FRESH
+   token on every exchange (`ensure-router-has-current-token!` re-exchanges on
+   rebuild), so the minted token never equalled the current baked one, the guard
+   fell open, and the loop re-minted on every post-refresh 401 → the 401 storm.
+   A recency marker matches EVERY provider. It is cleared on the first accepted
+   request ([[note-provider-request-ok!]]) so a genuine rotation minutes later is
+   read as a fresh 401 (re-mint), not misread as lag."
   [^Throwable e resolved-model]
   (let [pid (:provider resolved-model)]
     (and (auth-error-shaped? e)
-         (when-let [{:keys [minted]} (get @auth-last-refreshed pid)]
-           (= minted (config/baked-token pid))))))
+         (boolean (when-let [{:keys [at]} (get @auth-last-refreshed pid)]
+                    (< (- (System/currentTimeMillis) (long at)) AUTH_PROPAGATION_WINDOW_MS))))))
+
+(defn- note-provider-request-ok!
+  "Clear the just-refreshed propagation marker for this turn's provider once a
+   request has been ACCEPTED (auth succeeded). Keeps [[refresh-just-failed?]]'s
+   recency window scoped to the post-refresh settling burst, so a real
+   credential rotation later is treated as a fresh 401 (re-mint), never misread
+   as propagation lag. No-op when the provider has no marker."
+  [resolved-model]
+  (when-let [pid (:provider resolved-model)]
+    (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))))
 
 (defn- auth-refreshable-error?
   "True when exception `e` is a provider auth rejection (401/403 or an
@@ -4648,13 +4679,13 @@
             ;; hooks that don't accept it.
             (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
                  (ensure-router-has-current-token! pid)
-                 ;; Remember the token this refresh minted. If the very next
-                 ;; re-send with it ALSO 401s, `refresh-just-failed?` sees the
-                 ;; baked token == this minted token and treats it as PROPAGATION
-                 ;; LAG — backoff-retrying the SAME token instead of re-minting.
-                 (swap! auth-last-refreshed assoc
-                   pid
-                   {:minted (config/baked-token pid) :at (System/currentTimeMillis)})
+                 ;; Stamp the refresh time. If the very next re-send ALSO
+                 ;; auth-fails within AUTH_PROPAGATION_WINDOW_MS,
+                 ;; `refresh-just-failed?` reads this recency marker and treats
+                 ;; it as PROPAGATION LAG — backing off and retrying the SAME
+                 ;; token instead of re-minting (the storm). Cleared on the
+                 ;; first accepted request by `note-provider-request-ok!`.
+                 (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
                  (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
                            (str "Auth 401 — force-refreshed OAuth token for "
                                 pid
@@ -5935,6 +5966,7 @@
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
+                        _ (note-provider-request-ok! resolved-model)
                         {:keys [thinking assistant-prose blocks final-result]} iteration-result
                         block (first blocks)
                         ;; Phase 7: merge per-iteration `:lru` stamps
