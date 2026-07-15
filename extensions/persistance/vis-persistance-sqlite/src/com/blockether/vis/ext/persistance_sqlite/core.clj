@@ -1330,49 +1330,49 @@
    the count of members renumbered."
   [db-info project-id session-ids]
   (when (and (ds db-info) project-id)
-    (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (let [pid
-                              (->id project-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [pid
+              (->id project-id)
 
-                              members
-                              (mapv (comp str :id)
-                                    (query! tx-info
-                                            {:select [:id]
-                                             :from :session_soul
-                                             :where [:= :project_id pid]
-                                             :order-by [[:project_position :asc]
-                                                        [:created_at :desc]]}))
+              members
+              (mapv (comp str :id)
+                    (query! tx-info
+                            {:select [:id]
+                             :from :session_soul
+                             :where [:= :project_id pid]
+                             :order-by [[:project_position :asc] [:created_at :desc]]}))
 
-                              member?
-                              (set members)
+              member?
+              (set members)
 
-                              wanted
-                              (distinct (filter member? (map str session-ids)))
+              wanted
+              (distinct (filter member? (map str session-ids)))
 
-                              wanted-set
-                              (set wanted)
+              wanted-set
+              (set wanted)
 
-                              ordered
-                              (into (vec wanted) (remove wanted-set members))]
+              ordered
+              (into (vec wanted) (remove wanted-set members))]
 
-                          ;; Two phases so the partial UNIQUE index on
-                          ;; (project_id, project_position) never transiently
-                          ;; collides during a row-by-row renumber: first park
-                          ;; every member in a distinct NEGATIVE temp slot
-                          ;; (-1..-n, disjoint from every current/final 0..n-1),
-                          ;; then assign the final gap-free 0..n-1 order.
-                          (doseq [[pos sid] (map-indexed vector ordered)]
-                            (execute! tx-info
-                                      {:update :session_soul
-                                       :set {:project_position (- (inc pos))}
-                                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
-                          (doseq [[pos sid] (map-indexed vector ordered)]
-                            (execute! tx-info
-                                      {:update :session_soul
-                                       :set {:project_position pos}
-                                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
-                          (count ordered))))))
+          ;; Two phases so the partial UNIQUE index on
+          ;; (project_id, project_position) never transiently
+          ;; collides during a row-by-row renumber: first park
+          ;; every member in a distinct NEGATIVE temp slot
+          ;; (-1..-n, disjoint from every current/final 0..n-1),
+          ;; then assign the final gap-free 0..n-1 order.
+          (doseq [[pos sid] (map-indexed vector ordered)]
+            (execute! tx-info
+                      {:update :session_soul
+                       :set {:project_position (- (inc pos))}
+                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
+          (doseq [[pos sid] (map-indexed vector ordered)]
+            (execute! tx-info
+                      {:update :session_soul
+                       :set {:project_position pos}
+                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
+          (count ordered))))))
 
 
 ;; =============================================================================
