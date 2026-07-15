@@ -182,11 +182,27 @@
 (def ^:const BOX_V Symbols/SINGLE_LINE_VERTICAL)
 (def ^:const BOX_T_R Symbols/SINGLE_LINE_T_RIGHT)
 (def ^:const BOX_T_L Symbols/SINGLE_LINE_T_LEFT)
+(def ^:const BOX_T_DOWN Symbols/SINGLE_LINE_T_DOWN)
+(def ^:const BOX_T_UP Symbols/SINGLE_LINE_T_UP)
+(def ^:const BOX_CROSS Symbols/SINGLE_LINE_CROSS)
+
+(defn- int-widths ^ints [widths] (int-array (map #(int (long %)) widths)))
 
 (defn horiz-line
-  "Return a string of `n` horizontal box-drawing chars."
-  [n]
-  (apply str (repeat n BOX_H)))
+  "Return a string of `n` horizontal box-drawing chars. Delegates to lanterna's
+   primitive terminal-rule builder instead of rebuilding via Clojure seqs."
+  ^String [n]
+  (TerminalTextUtils/repeat BOX_H (int n)))
+
+(defn joined-horiz-line
+  "Return horizontal runs joined by `junction`, e.g. `──┬───`."
+  ^String [widths junction]
+  (TerminalTextUtils/joinedLine BOX_H (int-widths widths) (char junction)))
+
+(defn boxed-horiz-line
+  "Return a bordered horizontal rule, e.g. `┌──┬───┐`."
+  ^String [widths left junction right]
+  (TerminalTextUtils/boxedLine (int-widths widths) (char left) BOX_H (char junction) (char right)))
 
 ;;; ── Selection marker (dot cursor component) ─────────────────────
 ;;
@@ -252,8 +268,12 @@
    the next col (`col + STATUS_WIDTH`) so the caller can place the label right
    after. The reusable mark behind settings rows + resource rows."
   [g col row glyph fg bg]
-  (let [col (long col)
-        row (long row)]
+  (let [col
+        (long col)
+
+        row
+        (long row)]
+
     (set-colors! g fg bg)
     (put-str! g col row glyph)
     (+ col STATUS_WIDTH)))
@@ -264,13 +284,26 @@
   "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
-  (let [left (long left)
-        top (long top)
-        w (long w)
-        h (long h)
-        right (+ left w -1)
-        bottom (+ top h -1)
-        inner (- w 2)]
+  (let [left
+        (long left)
+
+        top
+        (long top)
+
+        w
+        (long w)
+
+        h
+        (long h)
+
+        right
+        (+ left w -1)
+
+        bottom
+        (+ top h -1)
+
+        inner
+        (- w 2)]
 
     ;; Corners
     (set-char! g left top BOX_TL)
@@ -289,10 +322,18 @@
 (defn draw-separator!
   "Draw a horizontal separator with T-junctions at left/right edges."
   [g left right row]
-  (let [left (long left)
-        right (long right)
-        row (long row)
-        inner (- right left 1)]
+  (let [left
+        (long left)
+
+        right
+        (long right)
+
+        row
+        (long row)
+
+        inner
+        (- right left 1)]
+
     (set-char! g left row BOX_T_R)
     (set-char! g right row BOX_T_L)
     (put-str! g (inc left) row (horiz-line inner))
