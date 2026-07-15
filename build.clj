@@ -756,24 +756,23 @@
         (into {} want)
 
         tree-sitter-native
-        (symbol "com.blockether"
-                (str "tree-sitter-language-pack-native-" (pack-native-token)))]
+        (symbol "com.blockether" (str "tree-sitter-language-pack-native-" (pack-native-token)))]
 
     (when (seq deps)
       (let [b (try (b/create-basis {:project nil :extra {:deps deps}})
                    (catch Exception e (println "WARN native-lib-jars:" (ex-message e)) nil))]
-        (let [jars
-              (->> (keys deps)
-                   (mapcat #(some-> b
-                                    :libs
-                                    (get %)
-                                    :paths))
-                   (filter #(and % (str/ends-with? % ".jar"))))]
+        (let [jars (->> (keys deps)
+                        (mapcat #(some-> b
+                                         :libs
+                                         (get %)
+                                         :paths))
+                        (filter #(and % (str/ends-with? % ".jar"))))]
           (when (and (contains? deps tree-sitter-native)
                      (not-any? #(str/includes? % (name tree-sitter-native)) jars))
-            (throw (ex-info "Native build requires the tree-sitter native artifact for its target platform."
-                            {:artifact tree-sitter-native
-                             :platform (pack-native-token)})))
+            (throw
+              (ex-info
+                "Native build requires the tree-sitter native artifact for its target platform."
+                {:artifact tree-sitter-native :platform (pack-native-token)})))
           jars)))))
 
 (defn- native-classpath
