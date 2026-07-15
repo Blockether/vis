@@ -1528,6 +1528,40 @@
         (expect (= ["queued"] (mapv :text queued)))
         (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
         (expect (empty? (:pending-sends (:db result))))))
+  (it "never queues a submission while a cancel is in flight (:cancelling?)"
+      ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
+      ;; message in the queue (`:pending-sends`) behind the turn being torn down —
+      ;; "I cancel and write something else and I get it in the queue". A submission
+      ;; during the cancel window is a FRESH intent: it must NOT be queued (and must
+      ;; never fire :gateway-enqueue). The submit path keeps the text in the editor.
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
+
+            db
+            {:active-tab-id :a
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              :cancelling? true
+                              :pending-sends []
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0}}}
+
+            result
+            (enqueue-fn db [:enqueue-message "typed during cancel" :a])]
+
+        ;; Nothing lands in the queue …
+        (expect (empty? (get-in result [:db :tab-locals :a :pending-sends])))
+        ;; … and no server-side queued turn is registered.
+        (expect (not-any? #(= :gateway-enqueue (first %)) (:fx result)))
+        (expect (some #(= :notify (first %)) (:fx result)))))
   (it "schedules queue drain as an effect after message commit"
       (let [message-received-fn
             (-> #'state/event-registry
@@ -1700,14 +1734,16 @@
         (expect (empty? (:pending-sends db)))
         (expect (some #{[:gateway-delete-queued "c1" "t-2"]} fx))
         (expect (some #{[:gateway-delete-queued "c1" "t-3"]} fx))))
-  (it "a send while a cancel is in flight never registers a gateway queued turn"
+  (it "a send while a cancel is in flight stays in the editor — never queued, never server-side"
       ;; Regression: cancel (`:cancelling?`) then immediately send. The send used
       ;; to still fire `:gateway-enqueue`, registering a SERVER-SIDE queued turn.
       ;; The cancel's restore deletes gateway records by :turn-id, but that id is
       ;; bound LATE by an async round-trip — so the restore raced ahead, the
       ;; orphaned turn survived and auto-drained (= SENT) while the text ALSO
       ;; landed back in the editor: "sent AND queued at the same time". A send
-      ;; during a cancel must stay purely LOCAL so restore reclaims it cleanly.
+      ;; during a cancel is a FRESH intent — it stays purely in the EDITOR (nothing
+      ;; queued locally, nothing registered server-side) so the user re-sends it
+      ;; cleanly once the cancel settles.
       (let [send-fn
             (-> #'state/event-registry
                 deref
@@ -1733,9 +1769,11 @@
             {normal-fx :fx}
             (send-fn (assoc db :cancelling? false) [:send-message "second" :main])]
 
-        ;; cancel window: queued locally, NOTHING registered server-side.
+        ;; cancel window: kept in the editor — NOTHING queued locally, NOTHING
+        ;; registered server-side, and the user is told to resend.
         (expect (not-any? #(= :gateway-enqueue (first %)) fx))
-        (expect (= ["second"] (mapv :text (:pending-sends cancelling-db))))
+        (expect (empty? (:pending-sends cancelling-db)))
+        (expect (some #(= :notify (first %)) fx))
         ;; normal in-flight queue (not cancelling) still registers server-side.
         (expect (some #(= :gateway-enqueue (first %)) normal-fx))))
   (it "set-queued-turn-id deletes the orphaned gateway turn when the entry is gone"
