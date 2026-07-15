@@ -2105,9 +2105,9 @@
 (def ^:private magit-hints
   "Hint-bar chords for the magit status buffer — the most important magit
    verbs, one key each, faithful to magit's own bindings."
-  [["↑/↓" "move"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"] ["x" "discard"]
-   ["c" "commit"] ["l" "log"] ["y" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"] ["b" "branch"]
-   ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
+  [["↑/↓" "move"] ["n/p" "section"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"]
+   ["x" "discard"] ["c" "commit"] ["l" "log"] ["y" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"]
+   ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
 
 (defn- magit-row-style
   "`[fg bold? bg]` for one status-buffer row — foreground, bold?, and an optional
@@ -2209,16 +2209,20 @@
             {:ok? true :msg (str "Done — " (count files) " file(s)")})))))
 
 (defn- magit-stage-action!
-  [root rows idx {:keys [kind area path]}]
-  (cond (and (= :file kind) (= :staged area)) {:ok? false :msg "Already staged"}
+  [root rows idx {:keys [kind area path hunk]}]
+  (cond (and (= :diff kind) (= :unstaged area)) (magit/stage-hunk! root {:path path :hunk hunk})
+        (and (= :diff kind) (= :staged area)) {:ok? false :msg "Hunk already staged (u to unstage)"}
+        (and (= :file kind) (= :staged area)) {:ok? false :msg "Already staged"}
         (= :file kind) (magit/stage-file! root path)
         (and (= :section kind) (contains? #{:untracked :unstaged :unmerged} area))
         (magit-section-action! rows idx #(magit/stage-file! root %))
         :else nil))
 
 (defn- magit-unstage-action!
-  [root rows idx {:keys [kind area path]}]
-  (cond (and (= :file kind) (= :staged area)) (magit/unstage-file! root path)
+  [root rows idx {:keys [kind area path hunk]}]
+  (cond (and (= :diff kind) (= :staged area)) (magit/unstage-hunk! root {:path path :hunk hunk})
+        (and (= :diff kind) (= :unstaged area)) {:ok? false :msg "Hunk not staged (s to stage)"}
+        (and (= :file kind) (= :staged area)) (magit/unstage-file! root path)
         (and (= :section kind) (= :staged area))
         (magit-section-action! rows idx #(magit/unstage-file! root %))
         (= :file kind) {:ok? false :msg "Not staged"}
@@ -2449,16 +2453,24 @@
     (p/set-colors! g t/dialog-fg t/dialog-bg)))
 
 (defn magit-transient!
-  "Magit-style transient overlay: a keymap of toggleable SWITCHES / value OPTIONS
-   and fire-once ACTIONS, grouped under headers. There is NO moving cursor — you
-   press an item's `:key` directly (magit's transient model). Switches highlight
-   while active; options display their value inline. `spec` is
+  "Magit-style transient rendered IN the status buffer's ECHO AREA — a bottom-
+   anchored popup painted over the buffer's own lower rows (title + grouped
+   SWITCHES / value OPTIONS / fire-once ACTIONS + a hint row on `hint-row`), NOT
+   a centered modal dialog box. The status buffer stays fully visible above it,
+   exactly like Emacs magit's transient popup / minibuffer. There is NO moving
+   cursor — you press an item's `:key` directly. Switches highlight while active;
+   options display their value inline. `spec` is
    `{:groups [{:title str :items [{:key :type :id :label}]}]}` where `:type` is
    `:switch` | `:option` | `:action`. `read-option` (impure) fetches an option's
-   value: `(read-option item current) -> str|nil` — nil (Esc) leaves it unchanged.
+   value: `(read-option item current) -> str|nil` — nil (Esc) leaves it unchanged;
+   it too should read INLINE (via the buffer's `:read!` minibuffer), never a box.
    Returns `{:action id :switches #{…} :options {id val}}` when an action fires,
-   or nil on Esc."
-  [^TerminalScreen screen title spec read-option]
+   or nil on Esc.
+
+   `g left inner-w hint-row text-w` are the SAME buffer-geometry values the other
+   inline minibuffer primitives receive, so the popup shares the status buffer's
+   canvas instead of allocating its own screen."
+  [^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
   (let [display-rows
         (vec (butlast (into []
                             (mapcat (fn [{:keys [title items]}]
@@ -2466,96 +2478,83 @@
                                               (map (fn [it]
                                                      {:kind :item :item it})
                                                    items)
-                                              [{:kind :blank}])))
-                            (:groups spec))))
+                                              [{:kind :blank}]))
+                                    (:groups spec)))))
 
-        total
+        n
         (count display-rows)
 
-        item-w
-        (+ 8
-           (reduce max
-                   16
-                   (map (fn [r]
-                          (case (:kind r)
-                            :item
-                            (+ 4 (p/display-width (str (:label (:item r)))))
+        ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
+        ;; the bold title one row above them. Clamp so a short terminal never
+        ;; paints above the top edge.
+        body-top
+        (max 1 (- hint-row n))
 
-                            :header
-                            (p/display-width (str (:text r)))
-
-                            0))
-                        display-rows)))
+        title-row
+        (max 0 (dec body-top))
 
         footer
         [["key" "toggle/run"] ["Esc" "cancel"]]]
 
     (loop [state {:switches #{} :options {}}]
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g
-                                        cols
-                                        rows
-                                        title
-                                        (footer-content-width cols footer item-w)
-                                        (adaptive-content-height rows (max 1 total)))
-            {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc left) title-row inner-w 1)
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (ellipsize (str title) text-w)))
+      (dotimes [i n]
+        (let [r (nth display-rows i)
+              row (+ body-top i)]
 
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (dotimes [i (min total content-h)]
-          (let [r (nth display-rows i)
-                row (+ content-top i)]
+          (case (:kind r)
+            :header
+            (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) row inner-w 1)
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (p/styled g
+                          [p/BOLD]
+                          (p/put-str! g (+ left 2) row (ellipsize (str (:text r)) text-w))))
 
-            (case (:kind r)
-              :header
-              (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/styled g [p/BOLD] (p/put-str! g (+ left 1) row (str (:text r)))))
+            :blank
+            (do (p/set-colors! g t/dialog-fg t/dialog-bg) (p/fill-rect! g (inc left) row inner-w 1))
 
-              :blank
-              nil
+            :item
+            (let [{:keys [type id] :as it} (:item r)
+                  active? (case type
+                            :switch
+                            (contains? (:switches state) id)
 
-              :item
-              (let [{:keys [type id] :as it} (:item r)
-                    active? (case type
-                              :switch
-                              (contains? (:switches state) id)
+                            :option
+                            (contains? (:options state) id)
 
-                              :option
-                              (contains? (:options state) id)
+                            false)
+                  value (when (= type :option) (get (:options state) id))]
 
-                              false)
-                    value (when (= type :option) (get (:options state) id))]
+              (draw-transient-item! g left row inner-w it active? value)))))
+      (draw-hint-bar! g left hint-row inner-w footer)
+      (.setCursorPosition screen nil)
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [key (read-modal-key! screen)]
+        (if (nil? key)
+          (recur state)
+          (condp = (key-type key)
+            KeyType/Escape nil
+            KeyType/Character
+            (let [ch (lower-key-character key)
+                  r (transient-toggle spec state ch)]
 
-                (draw-transient-item! g left row inner-w it active? value)))))
-        (draw-hint-bar! g left hint-row inner-w footer)
-        (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (if (nil? key)
-            (recur state)
-            (condp = (key-type key)
-              KeyType/Escape nil
-              KeyType/Character
-              (let [ch (lower-key-character key)
-                    r (transient-toggle spec state ch)]
+              (case (:kind r)
+                :continue
+                (recur (:state r))
 
-                (case (:kind r)
-                  :continue
-                  (recur (:state r))
+                :option
+                (let [{:keys [id] :as it} (:item r)
+                      v (read-option it (get (:options state) id))]
 
-                  :option
-                  (let [{:keys [id] :as it} (:item r)
-                        v (read-option it (get (:options state) id))]
+                  (recur (if (nil? v) state (assoc-in state [:options id] v))))
 
-                    (recur (if (nil? v) state (assoc-in state [:options id] v))))
-
-                  :action
-                  {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
-              (recur state))))))))
+                :action
+                {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
+            (recur state)))))))
 
 
 (defn- magit-push-flow!
@@ -2565,7 +2564,7 @@
    on `refs/for/<branch>` carrying that topic. Every OTHER configured remote is
    listed INLINE as its own `Push to <remote>` action in the SAME overlay (magit
    lists push targets in the transient — no second dialog)."
-  [^TerminalScreen screen busy! root]
+  [busy! mini root]
   (let [upstream
         (magit/upstream-name root)
 
@@ -2633,13 +2632,11 @@
         read-option
         (fn [{:keys [id]} current]
           (when (= id :topic)
-            (text-input-dialog! screen
-                                "Topic" "Topic (optional)"
-                                :initial (or current
-                                             (when (and branch (not= branch g-branch)) branch)
-                                             ""))))]
+            ((:read! mini)
+              "Topic:"
+              {:initial (or current (when (and branch (not= branch g-branch)) branch) "")})))]
 
-    (when-let [{:keys [action switches options]} (magit-transient! screen "Push" spec read-option)]
+    (when-let [{:keys [action switches options]} ((:transient! mini) "Push" spec read-option)]
       (let [base {:set-upstream? (contains? switches :set-upstream)
                   :force? (contains? switches :force)
                   :dry-run? (contains? switches :dry-run)
@@ -2804,7 +2801,7 @@
     (magit-copy-action! root row)
 
     \P
-    (magit-push-flow! screen busy! root)
+    (magit-push-flow! busy! mini root)
 
     \F
     (run-network! busy! "Pulling" #(magit/pull! root))
@@ -3025,7 +3022,10 @@
              :read! (fn [label opts]
                       (magit-mini-read! screen g left inner-w hint-row text-w label opts))
              :choose! (fn [title choices]
-                        (magit-mini-choose! screen g left inner-w hint-row text-w title choices))}]
+                        (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
+             :transient!
+             (fn [title spec read-option]
+               (magit-transient! screen g left inner-w hint-row text-w title spec read-option))}]
 
         (dotimes [i visible]
           (let [idx (+ start i)
@@ -3179,35 +3179,41 @@
 
           (cond (nil? key) (recur)
                 wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
-                :else
-                (condp = (key-type key)
-                  KeyType/Escape nil
-                  KeyType/ArrowUp (do (move! -1) (recur))
-                  KeyType/ArrowDown (do (move! 1) (recur))
-                  KeyType/PageUp
-                  (do (scroll-view! (- (max 1 (dec list-h)))) (reconcile-sel!) (recur))
-                  KeyType/PageDown (do (scroll-view! (max 1 (dec list-h))) (reconcile-sel!) (recur))
-                  KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0))
-                                   (reset! scroll 0)
-                                   (recur))
-                  KeyType/End (do (reset! scroll max-start) (reconcile-sel!) (recur))
-                  KeyType/Tab (do (toggle-diff!) (recur))
-                  KeyType/Enter (do (visit! row) (recur))
-                  KeyType/Character (let [c (key-character key)]
-                                      (if (= c \q)
-                                        nil
-                                        (do (reset! echo nil)
-                                            (run-action! (magit-char-action! screen
-                                                                             busy!
-                                                                             mini
-                                                                             row-root
-                                                                             (model-for row-root)
-                                                                             buf-rows
-                                                                             @sel
-                                                                             row
-                                                                             c))
-                                            (recur))))
-                  (recur))))))))
+                :else (condp = (key-type key)
+                        KeyType/Escape nil
+                        KeyType/ArrowUp (do (move! -1) (recur))
+                        KeyType/ArrowDown (do (move! 1) (recur))
+                        KeyType/PageUp
+                        (do (scroll-view! (- (max 1 (dec list-h)))) (reconcile-sel!) (recur))
+                        KeyType/PageDown
+                        (do (scroll-view! (max 1 (dec list-h))) (reconcile-sel!) (recur))
+                        KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0))
+                                         (reset! scroll 0)
+                                         (recur))
+                        KeyType/End (do (reset! scroll max-start) (reconcile-sel!) (recur))
+                        KeyType/Tab (do (toggle-diff!) (recur))
+                        KeyType/Enter (do (visit! row) (recur))
+                        KeyType/Character
+                        (let [c (key-character key)]
+                          (cond (= c \q) nil
+                                ;; n/p jump section-to-section (magit's section motion)
+                                (contains? #{\n \p} c)
+                                (let [i (magit/next-section buf-rows @sel (if (= c \n) 1 -1))]
+                                  (reset! sel i)
+                                  (reset! scroll (visible-window-start i @scroll visible total))
+                                  (recur))
+                                :else (do (reset! echo nil)
+                                          (run-action! (magit-char-action! screen
+                                                                           busy!
+                                                                           mini
+                                                                           row-root
+                                                                           (model-for row-root)
+                                                                           buf-rows
+                                                                           @sel
+                                                                           row
+                                                                           c))
+                                          (recur))))
+                        (recur))))))))
 
 (defn- current-model-info
   []

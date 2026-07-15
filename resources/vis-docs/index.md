@@ -117,6 +117,8 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 
 `vis` falls back through, in order: a repo native binary (`target/vis`), then the repo uberjar (`target/vis.jar`), then live source (`clojure -M:vis`). Building the native binary needs Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM. See **[Custom distributions](distributions.md)**.
 
+> **JVM path (`--jvm`) JDK requirement.** Vis embeds GraalPy/Truffle pinned to a specific version (currently `25.1.3`). On the JVM you must run on **either** a stock (non-GraalVM) **JDK 25** — e.g. `sdk install java 25.0.3-tem` — **or** a GraalVM whose version matches the pinned line (`graalvm-community-jdk-25i1` / `graal-25.1.3`). Running on a *mismatched* GraalVM (e.g. GraalVM CE 25.0.2) puts that JDK's built-in Truffle on the path where it collides with the pinned one, and Vis aborts at session start with an actionable version-mismatch message. JDK 21–24 are too old (a dependency is compiled for Java 25).
+
 ## Features
 
 - **Context as an environment.** The model writes code to query its world and keeps state in named vars and a SQLite database, not in the token budget. It sees exactly what it needs; everything else is one call away.

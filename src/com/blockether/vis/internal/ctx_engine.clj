@@ -310,26 +310,371 @@
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_env" "session_routing"
    "session_resources" "session_symbols"])
 
-(defn folds-view
-  "Compact model-facing reflection of the recorded `session_fold` intents so a
-   fold surfaces as a STRUCTURAL `session[\"folds\"] = …` delta — the model's live
-   confirmation that a compaction actually landed, not just the verb's return
-   string. Each recorded intent (`session_summaries`) becomes one string-keyed
-   map carrying its SELECTOR (`\"scopes\"` sorted vector | `\"through\"` | `\"from\"`/
-   `\"to\"` | `\"since\"`) plus the optional `\"gist\"` (absent gist = a plain drop).
-   Strings-only — it crosses the nippy/Python boundary. Pure."
+(defn scope-key
+  "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or
+   `\"t1/i2/f3\"` → `[1 2]` (the form index is dropped — ranges cover WHOLE
+   iterations). nil when the scope can't be parsed, so callers skip it rather
+   than mis-order it. Lives here (below `apply-summaries` in loop) so BOTH the
+   wire (`apply-summaries`) and the render-time ledger (`folds-view`) resolve fold
+   selectors through the SAME function."
+  [scope]
+  (when (string? scope)
+    (when-let [m (re-matches #"t(\d+)/i(\d+)(?:/f\d+)?" (str/trim scope))]
+      [(parse-long (nth m 1)) (parse-long (nth m 2))])))
+
+(defn turn-key
+  "Turn number of a bare WHOLE-TURN scope `\"tN\"` (no `/iN`); nil otherwise, so
+   `expand-through` only whole-turn-expands an id that is JUST a turn — a plain
+   `\"t1/i2\"` stays a single iteration."
+  [scope]
+  (when (string? scope)
+    (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
+      (parse-long (nth m 1)))))
+
+(defn expand-through
+  "Resolve every fold SELECTOR on each summary against `universe` (the caller's
+   own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
+   expands consistently wherever summaries are read (apply-summaries: the
+   trailer; resume / prior-turn: that turn's forms; folds-view: the ledger).
+   Selector keys (all optional, their results UNIONED):
+     `\"scopes\"`  explicit ids — a `tN/iN` is kept verbatim; a bare `tN` EXPANDS
+                 to every iteration of that turn present in `universe`.
+     `\"through\"` `tN/iN` cursor → every universe scope AT OR BEFORE it (start→cursor).
+     `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
+     `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
+   The range keys are dropped after resolution and the union lands in `\"scopes\"`.
+   Intents with none of these keys pass through untouched. Pure — same inputs →
+   same output."
+  [summaries universe]
+  (let [ukeys
+        (into []
+              (keep (fn [u]
+                      (when-let [k (scope-key u)]
+                        [u k]))
+                    universe))
+
+        pick
+        (fn [pred]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (pred k)))
+                      (map first))
+                ukeys))
+
+        turn-scopes
+        (fn [tn]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (= tn (first k))))
+                      (map first))
+                ukeys))
+
+        selector?
+        #{"scopes" "through" "from" "to" "since"}]
+
+    (mapv
+      (fn [s]
+        (if-not (some #(contains? s %) selector?)
+          s
+          (let [thr
+                (some-> (get s "through")
+                        scope-key)
+
+                frm
+                (some-> (get s "from")
+                        scope-key)
+
+                to
+                (some-> (get s "to")
+                        scope-key)
+
+                snc
+                (some-> (get s "since")
+                        scope-key)
+
+                expl
+                (into #{}
+                      (mapcat (fn [sc]
+                                (cond (scope-key sc) [sc]
+                                      (turn-key sc) (turn-scopes (turn-key sc))
+                                      :else [sc])))
+                      (get s "scopes"))
+
+                scopes
+                (cond-> expl
+                  thr
+                  (into (pick (fn [k]
+                                (<= (compare k thr) 0))))
+
+                  (or frm to)
+                  (into (pick (fn [k]
+                                (and (or (nil? frm) (>= (compare k frm) 0))
+                                     (or (nil? to) (<= (compare k to) 0))))))
+
+                  snc
+                  (into (pick (fn [k]
+                                (>= (compare k snc) 0)))))]
+
+            (-> s
+                (dissoc "through" "from" "to" "since")
+                (assoc "scopes" scopes)))))
+      summaries)))
+
+(defn supersede-summaries
+  "Collapse 'summary of summary': drop any summary whose scope set is fully
+   COVERED by another's — a proper subset, or an equal set recorded earlier — so
+   re-folding a region with a broader/newer gist REPLACES the finer breadcrumb
+   instead of stacking a second line. Coverage is never lost: every scope of a
+   dropped summary is present in the one that supersedes it (the superset wins;
+   for equal sets the later/newer wins). Order-stable. Expects scopes already
+   resolved (run AFTER expand-through). Pure."
   [summaries]
-  (into []
-        (keep (fn [s]
-                (when (map? s)
-                  (let [sel (cond-> (select-keys s ["scopes" "through" "from" "to" "since"])
-                              (contains? s "scopes")
-                              (update "scopes" #(vec (sort %))))]
-                    (when (seq sel)
-                      (cond-> sel
-                        (contains? s "gist")
-                        (assoc "gist" (get s "gist"))))))))
-        summaries))
+  (let [v
+        (vec summaries)
+
+        n
+        (count v)
+
+        covered?
+        (fn [i]
+          (let [si (set (get (nth v i) "scopes"))]
+            (and (seq si)
+                 (boolean (some (fn [j]
+                                  (when (not= i j)
+                                    (let [sj (set (get (nth v j) "scopes"))]
+                                      (and (every? sj si)           ; si ⊆ sj
+                                           (or (not (every? si sj)) ; proper subset → superset wins
+                                               (< i j))))))         ; equal → later wins
+                                (range n))))))]
+
+    (vec (keep-indexed (fn [i s]
+                         (when-not (covered? i) s))
+                       v))))
+
+(defn- int-runs
+  "Collapse a seq of integers into ascending inclusive `[lo hi]` runs of
+   CONSECUTIVE values (deduped + sorted first): `[1 2 3 5 6] → [[1 3] [5 6]]`.
+   Pure."
+  [xs]
+  (reduce (fn [acc n]
+            (if-let [[a b] (peek acc)]
+              (if (= n (inc b)) (conj (pop acc) [a n]) (conj acc [n n]))
+              (conj acc [n n])))
+          []
+          (distinct (sort xs))))
+
+(defn compress-scopes
+  "Compress a seq/set of concrete `tN/iN` scopes into a compact, model-legible
+   token vector, RELATIVE to `universe` (every `tN/iN` currently on the wire):
+     - a turn whose EVERY universe iteration is present  → `\"tN/*\"`
+     - a run of consecutive such FULL turns              → `\"tA-tB/*\"`
+     - full turns covering the WHOLE universe            → `[\"t*\"]`
+     - a partially-present turn stays explicit, its iteration numbers themselves
+       run-compressed: `\"tN/iM\"` (singleton) or `\"tN/iA-iC\"` (run).
+   Tokens are ordered by (turn, iter). Scopes/universe entries that don't parse
+   are ignored. Pure — same inputs → same output."
+  [scopes universe]
+  (let [by-turn
+        (fn [ss]
+          (reduce (fn [m sc]
+                    (if-let [[t i] (scope-key sc)]
+                      (update m t (fnil conj (sorted-set)) i)
+                      m))
+                  {}
+                  ss))
+
+        uni
+        (by-turn universe)
+
+        sel
+        (by-turn scopes)
+
+        full?
+        (fn [t]
+          (let [u (get uni t)]
+            (and (seq u) (every? (get sel t #{}) u))))
+
+        sel-turns
+        (sort (keys sel))
+
+        full-turns
+        (filterv full? sel-turns)
+
+        all-full?
+        (and (seq sel-turns) (= (set full-turns) (set (keys uni))) (every? full? sel-turns))]
+
+    (if all-full?
+      ["t*"]
+      (let [full-set
+            (set full-turns)
+
+            full-tokens
+            (map (fn [[a b]]
+                   [[a -1] (if (= a b) (str "t" a "/*") (str "t" a "-t" b "/*"))])
+                 (int-runs full-turns))
+
+            partial-tokens
+            (mapcat (fn [t]
+                      (when-not (full-set t)
+                        (map (fn [[a b]]
+                               [[t a] (if (= a b) (str "t" t "/i" a) (str "t" t "/i" a "-i" b))])
+                             (int-runs (get sel t)))))
+                    sel-turns)]
+
+        (mapv second (sort-by first (concat full-tokens partial-tokens)))))))
+
+(defn- unresolved-iters
+  "Iter tokens for ONE recorded fold when NO iteration universe is available to
+   resolve selectors against (resume / fresh-process seed, before the first live
+   send re-stamps `engine_iter_universe`). Stays in the canonical `\"iters\"`
+   vocabulary so the ledger is ONE shape everywhere: explicit `tN/iN` scopes are
+   run-compressed exactly like `compress-scopes`; a bare `tN` stays `\"tN\"`; a
+   range selector that can't resolve yet shows its BOUNDARY as a pending marker —
+   `\"<=tN/iN\"` (through), `\">=tN/iN\"` (since), `\"tA/iA..tB/iB\"` (from/to,
+   either bound open). Strings only. Pure."
+  [s]
+  (let [scopes
+        (get s "scopes")
+
+        explicit
+        (compress-scopes (filter scope-key scopes) [])
+
+        bare
+        (vec (sort (filter turn-key scopes)))
+
+        thr
+        (when-let [x (get s "through")]
+          (str "<=" x))
+
+        snc
+        (when-let [x (get s "since")]
+          (str ">=" x))
+
+        win
+        (when (or (get s "from") (get s "to")) (str (get s "from" "") ".." (get s "to" "")))]
+
+    (into [] (concat explicit bare (keep identity [thr snc win])))))
+
+(defn- join-scopes
+  "Join compressed scope tokens (compress-scopes / unresolved-iters output) into
+   ONE compact string, MERGING the iter-runs of the SAME turn:
+   [\"t3/i1-i2\" \"t3/i5-i6\" \"t3/i9\" \"t4/*\"] → \"t3/i1-i2,i5-i6,i9 t4/*\".
+   Whole-turn / marker tokens (`tN/*`, `tA-tB/*`, `t*`, `<=…`, `>=…`, `..`) pass
+   through untouched. nil for an empty seq. Pure."
+  [tokens]
+  (when (seq tokens)
+    (->> tokens
+         (reduce (fn [acc tok]
+                   (let [m
+                         (re-matches #"(t\d+)/(i[\d,i-]*)" tok)
+
+                         prev
+                         (peek acc)]
+
+                     (if (and m prev (= (:turn prev) (nth m 1)))
+                       (conj (pop acc) (update prev :iters conj (nth m 2)))
+                       (conj acc (if m {:turn (nth m 1) :iters [(nth m 2)]} {:tok tok})))))
+                 [])
+         (mapv (fn [g]
+                 (or (:tok g) (str (:turn g) "/" (str/join "," (:iters g))))))
+         (str/join " "))))
+
+(defn- fmt-tokens
+  "Compact human token count for the ledger headline: `950 -> 950`,
+   `53537 -> 54k`, `1000000 -> 1M`, `1250000 -> 1.2M`. Pure."
+  [n]
+  (let [n (long n)]
+    (cond (>= n 1000000)
+          (let [s (format "%.1f" (/ n 1000000.0))]
+            (str (if (str/ends-with? s ".0") (subs s 0 (- (count s) 2)) s) "M"))
+
+          (>= n 1000)
+          (str (Math/round (/ n 1000.0)) "k")
+
+          :else (str n))))
+
+(defn folds-view
+  "Model-facing LEDGER of what the recorded `session_fold` intents collapsed — ONE
+   canonical, COMPACT map so the model, the prompt and the `session[folds]` delta
+   all read the same small structure. String-keyed:
+     `\"saved\"`   headline `\"C/T steps (P%)\"` — how much of the wire is folded
+                  away (just `\"C steps folded\"` before a universe is stamped).
+     `\"folded\"`  one entry per SURVIVING (superseded) fold: `{\"at\" <scopes>,
+                  \"gist\"?}`, `at` the resolved + compressed scope STRING (never a
+                  raw through/from).
+     `\"live\"`    compact STRING of the scopes STILL on the wire = fold candidates.
+   With a stamped `universe` (the live `tN/iN` scopes this send) selectors are
+   resolved (`expand-through`) then covered folds dropped (`supersede-summaries`) →
+   concrete compressed scopes + a real live set. Without one (resume / fresh seed,
+   before the first live send) the SAME map is emitted best-effort: each fold's
+   `\"at\"` comes from `unresolved-iters` (explicit scopes compressed, ranges as
+   pending boundary markers) and `\"live\"` is empty until the next send re-stamps
+   the universe. Pure."
+  [summaries universe]
+  (let [universe
+        (into [] (comp (filter string?) (distinct)) universe)
+
+        has-uni?
+        (boolean (seq universe))
+
+        resolved
+        (if has-uni?
+          (supersede-summaries (expand-through summaries universe))
+          (filterv map? summaries))
+
+        collapsed-set
+        (into #{} (mapcat #(get % "scopes")) resolved)
+
+        live
+        (if has-uni? (into [] (remove collapsed-set) universe) [])
+
+        folded
+        (into []
+              (keep (fn [s]
+                      (let [toks (if has-uni?
+                                   (compress-scopes (get s "scopes") universe)
+                                   (unresolved-iters s))]
+                        (when-let [at (join-scopes toks)]
+                          (cond-> {"at" at}
+                            (contains? s "gist")
+                            (assoc "gist" (get s "gist")))))))
+              resolved)
+
+        c
+        (if has-uni?
+          (count collapsed-set)
+          (count (into #{} (comp (mapcat #(get % "scopes")) (filter scope-key)) resolved)))
+
+        total
+        (+ c (count live))
+
+        steps
+        (if (and has-uni? (pos? total))
+          (str c "/" total " steps")
+          (str c " steps folded"))
+
+        req
+        (some-> util (get "last_request_tokens") long)
+
+        win
+        (some-> util (get "model_input_limit") long)
+
+        sat
+        (get util "saturation")
+
+        saved
+        (if (and req (pos? req))
+          (str (fmt-tokens req)
+               (when (and win (pos? win)) (str "/" (fmt-tokens win)))
+               " tok now"
+               (when sat (str " (" sat "%)"))
+               " · " steps)
+          (if (and has-uni? (pos? total))
+            (str steps " (" (Math/round (* 100.0 (/ (double c) total))) "%)")
+            steps))]
+    {"saved" saved
+     "folded" folded
+     "live" (or (join-scopes (when has-uni? (compress-scopes live universe))) "")}))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
@@ -351,7 +696,8 @@
      (assoc "session_utilization" (get ctx "engine_utilization"))
 
      (seq (get ctx "session_summaries"))
-     (assoc "session_folds" (folds-view (get ctx "session_summaries"))))))
+     (assoc "session_folds"
+       (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe"))))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

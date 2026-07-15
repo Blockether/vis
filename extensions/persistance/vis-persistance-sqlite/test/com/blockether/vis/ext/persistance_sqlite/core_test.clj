@@ -2172,4 +2172,114 @@
             sid
             (h/store-session! s {:channel :tui :title "owned"})]
 
-        (expect (= "local" (:owner-id (persistance/db-get-session s sid)))))))
+        (expect (= "local" (:owner-id (persistance/db-get-session s sid))))))
+  (it "binds a project to its workspace_root and resolves it get-or-create"
+      (let [s
+            (h/store)
+
+            root
+            "/Users/me/code/acme"
+
+            p
+            (persistance/db-create-project! s {:name "acme" :workspace-root root})]
+
+        (expect (= root (:workspace-root p)))
+        ;; get-by-root round-trips the binding
+        (expect (= (:id p) (:id (persistance/db-get-project-by-root s "local" root))))
+        ;; a blank root is NOT a binding (stays a loose project)
+        (let [loose (persistance/db-create-project! s {:name "loose" :workspace-root "   "})]
+          (expect (nil? (:workspace-root loose))))))
+  (it "re-assigning a soul already in the project is idempotent (keeps its order)"
+      (let [s
+            (h/store)
+
+            p
+            (persistance/db-create-project! s {:name "idem" :channel :tui})
+
+            a
+            (h/store-session! s {:channel :tui :title "A"})
+
+            b
+            (h/store-session! s {:channel :tui :title "B"})
+
+            _
+            (doseq [sid [a b]]
+              (persistance/db-set-session-project! s sid (:id p)))
+
+            pos-of
+            (fn [sid]
+              (:project-position (persistance/db-get-session s sid)))
+
+            a0
+            (pos-of a)]
+
+        (expect (= 0 a0))
+        ;; re-assign A -> position UNCHANGED (not appended to the tail)
+        (persistance/db-set-session-project! s a (:id p))
+        (expect (= a0 (pos-of a)))))
+  (it "clearing membership drops the pointer and resets the stale ordinal"
+      (let [s
+            (h/store)
+
+            p
+            (persistance/db-create-project! s {:name "clear" :channel :tui})
+
+            a
+            (h/store-session! s {:channel :tui :title "A"})
+
+            b
+            (h/store-session! s {:channel :tui :title "B"})
+
+            _
+            (doseq [sid [a b]]
+              (persistance/db-set-session-project! s sid (:id p)))
+
+            _
+            (persistance/db-set-session-project! s b nil)
+
+            got
+            (persistance/db-get-session s b)]
+
+        (expect (nil? (:project-id got)))
+        (expect (= 0 (:project-position got)))))
+  (it
+    "a partial reorder still renumbers EVERY member to a gap-free 0..n-1"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "partial" :channel :tui})
+
+          a
+          (h/store-session! s {:channel :tui :title "A"})
+
+          b
+          (h/store-session! s {:channel :tui :title "B"})
+
+          c
+          (h/store-session! s {:channel :tui :title "C"})
+
+          _
+          (doseq [sid [a b c]]
+            (persistance/db-set-session-project! s sid (:id p)))
+
+          ;; name only B first; A and C are appended in current order
+          n
+          (persistance/db-reorder-project-sessions! s (:id p) [b])
+
+          order
+          (->> (persistance/db-list-sessions s :all)
+               (filter #(= (:id p) (:project-id %)))
+               (sort-by :project-position)
+               (mapv :title))
+
+          positions
+          (->> (persistance/db-list-sessions s :all)
+               (filter #(= (:id p) (:project-id %)))
+               (map :project-position)
+               sort
+               vec)]
+
+      (expect (= 3 n))
+      (expect (= "B" (first order)))
+      (expect (= [0 1 2] positions)))))

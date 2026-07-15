@@ -254,6 +254,82 @@
          (when (.isFile f) (vec (str/split-lines (slurp f)))))
        (catch Throwable _ nil)))
 
+(defn split-diff-hunks
+  "PURE: split a unified diff (as `lines`, WITH its `diff --git`/`index`/`--- `/
+   `+++ ` preamble) into `{:header [lines] :hunks [[lines] ...]}` — the preamble
+   shared by every hunk, then one line-vector per `@@` hunk. A valid one-hunk
+   patch for hunk N is therefore `(into header (nth hunks N))`, which `git apply`
+   accepts. Header is everything before the first `@@`; each hunk runs from its
+   `@@` line up to (not including) the next one."
+  [lines]
+  (let [header
+        (vec (take-while #(not (str/starts-with? % "@@")) lines))
+
+        body
+        (drop (count header) lines)
+
+        hunks
+        (reduce (fn [acc l]
+                  (if (str/starts-with? l "@@")
+                    (conj acc [l])
+                    (if (seq acc) (conj (pop acc) (conj (peek acc) l)) acc)))
+                []
+                body)]
+
+    {:header header :hunks hunks}))
+
+(defn- raw-diff-lines
+  "Diff for `path` (`git diff [--cached] -- path`) as RAW lines WITH preamble and
+   WITHOUT trimming — trailing whitespace on a blank context line must survive so
+   the reconstructed patch stays byte-faithful for `git apply`."
+  [root path cached?]
+  (let [args
+        (cond-> ["diff" "--no-color"]
+          cached?
+          (conj "--cached")
+
+          true
+          (into ["--" path]))
+
+        {:keys [exit out]}
+        (git! root args)]
+
+    (when (and (= 0 exit) (seq (str out))) (str/split-lines (str out)))))
+
+(defn- apply-hunk-patch!
+  "Write a one-hunk patch to a temp file and `git apply --cached [--reverse]` it
+   (run-git has no stdin, so a temp file is the path in). Returns the git result."
+  [root patch-lines reverse?]
+  (let [tmp (File/createTempFile "vis-hunk" ".patch")]
+    (try (spit tmp (str (str/join "\n" patch-lines) "\n"))
+         (git! root
+               (cond-> ["apply" "--cached"]
+                 reverse?
+                 (conj "--reverse")
+
+                 true
+                 (conj (.getPath tmp))))
+         (finally (.delete tmp)))))
+
+(defn stage-hunk!
+  "Magit's `s` on a diff HUNK: stage just hunk `hunk` (0-based, in `@@` order) of
+   `path`'s UNSTAGED diff — reconstruct that one hunk into a patch and
+   `git apply --cached` it, leaving the file's other hunks unstaged."
+  [root {:keys [path hunk]}]
+  (let [{:keys [header hunks]} (split-diff-hunks (raw-diff-lines root path false))]
+    (if-let [h (get hunks hunk)]
+      (action-result (str "Staged hunk in " path) (apply-hunk-patch! root (into header h) false))
+      {:ok? false :msg "No such hunk to stage"})))
+
+(defn unstage-hunk!
+  "Magit's `u` on a staged diff HUNK: unstage just hunk `hunk` (0-based) of
+   `path`'s STAGED diff — reverse-apply that one hunk to the index."
+  [root {:keys [path hunk]}]
+  (let [{:keys [header hunks]} (split-diff-hunks (raw-diff-lines root path true))]
+    (if-let [h (get hunks hunk)]
+      (action-result (str "Unstaged hunk in " path) (apply-hunk-patch! root (into header h) true))
+      {:ok? false :msg "No such hunk to unstage"})))
+
 ;; =============================================================================
 ;; Actions — all return {:ok? bool :msg str}
 ;; =============================================================================
@@ -530,7 +606,9 @@
 
 (defn- section-rows
   "One section: a `:section` header + its member rows + expanded diff rows.
-   Collapsed (see `section-open?`) it renders as the header alone."
+   Collapsed (see `section-open?`) it renders as the header alone. Diff rows of a
+   stageable file (staged/unstaged) carry `:area`/`:path`/`:hunk`/`:stageable?`
+   so the cursor can land on them for hunk-level `s`/`u`."
   [{:keys [area title rows expanded diff-fn]}]
   (when (seq rows)
     (let [open?
@@ -546,13 +624,30 @@
       (if-not open?
         [header]
         (into [header]
-              (mapcat (fn [row]
-                        (if (and expanded (contains? expanded [(:area row) (:path row)]))
-                          (into [row]
-                                (map (fn [l]
-                                       {:kind :diff :text (str "    " l)}))
-                                (or (when diff-fn (diff-fn row)) ["(no diff)"]))
-                          [row])))
+              (mapcat
+                (fn [row]
+                  (if (and expanded (contains? expanded [(:area row) (:path row)]))
+                    (let [stageable? (and (= :file (:kind row))
+                                          (contains? #{:staged :unstaged} (:area row)))]
+                      (into [row]
+                            ;; number diff lines by their enclosing `@@` hunk so a
+                            ;; stageable file's rows carry `:hunk`/`:stageable?`
+                            (:acc (reduce (fn [{:keys [hunk acc]} l]
+                                            (let [head? (str/starts-with? (str l) "@@")
+                                                  hunk (if head? (inc (long hunk)) hunk)]
+
+                                              {:hunk hunk
+                                               :acc (conj acc
+                                                          (cond-> {:kind :diff :text (str "    " l)}
+                                                            (and stageable? (nat-int? hunk))
+                                                            (assoc :area
+                                                              (:area row) :path
+                                                              (:path row) :hunk
+                                                              hunk :stageable?
+                                                              true)))}))
+                                          {:hunk -1 :acc []}
+                                          (or (when diff-fn (diff-fn row)) ["(no diff)"])))))
+                    [row])))
               rows)))))
 
 (defn- blank-row [] {:kind :blank :text ""})
@@ -698,9 +793,11 @@
                        (mapcat identity)))))))
 
 (defn selectable?
-  "Rows the dialog cursor can land on."
-  [{:keys [kind]}]
-  (contains? #{:file :section :stash :commit :repo} kind))
+  "Rows the dialog cursor can land on. A `:diff` row is landable only when it is
+   `:stageable?` (a hunk of a staged/unstaged file), so plain diff peeks stay
+   scroll-only."
+  [{:keys [kind stageable?]}]
+  (or (contains? #{:file :section :stash :commit :repo} kind) (and (= :diff kind) stageable?)))
 
 (defn first-selectable
   "Index of the first selectable row at-or-after `idx` (wrapping search both
@@ -718,6 +815,17 @@
     (loop [i (+ (long idx) (long dir))]
       (cond (or (neg? i) (>= i n)) idx
             (selectable? (nth rows i)) i
+            :else (recur (+ i (long dir)))))))
+
+(defn next-section
+  "Index of the nearest `:section`/`:repo` header from `idx` moving by `dir`
+   (+1/-1); `idx` unchanged when there is none that way. Magit's `n`/`p`
+   section-to-section jump."
+  [rows idx dir]
+  (let [n (count rows)]
+    (loop [i (+ (long idx) (long dir))]
+      (cond (or (neg? i) (>= i n)) idx
+            (contains? #{:section :repo} (:kind (nth rows i))) i
             :else (recur (+ i (long dir)))))))
 
 (defn section-of
