@@ -2809,3 +2809,81 @@
         (expect (= 1200 (auth-propagation-backoff-ms 0)))
         (expect (= 3600 (auth-propagation-backoff-ms 2)))
         (expect (= 5000 (auth-propagation-backoff-ms 10))))))
+
+(def ^:private env-cache (deref #'lp/cache))
+(def ^:private new-cache-entry (deref #'lp/new-cache-entry))
+(def ^:private touch-entry! (deref #'lp/touch-entry!))
+(def ^:private evict-if-idle! (deref #'lp/evict-if-idle!))
+
+(defn- backdate-entry!
+  "Push `entry`'s :last-active `ms` into the past so it reads as idle."
+  [entry ms]
+  (let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
+    (.set la (- (System/currentTimeMillis) ms))))
+
+(defdescribe env-reaper-test
+             ;; The idle-env reaper is the authoritative backstop against unbounded
+             ;; GraalPy Context growth. An empty {} env is safe to dispose:
+             ;; dispose-environment! no-ops with no :python-context / :db-info.
+             (describe "evict-if-idle!"
+                       (it "disposes + evicts an idle, unlocked entry"
+                           (let [k
+                                 "reaper-test/idle"
+
+                                 entry
+                                 (new-cache-entry {})]
+
+                             (swap! env-cache assoc k entry)
+                             (try (backdate-entry! entry 10000)
+                                  (expect (true? (evict-if-idle! k 5000)))
+                                  (expect (not (contains? @env-cache k)))
+                                  (finally (swap! env-cache dissoc k)))))
+                       (it
+                         "skips an entry whose lock is held (a running turn)"
+                         (let [k
+                               "reaper-test/busy"
+
+                               entry
+                               (new-cache-entry {})
+
+                               ^java.util.concurrent.locks.ReentrantLock lock
+                               (:lock entry)]
+
+                           (swap! env-cache assoc k entry)
+                           ;; A running turn holds the lock on ANOTHER thread;
+                           ;; ReentrantLock is reentrant, so the lock MUST be
+                           ;; held off-thread for tryLock to genuinely fail.
+                           (let [held
+                                 (promise)
+
+                                 release
+                                 (promise)
+
+                                 holder
+                                 (Thread. ^Runnable
+                                          (fn []
+                                            (.lock lock)
+                                            (deliver held true)
+                                            @release
+                                            (.unlock lock)))]
+
+                             (try (backdate-entry! entry 10000)
+                                  (.start holder)
+                                  @held
+                                  (expect (false? (evict-if-idle! k 5000)))
+                                  (expect (contains? @env-cache k))
+                                  (finally (deliver release true)
+                                           (.join holder 1000)
+                                           (swap! env-cache dissoc k))))))
+                       (it "keeps a freshly-touched (not-yet-idle) entry"
+                           (let [k
+                                 "reaper-test/warm"
+
+                                 entry
+                                 (new-cache-entry {})]
+
+                             (swap! env-cache assoc k entry)
+                             (try (touch-entry! entry)
+                                  (expect (false? (evict-if-idle! k 60000)))
+                                  (expect (contains? @env-cache k))
+                                  (finally (swap! env-cache dissoc k)))))))

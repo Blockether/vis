@@ -52,7 +52,9 @@
   ring/ring-core                                  {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.5"}
   metosin/reitit-ring                             {:mvn/version "0.10.1"}
-  com.google.zxing/core                           {:mvn/version "3.5.3"}}
+  com.google.zxing/core                           {:mvn/version "3.5.3"}
+  ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
+  com.github.mwiede/jsch                          {:mvn/version "2.28.4"}}
 
  :aliases
  {:lint   {:deps {io.github.enajski/codestyle

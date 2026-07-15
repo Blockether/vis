@@ -405,11 +405,11 @@
                                     0)
 
                                   rr
-                                  (long (section-rows (or (:result-render f) (:result f))))
+                                  (section-rows (or (:result-render f) (:result f)))
 
                                   cardr
                                   (long (reduce (fn [^long x card]
-                                                  (+ x 1 (long (section-rows (:body card)))))
+                                                  (+ x 1 (section-rows (:body card))))
                                                 0
                                                 (:cards f)))
 
@@ -503,13 +503,13 @@
   [messages settings bubble-w idx message detail-expansions session-id]
   (let [k (height-key message bubble-w settings detail-expansions session-id)]
     (or (locking estimate-cache (.get estimate-cache k))
-        (let [h (long (estimated-height-with-turn-separator messages
-                                                            settings
-                                                            bubble-w
-                                                            idx
-                                                            message
-                                                            detail-expansions
-                                                            session-id))]
+        (let [h (estimated-height-with-turn-separator messages
+                                                      settings
+                                                      bubble-w
+                                                      idx
+                                                      message
+                                                      detail-expansions
+                                                      session-id)]
           (locking estimate-cache (.put estimate-cache k h))
           h))))
 

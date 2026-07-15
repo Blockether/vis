@@ -3172,9 +3172,10 @@
 (defn- persist-tabs!
   "Persist the current open-tab set into the launch PROJECT (a project IS a tab
    set) — no EDN sidecar. Assigns every open tab's session to the project and
-   rewrites `project_position` to match tab order. ADD-only: closing a tab does
-   NOT unassign it, so the project stays a durable tab set (use the navigator's
-   'Remove from project' to drop one). Best effort and off the input thread — a
+   rewrites `project_position` to match tab order. Adds + reorders only; an
+   explicit tab CLOSE removes its session from the project (a `:close-tab` fx in
+   state.clj), so the open tabs and the project's members stay in lockstep.
+   Best effort and off the input thread — a
    gateway hiccup never breaks the UI."
   []
   (when-let [pid (ensure-active-project-id!)]
@@ -4080,7 +4081,7 @@
                                                                       (catch Throwable _ nil))]
                                                      (open-session-tab! sr false))))
                                                (catch Throwable _ nil))))))
-                 ;; C-x P — switch the ACTIVE project (its tab set). Pick a
+                 ;; C-x w — switch the ACTIVE project (its tab set). Pick a
                  ;; project, re-point `active-project-id*`, and open that
                  ;; project's member sessions as tabs. A project IS a tab set.
                  switch-project!
@@ -4101,18 +4102,25 @@
                                          #(dlg/searchable-select! screen "Switch project…" items))]
                          (when-let [pid (some-> (:id pick)
                                                 str)]
-                           (reset! active-project-id* pid)
-                           (let [ids (project-member-session-ids pid)]
-                             (if (seq ids)
+                           (when-not (= pid cur)
+                             (persist-tabs!)
+                             (reset! active-project-id* pid)
+                             (let [old-tab-ids (mapv :id (:tabs @state/app-db))
+                                   ids (project-member-session-ids pid)
+                                   opened (atom 0)]
+
                                (doseq [sid ids]
                                  (when-not (state/tab-id-for-session @state/app-db sid)
                                    (when-let [sr (try (chat/resume-session sid)
                                                       (catch Throwable _ nil))]
-                                     (open-session-tab! sr false))))
-                               (vis/notify! "Project has no sessions yet"
-                                            :level :info
-                                            :ttl-ms copy-success-ttl-ms)))
-                           (persist-tabs!))))))]
+                                     (open-session-tab! sr false)
+                                     (swap! opened inc))))
+                               (when (zero? @opened)
+                                 (when-let [config (:config @state/app-db)]
+                                   (open-session-tab! (chat/make-session config) false)))
+                               (doseq [tid old-tab-ids]
+                                 (state/dispatch [:close-tab tid true]))
+                               (persist-tabs!))))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))

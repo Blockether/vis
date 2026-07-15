@@ -417,7 +417,7 @@
 
         ;; minimal accent ＋ chip — the footer owns the `C-x n` hint
         plus-w
-        (long (p/display-width plus-label))
+        (p/display-width plus-label)
 
         plus-gap
         1

@@ -91,7 +91,7 @@ vis.extension(
     symbols=[
         vis.symbol(counter_bump, tag=\"mutation\"),
         vis.symbol(counter_read, tag=\"observation\"),
-        vis.symbol(counter_boom, tag=\"observation\"),
+        vis.symbol(counter_boom, tag=\"observation\", is_hidden=True),
     ],
     prompt=\"counter_ surface active.\",
     slash_commands=[vis.slash(\"count\", _slash, doc=\"Show the counter.\")],
@@ -119,7 +119,11 @@ vis.extension(
                        (let [bump (first (get-in ext [:ext/engine :ext.engine/symbols]))]
                          (expect (str/includes? (:ext.symbol/doc bump) "bump the counter"))
                          (expect (= ['[by]] (:ext.symbol/arglists bump)))
-                         (expect (= :mutation (:ext.symbol/tag bump))))))))
+                         (expect (= :mutation (:ext.symbol/tag bump))))
+                       ;; is_hidden=True -> the :ext.symbol/hidden? predicate key
+                       (let [boom (last (get-in ext [:ext/engine :ext.engine/symbols]))]
+                         (expect (= 'boom (:ext.symbol/symbol boom)))
+                         (expect (true? (:ext.symbol/hidden? boom))))))))
   (it "is idempotent: an unchanged scan is a no-op"
       (with-loaded {"counter.py" counter-py}
                    (fn [_ {:keys [ext-dir]}]
@@ -708,7 +712,7 @@ def _token():
 
 
 def _status():
-    return {'authenticated?': True, 'source': 'env-var', 'provider_id': 'acme'}
+    return {'is_authenticated': True, 'source': 'env-var', 'provider_id': 'acme'}
 
 
 def _detect():
@@ -754,7 +758,7 @@ def _auth_prompt():
 def _enrich(provider, router_opts):
     # provider crosses in as a plain string-keyed dict (stringify-deep) so the
     # hook can read model names; return an enriched model list.
-    return [{'name': m['name'], 'context': 262144, 'tool_call': True}
+    return [{'name': m['name'], 'context': 262144, 'is_tool_call': True}
             for m in provider['models']]
 
 
@@ -786,21 +790,21 @@ vis.extension(
                     'default_models': ['acme-large', 'acme-small'],
                     'responses_path': '/responses',
                     'extra_body': {'temperature': 0.6, 'top_p': 0.95}},
-            get_token=_token,
-            status=_status,
-            detect=_detect,
-            logout=_logout,
-            limits=_limits,
-            refresh_token=_refresh,
-            enrich_models=_enrich,
-            on_selected=_on_selected,
+            get_token_fn=_token,
+            status_fn=_status,
+            detect_fn=_detect,
+            logout_fn=_logout,
+            limits_fn=_limits,
+            refresh_token_fn=_refresh,
+            enrich_models_fn=_enrich,
+            on_selected_fn=_on_selected,
         ),
         vis.provider(
             id='acme-oauth',
             label='Acme OAuth',
-            refresh_token=_refresh_with_arg,
-            auth=_auth,
-            auth_prompt=_auth_prompt,
+            refresh_token_fn=_refresh_with_arg,
+            auth_fn=_auth,
+            auth_prompt_fn=_auth_prompt,
         ),
     ],
 )
@@ -888,7 +892,7 @@ vis.extension(
                      ((:provider/refresh-token-fn oauth) "old-rejected-token")))
           ;; enrich-models-fn: host provider + router-opts marshal INTO Python as
           ;; plain string-keyed dicts; the return keywordizes and the snake
-          ;; `tool_call` becomes the `:tool-call?` key the router reads.
+          ;; `is_tool_call` becomes the `:tool-call?` key the router reads.
           (expect (= [{:name "acme-large" :context 262144 :tool-call? true}
                       {:name "acme-small" :context 262144 :tool-call? true}]
                      ((:provider/enrich-models-fn p)

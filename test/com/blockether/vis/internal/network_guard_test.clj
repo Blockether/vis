@@ -12,7 +12,7 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
-(defn- ^Context pctx [ctx] (get ctx :python-context))
+(defn- pctx ^Context [ctx] (get ctx :python-context))
 
 (defn- outcome
   "Eval a DNS resolution for `host` in `ctx` and classify: `:ok`, `:blocked`

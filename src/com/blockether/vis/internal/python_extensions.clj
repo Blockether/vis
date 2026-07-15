@@ -95,7 +95,7 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'providers': list(providers or []),
     }
 
-def symbol(fn, name=None, tag='observation', hidden=False):
+def symbol(fn, name=None, tag='observation', is_hidden=False):
     if not callable(fn):
         raise ValueError('vis.symbol(fn, ...) requires a callable')
     if tag not in ('observation', 'mutation'):
@@ -112,7 +112,8 @@ def symbol(fn, name=None, tag='observation', hidden=False):
                         inspect.Parameter.POSITIONAL_OR_KEYWORD):
             params.append(p.name)
     return {'marker': 'symbol', 'fn': fn, 'name': name or fn.__name__, 'tag': tag,
-            'hidden': bool(hidden), 'doc': doc, 'params': params, 'varargs': varargs}
+            'hidden': bool(is_hidden),
+            'doc': doc, 'params': params, 'varargs': varargs}
 
 def slash(name, run, doc=None, usage=None):
     if not name or not isinstance(name, str):
@@ -131,26 +132,28 @@ def op_hook(ops, fn, phase='before'):
         raise ValueError('vis.op_hook requires a non-empty ops list')
     return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
 
-def provider(id, label, preset=None, get_token=None, detect=None, status=None,
-             logout=None, limits=None, refresh_token=None, auth=None,
-             auth_prompt=None, enrich_models=None, on_selected=None):
+def provider(id, label, preset=None, get_token_fn=None, detect_fn=None,
+             status_fn=None, logout_fn=None, limits_fn=None, refresh_token_fn=None,
+             auth_fn=None, auth_prompt_fn=None, enrich_models_fn=None,
+             on_selected_fn=None):
     if not id or not isinstance(id, str):
         raise ValueError('vis.provider(...) requires id=<non-empty string>')
     if not label or not isinstance(label, str):
         raise ValueError('vis.provider(...) requires label=<non-empty string>')
-    for slot, f in (('get_token', get_token), ('detect', detect),
-                    ('status', status), ('logout', logout),
-                    ('limits', limits), ('refresh_token', refresh_token),
-                    ('auth', auth), ('auth_prompt', auth_prompt),
-                    ('enrich_models', enrich_models), ('on_selected', on_selected)):
+    for slot, f in (('get_token_fn', get_token_fn), ('detect_fn', detect_fn),
+                    ('status_fn', status_fn), ('logout_fn', logout_fn),
+                    ('limits_fn', limits_fn), ('refresh_token_fn', refresh_token_fn),
+                    ('auth_fn', auth_fn), ('auth_prompt_fn', auth_prompt_fn),
+                    ('enrich_models_fn', enrich_models_fn),
+                    ('on_selected_fn', on_selected_fn)):
         if f is not None and not callable(f):
             raise ValueError('vis.provider %s= must be callable or None' % (slot,))
     return {'marker': 'provider', 'id': id, 'label': label,
-            'preset': dict(preset or {}), 'get_token': get_token,
-            'detect': detect, 'status': status, 'logout': logout,
-            'limits': limits, 'refresh_token': refresh_token,
-            'auth': auth, 'auth_prompt': auth_prompt,
-            'enrich_models': enrich_models, 'on_selected': on_selected}
+            'preset': dict(preset or {}), 'get_token_fn': get_token_fn,
+            'detect_fn': detect_fn, 'status_fn': status_fn, 'logout_fn': logout_fn,
+            'limits_fn': limits_fn, 'refresh_token_fn': refresh_token_fn,
+            'auth_fn': auth_fn, 'auth_prompt_fn': auth_prompt_fn,
+            'enrich_models_fn': enrich_models_fn, 'on_selected_fn': on_selected_fn}
 
 def ok(title, body=None, data=None):
     return {'marker': 'slash_result', 'status': 'ok', 'title': str(title),
@@ -609,15 +612,28 @@ def __vis_registration__():
 (def ^:private provider-enum-keys
   #{:provider-id :id :source :status :kind :scope :precision :api-style :unit})
 
+(defn- py-key->kw
+  "A Python provider-map key -> Clojure keyword. Underscores become dashes, and a
+   boolean-predicate `is_foo` / `is-foo` becomes the Clojure `:foo?` convention
+   (Python identifiers can't carry the trailing `?`, so `is_authenticated` is how
+   an author spells `:authenticated?`, `is_default` -> `:default?`, etc.). A bare
+   `is` / `is_` is left as-is."
+  [k]
+  (let [s (str/replace (str k) "_" "-")]
+    (if (and (str/starts-with? s "is-") (> (count s) 3))
+      (keyword (str (subs s 3) "?"))
+      (keyword s))))
+
 (defn- keywordize
   "Deep-convert a Python string-keyed provider map to keyword keys, coercing a
-   bounded allow-list of enum-ish values to keywords too."
+   bounded allow-list of enum-ish values to keywords too. Keys follow
+   `py-key->kw` (so `is_authenticated` -> `:authenticated?`)."
   [x]
   (cond (map? x)
         (into
           {}
           (map (fn [[k v]]
-                 (let [kk (keyword (str/replace (str k) "_" "-"))]
+                 (let [kk (py-key->kw k)]
                    [kk (if (and (string? v) (provider-enum-keys kk)) (keyword v) (keywordize v))])))
           x)
         (sequential? x) (mapv keywordize x)
@@ -638,13 +654,13 @@ def __vis_registration__():
         :else x))
 
 (def ^:private preset-known-keys
-  #{"base-url" "base_url" "api-style" "api_style" "default-models" "default_models" "hidden"
-    "hidden?"})
+  #{"base-url" "base_url" "api-style" "api_style" "default-models" "default_models" "is-hidden"
+    "is_hidden"})
 
 (defn- ->preset
   "UI/runtime defaults from a `vis.provider(preset=...)` dict. The four common
    keys are coerced precisely (`:base-url` string, `:api-style` keyword,
-   `:default-models` vec of strings, `:hidden?` boolean, dash or underscore
+   `:default-models` vec of strings, `:hidden?` boolean — authored `is_hidden`,
    accepted). Every OTHER key is passed through verbatim (top-level name
    dash-normalized to the kebab preset convention, values kept as-is) so a
    Python provider can set `:extra-body`, `:responses-path`, `:context`,
@@ -676,8 +692,8 @@ def __vis_registration__():
       (g "default-models" "default_models")
       (assoc :default-models (mapv str (g "default-models" "default_models")))
 
-      (some? (g "hidden" "hidden?"))
-      (assoc :hidden? (boolean (g "hidden" "hidden?"))))))
+      (some? (g "is-hidden" "is_hidden"))
+      (assoc :hidden? (boolean (g "is-hidden" "is_hidden"))))))
 
 (defn- call-provider-fn
   "Invoke a Python provider callable with `args`, tolerating an arg-count
@@ -778,11 +794,12 @@ def __vis_registration__():
   "Wrap a Python `enrich_models(provider, router_opts)` callable as
    `:provider/enrich-models-fn`. The host hands the svar-shaped provider and
    the router opts INTO Python as plain string-keyed dicts (`stringify-deep`);
-   the returned model list is keywordized, and each model's snake `tool_call`
-   is renamed to the `:tool-call?` key the router reads (Python can't spell the
-   `?`). A non-sequential return or any error yields nil, which the loop's
-   `enrich-provider-models` treats as 'no enrichment' — the router still
-   builds on svar's conservative defaults."
+   the returned model list is keywordized, so each model's `is_tool_call`
+   predicate becomes the `:tool-call?` key the router reads (the `is_<name>` ->
+   `:<name>?` convention `py-key->kw` applies everywhere). A non-sequential
+   return or any error yields nil, which the loop's `enrich-provider-models`
+   treats as 'no enrichment' — the router still builds on svar's conservative
+   defaults."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [svar-provider router-opts]
     (try (let [r (call-py-ext ext-name
@@ -790,15 +807,7 @@ def __vis_registration__():
                               ctx
                               pyfn
                               [(stringify-deep svar-provider) (stringify-deep router-opts)])]
-           (when (sequential? r)
-             (mapv (fn [m]
-                     (let [km (keywordize m)]
-                       (if (contains? km :tool-call)
-                         (-> km
-                             (assoc :tool-call? (:tool-call km))
-                             (dissoc :tool-call))
-                         km)))
-                   r)))
+           (when (sequential? r) (mapv keywordize r)))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
@@ -837,38 +846,38 @@ def __vis_registration__():
       (seq preset)
       (assoc :provider/preset preset)
 
-      (adapt "get_token")
-      (assoc :provider/get-token-fn (adapt "get_token"))
+      (adapt "get_token_fn")
+      (assoc :provider/get-token-fn (adapt "get_token_fn"))
 
-      (adapt "detect")
-      (assoc :provider/detect-fn (adapt "detect"))
+      (adapt "detect_fn")
+      (assoc :provider/detect-fn (adapt "detect_fn"))
 
-      (adapt "status")
-      (assoc :provider/status-fn (adapt "status"))
+      (adapt "status_fn")
+      (assoc :provider/status-fn (adapt "status_fn"))
 
-      (adapt "logout")
-      (assoc :provider/logout-fn (adapt "logout"))
+      (adapt "logout_fn")
+      (assoc :provider/logout-fn (adapt "logout_fn"))
 
-      (adapt "limits")
-      (assoc :provider/limits-fn (adapt "limits"))
+      (adapt "limits_fn")
+      (assoc :provider/limits-fn (adapt "limits_fn"))
 
-      (adapt "refresh_token")
-      (assoc :provider/refresh-token-fn (adapt "refresh_token"))
+      (adapt "refresh_token_fn")
+      (assoc :provider/refresh-token-fn (adapt "refresh_token_fn"))
 
-      (instance? Value (get spec "auth"))
-      (assoc :provider/auth-fn (auth-fn-adapter ext-name ctx (get spec "auth")))
+      (instance? Value (get spec "auth_fn"))
+      (assoc :provider/auth-fn (auth-fn-adapter ext-name ctx (get spec "auth_fn")))
 
-      (instance? Value (get spec "auth_prompt"))
+      (instance? Value (get spec "auth_prompt_fn"))
       (assoc :provider/auth-prompt-fn
-        (auth-prompt-fn-adapter ext-name ctx (get spec "auth_prompt")))
+        (auth-prompt-fn-adapter ext-name ctx (get spec "auth_prompt_fn")))
 
-      (instance? Value (get spec "enrich_models"))
+      (instance? Value (get spec "enrich_models_fn"))
       (assoc :provider/enrich-models-fn
-        (enrich-models-fn-adapter ext-name ctx (get spec "enrich_models")))
+        (enrich-models-fn-adapter ext-name ctx (get spec "enrich_models_fn")))
 
-      (instance? Value (get spec "on_selected"))
+      (instance? Value (get spec "on_selected_fn"))
       (assoc :provider/on-selected-fn
-        (on-selected-fn-adapter ext-name ctx (get spec "on_selected"))))))
+        (on-selected-fn-adapter ext-name ctx (get spec "on_selected_fn"))))))
 
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."

@@ -348,17 +348,15 @@
 
 (defdescribe
   session-fold-ctx-reflection-test
-  (it "folds-view resolves selectors into a concrete collapsed+live ledger"
+  (it "folds-view resolves selectors into a concrete collapsed+live one-line ledger"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
 
             out
             (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni)]
 
-        (expect (= "t1/*" (get-in out ["folded" 0 "at"]))) ; whole turn -> tN/*
-        (expect (= "mapped" (get-in out ["folded" 0 "gist"])))
-        (expect (= "t2/*" (get out "live"))) ; turn 2 still fully live
-        (expect (= "3/5 steps (60%)" (get out "saved")))))
+        ;; ONE compact line: <saved> | <fold> | live <scopes>
+        (expect (= "3/5 steps (60%) | t1/*: mapped | live t2/*" out))))
   (it "a through selector is RESOLVED (not shown raw); gist-less stays gist-less"
       (let [uni
             ["t1/i1" "t1/i2" "t2/i1"]
@@ -366,9 +364,7 @@
             out
             (folds-view [{"through" "t1/i2"}] uni)]
 
-        (expect (= "t1/*" (get-in out ["folded" 0 "at"])))
-        (expect (not (contains? (get-in out ["folded" 0]) "gist")))
-        (expect (= "t2/*" (get out "live")))))
+        (expect (= "2/3 steps (67%) | t1/* | live t2/*" out))))
   (it "a partial-turn fold stays explicit, iteration numbers run-compressed"
       (let [uni
             ["t3/i1" "t3/i2" "t3/i3" "t3/i4" "t3/i5"]
@@ -376,37 +372,26 @@
             out
             (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni)]
 
-        (expect (= "t3/i1-i2,i4" (get-in out ["folded" 0 "at"]))) ; same-turn runs merge
-        (expect (= "t3/i3,i5" (get out "live")))))
-  (it
-    "a broader re-fold SUPERSEDES a finer one in the ledger (one folded entry)"
-    (let [uni
-          ["t1/i1" "t1/i2" "t1/i3"]
+        ;; same-turn runs merge in the fold, gaps stay live
+        (expect (= "3/5 steps (60%) | t3/i1-i2,i4: g | live t3/i3,i5" out))))
+  (it "a broader re-fold SUPERSEDES a finer one in the ledger (one folded entry)"
+      (let [uni
+            ["t1/i1" "t1/i2" "t1/i3"]
 
-          out
-          (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
+            out
+            (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
 
-      (expect (= 1 (count (get out "folded"))))
-      (expect (= "meta" (get-in out ["folded" 0 "gist"])))
-      (expect (= "t*" (get-in out ["folded" 0 "at"]))) ; every turn folded -> t*
-      (expect (= "" (get out "live")))))
-  (it "with NO universe (resume / fresh seed) it stays the SAME canonical map shape"
-      ;; one shape everywhere: still {saved folded live}; explicit scopes compress,
-      ;; unresolved ranges show pending boundary markers.
+        ;; only the meta gist survives; every turn folded -> t*, nothing live
+        (expect (= "3/3 steps (100%) | t*: meta" out))))
+  (it "with NO universe (resume / fresh seed) it stays the SAME one-line string shape"
+      ;; explicit scopes compress; unresolved ranges show pending boundary markers.
       (let [out (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}
                              {"since" "t3/i1"} {"from" "t1/i1" "to" "t1/i4"}]
                             nil)]
-        (expect (= ["folded" "live" "saved"] (sort (keys out)))) ; identical envelope
-        (expect (= "t1/i1-i2" (get-in out ["folded" 0 "at"]))) ; explicit run-compressed
-        (expect (= "mapped" (get-in out ["folded" 0 "gist"])))
-        (expect (= "<=t2/i5" (get-in out ["folded" 1 "at"]))) ; through -> pending marker
-        (expect (= ">=t3/i1" (get-in out ["folded" 2 "at"]))) ; since -> pending marker
-        (expect (= "t1/i1..t1/i4" (get-in out ["folded" 3 "at"]))) ; from/to -> window
-        (expect (= "" (get out "live")))
-        (expect (= "2 steps folded" (get out "saved")))) ; explicit iters only
+        (expect (string? out))
+        (expect (= "2 steps folded | t1/i1-i2: mapped | <=t2/i5 | >=t3/i1 | t1/i1..t1/i4" out)))
       (let [out (folds-view [{"scopes" #{"t1/i1"}}] nil)]
-        (expect (= [{"at" "t1/i1"}] (get out "folded"))) ; gist-less stays gist-less
-        (expect (= "1 steps folded" (get out "saved")))))
+        (expect (= "1 steps folded | t1/i1" out))))
   (it "session-view derives session_folds only when summaries exist"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (expect (contains? (eng/session-view
@@ -420,7 +405,7 @@
             (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
 
         (expect (re-find #"^session\[\"folds\"\] = " d))
-        (expect (re-find #"folded" d))
+        (expect (re-find #"steps" d))
         (expect (re-find #"t1/\*" d)) ; whole turn compressed in the delta
         (expect (re-find #"mapped" d))))
   (it "appending a second fold re-emits the folds delta (only that key moves)"

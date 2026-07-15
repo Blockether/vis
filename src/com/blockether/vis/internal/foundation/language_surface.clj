@@ -6,7 +6,6 @@
   active handler for the requested/current language. REPL lifecycle is resource
   backed: `repl_start` creates a language-owned session resource and `repl_stop`
   stops one by id. Live REPLs also surface in the ctx `resources` block."
-  (:refer-clojure :exclude [format test])
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]))

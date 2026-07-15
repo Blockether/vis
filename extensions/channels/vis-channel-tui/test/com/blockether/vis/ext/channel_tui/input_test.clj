@@ -342,8 +342,8 @@
         (expect (= {:action :continue :state line-gone}
                    (input/handle-key (ctrl-key (Character. \u)) state))))))
 
-(defn- ^InputDecoder custom-decoder
-  [s]
+(defn- custom-decoder
+  ^InputDecoder [s]
   (let [decoder (InputDecoder. (StringReader. s))]
     (.addProfile decoder
                  (reify

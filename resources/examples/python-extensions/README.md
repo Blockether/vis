@@ -15,7 +15,7 @@ in a live session):
 | `protected_paths.py` | **Op hooks** — a before-hook that blocks file mutations on protected paths |
 | `pirate.py` | Dynamic **prompt fragment** (a callable, re-evaluated per turn) toggled by `/pirate` |
 | `github_issues.py` | Real-world integration: **HTTP from the trusted context**, config via slash + state, secrets via env vars |
-| `provider_acme.py` | **LLM provider** (`vis.provider`) — a router-callable provider from a `preset` + `get_token`, credentials via env vars |
+| `provider_acme.py` | **LLM provider** (`vis.provider`) — a router-callable provider from a `preset` + `get_token_fn`, credentials via env vars |
 
 The full authoring guide is the `python-extensions` page of Vis's own docs
 (`vis docs` site, or ask Vis: *"how do I write a Python extension?"* — it

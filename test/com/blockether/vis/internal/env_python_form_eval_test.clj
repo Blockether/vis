@@ -256,6 +256,17 @@ await patch({'path': css})" "t1/i1")]
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (nil? (:error r2)))
           (expect (= "ran" (:result r2)))))
+    ;; A `for`/`with` loop TARGET is transient scratch — it stays function-local
+    ;; to the wrapped block, so it neither persists nor clobbers the callable.
+    ;; It must NOT trip the durable-rebind guard.
+    (it "allows a `for` loop target that shadows a tool name and keeps the callable usable"
+        (let [ctx (mk)
+              r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
+              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+
+          (expect (nil? (:error r1)))
+          (expect (nil? (:error r2)))
+          (expect (= "patched" (:result r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
         (let [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
                                                                        "patched")}))

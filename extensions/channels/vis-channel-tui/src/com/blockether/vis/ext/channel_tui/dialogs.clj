@@ -484,7 +484,7 @@
                  not-empty)
 
          hint-w
-         (if hint (+ 2 (long (p/display-width hint))) 0)
+         (if hint (+ 2 (p/display-width hint)) 0)
 
          draw-text
          (ellipsize (str prefix label) (max 0 (- inner-w 2 hint-w)))]
@@ -496,7 +496,7 @@
        (p/put-str! g (inc left) row draw-text))
      (when hint
        (p/set-colors! g t/dialog-hint t/dialog-bg)
-       (p/put-str! g (- (+ left inner-w) (long (p/display-width hint))) row hint)
+       (p/put-str! g (- (+ left inner-w) (p/display-width hint)) row hint)
        (p/set-colors! g t/dialog-fg t/dialog-bg)))))
 (defn- draw-checkbox-item!
   ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor

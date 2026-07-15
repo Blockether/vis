@@ -1252,7 +1252,7 @@
   ;; daemon to stop that session's shell_bg children / REPLs and drop its
   ;; live runtime). A session with a running or queued turn is LEFT alone —
   ;; it stays resumable and keeps streaming; only process exit force-stops.
-  (fn [db [_ tab-id]]
+  (fn [db [_ tab-id keep-project?]]
     (let [db
           (-> db
               ensure-tabs
@@ -1320,9 +1320,18 @@
                 db)]
 
           {:db db
-           :fx (when (and closing-sid closing-idle? (not open-elsewhere?))
-                 [[:release-session-listener closing-sid]
-                  [:release-session-runtime closing-sid]])})))))
+           :fx (cond-> []
+                 ;; Tabs ARE the project's member sessions: an explicit close
+                 ;; removes the session from the active project (it survives as a
+                 ;; loose session, reachable via the navigator). Skipped on a
+                 ;; project SWITCH (keep-project? swaps the VIEW without disowning
+                 ;; the old set) or when the sid is still open in another tab.
+                 (and closing-sid (not keep-project?) (not open-elsewhere?))
+                 (conj [:unassign-session-project closing-sid])
+
+                 (and closing-sid closing-idle? (not open-elsewhere?))
+                 (into [[:release-session-listener closing-sid]
+                        [:release-session-runtime closing-sid]]))})))))
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))
@@ -3517,3 +3526,10 @@
         ;; transcript resumable; best-effort, never daemon-spawning.
         (fn [sid]
           (when sid (try (vis/gateway-release-session-runtime! sid) (catch Throwable _ nil)))))
+(reg-fx :unassign-session-project
+        ;; Tabs ARE the launch project's member sessions, so an explicit tab
+        ;; close drops that session from the project (SET NULL — the session is
+        ;; NOT deleted; it lingers loose and is reachable via the navigator).
+        ;; A project SWITCH keeps membership (see :close-tab keep-project?).
+        (fn [sid]
+          (when sid (try (vis/gateway-assign-project! sid nil) (catch Throwable _ nil)))))
