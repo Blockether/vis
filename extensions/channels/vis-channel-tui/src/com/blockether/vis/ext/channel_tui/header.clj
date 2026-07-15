@@ -358,8 +358,6 @@
   [id-short]
   (id-copy-block-text id-short))
 
-(defn- clamp-long [n lo hi] (max (long lo) (min (long hi) (long n))))
-
 (defn- active-strip-index
   [entries active-id]
   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries)) 0))
@@ -388,7 +386,7 @@
         (quot max-visible 2)
 
         start
-        (long (if overflow? (clamp-long (- active-idx half) 0 (max 0 (- n max-visible))) 0))
+        (if overflow? (p/clamp (- active-idx half) 0 (long (max 0 (- n max-visible)))) 0)
 
         end
         (min n (+ start max-visible))]
