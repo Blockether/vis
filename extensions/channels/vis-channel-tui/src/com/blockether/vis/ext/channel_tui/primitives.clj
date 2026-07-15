@@ -337,136 +337,30 @@
        (let [c (int (.charAt g 0))]
          (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
-(defn- sanitize-control-chars
-  "Replace every ASCII control character in `s` (codepoints 0x00-0x1F)
-   with `/` so a stray `\n` / `\t` / `\r` from a malformed link
-   parse or bad upstream string can NEVER take the render thread
-   down. Returns `s` UNCHANGED (same identity, no allocation) when
-   the input is clean - the overwhelmingly common case - so we
-   don't pay a StringBuilder allocation on every grapheme-width
-   call.
-
-   Session 954bf315 was the live trigger: a multi-line string with
-   an embedded `0x0a` reached `display-width`, Lanterna's
-   `TextCharacter.fromString` threw on the control char, the render
-   thread's catch-all swallowed the throw, the bubble silently
-   failed to paint, and the user saw a blank scrollback. This is the
-   belt-and-braces fallback for any caller that lets a control char
-   slip into a paint string.
-
-   Inline-span sentinels (\uE110...\uE117) live in the BMP
-   private-use area, not C0, so they pass through untouched."
-  ^String [^String s]
-  (let [n
-        (.length s)
-
-        first-bad
-        (loop [i 0]
-          (cond (>= i n) -1
-                (< (int (.charAt s i)) 0x20) i
-                :else (recur (inc i))))]
-
-    (if (neg? first-bad)
-      s
-      (let [sb (StringBuilder. n)]
-        (.append sb s (int 0) (int first-bad))
-        (loop [k first-bad]
-          (if (>= k n)
-            (.toString sb)
-            (let [c (.charAt s k)]
-              (.append sb (if (< (int c) 0x20) / c))
-              (recur (inc k)))))))))
 
 ;; Per-terminal glyph width (VS-16 emoji narrow on Apple Terminal.app, wide
 ;; elsewhere) lives in the lanterna fork's `TextCharacter.isDoubleWidth`
 ;; (auto-detected from TERM_PROGRAM). Everything here defers to it, so
 ;; measurement always matches what the fork's painter/screen emit.
 
-(defn- all-narrow-ascii?
-  "True when every char of `s` (length `n`) is printable ASCII (0x20-0x7E).
-   Such a string occupies exactly `n` terminal columns, so we can skip the
-   expensive grapheme/width segmentation in `TextCharacter/fromString` — no
-   `TextCharacter[]` allocation, no `Character$UnicodeBlock.of` per char. This
-   is the overwhelmingly common case (English prose, code, digits, punctuation)
-   and `display-width` is on the hot render/keystroke path, called across the
-   entire scrollback every frame."
-  [^String s ^long n]
-  (loop [i 0]
-    (if (>= i n)
-      true
-      (let [c (int (.charAt s i))]
-        (if (and (>= c 0x20) (<= c 0x7E)) (recur (inc i)) false)))))
 
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
 
-   Built on `TextCharacter/fromString`, the same routine
-   `AbstractTextGraphics.putString` uses internally after PR #625, so
-   what we measure matches what the renderer actually paints - grapheme
-   clusters honoured (BreakIterator-based), CJK + emoji counted as two
-   columns, ASCII as one.
+   Delegates to the lanterna fork's `TerminalTextUtils/displayColumns`
+   (>= 3.1.5-vis.24): grapheme clusters honoured, CJK + emoji counted as
+   two columns, ASCII as one, inline-span sentinels (\\uE110..\\uE119) as
+   zero, C0 control bytes sanitized to `/` first. This measures by the
+   exact same rule `AbstractTextGraphics.putString` paints by, so what we
+   measure always matches what the renderer emits.
 
-   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110...\uE119)
-   count as zero columns: they're invisible style toggles, never
-   painted, never advance the cursor.
-
-   Stray ASCII control bytes (0x00-0x1F) get sanitized to `/`
-   before reaching Lanterna - see `sanitize-control-chars` for the
-   why. Without that, a single rogue `\n` in a paint string used to
-   take down the entire render thread.
-
-   Pure printable-ASCII strings (the common case) short-circuit to
-   `(.length s)` — one column per char — skipping the grapheme/width
-   segmentation entirely.
+   `s` is coerced via `(str s)` first: a caller that maps display-width
+   over a string (handing us a Character / number) must never crash the
+   render thread with a ClassCastException. nil → 0.
 
    Returns 0 for nil/empty input."
   ^long [s]
-  ;; Coerce to String FIRST. `s` is usually a String, but a caller that
-  ;; maps display-width over a string (or hands us a Character / number)
-  ;; must never crash the render thread — a single ClassCastException here
-  ;; throws every frame and freezes the whole TUI. `(str s)` makes any input
-  ;; measurable; nil → 0.
-  (if (nil? s)
-    0
-    (let [^String safe
-          (sanitize-control-chars (str s))
-
-          len
-          (.length safe)]
-
-      (cond (zero? len) 0
-            ;; Fast path: printable ASCII ⇒ 1 column per char, no allocation.
-            (all-narrow-ascii? safe len) len
-            :else (let [cells
-                        (TextCharacter/fromString safe)
-
-                        n
-                        (alength cells)]
-
-                    (loop [i
-                           0
-
-                           width
-                           0]
-
-                      (if (>= i n)
-                        width
-                        (let [tc
-                              ^TextCharacter (aget cells i)
-
-                              g
-                              ^String (.getCharacterString tc)
-
-                              w
-                              (cond (inline-sentinel? g) 0
-                                    ;; Defer to lanterna's isDoubleWidth. The fork owns the
-                                    ;; per-terminal width policy (VS-16 = 2 on iTerm2/Ghostty/…,
-                                    ;; but 1 on Apple Terminal.app — auto-detected there), so
-                                    ;; measurement always matches what putString paints.
-                                    (.isDoubleWidth tc) 2
-                                    :else 1)]
-
-                          (recur (inc i) (+ width w))))))))))
+  (if (nil? s) 0 (TerminalTextUtils/displayColumns (str s))))
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
@@ -477,44 +371,10 @@
    un-consumed remainder (e.g. in word-wrapping). For just the prefix,
    `truncate-cols` is friendlier.
 
-   Returns 0 for nil/empty or non-positive `max-cols`."
+   Delegates to the lanterna fork's `TerminalTextUtils/columnPrefixLength`
+   (>= 3.1.5-vis.24). Returns 0 for nil/empty or non-positive `max-cols`."
   ^long [s ^long max-cols]
-  (cond (or (nil? s) (<= max-cols 0)) 0
-        (<= (display-width s) max-cols) (long (.length ^CharSequence s))
-        :else (let [cells
-                    (TextCharacter/fromString ^String s)
-
-                    n
-                    (alength cells)]
-
-                (loop [i
-                       0
-
-                       char-idx
-                       0
-
-                       used
-                       0]
-
-                  (if (>= i n)
-                    char-idx
-                    (let [tc
-                          ^TextCharacter (aget cells i)
-
-                          grapheme
-                          ^String (.getCharacterString tc)
-
-                          grapheme-len
-                          (long (.length grapheme))
-
-                          w
-                          (cond (inline-sentinel? grapheme) 0
-                                (.isDoubleWidth tc) 2
-                                :else 1)]
-
-                      (if (> (+ used w) max-cols)
-                        char-idx
-                        (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
+  (TerminalTextUtils/columnPrefixLength ^String s (int max-cols)))
 
 (defn truncate-cols
   "Return the longest prefix of `s` that fits in at most `max-cols`
@@ -525,59 +385,14 @@
    - If a double-width grapheme would straddle the cut, it is dropped
      (NOT half-included), and one space is appended in its place so the
      returned string's `display-width` is exactly `max-cols`. This keeps
-     `pad-right` / `pad-left` idempotent under repeated truncation."
+     `pad-right` / `pad-left` idempotent under repeated truncation.
+   - Trailing zero-width inline-span sentinels (style closers) are always
+     emitted, never stranded past the cut.
+
+   Delegates to the lanterna fork's `TerminalTextUtils/truncateColumns`
+   (>= 3.1.5-vis.24)."
   ^String [s ^long max-cols]
-  (cond (or (nil? s) (<= max-cols 0)) ""
-        (<= (display-width s) max-cols) s
-        :else (let [cells
-                    (TextCharacter/fromString ^String s)
-
-                    n
-                    (alength cells)
-
-                    sb
-                    (StringBuilder.)]
-
-                ;; Walk every grapheme, emit it iff it fits, stop on overflow.
-                ;; The earlier (= next max-cols) early-exit was deleted because
-                ;; it stranded trailing zero-width sentinels (style closers): if
-                ;; the budget filled exactly on a visible char and the next
-                ;; grapheme was a `INLINE_*_OFF`, the closer never made it into
-                ;; the output and the SGR style leaked past the cut. The
-                ;; structure below keeps walking sentinels for free (their `w`
-                ;; is zero, so `next` stays under budget) and only stops when a
-                ;; visible grapheme would push past `max-cols`.
-                (loop [i
-                       0
-
-                       used
-                       0]
-
-                  (if (>= i n)
-                    (.toString sb)
-                    (let [tc
-                          ^TextCharacter (aget cells i)
-
-                          gs
-                          ^String (.getCharacterString tc)
-
-                          w
-                          (cond (inline-sentinel? gs) 0
-                                (.isDoubleWidth tc) 2
-                                :else 1)
-
-                          next
-                          (+ used w)]
-
-                      (if (> next max-cols)
-                        ;; A wide grapheme would have straddled the cut: drop it
-                        ;; and pad with one space so the result's display-width
-                        ;; is exactly `max-cols`. Sentinels can't reach this
-                        ;; branch (their `w` is zero, so `next` never exceeds).
-                        (do (when (< used max-cols) (.append sb \space)) (.toString sb))
-                        ;; In-budget OR zero-width sentinel: append, advance,
-                        ;; continue. For sentinels `w` is 0 so `used` stays put.
-                        (do (.append sb gs) (recur (inc i) next)))))))))
+  (TerminalTextUtils/truncateColumns ^String s (int max-cols)))
 
 (defn truncate-middle
   "Shorten `s` to at most `max-cols` columns by ELIDING THE MIDDLE behind a
