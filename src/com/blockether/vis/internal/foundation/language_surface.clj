@@ -850,6 +850,12 @@
     {:symbol 'repl_eval
      :native-tool? true
      :call {:lead-opt "language" :rest :always}
+     ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
+     ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
+     ;; Clojure so the language pack's own timeout budget wins (parity with
+     ;; run_tests above).
+     :handler (fn [env input]
+                (repl-eval env input))
      :render render-repl-eval-result
      :color-role :tool-color/shell
      :schema

@@ -579,26 +579,49 @@
                  (or (:tok g) (str (:turn g) "/" (str/join "," (:iters g))))))
          (str/join " "))))
 
+(defn pretty-scopes
+  "Render a seq of concrete `tN/iN` scopes as ONE beautiful, model-legible anchor
+   string using the SAME grammar the fold ledger speaks (`compress-scopes` +
+   `join-scopes`): same-turn iter-runs merge (`t3/i3-i4,i7-i8`), whole turns
+   collapse to `tN/*` / `tA-tB/*` / `t*`. `universe` (the live wire scopes, or
+   nil) drives the whole-turn collapse; nil/empty keeps every turn explicit.
+   nil for an empty/unparseable seq. Pure. Shared by the ledger AND the
+   transcript fold breadcrumb so a collapsed region reads identically wherever
+   it surfaces — one anchor vocabulary, not two."
+  [scopes universe]
+  (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
+
 (defn folds-view
-  "Model-facing LEDGER of what the recorded `session_fold` intents collapsed — ONE
-   compact SINGLE-LINE STRING (never a nested map/list, so the Python pretty-printer
-   can't break it across lines). Pipe-delimited sections:
-     `<saved> | <fold> | <fold> … | live <scopes>`
-   where
-     - `<saved>` is the headline `\"C/T steps (P%)\"` — how much of the wire is folded
-       away (just `\"C steps folded\"` before a universe is stamped);
-     - each `<fold>` is one SURVIVING (superseded) fold as `\"<at>: <gist>\"` (or bare
-       `\"<at>\"` when gist-less), `at` the resolved + compressed scope string
-       (`tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`, never a raw through/from);
-     - `live <scopes>` (omitted when nothing is live) lists the compressed scopes
-       STILL on the wire = fold candidates.
-   With a stamped `universe` (the live `tN/iN` scopes this send) selectors are
-   resolved (`expand-through`) then covered folds dropped (`supersede-summaries`) →
-   concrete compressed scopes + a real live set. Without one (resume / fresh seed,
-   before the first live send) the SAME string is emitted best-effort: each fold's
+  "Model-facing LEDGER of what the recorded `session_fold` intents collapsed, split
+   by LIFESPAN into two compact SINGLE-LINE STRING leaves (never a nested map/list,
+   so the Python pretty-printer can't break them across lines). The split lets the
+   volatile part re-emit cheaply while the heavy part stays put:
+
+     `\"folds\"`  STABLE — the folds that SURVIVED supersession, as `\"<at>: <gist>\"` joined by
+                 ` | ` (bare `\"<at>\"` when gist-less), `at` the resolved + compressed
+                 scope string (`tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`, never a raw
+                 through/from). For a fold over COMPLETED past turns the `at` is fixed,
+                 so this leaf changes only when a fold lands or supersedes and the
+                 recursive per-leaf ctx delta ships the heavy gists ONCE per fold — not
+                 once per iteration. (A fold still covering the GROWING current turn is
+                 the one exception: its `at` re-resolves as that turn gains iterations.)
+     `\"now\"`    VOLATILE but TINY — the live budget, shaped
+                 `\"saved <C>/<T> (<P>%) · live <scopes>\"`: `saved` how much of the wire
+                 (`<T>` = every `tN/iN` still on the wire, so the folded scopes that have
+                 already scrolled off the trailer never inflate it) is folded away, and
+                 `live` the compressed scopes STILL on the wire = fold candidates. It holds
+                 only scopes + counts (NO gists) and NO position (the `# tN/iN` step tag
+                 the model already sees carries that), so re-emitting it every iteration
+                 costs a handful of tokens.
+
+   Returns a map holding whichever leaves apply; the caller (`session-view`) merges
+   them into `\"session_utilization\"`. With a stamped `universe` (the live `tN/iN`
+   scopes this send) selectors are resolved (`expand-through`), covered folds dropped
+   (`supersede-summaries`), and both leaves are produced. Without one (resume / fresh
+   seed, before the first live send) only `\"folds\"` is produced, best-effort: each
    `at` comes from `unresolved-iters` (explicit scopes compressed, ranges as pending
-   boundary markers) and there is no `live` section until the next send re-stamps
-   the universe. Pure."
+   boundary markers), and there is no `\"now\"` until the next send re-stamps the
+   universe. Pure."
   [summaries universe]
   (let [universe
         (into [] (comp (filter string?) (distinct)) universe)
@@ -611,6 +634,9 @@
           (supersede-summaries (expand-through summaries universe))
           (filterv map? summaries))
 
+        uni-set
+        (set universe)
+
         collapsed-set
         (into #{} (mapcat #(get % "scopes")) resolved)
 
@@ -621,7 +647,7 @@
         (into []
               (keep (fn [s]
                       (let [toks (if has-uni?
-                                   (compress-scopes (get s "scopes") universe)
+                                   (compress-scopes (filter uni-set (get s "scopes")) universe)
                                    (unresolved-iters s))]
                         (when-let [at (join-scopes toks)]
                           (if (contains? s "gist") (str at ": " (get s "gist")) at)))))
@@ -629,22 +655,31 @@
 
         c
         (if has-uni?
-          (count collapsed-set)
+          (count (filter uni-set collapsed-set))
           (count (into #{} (comp (mapcat #(get % "scopes")) (filter scope-key)) resolved)))
 
         total
         (+ c (count live))
 
-        saved
-        (if (and has-uni? (pos? total))
-          (str c "/" total " steps (" (Math/round (* 100.0 (/ (double c) total))) "%)")
-          (str c " steps folded"))
-
         live-str
-        (or (join-scopes (when has-uni? (compress-scopes live universe))) "")]
+        (join-scopes (when has-uni? (compress-scopes live universe)))
 
-    (->> (concat [saved] folded (when (seq live-str) [(str "live " live-str)]))
-         (str/join " | "))))
+        now
+        (when has-uni?
+          (str/join
+            " · "
+            (keep
+              identity
+              [(when (pos? total)
+                 (str "saved " c "/" total " (" (Math/round (* 100.0 (/ (double c) total))) "%)"))
+               (when (seq live-str) (str "live " live-str))])))]
+
+    (cond-> {}
+      (seq folded)
+      (assoc "folds" (str/join " | " folded))
+
+      (seq now)
+      (assoc "now" now))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
@@ -661,20 +696,22 @@
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
-   ;; The fold LEDGER is merged INTO `"session_utilization"` (under `"folds"`),
-   ;; not a second top-level key: tokens-now + what's-folded are ONE readout that
-   ;; rides the SAME per-iteration delta, so the ledger re-shows every iteration
-   ;; instead of being seeded once. Before any request is measured (no
-   ;; utilization) a fold still surfaces via a utilization map holding only
-   ;; `"folds"`.
+   ;; The fold LEDGER is merged INTO `"session_utilization"` (as sibling leaves
+   ;; `"folds"` + `"now"`), not a second top-level key: tokens-now + what's-folded
+   ;; are ONE readout riding the SAME per-iteration delta. The split is by LIFESPAN —
+   ;; `"folds"` (heavy gists) changes only when a fold lands (past-turn folds), so the
+   ;; recursive per-leaf
+   ;; delta ships it once per fold; `"now"` (position + budget + live) is tiny and
+   ;; re-emits every iteration. Before any request is measured (no utilization) a fold
+   ;; still surfaces via a utilization map holding only the ledger leaves.
    (let [folds
          (when (seq (get ctx "session_summaries"))
            (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe")))
 
          util
-         (cond-> (or (get ctx "engine_utilization") (when folds {}))
-           folds
-           (assoc "folds" folds))]
+         (cond-> (or (get ctx "engine_utilization") (when (seq folds) {}))
+           (seq folds)
+           (merge folds))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)

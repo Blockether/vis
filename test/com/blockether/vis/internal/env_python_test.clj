@@ -261,3 +261,34 @@
             (try (ep/boundary-view {"sym" 'git-fetch!}) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? e))
         (expect (= :symbol-value (:vis/boundary-violation (ex-data e)))))))
+
+(defdescribe
+  py-gc-option-guard-test
+  "Layer 1 GC-option guard: a misconfigured env var must NEVER produce a value that can
+   break Context construction. `clamp-gc-value` parses + clamps into the option's range."
+  (let [clamp #'ep/clamp-gc-value]
+    (it "an in-range value passes through unchanged"
+        (expect (= "1000" (clamp "1000" 1 Integer/MAX_VALUE)))
+        (expect (= "30" (clamp "30" 1 100))))
+    (it "the real bug: a byte-scale threshold clamps into [1,100] instead of throwing"
+        ;; the old docstring wrongly said Threshold was "bytes"; 1048576 would throw
+        ;; "must be an integer in range [1, 100]" at Context build. Now it clamps to 100.
+        (expect (= "100" (clamp "1048576" 1 100))))
+    (it "a below-floor value clamps up to the low bound"
+        (expect (= "1" (clamp "0" 1 100)))
+        (expect (= "1" (clamp "-5" 1 100))))
+    (it "whitespace is trimmed before parsing" (expect (= "50" (clamp "  50  " 1 100))))
+    (it "a blank / nil / non-numeric input contributes nothing (nil)"
+        (expect (nil? (clamp nil 1 100)))
+        (expect (nil? (clamp "" 1 100)))
+        (expect (nil? (clamp "   " 1 100)))
+        (expect (nil? (clamp "abc" 1 100)))
+        (expect (nil? (clamp "12.5" 1 100))))
+    (it "resolves the 2 GB BackgroundGCTaskMinimum floor by default (box shouldn't balloon)"
+        ;; No VIS_PY_GC_* env vars set in the test process, yet the minimum floor
+        ;; is baked in so the background collector engages from 2 GB up.
+        (let [opts (#'ep/resolve-py-gc-options)]
+          (expect (= "2048" (get opts "python.BackgroundGCTaskMinimum")))
+          ;; interval/threshold stay on GraalPy's own defaults (nil default)
+          (expect (nil? (get opts "python.BackgroundGCTaskInterval")))
+          (expect (nil? (get opts "python.BackgroundGCTaskThreshold")))))))

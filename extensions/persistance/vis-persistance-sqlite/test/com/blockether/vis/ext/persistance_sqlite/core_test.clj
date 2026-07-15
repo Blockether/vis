@@ -2242,6 +2242,45 @@
 
         (expect (nil? (:project-id got)))
         (expect (= 0 (:project-position got)))))
+  (it "a full REVERSAL reorder succeeds under the UNIQUE(project_id, position) index"
+      ;; every row must move into a slot another row currently holds, so a naive
+      ;; row-by-row renumber would transiently collide; the two-phase parking
+      ;; must keep it clean and end gap-free with NO duplicate positions.
+      (let [s
+            (h/store)
+
+            p
+            (persistance/db-create-project! s {:name "rev" :channel :tui})
+
+            a
+            (h/store-session! s {:channel :tui :title "A"})
+
+            b
+            (h/store-session! s {:channel :tui :title "B"})
+
+            c
+            (h/store-session! s {:channel :tui :title "C"})
+
+            _
+            (doseq [sid [a b c]]
+              (persistance/db-set-session-project! s sid (:id p)))
+
+            n
+            (persistance/db-reorder-project-sessions! s (:id p) [c b a])
+
+            rows
+            (->> (persistance/db-list-sessions s :all)
+                 (filter #(= (:id p) (:project-id %)))
+                 (sort-by :project-position))
+
+            positions
+            (mapv :project-position rows)]
+
+        (expect (= 3 n))
+        (expect (= ["C" "B" "A"] (mapv :title rows)))
+        ;; gap-free AND unique - no two members share a slot
+        (expect (= [0 1 2] positions))
+        (expect (= (count positions) (count (distinct positions))))))
   (it
     "a partial reorder still renumbers EVERY member to a gap-free 0..n-1"
     (let [s
