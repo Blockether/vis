@@ -59,7 +59,7 @@
         ;;      channel-tui.terminal-image is now a thin adapter over it.
         ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
         ;; Retire when upstream ships equivalent fixes.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.24"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.25"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
         ;; jcodec-javase. Only pulled in when the TUI jar is present.

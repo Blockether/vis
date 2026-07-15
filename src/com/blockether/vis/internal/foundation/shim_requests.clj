@@ -947,7 +947,7 @@ del __vis_install_requests_compat__
      :ext/sandbox-shims
      [{:shim/name "requests"
        :shim/description
-       "requests-compatible `requests` module backed by stdlib urllib (pure Python, no host bridge)."
+       "requests-compatible `requests` backed by stdlib urllib (pure Python). Not supported: HTTP/2 or real connection pooling; `HTTPDigestAuth` is an accepted no-op (sends no auth header)."
        :shim/preamble requests-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

@@ -780,7 +780,9 @@
 ;; matplotlib is special-cased in the engine.
 ;;
 ;;   :shim/name        identity string (dedup / logging).
-;;   :shim/description one-liner (optional).
+;;   :shim/description one-liner (optional): what library it shims AND what is
+;;                     NOT supported, e.g. "... Not supported: X, Y." — a shim
+;;                     with no caveat is 100% compatible.
 ;;   :shim/bindings    host callables the preamble delegates to — either a map
 ;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
 ;;                     Each fn is wired onto the sandbox globals as a Python

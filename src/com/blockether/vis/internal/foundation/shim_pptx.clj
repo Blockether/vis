@@ -1236,7 +1236,7 @@ del __vis_install_pptx__
      :ext/sandbox-shims
      [{:shim/name "pptx"
        :shim/description
-       "python-pptx-compatible .pptx writer backed by pure-Java Apache POI XSLF (presentations + slides + shapes live host-side by integer handle; the file crosses back as base64 on save)."
+       "python-pptx-compatible .pptx writer backed by pure-Java Apache POI XSLF (presentations/slides/shapes by integer handle; file returns as base64 on save). Not supported: charts, animation, and advanced slide layouts."
        :shim/bindings pptx-bridge-bindings
        :shim/preamble pptx-shim-src}]}))
 

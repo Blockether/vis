@@ -82,6 +82,17 @@
                      (expect (extension/envelope-success? result))
                      (expect (not (str/blank? (get (result-of result) "content"))))))))
 
+(defdescribe vis-docs-forgiving-slug-test
+             (it "resolves the same page across map/kwargs, trailing .md, whitespace, and case"
+                 (let [canonical (result-of (vis-docs-tool "extending"))]
+                   (expect (extension/envelope-success? (vis-docs-tool "extending")))
+                   ;; every one of these shapes must land on the SAME page
+                   (doseq [variant ["extending.md" "  extending  " "Extending" "EXTENDING.MD"
+                                    {"slug" "extending.md"} {:slug "Extending"}]]
+                     (let [result (vis-docs-tool variant)]
+                       (expect (extension/envelope-success? result))
+                       (expect (= (get canonical "slug") (get (result-of result) "slug"))))))))
+
 (defdescribe vis-docs-unknown-slug-test
              (it "fails with a message + hint listing valid slugs"
                  (let [result (vis-docs-tool "no-such-page")]
