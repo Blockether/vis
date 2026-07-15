@@ -47,7 +47,7 @@ jobs:
             bin: target/vis
             artifact: vis-macos-x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
       # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
       # the distributed binary, so the redistribution/license story stays FOSS.
@@ -57,7 +57,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.m2/repository
@@ -72,7 +72,7 @@ jobs:
         run: |
           "${{ matrix.bin }}" --version
           "${{ matrix.bin }}" help
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.bin }}
