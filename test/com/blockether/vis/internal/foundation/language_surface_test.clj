@@ -312,3 +312,43 @@
                                                                    [language-surface/test-symbol]}}]
                                                                 (fake-env []))]
                    (expect (contains? handlers "run_tests")))))
+
+(defdescribe
+  render-lint-result-names-target-test
+  (let [render #'language-surface/render-lint-result]
+    (it "a single-file lint headlines the FILE PATH, never a bare `1 file`"
+        (let [{:keys [summary]}
+              (@render
+               {"error" 0 "warning" 0 "info" 0 "files" 1 "findings" [] "targets" ["src/foo.clj"]})]
+          (expect (= "`src/foo.clj` — clean" summary))
+          (expect (str/includes? summary "foo.clj"))
+          (expect (not (str/includes? summary "1 file")))))
+    (it "several path targets collapse to `N targets`"
+        (expect (= "2 targets — clean"
+                   (:summary (@render
+                              {"error" 0
+                               "warning" 0
+                               "info" 0
+                               "files" 2
+                               "findings" []
+                               "targets" ["src/a.clj" "src/b.clj"]})))))
+    (it "a stdin snippet lint (no targets) reads `snippet`, not the misleading `1 file`"
+        (let [{:keys [summary]} (@render {"error" 0 "warning" 0 "info" 0 "files" 1 "findings" []})]
+          (expect (= "snippet — clean" summary))
+          (expect (not (str/includes? summary "1 file")))))
+    (it "a bare workspace lint (no targets, many files) keeps `N files`"
+        (expect (= "7 files — clean"
+                   (:summary (@render {"error" 0 "warning" 0 "info" 0 "files" 7 "findings" []})))))
+    (it "findings still render counts in the headline and lines in the body"
+        (let [{:keys [summary body]}
+              (@render
+               {"error" 1
+                "warning" 0
+                "info" 0
+                "files" 1
+                "targets" ["src/foo.clj"]
+                "findings"
+                [{"file" "src/foo.clj" "row" 3 "col" 5 "level" "error" "message" "boom"}]})]
+          (expect (str/includes? summary "`src/foo.clj`"))
+          (expect (str/includes? summary "1 error"))
+          (expect (str/includes? body "src/foo.clj:3:5 error: boom"))))))
