@@ -2414,10 +2414,13 @@
   []
   (let [all (registry/registered-providers)]
     (if (seq all)
-      (do (stdout! "Available providers:")
-          (doseq [p (sort-by :provider/id all)]
-            (stdout!
-              (str "  " (commandline/pad-right (name (:provider/id p)) 22) (:provider/label p)))))
+      ;; Width tracks the LONGEST provider id + a 2-space gutter so ids like
+      ;; `github-copilot-individual` (25 chars) never run into their label.
+      (let [w (+ 2 (reduce max 0 (map #(count (name (:provider/id %))) all)))]
+        (stdout! "Available providers:")
+        (doseq [p (sort-by :provider/id all)]
+          (stdout!
+            (str "  " (commandline/pad-right (name (:provider/id p)) w) (:provider/label p)))))
       (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath."))))
 
 (defn- cli-providers-list!

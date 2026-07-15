@@ -133,7 +133,8 @@
         path
         (:path data "live")]
 
-    (when (or (>= total-ms slow-live-frame-threshold-ms) (>= refresh-ms slow-refresh-threshold-ms))
+    (when (or (>= total-ms (long slow-live-frame-threshold-ms))
+              (>= refresh-ms (long slow-refresh-threshold-ms)))
       (tel/log! {:level :warn :id ::slow-frame :data data}
                 (format "slow TUI %s frame: %.1fms total (layout %.1f, paint %.1f, refresh %.1f)"
                         path
@@ -210,7 +211,7 @@
         (long (or drag-events 1))
 
         factor
-        (long (max 1 (min drag-autoscroll-max-coalesce-factor drag-events)))]
+        (long (max 1 (min (long drag-autoscroll-max-coalesce-factor) drag-events)))]
 
     (long (* amount factor))))
 (defn- pop-pending!
@@ -240,8 +241,8 @@
    escape is swallowed per close."
   []
   (let [closed @dialog-closed-at]
-    (and (pos? closed)
-         (<= (- (System/currentTimeMillis) closed) post-dialog-escape-window-ms)
+    (and (pos? (long closed))
+         (<= (- (System/currentTimeMillis) (long closed)) (long post-dialog-escape-window-ms))
          (compare-and-set! dialog-closed-at closed 0))))
 
 (defn- read-chat-input!
@@ -591,7 +592,7 @@
   (let [screen-selection (selection/document->screen-selection selection viewport)]
     (doseq [{:keys [row col width]}
             (selection/selected-ranges screen-selection cols rows selectable-ranges)
-            x (range col (+ col width))]
+            x (range col (+ (long col) (long width)))]
 
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
@@ -653,45 +654,46 @@
                                 visible))
             cache-key [needle case? (:eff-scroll layout) top-y bot-y cols (:render-version db)
                        active-band]
-            spans
-            (if (= cache-key (:key @search-hits-cache))
-              (:spans @search-hits-cache)
-              (let [computed
-                    (persistent!
-                      (reduce
-                        (fn [acc row]
-                          (if (contains? label-rows row)
-                            acc
-                            (let [sb (StringBuilder.)
-                                  _ (dotimes [c cols]
-                                      (let [tc (.getBackCharacter screen (int c) (int row))
-                                            s (or (some-> tc
-                                                          .getCharacterString)
-                                                  " ")]
+            spans (if (= cache-key (:key @search-hits-cache))
+                    (:spans @search-hits-cache)
+                    (let [computed
+                          (persistent!
+                            (reduce
+                              (fn [acc row]
+                                (if (contains? label-rows row)
+                                  acc
+                                  (let [sb (StringBuilder.)
+                                        _ (dotimes [c cols]
+                                            (let [tc (.getBackCharacter screen (int c) (int row))
+                                                  s (or (some-> tc
+                                                                .getCharacterString)
+                                                        " ")]
 
-                                        (.append sb ^String s)))
-                                  lower (cond-> (.toString sb)
-                                          (not case?)
-                                          str/lower-case)
-                                  current? (boolean (and active-band
-                                                         (<= (long (first active-band)) row)
-                                                         (< row (long (second active-band)))))]
+                                              (.append sb ^String s)))
+                                        lower (cond-> (.toString sb)
+                                                (not case?)
+                                                str/lower-case)
+                                        current?
+                                        (boolean (and active-band
+                                                      (<= (long (first active-band)) (long row))
+                                                      (< (long row) (long (second active-band)))))]
 
-                              (loop [from 0
-                                     acc acc]
+                                    (loop [from 0
+                                           acc acc]
 
-                                (let [pos (.indexOf ^String lower ^String needle (int from))]
-                                  (if (>= pos 0)
-                                    (recur (+ pos n-len)
-                                           (conj! acc {:row row :start pos :current? current?}))
-                                    acc))))))
-                        (transient [])
-                        (range (max top-y 0) bot-y)))]
-                (reset! search-hits-cache {:key cache-key :spans computed})
-                computed))]
+                                      (let [pos (.indexOf ^String lower ^String needle (int from))]
+                                        (if (>= pos 0)
+                                          (recur (+ pos n-len)
+                                                 (conj! acc
+                                                        {:row row :start pos :current? current?}))
+                                          acc))))))
+                              (transient [])
+                              (range (max top-y 0) bot-y)))]
+                      (reset! search-hits-cache {:key cache-key :spans computed})
+                      computed))]
 
         (doseq [{:keys [row start current?]} spans
-                x (range start (+ start n-len))]
+                x (range start (+ (long start) n-len))]
 
           (when-let [tc (.getBackCharacter screen (int x) (int row))]
             (.setCharacter screen
@@ -721,9 +723,9 @@
           selection-output-indent-markers)))
 (defn- bubble-line-text-col
   [role bubble-left line]
-  (cond (= :user role) (+ bubble-left bubble-content-h-pad)
+  (cond (= :user role) (+ (long bubble-left) (long bubble-content-h-pad))
         (assistant-code-text-row? line)
-        (+ bubble-left
+        (+ (long bubble-left)
            1
            (if (output-indented-row? line) (p/display-width selection-output-indent) 0))
         :else bubble-left))
@@ -766,13 +768,13 @@
         (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
         content-w
-        (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
+        (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
 
         top-limit
         (long text-top)
 
         bottom-limit
-        (+ top-limit (long (max 0 inner-h)))]
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? content-w)) (<= bottom-limit top-limit))
       []
@@ -816,7 +818,7 @@
         (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
         content-w
-        (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
+        (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
 
         offsets
         (vec (:offsets layout))
@@ -849,7 +851,8 @@
                     (long (or (get offsets idx) 0))
 
                     bottom
-                    (long (or (get offsets (inc idx)) (+ top (long (or (get heights idx) 0)))))]
+                    (long (or (get offsets (inc (long idx)))
+                              (+ top (long (or (get heights idx) 0)))))]
               :when (and (<= top end-row) (>= (dec bottom) start-row))
               :let [visible-projected
                     (get visible-projected-by-idx idx)
@@ -919,7 +922,7 @@
                              (long (or (get offsets idx) 0))
 
                              bottom
-                             (long (or (get offsets (inc idx))
+                             (long (or (get offsets (inc (long idx)))
                                        (+ top (long (or (get heights idx) 0)))))]
 
                          (and (<= top end-row) (>= (dec bottom) start-row)))))
@@ -1015,7 +1018,7 @@
         (long text-top)
 
         bottom-limit
-        (+ top-limit (long (max 0 inner-h)))]
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
       []
@@ -1083,7 +1086,7 @@
         (long text-top)
 
         bottom-limit
-        (+ top-limit (long (max 0 inner-h)))]
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
       []
@@ -1206,7 +1209,7 @@
    the input box padding or border chrome."
   [input-top text-rows cols]
   (let [cols
-        (long (max 0 cols))
+        (long (max 0 (long cols)))
 
         text-w
         (long (render/input-text-w cols))
@@ -1218,7 +1221,7 @@
         (+ (long input-top) 1 (long render/input-pad-y))
 
         n
-        (long (max 0 text-rows))]
+        (long (max 0 (long text-rows)))]
 
     (if (or (not (pos? text-w)) (not (pos? n)))
       []
@@ -1319,14 +1322,14 @@
    `input-min-lines` and `input-max-lines`; beyond the cap the box
    stops growing and `draw-input-box!` scrolls vertically to keep
    the cursor visible."
-  [{:keys [lines]} cols]
+  ^long [{:keys [lines]} cols]
   (let [text-w
         (render/input-text-w cols)
 
         n
         (render/input-visual-row-count lines text-w)]
 
-    (min input-max-lines (max input-min-lines n))))
+    (min (long input-max-lines) (max (long input-min-lines) (long n)))))
 (defn- overlay-locked?
   "True when an F1 help / F2 context modal card owns the whole screen.
    While locked, the cheap render fast-paths are disabled and the cursor
@@ -1369,6 +1372,12 @@
   (let [now-ms
         (long now-ms)
 
+        cols
+        (long cols)
+
+        rows
+        (long rows)
+
         frame-start-ns
         (System/nanoTime)
 
@@ -1376,10 +1385,10 @@
         (.newTextGraphics screen)
 
         text-rows
-        (input-text-rows input cols)
+        (long (input-text-rows input cols))
 
         input-box-h
-        (+ text-rows 2 (* 2 render/input-pad-y))
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         ;; Reserve bottom rows for footer proper (model/status + provider
         ;; limits). The Emacs echo area is a single flat row directly
@@ -1402,7 +1411,7 @@
         ;; this outer gap the first recap/progress bubble visually hugs the
         ;; header bottom rule.
         messages-top
-        (inc (header/header-rows db))
+        (inc (long (header/header-rows db)))
 
         messages-bottom
         echo-row
@@ -1416,7 +1425,7 @@
         ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w
-        (max 1 (- cols render/MESSAGE_SIDE_PAD))
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
         inner-h
         (max 0 (- messages-bottom messages-top 2))
@@ -1489,7 +1498,7 @@
         (long (:total-h layout))
 
         text-top
-        (+ messages-top render/MESSAGE_MARGIN_TOP)
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
         transcript-selectable-ranges
         (bubble-selectable-ranges layout text-top inner-h cols)
@@ -1866,7 +1875,7 @@
 (defn- render-scrollbar!
   [g cols bar-top inner-h track-h total-h eff-scroll]
   (scrollbar/draw! g
-                   {:col (- cols 2)
+                   {:col (- (long cols) 2)
                     :top bar-top
                     :track-h track-h
                     :total-h total-h
@@ -1905,11 +1914,17 @@
         g
         (.newTextGraphics screen)
 
+        cols
+        (long cols)
+
+        rows
+        (long rows)
+
         text-rows
-        (input-text-rows input cols)
+        (long (input-text-rows input cols))
 
         input-box-h
-        (+ text-rows 2 (* 2 render/input-pad-y))
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         input-top
         (- rows input-box-h 2)
@@ -1931,13 +1946,13 @@
         ;; with the partial-live re-paint, so a second click on a
         ;; collapsible disclosure misses its toggle target.
         messages-top
-        (inc (header/header-rows db))
+        (inc (long (header/header-rows db)))
 
         messages-bottom
         echo-row
 
         bubble-w
-        (max 1 (- cols render/MESSAGE_SIDE_PAD))
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
         inner-h
         (max 0 (- messages-bottom messages-top 2))
@@ -1951,7 +1966,7 @@
         (scroll/layout-offset (:scroll db) prev-max-s)
 
         text-top
-        (+ messages-top render/MESSAGE_MARGIN_TOP)
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
         header-top
         0
@@ -1996,8 +2011,8 @@
                 total-h (long (:total-h layout))
                 max-s (max 0 (- total-h inner-h))]
 
-            (when (and (vector? offsets) (< target (count offsets)))
-              (state/dispatch [:set-scroll (max 0 (min max-s (long (nth offsets target))))]))
+            (when (and (vector? offsets) (< (long target) (count offsets)))
+              (state/dispatch [:set-scroll (max 0 (min max-s (long (nth offsets (long target)))))]))
             (state/dispatch [:scroll-to-message-resolved])))
 
         live-idx
@@ -2076,8 +2091,8 @@
                              (< row header-rows-n)
                              ;; live bubble re-registers below
                              (and live-row-band
-                                  (>= row (first live-row-band))
-                                  (< row (second live-row-band)))
+                                  (>= row (long (first live-row-band)))
+                                  (< row (long (second live-row-band))))
                              ;; footer re-registers below (its button
                              ;; click-regions: dirs / resources) — drop
                              ;; stale copies so the fresh ones win.
@@ -2209,7 +2224,13 @@
    `render-frame!` for this state; force it off with `force-full-frame?`."
   [^TerminalScreen screen cols rows {:keys [messages input progress settings] :as db} now-ms
    previous-layout]
-  (let [frame-start-ns
+  (let [cols
+        (long cols)
+
+        rows
+        (long rows)
+
+        frame-start-ns
         (System/nanoTime)
 
         g
@@ -2222,7 +2243,7 @@
         (input-text-rows input cols)
 
         input-box-h
-        (+ text-rows 2 (* 2 render/input-pad-y))
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         input-top
         (- rows input-box-h 2)
@@ -2231,13 +2252,13 @@
         (- input-top 1)
 
         messages-top
-        (inc (header/header-rows db))
+        (inc (long (header/header-rows db)))
 
         messages-bottom
         echo-row
 
         bubble-w
-        (max 1 (- cols render/MESSAGE_SIDE_PAD))
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
         inner-h
         (max 0 (- messages-bottom messages-top 2))
@@ -2249,7 +2270,7 @@
         (scroll/layout-offset (:scroll db) prev-max-s)
 
         text-top
-        (+ messages-top render/MESSAGE_MARGIN_TOP)
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
         progress-extra
         {:now-ms now-ms
@@ -2336,14 +2357,20 @@
    The caller reuses `previous-layout` verbatim (returned as `[last-layout
    false]`), so no layout is republished."
   [^TerminalScreen screen cols rows {:keys [input slash-command-index] :as db} now-ms]
-  (let [g
+  (let [cols
+        (long cols)
+
+        rows
+        (long rows)
+
+        g
         (.newTextGraphics screen)
 
         text-rows
         (input-text-rows input cols)
 
         input-box-h
-        (+ text-rows 2 (* 2 render/input-pad-y))
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         input-top
         (- rows input-box-h 2)
@@ -2435,7 +2462,7 @@
              (:total-h ly)
              (:inner-h ly)
              (or (:loading? db) (scroll-anim-active? db))
-             (>= (- now-top (long last-ease-ms)) scroll-anim-tick-ms))]
+             (>= (- (long now-top) (long last-ease-ms)) (long scroll-anim-tick-ms)))]
 
     (when ease? (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)]))
     (if ease? now-top last-ease-ms)))
@@ -2634,9 +2661,11 @@
                         animate?
                         (and (not overlay-open?)
                              (or (and any-loading?
-                                      (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
+                                      (>= (- (long now-ms) (long last-frame-ms))
+                                          (long spinner-tick-ms)))
                                  (and scroll-anim?
-                                      (>= (- now-ms (long last-frame-ms)) scroll-anim-tick-ms))))
+                                      (>= (- (long now-ms) (long last-frame-ms))
+                                          (long scroll-anim-tick-ms)))))
 
                         same-size?
                         (and (= last-cols cols) (= last-rows rows))
@@ -2767,7 +2796,8 @@
                         provider-id (active-provider-id)
                         changed? (not= provider-id last-provider-id)
                         forced? (:provider-limits-force? @state/app-db)
-                        stale? (>= (- now-ms (long last-refresh-ms)) provider-limits-refresh-ms)]
+                        stale? (>= (- now-ms (long last-refresh-ms))
+                                   (long provider-limits-refresh-ms))]
 
                     (try (cond (nil? provider-id) (when last-provider-id
                                                     (state/dispatch [:clear-provider-limits]))
@@ -3398,7 +3428,7 @@
                            (loop [frame 0]
                              (when-not @stop?
                                (when (and (>= (- (System/currentTimeMillis) start)
-                                              boot-splash-grace-ms)
+                                              (long boot-splash-grace-ms))
                                           (not (:dialog-open? @state/app-db))
                                           (.tryLock ^ReentrantLock draw-lock))
                                  (try (paint-boot-splash! screen frame)
@@ -4174,7 +4204,7 @@
                                                       (catch Throwable _ nil))]
                                      (open-session-tab! sr false)
                                      (swap! opened inc))))
-                               (when (zero? @opened)
+                               (when (zero? (long @opened))
                                  (when-let [config (:config @state/app-db)]
                                    (open-session-tab! (chat/make-session config) false)))
                                (doseq [tid old-tab-ids]
@@ -4369,7 +4399,9 @@
                                                  " hit=" hit-kind)}))
                                   (catch Throwable _ nil)))
                          bar-top messages-top
-                         track-h (+ inner-h render/MESSAGE_MARGIN_TOP render/MESSAGE_MARGIN_BOTTOM)
+                         track-h (+ (long inner-h)
+                                    (long render/MESSAGE_MARGIN_TOP)
+                                    (long render/MESSAGE_MARGIN_BOTTOM))
                          ;; Single source of truth for thumb geometry
                          ;; lives in `scrollbar/geometry` so painter
                          ;; and hit-test cannot drift apart. A nil
@@ -4382,14 +4414,14 @@
                                                   (scroll/layout-offset
                                                     (:scroll db)
                                                     (max 0 (- (long total-h) (long inner-h)))))
-                         thumb-top (when geom (+ bar-top (long (:thumb-top-rel geom))))
+                         thumb-top (when geom (+ (long bar-top) (long (:thumb-top-rel geom))))
                          thumb-h (long (or (:thumb-h geom) 0))
                          ;; Hit-zone: the thumb's actual rows, with a
                          ;; 3-column-wide x-band on the right gutter so
                          ;; the user doesn't need pixel-perfect aim.
                          on-thumb? (and (some? geom)
-                                        (>= mx (- cols render/MESSAGE_MARGIN_RIGHT))
-                                        (< mx cols)
+                                        (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
+                                        (< mx (long cols))
                                         (>= my (long thumb-top))
                                         (< my (+ (long thumb-top) thumb-h)))
                          selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
@@ -4400,8 +4432,8 @@
                          transcript-disclosure-copy-regions
                          (get-in db [:layout :transcript-disclosure-copy-regions])
                          input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
-                         selection-viewport {:viewport-top (+ messages-top
-                                                              render/MESSAGE_MARGIN_TOP)
+                         selection-viewport {:viewport-top (+ (long messages-top)
+                                                              (long render/MESSAGE_MARGIN_TOP))
                                              :eff-scroll (get-in db [:layout :eff-scroll])}
                          slash-suggestions
                          (slash-suggestions-for-input screen (:input db) (:slash-command-index db))]
@@ -4617,7 +4649,7 @@
                        ;; dispatch any scroll mutation here - a bare
                        ;; click without movement must not move content.
                        (and (= atype MouseActionType/CLICK_DOWN) on-thumb?)
-                       (do (vreset! scrollbar-drag-offset (- my thumb-top)) (recur))
+                       (do (vreset! scrollbar-drag-offset (- my (long thumb-top))) (recur))
                        ;; CLICK_DOWN on the scrollbar TRACK (right
                        ;; gutter, anywhere in the messages-area rows,
                        ;; off-thumb): jump the thumb so it CENTERS on
@@ -4633,10 +4665,10 @@
                        ;; scrollbar and nothing scrolls\").
                        (and (= atype MouseActionType/CLICK_DOWN)
                             (some? geom)
-                            (>= mx (- cols render/MESSAGE_MARGIN_RIGHT))
-                            (< mx cols)
-                            (>= my bar-top)
-                            (< my (+ bar-top inner-h)))
+                            (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
+                            (< mx (long cols))
+                            (>= my (long bar-top))
+                            (< my (+ (long bar-top) (long inner-h))))
                        (let [grip (long (quot thumb-h 2))]
                          (vreset! scrollbar-drag-offset grip)
                          (state/dispatch [:scroll-to-y (- my grip) bar-top track-h total-h inner-h])
@@ -4670,7 +4702,8 @@
                            (when-let [{:keys [direction amount]} (selection/auto-scroll-step
                                                                    screen-focus
                                                                    {:top bar-top
-                                                                    :bottom (+ bar-top inner-h)
+                                                                    :bottom (+ (long bar-top)
+                                                                               (long inner-h))
                                                                     :edge-size 6
                                                                     :max-step 6})]
                              (let [amount (coalesced-drag-scroll-amount amount drag-events)]
@@ -5458,9 +5491,10 @@
                                ;; silently swallowing the keystroke. :next/:prev and
                                ;; in-range indexes fall through to the normal switch.
                                (if (and (integer? workspace-index)
-                                        (or (neg? workspace-index) (>= workspace-index n)))
+                                        (or (neg? (long workspace-index))
+                                            (>= (long workspace-index) (long n))))
                                  (vis/notify! (str "No workspace "
-                                                   (inc workspace-index)
+                                                   (inc (long workspace-index))
                                                    " — only "
                                                    n
                                                    (if (= 1 n) " tab open" " tabs open"))
@@ -5890,7 +5924,7 @@
                   ;; call `shutdown-agents` after their main loops; the TUI did
                   ;; not, so the hang was channel-specific.
                   (try (shutdown-agents) (catch Throwable _ nil))))
-    (when (pos? @exit-code) (System/exit @exit-code))))
+    (when (pos? (long @exit-code)) (System/exit (int @exit-code)))))
 ;;; Channel registration lives in com.blockether.vis.ext.channel-tui.core.
 ;;; Keep this namespace as the heavyweight runtime implementation loaded only
 ;;; when the TUI channel actually runs.
