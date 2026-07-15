@@ -157,3 +157,39 @@
                      (expect (= 240.0 (:remaining row)))
                      (expect (= 300.0 (:limit row)))
                      (expect (= 60.0 (:used row)))))))
+
+(defdescribe
+  copilot-refresh-margin-test
+  (it "subtracts REFRESH_MARGIN_MS from the refresh_in soft deadline on mint (issue #21)"
+      ;; GitHub's refresh_in (soft, proxy-reject) is shorter than expires_at (hard).
+      ;; The mint must refresh a FULL margin BEFORE the soft deadline, never right
+      ;; up to it — otherwise clock skew / round-trip lands us past the soft reject
+      ;; ("IDE token expired") and the 401 recovery loop storms.
+      (let [now
+            (System/currentTimeMillis)
+
+            refresh-in-s
+            1500
+
+            margin
+            (* 5 60 1000)
+
+            soft
+            (+ now (* refresh-in-s 1000))]
+
+        (with-redefs [sut/get-json
+                      (fn [_ _]
+                        {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
+                         :expires_at (long (/ (+ now 1800000) 1000))
+                         :refresh_in refresh-in-s})
+
+                      sut/copilot-llm-base-url
+                      (fn [& _]
+                        "https://api.individual.githubcopilot.com/v1")]
+
+          (let [{:keys [refresh-at-ms expires-at-ms]} (#'sut/exchange-for-copilot-token!
+                                                       "oauth-tok")]
+            ;; refresh-at-ms == (min hard soft) - margin, and soft < hard here
+            (expect (< (Math/abs (- (long refresh-at-ms) (- soft margin))) 2000))
+            ;; always strictly before the hard expiry too
+            (expect (< (long refresh-at-ms) (long expires-at-ms))))))))

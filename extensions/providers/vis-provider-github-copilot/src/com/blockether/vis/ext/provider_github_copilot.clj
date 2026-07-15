@@ -462,10 +462,12 @@
        ;; signal — refresh once it elapses, NOT at `expires_at`. Accounts whose
        ;; `refresh_in` is far shorter than `expires_at - now` otherwise keep a
        ;; token the proxy already rejects ("IDE token expired"), storming the 401
-       ;; recovery loop. Clamp to the hard expiry; fall back to the fixed margin.
-       :refresh-at-ms (if refresh-in
-                        (min hard-ms (+ now (* (long refresh-in) 1000)))
-                        (- hard-ms REFRESH_MARGIN_MS))
+       ;; recovery loop. Clamp to the hard expiry; ALWAYS subtract the fixed
+       ;; margin (skew + round-trip slack) from whichever expiry is sooner, so
+       ;; the `refresh_in` branch never serves a token right up to the soft
+       ;; deadline — matching the margin the anthropic/openai-codex providers keep.
+       :refresh-at-ms (- (if refresh-in (min hard-ms (+ now (* (long refresh-in) 1000))) hard-ms)
+                         REFRESH_MARGIN_MS)
        :api-url (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
        :account-type account-type
        :sku (or (response-field resp :sku) (response-field resp :access_type_sku))
