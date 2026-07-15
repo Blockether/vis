@@ -103,17 +103,10 @@
     (.refresh screen Screen$RefreshType/DELTA)))
 (defn clamp ^long [^long x ^long lo ^long hi] (max lo (min hi x)))
 (defn ellipsize
+  "Right-truncate `s` to `max-w` columns with a trailing `…`.
+   Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."
   [s max-w]
-  (let [txt
-        (or s "")
-
-        max-w
-        (long max-w)]
-
-    (cond (<= max-w 0) ""
-          (<= (p/display-width txt) max-w) txt
-          (= max-w 1) "..."
-          :else (str (p/truncate-cols txt (dec max-w)) "..."))))
+  (p/ellipsize s max-w))
 (def ^:private min-adaptive-content-h
   "Content-height floor for adaptive dialogs — the box never shrinks below
    this many content rows (≈ this + chrome tall), so a tiny popup still reads
