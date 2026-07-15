@@ -44,15 +44,23 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (defn layout
   "Compute table geometry inside a dialog `bounds` ({:left :inner-w}).
    Pure: no drawing. Useful for mouse hit-testing before `draw!`."
   [{:keys [left inner-w]}]
-  (let [table-x
+  (let [left
+        (long left)
+
+        inner-w
+        (long inner-w)
+
+        table-x
         (+ left 1)
 
         table-w
-        (max 1 (- inner-w 1))
+        (long (max 1 (- inner-w 1)))
 
         ;; Full rendered row width (both `│` borders included).
         rendered-w
@@ -61,7 +69,7 @@
         ;; First column hosts the marker inside the box, so the caller's
         ;; data columns get `SELECTION_WIDTH` fewer cells.
         table-content-w
-        (max 1 (- rendered-w p/SELECTION_WIDTH))]
+        (long (max 1 (- rendered-w p/SELECTION_WIDTH)))]
 
     {:marker-col (+ table-x 2)
      :table-x table-x
@@ -74,7 +82,15 @@
   "Resolve the absolute row indices for each painted line, given the
    caller-supplied `top` and `body-h`."
   [top body-h]
-  (let [body-top (+ top 3)]
+  (let [top
+        (long top)
+
+        body-h
+        (long body-h)
+
+        body-top
+        (+ top 3)]
+
     {:border-top top
      :header (+ top 1)
      :separator (+ top 2)
@@ -89,8 +105,26 @@
   (let [{:keys [body-top]}
         (rows top body-h)
 
+        table-x
+        (long table-x)
+
+        body-top
+        (long body-top)
+
+        body-h
+        (long body-h)
+
+        scroll
+        (long scroll)
+
+        mx
+        (long mx)
+
+        my
+        (long my)
+
         row-w
-        (or rendered-w table-content-w)]
+        (long (or rendered-w table-content-w))]
 
     (when (and (>= mx table-x) (< mx (+ table-x row-w)) (>= my body-top) (< my (+ body-top body-h)))
       (+ scroll (- my body-top)))))
@@ -144,6 +178,24 @@
 
         {:keys [border-top header separator body-top]}
         row-ix
+
+        rendered-w
+        (long rendered-w)
+
+        table-x
+        (long table-x)
+
+        body-top
+        (long body-top)
+
+        body-h
+        (long body-h)
+
+        scroll
+        (long scroll)
+
+        total
+        (long total)
 
         aligns
         (vec (take (count widths) aligns))

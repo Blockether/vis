@@ -24,9 +24,11 @@
 
 (defn clamp
   "Clamp `x` into the inclusive range [lo, hi]. Primitive-long in and out —
-   the one canonical range clamp every dialog / header / provider view shares."
+   the one canonical range clamp every dialog / header / provider view shares.
+   Delegates to the lanterna fork's `TerminalTextUtils/clamp` (>= 3.1.5-vis.27)
+   so the whole channel reuses ONE primitive range clamp."
   ^long [^long x ^long lo ^long hi]
-  (max lo (min hi x)))
+  (TerminalTextUtils/clamp x lo hi))
 
 ;;; ── Color ──────────────────────────────────────────────────────────────────
 
@@ -207,10 +209,8 @@
    rows show two spaces, so the body content stays column-aligned.
 
    The glyph MUST be display-width 1 so glyph+space == 2 cols and
-   exactly fills the reserved gutter. `•` (U+2022) is East-Asian
-   *ambiguous* width; the lanterna fork (>= 3.1.5-vis.7) scores EAW=A
-   as NARROW by default, so `• ` is 2 cols. (A regression in vis.6
-   briefly made it wide — the 'marker eats a character' bug.)"
+   exactly fills the reserved gutter. `•` is the project-wide selector
+   dot, kept bare (no VS-16) to avoid terminal width surprises."
   "• ")
 
 (def ^:const SELECTION_BLANK "  ")
@@ -252,9 +252,11 @@
    the next col (`col + STATUS_WIDTH`) so the caller can place the label right
    after. The reusable mark behind settings rows + resource rows."
   [g col row glyph fg bg]
-  (set-colors! g fg bg)
-  (put-str! g col row glyph)
-  (+ col STATUS_WIDTH))
+  (let [col (long col)
+        row (long row)]
+    (set-colors! g fg bg)
+    (put-str! g col row glyph)
+    (+ col STATUS_WIDTH)))
 
 ;;; ── Composite primitives ──────────────────────────────────────────────────
 
@@ -262,14 +264,13 @@
   "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
-  (let [right
-        (+ left w -1)
-
-        bottom
-        (+ top h -1)
-
-        inner
-        (- w 2)]
+  (let [left (long left)
+        top (long top)
+        w (long w)
+        h (long h)
+        right (+ left w -1)
+        bottom (+ top h -1)
+        inner (- w 2)]
 
     ;; Corners
     (set-char! g left top BOX_TL)
@@ -280,7 +281,7 @@
     (put-str! g (inc left) top (horiz-line inner))
     (put-str! g (inc left) bottom (horiz-line inner))
     ;; Vertical edges
-    (doseq [r (range (inc top) bottom)]
+    (doseq [^long r (range (inc top) bottom)]
       (set-char! g left r BOX_V)
       (set-char! g right r BOX_V))
     g))
@@ -288,7 +289,10 @@
 (defn draw-separator!
   "Draw a horizontal separator with T-junctions at left/right edges."
   [g left right row]
-  (let [inner (- right left 1)]
+  (let [left (long left)
+        right (long right)
+        row (long row)
+        inner (- right left 1)]
     (set-char! g left row BOX_T_R)
     (set-char! g right row BOX_T_L)
     (put-str! g (inc left) row (horiz-line inner))
