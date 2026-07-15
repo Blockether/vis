@@ -81,3 +81,45 @@
                          "import paramiko\n" "a=paramiko.SFTPAttributes._from("
                          "{'st_size':42,'st_mode':33188,'st_uid':1000,'filename':'readme.txt'})\n"
                          "[a.st_size, a.st_mode, a.st_uid, a.filename]")))))))
+
+(defdescribe
+  paramiko-server-side-test
+  (it
+    "exposes the server-side class tree, constants, and submodules"
+    (with-python-context
+      (expect
+        (=
+          [true true true true true true true true true true true true true true]
+          (ev
+            python-context
+            (str
+              "import paramiko\n"
+              "from paramiko.server import ServerInterface, InteractiveQuery, SubsystemHandler\n"
+              "from paramiko.sftp_server import SFTPServer\n"
+              "from paramiko.sftp_si import SFTPServerInterface\n"
+              "from paramiko.sftp_handle import SFTPHandle\n"
+              "class S(ServerInterface):\n" "  def check_auth_password(self, u, p):\n"
+              "    return paramiko.AUTH_SUCCESSFUL\n" "s=S()\n"
+              "r=[]\n" "r.append(s.check_auth_password('u','p')==paramiko.AUTH_SUCCESSFUL)\n"
+              "r.append(s.check_auth_publickey('u',None)==paramiko.AUTH_FAILED)\n"
+              "r.append(s.check_channel_request('x',0)==paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED)\n"
+              "r.append(s.get_allowed_auths('u')=='password')\n"
+              "r.append(s.check_channel_exec_request(None,'ls') is False)\n"
+              "r.append(paramiko.SFTP_OK==0 and paramiko.SFTP_EOF==1)\n"
+              "r.append(issubclass(SFTPServer, SubsystemHandler))\n"
+              "r.append(SFTPServer.convert_errno(2)==paramiko.SFTP_NO_SUCH_FILE)\n"
+              "r.append(SFTPServer.convert_errno(13)==paramiko.SFTP_PERMISSION_DENIED)\n"
+              "si=SFTPServerInterface(s)\n"
+              "r.append(si.list_folder('/')==paramiko.SFTP_OP_UNSUPPORTED)\n"
+              "r.append(si.stat('/x')==paramiko.SFTP_OP_UNSUPPORTED)\n" "h=SFTPHandle()\n"
+              "r.append(h.close() is None)\n" "r.append(h.stat()==paramiko.SFTP_OP_UNSUPPORTED)\n"
+              "r.append(hasattr(InteractiveQuery(),'add_prompt'))\n" "r"))))))
+  (it "raises SSHException for server mode (Transport.start_server) \u2014 client-only backend"
+      (with-python-context
+        (expect (= "SSHException"
+                   (ev python-context
+                       (str "import paramiko\n" "class S(paramiko.ServerInterface):\n"
+                            "  pass\n" "t=paramiko.Transport(sess=None)\n"
+                            "out='?'\n" "try:\n"
+                            "  t.start_server(server=S())\n" "except paramiko.SSHException as e:\n"
+                            "  out=type(e).__name__\n" "out")))))))
