@@ -3561,6 +3561,12 @@
         (let [dir
               "tool-ignore-neg-include"
 
+              ;; This fixture is reused across test invocations. Remove the
+              ;; prior run's tool-only ignore file before asserting the default
+              ;; `.gitignore` behavior.
+              _
+              (fs/delete-if-exists (fs/file (str (temp-dir-path dir) "/.ignore")))
+
               _
               (write-temp! (str dir "/.gitignore") "vendor/\n")
 
