@@ -57,9 +57,13 @@
         ;;      detection (isGraphicalTerminal → graphical vs non-graphical terminal),
         ;;      pixel-dimension sniffing, cell-box sizing, escape encoding. vis's
         ;;      channel-tui.terminal-image is now a thin adapter over it.
+        ;;  13. Terminal chrome rule builders (vis.28): TerminalTextUtils/repeat,
+        ;;      joinedLine, and boxedLine build `─`, `──┬──`, and `┌──┐` strings in
+        ;;      Java StringBuilder code so TUI tables/dialog separators don't rebuild
+        ;;      hot chrome through Clojure seq helpers every paint.
         ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
         ;; Retire when upstream ships equivalent fixes.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.27"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.28"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
         ;; jcodec-javase. Only pulled in when the TUI jar is present.

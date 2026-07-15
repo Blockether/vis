@@ -168,16 +168,16 @@
   ([widths kind]
    (let [junction (case kind
                     :top
-                    \┬
+                    p/BOX_T_DOWN
 
                     :middle
-                    \┼
+                    p/BOX_CROSS
 
                     :bottom
-                    \┴
+                    p/BOX_T_UP
 
-                    \┼)]
-     (str/join (str junction) (map #(p/horiz-line (+ (long %) 2)) widths))))
+                    p/BOX_CROSS)]
+     (p/joined-horiz-line (map #(+ (long %) 2) widths) junction)))
   ([columns table-w kind] (border-line (column-widths columns table-w) kind)))
 
 (defn boxed-row-line
@@ -191,16 +191,16 @@
   [widths kind]
   (let [[left junction right] (case kind
                                 :top
-                                ["┌" "┬" "┐"]
+                                [p/BOX_TL p/BOX_T_DOWN p/BOX_TR]
 
                                 :middle
-                                ["├" "┼" "┤"]
+                                [p/BOX_T_R p/BOX_CROSS p/BOX_T_L]
 
                                 :bottom
-                                ["└" "┴" "┘"]
+                                [p/BOX_BL p/BOX_T_UP p/BOX_BR]
 
-                                ["├" "┼" "┤"])]
-    (str left (str/join junction (map #(p/horiz-line (+ (long %) 2)) widths)) right)))
+                                [p/BOX_T_R p/BOX_CROSS p/BOX_T_L])]
+    (p/boxed-horiz-line (map #(+ (long %) 2) widths) left junction right)))
 
 (defn draw-line!
   [g x row width selected? line]

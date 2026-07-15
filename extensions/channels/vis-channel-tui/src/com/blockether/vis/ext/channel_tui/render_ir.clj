@@ -739,7 +739,7 @@
 
 (defn- table-border-line
   [left join right widths]
-  (str left (str/join join (map #(apply str (repeat (+ 2 (long %)) "─")) widths)) right))
+  (p/boxed-horiz-line (map #(+ 2 (long %)) widths) (first left) (first join) (first right)))
 
 (defn- table-data-line
   [cells widths]
