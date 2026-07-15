@@ -139,7 +139,13 @@
    Layout: border -> title bar -> top separator -> CONTENT -> bottom separator -> hint -> border."
   ([bounds] (dialog-layout bounds nil))
   ([{:keys [top bottom]} content-count]
-   (let [raw-top
+   (let [top
+         (long top)
+
+         bottom
+         (long bottom)
+
+         raw-top
          (+ top 3)
 
          hint-row
@@ -597,8 +603,26 @@
                         (default-content-width cols)
                         (adaptive-content-height rows content-h)))
   ([g cols rows title content-w content-h]
-   (let [[box-w box-h]
+   (let [cols
+         (long cols)
+
+         rows
+         (long rows)
+
+         content-w
+         (long content-w)
+
+         content-h
+         (long content-h)
+
+         [box-w box-h]
          (render/golden-dialog-size cols rows content-w content-h)
+
+         box-w
+         (long box-w)
+
+         box-h
+         (long box-h)
 
          box-left
          (quot (- cols box-w) 2)
@@ -682,7 +706,7 @@
    stripe, no separators - one thin-bordered rect on the dialog background
    with the title inline on the top border. Same default footprint and the
    same bounds map as the boxed chrome, so `dialog-layout` works unchanged."
-  [g cols rows title]
+  [g ^long cols ^long rows title]
   (let [content-w
         (default-content-width cols)
 
@@ -691,6 +715,12 @@
 
         [box-w box-h]
         (render/golden-dialog-size cols rows content-w content-h)
+
+        box-w
+        (long box-w)
+
+        box-h
+        (long box-h)
 
         box-left
         (quot (- cols box-w) 2)
