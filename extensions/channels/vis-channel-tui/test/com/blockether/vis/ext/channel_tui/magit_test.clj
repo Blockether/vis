@@ -424,7 +424,7 @@
   status-rows-test
   (it "renders head facts, sections with counts, stashes and commits in order"
       (let [rows
-            (magit/status-rows sample-model #{[:section :stashes] [:section :commits]})
+            (magit/status-rows sample-model #{[:section :stashes]})
 
             texts
             (mapv :text rows)
@@ -446,20 +446,22 @@
         (expect (some #(and (= :file (:kind %)) (str/includes? (:text %) "deleted")) rows))
         (expect (some #(and (= :stash (:kind %)) (= "stash@{0}" (:ref %))) rows))
         (expect (some #(and (= :commit (:kind %)) (= "abc1234" (:sha %))) rows))))
-  (it "folds the stash list and commit log shut by default (magit fold)"
+  (it "folds the stash list and unstaged changes shut by default, keeps recent commits open (magit fold)"
       (let [rows (magit/status-rows sample-model #{})]
         (expect (not-any? #(= :stash (:kind %)) rows))
-        (expect (not-any? #(= :commit (:kind %)) rows))
+        (expect (not-any? #(and (= :file (:kind %)) (= :unstaged (:area %))) rows))
+        (expect (some #(= :commit (:kind %)) rows))
         ;; the section HEADERS still render so the counts stay visible
         (expect (some #(and (= :section (:kind %)) (= :stashes (:area %))) rows))
-        (expect (some #(and (= :section (:kind %)) (= :commits (:area %))) rows))))
-  (it "section-open? flips a section from its default (working open, log closed)"
-      (expect (magit/section-open? #{} :unstaged))
+        (expect (some #(and (= :section (:kind %)) (= :unstaged (:area %))) rows))))
+  (it "section-open? reflects defaults (staged/commits open, unstaged/stash/log closed) and flips them"
+      (expect (not (magit/section-open? #{} :unstaged)))
       (expect (magit/section-open? #{} :staged))
+      (expect (magit/section-open? #{} :commits))
       (expect (not (magit/section-open? #{} :stashes)))
-      (expect (not (magit/section-open? #{} :commits)))
       (expect (magit/section-open? #{[:section :stashes]} :stashes))
-      (expect (not (magit/section-open? #{[:section :unstaged]} :unstaged))))
+      (expect (magit/section-open? #{[:section :unstaged]} :unstaged))
+      (expect (not (magit/section-open? #{[:section :commits]} :commits))))
   (it "expands a stash's diff lines directly under its row"
       (let [diff-fn
             (fn [{:keys [ref]}]
@@ -510,7 +512,7 @@
               ["@@ -1 +1,2 @@" "+two"])
 
             rows
-            (magit/status-rows sample-model #{[:unstaged "a.txt"]} diff-fn)
+            (magit/status-rows sample-model #{[:section :unstaged] [:unstaged "a.txt"]} diff-fn)
 
             idx
             (first (keep-indexed #(when (= "a.txt" (:path %2)) %1) rows))
@@ -532,7 +534,7 @@
               [(str "@@ " sha " @@") "+added"])
 
             rows
-            (magit/status-rows sample-model #{[:section :commits] [:commits "abc1234"]} diff-fn)
+            (magit/status-rows sample-model #{[:commits "abc1234"]} diff-fn)
 
             idx
             (first (keep-indexed #(when (= "abc1234" (:sha %2)) %1) rows))
@@ -773,7 +775,7 @@
                 (magit/file-diff-lines (:root row) row))
 
               rows
-              (magit/multi-status-rows repos #{[a :unstaged "a.txt"]} diff-fn)
+              (magit/multi-status-rows repos #{[a :section :unstaged] [a :unstaged "a.txt"]} diff-fn)
 
               diffs
               (filterv #(= :diff (:kind %)) rows)]
@@ -797,7 +799,7 @@
                                {:root b :trunk b :label "beta" :draft? false}])
 
             rows
-            (magit/multi-status-rows repos #{} nil)
+            (magit/multi-status-rows repos #{[a :section :unstaged] [b :section :unstaged]} nil)
 
             section-idxs
             (keep-indexed #(when (and (= :section (:kind %2)) (= :unstaged (:area %2))) %1) rows)]
@@ -839,7 +841,7 @@
             (magit/load-repos roots)
 
             rows
-            (magit/multi-status-rows repos #{} nil)]
+            (magit/multi-status-rows repos #{[clone :section :unstaged]} nil)]
 
         ;; buffer reads the clone: the draft edit is visible
         (expect (= [clone] (mapv :root roots)))
@@ -883,7 +885,7 @@
             (magit/workspace-roots ws nil)
 
             rows
-            (magit/multi-status-rows (magit/load-repos roots) #{} nil)]
+            (magit/multi-status-rows (magit/load-repos roots) #{[clone-a :section :unstaged]} nil)]
 
         (expect (= [clone-a clone-b] (mapv :root roots)))
         (expect (every? :draft? roots))

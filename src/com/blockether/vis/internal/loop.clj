@@ -176,6 +176,63 @@
   [streak]
   (>= (long streak) CONSECUTIVE_PROVIDER_ERROR_LIMIT))
 
+(def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES
+  "Transparent retries for svar's terminal `:svar.llm/provider-unavailable`
+   — the single (pinned) provider's upstream call failed before any usable
+   response came back (a transient 5xx / dropped connection svar already
+   gave up on). A momentary blip usually clears on a re-send, so re-send the
+   SAME request a few times (widening backoff) before surfacing the error.
+   3 retries = 4 total attempts; if it STILL fails the turn ends with the
+   provider-error card (the user picks where to go next) rather than silently
+   hopping providers or feeding an unactionable outage back to the model."
+  3)
+
+(def ^:private PROVIDER_UNAVAILABLE_RETRY_DELAYS_MS
+  "Widening backoff (ms) before each provider-unavailable retry, indexed by
+   attempt — same procedure as `PROVIDER_STREAM_REWIND_DELAYS_MS`. A momentary
+   upstream outage (5xx / dropped connection) realistically takes a few seconds
+   to clear, so the delay grows 1s → 2s → 4s across the retries rather than
+   re-hitting the same blip on a fixed cadence."
+  [1000 2000 4000])
+
+(defn- provider-unavailable-error?
+  "True when an exception is svar's terminal `:svar.llm/provider-unavailable`
+   (a single-provider turn whose upstream call failed before any usable
+   response). Retry-able ONCE, then terminal."
+  [^Throwable e]
+  (= :svar.llm/provider-unavailable (:type (ex-data e))))
+
+(defn- provider-unavailable-retry?
+  "True while a provider-unavailable exception still has PU retry budget left
+   (`pu-attempt` below the cap). Gate for the transparent re-send."
+  [^Throwable e pu-attempt]
+  (and (provider-unavailable-error? e)
+       (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES))))
+
+(defn- provider-unavailable-retry-delay-ms
+  "Widening backoff (ms) before the `pu-attempt`-th (0-based) provider-unavailable
+   retry; clamps past the vector's end to its final value (4000)."
+  [pu-attempt]
+  (long (nth PROVIDER_UNAVAILABLE_RETRY_DELAYS_MS pu-attempt 4000)))
+
+(defn- next-retry-counters
+  "Pure counter-threading for the iteration retry loop's recur arms. Given the
+   retry decision `result` and the current `:attempt`/`:max-tokens-attempt`/
+   `:pu-attempt`, returns the next `[attempt max-tokens-attempt pu-attempt]` with
+   ONLY the budget owned by that retry class advanced — the others stay flat so
+   the policies never starve each other (provider-unavailable's 1s→2s→4s backoff
+   always starts at pu-attempt=0 no matter how many stream/auth retries preceded
+   it). Returns nil when `result` is not a retry signal (a real iteration result)."
+  [result
+   {:keys [attempt max-tokens-attempt pu-attempt]
+    :or {attempt 0 max-tokens-attempt 0 pu-attempt 0}}]
+  (cond (= result ::retry-stream) [(inc attempt) max-tokens-attempt pu-attempt]
+        (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
+        (and (map? result) (contains? result ::retry-max-tokens)) [attempt (inc max-tokens-attempt)
+                                                                   pu-attempt]
+        (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt pu-attempt]
+        (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt pu-attempt]))
+
 (def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000 4000])
 
 (defn- provider-call-cancelled?
@@ -959,7 +1016,7 @@
   ;; surfacing them to Vis, so feeding them back into the RLM only burns
   ;; visible iterations and cannot help the model self-correct.
   #{:svar.core/http-error :svar.llm/all-providers-exhausted :svar.llm/circuit-open
-    :svar.llm/provider-exhausted})
+    :svar.llm/provider-exhausted :svar.llm/provider-unavailable})
 
 (defn- infrastructure-error?
   [ex-data-map]
@@ -2092,27 +2149,103 @@
     (when-let [m (re-matches #"t(\d+)/i(\d+)(?:/f\d+)?" (str/trim scope))]
       [(parse-long (nth m 1)) (parse-long (nth m 2))])))
 
+(defn- turn-key
+  "Turn number of a bare WHOLE-TURN scope `\"tN\"` (no `/iN`); nil otherwise, so
+   `expand-through` only whole-turn-expands an id that is JUST a turn — a plain
+   `\"t1/i2\"` stays a single iteration."
+  [scope]
+  (when (string? scope)
+    (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
+      (parse-long (nth m 1)))))
+
 (defn- expand-through
-  "Normalize range-fold intents: replace each summary's `:through \"tN/iN\"` cursor
-   with a concrete `:scopes` set = every iteration scope in `universe` AT OR
-   BEFORE the cursor (inclusive), unioned with any explicit `:scopes` it already
-   carried. Summaries with no `:through` pass through untouched. Pure — same
-   inputs → same output. `universe` is the caller's own set of live iteration
-   scopes (apply-summaries: the trailer; previous-turn-context: that turn's
-   forms), so the SAME intent expands consistently wherever summaries are read."
+  "Resolve every fold SELECTOR on each summary against `universe` (the caller's
+   own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
+   expands consistently wherever summaries are read (apply-summaries: the
+   trailer; resume / prior-turn: that turn's forms). Selector keys (all optional,
+   their results UNIONED):
+     `\"scopes\"`  explicit ids — a `tN/iN` is kept verbatim; a bare `tN` EXPANDS
+                 to every iteration of that turn present in `universe`.
+     `\"through\"` `tN/iN` cursor → every universe scope AT OR BEFORE it (start→cursor).
+     `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
+     `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
+   The range keys are dropped after resolution and the union lands in `\"scopes\"`.
+   Intents with none of these keys pass through untouched. Pure — same inputs →
+   same output."
   [summaries universe]
-  (mapv (fn [s]
-          (if-let [thr (get s "through")]
-            (let [tk (scope-key thr)]
-              (-> s
-                  (dissoc "through")
-                  (assoc "scopes" (into (set (get s "scopes"))
-                                        (filter (fn [u]
-                                                  (when-let [uk (scope-key u)]
-                                                    (and tk (<= (compare uk tk) 0))))
-                                                universe)))))
-            s))
-        summaries))
+  (let [ukeys
+        (into []
+              (keep (fn [u]
+                      (when-let [k (scope-key u)]
+                        [u k]))
+                    universe))
+
+        pick
+        (fn [pred]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (pred k)))
+                      (map first))
+                ukeys))
+
+        turn-scopes
+        (fn [tn]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (= tn (first k))))
+                      (map first))
+                ukeys))
+
+        selector?
+        #{"scopes" "through" "from" "to" "since"}]
+
+    (mapv
+      (fn [s]
+        (if-not (some #(contains? s %) selector?)
+          s
+          (let [thr
+                (some-> (get s "through")
+                        scope-key)
+
+                frm
+                (some-> (get s "from")
+                        scope-key)
+
+                to
+                (some-> (get s "to")
+                        scope-key)
+
+                snc
+                (some-> (get s "since")
+                        scope-key)
+
+                expl
+                (into #{}
+                      (mapcat (fn [sc]
+                                (cond (scope-key sc) [sc]
+                                      (turn-key sc) (turn-scopes (turn-key sc))
+                                      :else [sc])))
+                      (get s "scopes"))
+
+                scopes
+                (cond-> expl
+                  thr
+                  (into (pick (fn [k]
+                                (<= (compare k thr) 0))))
+
+                  (or frm to)
+                  (into (pick (fn [k]
+                                (and (or (nil? frm) (>= (compare k frm) 0))
+                                     (or (nil? to) (<= (compare k to) 0))))))
+
+                  snc
+                  (into (pick (fn [k]
+                                (>= (compare k snc) 0)))))]
+
+            (-> s
+                (dissoc "through" "from" "to" "since")
+                (assoc "scopes" scopes)))))
+      summaries)))
 
 (defn- supersede-summaries
   "Collapse 'summary of summary': drop any summary whose scope set is fully
@@ -2173,11 +2306,35 @@
         target
         (fn [scopes]
           (if (map? scopes)
-            (when-let [thr (some-> (get scopes "through")
-                                   str
-                                   str/trim
-                                   not-empty)]
-              [{"through" thr} (str "through " thr)])
+            (let [pick
+                  (fn [k]
+                    (some-> (get scopes k)
+                            str
+                            str/trim
+                            not-empty))
+
+                  thr
+                  (pick "through")
+
+                  snc
+                  (pick "since")
+
+                  frm
+                  (pick "from")
+
+                  to
+                  (pick "to")]
+
+              (cond thr [{"through" thr} (str "through " thr)]
+                    snc [{"since" snc} (str "since " snc)]
+                    (or frm to) [(cond-> {}
+                                   frm
+                                   (assoc "from" frm)
+
+                                   to
+                                   (assoc "to" to))
+                                 (str "window " (or frm "start") ".." (or to "end"))]
+                    :else nil))
             (let [ss (->set scopes)]
               (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))]))))
 
@@ -2199,7 +2356,9 @@
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}} "model folded scopes")
            (str "folded " label (when g (str " → " g))))
-         "session_fold: nothing to fold (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))}))
+         (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
+              "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
+              "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
 
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
@@ -2944,6 +3103,39 @@
                                  :description "Python source to execute in the sandbox."}}
             :required ["code"]}})
 
+(defn- session-fold-tool
+  "Engine-level `session_fold` native-tool schema — the context-compaction verb
+   advertised as a first-class tool_use. It is ALSO callable bare / inside
+   `python_execution` (the SAME bound sandbox verb from `compaction-verbs`);
+   native dispatch just synthesizes `session_fold(target, gist)` into that verb
+   (see the injected call-shape), so ONE definition drives both surfaces and the
+   ctx-atom closure is reused — no separate Clojure handler."
+  []
+  {:name "session_fold"
+   :description (str "Compact PAST steps out of the conversation to keep context lean: fold "
+                     "the named steps (each tagged `# tN/iN` in its result) off the wire, "
+                     "replaced by ONE optional gist line. `target` selects what to fold; "
+                     "`gist` is the single takeaway kept in their place — OMIT it to drop the "
+                     "steps outright. Folds are idempotent and superseding: a broader re-fold "
+                     "replaces a finer one (one breadcrumb, never a stack). Same verb is "
+                     "callable inside python_execution as `session_fold(target, gist)`.")
+   :schema {:type "object"
+            :properties
+            {"target" {:description
+                       (str
+                         "What to fold. Either a LIST of step ids like [\"t2/i3\", \"t2/i4\"] "
+                         "(a bare \"t2\" in the list folds that WHOLE turn), OR a selector "
+                         "object: {\"through\": \"tN/iN\"} folds every step up to and INCLUDING "
+                         "that one; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an inclusive window "
+                         "(either bound optional); {\"since\": \"tN/iN\"} that step through the "
+                         "newest.")}
+             "gist" {:type "string"
+                     :description
+                     (str "Optional one-line takeaway kept in place of the folded steps, "
+                          "anchored (e.g. \"http timeout @ http.py:52\"). OMIT to drop the steps "
+                          "with no summary line.")}}
+            :required ["target"]}})
+
 (defn- native-tools
   "The native tool surface advertised to the model: the file tools declared via
    each extension's `vis/symbol` `:native-tool` opt (single source of truth —
@@ -2951,7 +3143,9 @@
    transforms. Order: the registered file tools, then python_execution. `caps`
    (`:sandbox-caps` from the env) tailors python_execution's fs/network line."
   [active-extensions caps env]
-  (conj (extension/native-tool-schemas active-extensions env) (python-execution-tool caps)))
+  (conj (extension/native-tool-schemas active-extensions env)
+        (session-fold-tool)
+        (python-execution-tool caps)))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -3513,7 +3707,10 @@
           native-handlers (extension/native-tool-handlers active-extensions environment)
           ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
           ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
-          call-shapes (extension/native-tool-call-shapes active-extensions environment)
+          call-shapes (assoc (extension/native-tool-call-shapes active-extensions environment)
+                        ;; Engine-level session_fold: synthesize a POSITIONAL
+                        ;; `session_fold(target, gist)` into the bound verb.
+                        "session_fold" {:pos ["target"] :opt-pos ["gist"]})
           blocks (if answer-md
                    []
                    (mapv (fn [tc]
@@ -5532,6 +5729,12 @@
                     ;;                              wins per `preserve-auto-params` merge order.
                     (loop [attempt 0
                            max-tokens-attempt 0
+                           ;; PU (provider-unavailable) gets its OWN retry budget,
+                           ;; independent of the stream-rewind / auth retries that
+                           ;; also thread through `attempt` — else its "1s->2s->4s,
+                           ;; 3 retries" story only holds when PU is the FIRST
+                           ;; failure in the turn.
+                           pu-attempt 0
                            current-extra-body extra-body
                            ;; `env` is threaded so the auth-refresh retry can
                            ;; reseat its `:router` to the rebuilt one (the
@@ -5555,103 +5758,142 @@
                                                                              trailer-iters))}
                                               :extra-body current-extra-body})
                               (catch Exception e
-                                (cond (and (stream-truncated-error? e)
-                                           (< attempt MAX_STREAM_TRUNCATED_RETRIES))
-                                      (do (tel/log! {:level :warn
-                                                     :id ::stream-truncated-retry
-                                                     :data {:iteration iteration
-                                                            :attempt (inc attempt)
-                                                            :max-retries
-                                                            MAX_STREAM_TRUNCATED_RETRIES
-                                                            :type (:type (ex-data e))}}
-                                                    (str "Stream truncated, transparent retry "
-                                                         (inc attempt)
-                                                         "/" MAX_STREAM_TRUNCATED_RETRIES))
-                                          ::retry-stream)
-                                      ;; Max-tokens cap: model burnt the entire output
-                                      ;; budget on hidden reasoning before emitting a
-                                      ;; tool call. Double the budget and try once more so the
-                                      ;; turn doesn't fail when the same call would have
-                                      ;; succeeded with a slightly larger ceiling. Reasoning-
-                                      ;; heavy iterations hit this when the provider's
-                                      ;; finish_reason: \"length\" leaves content-acc empty.
-                                      (and (max-tokens-exceeded-error? e)
-                                           (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
-                                      (let [data (ex-data e)
-                                            prev-max (or (:output-tokens data)
-                                                         (:max_tokens current-extra-body)
-                                                         8192)
-                                            bumped (bumped-max-tokens-extra-body current-extra-body
-                                                                                 prev-max)]
+                                (cond
+                                  (and (stream-truncated-error? e)
+                                       (< attempt MAX_STREAM_TRUNCATED_RETRIES))
+                                  (do (tel/log! {:level :warn
+                                                 :id ::stream-truncated-retry
+                                                 :data {:iteration iteration
+                                                        :attempt (inc attempt)
+                                                        :max-retries MAX_STREAM_TRUNCATED_RETRIES
+                                                        :type (:type (ex-data e))}}
+                                                (str "Stream truncated, transparent retry "
+                                                     (inc attempt)
+                                                     "/" MAX_STREAM_TRUNCATED_RETRIES))
+                                      ::retry-stream)
+                                  ;; Max-tokens cap: model burnt the entire output
+                                  ;; budget on hidden reasoning before emitting a
+                                  ;; tool call. Double the budget and try once more so the
+                                  ;; turn doesn't fail when the same call would have
+                                  ;; succeeded with a slightly larger ceiling. Reasoning-
+                                  ;; heavy iterations hit this when the provider's
+                                  ;; finish_reason: \"length\" leaves content-acc empty.
+                                  (and (max-tokens-exceeded-error? e)
+                                       (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
+                                  (let [data (ex-data e)
+                                        prev-max (or (:output-tokens data)
+                                                     (:max_tokens current-extra-body)
+                                                     8192)
+                                        bumped (bumped-max-tokens-extra-body current-extra-body
+                                                                             prev-max)]
 
-                                        (tel/log!
-                                          {:level :warn
-                                           :id ::max-tokens-exceeded-retry
-                                           :data {:iteration iteration
-                                                  :attempt (inc max-tokens-attempt)
-                                                  :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                  :prev-max prev-max
-                                                  :new-max (:max_tokens bumped)
-                                                  :reasoning-length (:reasoning-length data)}}
-                                          (str "max_tokens exhausted on reasoning (~"
-                                               (or (:reasoning-length data) "?")
-                                               " reasoning tokens); retry " (inc max-tokens-attempt)
-                                               "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                               " with max_tokens=" (:max_tokens bumped)))
-                                        ;; Bump max-tokens-attempt so a second cap-hit
-                                        ;; doesn't loop forever; keep `attempt` flat so a
-                                        ;; subsequent stream-truncated still has its own
-                                        ;; quota.
-                                        {::retry-max-tokens bumped})
-                                      ;; Post-refresh auth 401: the token we
-                                      ;; JUST force-refreshed 401'd AGAIN. Almost
-                                      ;; always OAuth PROPAGATION LAG at the
-                                      ;; provider edge (a freshly-minted token is
-                                      ;; briefly not-yet-valid), NOT a dead
-                                      ;; credential — the same token succeeds
-                                      ;; seconds later. Re-minting is what CAUSES
-                                      ;; the storm, so DON'T refresh: back off and
-                                      ;; retry the SAME token until it settles.
-                                      (and (< attempt MAX_AUTH_REFRESH_RETRIES)
-                                           (refresh-just-failed? e resolved-model))
-                                      ::retry-auth-backoff
-                                      ;; Auth 401/403 from a refreshable
-                                      ;; provider: force an OAuth refresh +
-                                      ;; router rebuild, then re-send once.
-                                      ;; `try-refresh-provider-token!` does
-                                      ;; the work and returns true only when
-                                      ;; a refresh actually happened.
-                                      (and (< attempt MAX_AUTH_REFRESH_RETRIES)
-                                           (auth-refreshable-error? e resolved-model)
-                                           (try-refresh-provider-token! resolved-model))
-                                      ::retry-auth-refresh
-                                      :else (handle-iteration-exception!
-                                              e
-                                              {:iteration iteration
-                                               :messages effective-messages
-                                               :routing effective-routing
-                                               :reasoning-level reasoning-level}))))]
-                        (cond
-                          (= result ::retry-stream)
-                          (recur (inc attempt) max-tokens-attempt current-extra-body env)
-                          (and (map? result) (contains? result ::retry-max-tokens))
-                          (recur attempt (inc max-tokens-attempt) (::retry-max-tokens result) env)
-                          (= result ::retry-auth-refresh)
-                          ;; Token was force-refreshed and the router rebuilt;
-                          ;; reseat THIS turn's env onto the fresh router before
-                          ;; re-sending (run-iteration uses (:router env)).
-                          (recur (inc attempt)
-                                 max-tokens-attempt
-                                 current-extra-body
-                                 (assoc env :router (get-router)))
-                          (= result ::retry-auth-backoff)
-                          ;; Same just-refreshed token 401'd (propagation lag):
-                          ;; wait, then re-send the SAME token — no re-mint, no
-                          ;; router rebuild. `attempt` grows so backoff widens and
-                          ;; the retry budget still bounds it.
-                          (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
-                              (recur (inc attempt) max-tokens-attempt current-extra-body env))
-                          :else result)))]
+                                    (tel/log! {:level :warn
+                                               :id ::max-tokens-exceeded-retry
+                                               :data {:iteration iteration
+                                                      :attempt (inc max-tokens-attempt)
+                                                      :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                      :prev-max prev-max
+                                                      :new-max (:max_tokens bumped)
+                                                      :reasoning-length (:reasoning-length data)}}
+                                              (str "max_tokens exhausted on reasoning (~"
+                                                   (or (:reasoning-length data) "?")
+                                                   " reasoning tokens); retry "
+                                                   (inc max-tokens-attempt)
+                                                   "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                   " with max_tokens=" (:max_tokens bumped)))
+                                    ;; Bump max-tokens-attempt so a second cap-hit
+                                    ;; doesn't loop forever; keep `attempt` flat so a
+                                    ;; subsequent stream-truncated still has its own
+                                    ;; quota.
+                                    {::retry-max-tokens bumped})
+                                  ;; Post-refresh auth 401: the token we
+                                  ;; JUST force-refreshed 401'd AGAIN. Almost
+                                  ;; always OAuth PROPAGATION LAG at the
+                                  ;; provider edge (a freshly-minted token is
+                                  ;; briefly not-yet-valid), NOT a dead
+                                  ;; credential — the same token succeeds
+                                  ;; seconds later. Re-minting is what CAUSES
+                                  ;; the storm, so DON'T refresh: back off and
+                                  ;; retry the SAME token until it settles.
+                                  (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                       (refresh-just-failed? e resolved-model))
+                                  ::retry-auth-backoff
+                                  ;; Auth 401/403 from a refreshable
+                                  ;; provider: force an OAuth refresh +
+                                  ;; router rebuild, then re-send once.
+                                  ;; `try-refresh-provider-token!` does
+                                  ;; the work and returns true only when
+                                  ;; a refresh actually happened.
+                                  (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                       (auth-refreshable-error? e resolved-model)
+                                       (try-refresh-provider-token! resolved-model))
+                                  ::retry-auth-refresh
+                                  ;; svar gave up on the single pinned
+                                  ;; provider (transient 5xx / dropped
+                                  ;; connection) and threw its terminal
+                                  ;; `provider-unavailable`. On the MAIN
+                                  ;; turn we don't hop providers, but a
+                                  ;; momentary blip usually clears: back
+                                  ;; off (widening delay) and re-send the
+                                  ;; SAME request a few times before the
+                                  ;; turn fails with the card.
+                                  (provider-unavailable-retry? e pu-attempt)
+                                  (let [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)]
+                                    (tel/log! {:level :warn
+                                               :id ::provider-unavailable-retry
+                                               :data {:iteration iteration
+                                                      :attempt (inc pu-attempt)
+                                                      :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
+                                                      :delay-ms delay-ms
+                                                      :status (:status (ex-data e))}}
+                                              (str "Provider unavailable, transparent retry "
+                                                   (inc pu-attempt)
+                                                   "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
+                                    (Thread/sleep delay-ms)
+                                    ::retry-provider-unavailable)
+                                  :else (handle-iteration-exception! e
+                                                                     {:iteration iteration
+                                                                      :messages effective-messages
+                                                                      :routing effective-routing
+                                                                      :reasoning-level
+                                                                      reasoning-level}))))]
+                        (if-let [[attempt* max-tokens-attempt* pu-attempt*]
+                                 (next-retry-counters result
+                                                      {:attempt attempt
+                                                       :max-tokens-attempt max-tokens-attempt
+                                                       :pu-attempt pu-attempt})]
+                          (cond
+                            (and (map? result) (contains? result ::retry-max-tokens))
+                            (recur attempt*
+                                   max-tokens-attempt*
+                                   pu-attempt*
+                                   (::retry-max-tokens result)
+                                   env)
+                            (= result ::retry-auth-refresh)
+                            ;; Token was force-refreshed and the router rebuilt;
+                            ;; reseat THIS turn's env onto the fresh router before
+                            ;; re-sending (run-iteration uses (:router env)).
+                            (recur attempt*
+                                   max-tokens-attempt*
+                                   pu-attempt*
+                                   current-extra-body
+                                   (assoc env :router (get-router)))
+                            (= result ::retry-auth-backoff)
+                            ;; Same just-refreshed token 401'd (propagation lag):
+                            ;; wait, then re-send the SAME token — no re-mint, no
+                            ;; router rebuild. `attempt` grows so backoff widens and
+                            ;; the retry budget still bounds it.
+                            (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
+                                (recur attempt*
+                                       max-tokens-attempt*
+                                       pu-attempt*
+                                       current-extra-body
+                                       env))
+                            ;; ::retry-stream / ::retry-provider-unavailable: same
+                            ;; request, same env; only the owning counter advanced.
+                            :else
+                            (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env))
+                          result)))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
@@ -8565,6 +8807,25 @@
 (defn get-project [project-id] (persistance/db-get-project (db-info) project-id))
 
 (defn create-project! [opts] (persistance/db-create-project! (db-info) opts))
+
+(defn get-project-by-root
+  "Project bound to canonical workspace `root` for `owner-id` (default
+   \"local\"), or nil."
+  ([root] (get-project-by-root "local" root))
+  ([owner-id root] (persistance/db-get-project-by-root (db-info) owner-id root)))
+
+(defn ensure-project-for-root!
+  "Get-or-create the project bound to canonical workspace `root` (a project IS a
+   tab set). Race-safe: on a UNIQUE(owner_id, root) collision from a concurrent
+   creator the insert throws and we re-read. `name` seeds a freshly created
+   project (falls back to the root path)."
+  ([root] (ensure-project-for-root! "local" root nil))
+  ([owner-id root name]
+   (or (get-project-by-root owner-id root)
+       (try (create-project! {:name (or (not-empty (str name)) (str root))
+                              :owner-id (or owner-id "local")
+                              :root root})
+            (catch Throwable _ (get-project-by-root owner-id root))))))
 
 (defn update-project! [project-id opts] (persistance/db-update-project! (db-info) project-id opts))
 

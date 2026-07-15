@@ -1130,6 +1130,23 @@
           (string? result) (not-empty (str/trimr result))
           :else (str "```edn\n" (pr-str result) "\n```"))))
 
+(def ^:private tool-color-var
+  "Per-tool BADGE color for native tool result cards as THEMED CSS vars — the
+   `--tool-*` custom properties `theme->web-css-vars` emits from the SAME palette
+   tokens the TUI paints op-cards with, so the badge tracks every theme
+   (light/dark/…). Keyed by the `:color-role` a native tool declares; mirrors the
+   TUI's `tool-color-role->fg`."
+  {:tool-color/read "var(--tool-read)"
+   :tool-color/search "var(--tool-search)"
+   :tool-color/preview "var(--tool-preview)"
+   :tool-color/edit "var(--tool-edit)"
+   :tool-color/create "var(--tool-create)"
+   :tool-color/delete "var(--tool-delete)"
+   :tool-color/move "var(--tool-move)"
+   :tool-color/shell "var(--tool-shell)"
+   :tool-color/meta "var(--tool-meta)"
+   :tool-color/test "var(--tool-test)"})
+
 (defn- result-card->hiccup
   "One op-card descriptor (`vis/result-card`) → its hiccup: a collapsible
    `<details>` when it has a body (chevroned badge row is the `<summary>`, body
@@ -1137,7 +1154,7 @@
    native-tool form AND each card of a print-many block, so every op-card paints
    identically however many a form carries. nil when there's neither body nor
    summary."
-  [{:keys [summary body]} & [strip-fences?]]
+  [{:keys [label color-role summary body]} & [strip-fences?]]
   (let [body-md
         ((if strip-fences? strip-image-fences resolve-image-fences) (result-markdown body))
 
@@ -1151,17 +1168,25 @@
                          (str/starts-with? "\n")))]
 
     (when (or body-md summary)
-      ;; The op-card TOOL-NAME badge (the colored uppercase CAT/RG/PATCH label)
-      ;; is dropped — the card shows only its summary + expandable body. The
-      ;; `.block-result-label` class stays for the disclosure chevron + layout.
-      (let [head [(when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
+      ;; The op-card TOOL-NAME badge (the colored uppercase CAT/RG/PATCH label),
+      ;; painted in the tool's themed color; non-tool forms fall back to "result".
+      (let [color
+            (get tool-color-var color-role)
+
+            label-attr
+            (if (and label color) {:style (str "color:" color)} {})
+
+            head
+            [(or (when color label) "result")
+             (when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
+
         (if body-md
-          [:details.block-result-card (into [:summary.block-sum.block-result-label] head)
+          [:details.block-result-card (into [:summary.block-sum.block-result-label label-attr] head)
            [:div.block.block-result.md
             (cond-> {:data-md body-md}
               head-gap?
               (assoc :class "has-head-gap")) (md->hiccup body-md)]]
-          [:div.block-result-card (into [:div.block-result-label] head)])))))
+          [:div.block-result-card (into [:div.block-result-label label-attr] head)])))))
 
 (defn- block-result
   "The form's RETURN value as a result card. A native tool form (cat/rg/patch/…)
@@ -1693,141 +1718,145 @@
 (defn- event->frames
   "One gateway event -> seq of `{:event name :html fragment}` for the
    htmx SSE extension (`sse-swap=\"<name>\"`)."
-  [sid {:keys [type] :as event}]
-  (case type
-    ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
-    ;; order): user bubble (form response), trace blocks, answer.
-    ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
-    "turn.started"
-    (cond-> [{:event "thinking" :html (html (list [:div.dots [:span] [:span] [:span]]))}
-             {:event "turnctl" :html (html (stop-button sid))}
-             {:event "queued" :html (html (queued-content sid))}]
-      (:queued? event)
-      (into [{:event "message"
-              :html (user-bubble-html (:request event) (turn-live-key "user" event))}])
+  [sid raw-event]
+  ;; Normalize the wire event ONCE, at the single choke point every path (SSE
+  ;; loop, poll, in-flight replay) funnels through, so a MIRRORED event (crossed
+  ;; the cross-process bus with snake_case keys) and a same-process event (kebab)
+  ;; read IDENTICALLY below — no branch re-derives key-spelling tolerance, one
+  ;; contract, the SAME keys the TUI client normalizes to.
+  (let [{:keys [type] :as event} (vis/event<-wire raw-event)]
+    (case type
+      ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
+      ;; order): user bubble (form response), trace blocks, answer.
+      ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
+      "turn.started"
+      (cond-> [{:event "thinking" :html (html (list [:div.dots [:span] [:span] [:span]]))}
+               {:event "turnctl" :html (html (stop-button sid))}
+               {:event "queued" :html (html (queued-content sid))}]
+        (:queued? event)
+        (into [{:event "message"
+                :html (user-bubble-html (:request event) (turn-live-key "user" event))}])
 
-      ;; status flips to running -> header chip + sidebar dot light up
-      true
-      (into (chrome-frames sid)))
+        ;; status flips to running -> header chip + sidebar dot light up
+        true
+        (into (chrome-frames sid)))
 
-    "reasoning.delta"
-    (when-let [thought (block-thinking (:text event))]
-      [{:event "thinking" :html (html thought)}])
+      "reasoning.delta"
+      (when-let [thought (block-thinking (:text event))]
+        [{:event "thinking" :html (html thought)}])
 
-    ;; Live prose, coalesced to sentence granularity by the gateway. Only the
-    ;; `:prose-final` frames paint a prose block — DISTINCT from the #thinking
-    ;; trace above; streaming provider `:content` (no prose-final) is skipped.
-    "content.delta"
-    (when (:prose-final event)
-      (when-let [prose (block-prose (:text event)
-                                    (turn-live-key (str "prose:" (:iteration event)) event))]
-        [{:event "message" :html (html prose)}]))
+      ;; Live prose, coalesced to sentence granularity by the gateway. Only the
+      ;; `:prose-final` frames paint a prose block — DISTINCT from the #thinking
+      ;; trace above; streaming provider `:content` (no prose-final) is skipped.
+      "content.delta"
+      (when (:prose-final event)
+        (when-let [prose (block-prose (:text event)
+                                      (turn-live-key (str "prose:" (:iteration event)) event))]
+          [{:event "message" :html (html prose)}]))
 
-    ;; Coarse live-progress: a provider wait, response parse, or a nested
-    ;; shell/tool call. Repaint the transient #thinking ticker with a labeled
-    ;; spinner so the user sees SOMETHING is happening; iteration.completed
-    ;; resets it to bare dots.
-    "activity"
-    [{:event "thinking" :html (html (activity-ticker event))}]
+      ;; Coarse live-progress: a provider wait, response parse, or a nested
+      ;; shell/tool call. Repaint the transient #thinking ticker with a labeled
+      ;; spinner so the user sees SOMETHING is happening; iteration.completed
+      ;; resets it to bare dots.
+      "activity"
+      [{:event "thinking" :html (html (activity-ticker event))}]
 
-    "block.started"
-    ;; Nothing painted at form START: the code row is emitted at
-    ;; `block.output` instead, because only THEN is the result known — and
-    ;; the result sentinel (vis_answer/vis_silent → `:silent`) is the sole
-    ;; signal that the form is engine chrome to fold away. (No head parsing.)
-    nil
+      "block.started"
+      ;; Nothing painted at form START: the code row is emitted at
+      ;; `block.output` instead, because only THEN is the result known — and
+      ;; the result sentinel (vis_answer/vis_silent → `:silent`) is the sole
+      ;; signal that the form is engine chrome to fold away. (No head parsing.)
+      nil
 
-    "block.output"
-    ;; `:silent` is the engine's display contract: a structurally code-free
-    ;; block, or one whose result is a vis_answer (done) / vis_silent (title)
-    ;; sentinel, is pure chrome — no code, no result row.
-    (when-not (:silent event)
-      (let [code
-            (:code event)
+      "block.output"
+      ;; `:silent` is the engine's display contract: a structurally code-free
+      ;; block, or one whose result is a vis_answer (done) / vis_silent (title)
+      ;; sentinel, is pure chrome — no code, no result row.
+      (when-not (:silent event)
+        (let [;; Project the event through the SAME `vis/form<-wire` contract the
+              ;; DB-restored trace uses (`wire-env->form`): a MIRRORED event
+              ;; arriving over the cross-process bus has its kebab keys munged to
+              ;; snake_case (`:vis/tool-name` → `:vis/tool_name`, `:tool-color-role`
+              ;; → `:tool_color_role`), so reading them raw yielded nil and the
+              ;; op-card badge/label silently vanished live. `<-wire` is tolerant of
+              ;; BOTH spellings, so local and mirrored events paint identically.
+              form (wire-env->form event)
+              code (:code event)
+              ;; Code row rides HERE (not block.started) so chrome never flashes.
+              code-frame (when-not (or (str/blank? (str code)) (vis/hide-tool-code? form))
+                           {:event "message" :html (html (block-code code))})
+              ;; Human display surface: the block RETURN value as a native tool's
+              ;; colored op-card (badge + summary + collapsible body as ONE card),
+              ;; painted from the wire-normalized `form` above.
+              result-frame (when-let [out (block-result (:result event) form)]
+                             {:event "message" :html (html out)})
+              error-frame (when (:error event)
+                            {:event "message"
+                             :html (html (live-error-frame event
+                                                           (turn-live-key (str "error:"
+                                                                               (:iteration event))
+                                                                          event)))})]
 
-            ;; Code row rides HERE (not block.started) so chrome never flashes.
-            code-frame
-            (when-not (or (str/blank? (str code)) (vis/hide-tool-code? event))
-              {:event "message" :html (html (block-code code))})
+          (into [] (keep identity [code-frame result-frame error-frame]))))
 
-            ;; Human display surface: the block RETURN value, rendered as markdown.
-            ;; Pass the whole EVENT so a native tool's result gets its colored label
-            ;; badge LIVE (the event carries :vis/tool-name + :tool-color-role) —
-            ;; the same op-card the DB-restored trace renders.
-            result-frame
-            (when-let [out (block-result (:result event) event)]
-              {:event "message" :html (html out)})
+      "iteration.error"
+      [{:event "message"
+        :html (html (live-error-frame event
+                                      (turn-live-key (str "error:" (:iteration event)) event)))}]
 
-            error-frame
-            (when (:error event)
-              {:event "message"
-               :html (html (live-error-frame event
-                                             (turn-live-key (str "error:" (:iteration event))
-                                                            event)))})]
+      "iteration.completed"
+      (let [thought (block-thinking (:thinking event)
+                                    (turn-live-key (str "thinking:" (:iteration event)) event))
+            prose (block-prose (:assistant-prose event)
+                               (turn-live-key (str "prose:" (:iteration event)) event))]
 
-        (into [] (keep identity [code-frame result-frame error-frame]))))
-
-    "iteration.error"
-    [{:event "message"
-      :html (html (live-error-frame event
-                                    (turn-live-key (str "error:" (:iteration event)) event)))}]
-
-    "iteration.completed"
-    (let [thought
-          (block-thinking (:thinking event)
-                          (turn-live-key (str "thinking:" (:iteration event)) event))
+        ;; Complete reasoning + complete prose pin into the thread HERE. No
+        ;; token/partial model text is streamed by current gateway builds.
+        (cond-> []
+          thought
+          (conj {:event "message" :html (html thought)})
 
           prose
-          (block-prose (:assistant-prose event)
-                       (turn-live-key (str "prose:" (:iteration event)) event))]
+          (conj {:event "message" :html (html prose)})
 
-      ;; Complete reasoning + complete prose pin into the thread HERE. No
-      ;; token/partial model text is streamed by current gateway builds.
-      (cond-> []
-        thought
-        (conj {:event "message" :html (html thought)})
+          ;; the ticker RESETS to dots (not empty) - the turn is still running,
+          ;; so the bottom indicator must survive the iteration boundary; only
+          ;; turn.completed/failed clears it. Do NOT re-render chrome here:
+          ;; replaying a running turn during session switches otherwise swaps the
+          ;; sidebar/header once per iteration, making icons and rails visibly flicker.
+          true
+          (conj {:event "thinking" :html (html [:div.dots [:span] [:span] [:span]])})))
 
-        prose
-        (conj {:event "message" :html (html prose)})
+      ("turn.completed" "turn.failed")
+      (let [trace (trace-lazy event)]
+        (cond-> [{:event "thinking" :html ""} {:event "turnctl" :html ""}]
+          ;; A turn completed through SSE/polling never gets re-rendered as a
+          ;; restored `turn-block`, so its lazy "N iterations" disclosure must
+          ;; be pinned live too. Otherwise the row appears only after a full
+          ;; browser refresh.
+          trace
+          (conj {:event "message" :html (html trace)})
 
-        ;; the ticker RESETS to dots (not empty) - the turn is still running,
-        ;; so the bottom indicator must survive the iteration boundary; only
-        ;; turn.completed/failed clears it. Do NOT re-render chrome here:
-        ;; replaying a running turn during session switches otherwise swaps the
-        ;; sidebar/header once per iteration, making icons and rails visibly flicker.
-        true
-        (conj {:event "thinking" :html (html [:div.dots [:span] [:span] [:span]])})))
+          true
+          (into [{:event "message" :html (vis-message-html event)}
+                 {:event "queued" :html (html (queued-content sid))}
+                 {:event "footer" :html (html (footer-content sid))}])
 
-    ("turn.completed" "turn.failed")
-    (let [trace (trace-lazy event)]
-      (cond-> [{:event "thinking" :html ""} {:event "turnctl" :html ""}]
-        ;; A turn completed through SSE/polling never gets re-rendered as a
-        ;; restored `turn-block`, so its lazy "N iterations" disclosure must
-        ;; be pinned live too. Otherwise the row appears only after a full
-        ;; browser refresh.
-        trace
-        (conj {:event "message" :html (html trace)})
+          ;; the chip leaves `running` and the title may have just been
+          ;; generated - re-render header + session drawer
+          true
+          (into (chrome-frames sid))))
 
-        true
-        (into [{:event "message" :html (vis-message-html event)}
-               {:event "queued" :html (html (queued-content sid))}
-               {:event "footer" :html (html (footer-content sid))}])
+      ("turn.queued" "turn.queued.updated" "turn.queued.deleted")
+      [{:event "queued" :html (html (queued-content sid))}]
 
-        ;; the chip leaves `running` and the title may have just been
-        ;; generated - re-render header + session drawer
-        true
-        (into (chrome-frames sid))))
+      ;; a session title changed (this one or another) - re-render the
+      ;; header chip + the session drawer so generated titles land live,
+      ;; even while the user is looking at a DIFFERENT session.
+      "session.title_updated"
+      (chrome-frames sid)
 
-    ("turn.queued" "turn.queued.updated" "turn.queued.deleted")
-    [{:event "queued" :html (html (queued-content sid))}]
-
-    ;; a session title changed (this one or another) - re-render the
-    ;; header chip + the session drawer so generated titles land live,
-    ;; even while the user is looking at a DIFFERENT session.
-    "session.title_updated"
-    (chrome-frames sid)
-
-    nil))
+      nil)))
 
 (defn- inflight-live-frames
   "Replay the IN-FLIGHT turn's events `(from, to]` through the SAME
@@ -3325,19 +3354,20 @@
      :body (modal-shell
              "Move to project"
              [:div.proj-pick
-              (for [p projects]
-                [:form {:hx-post (str "/ui/session/" sid "/move") :hx-swap "none"}
-                 [:input {:type "hidden" :name "project_id" :value (str (:id p))}]
-                 [:button.proj-pick-row
-                  {:type "submit"
-                   :class (when (= (str (:id p)) (str cur)) "current")
-                   :style (str "--proj:" (project-accent p))} [:span.side-project-dot]
-                  [:span.proj-pick-name (or (not-empty (:name p)) "Project")]
-                  [:span.side-project-count (:session_count p)]]])
+              ;; A single native <select> is the reliable move control (the user
+              ;; picks a project — or "No project" to clear — and the change POSTs
+              ;; straight to /move). The current project is preselected.
               [:form {:hx-post (str "/ui/session/" sid "/move") :hx-swap "none"}
-               [:input {:type "hidden" :name "project_id" :value ""}]
-               [:button.proj-pick-row.proj-pick-none {:type "submit"} (icon "x")
-                [:span "Remove from project"]]]
+               [:select.proj-select
+                {:name "project_id"
+                 :aria-label "Move session to project"
+                 :hx-post (str "/ui/session/" sid "/move")
+                 :hx-trigger "change"
+                 :hx-swap "none"}
+                [:option {:value "" :selected (str/blank? (str cur))} "— No project —"]
+                (for [p projects]
+                  [:option {:value (str (:id p)) :selected (= (str (:id p)) (str cur))}
+                   (or (not-empty (:name p)) "Project")])]]
               [:button.proj-pick-row.proj-pick-new
                {:type "button" :hx-get "/ui/projects/new" :hx-target "#modal" :hx-swap "innerHTML"}
                (icon "folder-plus") [:span "New project…"]]])}))
@@ -5713,6 +5743,113 @@
       (.start))
     {:process process :url (deref url-promise 30000 nil)}))
 
+(defn- tailscale-active?
+  "Best-effort probe: true when the `tailscale` CLI is present AND its backend
+   is Running (so Tailscale's MagicDNS resolver is in play on this box). Any
+   failure - missing binary, non-zero exit, timeout - yields false rather than
+   throwing, so callers can treat it as a pure hint."
+  []
+  (try (let [process
+             (.start (doto (ProcessBuilder. ^java.util.List ["tailscale" "status"])
+                       (.redirectErrorStream true)))
+
+             _drain
+             (future (slurp (.getInputStream process)))
+
+             done?
+             (.waitFor process 5 java.util.concurrent.TimeUnit/SECONDS)]
+
+         (if done? (zero? (.exitValue process)) (do (.destroyForcibly process) false)))
+       (catch Exception _ false)))
+
+(defn- start-tailscale!
+  "Spawn `tailscale serve <port>` (a Tailscale tailnet HTTPS proxy that exposes
+   the local gateway at https://<host>.<tailnet>.ts.net to devices signed into
+   your tailnet) and block until that URL shows up in its output (or 30s pass).
+   Because the hostname is a real `*.ts.net` name served by your own tailnet, it
+   resolves cleanly through Tailscale MagicDNS - unlike the `*.trycloudflare.com`
+   names cloudflared mints, which a Tailscale resolver often can't see. `serve`
+   (unlike `funnel`) needs no admin-console setup and keeps the URL tailnet-
+   private. Returns {:process Process :url String-or-nil :hint String-or-nil} -
+   `:hint` carries tailscale's own guidance (e.g. the one-time enable-Serve link)
+   when no URL appears, so the caller can print something actionable instead of a
+   bare timeout. Throws ex-info {:tailscale/missing? true} with a friendly message
+   when the `tailscale` binary is not on PATH."
+  [port]
+  (let [pb
+        (doto (let [^java.util.List argv ["tailscale" "serve" (str port)]]
+                (ProcessBuilder. argv))
+          (.redirectErrorStream true))
+
+        ^java.lang.Process process
+        (try (.start pb)
+             (catch java.io.IOException _
+               (throw
+                 (ex-info
+                   (str "tailscale binary not found on PATH. "
+                        "Install it first (https://tailscale.com/download) and run `tailscale up`.")
+                   {:tailscale/missing? true}))))
+
+        url-promise
+        (promise)
+
+        ;; Keep the last handful of non-blank lines so a failed spawn (Serve not
+        ;; enabled on the tailnet, HTTPS certs off, ...) can echo tailscale's own
+        ;; guidance - including the admin-console enable link - instead of nothing.
+        lines
+        (atom [])
+
+        reader
+        (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream process)))]
+
+    (doto (Thread. ^Runnable
+                   (fn []
+                     (loop []
+
+                       (when-let [line (.readLine reader)]
+                         (when-not (clojure.string/blank? line)
+                           (swap! lines (fn [xs]
+                                          (vec (take-last 8
+                                                          (conj xs (clojure.string/trim line)))))))
+                         (when-let [url (re-find #"https://[a-z0-9.-]+\.ts\.net" line)]
+                           (deliver url-promise url))
+                         (recur)))))
+      (.setDaemon true)
+      (.start))
+    (let [url (deref url-promise 30000 nil)]
+      {:process process
+       :url url
+       :hint (when-not url
+               (let [captured (seq @lines)]
+                 (when captured (clojure.string/join " " captured))))})))
+
+(defn- attach-tunnel!
+  "Spawn a public tunnel via `starter` (a 0-arg fn returning
+   {:process Process :url String-or-nil}), register a JVM shutdown hook that
+   tears the child down forcibly on exit (SIGTERM, then SIGKILL if it lingers -
+   so an interrupted parent stops orphaning tunnels), and print the resulting
+   `<url>/ui` (or a fallback note). `label` names the tunnel in the printed
+   lines; `missing-key` is the ex-data flag whose presence turns a spawn failure
+   into a friendly one-line message instead of a re-throw."
+  [label missing-key starter]
+  (try (let [{:keys [^Process process url hint]} (starter)]
+         (.addShutdownHook
+           (Runtime/getRuntime)
+           (Thread. ^Runnable
+                    (fn []
+                      (when (.isAlive process)
+                        (.destroy process)
+                        (when-not (.waitFor process 5 java.util.concurrent.TimeUnit/SECONDS)
+                          (.destroyForcibly process))))))
+         (cond url (println (str label " tunnel: " url "/ui"))
+               hint (println (str label ": no URL yet - " hint))
+               :else (println (str label
+                                   ": tunnel started, but no public URL appeared within 30s (check "
+                                   label
+                                   " logs)"))))
+       (catch clojure.lang.ExceptionInfo e
+         (if (missing-key (ex-data e)) (println (str label ": " (ex-message e))) (throw e)))))
+
 (defn channel-main
   "`vis channels web` ensures the detached gateway daemon is running AND
    actually serving `/ui` (the routes are auto-mounted in that daemon
@@ -5725,6 +5862,9 @@
   (let [cloudflared?
         (boolean (some #{"--cloudflared"} args))
 
+        tailscale?
+        (boolean (some #{"--tailscale"} args))
+
         {:keys [host port secret]}
         (vis/gateway-ensure-serving! "/ui")
 
@@ -5735,24 +5875,29 @@
     (if require_token
       (println (str "bearer token: " (or secret "<registry secret unavailable>")))
       (println "auth: disabled (loopback daemon default)"))
-    (when cloudflared?
+    ;; A public tunnel is requested. --tailscale serves over your own tailnet
+    ;; (a *.ts.net name that Tailscale MagicDNS resolves cleanly); --cloudflared
+    ;; mints a *.trycloudflare.com name that a Tailscale resolver often can't
+    ;; see - so when Tailscale is active we nudge toward --tailscale up front.
+    (when (or cloudflared? tailscale?)
       (when-not require_token
         (println
-          "cloudflared: WARNING gateway auth is disabled; restart the daemon with --require-token before exposing it publicly."))
-      (try
-        (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
-          (.addShutdownHook (Runtime/getRuntime)
-                            (Thread. ^Runnable
-                                     (fn []
-                                       (.destroy ^Process process))))
-          (if url
-            (println (str "cloudflared tunnel: " url "/ui"))
-            (println
-              "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))
-        (catch clojure.lang.ExceptionInfo e
-          (if (:cloudflared/missing? (ex-data e))
-            (println (str "cloudflared: " (ex-message e)))
-            (throw e)))))
+          (if tailscale?
+            (str
+              "tailscale: note - gateway auth is disabled; this URL is reachable by every "
+              "device signed into your tailnet. Restart the daemon with --require-token to gate it.")
+            "cloudflared: WARNING gateway auth is disabled; restart the daemon with --require-token before exposing it publicly.")))
+      (when (and cloudflared? (not tailscale?) (tailscale-active?))
+        (println
+          (str "cloudflared: heads-up - Tailscale is active on this machine, and its MagicDNS "
+               "often can't resolve *.trycloudflare.com, so the URL below may look unreachable "
+               "locally even though the tunnel is live. Re-run with `--tailscale` to serve over "
+               "your tailnet (a *.ts.net URL that resolves cleanly) instead.")))
+      (if tailscale?
+        (attach-tunnel! "tailscale" :tailscale/missing? #(start-tailscale! port))
+        (attach-tunnel! "cloudflared"
+                        :cloudflared/missing?
+                        #(start-cloudflared! (str "http://" host ":" port)))))
     @(promise)))
 
 (vis/register-extension!
@@ -5763,10 +5908,11 @@
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
-     :ext/channels [{:channel/id :web
-                     :channel/cmd "web"
-                     :channel/doc "Serve the gateway with the /ui web companion."
-                     :channel/usage
-                     "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
-                     :channel/main-fn #'channel-main}]
+     :ext/channels
+     [{:channel/id :web
+       :channel/cmd "web"
+       :channel/doc "Serve the gateway with the /ui web companion."
+       :channel/usage
+       "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared] [--tailscale]"
+       :channel/main-fn #'channel-main}]
      :ext/channel-contributions {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))

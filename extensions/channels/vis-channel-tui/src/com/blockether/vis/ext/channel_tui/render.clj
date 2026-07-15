@@ -773,7 +773,7 @@
         (or (:slash/usage suggestion) "")
 
         usage
-        (p/truncate-cols usage-raw avail)
+        (if file? (p/truncate-middle usage-raw avail) (p/truncate-cols usage-raw avail))
 
         usage-w
         (p/display-width usage)
@@ -798,12 +798,14 @@
     (when (pos? chip-w)
       (p/set-colors! g t/code-block-fg t/code-block-bg)
       (p/fill-rect! g x0 row chip-w 1)
-      (p/put-str! g (inc x0) row usage)
+      ;; Literal backticks around the candidate so it reads as markdown inline
+      ;; code (`path` / `/cmd`), on top of the code-chip background.
+      (p/put-str! g x0 row (str "`" usage "`"))
       (p/set-colors! g row-fg row-bg))
     (if file?
       ;; FILE row: size · age · status meta, RIGHT-ALIGNED to the row edge.
       (let [desc-avail
-            (max 0 (- row-right chip-end 1))
+            (max 0 (- row-right chip-end 2))
 
             desc
             (when (pos? desc-avail) (p/truncate-cols desc-raw desc-avail))
@@ -812,7 +814,7 @@
             (if desc (p/display-width desc) 0)]
 
         (when (and desc (pos? desc-w))
-          (let [desc-x (max (+ chip-end 1) (- row-right desc-w))]
+          (let [desc-x (max (+ chip-end 2) (- row-right desc-w))]
             (p/set-fg! g t/dialog-hint)
             (p/styled g [p/ITALIC] (p/put-str! g desc-x row desc))
             (p/set-fg! g row-fg))))
@@ -1313,10 +1315,14 @@
         (str/split (or s "") #";")))
 (defn- ansi-codes->fg
   [codes current-fg base-fg]
-  (reduce (fn [fg code]
-            (if (= 0 code) base-fg (ansi-code->fg code fg base-fg)))
-          current-fg
-          codes))
+  ;; An empty SGR (`ESC[m`, canonically ESC[0m) is a full reset — git's own
+  ;; `%C(reset)` emits exactly that, so treat no codes as "back to base".
+  (if (empty? codes)
+    base-fg
+    (reduce (fn [fg code]
+              (if (= 0 code) base-fg (ansi-code->fg code fg base-fg)))
+            current-fg
+            codes)))
 
 (defn paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.

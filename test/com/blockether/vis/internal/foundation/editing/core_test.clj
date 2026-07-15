@@ -3057,7 +3057,21 @@
           (expect (= 2 (count (:failures r))))
           (expect (string/includes? msg "2 edits failed"))
           (expect (string/includes? msg "edit 0"))
-          (expect (string/includes? msg "edit 1"))))))   ;; the later edit is visible now
+          (expect (string/includes? msg "edit 1")))) ;; the later edit is visible now
+    (it "GROUPS same-cause failures into ONE root-cause headline, not N paragraphs"
+        (let [p (write-temp! "pmf/b.txt" "alpha\nbeta\ngamma\n")
+              r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "WRONGA") "replace" "x"}
+                        {"path" p "from_anchor" (patch/line-anchor 3 "WRONGB") "replace" "y"}])
+              msg (:message r)]
+
+          ;; Both edits fail for the SAME reason (stale anchors), so the root-cause
+          ;; sentence appears ONCE with both edits named in the compact list —
+          ;; not two near-identical verbose paragraphs.
+          (expect (false? (:success? r)))
+          (expect (= 1 (count (re-seq #"no longer match the file" msg))))
+          (expect (string/includes? msg "2 ×"))
+          (expect (string/includes? msg "edit 0"))
+          (expect (string/includes? msg "edit 1"))))))
 
 (defdescribe
   find-files-op-name-test

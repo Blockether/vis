@@ -71,9 +71,13 @@
                       ;; never hands the pages back, so idle RSS balloons. A
                       ;; periodic idle GC + tight free-ratios make G1 shrink
                       ;; committed toward the live set and uncommit to the OS;
-                      ;; it re-commits smoothly under load.
+                      ;; it re-commits smoothly under load. The interval is a
+                      ;; tradeoff: each timer-driven concurrent cycle costs a
+                      ;; small CPU blip, so a too-short period shows up as a
+                      ;; recurring idle CPU "jump". 60s keeps idle RSS shrinking
+                      ;; while making those blips ~6x rarer than the old 10s.
                       "-XX:+G1PeriodicGCInvokesConcurrent"
-                      "-XX:G1PeriodicGCInterval=10000"
+                      "-XX:G1PeriodicGCInterval=60000"
                       "-XX:MinHeapFreeRatio=10"
                       "-XX:MaxHeapFreeRatio=25"
                       ;; Raise the heap CEILING. There is no explicit -Xmx, but the

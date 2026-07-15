@@ -37,7 +37,9 @@
           (expect (= "/new-tab "
                      (suggest/completion-text (suggest/selected-suggestion suggestions))))
           (expect (= 2 (suggest/move-index 1 1 3)))
-          (expect (= 2 (suggest/move-index 0 -1 3)))))
+          ;; Clamps at the ends instead of wrapping around.
+          (expect (= 0 (suggest/move-index 0 -1 3)))
+          (expect (= 2 (suggest/move-index 2 1 3)))))
     (it "hides suggestions after tab completion inserts trailing space"
         (expect (nil? (suggest/suggestions "/new-tab " commands)))
         (expect (nil? (suggest/suggestions "/voice/toggle-recording on" commands))))

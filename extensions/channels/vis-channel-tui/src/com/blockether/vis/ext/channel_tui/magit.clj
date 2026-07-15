@@ -111,6 +111,27 @@
   [root range-spec]
   (parse-commit-lines (ok-lines root ["log" (str "--format=%h" field-sep "%s") range-spec])))
 
+(def ^:private log-graph-format
+  "git pretty-format for the graph log viewer (magit's log look): the
+   auto-colored abbreviated sha, its ref decorations, the subject, then a
+   dim `— author, relative-date` trailer. `%C(auto)`/`%C(reset)` emit git's
+   own ANSI, which the log viewer paints through `render/paint-ansi-line!`."
+  (str "%C(auto)%h%C(reset)%C(auto)%d%C(reset) %s" "%C(dim white) — %an, %ar%C(reset)"))
+
+(defn log-graph-lines
+  "Pretty `git log --graph` for the fullscreen log viewer, as ANSI-colored
+   lines (git's own `--color=always` graph). `opts`:
+   - `:all?` include every ref, not just HEAD's history (default false)
+   - `:max`  commit cap (default 250).
+   Returns a vec of lines; a one-line notice when the repo has no commits."
+  ([root] (log-graph-lines root {}))
+  ([root {:keys [all? max] :or {max 250}}]
+   (let [args (cond-> ["log" "--graph" "--color=always" (str "--max-count=" (long max))
+                       (str "--pretty=format:" log-graph-format)]
+                all?
+                (conj "--all"))]
+     (or (not-empty (ok-lines root args)) ["(no commits yet)"]))))
+
 (defn stashes
   "Stash list as `[{:ref \"stash@{0}\" :message}]`, newest first."
   [root]
@@ -222,6 +243,16 @@
     (some->> (ok-lines root ["stash" "show" "-p" "--no-color" ref])
              (drop-while str/blank?)
              vec)))
+
+(defn visit-file-lines
+  "Working-tree content of `path` (relative to `root`) as plain lines for the
+   fullscreen `RET`-visit viewer, or nil when it isn't a readable regular file
+   (a deleted/renamed entry has no working-tree body — the caller falls back to
+   the diff)."
+  [root path]
+  (try (let [f (File. (as-file root) (str path))]
+         (when (.isFile f) (vec (str/split-lines (slurp f)))))
+       (catch Throwable _ nil)))
 
 ;; =============================================================================
 ;; Actions — all return {:ok? bool :msg str}
@@ -455,9 +486,10 @@
 
 (def ^:private default-collapsed-sections
   "Sections magit folds shut on entry, shown as a header only until TAB opens
-   them: the stash list and the commit log. Working-tree sections (untracked/
-   unstaged/staged/unmerged) stay open so pending changes are always visible."
-  #{:stashes :commits :unpushed :unpulled})
+   them. Recent commits stay OPEN so the project's latest history is always in
+   view; the noisy working-tree churn (unstaged edits) plus the stash list and
+   the unpushed/unpulled logs start collapsed so the buffer opens tidy."
+  #{:stashes :unstaged :unpushed :unpulled})
 
 (defn section-open?
   "Is `area`'s section currently expanded? `expanded` carries `[:section area]`

@@ -30,7 +30,7 @@
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each requested namespace, selecting
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
-   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath. ns-deps is an optional map from namespace string to a vector of PROJECT namespace strings the test directly requires; each is reloaded before the test so source edits are picked up."
+   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath. ns-deps is an optional map from namespace string to a vector of PROJECT namespace strings the test TRANSITIVELY requires, in dependency order (leaves first); each is reloaded before the test so source edits — including to deeper deps — are picked up."
   (quote
     (fn [nsyms sel ns-files ns-deps]
       (doseq [n nsyms]
@@ -240,8 +240,9 @@
   "Self-contained Clojure source string that runs tests for ns-strs with sel.
    ns-files optionally maps namespace strings to absolute .clj paths to load
    when the target nREPL does not have test paths on the classpath. ns-deps
-   maps each namespace string to the vector of PROJECT namespaces it directly
-   requires, reloaded before the test so source edits are picked up.
+   maps each namespace string to the vector of PROJECT namespaces it transitively
+   requires (dependency order, leaves first), reloaded before the test so source
+   edits — including to deeper deps — are picked up.
 
    The printer vars are pinned (no length/level/meta/dup limits) so the emitted
    code is always COMPLETE and readable — a caller runtime that caps
@@ -445,35 +446,81 @@
         ns-strs))
 
 (defn- reload-plan
-  "For each requested test ns, the PROJECT namespaces it directly requires — the
-   code under test. run-form reloads these before the test so source edits made
-   since the nREPL loaded them are picked up (a plain (require ns :reload) only
-   reloads the test file itself, leaving its source deps stale). Library
-   namespaces are excluded: a dep counts only when a matching .clj source file
-   lives under root."
+  "For each requested test ns, the PROJECT namespaces it TRANSITIVELY requires —
+   the code under test — returned in dependency order (leaves first). run-form
+   reloads these before the test so source edits made since the nREPL loaded
+   them are picked up. A plain (require ns :reload) only reloads the test file
+   itself, and reloading just the test's DIRECT requires still leaves edits to
+   deeper source deps stale (foo.core-test -> foo.helper -> foo.core: an edit to
+   foo.core is missed). Walking the transitive project graph and reloading
+   deps-first fixes that. Library namespaces are excluded: a dep counts only
+   when a matching .clj source file lives under root; the walk is cycle-safe."
   [root ns-strs ns-files]
-  (let [src-rel-paths
+  (let [ns->file
+        ;; project ns string -> its source File (first declaration wins).
+        ;; Built from the real (ns ...) form of every .clj under root, so
+        ;; membership doubles as the project? test (a lib ns has no file here).
         (->> (io/file root)
              file-seq
              (filter (fn [^java.io.File x]
                        (and (.isFile x) (str/ends-with? (.getName x) ".clj"))))
-             (map (fn [^java.io.File x]
-                    (str/replace (.getPath x) java.io.File/separator "/")))
-             vec)
+             (reduce (fn [m ^java.io.File x]
+                       (if-let [n (ns-of-file x)]
+                         (if (contains? m n) m (assoc m n x))
+                         m))
+                     {}))
 
         project?
         (fn [dep]
-          (let [rel (str "/" (ns->source-relpath dep))]
-            (boolean (some #(str/ends-with? % rel) src-rel-paths))))]
+          (contains? ns->file dep))
+
+        direct-deps
+        (fn [^java.io.File f self]
+          (->> (ns-deps-of-file f)
+               (filter project?)
+               (remove #(= % self))
+               distinct
+               vec))
+
+        ;; Direct PROJECT deps of a project ns (via its own source file), memoized
+        ;; so the shared graph is read once even across many requested tests.
+        deps-of
+        (let [cache (volatile! {})]
+          (fn deps-of [ns-str]
+            (if-let [e (find @cache ns-str)]
+              (val e)
+              (let [ds (if-let [^java.io.File f (get ns->file ns-str)]
+                         (direct-deps f ns-str)
+                         [])]
+                (vswap! cache assoc ns-str ds)
+                ds))))
+
+        ;; Transitive project deps of a set of direct deps, in dependency order
+        ;; (each dep emitted AFTER its own deps), cycle-safe via `seen`.
+        transitive
+        (fn [directs]
+          (let [seen
+                (volatile! #{})
+
+                order
+                (volatile! [])
+
+                walk
+                (fn walk [n]
+                  (when-not (contains? @seen n)
+                    (vswap! seen conj n)
+                    (doseq [d (deps-of n)]
+                      (walk d))
+                    (vswap! order conj n)))]
+
+            (doseq [d directs]
+              (walk d))
+            @order))]
 
     (into {}
           (keep (fn [ns-str]
                   (when-let [tf (or (get ns-files ns-str) (test-file-for root ns-str))]
-                    (let [deps (->> (ns-deps-of-file (io/file tf))
-                                    (filter project?)
-                                    (remove #(= % ns-str))
-                                    distinct
-                                    vec)]
+                    (let [deps (transitive (direct-deps (io/file tf) ns-str))]
                       (when (seq deps) [ns-str deps])))))
           ns-strs)))
 

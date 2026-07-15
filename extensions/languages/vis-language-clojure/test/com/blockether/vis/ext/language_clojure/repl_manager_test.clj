@@ -5,6 +5,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.core :as core]
+            [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -381,3 +382,69 @@
                  (let [f (io/file (tmp-dir) "t.log")]
                    (spit f "a\nb\n")
                    (expect (= ["a" "b"] (rm/tail-log (str f)))))))
+
+(defdescribe clj-eval-dir-routing-test
+             ;; Regression: clj-eval-fn must READ `dir` from the arg map and hand the
+             ;; RESOLVED (canonical) dir to resolve-target! as its default-dir — so a
+             ;; multi-REPL session routes the eval to the REPL rooted at that dir instead
+             ;; of silently dropping `dir` and always matching the workspace-root REPL.
+             ;; resolve-target! and the nREPL client are stubbed: no subprocess, no socket.
+             (it "hands the resolved (canonical) `dir` to resolve-target! as default-dir"
+                 (let [root
+                       (tmp-dir)
+
+                       _
+                       (.mkdirs (io/file root "sub"))
+
+                       captured
+                       (atom nil)]
+
+                   (with-redefs [rm/resolve-target!
+                                 (fn [_sid _rid default-dir]
+                                   (reset! captured default-dir)
+                                   {:id "nrepl:/x" :dir default-dir :port 7777})
+
+                                 nrepl-client/eval!
+                                 (fn [_]
+                                   {"value" "2"})]
+
+                     (core/clj-eval-fn {:workspace/root root :session-id "s"}
+                                       {"code" "(+ 1 1)" "dir" "sub"})
+                     (expect (= (.getCanonicalPath (io/file root "sub")) @captured)))))
+             (it "defaults default-dir to the workspace root when no `dir` is given"
+                 (let [root
+                       (tmp-dir)
+
+                       captured
+                       (atom nil)]
+
+                   (with-redefs [rm/resolve-target!
+                                 (fn [_sid _rid default-dir]
+                                   (reset! captured default-dir)
+                                   {:id "nrepl:/r" :dir default-dir :port 7777})
+
+                                 nrepl-client/eval!
+                                 (fn [_]
+                                   {"value" "2"})]
+
+                     (core/clj-eval-fn {:workspace/root root :session-id "s"} {"code" "(+ 1 1)"})
+                     (expect (= (.getCanonicalPath (io/file root)) @captured)))))
+             (it "an explicit `id` is still forwarded to resolve-target! (dir unchanged)"
+                 (let [root
+                       (tmp-dir)
+
+                       captured
+                       (atom nil)]
+
+                   (with-redefs [rm/resolve-target!
+                                 (fn [_sid rid default-dir]
+                                   (reset! captured [rid default-dir])
+                                   {:id rid :dir default-dir :port 7777})
+
+                                 nrepl-client/eval!
+                                 (fn [_]
+                                   {"value" "2"})]
+
+                     (core/clj-eval-fn {:workspace/root root :session-id "s"}
+                                       {"code" "(+ 1 1)" "id" "nrepl:/b"})
+                     (expect (= ["nrepl:/b" (.getCanonicalPath (io/file root))] @captured))))))

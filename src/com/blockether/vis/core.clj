@@ -104,6 +104,7 @@
              [gateway-list-projects gateway-client/list-projects]
              [gateway-get-project gateway-client/get-project]
              [gateway-create-project! gateway-client/create-project!]
+             [gateway-ensure-project-for-root! gateway-client/ensure-project-for-root!]
              [gateway-update-project! gateway-client/update-project!]
              [gateway-delete-project! gateway-client/delete-project!]
              [gateway-assign-project! gateway-client/assign-project!]
@@ -355,6 +356,17 @@
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
 (import-vars [wire-json-str wire/json-str] [wire-json-pretty wire/json-str-pretty])
+
+;; THE inbound normalization every channel applies to a gateway event BEFORE it
+;; reads any field. The wire munges keyword map keys `-`->`_` on the way out
+;; (`wire/->wire`) and `parse-json` keywordizes VERBATIM, so a foreign event
+;; arriving over the cross-process bus has snake_case keys (`:prose-final` ->
+;; `:prose_final`, `:tool-color-role` -> `:tool_color_role`) while a same-process
+;; event keeps kebab. Reading a kebab key off a snake event yields nil — the class
+;; of bug behind vanishing prose/badges. `event<-wire` restores the kebab shape
+;; recursively (structural inverse of the munge, keys only), so EVERY channel — TUI
+;; client, web, mobile — reads the ONE canonical key set regardless of origin.
+(defn event<-wire [event] (wire/kebab-keys event))
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python

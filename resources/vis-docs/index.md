@@ -16,7 +16,7 @@ manages that window and *when*.
 - **The engine owns the context, not the transcript.** Each step is tagged and
   addressable. Once a step has served its purpose, the engine folds it away —
   the tool call *and* its output collapse into a one-line summary you write
-  (`session_fold`), or drop entirely (`session_drop`). The window stays a
+  (`session_fold`), or drop entirely (`session_fold` with no summary). The window stays a
   curated ledger of live facts, not an append-only log.
 
 - **Summarization is continuous, not an emergency.** Other agents compact

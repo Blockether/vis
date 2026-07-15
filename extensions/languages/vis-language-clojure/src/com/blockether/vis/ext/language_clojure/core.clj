@@ -358,9 +358,12 @@
   "Evaluate Clojure over the session's nREPL. Target resolution (autostart is ON):
      - explicit `port` → dial it directly (escape hatch; no autostart/recovery);
      - `id`/`repl_id`  → the REPL registered under that id in THIS session;
-     - no id, 0 REPLs  → AUTOSTART one in the workspace root (:dev :test) and use it;
+     - `dir`           → the REPL rooted at that dir (resolved against the workspace
+                         root; autostarted there when the session owns none);
+     - no id, 0 REPLs  → AUTOSTART one in `dir` (default: workspace root; :dev :test);
      - no id, 1 REPL   → use it (the implicit default);
-     - no id, >1 REPLs → error listing ids (the model must pick one).
+     - no id, >1 REPLs → the REPL owning `dir` (default: the workspace root) when
+                         present, else the first (dir-sorted).
    The just-autostarted REPL is mirrored into the session resources on the next
    ctx render (footer + stop/restart).
 
@@ -401,6 +404,9 @@
          sid
          (:session-id env)
 
+         default-dir
+         (resolve-repl-dir root (get m "dir"))
+
          run
          (fn [p repl-label]
            ;; Carry the evaluated FORM back on the result (string key, crosses the
@@ -424,7 +430,7 @@
        ;; autostart and no auto-recovery.
        (extension/success {:result (run port (str host ":" port))})
        (let [target
-             (repl-manager/resolve-target! sid rid root)
+             (repl-manager/resolve-target! sid rid default-dir)
 
              tport
              (:port target)]
