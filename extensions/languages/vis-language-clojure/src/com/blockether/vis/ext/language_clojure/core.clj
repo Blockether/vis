@@ -392,17 +392,31 @@
          timeout_ms
          (get m "timeout_ms")
 
-         rid
-         (some-> (or (get m "id") (get m "repl_id"))
-                 str
-                 str/trim
-                 not-empty)
-
          root
          (env-root env)
 
          sid
          (:session-id env)
+
+         requested-dir?
+         (contains? m "dir")
+
+         requested-rid
+         (some-> (or (get m "id") (get m "repl_id"))
+                 str
+                 str/trim
+                 not-empty)
+
+         rid
+         ;; A model may carry a stale/previous ctx resource id while also passing
+         ;; an explicit `dir` for the code's project root. If that id is not live
+         ;; in THIS session, let `dir` drive the normal autostart path instead of
+         ;; failing before autostart gets a chance. With no explicit dir, keep the
+         ;; strict id contract and surface the unknown-id error.
+         (when-not (and requested-dir?
+                        requested-rid
+                        (not (repl-manager/repl-by-id sid requested-rid)))
+           requested-rid)
 
          default-dir
          (resolve-repl-dir root (get m "dir"))
