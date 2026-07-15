@@ -803,7 +803,7 @@
   "Index of the first selectable row at-or-after `idx` (wrapping search both
    directions handled by the caller); nil when nothing is selectable."
   [rows idx]
-  (let [n (count rows)]
+  (let [n (count rows) idx (long idx)]
     (or (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n) n))
         (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n))))))
 

@@ -159,7 +159,8 @@
   "True when (col, row) lies inside `bounds`. Inclusive on the left
    edge, exclusive on the right edge."
   [{:keys [row col width]} c r]
-  (and (= r row) (>= c col) (< c (+ col width))))
+  (let [col (long col) width (long width) c (long c)]
+    (and (= r row) (>= c col) (< c (+ col width)))))
 
 (defn lookup
   "Return the topmost (last-registered) region containing (col, row),
