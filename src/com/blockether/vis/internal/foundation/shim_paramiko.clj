@@ -557,6 +557,7 @@
             self.st_mtime = None
             self.filename = None
             self.longname = None
+            self._flags = 0
 
         @classmethod
         def _from(cls, m):
@@ -830,6 +831,24 @@
         def getpeername(self):
             return None
 
+        def start_server(self, event=None, server=None):
+            raise SSHException('paramiko shim: server mode (Transport.start_server) is unsupported; the JSch backend is client-only')
+
+        def start_client(self, event=None, timeout=None):
+            raise SSHException('paramiko shim: low-level Transport.start_client is unsupported; use SSHClient')
+
+        def add_server_key(self, key):
+            return None
+
+        def get_server_key(self):
+            return None
+
+        def set_subsystem_handler(self, name, handler, *larg, **kwarg):
+            return None
+
+        def accept(self, timeout=None):
+            return None
+
         def close(self):
             if self._sess is not None:
                 try:
@@ -932,6 +951,235 @@
             self.close()
             return False
 
+    AUTH_SUCCESSFUL = 0
+    AUTH_PARTIALLY_SUCCESSFUL = 1
+    AUTH_FAILED = 2
+    OPEN_SUCCEEDED = 0
+    OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED = 1
+    OPEN_FAILED_CONNECT_FAILED = 2
+    OPEN_FAILED_UNKNOWN_CHANNEL_TYPE = 3
+    OPEN_FAILED_RESOURCE_SHORTAGE = 4
+    SFTP_OK = 0
+    SFTP_EOF = 1
+    SFTP_NO_SUCH_FILE = 2
+    SFTP_PERMISSION_DENIED = 3
+    SFTP_FAILURE = 4
+    SFTP_BAD_MESSAGE = 5
+    SFTP_NO_CONNECTION = 6
+    SFTP_CONNECTION_LOST = 7
+    SFTP_OP_UNSUPPORTED = 8
+    SFTP_FLAG_READ = 1
+    SFTP_FLAG_WRITE = 2
+    SFTP_FLAG_APPEND = 4
+    SFTP_FLAG_CREATE = 8
+    SFTP_FLAG_TRUNC = 16
+    SFTP_FLAG_EXCL = 32
+
+    class InteractiveQuery(object):
+        def __init__(self, name='', instructions='', *prompts):
+            self.name = name
+            self.instructions = instructions
+            self.prompts = []
+            for p in prompts:
+                if isinstance(p, (tuple, list)):
+                    self.prompts.append((p[0], bool(p[1])))
+                else:
+                    self.prompts.append((p, True))
+
+        def add_prompt(self, prompt, echo=True):
+            self.prompts.append((prompt, bool(echo)))
+
+    class ServerInterface(object):
+        def check_channel_request(self, kind, chanid):
+            return OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+        def get_allowed_auths(self, username):
+            return 'password'
+
+        def check_auth_none(self, username):
+            return AUTH_FAILED
+
+        def check_auth_password(self, username, password):
+            return AUTH_FAILED
+
+        def check_auth_publickey(self, username, key):
+            return AUTH_FAILED
+
+        def check_auth_interactive(self, username, submethods):
+            return AUTH_FAILED
+
+        def check_auth_interactive_response(self, responses):
+            return AUTH_FAILED
+
+        def check_auth_gssapi_with_mic(self, username, gss_authenticated=AUTH_FAILED, cc_file=None):
+            return AUTH_FAILED
+
+        def check_auth_gssapi_keyex(self, username, gss_authenticated=AUTH_FAILED, cc_file=None):
+            return AUTH_FAILED
+
+        def enable_auth_gssapi(self):
+            return False
+
+        def check_port_forward_request(self, address, port):
+            return False
+
+        def cancel_port_forward_request(self, address, port):
+            return None
+
+        def check_global_request(self, kind, msg):
+            return False
+
+        def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
+            return False
+
+        def check_channel_shell_request(self, channel):
+            return False
+
+        def check_channel_exec_request(self, channel, command):
+            return False
+
+        def check_channel_subsystem_request(self, channel, name):
+            return False
+
+        def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight):
+            return False
+
+        def check_channel_x11_request(self, channel, single_connection, auth_protocol, auth_cookie, screen_number):
+            return False
+
+        def check_channel_forward_agent_request(self, channel):
+            return False
+
+        def check_channel_direct_tcpip_request(self, chanid, origin, destination):
+            return OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+        def get_banner(self):
+            return (None, None)
+
+    class SubsystemHandler(object):
+        def __init__(self, channel, name, server, *larg, **kwarg):
+            self._channel = channel
+            self._name = name
+            self._server = server
+
+        def get_server(self):
+            return self._server
+
+        def start_subsystem(self, name, transport, channel):
+            pass
+
+        def finish_subsystem(self):
+            pass
+
+    class SFTPServerInterface(object):
+        def __init__(self, server, *larg, **kwarg):
+            self.server = server
+
+        def session_started(self):
+            pass
+
+        def session_ended(self):
+            pass
+
+        def open(self, path, flags, attr):
+            return SFTP_OP_UNSUPPORTED
+
+        def list_folder(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def stat(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def lstat(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def remove(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def rename(self, oldpath, newpath):
+            return SFTP_OP_UNSUPPORTED
+
+        def posix_rename(self, oldpath, newpath):
+            return SFTP_OP_UNSUPPORTED
+
+        def mkdir(self, path, attr):
+            return SFTP_OP_UNSUPPORTED
+
+        def rmdir(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def chattr(self, path, attr):
+            return SFTP_OP_UNSUPPORTED
+
+        def readlink(self, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def symlink(self, target_path, path):
+            return SFTP_OP_UNSUPPORTED
+
+        def canonicalize(self, path):
+            import posixpath
+            if posixpath.isabs(path):
+                return posixpath.normpath(path)
+            return posixpath.normpath('/' + path)
+
+    class SFTPHandle(object):
+        def __init__(self, flags=0):
+            self._flags = flags
+            self._name = None
+
+        def close(self):
+            pass
+
+        def read(self, offset, length):
+            return SFTP_OP_UNSUPPORTED
+
+        def write(self, offset, data):
+            return SFTP_OP_UNSUPPORTED
+
+        def stat(self):
+            return SFTP_OP_UNSUPPORTED
+
+        def chattr(self, attr):
+            return SFTP_OP_UNSUPPORTED
+
+    class SFTPServer(SubsystemHandler):
+        def __init__(self, channel, name, server, sftp_si=None, *larg, **kwarg):
+            super().__init__(channel, name, server)
+            if isinstance(sftp_si, type):
+                self.server = sftp_si(server, *larg, **kwarg)
+            else:
+                self.server = sftp_si
+
+        def start_subsystem(self, name, transport, channel):
+            raise SSHException('paramiko shim: serving an SFTP subsystem is unsupported; the JSch backend is client-only')
+
+        def finish_subsystem(self):
+            pass
+
+        @staticmethod
+        def convert_errno(e):
+            import errno
+            if e == errno.EACCES:
+                return SFTP_PERMISSION_DENIED
+            if e in (errno.ENOENT, errno.ENOTDIR):
+                return SFTP_NO_SUCH_FILE
+            return SFTP_FAILURE
+
+        @staticmethod
+        def set_file_attr(filename, attr):
+            import os
+            flags = getattr(attr, '_flags', 0)
+            if flags & SFTPAttributes.FLAG_PERMISSIONS and attr.st_mode is not None:
+                os.chmod(filename, attr.st_mode)
+            if flags & SFTPAttributes.FLAG_UIDGID:
+                os.chown(filename, attr.st_uid, attr.st_gid)
+            if flags & SFTPAttributes.FLAG_AMTIME:
+                os.utime(filename, (attr.st_atime, attr.st_mtime))
+            if flags & SFTPAttributes.FLAG_SIZE:
+                with open(filename, 'r+') as f:
+                    f.truncate(attr.st_size)
+
     def util_log_to_file(*a, **k):
         return None
 
@@ -964,6 +1212,35 @@
     mod.ProxyCommandFailure = ProxyCommandFailure
     mod.ConfigParseError = ConfigParseError
     mod.NoValidConnectionsError = NoValidConnectionsError
+    mod.ServerInterface = ServerInterface
+    mod.InteractiveQuery = InteractiveQuery
+    mod.SubsystemHandler = SubsystemHandler
+    mod.SFTPServer = SFTPServer
+    mod.SFTPServerInterface = SFTPServerInterface
+    mod.SFTPHandle = SFTPHandle
+    mod.AUTH_SUCCESSFUL = AUTH_SUCCESSFUL
+    mod.AUTH_PARTIALLY_SUCCESSFUL = AUTH_PARTIALLY_SUCCESSFUL
+    mod.AUTH_FAILED = AUTH_FAILED
+    mod.OPEN_SUCCEEDED = OPEN_SUCCEEDED
+    mod.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED = OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+    mod.OPEN_FAILED_CONNECT_FAILED = OPEN_FAILED_CONNECT_FAILED
+    mod.OPEN_FAILED_UNKNOWN_CHANNEL_TYPE = OPEN_FAILED_UNKNOWN_CHANNEL_TYPE
+    mod.OPEN_FAILED_RESOURCE_SHORTAGE = OPEN_FAILED_RESOURCE_SHORTAGE
+    mod.SFTP_OK = SFTP_OK
+    mod.SFTP_EOF = SFTP_EOF
+    mod.SFTP_NO_SUCH_FILE = SFTP_NO_SUCH_FILE
+    mod.SFTP_PERMISSION_DENIED = SFTP_PERMISSION_DENIED
+    mod.SFTP_FAILURE = SFTP_FAILURE
+    mod.SFTP_BAD_MESSAGE = SFTP_BAD_MESSAGE
+    mod.SFTP_NO_CONNECTION = SFTP_NO_CONNECTION
+    mod.SFTP_CONNECTION_LOST = SFTP_CONNECTION_LOST
+    mod.SFTP_OP_UNSUPPORTED = SFTP_OP_UNSUPPORTED
+    mod.SFTP_FLAG_READ = SFTP_FLAG_READ
+    mod.SFTP_FLAG_WRITE = SFTP_FLAG_WRITE
+    mod.SFTP_FLAG_APPEND = SFTP_FLAG_APPEND
+    mod.SFTP_FLAG_CREATE = SFTP_FLAG_CREATE
+    mod.SFTP_FLAG_TRUNC = SFTP_FLAG_TRUNC
+    mod.SFTP_FLAG_EXCL = SFTP_FLAG_EXCL
 
     _util = types.ModuleType('paramiko.util')
     _util.log_to_file = util_log_to_file
@@ -1016,9 +1293,45 @@
     _ec.ECDSAKey = ECDSAKey
     mod.ecdsakey = _ec
 
+    _server = types.ModuleType('paramiko.server')
+    _server.ServerInterface = ServerInterface
+    _server.InteractiveQuery = InteractiveQuery
+    _server.SubsystemHandler = SubsystemHandler
+    mod.server = _server
+
+    _common = types.ModuleType('paramiko.common')
+    for _cn in ('AUTH_SUCCESSFUL', 'AUTH_PARTIALLY_SUCCESSFUL', 'AUTH_FAILED',
+                'OPEN_SUCCEEDED', 'OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED',
+                'OPEN_FAILED_CONNECT_FAILED', 'OPEN_FAILED_UNKNOWN_CHANNEL_TYPE',
+                'OPEN_FAILED_RESOURCE_SHORTAGE'):
+        setattr(_common, _cn, getattr(mod, _cn))
+    mod.common = _common
+
+    _sftpm = types.ModuleType('paramiko.sftp')
+    for _cn in ('SFTP_OK', 'SFTP_EOF', 'SFTP_NO_SUCH_FILE', 'SFTP_PERMISSION_DENIED',
+                'SFTP_FAILURE', 'SFTP_BAD_MESSAGE', 'SFTP_NO_CONNECTION',
+                'SFTP_CONNECTION_LOST', 'SFTP_OP_UNSUPPORTED', 'SFTP_FLAG_READ',
+                'SFTP_FLAG_WRITE', 'SFTP_FLAG_APPEND', 'SFTP_FLAG_CREATE',
+                'SFTP_FLAG_TRUNC', 'SFTP_FLAG_EXCL'):
+        setattr(_sftpm, _cn, getattr(mod, _cn))
+    mod.sftp = _sftpm
+
+    _sftpsrv = types.ModuleType('paramiko.sftp_server')
+    _sftpsrv.SFTPServer = SFTPServer
+    mod.sftp_server = _sftpsrv
+
+    _sftpsi = types.ModuleType('paramiko.sftp_si')
+    _sftpsi.SFTPServerInterface = SFTPServerInterface
+    mod.sftp_si = _sftpsi
+
+    _sftph = types.ModuleType('paramiko.sftp_handle')
+    _sftph.SFTPHandle = SFTPHandle
+    mod.sftp_handle = _sftph
+
     sys.modules['paramiko'] = mod
     for _sub in ('util', 'ssh_exception', 'client', 'sftp_client', 'sftp_file',
-                 'sftp_attr', 'transport', 'pkey', 'rsakey', 'ed25519key', 'ecdsakey'):
+                 'sftp_attr', 'transport', 'pkey', 'rsakey', 'ed25519key', 'ecdsakey',
+                 'server', 'common', 'sftp', 'sftp_server', 'sftp_si', 'sftp_handle'):
         sys.modules['paramiko.' + _sub] = getattr(mod, _sub)
 
     try:
@@ -1034,7 +1347,7 @@ del __vis_install_paramiko__
   (vis/extension
     {:ext/name "foundation-shim-paramiko"
      :ext/description
-     "Sandbox shim: a paramiko-compatible SSH2 module (SSHClient/exec_command/open_sftp/SFTPClient get/put/listdir/stat/open/mkdir/rename/RSAKey+Ed25519Key/AutoAddPolicy/SSHException tree/Transport) backed by the pure-Java mwiede JSch fork. GraalPy has no native cryptography/cffi, so CPython paramiko can't install; this makes `import paramiko` work. No pip, no native wheel, no host binary."
+     "Sandbox shim: a paramiko-compatible SSH2 module (SSHClient/exec_command/open_sftp/SFTPClient get/put/listdir/stat/open/mkdir/rename/RSAKey+Ed25519Key/AutoAddPolicy/SSHException tree/Transport, plus the server-side API surface: ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) backed by the pure-Java mwiede JSch fork. GraalPy has no native cryptography/cffi, so CPython paramiko can't install; this makes `import paramiko` work. No pip, no native wheel, no host binary."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -1043,7 +1356,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Not supported: key generation, `from_private_key(file_obj)`, interactive `invoke_shell`, and the low-level `Transport` API — use `SSHClient` + `exec_command`/SFTP."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). The server-side API (ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) is present as subclassable surface so server-oriented code imports and type-checks, but the JSch backend is client-only: actually running a server (`Transport.start_server`) raises SSHException. Also unsupported: key generation, `from_private_key(file_obj)`, interactive `invoke_shell`, and the low-level `Transport` client API — use `SSHClient` + `exec_command`/SFTP."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 
