@@ -2334,8 +2334,17 @@
         dup?
         (= text (:text (peek (vec (or (:pending-sends source-db) [])))))]
 
-    (if dup?
-      {:db db}
+    (cond
+      ;; The user asked to STOP the current turn (`:cancelling?`). A submission in
+      ;; that window is a FRESH intent, not queue fodder — never park it behind the
+      ;; turn being torn down. Parking it here flashed the message into the queue
+      ;; and, if the terminal event raced as a normal completion instead of a
+      ;; cancel, auto-drained/sent it. The submit path keeps the text in the editor
+      ;; instead, so the user re-sends it cleanly once the cancel settles.
+      (:cancelling? source-db)
+      {:db db :fx [[:notify "Cancelling current turn — message kept in the editor" :warn 2500]]}
+      dup? {:db db}
+      :else
       (let [preview-text
             (input/collapse-paste-placeholders text pastes)
 
@@ -2935,7 +2944,7 @@
                                :pending-sends mirrors
                                :input-history-index nil
                                :input-history-draft nil)))
-           :fx (into [[:notify "Queue restored to input \u2014 not sent" :info 2000]]
+           :fx (into [[:notify "Queue restored to input — not sent" :info 2000]]
                      (mapv (fn [tid]
                              [:gateway-delete-queued sid tid])
                            tids))})))))
@@ -3029,8 +3038,8 @@
                       (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
                       {:db (clear-active-turn-state db)
                        :fx (cond-> [[:notify
-                                     "Cancel timed out \u2014 cleared locally. You can send again."
-                                     :warn cancel-notification-ttl-ms]]
+                                     "Cancel timed out — cleared locally. You can send again." :warn
+                                     cancel-notification-ttl-ms]]
                              (some :client-id (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
 (defn background-loading-tokens

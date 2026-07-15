@@ -1908,7 +1908,7 @@
                                             (str/starts-with? body tool-output-indent))
                       line
                       (if output-indented? (str marker (subs body (count tool-output-indent))) line)
-                      ;; Result/code rows inset 1 col for breathing room — EXCEPT a
+                      ;; Result/code rows inset 2 cols for breathing room — EXCEPT a
                       ;; no-chevron summary headline (`:result-headline`): with no
                       ;; chevron to fill the slot, that inset reads as a dangling left
                       ;; margin, so paint it flush against the band's left edge.
@@ -1920,7 +1920,7 @@
                           (+ tool-output-indent-cols)
 
                           code-text-inset?
-                          inc)
+                          (+ 2))
                       iw (if output-indented? (max 0 (- iw tool-output-indent-cols)) iw)
                       fbx (if output-indented? (+ fbx tool-output-indent-cols) fbx)]
 

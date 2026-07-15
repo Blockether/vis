@@ -294,6 +294,14 @@
             (vis/notify! "Input looks like copied assistant transcript; not sent"
                          :level :warn
                          :ttl-ms 4000)
+            ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
+            ;; submission is a fresh intent — not queue fodder. Keep it in the editor
+            ;; (NO :reset-input) and tell them to resend once the cancel settles,
+            ;; rather than parking it in the queue behind the turn being torn down.
+            (:cancelling? db) (vis/notify!
+                                "Cancelling current turn — press Enter again once it stops"
+                                :level :warn
+                                :ttl-ms 2500)
             (:loading? db) (do (state/dispatch [:enqueue-message text])
                                (state/dispatch [:reset-input]))
             :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
@@ -3901,10 +3909,12 @@
                                                 projects)
                                           [{:id ::new-project :label "＋ New project…"}
                                            {:id ::remove-project :label "✗ Remove from project"}]))
-                             pick
-                             (with-dialog-lock
-                               #(dlg/searchable-select! screen "Move session to project…" items
-                                                        {:placeholder "Type to filter projects…" :enter-label "move"}))]
+                             pick (with-dialog-lock #(dlg/searchable-select!
+                                                       screen
+                                                       "Move session to project…"
+                                                       items
+                                                       {:placeholder "Type to filter projects…"
+                                                        :enter-label "move"}))]
 
                          (when pick
                            (let [pid (cond (= ::new-project (:id pick))
@@ -4143,9 +4153,12 @@
                                                         (str "  (" n ")")))})
                                        projects)]
 
-                       (when-let [pick (with-dialog-lock
-                                         #(dlg/searchable-select! screen "Switch project…" items
-                                                                  {:placeholder "Type to filter projects…" :enter-label "switch"}))]
+                       (when-let [pick (with-dialog-lock #(dlg/searchable-select!
+                                                            screen
+                                                            "Switch project…"
+                                                            items
+                                                            {:placeholder "Type to filter projects…"
+                                                             :enter-label "switch"}))]
                          (when-let [pid (some-> (:id pick)
                                                 str)]
                            (when-not (= pid cur)
@@ -5448,7 +5461,7 @@
                                         (or (neg? workspace-index) (>= workspace-index n)))
                                  (vis/notify! (str "No workspace "
                                                    (inc workspace-index)
-                                                   " \u2014 only "
+                                                   " — only "
                                                    n
                                                    (if (= 1 n) " tab open" " tabs open"))
                                               :level :warn
