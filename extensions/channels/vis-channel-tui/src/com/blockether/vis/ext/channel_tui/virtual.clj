@@ -400,24 +400,29 @@
                                   (:code f)
 
                                   cr
-                                  (if (and (string? c) (not (str/blank? c)))
-                                    (+ (wrapped-rows-est c fold-w) 2)
-                                    0)
+                                  (long (if (and (string? c) (not (str/blank? c)))
+                                          (+ (wrapped-rows-est c fold-w) 2)
+                                          0))
 
                                   rr
-                                  (section-rows (or (:result-render f) (:result f)))
+                                  #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                                  (long (section-rows (or (:result-render f) (:result f))))
 
                                   cardr
                                   (long (reduce (fn [^long x card]
-                                                  (+ x 1 (section-rows (:body card))))
+                                                  (+ x
+                                                     1
+                                                     #_{:clj-kondo/ignore
+                                                        [:redundant-primitive-coercion]}
+                                                     (long (section-rows (:body card)))))
                                                 0
                                                 (:cards f)))
 
                                   comr
-                                  (let [cm (:comment f)]
-                                    (if (and (string? cm) (not (str/blank? cm)))
-                                      (+ (wrapped-rows-est cm fold-w) 2)
-                                      0))]
+                                  (long (let [cm (:comment f)]
+                                          (if (and (string? cm) (not (str/blank? cm)))
+                                            (+ (wrapped-rows-est cm fold-w) 2)
+                                            0)))]
 
                               (+ a
                                  cr

@@ -275,7 +275,7 @@
         push!
         (fn [a]
           (vswap! line conj a)
-          (vswap! lw + (run-width a)))]
+          (vswap! lw #(+ (long %) (long (run-width a)))))]
 
     (doseq [a atoms]
       (cond (:break? a) (flush! false)
@@ -286,15 +286,15 @@
             ;; own indentation (source columns / cat blank-gutter pad), whose
             ;; loss left-shifts the line and breaks column alignment.
             ;; Otherwise add it (might overflow; trailing ws collapses in render).
-            (when (or (not @cont?) (> @lw @prefix-w)) (push! a))
+            (when (or (not @cont?) (> (long @lw) (long @prefix-w))) (push! a))
             :else (let [aw (run-width a)]
                     (cond
                       ;; fits on current line
-                      (<= (+ @lw aw) width) (push! a)
+                      (<= (+ (long @lw) (long aw)) (long width)) (push! a)
                       ;; current line still has only the prefix → force-fit
                       (= @lw @prefix-w) (do (push! a) (flush! true))
                       :else (do (flush! true) (push! a))))))
-    (when (> (line-width {:runs @line}) @prefix-w) (vswap! out conj {:runs @line}))
+    (when (> (long (line-width {:runs @line})) (long @prefix-w)) (vswap! out conj {:runs @line}))
     @out))
 
 (defn- trim-trailing-ws
@@ -334,7 +334,7 @@
    shape (see autoresearch B2 discard)."
   [children width opts]
   (if-let [limit (:max-lines opts)]
-    (let [cap (long (* 3 (long limit) 1/2))] ; 1.5*limit
+    (let [cap (long (quot (* 3 (long limit)) 2))] ; 1.5*limit
       (reduce (fn [acc child]
                 (let [acc' (into acc (block->lines child width opts))]
                   (if (>= (count acc') cap) (reduced acc') acc')))
@@ -570,7 +570,7 @@
                 marker
                 (if ordered?
                   (let [m (str @n ". ")]
-                    (vswap! n inc)
+                    (vswap! n #(inc (long %)))
                     m)
                   (or (:marker task-marker) "- "))
 
@@ -628,7 +628,7 @@
                                 ;; nested block: recurse and indent each line
                                 :else
                                 (let [inner
-                                      (block->lines b (max 1 (- width (count indent))) opts)
+                                      (block->lines b (max 1 (- (long width) (count indent))) opts)
 
                                       prefixed
                                       (mapv (fn [l]
@@ -664,7 +664,7 @@
 (defn- quote->lines
   [children width opts]
   (let [inner
-        (blocks->lines children (max 1 (- width 2)) opts)
+        (blocks->lines children (max 1 (- (long width) 2)) opts)
 
         ;; Strip per-paragraph outer-margin blanks the child block
         ;; renderers append. A blockquote should paint as ONE solid
@@ -726,9 +726,9 @@
         (- (long cap) (+ 1 (* 3 cols)))]
 
     (cond (empty? widths) widths
-          (>= budget (reduce + widths)) widths
+          (>= (long budget) (long (reduce + widths))) widths
           :else (loop [ws widths]
-                  (if (or (<= (reduce + ws) budget) (every? #(<= (long %) 1) ws))
+                  (if (or (<= (long (reduce + ws)) (long budget)) (every? #(<= (long %) 1) ws))
                     ws
                     (let [max-w (apply max ws)
                           idx (first (keep-indexed (fn [i w]
@@ -799,7 +799,7 @@
                 (mapv #(or (nth row % nil) "") (range cols)))
               raw-rows)]
 
-    (if (or (zero? cols) (empty? norm-rows))
+    (if (or (zero? (long cols)) (empty? norm-rows))
       []
       (let [natural-widths
             (vec (for [i (range cols)]
@@ -1308,6 +1308,40 @@
 
       (contains? style :link)
       (str p/INLINE_LINK_OFF))))
+
+(defn- line-link-spans
+  "Clickable inline-link spans for one walker line's runs. Returns a vec of
+   `{:col C :width W :url U}` — the display-COLUMN offset from the visible
+   body start, the terminal-column width, and the target href — one entry
+   per CONTIGUOUS stretch of runs sharing the same href (a link whose label
+   carries bold/italic splits into several runs but reads as one region).
+   `nil` when the line has no link runs. Column offsets are body-relative;
+   the painter adds the line's absolute `x`/`row`. Block/inline markers are
+   zero-width, so this offset matches the painted column."
+  [runs]
+  (not-empty
+    (:spans
+      (reduce (fn [{:keys [col spans]} {:keys [text href style]}]
+                (let [w
+                      (p/display-width (or text ""))
+
+                      link?
+                      (and href (contains? style :link))
+
+                      prev
+                      (peek spans)]
+
+                  {:col (+ (long col) w)
+                   :spans (cond (not link?) spans
+                                ;; extend the previous span iff same href AND adjacent
+                                (and prev
+                                     (= (:url prev) href)
+                                     (= (+ (long (:col prev)) (long (:width prev))) (long col)))
+                                (conj (pop spans) (update prev :width + w))
+                                :else (conj spans {:col (long col) :width w :url href}))}))
+              {:col 0 :spans []}
+              runs))))
+
 (defn- line-body-sentinels
   "Inline-sentinel body string for one walker line's runs. A BLOCK code line
    (`:block-tag :code`) already paints a full-width code band via its marker,
@@ -1394,7 +1428,8 @@
          (marker-set-for (:mode opts))]
 
      (mapv (fn [{:keys [runs block-tag block-level meta]}]
-             {:line (str (block-marker-for ms block-tag block-level)
-                         (line-body-sentinels block-tag runs))
-              :meta meta})
+             (let [links (line-link-spans runs)]
+               {:line (str (block-marker-for ms block-tag block-level)
+                           (line-body-sentinels block-tag runs))
+                :meta (if links (assoc (or meta {}) :links links) meta)}))
            lines))))
