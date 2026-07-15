@@ -600,7 +600,7 @@
             else:
                 r = bytes(self._data[self._pos:self._pos + size])
                 self._pos += len(r)
-            return r if self._binary else r.decode('utf-8')
+            return r
 
         def readline(self, size=-1):
             idx = self._data.find(_NLB, self._pos)
@@ -610,7 +610,7 @@
             else:
                 r = bytes(self._data[self._pos:idx + 1])
                 self._pos = idx + 1
-            return r if self._binary else r.decode('utf-8')
+            return r
 
         def readlines(self, sizehint=None):
             out = []

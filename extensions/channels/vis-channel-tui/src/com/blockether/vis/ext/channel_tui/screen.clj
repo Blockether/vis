@@ -3131,6 +3131,17 @@
   ;; `project_position` order) OWNS the open-tab set.
   (atom nil))
 
+(defonce ^:private persist-tabs-running*
+  ;; True while a `persist-tabs!` worker is in flight. Guarantees at most ONE
+  ;; persist runs at a time — concurrent persists last-writer-race the reorder
+  ;; and can transiently reshuffle `project_position`.
+  (atom false))
+
+(defonce ^:private persist-tabs-pending*
+  ;; A persist was requested while one was running. The in-flight worker
+  ;; coalesces the burst into ONE more pass instead of spawning N scans.
+  (atom false))
+
 (defn- launch-root
   "Canonical path of the launch directory (`user.dir`) — the workspace root the
    auto-project binds to."
@@ -3169,29 +3180,62 @@
          (sort-by #(or (:project_position %) Long/MAX_VALUE))
          (mapv #(str (:id %))))))
 
-(defn- persist-tabs!
-  "Persist the current open-tab set into the launch PROJECT (a project IS a tab
-   set) — no EDN sidecar. Assigns every open tab's session to the project and
-   rewrites `project_position` to match tab order. Adds + reorders only; an
-   explicit tab CLOSE removes its session from the project (a `:close-tab` fx in
-   state.clj), so the open tabs and the project's members stay in lockstep.
-   Best effort and off the input thread — a
-   gateway hiccup never breaks the UI."
+(defn- persist-tabs-once!
+  "One synchronous persist pass: reconcile the current open-tab set with the
+   launch PROJECT (a project IS a tab set). LOOSE tabs (no project) join the
+   launch project; tabs already OWNED by ANOTHER project are GUESTS — never
+   stolen, they simply aren't durable members here. `project_position` is then
+   rewritten to match tab order (member-scoped, so guests drop out of the order
+   automatically). Best effort — a gateway hiccup is swallowed."
   []
   (when-let [pid (ensure-active-project-id!)]
     (let [snap (state/tab-session-snapshot @state/app-db)
           ids (mapv :id (:sessions snap))]
 
       (when (seq ids)
-        (vis/worker-future
-          "tui-persist-tabs"
-          (fn []
-            (try (let [members (set (project-member-session-ids pid))]
-                   (doseq [sid ids]
-                     (when-not (contains? members (str sid))
-                       (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))
-                   (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))
-                 (catch Throwable _ nil))))))))
+        ;; One scan of every session -> its CURRENT project id (nil = loose).
+        (let [proj-of (into {}
+                            (map (fn [s]
+                                   [(str (:id s))
+                                    (some-> (:project_id s)
+                                            str)]))
+                            (try (vis/gateway-list-sessions :all) (catch Throwable _ nil)))
+              pid-str (str pid)]
+
+          (doseq [sid ids]
+            (let [cur (get proj-of (str sid) ::unlisted)]
+              ;; Assign ONLY loose (nil) or not-yet-listed (brand-new) sessions.
+              ;; A session owned by a DIFFERENT project is a guest — leave it be.
+              (when (or (nil? cur) (= ::unlisted cur) (= pid-str cur))
+                (when-not (= pid-str cur)
+                  (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))))
+          (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))))))
+
+(defn- persist-tabs!
+  "Persist the current open-tab set into the launch PROJECT — no EDN sidecar.
+   SERIALIZED and COALESCING: at most one persist worker runs at a time (so
+   concurrent persists never last-writer-race the reorder into a transient
+   reshuffle), and a burst of requests collapses into a single trailing pass
+   instead of N `list-sessions` scans. Best effort and off the input thread — a
+   gateway hiccup never breaks the UI. See `persist-tabs-once!` for the
+   loose-joins / guest-never-stolen membership rules."
+  []
+  (reset! persist-tabs-pending* true)
+  (when (compare-and-set! persist-tabs-running* false true)
+    (vis/worker-future "tui-persist-tabs"
+                       (fn []
+                         (loop []
+
+                           (reset! persist-tabs-pending* false)
+                           (try (persist-tabs-once!) (catch Throwable _ nil))
+                           (if @persist-tabs-pending*
+                             (recur)
+                             (do (reset! persist-tabs-running* false)
+                                 ;; A request that slipped in AFTER we cleared pending but BEFORE
+                                 ;; we released the run flag would otherwise be lost — re-claim.
+                                 (when (and @persist-tabs-pending*
+                                            (compare-and-set! persist-tabs-running* false true))
+                                   (recur)))))))))
 
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
@@ -4124,10 +4168,13 @@
 
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))
-             ;; Plain launch: restore the REST of the launch project's tab set as
-             ;; tabs (the startup tab opened one). A project IS a tab set.
-             (when-not (or (:session-id opts) (:continue opts) (:resume opts))
-               (restore-project-tabs!))
+             ;; Plain launch AND `--continue` restore the WHOLE launch-project
+             ;; tab set (the startup tab opened one/the most-recent; the rest
+             ;; come back as tabs) — a project IS a tab set, so "continue where I
+             ;; left off" means my working dir's tabs, not a lone tab. Only the
+             ;; TARGETED flags stay single-tab: `--session-id` (one explicit
+             ;; session) and `--resume` (the picker opens below).
+             (when-not (or (:session-id opts) (:resume opts)) (restore-project-tabs!))
              (loop []
 
                ;; Layout fields are populated by the render thread after the first paint. Until

@@ -667,13 +667,18 @@
    ;; instead of being seeded once. Before any request is measured (no
    ;; utilization) a fold still surfaces via a utilization map holding only
    ;; `"folds"`.
-   (let [folds (when (seq (get ctx "session_summaries"))
-                 (folds-view (get ctx "session_summaries")
-                             (get ctx "engine_iter_universe")))
-         util (cond-> (or (get ctx "engine_utilization") (when folds {}))
-                folds (assoc "folds" folds))]
+   (let [folds
+         (when (seq (get ctx "session_summaries"))
+           (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe")))
+
+         util
+         (cond-> (or (get ctx "engine_utilization") (when folds {}))
+           folds
+           (assoc "folds" folds))]
+
      (cond-> (select-keys ctx model-facing-keys)
-       (seq util) (assoc "session_utilization" util)))))
+       (seq util)
+       (assoc "session_utilization" util)))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

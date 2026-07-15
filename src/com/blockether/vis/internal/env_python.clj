@@ -1798,10 +1798,6 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; `json.dumps(...)` and `shlex.quote(...)` work in every run_python
     ;; block without repeated imports.
     (install-auto-imports! ctx)
-    ;; REPL recovery slots first (so they land in the baseline and get filtered
-    ;; out of the model-visible live-vars view).
-    (doseq [s ["_1" "_2" "_3" "_e"]]
-      (.putMember g s nil))
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (install-protected-names! g custom-bindings)
     (doseq [[sym val] (or custom-bindings {})]
