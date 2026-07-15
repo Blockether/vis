@@ -84,6 +84,7 @@ def collect(job_dir: Path, run_dir: Path, task_id: str) -> dict[str, Any]:
                 copied_trial_files.append(name)
 
         verifier_copied = _copy_tree(trial_dir / "verifier", dest / "verifier")
+        agent_copied = _copy_tree(trial_dir / "agent", dest / "agent")
         _copy_file(trial_dir / "artifacts" / "manifest.json", dest / "artifacts-manifest.json")
 
         for trace in trial_dir.glob(f"**/vis-traces/{task_id}/vis.trace.jsonl"):
@@ -97,6 +98,7 @@ def collect(job_dir: Path, run_dir: Path, task_id: str) -> dict[str, Any]:
                 "dest": str(dest),
                 "files": copied_trial_files,
                 "verifier": verifier_copied,
+                "agent": agent_copied,
             }
         )
 

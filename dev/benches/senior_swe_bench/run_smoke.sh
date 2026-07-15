@@ -12,6 +12,31 @@ artifact="${VIS_BENCH_ARTIFACT:-$repo_root/target/bench/vis-agent.tar.gz}"
 export VIS_BENCH_ARTIFACT="$artifact"
 export VIS_MODEL="${VIS_MODEL:-glm-5.2}"
 export VIS_PROVIDER="${VIS_PROVIDER:-zai-coding-plan}"
+vis_agent="dev.benches.senior_swe_bench.agent:VisInstalledAgent"
+pi_agent="dev.benches.senior_swe_bench.agent:PiGlm52Agent"
+bench_agent="${VIS_BENCH_AGENT:-$vis_agent}"
+if [[ "$bench_agent" == "pi" ]]; then
+  bench_agent="$pi_agent"
+fi
+bench_agent_model="${VIS_BENCH_AGENT_MODEL:-$VIS_MODEL}"
+bench_agent_label="${VIS_BENCH_AGENT_LABEL:-Vis}"
+bench_agent_version="${VIS_BENCH_AGENT_VERSION:-}"
+bench_agent_endpoint="${VIS_BENCH_AGENT_ENDPOINT:-}"
+bench_agent_route="${VIS_BENCH_AGENT_ROUTE:-}"
+bench_agent_reasoning_effort="${VIS_BENCH_REASONING_EFFORT:-high}"
+bench_agent_output_cap=32768
+bench_agent_pi_thinking_level=""
+is_pi_agent=0
+if [[ "$bench_agent" == "$pi_agent" ]]; then
+  is_pi_agent=1
+  bench_agent_model="${VIS_BENCH_AGENT_MODEL:-zai/$VIS_MODEL}"
+  bench_agent_label="${VIS_BENCH_AGENT_LABEL:-pi.dev}"
+  bench_agent_version="${bench_agent_version:-0.73.1}"
+  bench_agent_endpoint="${bench_agent_endpoint:-https://api.z.ai/api/coding/paas/v4}"
+  bench_agent_route="${bench_agent_route:-zai-coding-plan}"
+elif [[ "$bench_agent" == "$vis_agent" ]]; then
+  bench_agent_route="${bench_agent_route:-$VIS_PROVIDER}"
+fi
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 remote_home="${VIS_BENCH_REMOTE_HOME:-/tmp/vis-home}"
 remote_home_mount="${VIS_BENCH_REMOTE_HOME_MOUNT:-}"
@@ -29,9 +54,12 @@ verifier_va_harness="${VIS_BENCH_VERIFIER_VA_HARNESS:-${SSB_OVERRIDE_VA_HARNESS:
 verifier_openai_base_url="${VIS_BENCH_VERIFIER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-${OPENAI_API_BASE:-${ZAI_API_BASE:-}}}}"
 verifier_tool_choice_compat="${VIS_BENCH_VERIFIER_TOOL_CHOICE_COMPAT:-}"
 verifier_response_format_compat="${VIS_BENCH_VERIFIER_RESPONSE_FORMAT_COMPAT:-}"
+agent_env_file="${VIS_BENCH_AGENT_ENV_FILE:-$verifier_env_file}"
 verifier_tool_choice_compat_disabled=0
 verifier_response_format_compat_disabled=0
 verifier_timeout_multiplier="${VIS_BENCH_VERIFIER_TIMEOUT_MULTIPLIER:-}"
+verifier_disable_thinking_on_emit=0
+verifier_usage_capture="litellm_jsonl+validation_trajectories"
 export VIS_BENCH_REMOTE_HOME="$remote_home"
 
 fail_pre_harbor() {
@@ -58,6 +86,14 @@ PY
 if [[ "$preflight_only" != "0" && "$preflight_only" != "1" ]]; then
   fail_pre_harbor "preflight_only_invalid" "VIS_BENCH_PREFLIGHT_ONLY must be 0 or 1, got '$preflight_only'"
 fi
+case "$bench_agent_reasoning_effort" in
+  high) bench_agent_pi_thinking_level="high" ;;
+  max) bench_agent_pi_thinking_level="xhigh" ;;
+  *) fail_pre_harbor "reasoning_effort_invalid" "VIS_BENCH_REASONING_EFFORT must be high or max; got '$bench_agent_reasoning_effort'" ;;
+esac
+if [[ "$is_pi_agent" != "1" ]]; then
+  bench_agent_pi_thinking_level=""
+fi
 
 if [[ "${1:-}" == "--check" ]]; then
   harbor run --help >/dev/null
@@ -68,6 +104,15 @@ fi
 
 mkdir -p "$out/harbor-output" "$out/vis-traces" "$out/patches"
 cp "$lock" "$out/dataset.lock.json"
+
+locked_harbor_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["harbor_version"])' "$lock")"
+if ! harbor_version="$(harbor --version 2>&1)"; then
+  fail_pre_harbor "harbor_unavailable" "$harbor_version"
+fi
+if [[ "$harbor_version" != "$locked_harbor_version" ]]; then
+  fail_pre_harbor "harbor_version_mismatch" \
+    "Senior SWE-Bench locks Harbor $locked_harbor_version, but the active executable is $harbor_version."
+fi
 
 task_id="$(python3 - <<'PY' "$subset"
 import json, sys
@@ -95,13 +140,17 @@ PY
   fail_pre_harbor "python_dev_image_mode_invalid" "$prepare_python_dev_image"
 fi
 
+agent_config="${VIS_BENCH_CONFIG:-}"
+if [[ "$bench_agent" != "$vis_agent" ]]; then
+  agent_config=""
+fi
 preflight_args=(--artifact "$artifact" --json)
-if [[ -n "${VIS_BENCH_CONFIG:-}" ]]; then
-  preflight_args+=(--config "$VIS_BENCH_CONFIG")
+if [[ -n "$agent_config" ]]; then
+  preflight_args+=(--config "$agent_config")
 elif [[ -n "$remote_home_mount" && -f "$remote_home_mount/.vis/config.edn" ]]; then
   preflight_args+=(--config "$remote_home_mount/.vis/config.edn")
 fi
-if [[ "${VIS_BENCH_INSTALL_ONLY:-0}" != "1" ]]; then
+if [[ "$bench_agent" == "$vis_agent" && "${VIS_BENCH_INSTALL_ONLY:-0}" != "1" ]]; then
   preflight_args+=(--require-config)
   if [[ "${VIS_BENCH_ALLOW_NO_CONFIG:-0}" == "1" ]]; then
     preflight_args+=(--allow-no-config)
@@ -125,7 +174,21 @@ PY
   fail_pre_harbor "preflight_failed" "$preflight_message"
 fi
 
-if ! guard_message="$(python3 - <<'PY' "$here" "${VIS_BENCH_CONFIG:-}" "$remote_home_mount" "${VIS_BENCH_ALLOW_CONFIG_UPLOAD_WITH_HOME_MOUNT:-0}" 2>&1
+if [[ "$bench_agent" == "$vis_agent" && -z "$bench_agent_endpoint" ]]; then
+  bench_agent_endpoint="$(python3 - <<'PY' "$out/preflight.json" "$VIS_PROVIDER"
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+for provider in data.get("config", {}).get("provider_configs", []):
+    if provider.get("id") == sys.argv[2] and provider.get("base_url"):
+        print(provider["base_url"])
+        break
+PY
+)"
+fi
+
+if ! guard_message="$(python3 - <<'PY' "$here" "$agent_config" "$remote_home_mount" "${VIS_BENCH_ALLOW_CONFIG_UPLOAD_WITH_HOME_MOUNT:-0}" 2>&1
 import importlib.util
 import sys
 from pathlib import Path
@@ -192,6 +255,13 @@ ensure_openai_slug() {
 if [[ -n "$verifier_env_file" && ! -f "$verifier_env_file" ]]; then
   fail_pre_harbor "verifier_env_file_missing" "VIS_BENCH_VERIFIER_ENV_FILE does not exist: $verifier_env_file"
 fi
+
+if [[ "$bench_agent" != "$vis_agent" && "$bench_agent_model" == zai/* ]]; then
+  if [[ -z "${ZAI_API_KEY:-}" ]] && ! env_file_has_key "$agent_env_file" "ZAI_API_KEY"; then
+    fail_pre_harbor "agent_zai_api_key_missing" \
+      "pi.dev with model '$bench_agent_model' requires ZAI_API_KEY in the host environment or VIS_BENCH_AGENT_ENV_FILE."
+  fi
+fi
 if [[ -z "$verifier_openai_base_url" && -n "$verifier_env_file" ]]; then
   verifier_openai_base_url="$(env_file_value "$verifier_env_file" OPENAI_BASE_URL || true)"
 fi
@@ -243,12 +313,11 @@ elif [[ "$verifier_provider" == "openai" ]]; then
       "VIS_BENCH_VERIFIER_PROVIDER=openai requires VIS_BENCH_VERIFIER_CLASSIFIER_MODEL or SSB_OVERRIDE_CLASSIFIER_MODEL, for example openai/<classifier-model>."
   fi
 elif [[ "$verifier_provider" == "zai" ]]; then
-  verifier_openai_base_url="${verifier_openai_base_url:-https://api.z.ai/api/paas/v4/}"
-  if [[ "$verifier_tool_choice_compat_disabled" != "1" ]]; then
-    verifier_tool_choice_compat="${verifier_tool_choice_compat:-required}"
-  fi
-  if [[ "$verifier_tool_choice_compat_disabled" != "1" && "$verifier_response_format_compat_disabled" != "1" ]]; then
+  verifier_openai_base_url="${verifier_openai_base_url:-https://api.z.ai/api/coding/paas/v4/}"
+  verifier_timeout_multiplier="${verifier_timeout_multiplier:-3}"
+  if [[ "$verifier_response_format_compat_disabled" != "1" ]]; then
     verifier_response_format_compat="${verifier_response_format_compat:-json_object}"
+    verifier_disable_thinking_on_emit=1
   fi
   verifier_judge_model="${verifier_judge_model:-${verifier_model:-glm-5.2}}"
   verifier_classifier_model="${verifier_classifier_model:-${verifier_model:-glm-5.2}}"
@@ -312,7 +381,7 @@ PY
     fail_pre_harbor "remote_home_mount_invalid" "$mounts_json"
   fi
 fi
-config_delivery="$(python3 - <<'PY' "$here" "${VIS_BENCH_CONFIG:-}" "$remote_home_mount"
+config_delivery="$(python3 - <<'PY' "$here" "$agent_config" "$remote_home_mount"
 import importlib.util
 import sys
 from pathlib import Path
@@ -326,20 +395,56 @@ print(preflight.resolve_config_delivery(sys.argv[2], sys.argv[3]))
 PY
 )"
 
+pi_models_json=""
+pi_models_sha256=""
+if [[ "$is_pi_agent" == "1" ]]; then
+  pi_models_json="$out/pi-models.json"
+  pi_models_sha256="$(python3 - <<'PY' "$here" "$pi_models_json"
+import hashlib
+import importlib.util
+import sys
+from pathlib import Path
+
+here = Path(sys.argv[1])
+path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("preflight", here / "preflight.py")
+preflight = importlib.util.module_from_spec(spec)
+sys.modules["preflight"] = preflight
+spec.loader.exec_module(preflight)  # type: ignore[union-attr]
+preflight.write_pi_glm52_models_config(path)
+print(hashlib.sha256(path.read_bytes()).hexdigest())
+PY
+)"
+fi
+
 dataset_copy="$out/dataset"
 cat > "$out/command.json" <<EOF
 {
-  "command": ["harbor", "run", "--yes", "--path", "$dataset_copy/tasks", "--agent", "dev.benches.senior_swe_bench.agent:VisInstalledAgent", "--model", "$VIS_MODEL"],
+  "command": ["harbor", "run", "--yes", "--path", "$dataset_copy/tasks", "--agent", "$bench_agent", "--model", "$bench_agent_model"],
   "task_ids": ["$task_id"],
 
   "run_id": "$run_id",
+  "bench_agent": "$bench_agent",
+  "bench_agent_label": "$bench_agent_label",
+  "bench_model": "$bench_agent_model",
+  "bench_agent_version_requested": "$bench_agent_version",
+  "bench_agent_endpoint": "$bench_agent_endpoint",
+  "bench_agent_route": "$bench_agent_route",
+  "bench_agent_reasoning_effort": "$bench_agent_reasoning_effort",
+  "bench_agent_reasoning_effort_explicit": true,
+  "bench_agent_pi_thinking_level": "$bench_agent_pi_thinking_level",
+  "bench_agent_output_cap": $bench_agent_output_cap,
+  "bench_agent_pi_models_json": "$pi_models_json",
+  "bench_agent_pi_models_sha256": "$pi_models_sha256",
+  "harbor_version": "$harbor_version",
+  "harbor_version_locked": "$locked_harbor_version",
   "vis_provider": "$VIS_PROVIDER",
   "vis_model": "$VIS_MODEL",
   "vis_bench_artifact": "$artifact",
   "vis_bench_remote_home": "$remote_home",
   "vis_bench_remote_home_mount": "$remote_home_mount",
   "vis_bench_remote_home_mount_mode": "$remote_home_mount_mode",
-  "vis_bench_config": "${VIS_BENCH_CONFIG:-}",
+  "vis_bench_config": "$agent_config",
   "vis_bench_config_delivery": "$config_delivery",
   "vis_bench_verifier_provider": "$verifier_provider",
   "vis_bench_verifier_env_file": "$verifier_env_file",
@@ -350,7 +455,9 @@ cat > "$out/command.json" <<EOF
   "vis_bench_verifier_va_harness": "$verifier_va_harness",
   "vis_bench_verifier_tool_choice_compat": "$verifier_tool_choice_compat",
   "vis_bench_verifier_response_format_compat": "$verifier_response_format_compat",
+  "vis_bench_verifier_disable_thinking_on_emit": "$verifier_disable_thinking_on_emit",
   "vis_bench_verifier_timeout_multiplier": "$verifier_timeout_multiplier",
+  "vis_bench_verifier_usage_capture": "$verifier_usage_capture",
   "vis_bench_task_image": "$task_image_override",
   "vis_bench_prepare_python_dev_image_requested": "$requested_prepare_python_dev_image",
   "vis_bench_prepare_python_dev_image": "$prepare_python_dev_image",
@@ -376,20 +483,20 @@ for task in (dest/'tasks').iterdir():
         shutil.rmtree(task)
 PY
 
+verifier_adapt_args=(
+  --dataset-copy "$dataset_copy"
+  --out "$out/verifier-adaptations.json"
+)
 if [[ -n "$verifier_tool_choice_compat" ]]; then
-  verifier_adapt_args=(
-    --dataset-copy "$dataset_copy"
-    --tool-choice-compat "$verifier_tool_choice_compat"
-    --out "$out/verifier-adaptations.json"
-  )
-  if [[ -n "$verifier_response_format_compat" ]]; then
-    verifier_adapt_args+=(--response-format-compat "$verifier_response_format_compat")
-  fi
-  if ! verifier_adaptation_output="$(python3 "$here/verifier_adapt.py" "${verifier_adapt_args[@]}" 2>&1)"; then
-    fail_pre_harbor "verifier_adaptation_failed" "$verifier_adaptation_output"
-  fi
-  printf '%s\n' "$verifier_adaptation_output" > "$out/verifier-adaptations.stdout.txt"
+  verifier_adapt_args+=(--tool-choice-compat "$verifier_tool_choice_compat")
 fi
+if [[ -n "$verifier_response_format_compat" ]]; then
+  verifier_adapt_args+=(--response-format-compat "$verifier_response_format_compat")
+fi
+if ! verifier_adaptation_output="$(python3 "$here/verifier_adapt.py" "${verifier_adapt_args[@]}" 2>&1)"; then
+  fail_pre_harbor "verifier_adaptation_failed" "$verifier_adaptation_output"
+fi
+printf '%s\n' "$verifier_adaptation_output" > "$out/verifier-adaptations.stdout.txt"
 
 task_toml="$dataset_copy/tasks/$task_id/task.toml"
 task_base_image="$(python3 - <<'PY' "$task_toml"
@@ -503,19 +610,37 @@ set +e
 harbor_args=(
   --yes \
   --path "$dataset_copy/tasks" \
-  --agent dev.benches.senior_swe_bench.agent:VisInstalledAgent \
-  --model "$VIS_MODEL" \
+  --agent "$bench_agent" \
+  --model "$bench_agent_model" \
   --artifact /logs/artifacts \
   --agent-env "PYTHONPATH=$PYTHONPATH" \
   --agent-env "HARBOR_TASK_ID=$task_id" \
-  --agent-env "HARBOR_ARTIFACTS_DIR=/logs/artifacts" \
-  --agent-env "VIS_BENCH_REMOTE_HOME=$remote_home" \
-  --agent-env "VIS_PROVIDER=$VIS_PROVIDER" \
-  --agent-env "VIS_MODEL=$VIS_MODEL"
+  --agent-env "HARBOR_ARTIFACTS_DIR=/logs/artifacts"
 )
+if [[ -n "$bench_agent_version" ]]; then
+  harbor_args+=(--agent-kwarg "version=$bench_agent_version")
+fi
+if [[ "$is_pi_agent" == "1" ]]; then
+  harbor_args+=(--agent-kwarg "thinking=$bench_agent_pi_thinking_level")
+  harbor_args+=(--agent-env "VIS_BENCH_PI_MODELS_JSON=$pi_models_json")
+  harbor_args+=(--agent-env "VIS_BENCH_REASONING_EFFORT=$bench_agent_reasoning_effort")
+fi
+if [[ "$bench_agent" == "$vis_agent" ]]; then
+  harbor_args+=(--agent-env "VIS_BENCH_REMOTE_HOME=$remote_home")
+  harbor_args+=(--agent-env "VIS_PROVIDER=$VIS_PROVIDER")
+  harbor_args+=(--agent-env "VIS_MODEL=$VIS_MODEL")
+  harbor_args+=(--agent-env "VIS_BENCH_REASONING_EFFORT=$bench_agent_reasoning_effort")
+elif [[ "$bench_agent_model" == zai/* ]]; then
+  if [[ -n "${ZAI_API_KEY:-}" ]]; then
+    harbor_args+=(--agent-env "ZAI_API_KEY=$ZAI_API_KEY")
+  else
+    harbor_args+=(--agent-env "ZAI_API_KEY=$(env_file_value "$agent_env_file" ZAI_API_KEY)")
+  fi
+fi
 if [[ -n "$verifier_timeout_multiplier" ]]; then
   harbor_args+=(--verifier-timeout-multiplier "$verifier_timeout_multiplier")
 fi
+harbor_args+=(--verifier-env "SSB_LLM_USAGE_PATH=/logs/verifier/llm_usage.jsonl")
 if [[ -n "$verifier_env_file" ]]; then
   harbor_args+=(--env-file "$verifier_env_file")
 fi
@@ -547,14 +672,23 @@ if [[ -n "$verifier_va_harness" ]]; then
 fi
 if [[ -n "$verifier_tool_choice_compat" ]]; then
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_TOOL_CHOICE=$verifier_tool_choice_compat")
+fi
+if [[ -n "$verifier_tool_choice_compat" || -n "$verifier_response_format_compat" ]]; then
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON=1")
+fi
+if [[ -n "$verifier_response_format_compat" ]]; then
+  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_RESPONSE_FORMAT=$verifier_response_format_compat")
+elif [[ -n "$verifier_tool_choice_compat" ]]; then
   harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_RESPONSE_FORMAT=${verifier_response_format_compat:-1}")
+fi
+if [[ "$verifier_disable_thinking_on_emit" == "1" ]]; then
+  harbor_args+=(--verifier-env "SSB_OPENAI_COMPAT_DISABLE_THINKING=1")
 fi
 if [[ -n "$mounts_json" ]]; then
   harbor_args+=(--mounts "$mounts_json")
 fi
-if [[ -n "${VIS_BENCH_CONFIG:-}" ]]; then
-  harbor_args+=(--agent-env "VIS_BENCH_CONFIG=$VIS_BENCH_CONFIG")
+if [[ -n "$agent_config" ]]; then
+  harbor_args+=(--agent-env "VIS_BENCH_CONFIG=$agent_config")
 fi
 if [[ "${VIS_BENCH_INSTALL_ONLY:-0}" == "1" ]]; then
   harbor_args+=(--install-only)
@@ -562,13 +696,10 @@ fi
 harbor run "${harbor_args[@]}" > "$out/harbor.log" 2>&1
 
 
-status=$?
+harbor_status=$?
+status=$harbor_status
 set -e
 
-if [[ -d artifacts/vis-traces/$task_id ]]; then
-  mkdir -p "$out/vis-traces/$task_id"
-  cp -R artifacts/vis-traces/$task_id/. "$out/vis-traces/$task_id/" || true
-fi
 latest_job=""
 harbor_result_path="$(sed -n 's/^Results written to \(jobs\/.*\/result\.json\).*$/\1/p' "$out/harbor.log" | tail -1 || true)"
 if [[ -n "$harbor_result_path" ]]; then
@@ -578,12 +709,36 @@ else
   find jobs -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort > "$jobs_after" || true
   latest_job="$(comm -13 "$jobs_before" "$jobs_after" | tail -1 || true)"
 fi
+
+redact_args=()
+if [[ -n "$agent_config" && -f "$agent_config" ]]; then
+  redact_args+=(--secret-source "$agent_config")
+fi
+if [[ -n "$verifier_env_file" && -f "$verifier_env_file" ]]; then
+  redact_args+=(--secret-source "$verifier_env_file")
+fi
+if [[ -n "$agent_env_file" && -f "$agent_env_file" && "$agent_env_file" != "$verifier_env_file" ]]; then
+  redact_args+=(--secret-source "$agent_env_file")
+fi
+if [[ -d artifacts/vis-traces/$task_id ]]; then
+  redact_args+=(--path "artifacts/vis-traces/$task_id")
+fi
+if [[ -n "$latest_job" && -d "$latest_job" ]]; then
+  redact_args+=(--path "$latest_job")
+fi
+python3 "$here/redact_secrets.py" "${redact_args[@]}" --out "$out/redaction-before-copy.json" >/dev/null
+
+if [[ -d artifacts/vis-traces/$task_id ]]; then
+  mkdir -p "$out/vis-traces/$task_id"
+  cp -R artifacts/vis-traces/$task_id/. "$out/vis-traces/$task_id/" || true
+fi
 if [[ -n "$latest_job" && -d "$latest_job" ]]; then
   python3 "$here/collect_harbor_artifacts.py" \
     --job-dir "$latest_job" \
     --run-dir "$out" \
     --task-id "$task_id" > "$out/harbor-output/collection.stdout.json" || true
 fi
+python3 "$here/redact_secrets.py" "${redact_args[@]}" --path "$out" --out "$out/secret-redaction.json" >/dev/null
 patch_file="$out/harbor-output/trial/verifier/agent.patch"
 if [[ ! -s "$patch_file" ]]; then
   patch_file="$out/patches/$task_id.diff"
@@ -620,5 +775,19 @@ python3 "$here/metrics.py" \
   $reward_file \
   --out "$out/summary.json" >/dev/null
 
-echo "wrote $out (harbor exit $status)"
+if [[ "$status" == "0" && "${VIS_BENCH_INSTALL_ONLY:-0}" != "1" ]]; then
+  if ! python3 - <<'PY' "$out/summary.json"
+import json
+import sys
+
+summary = json.load(open(sys.argv[1]))
+raise SystemExit(0 if summary.get("completion", {}).get("complete") is True else 1)
+PY
+  then
+    status=3
+    echo "run completed without an authoritative score; see $out/summary.json" >&2
+  fi
+fi
+
+echo "wrote $out (harbor exit $harbor_status, run exit $status)"
 exit "$status"

@@ -22,12 +22,19 @@ except Exception:  # pragma: no cover - exercised only when Harbor is absent loc
         def with_prompt_template(fn):  # type: ignore[no-redef]
             return fn
 
+try:
+    from harbor.agents.installed.pi import Pi as HarborPi  # type: ignore
+except Exception:  # pragma: no cover - keeps host-side unit tests Harbor-free.
+    HarborPi = BaseInstalledAgent  # type: ignore[misc,assignment]
+
 
 HERE = Path(__file__).resolve().parent
 ARTIFACT_ENV = "VIS_BENCH_ARTIFACT"
 DEFAULT_INSTALL = "/tmp/vis-agent"
 DEFAULT_ARTIFACTS = "/logs/artifacts"
 DEFAULT_REMOTE_HOME = "/tmp/vis-home"
+PI_MODELS_ENV = "VIS_BENCH_PI_MODELS_JSON"
+PI_MODELS_REMOTE = "/tmp/vis-bench-pi-models.json"
 
 
 
@@ -141,8 +148,22 @@ def _merge_trace_metrics(stats: dict[str, Any], source: dict[str, Any], max_iter
 
 
 def _summarize_trace(trace: Path) -> dict[str, Any]:
-    stats: dict[str, Any] = {"trace": str(trace), "iterations": 0, "tool_calls": 0, "tokens": {}, "cost_usd": None}
+    stats: dict[str, Any] = {
+        "trace": str(trace),
+        "source": "vis_trace",
+        "available": trace.exists(),
+        "telemetry_complete": False,
+        "iterations": 0,
+        "tool_calls": 0,
+        "shell_calls": 0,
+        "file_reads": 0,
+        "tokens": {},
+        "cost_usd": None,
+        "reasoning_reporting": "unreported",
+    }
     max_iteration = 0
+    tool_ids: set[str] = set()
+    file_read_tools = {"cat", "rg", "find_files", "ls", "outline"}
     if not trace.exists():
         return stats
     for line in trace.read_text(errors="replace").splitlines():
@@ -157,16 +178,80 @@ def _summarize_trace(trace: Path) -> dict[str, Any]:
         iteration = obj.get("iteration", payload.get("iteration"))
         if isinstance(iteration, int):
             max_iteration = max(max_iteration, iteration)
-        if obj.get("type") == "tool_call" or obj.get("tool"):
+        tool_event = payload.get("tool-event") if isinstance(payload.get("tool-event"), dict) else {}
+        tool_name = str(
+            obj.get("tool")
+            or obj.get("name")
+            or payload.get("tool-name")
+            or payload.get("tool")
+            or payload.get("name")
+            or tool_event.get("op")
+            or ""
+        )
+        scope = payload.get("scope")
+        if phase in {"form-start", "tool-start"} and (scope or tool_name):
+            tool_id = str(scope or f"{phase}:{iteration}:{payload.get('position')}:{tool_name}")
+            if tool_id not in tool_ids:
+                tool_ids.add(tool_id)
+                stats["tool_calls"] += 1
+                if "shell" in tool_name:
+                    stats["shell_calls"] += 1
+                if tool_name in file_read_tools:
+                    stats["file_reads"] += 1
+        elif obj.get("type") == "tool_call" and tool_name:
             stats["tool_calls"] += 1
         max_iteration = _merge_trace_metrics(stats, obj, max_iteration)
         max_iteration = _merge_trace_metrics(stats, payload, max_iteration)
         final_payload = payload.get("final")
         if isinstance(final_payload, dict):
             max_iteration = _merge_trace_metrics(stats, final_payload, max_iteration)
+        eval_evidence = payload.get("eval")
+        if isinstance(eval_evidence, dict):
+            stats["eval"] = eval_evidence
+            stats["eval_valid"] = eval_evidence.get("valid?") is True
+            effort_evidence = eval_evidence.get("reasoning-effort")
+            if isinstance(effort_evidence, dict) and isinstance(effort_evidence.get("requested"), str):
+                stats["reasoning_effort"] = effort_evidence["requested"]
+                stats["reasoning_effort_explicit"] = True
     if max_iteration:
         stats["iterations"] = max(stats["iterations"], max_iteration)
+    stats["telemetry_complete"] = stats["available"] and stats["iterations"] > 0
+    if _token_value(stats["tokens"], "reasoning", "reasoning_tokens") is not None:
+        stats["reasoning_reporting"] = "reported"
     return stats
+
+
+def _token_value(tokens: dict[str, Any], *keys: str) -> int | float | None:
+    for key in keys:
+        value = tokens.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _populate_context(context: Any, stats: dict[str, Any]) -> Any:
+    """Copy trace accounting into Harbor before it serializes AgentContext."""
+    tokens = stats.get("tokens") if isinstance(stats.get("tokens"), dict) else {}
+    values = {
+        "n_input_tokens": _token_value(tokens, "input", "input_tokens", "prompt"),
+        "n_cache_tokens": _token_value(tokens, "cached", "cache-read", "cache_read", "cache_tokens"),
+        "n_output_tokens": _token_value(tokens, "output", "output_tokens", "completion"),
+        "cost_usd": stats.get("cost_usd") if isinstance(stats.get("cost_usd"), (int, float)) else None,
+    }
+    metadata = {"vis": stats}
+    if isinstance(context, dict):
+        context.update({key: value for key, value in values.items() if value is not None})
+        context.setdefault("metadata", {}).update(metadata)
+        return context
+    for key, value in values.items():
+        if value is not None and hasattr(context, key):
+            setattr(context, key, value)
+    current = getattr(context, "metadata", None)
+    if isinstance(current, dict):
+        current.update(metadata)
+    elif hasattr(context, "metadata"):
+        setattr(context, "metadata", metadata)
+    return context
 
 
 class VisInstalledAgent(BaseInstalledAgent):
@@ -175,6 +260,17 @@ class VisInstalledAgent(BaseInstalledAgent):
     @staticmethod
     def name() -> str:
         return "vis-installed"
+
+    def get_version_command(self) -> str:
+        install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
+        remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
+        return (
+            f"HOME={shlex.quote(remote_home)} {shlex.quote(f'{install_prefix}/vis')} "
+            f"-Duser.home={shlex.quote(remote_home)} --version"
+        )
+
+    def parse_version(self, stdout: str) -> str:
+        return stdout.strip().splitlines()[-1].strip()
 
     async def install(self, environment: Any) -> None:
 
@@ -264,6 +360,12 @@ class VisInstalledAgent(BaseInstalledAgent):
         remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
         provider = _env_value(self, "VIS_PROVIDER", "zai-coding-plan") or "zai-coding-plan"
         model = _env_value(self, "VIS_MODEL", "glm-5.2") or "glm-5.2"
+        reasoning_effort = _env_value(self, "VIS_BENCH_REASONING_EFFORT", "high") or "high"
+        if reasoning_effort not in {"high", "max"}:
+            raise ValueError(
+                "VIS_BENCH_REASONING_EFFORT must be high or max; "
+                f"got {reasoning_effort!r}"
+            )
         timeout = float(_env_value(self, "VIS_BENCH_TIMEOUT", "7200") or "7200")
         cmd = [
             vis_bin,
@@ -272,40 +374,75 @@ class VisInstalledAgent(BaseInstalledAgent):
             "--full-trace-json-stream",
             "--provider", provider,
             "--model", model,
+            "--reasoning-effort", reasoning_effort,
             instruction,
         ]
+        project_config = f"{cwd}/.vis/config.edn"
+        home_config = f"{remote_home}/.vis/config.edn"
         shell = (
-            f"mkdir -p {shlex.quote(str(trace_dir))} && "
+            f"mkdir -p {shlex.quote(str(trace_dir))} {shlex.quote(f'{cwd}/.vis')} && "
+            f"if [ -f {shlex.quote(home_config)} ]; then cp {shlex.quote(home_config)} {shlex.quote(project_config)}; fi && "
             f"HOME={shlex.quote(remote_home)} "
             + " ".join(shlex.quote(x) for x in cmd)
             + f" > {shlex.quote(str(trace))} 2> {shlex.quote(str(stderr))}"
         )
         result = await _maybe_env_run(environment, shell, cwd=cwd, timeout=timeout)
+        local_trace = Path(self.logs_dir) / f"vis-{task_id}.trace.jsonl"
+        download_file = getattr(environment, "download_file", None)
+        if callable(download_file):
+            try:
+                downloaded = download_file(str(trace), local_trace)
+                if asyncio.iscoroutine(downloaded):
+                    await downloaded
+                stats = _summarize_trace(local_trace)
+                stats.setdefault("reasoning_effort", reasoning_effort)
+                stats["reasoning_effort_explicit"] = True
+                _populate_context(context, stats)
+            except Exception:
+                # Harbor still retains the remote artifact; metrics will mark the
+                # rollout trace unavailable instead of manufacturing zeroes.
+                pass
         if _returncode(result) != 0:
             raise RuntimeError(f"vis exited {_returncode(result)}; stderr artifact: {stderr}")
         return result
 
     def populate_context_post_run(self, context: Any) -> Any:
         task_id = _task_id_from_context(context, _env_value(self, "HARBOR_TASK_ID"))
-        trace = Path(_env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS) or DEFAULT_ARTIFACTS) / "vis-traces" / task_id / "vis.trace.jsonl"
+        local_trace = Path(self.logs_dir) / f"vis-{task_id}.trace.jsonl"
+        trace = local_trace if local_trace.exists() else Path(_env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS) or DEFAULT_ARTIFACTS) / "vis-traces" / task_id / "vis.trace.jsonl"
         stats = _summarize_trace(trace)
-        if isinstance(context, dict):
-            context.setdefault("vis", {}).update(stats)
-            return context
-        metadata = getattr(context, "metadata", None)
-        if isinstance(metadata, dict):
-            metadata["vis"] = stats
-            return context
-        if hasattr(context, "metadata"):
-            try:
-                setattr(context, "metadata", {"vis": stats})
-                return context
-            except Exception:
-                pass
-        try:
-            setattr(context, "vis", stats)
-        except Exception:
-            extra = getattr(context, "__pydantic_extra__", None)
-            if isinstance(extra, dict):
-                extra["vis"] = stats
-        return context
+        stats.setdefault(
+            "reasoning_effort",
+            _env_value(self, "VIS_BENCH_REASONING_EFFORT", "high") or "high",
+        )
+        stats["reasoning_effort_explicit"] = True
+        return _populate_context(context, stats)
+
+
+class PiGlm52Agent(HarborPi):
+    """Pinned Pi harness that installs the benchmark's explicit GLM-5.2 model."""
+
+    async def install(self, environment: Any) -> None:
+        await super().install(environment)
+        config_value = _env_value(self, PI_MODELS_ENV)
+        if not config_value:
+            raise FileNotFoundError(f"{PI_MODELS_ENV} is not set")
+        config = Path(config_value).expanduser().resolve()
+        if not config.is_file():
+            raise FileNotFoundError(f"{PI_MODELS_ENV} points to missing file: {config}")
+
+        await environment.upload_file(config, PI_MODELS_REMOTE)
+        proc = await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                "mkdir -p \"$HOME/.pi/agent\"; "
+                f"cp {shlex.quote(PI_MODELS_REMOTE)} \"$HOME/.pi/agent/models.json\"; "
+                "chmod 600 \"$HOME/.pi/agent/models.json\""
+            ),
+        )
+        if proc is not None and _returncode(proc) != 0:
+            raise RuntimeError(
+                "failed to install Pi GLM-5.2 models.json "
+                f"(exit {_returncode(proc)}): {_result_text(proc, 'stderr')[-1000:]}"
+            )
