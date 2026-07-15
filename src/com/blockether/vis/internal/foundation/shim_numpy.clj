@@ -1701,7 +1701,7 @@ del __vis_install_numpy__
      :ext/sandbox-shims
      [{:shim/name "numpy"
        :shim/description
-       "numpy-compatible `numpy` module implemented in pure Python (ndarray, broadcasting, linalg, random). No host bridge."
+       "numpy-compatible `numpy` in pure Python (ndarray, broadcasting, linalg, random). Not supported: C-speed; a few ops limited to <=2-D — median/cumsum/sort/flip/repeat along an axis, `tile` with tuple reps, `pad` beyond 1-D, `dstack` raise `NotImplementedError`."
        :shim/preamble numpy-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

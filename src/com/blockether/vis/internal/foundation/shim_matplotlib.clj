@@ -1640,7 +1640,7 @@ del __vis_install_matplotlib__
      :ext/sandbox-shims
      [{:shim/name "matplotlib"
        :shim/description
-       "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with a Java2D PNG renderer and a pure-Python ASCII renderer (show/to_ascii/savefig .txt)."
+       "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with Java2D PNG and ASCII renderers (show/to_ascii/savefig). Not supported: animation, 3-D axes, full rcParams theming; only documented plot types render."
        :shim/bindings mpl-bridge-bindings
        :shim/preamble matplotlib-shim-src}]}))
 

@@ -270,7 +270,7 @@ del __vis_install_attach__
      :ext/sandbox-shims
      [{:shim/name "attach"
        :shim/description
-       "vis_attach / vis_attach_bytes: persist a produced artifact as a durable iteration attachment (DB-owned bytes, media-type sniffed)."
+       "vis_attach / vis_attach_bytes: persist a produced artifact as a durable iteration attachment (DB-owned bytes, media-type sniffed). vis-native helper — no upstream Python library."
        :shim/bindings attach-bridge-bindings
        :shim/preamble attach-shim-src}]}))
 

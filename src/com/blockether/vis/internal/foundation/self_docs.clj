@@ -39,25 +39,37 @@
             (assoc "blurb" blurb)))
         ps))
 
+(defn- normalize-slug
+  "Coerce a caller's slug arg to a bare, comparable slug: unwrap the
+   map/kwargs shape, trim, drop a trailing `.md` (pages cross-link by
+   filename), lower-case. Blank/nil → \"\" so an empty ask fails cleanly."
+  [slug]
+  (-> (if (map? slug) (or (get slug "slug") (get slug :slug) "") slug)
+      str
+      str/trim
+      (str/replace #"(?i)\.md$" "")
+      str/lower-case))
+
 (defn- vis-docs-tool
   "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\", \"blurb\"}, ...]} — list vis's own embedded doc pages, each with a one-line blurb of what it covers.
 await vis_docs(slug)  -> {\"slug\", \"title\", \"section\", \"content\"} — one page's full markdown.
+Slug matching is forgiving: the map/kwargs shape, a trailing `.md`, surrounding whitespace, and case are all tolerated (`vis_docs(\"extending.md\")` == `vis_docs(\"Extending\")` == `vis_docs({\"slug\": \"extending\"})`).
 Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
   ([] (extension/success {:result {"pages" (listing (pages))}}))
   ([slug]
    (let [ps
          (pages)
 
-         slug'
-         (str/trim (str slug))]
+         want
+         (normalize-slug slug)]
 
-     (if-let [page (some #(when (= slug' (:slug %)) %) ps)]
+     (if-let [page (some #(when (= want (normalize-slug (:slug %))) %) ps)]
        (extension/success {:result
                            (cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
                              (:section page)
                              (assoc "section" (:section page)))})
        (extension/failure {:result nil
-                           :error {:message (str "Unknown vis docs slug " (pr-str slug') ".")
+                           :error {:message (str "Unknown vis docs slug " (pr-str want) ".")
                                    :hint (str "Valid slugs: "
                                               (str/join ", " (map :slug ps))
                                               ". Call vis_docs() to list all pages.")}})))))

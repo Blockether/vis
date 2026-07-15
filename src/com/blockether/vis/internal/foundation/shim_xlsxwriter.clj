@@ -701,7 +701,7 @@ del __vis_install_xlsxwriter__
      :ext/sandbox-shims
      [{:shim/name "xlsxwriter"
        :shim/description
-       "xlsxwriter-compatible .xlsx writer backed by pure-Java Apache POI (workbooks + styles live host-side by integer handle; the file crosses back as base64 on close)."
+       "xlsxwriter-compatible .xlsx writer backed by pure-Java Apache POI (workbooks/styles by integer handle; file returns as base64 on close). Not supported: streaming (`constant_memory`), VBA, and some advanced chart/formatting options."
        :shim/bindings xlsxwriter-bridge-bindings
        :shim/preamble xlsxwriter-shim-src}]}))
 

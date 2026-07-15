@@ -3180,7 +3180,7 @@ del __vis_install_pil__
      :ext/sandbox-shims
      [{:shim/name "pil"
        :shim/description
-       "Pillow-compatible `PIL` package (Image/ImageDraw/ImageFilter/ImageOps/ImageColor/ImageEnhance/ImageChops/ImageFont) backed by JVM Java2D / ImageIO."
+       "Pillow-compatible `PIL` (Image/ImageDraw/ImageFilter/ImageOps/ImageColor/ImageEnhance/ImageChops/ImageFont) backed by JVM Java2D/ImageIO. Not supported: some color-mode conversions and `Image.transform` methods raise `ValueError`."
        :shim/bindings pil-bridge-bindings
        :shim/preamble pil-shim-src}]}))
 

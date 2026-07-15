@@ -3903,7 +3903,8 @@
                                            {:id ::remove-project :label "✗ Remove from project"}]))
                              pick
                              (with-dialog-lock
-                               #(dlg/searchable-select! screen "Move session to project…" items))]
+                               #(dlg/searchable-select! screen "Move session to project…" items
+                                                        {:placeholder "Type to filter projects…" :enter-label "move"}))]
 
                          (when pick
                            (let [pid (cond (= ::new-project (:id pick))
@@ -4143,7 +4144,8 @@
                                        projects)]
 
                        (when-let [pick (with-dialog-lock
-                                         #(dlg/searchable-select! screen "Switch project…" items))]
+                                         #(dlg/searchable-select! screen "Switch project…" items
+                                                                  {:placeholder "Type to filter projects…" :enter-label "switch"}))]
                          (when-let [pid (some-> (:id pick)
                                                 str)]
                            (when-not (= pid cur)

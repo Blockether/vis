@@ -414,52 +414,14 @@
    single `…`, keeping both the HEAD and the TAIL. Ideal for file paths, where
    the basename (tail) is as informative as the leading dirs — plain
    `truncate-cols` drops the filename. Falls back to head truncation when there
-   isn't room for both sides plus the ellipsis. Grapheme-cluster safe."
+   isn't room for both sides plus the ellipsis. Grapheme-cluster safe.
+
+   Backed by the lanterna fork's `TerminalTextUtils/truncateMiddle`
+   (>= 3.1.5-vis.25)."
   ^String [s ^long max-cols]
-  (cond (or (nil? s) (<= max-cols 0)) ""
-        (<= (display-width s) max-cols) s
-        (<= max-cols 2) (truncate-cols s max-cols)
-        :else
-        (let [budget
-              (dec max-cols)
-
-              ; one column spent on the ellipsis
-              tail-cols
-              (quot budget 2)
-
-              head-cols
-              (- budget tail-cols)
-
-              head
-              (truncate-cols s head-cols)
-
-              cells
-              (TextCharacter/fromString ^String s)
-
-              tail
-              (loop [i
-                     (dec (alength cells))
-
-                     used
-                     0
-
-                     acc
-                     nil]
-
-                (if (neg? i)
-                  acc
-                  (let [tc
-                        ^TextCharacter (aget cells i)
-
-                        g
-                        ^String (.getCharacterString tc)
-
-                        w
-                        (if (.isDoubleWidth tc) 2 1)]
-
-                    (if (> (+ used w) tail-cols) acc (recur (dec i) (+ used w) (str g acc))))))]
-
-          (str head "…" tail))))
+  (TerminalTextUtils/truncateMiddle (some-> s
+                                            str)
+                                    (int max-cols)))
 
 (defn fold-cols
   "Character-fold `s` into a vector of segments, each at most `max-cols`
@@ -806,149 +768,46 @@
 
 (defn pad-right
   "Pad string to `w` terminal columns, right-filling with spaces.
-   Truncates (column-aware) if too wide."
-  [s w]
-  (let [txt
-        (or s "")
-
-        cols
-        (display-width txt)
-
-        w
-        (long w)]
-
-    (cond (= cols w) txt
-          (> cols w) (truncate-cols txt w)
-          :else (str txt (apply str (repeat (- w cols) \space))))))
+   Truncates (column-aware) if too wide. Backed by the lanterna fork's
+   `TerminalTextUtils/padRight` (>= 3.1.5-vis.25)."
+  ^String [s w]
+  (TerminalTextUtils/padRight (str (or s "")) (int w)))
 
 (defn pad-left
   "Pad string to `w` terminal columns, left-filling with spaces.
-   Truncates (column-aware) if too wide."
-  [s w]
-  (let [txt
-        (or s "")
-
-        cols
-        (display-width txt)
-
-        w
-        (long w)]
-
-    (cond (= cols w) txt
-          (> cols w) (truncate-cols txt w)
-          :else (str (apply str (repeat (- w cols) \space)) txt))))
+   Truncates (column-aware) if too wide. Backed by the lanterna fork's
+   `TerminalTextUtils/padLeft` (>= 3.1.5-vis.25)."
+  ^String [s w]
+  (TerminalTextUtils/padLeft (str (or s "")) (int w)))
 
 (defn center-text
   "Center string within `w` terminal columns, padding both sides.
-   Truncates (column-aware) if too wide."
-  [s w]
-  (let [txt
-        (or s "")
-
-        cols
-        (display-width txt)
-
-        w
-        (long w)]
-
-    (cond (>= cols w) (truncate-cols txt w)
-          :else
-          (let [left-pad
-                (quot (- w cols) 2)
-
-                right-pad
-                (- w cols left-pad)]
-
-            (str (apply str (repeat left-pad \space)) txt (apply str (repeat right-pad \space)))))))
+   Truncates (column-aware) if too wide. Backed by the lanterna fork's
+   `TerminalTextUtils/center` (>= 3.1.5-vis.25)."
+  ^String [s w]
+  (TerminalTextUtils/center (str (or s "")) (int w)))
 
 (defn space-between
   "Distribute items across `w` terminal columns with equal gaps.
    First item flush-left, last item flush-right, rest evenly spaced.
-   Like CSS justify-content: space-between."
-  [items w]
-  (let [n
-        (count items)
-
-        w
-        (long w)]
-
-    (cond (zero? n) (apply str (repeat w \space))
-          (= n 1) (center-text (first items) w)
-          :else (let [total-text
-                      (long (reduce + (map display-width items)))
-
-                      total-gaps
-                      (- w total-text)
-
-                      gap-count
-                      (dec n)
-
-                      base-gap
-                      (max 1 (quot total-gaps gap-count))
-
-                      extra
-                      (- total-gaps (* base-gap gap-count))]
-
-                  (apply str
-                    (interleave items
-                                (concat
-                                  ;; Distribute remainder across first gaps
-                                  (map (fn [i]
-                                         (apply str
-                                           (repeat (+ base-gap (if (< (long i) (long extra)) 1 0))
-                                                   \space)))
-                                       (range gap-count))
-                                  ;; sentinel so interleave doesn't drop last item
-                                  [""])))))))
+   Like CSS justify-content: space-between. Backed by the lanterna fork's
+   `TerminalTextUtils/spaceBetween` (>= 3.1.5-vis.25)."
+  ^String [items w]
+  (TerminalTextUtils/spaceBetween (mapv str items) (int w)))
 
 (defn space-around
   "Distribute items across `w` terminal columns with equal space
-   around each item. Like CSS justify-content: space-around."
-  [items w]
-  (let [n
-        (count items)
-
-        w
-        (long w)]
-
-    (cond (zero? n) (apply str (repeat w \space))
-          (= n 1) (center-text (first items) w)
-          :else (let [total-text
-                      (long (reduce + (map display-width items)))
-
-                      total-gaps
-                      (- w total-text)
-
-                      slots
-                      (* 2 n)
-
-                      ;; each item gets space on both sides
-                      base
-                      (max 0 (quot total-gaps slots))
-
-                      unit-gap
-                      (apply str (repeat base \space))
-
-                      ;; Build: gap item gap | gap item gap | ...
-                      parts
-                      (mapcat (fn [item]
-                                [unit-gap item unit-gap])
-                              items)
-
-                      result
-                      (apply str parts)
-
-                      result-w
-                      (display-width result)]
-
-                  (cond (= result-w w) result
-                        (< result-w w) (str result (apply str (repeat (- w result-w) \space)))
-                        :else (truncate-cols result w))))))
+   around each item. Like CSS justify-content: space-around. Backed by the
+   lanterna fork's `TerminalTextUtils/spaceAround` (>= 3.1.5-vis.25)."
+  ^String [items w]
+  (TerminalTextUtils/spaceAround (mapv str items) (int w)))
 
 (defn v-center-offset
-  "Compute vertical offset to center `content-h` rows within `container-h` rows."
-  [content-h container-h]
-  (if (< content-h container-h) (quot (- container-h content-h) 2) 0))
+  "Compute vertical offset to center `content-h` rows within `container-h` rows.
+   Backed by the lanterna fork's `TerminalTextUtils/verticalCenterOffset`
+   (>= 3.1.5-vis.25)."
+  ^long [content-h container-h]
+  (TerminalTextUtils/verticalCenterOffset (int content-h) (int container-h)))
 
 ;;; ── Word-wrap & justification ──────────────────────────────────────────────
 ;; Backed by the native, grapheme/EAW-aware `TerminalTextUtils` methods in the
