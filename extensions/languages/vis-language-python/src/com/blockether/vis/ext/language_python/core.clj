@@ -7,8 +7,10 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.language-python.interpreter :as interpreter]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
-            [com.blockether.vis.internal.extension :as extension]))
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.python-test-runner :as ptr]))
 
 ;; =============================================================================
 ;; Activation
@@ -153,6 +155,139 @@
                                     (assoc "code" code))}))))
 
 ;; =============================================================================
+;; run_tests
+;; =============================================================================
+
+(defn- tail-str
+  "Last `n` chars of `s`, ellipsized when truncated."
+  [^String s n]
+  (if (<= (count s) (long n)) s (str "…" (subs s (- (count s) (long n))))))
+
+(defn- resolve-test-paths
+  "Absolute path strings to hand a test runner. Honors `{paths}`; else defaults
+   to `tests/` when it exists, otherwise the workspace root."
+  [^String root opts]
+  (let [given (seq (map str (get opts "paths")))]
+    (cond given (mapv #(resolve-dir root %) given)
+          (.isDirectory (io/file root "tests")) [(resolve-dir root "tests")]
+          :else [(resolve-dir root nil)])))
+
+(defn- graalpy-test
+  "Hermetic backend: discover test_*.py / *_test.py under `paths` and run each in
+   a trusted GraalPy context via the built-in stdlib-only pytest shim. Adds a
+   `hint` to switch to the project interpreter when a failure smells like a
+   missing third-party module the sandbox can't see."
+  [paths]
+  (let [res
+        (ptr/test-python-extensions! {:dirs paths})
+
+        dep-smell?
+        (boolean (some (fn [t]
+                         (and (= :errored (:outcome t))
+                              (re-find #"(?i)ModuleNotFoundError|No module named|ImportError"
+                                       (str (:message t)))))
+                       (:tests res)))]
+
+    (cond-> {"runner" "graalpy"
+             "files" (:files res)
+             "ok" (boolean (:ok? res))
+             "passed" (or (:passed res) 0)
+             "failed" (or (:failed res) 0)
+             "errored" (or (:errored res) 0)
+             "skipped" (or (:skipped res) 0)
+             "output" (ptr/render-test-report res)}
+      (:error res)
+      (assoc "error" (:error res))
+
+      dep-smell?
+      (assoc "hint"
+        (str "Some tests failed to import modules under the stdlib-only GraalPy "
+             "sandbox. Re-run with {\"runner\": \"project\"} to use the project "
+             "interpreter's installed dependencies.")))))
+
+(defn- project-test
+  "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
+   .venv / python3 `-m pytest <paths>`) in `dir` so installed deps are visible."
+  [^String dir paths]
+  (let [cmd
+        (-> (interpreter/resolve-command dir)
+            (conj "-m" "pytest")
+            (into paths))
+
+        pb
+        (doto (ProcessBuilder. ^java.util.List cmd)
+          (.directory (io/file dir))
+          (.redirectErrorStream true))
+
+        p
+        (.start pb)
+
+        out
+        (future (slurp (.getInputStream p)))
+
+        done?
+        (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
+
+    (when-not done? (.destroyForcibly p))
+    (let [s
+          (str @out)
+
+          [_ passed]
+          (re-find #"(?m)(\d+) passed" s)
+
+          [_ failed]
+          (re-find #"(?m)(\d+) failed" s)
+
+          [_ errored]
+          (re-find #"(?m)(\d+) error(?:ed|s)?\b" s)]
+
+      {"runner" "project"
+       "cmd" (vec cmd)
+       "dir" dir
+       "exit" (when done? (.exitValue p))
+       "timed_out" (not done?)
+       "passed" (some-> passed
+                        parse-long)
+       "failed" (some-> failed
+                        parse-long)
+       "errored" (some-> errored
+                         parse-long)
+       "output" (tail-str s 8000)})))
+
+(defn py-test-fn
+  "run_tests handler for Python. Two backends behind `{runner}`:
+     - \"graalpy\" (DEFAULT) — hermetic, stdlib-only. Discovers `test_*.py` /
+       `*_test.py` under `{paths}` (default: `tests/` if present, else the
+       workspace root) and runs each in a TRUSTED GraalPy context via the
+       built-in pytest shim. No project deps visible.
+     - \"project\" — shells the project interpreter's pytest
+       (`uv`/`poetry`/`.venv`/`python3` `-m pytest <paths>`) so installed test
+       deps ARE visible. Aliases: `{interpreter true}`.
+   Pass an opts map `{runner, paths, dir}` (a bare code string is not accepted)."
+  [env arg]
+  (let [root
+        (env-root env)
+
+        opts
+        (if (map? arg) arg {})
+
+        dir
+        (resolve-dir root (get opts "dir"))
+
+        runner
+        (let [r (str/lower-case (str (or (get opts "runner")
+                                         (when (get opts "interpreter") "project")
+                                         "graalpy")))]
+          (if (contains? #{"project" "interpreter" "real" "system"} r) "project" "graalpy"))
+
+        paths
+        (resolve-test-paths root opts)]
+
+    (extension/success
+      {:result (assoc (if (= "project" runner) (project-test dir paths) (graalpy-test paths))
+                 "language" "python")})))
+
+;; =============================================================================
 ;; Manifest
 ;; =============================================================================
 
@@ -172,6 +307,7 @@
      :ext/activation-fn activation-fn
      :ext/language-tools [{:language "python"
                            :repl-eval-fn py-repl-eval-fn
+                           :test-fn py-test-fn
                            :start-repl-fn (fn [env op opts]
                                             (py-start-repl-fn env op opts))}]
      :ext/startable-resources [{:kind :repl
