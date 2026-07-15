@@ -1,62 +1,86 @@
 -- =============================================================================
--- V1 - vis schema (SQLite)
+-- V1__schema.sql — vis unified SQLite baseline schema.
 --
--- Hierarchy:
+-- A single consolidated migration equivalent to the old incremental chain
+-- V1..V10 applied end to end: every ALTER / rename / table-rebuild is folded
+-- inline into clean CREATE statements (no historical data transforms — a
+-- fresh DB has no rows to migrate). Drop this in as the ONLY file under
+-- migration/ for a fresh install, and reset the Flyway baseline so existing
+-- ~/.vis/vis.mdb databases keep their incremental chain.
 --
---   workspace (git worktree-backed work unit; one branch per row,
---              trunk-kind rows have no worktree dir)
---     └─ session_state (binds to exactly one workspace via workspace_id)
+-- Folded from:
+--   V1  base schema
+--   V2  session_iteration_attachment      (superseded by V4)
+--   V3  session_turn_attachment rebuild    (superseded by V4)
+--   V4  unify attachments -> session_attachment
+--   V5  session_soul.claimed_at
+--   V6  owner + session_group(+membership) — group renamed to project in V7
+--   V7  session_group -> project; soul.group_id -> project_id; project_position
+--   V8  session_turn_queue
+--   V9  project.workspace_root (project == tab set, bound to a dir)
+--   V10 project_position hard-unique invariant
 --
---   session_soul (identity)
---     └─ session_state (branch/fork; pinned to workspace 1:1)
---          └─ session_turn_soul (user ask, branch-local)
---               └─ session_turn_state (one run/retry of the turn)
---                    └─ session_turn_iteration (one LLM round-trip)
---                         │
---                         └─ code / tool_calls BLOB / duration_ms columns
---                              The executed TOOL-CALL records (one per call) live
---                              on the iteration row. Sandbox state is NOT persisted:
---                              one persistent interpreter holds globals in-process,
---                              never as cross-turn DB state.
---                              Cross-turn memory rides on session_turn_state.ctx
---                              — the bare per-turn context snapshot (identity,
---                              workspace, env, routing, resources, symbols) as
---                              one Nippy blob on this row. The tool_calls BLOB is
---                              the forensic source-of-truth for executed code.
---
--- Naming convention:
---   *_soul   = immutable identity, branch-local
---   *_state  = mutable snapshot; retry/fork = new state row
---   parent_table_child = nested concept (session_turn_iteration
---                        = iteration nested under session_turn_state)
---
--- Position columns (1-based int) live alongside UUID PKs at every
--- level. UUIDs are the join key; position is the public/agent-
--- facing identifier.
---
--- Flow per turn:
---   user request
---     -> session_turn_soul + session_turn_state
---     -> session_turn_iteration(s)
---          each session_turn_iteration records executed code in `code`
---          and the executed TOOL-CALL records in `tool_calls` (BLOB), plus
---          duration_ms. Sandbox state is NOT persisted: one persistent
---          interpreter holds the model's globals in-process across turns.
---          Prior tool-call outcomes live in the tool_calls BLOB (DB reads
---          against session_turn_iteration.tool_calls).
---     -> session_turn_state done/error
---     -> next turn (or branch/fork to new session_state)
---
--- Fork flow:
---   session_state(v1)
---        └─ fork -> session_state(v2, parent_state_id=v1)
---   Each fork keeps isolated branch-local session_turn_soul identity.
+-- Table order respects FK dependencies where it can; SQLite resolves the two
+-- genuinely circular refs (session_soul.parent_state_id <-> session_state) at
+-- row time, not DDL time, so a forward reference is fine.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
 
 -- =============================================================================
--- Session soul - pure identity.
+-- owner — ownership tag (the "who" axis). Single-user seam: one `local` row.
+-- (V6)
+-- =============================================================================
+CREATE TABLE owner (
+  id           TEXT PRIMARY KEY NOT NULL,
+  name         TEXT NOT NULL CHECK (trim(name) <> ''),
+  created_at   INTEGER NOT NULL
+);
+
+-- The single implicit owner every session belongs to until real accounts land.
+-- created_at = 0 marks it as the schema-seeded default.
+INSERT INTO owner (id, name, created_at) VALUES ('local', 'local', 0);
+
+-- =============================================================================
+-- project — the cross-channel "what belongs together" axis (V6 session_group,
+-- renamed in V7). A project OWNS its member sessions (the TUI calls them TABS),
+-- ordered by session_soul.project_position. `workspace_root` binds a project to
+-- a directory so "workspace = project = tab set" (V9).
+-- =============================================================================
+CREATE TABLE project (
+  id             TEXT PRIMARY KEY NOT NULL,
+  owner_id       TEXT NOT NULL REFERENCES owner(id),
+  -- NULL = a cross-channel project (shows in EVERY channel's db-list-projects
+  -- view); non-NULL scopes it to one channel ('tui'/'telegram'/…).
+  channel        TEXT,
+  name           TEXT NOT NULL CHECK (trim(name) <> ''),
+  color          TEXT,                        -- optional TUI/web accent
+  position       INTEGER NOT NULL DEFAULT 0,  -- manual ordering within a channel
+  created_at     INTEGER NOT NULL,
+  archived_at    INTEGER,                     -- soft-hide without deleting
+
+  -- Canonical absolute path of the workspace root this project is bound to.
+  -- NULL = a LOOSE project (hand-created via the move-to-project picker), not
+  -- tied to a directory. NOTE: this is `workspace.repo_root` (the real cwd),
+  -- NOT `workspace.root` (the rift clone path) — named `workspace_root` so the
+  -- two `root`s one join apart never collide. Callers store a
+  -- java.io.File/getCanonicalPath (case-normalized so a dir never fragments
+  -- into two projects). The CHECK forbids a blank binding posing as "bound".
+  workspace_root TEXT CHECK (workspace_root IS NULL OR trim(workspace_root) <> '')
+);
+
+CREATE INDEX idx_project_owner_channel
+  ON project(owner_id, channel, position, created_at);
+
+-- One project per (owner, workspace_root): partial-unique makes get-or-create
+-- race-safe (a losing concurrent insert fails and the caller re-reads).
+CREATE UNIQUE INDEX idx_project_owner_workspace_root
+  ON project(owner_id, workspace_root)
+  WHERE workspace_root IS NOT NULL;
+
+-- =============================================================================
+-- session_soul — pure identity. (V1 + claimed_at V5 + owner_id/project_id V6/V7
+-- + project_position V7)
 -- =============================================================================
 CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
@@ -68,17 +92,30 @@ CREATE TABLE session_soul (
   -- retry versioning — so forks are untouched. NULL = a normal top-level
   -- session (the only kind `db-list-sessions` shows); children hang off their
   -- parent for a queryable sub-tree and cascade-delete with it.
-  parent_state_id TEXT REFERENCES session_state(id) ON DELETE CASCADE,
+  parent_state_id   TEXT REFERENCES session_state(id) ON DELETE CASCADE,
   -- Per-session model preference: the PROVIDER + MODEL this session routes
-  -- through, set via the web picker or the TUI (Ctrl+T). Mirrors how a turn
-  -- records its route (session_state.llm_root_provider + llm_root_model) so
-  -- the preference is unambiguous (a model name can exist under >1 provider).
-  -- Channel-neutral and read by the engine at turn start
-  -- (prepare-turn-context) so every channel routes the same way. Both NULL =
-  -- router default.
+  -- through, set via the web picker or the TUI (Ctrl+T). Both NULL = router
+  -- default.
   llm_pref_provider TEXT,
   llm_pref_model    TEXT,
-  created_at   INTEGER NOT NULL
+  created_at        INTEGER NOT NULL,
+
+  -- Adoption stamp (V5). NULL = unclaimed warm-pool scaffolding (hidden from
+  -- db-list-sessions); non-NULL = a real conversation (user-created or received
+  -- its first turn). Direct resume by id stays unfiltered.
+  claimed_at        INTEGER,
+
+  -- Ownership tag (V6).
+  owner_id          TEXT REFERENCES owner(id),
+
+  -- Exclusive project membership pointer (V6 group_id -> V7 project_id). A soul
+  -- is in 0..1 projects; deleting the project SCATTERS members back to loose
+  -- (SET NULL), never cascade-deletes conversations.
+  project_id        TEXT REFERENCES project(id) ON DELETE SET NULL,
+
+  -- Manual order of this soul within its project (the movable TAB order, V7).
+  -- Held gap-free & unique per project by idx_project_position (V10).
+  project_position  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_session_soul_parent ON session_soul(parent_state_id)
@@ -91,14 +128,27 @@ CREATE UNIQUE INDEX idx_session_soul_channel_external
   ON session_soul(channel, external_id)
   WHERE external_id IS NOT NULL;
 
+-- Claimed-only listing hot path (V5).
+CREATE INDEX idx_session_soul_claimed
+  ON session_soul(channel, claimed_at, created_at DESC)
+  WHERE claimed_at IS NOT NULL;
+
+CREATE INDEX idx_session_soul_owner ON session_soul(owner_id);
+
+-- Members of a project in tab order (V7).
+CREATE INDEX idx_session_soul_project ON session_soul(project_id, project_position)
+  WHERE project_id IS NOT NULL;
+
+-- One slot per (project, position), forever — position integrity is structural,
+-- not application convention (V10). The reorder fn parks members in negative
+-- temp slots first so a row-by-row renumber never transiently collides.
+CREATE UNIQUE INDEX idx_project_position
+  ON session_soul(project_id, project_position)
+  WHERE project_id IS NOT NULL;
+
 -- =============================================================================
--- Workspace — a rift copy-on-write clone of cwd (a "draft").
---
--- One row = one draft clone on disk = one session-binding (1:1 invariant).
--- The user's real cwd is *trunk* (`repo_root`) and is never mutated; `root`
--- is the rift clone path. `fork_ms` is the clone timestamp — the baseline
--- for the mtime since-fork diff that `apply` lands back into cwd. Drafts
--- carry no git: no branch/commit/merge, only active -> discarded.
+-- workspace — a rift copy-on-write clone of cwd (a "draft"). One row = one
+-- draft clone on disk = one session-binding (1:1). (V1)
 -- =============================================================================
 CREATE TABLE workspace (
   id                   TEXT PRIMARY KEY NOT NULL,
@@ -111,40 +161,23 @@ CREATE TABLE workspace (
 
   fork_ms              INTEGER,           -- clone timestamp; mtime since-fork baseline
 
-  -- Human-friendly label overriding the default (session.title) in the
-  -- TUI strip. NULL falls back to the heuristic. Set via `workspace/set-label!`.
-  label                TEXT,
-  -- Monotonic timestamp of the last `workspace/focus!` (TUI strip ordering /
-  -- tab restore). NULL falls back to `created_at`.
-  last_focused_at_ms   INTEGER,
+  label                TEXT,              -- human label overriding session.title in the TUI strip
+  last_focused_at_ms   INTEGER,           -- last workspace/focus! (NULL -> created_at)
 
-  -- Additional filesystem roots (opencode-style "add folders/repos"): extra
-  -- directories the session may operate on IN ADDITION to its primary `root`.
-  -- JSON array of canonical absolute path strings, e.g.
-  -- '["/Users/me/lib-a","/Users/me/lib-b"]'. NULL / absent = no extra roots
-  -- (the single-root default). Mutated via `workspace/add-filesystem-root!` /
-  -- `remove-filesystem-root!` (the `/fs add|remove` slash commands).
+  -- Extra filesystem roots the session may operate on (JSON array of canonical
+  -- absolute paths). NULL/absent = single-root default.
   filesystem_roots     TEXT,
 
-  -- Workspace kind: 'trunk' = the user's real cwd (never cloned), 'draft' =
-  -- an isolated backend working copy that `apply!` lands back into trunk.
-  -- ('checkpoint' is reserved in the constraint for forward-compatibility but
-  -- is not minted by core.)
   workspace_kind       TEXT NOT NULL DEFAULT 'trunk'
                        CHECK (workspace_kind IN ('trunk', 'draft', 'checkpoint')),
 
-  -- Which registered workspace backend supplies this workspace's isolation.
-  -- 'live' = no backend (trunk, edits in place); e.g. 'rift' for the CoW
-  -- backend extension. Persisted so discard routes to the right backend.
   workspace_backend    TEXT NOT NULL DEFAULT 'live',
 
-  -- The workspace this one forked from (draft → its trunk parent). Lineage
-  -- only; NULL for trunks. RESTRICT so a parent can't vanish under a child.
+  -- Lineage: draft -> its trunk parent. RESTRICT so a parent can't vanish under
+  -- a child. NULL for trunks.
   parent_workspace_id  TEXT REFERENCES workspace(id) ON DELETE RESTRICT,
 
-  -- Cumulative since-fork baseline. For ordinary drafts this equals fork_ms;
-  -- the column exists so apply! can read one baseline uniformly.
-  apply_fork_ms        INTEGER,
+  apply_fork_ms        INTEGER,           -- cumulative since-fork baseline for apply!
 
   created_at           INTEGER NOT NULL,
   discarded_at         INTEGER
@@ -157,10 +190,7 @@ CREATE INDEX idx_workspace_parent
   ON workspace(parent_workspace_id);
 
 -- =============================================================================
--- repo_focus — per-repo last-active workspace pointer.
--- One row per repo; updated by `workspace/focus!`. The TUI uses this to
--- restore the active tab across restarts; the Telegram switcher uses it
--- as the default landing for `/workspace switch` without an argument.
+-- repo_focus — per-repo last-active workspace pointer. (V1)
 -- =============================================================================
 CREATE TABLE repo_focus (
   repo_id        TEXT PRIMARY KEY NOT NULL,
@@ -170,11 +200,11 @@ CREATE TABLE repo_focus (
 );
 
 -- =============================================================================
--- Session state - forkable mutable snapshot. Pinned 1:1 to a workspace.
+-- session_state — forkable mutable snapshot. Pinned 1:1 to a workspace. (V1)
 -- =============================================================================
 CREATE TABLE session_state (
   id                    TEXT PRIMARY KEY NOT NULL,
-  session_soul_id  TEXT NOT NULL
+  session_soul_id       TEXT NOT NULL
                         REFERENCES session_soul(id) ON DELETE CASCADE,
   parent_state_id       TEXT
                         REFERENCES session_state(id) ON DELETE CASCADE,
@@ -201,11 +231,11 @@ CREATE INDEX idx_session_state_parent
   ON session_state(parent_state_id);
 
 -- =============================================================================
--- Turn soul - immutable identity of a user request, branch-local.
+-- session_turn_soul — immutable identity of a user request, branch-local. (V1)
 -- =============================================================================
 CREATE TABLE session_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
-  session_state_id  TEXT NOT NULL
+  session_state_id       TEXT NOT NULL
                          REFERENCES session_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
   user_request           TEXT,
@@ -249,8 +279,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Session turn state - one run of session_turn_soul.
--- Retry = new state version.
+-- session_turn_state — one run of session_turn_soul. Retry = new version. (V1)
 -- =============================================================================
 CREATE TABLE session_turn_state (
   id                           TEXT PRIMARY KEY NOT NULL,
@@ -259,19 +288,14 @@ CREATE TABLE session_turn_state (
   forked_from_session_turn_state_id   TEXT
                                REFERENCES session_turn_state(id) ON DELETE SET NULL,
   version                      INTEGER NOT NULL CHECK (version >= 0),
-  llm_root_provider            TEXT,    -- provider id (e.g. 'openai', 'github-copilot')
+  llm_root_provider            TEXT,
   llm_root_model               TEXT,
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   iteration_count              INTEGER NOT NULL DEFAULT 0 CHECK (iteration_count >= 0),
   duration_ms                  INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
-  -- Phase B canonical token shape. `input_tokens` is ALWAYS TOTAL
-  -- (Anthropic-additive raw values are summed at the canonical
-  -- normalizer boundary; OpenAI / Gemini / Z.ai already report total).
-  -- The detail columns are SUBSETS of `input_tokens` and obey the
-  -- invariant:
-  --   input_regular_tokens + input_cache_write_tokens
-  --     + input_cache_read_tokens = input_tokens
+  -- Canonical token shape. input_tokens is ALWAYS TOTAL; the detail columns are
+  -- SUBSETS: input_regular + input_cache_write + input_cache_read = input_tokens.
   input_tokens                 INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
   input_regular_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (input_regular_tokens >= 0),
   input_cache_write_tokens     INTEGER NOT NULL DEFAULT 0 CHECK (input_cache_write_tokens >= 0),
@@ -279,34 +303,18 @@ CREATE TABLE session_turn_state (
   output_tokens                INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
   output_reasoning_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (output_reasoning_tokens >= 0),
   total_cost_usd               REAL NOT NULL DEFAULT 0 CHECK (total_cost_usd >= 0),
-  answer_markdown              TEXT,        -- Raw Markdown source of the model's plain-prose answer.
-                                            -- Channels parse via `render/markdown->ir` at render time.
-                                            -- NULL while the turn is still running.
-  -- Per-turn final outcome, derived at turn end. Lets the next turn's
-  -- handover digest say "previous turn complete | cancelled | error"
-  -- without scanning every session_turn_iteration. Set by the session_turn_iteration
-  -- loop on the terminal session_turn_iteration and by
-  -- sweep-orphaned-running-turns! for cancelled / orphaned turns.
+  answer_markdown              TEXT,        -- raw Markdown of the model's plain-prose answer; NULL while running
+  -- Per-turn final outcome, derived at turn end.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
                                       prior_outcome IN ('complete', 'cancelled', 'error')),
 
-  -- Nippy-encoded CTX snapshot as of the END of this turn version.
-  -- Live CTX = ctx on the latest turn-state for the latest turn-soul
-  -- of a session_state. History = walk the soul chain and decode each
-  -- row's ctx in turn-position order. No parallel history table;
-  -- per-turn snapshots come for free.
-  -- NULL while the turn is still running; written by the engine's
-  -- (done ...) handler in the same transaction that flips status.
-  -- Forks: copy parent's latest ctx into the new state's turn-1 row
-  -- so branched timelines keep their pre-fork history.
+  -- Nippy-encoded CTX snapshot as of the END of this turn version. NULL while
+  -- running; written by the (done ...) handler in the status-flip transaction.
   ctx                          BLOB,
 
-  -- Nippy-encoded STRUCTURED terminal error for a turn that ended in
-  -- status='error' (the provider-error map: kind / message / provider /
-  -- attempts / routing trace). FIRST-CLASS, distinct from answer_markdown: an
-  -- error is NOT an answer, so it's stored here (queryable) and channels render
-  -- the error CARD from it. NULL for a successful turn.
+  -- Nippy-encoded STRUCTURED terminal error for a status='error' turn. NULL for
+  -- a successful turn.
   error                        BLOB,
 
   created_at                   INTEGER NOT NULL,
@@ -321,7 +329,7 @@ CREATE INDEX idx_session_turn_state_forked_from
   ON session_turn_state(forked_from_session_turn_state_id);
 
 -- =============================================================================
--- Iteration - one LLM round-trip within a session_turn_state.
+-- session_turn_iteration — one LLM round-trip within a session_turn_state. (V1)
 -- =============================================================================
 CREATE TABLE session_turn_iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
@@ -341,32 +349,20 @@ CREATE TABLE session_turn_iteration (
 
   llm_full_duration_ms            INTEGER CHECK (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
-                                  ),       -- total duration across all traced attempts
+                                  ),
   llm_thinking                    TEXT,
-  -- Model markdown PROSE returned ALONGSIDE a tool call (its commentary while
-  -- acting, native tool calling) — persisted so a resumed turn / web history
-  -- still shows what the model SAID, not only what it ran. Null = no prose.
+  -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
   llm_assistant_prose             TEXT,
   llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_code IN (0, 1)),
 
-  -- svar canonical assistant message persisted so preserved-thinking
-  -- replay survives a vis restart. JSON-encoded
-  -- `{:role "assistant" :content [<canonical-blocks>]}` exactly as
-  -- svar's `:assistant-message` returns it; canonical thinking blocks
-  -- carry per-provider preserved-reasoning state under
-  -- `:thinking-signature`. Cross-turn / cross-restart resume reads
-  -- this column to rebuild the per-turn replay buffer.
+  -- svar canonical assistant message (JSON) — preserved-thinking replay survives
+  -- a restart.
   llm_assistant_message           TEXT,
 
-  -- Phase B canonical token shape per iteration. NULL columns when the
-  -- provider response did not surface usage (e.g. LLM call failed
-  -- before a response landed). `input_tokens` is TOTAL, the detail
-  -- columns are subsets obeying the invariant:
-  --   input_regular + input_cache_write + input_cache_read = input_tokens
-  -- `output_reasoning_tokens` is a subset of `output_tokens`.
-  -- Cost is provider-side estimated USD via the router's pricing
-  -- table at write time — historical rows survive future price changes.
+  -- Canonical per-iteration token shape (NULL when the response surfaced no
+  -- usage). input_tokens is TOTAL; detail columns are subsets; cost is
+  -- provider-estimated USD at write time.
   input_tokens                    INTEGER CHECK (
                                     input_tokens IS NULL OR input_tokens >= 0
                                   ),
@@ -389,34 +385,15 @@ CREATE TABLE session_turn_iteration (
                                     cost_usd IS NULL OR cost_usd >= 0
                                   ),
 
-
-  -- The code this iteration executed, as one string: the synthesized native
-  -- tool calls (cat/rg/patch/…) and/or the python_execution program. Forensics
-  -- + transcript replay. Per-call outcome (result / stdout / error) lives in
-  -- `tool_calls` below — there are NO `result` / `error` columns on this row.
+  -- The code this iteration executed (synthesized native tool calls and/or the
+  -- python_execution program). Per-call outcome lives in tool_calls below.
   code                            TEXT NOT NULL,
 
-  -- Nippy-encoded vec of the TOOL-CALL records executed this iteration. An
-  -- iteration IS a list of tool calls (one of which may be python_execution);
-  -- one record per call:
-  --   [{:scope             "tN/iM"       -- iteration handle (no per-form index)
-  --     :tag               :observation | :mutation
-  --     :src               <the call's source code>
-  --     :svar/tool-call-id <id>             -- the tool_use this record answers
-  --     :vis/tool-name     <name>           -- cat / rg / python_execution / …
-  --     :result <any>                       -- a NATIVE tool's returned value
-  --     :stdout <string>                    -- python_execution's PRINTED text
-  --     :error  {:message :data?}}          -- present when the call threw
-  --    ...]
-  -- :result and :stdout are EXCLUSIVE (the engine emits ONE per call): a native
-  -- tool carries :result, a python_execution call carries :stdout; a failure
-  -- carries :error (+ any partial :stdout). A DB read decodes this vec to
-  -- recover a prior call's outcome. NULL or empty vec on empty iters.
+  -- Nippy-encoded vec of the TOOL-CALL records executed this iteration
+  -- (:result for native tools, :stdout for python_execution, :error on throw).
+  -- NULL/empty on empty iters.
   tool_calls                      BLOB,
-  -- sandbox eval wall time for this iteration's block. The LLM
-  -- call time lives on llm_full_duration_ms; the turn total wall time
-  -- lives on session_turn_state.duration_ms. Per-iteration wall time
-  -- approximates eval_duration_ms + llm_full_duration_ms.
+  -- Sandbox eval wall time for this iteration's block.
   eval_duration_ms                INTEGER CHECK (
                                     eval_duration_ms IS NULL OR eval_duration_ms >= 0
                                   ),
@@ -432,34 +409,6 @@ CREATE INDEX idx_session_turn_iteration_session_turn_state
 
 CREATE INDEX idx_session_turn_iteration_session_turn_state_created
   ON session_turn_iteration(session_turn_state_id, created_at);
-
-CREATE TABLE llm_routing_event (
-  id                             TEXT PRIMARY KEY NOT NULL,
-  session_turn_iteration_id TEXT NOT NULL
-                                 REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
-  position                       INTEGER NOT NULL CHECK (position >= 0),
-  event_type                     TEXT NOT NULL,
-  provider                       TEXT,
-  model                          TEXT,
-  from_provider                  TEXT,
-  from_model                     TEXT,
-  to_provider                    TEXT,
-  to_model                       TEXT,
-  status                         INTEGER,
-  reason                         TEXT,
-  error                          TEXT,
-  attempt                        INTEGER CHECK (attempt IS NULL OR attempt >= 0),
-  delay_ms                       INTEGER CHECK (delay_ms IS NULL OR delay_ms >= 0),
-  elapsed_ms                     INTEGER CHECK (elapsed_ms IS NULL OR elapsed_ms >= 0),
-  at_ms                          INTEGER,
-  event_json                     TEXT NOT NULL,
-  created_at                     INTEGER NOT NULL,
-
-  UNIQUE (session_turn_iteration_id, position)
-);
-
-CREATE INDEX idx_llm_routing_event_iteration_position
-  ON llm_routing_event(session_turn_iteration_id, position);
 
 CREATE TRIGGER trg_session_turn_iteration_position_ai
 BEFORE INSERT ON session_turn_iteration
@@ -493,19 +442,38 @@ BEGIN
 END;
 
 -- =============================================================================
--- No sandbox-var sidecar tables. The model's Python globals live in ONE
--- persistent in-process interpreter per session; they are not persisted. Prior
--- tool-call outcomes live in session_turn_iteration.tool_calls (DB reads).
+-- llm_routing_event — per-iteration provider/model routing trace. (V1)
+-- =============================================================================
+CREATE TABLE llm_routing_event (
+  id                             TEXT PRIMARY KEY NOT NULL,
+  session_turn_iteration_id TEXT NOT NULL
+                                 REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
+  position                       INTEGER NOT NULL CHECK (position >= 0),
+  event_type                     TEXT NOT NULL,
+  provider                       TEXT,
+  model                          TEXT,
+  from_provider                  TEXT,
+  from_model                     TEXT,
+  to_provider                    TEXT,
+  to_model                       TEXT,
+  status                         INTEGER,
+  reason                         TEXT,
+  error                          TEXT,
+  attempt                        INTEGER CHECK (attempt IS NULL OR attempt >= 0),
+  delay_ms                       INTEGER CHECK (delay_ms IS NULL OR delay_ms >= 0),
+  elapsed_ms                     INTEGER CHECK (elapsed_ms IS NULL OR elapsed_ms >= 0),
+  at_ms                          INTEGER,
+  event_json                     TEXT NOT NULL,
+  created_at                     INTEGER NOT NULL,
+
+  UNIQUE (session_turn_iteration_id, position)
+);
+
+CREATE INDEX idx_llm_routing_event_iteration_position
+  ON llm_routing_event(session_turn_iteration_id, position);
 
 -- =============================================================================
--- Extension aggregate - extension-owned durable sidecar state.
---
--- extension_id is filled by runtime extension helpers from the registered
--- extension identity. Extension callers should not supply or spoof it.
---
--- Optional block scope belongs to a session_turn_iteration. Current
--- iteration rows store one executed form, so block_index is normally 0
--- when present.
+-- extension_aggregate — extension-owned durable sidecar state. (V1)
 -- =============================================================================
 CREATE TABLE extension_aggregate (
   id                          TEXT PRIMARY KEY NOT NULL,
@@ -532,9 +500,8 @@ CREATE TABLE extension_aggregate (
                                 session_turn_iteration_block_id IS NULL OR trim(session_turn_iteration_block_id) <> ''
                               ),
 
-  -- Singleton dedupe key for upsert. Generated from FK scope columns
-  -- because SQLite treats NULLs in UNIQUE as distinct, which would
-  -- otherwise defeat ON CONFLICT against the FK columns directly.
+  -- Singleton dedupe key for upsert (SQLite treats NULLs in UNIQUE as distinct,
+  -- which would otherwise defeat ON CONFLICT against the FK columns directly).
   scope_key                   TEXT GENERATED ALWAYS AS (
                                 CASE
                                   WHEN session_turn_iteration_block_id IS NOT NULL
@@ -594,16 +561,10 @@ CREATE INDEX idx_extension_aggregate_iteration_block_id
   ON extension_aggregate(session_turn_iteration_block_id)
   WHERE session_turn_iteration_block_id IS NOT NULL;
 
--- Supports index_data JSON field filtering for extension aggregate queries.
--- Extensions pass {:index-data {:field value}} to extension-list-aggregates/extension-delete-aggregate!;
--- the clause layer generates json_extract WHERE conditions on these paths.
 CREATE INDEX idx_extension_aggregate_index_data_kind
   ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.kind'))
   WHERE index_data IS NOT NULL;
 
--- Supports graph-traversal-style index queries (Bridge edges by source/target).
--- Without these, "find all edges FROM x" or "find all edges TO y" scans all rows
--- of that kind.
 CREATE INDEX idx_extension_aggregate_index_source
   ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.source'))
   WHERE index_data IS NOT NULL;
@@ -612,16 +573,12 @@ CREATE INDEX idx_extension_aggregate_index_target
   ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.target'))
   WHERE index_data IS NOT NULL;
 
--- Supports "all nodes/edges for a file" queries (Bridge re-indexing).
 CREATE INDEX idx_extension_aggregate_index_path
   ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.path'))
   WHERE index_data IS NOT NULL;
 
 -- =============================================================================
--- Log - structured logs.
--- Event envelope:
---   - event: machine-stable event key (e.g. "session_turn_iteration.llm.error")
---   - data: JSON-encoded object/string with all event payload fields
+-- log — structured logs. (V1)
 -- =============================================================================
 CREATE TABLE log (
   id                     TEXT PRIMARY KEY NOT NULL,
@@ -674,28 +631,71 @@ CREATE INDEX idx_log_iteration
   WHERE session_turn_iteration_id IS NOT NULL;
 
 -- =============================================================================
--- Turn attachments - durable image bytes for a user request, branch-local.
+-- session_attachment — unified attachment table (V4; supersedes V1/V2/V3
+-- session_turn_attachment + session_iteration_attachment).
 --
--- EVERY image the user attaches to a turn persists here as raw BLOB bytes,
--- keyed to the turn soul: INLINE uploads (web/API base64 payloads, no durable
--- disk path) AND terminal-drop images (a path pasted into the message). Storing
--- the bytes - not just the on-disk path - means resume + history re-render
--- survive a restart even after the source file is moved or deleted.
--- Kept OFF the ctx / event-log path (bytes are big) - same ethos as the
--- gateway's bounded-pr "big values stay off the log".
+-- Every row carries session_turn_soul_id (ALWAYS set: the turn it belongs to).
+-- A row with session_turn_iteration_id set is a TOOL artifact (OUTBOUND); NULL
+-- means a USER image (INBOUND). `source` is DERIVED from that, never stored.
+-- Storage: inline `bytes` now, `storage_uri` reserved for externalization;
+-- exactly one is set.
 -- =============================================================================
-CREATE TABLE session_turn_attachment (
-  id                     TEXT PRIMARY KEY NOT NULL,
-  session_turn_soul_id   TEXT NOT NULL
-                         REFERENCES session_turn_soul(id) ON DELETE CASCADE,
-  position               INTEGER NOT NULL CHECK (position >= 0),
-  kind                   TEXT NOT NULL DEFAULT 'image',
-  media_type             TEXT NOT NULL,
-  filename               TEXT,
-  size_bytes             INTEGER NOT NULL CHECK (size_bytes >= 0),
-  bytes                  BLOB NOT NULL,
-  created_at             INTEGER NOT NULL
+CREATE TABLE session_attachment (
+  id                        TEXT PRIMARY KEY NOT NULL,
+
+  session_turn_soul_id      TEXT NOT NULL
+                            REFERENCES session_turn_soul(id) ON DELETE CASCADE,
+
+  session_turn_iteration_id TEXT
+                            REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
+
+  tool_call_id              TEXT,
+
+  position                  INTEGER NOT NULL CHECK (position >= 0),
+  kind                      TEXT NOT NULL DEFAULT 'image',
+  media_type                TEXT NOT NULL,
+  filename                  TEXT,
+  size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
+
+  bytes                     BLOB,
+  storage_uri               TEXT,
+
+  created_at                INTEGER NOT NULL,
+
+  -- Exactly one payload location: never both, never neither.
+  CHECK (
+    (bytes IS NOT NULL AND storage_uri IS NULL)
+    OR
+    (bytes IS NULL AND storage_uri IS NOT NULL)
+  ),
+
+  -- Tool grain (iteration, tool_call_id, position). User rows have a NULL
+  -- iteration and SQLite treats NULLs as distinct in UNIQUE, so user images
+  -- stay unconstrained.
+  UNIQUE (session_turn_iteration_id, tool_call_id, position)
 );
 
-CREATE INDEX idx_turn_attachment_soul
-  ON session_turn_attachment(session_turn_soul_id, position);
+-- Per-turn roll-up (user + tool together): the introspection hot path.
+CREATE INDEX idx_attachment_soul
+  ON session_attachment(session_turn_soul_id, position);
+
+-- Per-iteration roll-up (tool artifacts), ordered by (call, position).
+CREATE INDEX idx_attachment_iteration
+  ON session_attachment(session_turn_iteration_id, tool_call_id, position);
+
+-- =============================================================================
+-- session_turn_queue — durable per-session TURN QUEUE (V8). A queued turn is
+-- pure gateway scheduling intent (not yet a session_turn_state); rows are
+-- short-lived and drop when drained/cancelled/soul-deleted.
+-- =============================================================================
+CREATE TABLE session_turn_queue (
+  id               TEXT PRIMARY KEY NOT NULL,   -- gateway registry turn id (tid)
+  session_soul_id  TEXT NOT NULL,
+  request          TEXT NOT NULL,
+  position         INTEGER NOT NULL,            -- FIFO order within the session
+  queued_at        INTEGER NOT NULL,
+  FOREIGN KEY (session_soul_id) REFERENCES session_soul(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_session_turn_queue_session
+  ON session_turn_queue(session_soul_id, position, queued_at);
