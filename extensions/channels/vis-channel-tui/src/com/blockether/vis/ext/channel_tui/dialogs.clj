@@ -103,7 +103,6 @@
     (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
     (.refresh screen Screen$RefreshType/DELTA)))
-(defn clamp ^long [^long x ^long lo ^long hi] (max lo (min hi x)))
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
    Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."
@@ -134,7 +133,7 @@
           floor
           (min (long min-adaptive-content-h) max-h)]
 
-      (clamp (long requested) floor max-h))))
+      (p/clamp (long requested) floor max-h))))
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
@@ -184,7 +183,7 @@
         (max 0 (- total-count visible-count))
 
         start
-        (clamp current-start 0 last-start)]
+        (p/clamp current-start 0 last-start)]
 
     (cond (< idx start) idx
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
@@ -917,7 +916,7 @@
           :filter? filter?
           :placeholder placeholder}))
      :reconcile (fn [state {:keys [total list-h]}]
-                  (let [selected (clamp (:selected state) 0 (max 0 (dec (long total))))]
+                  (let [selected (p/clamp (:selected state) 0 (max 0 (dec (long total))))]
                     (assoc state
                       :selected selected
                       :scroll (visible-window-start selected (:scroll state) list-h total))))
@@ -965,7 +964,7 @@
                   cursor)))
      :on-key
      (fn [{:keys [selected query] :as state} key {:keys [total filtered]}]
-       (let [clampf #(clamp % 0 (max 0 (dec (long total))))]
+       (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
          (if-let [wheel (modal-wheel-step key)]
            (assoc state :selected (clampf (+ (long selected) (long wheel))))
            (condp = (key-type key)
@@ -1069,7 +1068,7 @@
             (min (long total) (long content-h))
 
             _
-            (swap! selected #(clamp % 0 (max 0 (dec total))))
+            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
             _
             (swap! scroll #(visible-window-start @selected % content-h total))]
@@ -1096,9 +1095,9 @@
             (recur)
             (condp = (key-type key)
               KeyType/Escape nil
-              KeyType/ArrowUp (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total))))
+              KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
                                   (recur))
-              KeyType/ArrowDown (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total))))
+              KeyType/ArrowDown (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
                                     (recur))
               KeyType/Enter (mapv #(nth items %) (sort @checked))
               KeyType/Character
@@ -1445,7 +1444,7 @@
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
 
-        (swap! selected #(clamp % 0 (max 0 (dec total))))
+        (swap! selected #(p/clamp % 0 (max 0 (dec total))))
         (if (zero? total)
           (draw-list-item! g left content-top inner-w false "  (no managed resources)")
           (dotimes [i (min (long total) (long content-h))]
@@ -1494,9 +1493,9 @@
             (recur)
             (condp = (key-type key)
               KeyType/Escape nil
-              KeyType/ArrowUp (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total))))
+              KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
                                   (recur))
-              KeyType/ArrowDown (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total))))
+              KeyType/ArrowDown (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
                                     (recur))
               KeyType/Character
               (let [c (lower-key-character key)]
@@ -1507,7 +1506,7 @@
                   (do (start-resource-flow! screen session-id) (recur))
                   (do
                     (when (pos? total)
-                      (let [r (nth items (clamp @selected 0 (dec total)))]
+                      (let [r (nth items (p/clamp @selected 0 (dec total)))]
                         (cond
                           (= c \s) (do (vis/gateway-stop-resource! session-id (get r "id"))
                                        (vis/notify! (str "Stopped " (get r "label"))
@@ -1624,7 +1623,7 @@
             (when @follow (reset! scroll max-scroll))
 
             _
-            (swap! scroll #(clamp % 0 max-scroll))]
+            (swap! scroll #(p/clamp % 0 max-scroll))]
 
         (dotimes [i visible]
           (let [idx (+ (long @scroll) (long i))
@@ -1662,7 +1661,7 @@
               move!
               (fn [f]
                 (reset! follow false)
-                (swap! scroll #(clamp (f %) 0 max-scroll)))]
+                (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
 
           (cond (nil? key) (recur)
                 wheel (do (move! #(+ (long %) (long wheel))) (recur))
@@ -1767,7 +1766,7 @@
             (when @follow (reset! scroll max-scroll))
 
             _
-            (swap! scroll #(clamp % 0 max-scroll))]
+            (swap! scroll #(p/clamp % 0 max-scroll))]
 
         ;; Whole-screen wipe, then the code-block background under the body.
         (render/fill-background! g cols rows)
@@ -1829,7 +1828,7 @@
               move!
               (fn [f]
                 (reset! follow false)
-                (swap! scroll #(clamp (f %) 0 max-scroll)))]
+                (swap! scroll #(p/clamp (f %) 0 max-scroll)))]
 
           (cond (nil? key) (recur)
                 wheel (do (move! #(+ (long %) (long wheel))) (recur))
@@ -3070,7 +3069,7 @@
             (long (max 0 (- total visible)))
 
             start
-            (clamp @scroll 0 max-start)
+            (p/clamp @scroll 0 max-start)
 
             _
             (reset! scroll start)
@@ -3185,7 +3184,7 @@
               (fn [delta]
                 ;; Scroll the VIEWPORT independently of the selection, so a long
                 ;; expanded diff (whose lines aren't selectable) can be read.
-                (swap! scroll #(clamp (+ (long %) (long delta)) 0 max-start)))
+                (swap! scroll #(p/clamp (+ (long %) (long delta)) 0 max-start)))
 
               reconcile-sel!
               (fn []
@@ -3801,12 +3800,12 @@
 (defn- move-settings-selection
   [rows ^long selected ^long delta]
   (let [n (count rows)]
-    (loop [idx (clamp (+ selected delta) 0 (max 0 (dec n)))]
+    (loop [idx (p/clamp (+ selected delta) 0 (max 0 (dec n)))]
       (cond (= idx selected) idx
             (settings-selectable? (nth rows idx)) idx
             (and (neg? delta) (zero? idx)) selected
             (and (pos? delta) (= idx (dec n))) selected
-            :else (recur (clamp (+ idx delta) 0 (max 0 (dec n))))))))
+            :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
 (defn- edit-extension-env-var!
   [^TerminalScreen screen {:keys [name label description secret?]}]
   (let [{:keys [source value]}
@@ -3902,7 +3901,7 @@
               (min (long total) (long content-h))
 
               _
-              (swap! selected #(clamp % 0 (max 0 (dec total))))
+              (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
               _
               (swap! scroll #(visible-window-start @selected % content-h total))]
@@ -3936,10 +3935,10 @@
             (when key
               (condp = (key-type key)
                 KeyType/Escape (do (preview! original) nil)
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total))))
+                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
                                     (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total))))
-                                      (recur))
+                KeyType/ArrowDown
+                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (:theme-id (nth items @selected))
                 (recur)))))))))
 (defn- activate-theme-row!
@@ -4207,7 +4206,7 @@
              ;; whole list-painting block below reuses the single-pane math
              ;; unchanged — only the search bar and hint bar stay full width.
              rail-w
-             (clamp (quot inner-w 4) 14 22)
+             (p/clamp (quot inner-w 4) 14 22)
 
              lleft
              (+ left rail-w 1)
@@ -4234,7 +4233,7 @@
              (max 1 (- content-h 2))
 
              _
-             (swap! selected #(clamp % 0 (max 0 (dec n))))
+             (swap! selected #(p/clamp % 0 (max 0 (dec n))))
 
              option-indent
              (long (settings-option-indent))
@@ -4464,7 +4463,7 @@
                (read-modal-key! screen)
 
                selected-row
-               (when (pos? n) (nth rows (clamp @selected 0 (dec n))))]
+               (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
 
            (when key
              (cond
@@ -4815,7 +4814,7 @@
             (min total body-h)
 
             _
-            (swap! selected #(clamp % 0 (max 0 (dec total))))
+            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
             _
             (swap! scroll #(visible-window-start @selected % body-h total))]
@@ -4868,14 +4867,14 @@
         (let [key (read-modal-key! screen)]
           (when key
             (if-let [wheel-step (modal-wheel-step key)]
-              (do (swap! selected #(clamp (+ (long %) (long wheel-step)) 0 (max 0 (dec total))))
+              (do (swap! selected #(p/clamp (+ (long %) (long wheel-step)) 0 (max 0 (dec total))))
                   (recur))
               (condp = (key-type key)
                 KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total))))
+                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
                                     (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total))))
-                                      (recur))
+                KeyType/ArrowDown
+                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (when (pos? total) (select-keys (nth items @selected) [:action :id]))
                 KeyType/Character (let [raw-c (key-character key)
                                         c (lower-character raw-c)]
@@ -5204,7 +5203,7 @@
             ;; can add `foo/` straight from the list without stepping into it;
             ;; with a file or `..` highlighted it falls back to THIS folder.
             sel-idx
-            (clamp @selected 0 (max 0 (dec total)))
+            (p/clamp @selected 0 (max 0 (dec total)))
 
             sel-entry
             (when (pos? total) (nth entries sel-idx))
@@ -5333,10 +5332,10 @@
             (+ (long content-top) hdr-h)
 
             body-h
-            (clamp total 1 (max 1 (- (long content-h) hdr-h)))
+            (p/clamp total 1 (max 1 (- (long content-h) hdr-h)))
 
             _
-            (swap! selected #(clamp % 0 (max 0 (dec total))))
+            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
             _
             (swap! scroll #(visible-window-start @selected % body-h total))
@@ -5538,9 +5537,9 @@
           (when key
             (cond (modal-escape-key? key) nil
                   (modal-wheel-step key)
-                  (do (swap! selected #(clamp (+ (long %) (long (modal-wheel-step key)))
-                                              0
-                                              (max 0 (dec total))))
+                  (do (swap! selected #(p/clamp (+ (long %) (long (modal-wheel-step key)))
+                                                0
+                                                (max 0 (dec total))))
                       (recur))
                   ;; Actions are MODIFIER keys, never list rows, so plain typing
                   ;; (incl. the letters a/n) keeps filtering the list.
@@ -5570,9 +5569,9 @@
                   :else
                   (condp = (key-type key)
                     KeyType/ArrowUp
-                    (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
+                    (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
                     KeyType/ArrowDown
-                    (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
+                    (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                     KeyType/ArrowRight (or (enter!) (recur))
                     KeyType/ArrowLeft (do (ascend!) (recur))
                     KeyType/Tab (.getPath dir)
@@ -5700,13 +5699,13 @@
             ;; Height = actual row count (capped) so the bottom border is
             ;; glued to the last row instead of floating below blanks.
             body-h
-            (clamp total 1 (max 1 (- (long content-h) 6)))
+            (p/clamp total 1 (max 1 (- (long content-h) 6)))
 
             bottom-row
             (+ body-top body-h)
 
             _
-            (swap! selected #(clamp % 0 (max 0 (dec total))))
+            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
             _
             (swap! scroll #(visible-window-start @selected % body-h total))]
@@ -5803,10 +5802,10 @@
 
           (when key
             (cond
-              (modal-wheel-step key) (do (swap! selected #(clamp (+ (long %)
-                                                                    (long (modal-wheel-step key)))
-                                                                 0
-                                                                 (max 0 (dec total))))
+              (modal-wheel-step key) (do (swap! selected #(p/clamp (+ (long %)
+                                                                      (long (modal-wheel-step key)))
+                                                                   0
+                                                                   (max 0 (dec total))))
                                          (recur))
               ;; Scrollbar mouse: grab the thumb, jump on a track click, and
               ;; follow drags. The bar is the only mouse target here; row
@@ -5849,9 +5848,9 @@
                             (or (scrollbar/scroll-from-mouse-y my body-top body-h total body-h grip)
                                 0)]
                         (reset! scroll ns)
-                        (swap! selected #(clamp %
-                                                ns
-                                                (min (dec total) (+ (long ns) (dec body-h)))))))]
+                        (swap! selected #(p/clamp %
+                                                  ns
+                                                  (min (dec total) (+ (long ns) (dec body-h)))))))]
 
                 (cond (= action MouseActionType/CLICK_RELEASE)
                       (do (vreset! scrollbar-drag-offset nil) (recur))
@@ -5908,35 +5907,35 @@
                                                (swap! query str (str/replace pasted #"\s+" " "))
                                                (reset-list!)))
                                            (recur))
-              :else (condp = (key-type key)
-                      KeyType/Escape nil
-                      KeyType/ArrowUp
-                      (if (and (input/reorder-modifier? key) (pos? total))
-                        (if-let [id (:id (:target (nth visible-rows @selected)))]
-                          {:action :reorder :id id :dir :up}
-                          (recur))
-                        (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
-                      KeyType/ArrowDown
-                      (if (and (input/reorder-modifier? key) (pos? total))
-                        (if-let [id (:id (:target (nth visible-rows @selected)))]
-                          {:action :reorder :id id :dir :down}
-                          (recur))
-                        (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
-                      KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
-                      KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                            (reset-list!)
-                                            (recur))
-                      ;; Plain printable character → filter query. Skip control
-                      ;; chars and Alt/Ctrl-modified keys (those are commands).
-                      KeyType/Character (let [c (key-character key)]
-                                          (when (and c
-                                                     (not (input/alt-modifier? key))
-                                                     (not (input/ctrl-modifier? key))
-                                                     (not (iso-control-character? c)))
-                                            (swap! query str c)
-                                            (reset-list!))
-                                          (recur))
-                      (recur)))))))))
+              :else
+              (condp = (key-type key)
+                KeyType/Escape nil
+                KeyType/ArrowUp
+                (if (and (input/reorder-modifier? key) (pos? total))
+                  (if-let [id (:id (:target (nth visible-rows @selected)))]
+                    {:action :reorder :id id :dir :up}
+                    (recur))
+                  (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
+                KeyType/ArrowDown
+                (if (and (input/reorder-modifier? key) (pos? total))
+                  (if-let [id (:id (:target (nth visible-rows @selected)))]
+                    {:action :reorder :id id :dir :down}
+                    (recur))
+                  (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
+                KeyType/Backspace
+                (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %)) (reset-list!) (recur))
+                ;; Plain printable character → filter query. Skip control
+                ;; chars and Alt/Ctrl-modified keys (those are commands).
+                KeyType/Character (let [c (key-character key)]
+                                    (when (and c
+                                               (not (input/alt-modifier? key))
+                                               (not (input/ctrl-modifier? key))
+                                               (not (iso-control-character? c)))
+                                      (swap! query str c)
+                                      (reset-list!))
+                                    (recur))
+                (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
@@ -6081,7 +6080,7 @@
             lines (vec (mapcat #(render/wrap-text % text-w) (str/split-lines (or text "(empty)"))))
             total (count lines)
             max-scroll (long (max 0 (- total (long content-h))))
-            _ (swap! scroll #(clamp % 0 max-scroll))
+            _ (swap! scroll #(p/clamp % 0 max-scroll))
             visible (subvec lines @scroll (min total (+ (long @scroll) (long content-h))))]
 
         ;; Body - verbatim line render, no ellipsization (wrap-text
@@ -6223,7 +6222,7 @@
               (long (max 0 (- total (long content-h))))
 
               _
-              (swap! scroll #(clamp % 0 max-scroll))
+              (swap! scroll #(p/clamp % 0 max-scroll))
 
               visible
               (subvec (vec lines) @scroll (min total (+ (long @scroll) (long content-h))))]
@@ -6323,7 +6322,7 @@
             total (count items)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
             visible (min total (long content-h))
-            _ (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _ (swap! selected #(p/clamp % 0 (max 0 (dec total))))
             _ (swap! scroll #(visible-window-start @selected % content-h total))]
 
         (dotimes [i visible]
@@ -6346,10 +6345,10 @@
             (let [ktype (key-type key)]
               (condp = ktype
                 KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec (long %)) 0 (max 0 (dec total))))
+                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
                                     (recur status))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc (long %)) 0 (max 0 (dec total))))
-                                      (recur status))
+                KeyType/ArrowDown
+                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur status))
                 KeyType/Character
                 (let [c (lower-key-character key)]
                   (cond (= c \space) (do (when (pos? total)
