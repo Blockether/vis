@@ -2766,8 +2766,10 @@
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
 (def ^:private refresh-just-failed? (deref #'lp/refresh-just-failed?))
+(def ^:private note-provider-request-ok! (deref #'lp/note-provider-request-ok!))
 (def ^:private auth-refreshable-error? (deref #'lp/auth-refreshable-error?))
 (def ^:private auth-propagation-backoff-ms (deref #'lp/auth-propagation-backoff-ms))
+(def ^:private AUTH_PROPAGATION_WINDOW_MS (deref #'lp/AUTH_PROPAGATION_WINDOW_MS))
 
 (defn- auth-401
   []
@@ -2778,16 +2780,30 @@
   post-refresh-propagation-backoff-test
   (describe
     "a token we JUST refreshed that 401s again is treated as propagation lag, not dead"
-    (it "refresh-just-failed? fires when the failing token == the one we just minted"
+    (it "refresh-just-failed? fires when we force-refreshed within the propagation window"
+        (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
+        (expect (true? (refresh-just-failed? (auth-401) {:provider :ap}))))
+    (it "does NOT fire once the last refresh is older than the window (real rotation → refresh)"
+        (reset! auth-last-refreshed {:ap {:at (- (System/currentTimeMillis)
+                                                 (long AUTH_PROPAGATION_WINDOW_MS)
+                                                 1)}})
+        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
+    (it "does NOT fire when the provider was never refreshed"
+        (reset! auth-last-refreshed {})
+        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
+    (it "fires regardless of token VALUE — covers providers that mint a fresh token each exchange"
+        ;; Regression for the Copilot 401 storm: the old value-equality check
+        ;; (minted == baked-token) never matched a rotating-token provider and
+        ;; fell open into an endless re-mint. Recency matches every provider.
+        (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
         (with-redefs [config/baked-token (fn [_]
-                                           "T-fresh")]
-          (reset! auth-last-refreshed {:ap {:minted "T-fresh" :at 0}})
-          (expect (true? (boolean (refresh-just-failed? (auth-401) {:provider :ap}))))))
-    (it "does NOT fire when the failing token differs from the minted one (peer rotation → refresh)"
-        (with-redefs [config/baked-token (fn [_]
-                                           "T-baked")]
-          (reset! auth-last-refreshed {:ap {:minted "T-different" :at 0}})
-          (expect (not (refresh-just-failed? (auth-401) {:provider :ap})))))
+                                           "a-totally-different-token")]
+          (expect (true? (refresh-just-failed? (auth-401) {:provider :ap})))))
+    (it "note-provider-request-ok! clears the marker so a later 401 re-mints, not backs off"
+        (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
+        (note-provider-request-ok! {:provider :ap})
+        (expect (nil? (get @auth-last-refreshed :ap)))
+        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
     (it "a post-refresh 401 stays REFRESHABLE-shaped but routes to backoff, never a dead latch"
         ;; No dead-credential latch exists any more: the provider is
         ;; always eligible to recover; the classifier just prefers the
@@ -2803,7 +2819,7 @@
                          :provider/refresh-token-fn (fn [& _]
                                                       :ok)})]
 
-          (reset! auth-last-refreshed {:ap {:minted "T-fresh" :at 0}})
+          (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
           (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap})))))
     (it "backoff widens with the attempt count and is capped at 5s"
         (expect (= 1200 (auth-propagation-backoff-ms 0)))
