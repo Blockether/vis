@@ -9,7 +9,14 @@
 
  ;; `with-python-context` (sandbox-shim tests) is an anaphoric macro that binds
  ;; `python-context`; tell kondo the symbol is intentional, not a typo.
- :linters {:unresolved-symbol {:exclude [python-context]}}
+ :linters
+ {:unresolved-symbol {:exclude [python-context]}
+  ;; Telemere generates these vars through macros, so dependency analysis cannot
+  ;; discover them even though they resolve at compile time.
+  :unresolved-var
+  {:exclude [taoensso.telemere/handler:file
+             taoensso.telemere/handler:console
+             taoensso.telemere/call-on-shutdown!]}}
 
  :hooks
  {:analyze-call
