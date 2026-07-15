@@ -43,7 +43,7 @@ jobs:
     name: regenerate AUDIT.md
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
