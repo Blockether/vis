@@ -338,7 +338,7 @@
   "Wrap a vec of display lines to fit within max-width. Returns flat vec of wrapped lines."
   [messages max-width]
   (into [] (mapcat #(wrap-text % max-width)) messages))
-(def ^:private phi 1.618)
+(def ^:private ^:const phi 1.618)
 (def ^:private dialog-chrome-w 4)
 ;; border(1) + pad(1) each side
 (def ^:private dialog-chrome-h 6)
@@ -349,17 +349,17 @@
    Only expands WIDTH when content is too narrow for golden ratio.
    Never inflates height beyond what content needs.
    Clamped to terminal bounds."
-  [cols rows content-w content-h]
+  [^long cols ^long rows ^long content-w ^long content-h]
   (let [;; Minimum box size to contain content + chrome
         min-w
-        (+ content-w dialog-chrome-w)
+        (+ content-w (long dialog-chrome-w))
 
         min-h
-        (+ content-h dialog-chrome-h)
+        (+ content-h (long dialog-chrome-h))
 
         ;; Only widen to approach φ - never heighten
         golden-w
-        (int (* min-h phi))
+        (long (* min-h phi))
 
         box-w
         (max min-w golden-w)
@@ -534,12 +534,12 @@
    The input box is SIDELESS (top/bottom rules only, no `│` rails)
    and `input-pad-x` is now 0, so the typing zone spans the full
    terminal width - `text-w` = `cols` (clamped to >=1)."
-  [cols]
-  (max 1 (- cols (* 2 input-pad-x))))
+  ^long [^long cols]
+  (max 1 (- cols (* 2 (long input-pad-x)))))
 (defn- wrap-input-line
   "Soft-wrap one logical input line into visual segments at `text-w`
    columns. Always returns a non-empty vec (empty input -> [\"\"])."
-  [^String line text-w]
+  [^String line ^long text-w]
   (let [text-w
         (max 1 text-w)
 
@@ -561,7 +561,7 @@
 (defn visual-rows-for-line
   "How many visual rows logical line `line` occupies when soft-wrapped
    at `text-w` cols. Empty line still counts as 1 (a typable row)."
-  [^String line text-w]
+  ^long [^String line ^long text-w]
   (let [text-w
         (max 1 text-w)
 
@@ -575,8 +575,11 @@
 (defn input-visual-row-count
   "Total visual rows occupied by every logical line in the input
    editor when soft-wrapped at `text-w` cols."
-  [lines text-w]
-  (reduce + (map #(visual-rows-for-line % text-w) lines)))
+  ^long [lines ^long text-w]
+  (reduce (fn [^long acc line]
+            (+ acc (visual-rows-for-line line text-w)))
+          0
+          lines))
 (defn- soft-wrap-input
   "Translate the logical editor state `{:lines :crow :ccol}` into a
    visual layout suitable for rendering. Returns:
