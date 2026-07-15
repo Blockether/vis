@@ -129,10 +129,14 @@
         :else nil))
 
 (defn generic-limit-has-signal?
-  "True when the row has any usage signal worth surfacing. Used to
-   prefer non-zero rows when the visible area is tight."
+  "True when the row has usage or reset signal worth surfacing. Used to
+   prefer informative rows when the visible area is tight. A reset timestamp
+   is signal even when the provider reports zero remaining and omits a limit:
+   that's exactly when the user needs to know when credits come back."
   [row]
-  (or (:unlimited? row) (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
+  (or (:unlimited? row)
+      (some? (get-in row [:window :resets-at-ms]))
+      (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
 
 (defn label+usage
   "Compose `\"<label> <usage>\"` for a single row, or `\"<label>\"`

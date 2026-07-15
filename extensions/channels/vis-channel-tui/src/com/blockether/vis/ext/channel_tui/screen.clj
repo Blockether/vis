@@ -4179,9 +4179,12 @@
                                          (let [current? (= cur (str (:id p)))
                                                session-count (:session_count p)
                                                sessions-label (when session-count
-                                                                (str session-count " " (if (= 1 session-count)
-                                                                                         "session"
-                                                                                         "sessions")))]
+                                                                (str session-count
+                                                                     " "
+                                                                     (if (= 1 session-count)
+                                                                       "session"
+                                                                       "sessions")))]
+
                                            {:id (:id p)
                                             :label (:name p)
                                             :hint (str (when current? "current")

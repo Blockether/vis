@@ -17,6 +17,11 @@ describe("composer @-file suggestions", () => {
     expect(activeFileMention("open @")).toEqual({ start: 5, end: 6, q: "" });
   });
 
+  it("stops suggesting once the @ token is followed by whitespace", () => {
+    expect(activeFileMention("open @ ")).toBeNull();
+    expect(activeFileMention("open @src ")).toBeNull();
+  });
+
   it("does not treat @@ as a file sigil", () => {
     expect(activeFileMention("literal @@")).toBeNull();
   });

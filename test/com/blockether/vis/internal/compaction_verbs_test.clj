@@ -358,16 +358,58 @@
             ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
 
             out
-            (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni)]
+            (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni nil nil)]
 
         ;; no gist here (it rides the breadcrumb); just saved · live
         (expect (= {"now" "saved 3/5 (60%) · live t2/*"} out))))
+  (it "stamped weights price the saved wire as `~<toks> tok` in the `now` label"
+      (let [uni
+            ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
+
+            weights
+            {"t1/i1" 4000 "t1/i2" 6000 "t1/i3" 2000 "t2/i1" 500 "t2/i2" 900}
+
+            out
+            (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni weights nil)]
+
+        ;; only the three folded scopes' weights are summed (4k+6k+2k = 12k)
+        (expect (= {"now" "saved 3/5 (60%, ~12k tok) · live t2/*"} out))))
+  (it "no weights (or none matching the folded scopes) omits the token clause"
+      (let [uni ["t1/i1" "t1/i2" "t2/i1"]]
+        ;; nil weights -> scope counts only
+        (expect (= {"now" "saved 2/3 (67%) · live t2/*"}
+                   (folds-view [{"through" "t1/i2"}] uni nil nil)))
+        ;; weights present but none cover the folded scopes -> still no clause
+        (expect (= {"now" "saved 2/3 (67%) · live t2/*"}
+                   (folds-view [{"through" "t1/i2"}] uni {"t9/i9" 5000} nil)))))
+  (it "the live per-call saturation leads the `now` label as a `context <U>%` clause"
+      (let [uni
+            ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
+
+            weights
+            {"t1/i1" 4000 "t1/i2" 6000 "t1/i3" 2000}]
+
+        ;; util's saturation prepends `context 44%`; folds + tokens follow
+        (expect (= {"now" "context 44% · saved 3/5 (60%, ~12k tok) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "g"}]
+                               uni
+                               weights
+                               {"saturation" 44})))
+        ;; saturation of 0 still shows (0 is a real reading, not "missing")
+        (expect (= {"now" "context 0% · saved 3/5 (60%) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "g"}]
+                               uni
+                               nil
+                               {"saturation" 0})))
+        ;; no util -> no context clause (unchanged shape)
+        (expect (= {"now" "saved 3/5 (60%) · live t2/*"}
+                   (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "g"}] uni nil nil)))))
   (it "a through selector is RESOLVED against the wire when scoring `saved`"
       (let [uni
             ["t1/i1" "t1/i2" "t2/i1"]
 
             out
-            (folds-view [{"through" "t1/i2"}] uni)]
+            (folds-view [{"through" "t1/i2"}] uni nil nil)]
 
         (expect (= {"now" "saved 2/3 (67%) · live t2/*"} out))))
   (it "a partial-turn fold leaves the unfolded gaps live in `now`"
@@ -375,7 +417,7 @@
             ["t3/i1" "t3/i2" "t3/i3" "t3/i4" "t3/i5"]
 
             out
-            (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni)]
+            (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni nil nil)]
 
         ;; the unfolded gaps show as live, run-compressed
         (expect (= {"now" "saved 3/5 (60%) · live t3/i3,i5"} out))))
@@ -384,7 +426,10 @@
             ["t1/i1" "t1/i2" "t1/i3"]
 
             out
-            (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
+            (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}]
+                        uni
+                        nil
+                        nil)]
 
         ;; every turn folded -> no live section, no gist
         (expect (= {"now" "saved 3/3 (100%)"} out))))
@@ -395,15 +440,18 @@
             ["t3/i1" "t3/i2" "t3/i3"]
 
             out
-            (folds-view [{"scopes" #{"t1/i1"} "gist" "old"}] uni)]
+            (folds-view [{"scopes" #{"t1/i1"} "gist" "old"}] uni nil nil)]
 
         (expect (= {"now" "saved 0/3 (0%) · live t*"} out))))
   (it "with NO universe (resume / fresh seed) folds-view yields `{}` — breadcrumbs carry the gists"
       ;; before the first live send stamps the universe there is no budget to report;
       ;; the transcript breadcrumbs alone hold every fold's gist until the next send.
-      (expect
-        (= {} (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}] nil)))
-      (expect (= {} (folds-view [{"scopes" #{"t1/i1"}}] nil))))
+      (expect (= {}
+                 (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}]
+                             nil
+                             nil
+                             nil)))
+      (expect (= {} (folds-view [{"scopes" #{"t1/i1"}}] nil nil nil))))
   (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (let [util (get (eng/session-view (assoc base-ctx
@@ -446,3 +494,41 @@
                                                                     "gist" "g"}])))
                               "utilization")
                          "now"))))
+
+;; ── layer 6: the human-facing fold CARD (tokens saved + context level) ───────
+
+(defn- priced-ctx
+  "ctx-atom pre-stamped as a live send would be: an iteration universe, the
+   per-scope ~token weights (`stamp-iter-universe!`), and the provider-measured
+   utilization — everything the `session_fold` card prices its suffix from."
+  []
+  (atom {"engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t2/i1"]
+         "engine_iter_weights" {"t1/i1" 12000 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
+         "engine_utilization"
+         {"saturation" 44 "last_request_tokens" 42000 "model_input_limit" 96000}}))
+
+(defdescribe
+  session-fold-card-test
+  ;; The verb RETURN string is the tool card the human sees. It is enriched with
+  ;; how much wire the fold reclaims (~tokens, summed from `engine_iter_weights`)
+  ;; and the context level that triggered it (from `engine_utilization`) — real
+  ;; provider limits, not estimates.
+  (it "an explicit scope card prices its ~tokens + the true context level"
+      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+        (expect (= "folded t1/i1 · ~12k tokens · context 44% (42k/96k) → big cat dump"
+                   (sf ["t1/i1"] "big cat dump")))))
+  (it "a `through` selector sums the weight of EVERY scope it resolves"
+      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+        ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
+        (expect (= "folded through t1/i2 · ~15k tokens · context 44% (42k/96k) → traced"
+                   (sf {"through" "t1/i2"} "traced")))))
+  (it "a gist-less fold still shows the tokens + context suffix"
+      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+        (expect (= "folded t1/i1 · ~12k tokens · context 44% (42k/96k)" (sf ["t1/i1"])))))
+  (it "a scope with NO stamped weight omits the token clause, keeps context"
+      (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
+        ;; t2/i9 is not in the weights map (created this iteration, unsent)
+        (expect (= "folded t2/i9 · context 44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
+  (it "with NO stamped utilization the card degrades to the bare confirmation"
+      (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
+        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))

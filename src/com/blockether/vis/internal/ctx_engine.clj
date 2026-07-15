@@ -559,6 +559,14 @@
   [scopes universe]
   (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
 
+(defn- fmt-toks
+  "Compact token count for the model-facing budget: `1000+` → `\"<n>k\"`, else the
+   raw integer. Matches the `session_fold` card's `~<n>k tokens` spelling so the
+   once-per-fold card and the per-iteration `now` budget read the same way."
+  [t]
+  (let [t (long t)]
+    (if (>= t 1000) (str (Math/round (/ (double t) 1000.0)) "k") (str t))))
+
 (defn folds-view
   "Model-facing LIVE BUDGET derived from the recorded `session_fold` intents.
 
@@ -568,21 +576,29 @@
    would duplicate the breadcrumb that is already on the wire. It emits only the
    volatile budget signal:
 
-     `\"now\"`  VOLATILE but TINY — shaped `\"saved <C>/<T> (<P>%) · live <scopes>\"`:
+     `\"now\"`  VOLATILE but TINY — shaped `\"context <U>% · saved <C>/<T> (<P>%, ~<toks> tok) · live <scopes>\"`:
               `saved` how much of the wire (`<T>` = every `tN/iN` still on the
               wire, so folded scopes that already scrolled off the trailer never
-              inflate it) is folded away, and `live` the compressed scopes STILL
-              on the wire = fold candidates. Scopes + counts only — no gists, no
-              position (the `# tN/iN` step tag the model already sees carries
-              that) — so re-emitting it every iteration costs a handful of tokens.
+              inflate it) is folded away, priced BOTH in scopes (`<C>/<T>`) AND —
+              when `weights` are stamped — in reclaimed context (`~<toks> tok`,
+              summed from `engine_iter_weights` with the SAME estimator the
+              `session_fold` card and the over-budget nudge use); and `live` the
+              compressed scopes STILL on the wire = fold candidates. No gists, no
+              compressed scopes STILL on the wire = fold candidates. `context` the
+              LIVE per-call saturation (`util`'s `saturation`), so the same delta
+              carries how full the window is now. No gists, no position (the `# tN/iN`
+              step tag the model already sees carries that) — so re-emitting it every
+              iteration costs a handful of tokens.
 
    Returns `{\"now\" …}` when a `universe` (the live `tN/iN` scopes this send) is
    stamped: selectors resolved (`expand-through`), covered folds dropped
    (`supersede-summaries`), budget computed against the live wire. Without one
    (resume / fresh seed, before the first live send) returns `{}` — the
    breadcrumbs still carry every gist until the next send re-stamps the universe.
+   The token clause is best-effort: no `weights` (or a scope not yet weighed)
+   simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
    Pure."
-  [summaries universe]
+  [summaries universe weights util]
   (let [universe
         (into [] (comp (filter string?) (distinct)) universe)
 
@@ -601,24 +617,40 @@
         live
         (into [] (remove collapsed-set) universe)
 
+        collapsed-live
+        (filter uni-set collapsed-set)
+
         c
-        (count (filter uni-set collapsed-set))
+        (count collapsed-live)
 
         total
         (+ c (count live))
+
+        saved-toks
+        (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live)))
+
+        sat
+        (get util "saturation")
 
         live-str
         (join-scopes (compress-scopes live universe))
 
         now
         (when has-uni?
-          (str/join
-            " · "
-            (keep
-              identity
-              [(when (pos? total)
-                 (str "saved " c "/" total " (" (Math/round (* 100.0 (/ (double c) total))) "%)"))
-               (when (seq live-str) (str "live " live-str))])))]
+          (str/join " · "
+                    (keep identity
+                          [(when sat (str "context " sat "%"))
+                           (when (pos? total)
+                             (str "saved "
+                                  c
+                                  "/"
+                                  total
+                                  " ("
+                                  (Math/round (* 100.0 (/ (double c) total)))
+                                  "%"
+                                  (when (and saved-toks (pos? (long saved-toks)))
+                                    (str ", ~" (fmt-toks saved-toks) " tok"))
+                                  ")")) (when (seq live-str) (str "live " live-str))])))]
 
     (cond-> {}
       (seq now)
@@ -648,7 +680,10 @@
    ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
    (let [budget
          (when (seq (get ctx "session_summaries"))
-           (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe")))
+           (folds-view (get ctx "session_summaries")
+                       (get ctx "engine_iter_universe")
+                       (get ctx "engine_iter_weights")
+                       (get ctx "engine_utilization")))
 
          util
          (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))

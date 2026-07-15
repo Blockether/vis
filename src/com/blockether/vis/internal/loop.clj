@@ -1528,6 +1528,7 @@
 ;; `supersede-summaries`) lives in `ctx-engine` so the wire (`apply-summaries`)
 ;; and the render-time ledger (`ctx-engine/folds-view`) share ONE resolver.
 (declare iter-of-scope)
+(declare form-wire-chars)
 
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
@@ -1717,17 +1718,40 @@
   "Record the CURRENT wire's iteration universe — the `tN/iN` scopes present in
    `trailer-iters` — on the ctx-atom as `engine_iter_universe`, so the render-time
    `ctx-engine/folds-view` resolves fold selectors + computes the still-live
-   ledger against the SAME scopes the wire folds against. Engine-ephemeral (an
-   `engine_*` key, stripped at persist by `strip-ephemeral`); overwritten every
-   send so it always reflects the live trailer."
+   ledger against the SAME scopes the wire folds against. ALSO stamps
+   `engine_iter_weights`: a `{scope → ~tokens}` map priced with the SAME estimator
+   `fold-candidates` ranks by (clipped wire chars / 4), so the `session_fold` card
+   can report how much wire a fold reclaims. A scope created THIS iteration (not
+   yet sent) has no weight until the next send — the card just omits its token
+   clause, exactly as the over-budget nudge does. Engine-ephemeral (an `engine_*`
+   key, stripped at persist by `strip-ephemeral`); overwritten every send so it
+   always reflects the live trailer."
   [ctx-atom trailer-iters]
   (when ctx-atom
-    (let [uni (into []
-                    (comp (keep (fn [[_ rec]]
-                                  (some iter-of-scope (keep :scope (:forms-vec rec)))))
-                          (distinct))
-                    trailer-iters)]
-      (swap! ctx-atom assoc "engine_iter_universe" uni))))
+    (let [scope-of
+          (fn [rec]
+            (some iter-of-scope (keep :scope (:forms-vec rec))))
+
+          uni
+          (into []
+                (comp (keep (fn [[_ rec]]
+                              (scope-of rec)))
+                      (distinct))
+                trailer-iters)
+
+          weights
+          (persistent! (reduce (fn [m [_ rec]]
+                                 (if-let [sc (scope-of rec)]
+                                   (let [chars (reduce +
+                                                       0
+                                                       (map form-wire-chars
+                                                            (remove :summary? (:forms-vec rec))))]
+                                     (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
+                                   m))
+                               (transient {})
+                               trailer-iters))]
+
+      (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2288,7 +2312,55 @@
 
         record!
         (fn [intent]
-          (when ctx-atom (swap! ctx-atom update "session_summaries" (fnil conj []) intent)))]
+          (when ctx-atom (swap! ctx-atom update "session_summaries" (fnil conj []) intent)))
+
+        fmt-tok
+        (fn [t]
+          (if (>= (long t) 1000)
+            (str (long (Math/round (/ (double t) 1000.0))) "k")
+            (str (long t))))
+
+        ;; Human-facing enrichment for the fold card: how much wire this fold
+        ;; reclaims (~tokens, summed from `engine_iter_weights`) and the context
+        ;; level that triggered it (from `engine_utilization`). Best-effort — any
+        ;; hiccup degrades to no suffix rather than breaking the confirmation.
+        priced
+        (fn [base]
+          (try
+            (let [ctx
+                  (some-> ctx-atom
+                          deref)
+
+                  universe
+                  (get ctx "engine_iter_universe")
+
+                  weights
+                  (get ctx "engine_iter_weights")
+
+                  util
+                  (get ctx "engine_utilization")
+
+                  scopes
+                  (into #{}
+                        (mapcat #(get % "scopes"))
+                        (ctx-engine/expand-through [base] (or universe [])))
+
+                  toks
+                  (reduce + 0 (keep #(get weights %) scopes))
+
+                  sat
+                  (get util "saturation")
+
+                  req
+                  (get util "last_request_tokens")
+
+                  lim
+                  (get util "model_input_limit")]
+
+              (str (when (pos? (long toks)) (str " · ~" (fmt-tok toks) " tokens"))
+                   (when (and sat req lim)
+                     (str " · context " sat "% (" (fmt-tok req) "/" (fmt-tok lim) ")"))))
+            (catch Throwable _ "")))]
 
     {'session-fold
      (fn session-fold [scopes & [gist]]
@@ -2303,7 +2375,7 @@
 
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}} "model folded scopes")
-           (str "folded " label (when g (str " → " g))))
+           (str "folded " label (priced base) (when g (str " → " g))))
          (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))

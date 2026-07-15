@@ -270,6 +270,23 @@
   (when-not (str/blank? (str s))
     (try (.toEpochMilli (Instant/parse (str s))) (catch Exception _ nil))))
 
+(defn- usage-field
+  [m k]
+  (when (map? m)
+    (let [snake
+          (name k)
+
+          camel
+          (str/replace snake #"_([a-zA-Z])" #(str/upper-case (second %)))
+
+          kebab
+          (str/replace snake #"_" "-")]
+
+      (reduce (fn [_ k*]
+                (when (contains? m k*) (reduced (get m k*))))
+              nil
+              [k snake (keyword camel) camel (keyword kebab) kebab]))))
+
 (defn- clamp-percent
   [n]
   (when (number? n)
@@ -279,7 +296,7 @@
 
 (defn- percentage-limit-row
   [id label window-unit window-size usage]
-  (when-let [used (clamp-percent (:utilization usage))]
+  (when-let [used (clamp-percent (usage-field usage :utilization))]
     (cond-> {:id id
              :label label
              :scope :plan
@@ -291,15 +308,19 @@
              :limit 100.0
              :remaining (- 100.0 used)
              :window {:kind :rolling :unit window-unit :size window-size}}
-      (:resets_at usage)
-      (assoc-in [:window :resets-at-ms] (parse-instant-ms (:resets_at usage))))))
+      (usage-field usage :resets_at)
+      (assoc-in [:window :resets-at-ms] (parse-instant-ms (usage-field usage :resets_at))))))
 
 (defn- usage-limit-rows
   [usage]
-  (->> [(percentage-limit-row :claude-5h "Claude 5h" :hour 5 (:five_hour usage))
-        (percentage-limit-row :claude-7d "Claude 7d" :day 7 (:seven_day usage))
-        (percentage-limit-row :claude-sonnet-7d "Claude Sonnet 7d" :day 7 (:seven_day_sonnet usage))
-        (percentage-limit-row :claude-opus-7d "Claude Opus 7d" :day 7 (:seven_day_opus usage))]
+  (->> [(percentage-limit-row :claude-5h "Claude 5h" :hour 5 (usage-field usage :five_hour))
+        (percentage-limit-row :claude-7d "Claude 7d" :day 7 (usage-field usage :seven_day))
+        (percentage-limit-row :claude-sonnet-7d
+                              "Claude Sonnet 7d" :day
+                              7 (usage-field usage :seven_day_sonnet))
+        (percentage-limit-row :claude-opus-7d
+                              "Claude Opus 7d" :day
+                              7 (usage-field usage :seven_day_opus))]
        (remove nil?)
        vec))
 

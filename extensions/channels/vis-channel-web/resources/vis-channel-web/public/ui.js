@@ -576,7 +576,8 @@
           }
           return;
         }
-        if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+        if (e.key === " " || e.key === "Spacebar") { hideSuggest(); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
         else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
         else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(active); }
         else if (e.key === "Escape") { hideSuggest(); }

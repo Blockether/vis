@@ -2820,43 +2820,42 @@
               request-text
               (or (:running-request session) "")]
 
-          {:db (update-tab db
-                           workspace-id
-                           (fn [w]
-                             (-> w
-                                 (update :messages
-                                         conj
-                                         (assoc (chat/user-message request-text)
-                                           :client-turn-id client-turn-id))
-                                 (update :messages
-                                         conj
-                                         (assoc (chat/assistant-message pending-assistant-ir)
-                                           :pending? true
-                                           :client-turn-id client-turn-id))
-                                 ;; The turn we are ATTACHING as running must not
-                                 ;; ALSO linger as a "Queued" row: the backlog mirror
-                                 ;; above (and any in-flight :sync-queued-turn :add)
-                                 ;; may have seeded `tid` from a snapshot taken while it
-                                 ;; was still queued. Strip it so it paints once — as
-                                 ;; the live turn — not a second time under Queued.
-                                 (update :pending-sends
-                                         (fn [q]
-                                           (vec
-                                             (remove #(or (= tid (:turn-id %))
-                                                          (and (nil? (:turn-id %))
-                                                               (= request-text
-                                                                  (or (:agent-text %) (:text %)))))
-                                                     (or q [])))))
-                                 (assoc :scroll scroll/follow
-                                        :loading? true
-                                        :cancel-token token
-                                        :gateway-turn-id tid
-                                        :cancelling? false
-                                        :progress {:iterations []}
-                                        :turn-start-ms (or (:running-started-at session)
-                                                           (System/currentTimeMillis))
-                                        :input-history-index nil
-                                        :input-history-draft nil))))
+          {:db
+           (update-tab
+             db
+             workspace-id
+             (fn [w]
+               (->
+                 w
+                 (update :messages
+                         conj
+                         (assoc (chat/user-message request-text) :client-turn-id client-turn-id))
+                 (update :messages
+                         conj
+                         (assoc (chat/assistant-message pending-assistant-ir)
+                           :pending? true
+                           :client-turn-id client-turn-id))
+                 ;; The turn we are ATTACHING as running must not
+                 ;; ALSO linger as a "Queued" row: the backlog mirror
+                 ;; above (and any in-flight :sync-queued-turn :add)
+                 ;; may have seeded `tid` from a snapshot taken while it
+                 ;; was still queued. Strip it so it paints once — as
+                 ;; the live turn — not a second time under Queued.
+                 (update :pending-sends
+                         (fn [q]
+                           (vec (remove #(or (= tid (:turn-id %))
+                                             (and (nil? (:turn-id %))
+                                                  (= request-text (or (:agent-text %) (:text %)))))
+                                  (or q [])))))
+                 (assoc :scroll scroll/follow
+                        :loading? true
+                        :cancel-token token
+                        :gateway-turn-id tid
+                        :cancelling? false
+                        :progress {:iterations []}
+                        :turn-start-ms (or (:running-started-at session) (System/currentTimeMillis))
+                        :input-history-index nil
+                        :input-history-draft nil))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 (reg-event-fx
   :sibling-turn-started

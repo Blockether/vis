@@ -36,6 +36,21 @@
                    (get-in report [:limits 0 :window])))
         (expect (= {:kind :rolling :unit :day :size 7 :resets-at-ms 3700000}
                    (get-in report [:limits 1 :window])))))
+  (it "accepts camelCase Codex usage payload keys so the 5h reset is not dropped"
+      (let [report (codex/usage->dynamic-limits
+                     {:rateLimit
+                      {:allowed true
+                       :limitReached true
+                       :primaryWindow
+                       {:usedPercent 100 :limitWindowSeconds (* 5 60 60) :resetAfterSeconds 18000}
+                       :secondaryWindow
+                       {:usedPercent 20 :limitWindowSeconds (* 7 24 60 60) :resetAt 2000}}}
+                     {:id "gpt-5.3-codex"}
+                     100000)]
+        (expect (= [:codex-5h :codex-7d] (mapv :id (:limits report))))
+        (expect (= 0.0 (get-in report [:limits 0 :remaining])))
+        (expect (= 18100000 (get-in report [:limits 0 :window :resets-at-ms])))
+        (expect (= 2000000 (get-in report [:limits 1 :window :resets-at-ms])))))
   (it "selects the nested Codex Spark bucket for the Spark model"
       (let [report (codex/usage->dynamic-limits
                      {:rate_limit {:primary_window {:used_percent 99}}

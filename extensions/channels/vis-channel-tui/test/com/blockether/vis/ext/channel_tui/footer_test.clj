@@ -165,8 +165,8 @@
                             (filter #(= :left (:region %)))
                             first
                             :text)]
-              (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
-              (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
+              (expect (re-find #"Codex 5h 76% ↺1h55m@" text))
+              (expect (re-find #"Codex 7d 85% ↺3d18h@" text)))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let [build-limits-segments
@@ -205,8 +205,8 @@
                           (filter #(= :left (:region %)))
                           first
                           :text)]
-            (expect (re-find #"Z\.ai coding plan 5h 75% left ↺1h30m" text))
-            (expect (re-find #"Z\.ai coding plan 7d 50% left ↺3d0h" text)))))))
+            (expect (re-find #"Z\.ai 5h 75% ↺1h30m" text))
+            (expect (re-find #"Z\.ai 7d 50% ↺3d0h" text)))))))
   (it
     "shows GitHub Copilot premium interaction utilization on the second footer line"
     (let [build-limits-segments
@@ -245,7 +245,7 @@
                           (filter #(= :left (:region %)))
                           first
                           :text)]
-            (expect (re-find #"Premium interactions 60/300 used \(240 left\) ↺2d0h" text)))))))
+            (expect (re-find #"Premium 60/300 \(240\) ↺2d0h" text)))))))
   (it "renders the gateway :git fact for the active workspace"
       ;; Git status is a GATEWAY SESSION FACT — resolved server-side by
       ;; `git/workspace-status` and carried on the workspace record as `:git`. The
