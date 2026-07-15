@@ -63,6 +63,9 @@
                  (expect (lfmt/generic-limit-has-signal? {:remaining 47}))
                  (expect (lfmt/generic-limit-has-signal? {:limit 100}))
                  (expect (lfmt/generic-limit-has-signal? {:used 12})))
+             (it "true on reset timestamps even when credits are exhausted"
+                 (expect (lfmt/generic-limit-has-signal? {:remaining 0
+                                                          :window {:resets-at-ms 1778155200000}})))
              (it "false when all fields are zero/nil"
                  (expect (not (lfmt/generic-limit-has-signal? {})))
                  (expect (not (lfmt/generic-limit-has-signal? {:remaining 0 :limit 0 :used 0})))))

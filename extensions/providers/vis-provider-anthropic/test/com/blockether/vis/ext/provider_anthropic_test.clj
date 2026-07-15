@@ -113,10 +113,10 @@
                                     (reset! called {:url url :opts opts})
                                     {:status 200
                                      :body (json/write-json-str
-                                             {:five_hour {:utilization 72.5
-                                                          :resets_at "2026-05-07T12:00:00Z"}
-                                              :seven_day {:utilization 25}
-                                              :seven_day_opus {:utilization 10}})})}
+                                             {:fiveHour {:utilization 72.5
+                                                         :resetsAt "2026-05-07T12:00:00Z"}
+                                              :sevenDay {:utilization 25}
+                                              :sevenDayOpus {:utilization 10}})})}
         (fn []
           (anthropic/clear-limits-cache!)
           (let [report
@@ -133,7 +133,7 @@
             (expect (= 72.5 (:used (first rows))))
             (expect (= 27.5 (:remaining (first rows))))
             (expect (= 100.0 (:limit (first rows))))
-            (expect (int? (get-in (first rows) [:window :resets-at-ms]))))))))
+            (expect (= 1778155200000 (get-in (first rows) [:window :resets-at-ms]))))))))
   (it "coalesces concurrent Claude subscription usage limit checks"
       (let [provider
             (vis/provider-by-id :anthropic-coding-plan)

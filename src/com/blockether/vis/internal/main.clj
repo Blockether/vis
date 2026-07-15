@@ -34,6 +34,7 @@
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.doctor :as doctor]
+            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
@@ -2901,6 +2902,105 @@
                    (= "stopped" status) "gateway stopped"
                    :else (str "gateway stop requested: " (pr-str m))))))
 
+;;; ── `vis python` — standalone GraalPy interpreter ────────────────────────
+;;
+;; Expose JUST the embedded GraalPy sandbox -- every foundation shim
+;; (requests/pandas/numpy/yaml/sqlite3/...), the POSIX-compat preamble, and
+;; the auto-imports -- with NO agent tool bindings. Handy for reproducing
+;; sandbox behaviour and exercising shims straight from the shell. Behaves
+;; identically under the JVM and the native image: both drive the same
+;; `env/*` machinery.
+
+(defn- python-cli-context
+  "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
+   installed, filesystem rooted at the current working directory, network
+   enabled unless `network?` is false. No tool bindings -- just the
+   interpreter with its shims."
+  [{:keys [network?]}]
+  (let [cwd
+        (.getCanonicalPath (io/file "."))
+
+        {:keys [python-context]}
+        (env/create-python-context {}
+                                   (fn []
+                                     [cwd])
+                                   {:enabled? (boolean network?)})]
+
+    ;; Bind an empty standing `ctx` dict so the async runtime has it available.
+    (env/bind-ctx! python-context {})
+    python-context))
+
+(defn- run-python-source!
+  "Evaluate one Python source block in `ctx`, rendering its outcome to the
+   real terminal. Returns the process exit code (0 ok, 1 on a raised error).
+   Matches the agent sandbox semantics: `print(...)` is what surfaces, a bare
+   trailing expression does NOT echo."
+  [ctx code]
+  (let [{:keys [stdout result error]} (env/run-python-block ctx code)]
+    (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
+          (and (some? stdout) (seq stdout)) (do (write-stdout! stdout) 0)
+          (some? result) (do (stdout! (pr-str result)) 0)
+          :else 0)))
+
+(defn- python-repl!
+  "Minimal interactive REPL over one persistent standalone sandbox `ctx`.
+   Reads a whole block (terminated by a blank line, so multi-line defs work),
+   evaluates it, and prints captured stdout. Ctrl-D / EOF quits."
+  [ctx]
+  (stdout! (str "vis python -- embedded GraalPy sandbox (all shims, no tools). "
+                "Blank line runs the block; use print(...) to see output; Ctrl-D quits."))
+  (let [reader (java.io.BufferedReader. (java.io.InputStreamReader. System/in))]
+    (loop []
+
+      (write-stdout! ">>> ")
+      (let [buf (StringBuilder.)
+            eof?
+            (loop []
+
+              (let [line (.readLine reader)]
+                (cond (nil? line) true
+                      (str/blank? line) false
+                      :else
+                      (do (.append buf line) (.append buf "\n") (write-stdout! "... ") (recur)))))
+            code (str/trim (.toString buf))]
+
+        (when (seq code) (run-python-source! ctx code))
+        (if eof? (stdout! "") (recur))))))
+
+(defn- cli-python!
+  "`vis python` -- run code in the embedded GraalPy sandbox (all shims, no tool
+   bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
+   piped stdin (run stdin), or an interactive REPL on a bare TTY. `--no-network`
+   disables sandbox network."
+  [_parsed residual]
+  (config/init-cli!)
+  (let [raw
+        (vec residual)
+
+        no-network?
+        (boolean (some #{"--no-network"} raw))
+
+        args
+        (vec (remove #{"--no-network"} raw))
+
+        ctx
+        (python-cli-context {:network? (not no-network?)})
+
+        exit
+        (cond (= "-c" (first args)) (if-let [code (second args)]
+                                      (run-python-source! ctx code)
+                                      (do (stdout! "vis python -c requires a CODE argument.") 2))
+              (= "-" (first args)) (run-python-source! ctx (slurp System/in))
+              (seq args) (let [f (io/file (first args))]
+                           (if (.isFile f)
+                             (run-python-source! ctx (slurp f))
+                             (do (stdout! (str "vis python: no such file: " (first args))) 2)))
+              (some? (System/console)) (do (python-repl! ctx) 0)
+              :else (run-python-source! ctx (slurp System/in)))]
+
+    (shutdown-agents)
+    (System/exit exit)))
+
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
 ;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
@@ -2939,7 +3039,15 @@
               {:cmd/name "gateway"
                :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
                :cmd/usage "vis gateway <start|status|stop|pair> [--db PATH]"
-               :cmd/subcommands #(registry/registered-under ["gateway"])}]]
+               :cmd/subcommands #(registry/registered-under ["gateway"])}
+              {:cmd/name "python"
+               :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
+               :cmd/usage "vis python [-c CODE | FILE.py | -] [--no-network]"
+               :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
+                              "vis python script.py" "echo 'print(1 + 1)' | vis python"
+                              "vis python   # interactive REPL"]
+               :cmd/owns-tty? true
+               :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis gateway` subcommands ──────────────────────────────────────────
