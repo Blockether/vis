@@ -2,6 +2,8 @@
   "Pure slash-command discovery/filtering for the TUI prompt."
   (:require [clojure.string :as str]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (def ^:private default-limit 6)
 
 (defn clamp-index

@@ -47,6 +47,8 @@
            [java.time.format DateTimeFormatter]
            [java.util Locale]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level :balanced)
 (def ^:private default-codex-verbosity :low)
@@ -252,10 +254,10 @@
           (quot total-seconds 86400)
 
           hours
-          (quot (mod total-seconds 86400) 3600)
+          (quot (long (mod total-seconds 86400)) 3600)
 
           minutes
-          (quot (mod total-seconds 3600) 60)]
+          (quot (long (mod total-seconds 3600)) 60)]
 
       (cond (pos? days) (str days "d" hours "h")
             (pos? hours) (str hours "h" minutes "m")
@@ -269,7 +271,7 @@
 
           formatter
           (if (and (>= (- (long reset-ms) (long now-ms)) 0)
-                   (< (- (long reset-ms) (long now-ms)) one-week-ms))
+                   (< (- (long reset-ms) (long now-ms)) (long one-week-ms)))
             short-reset-formatter
             long-reset-formatter)]
 
@@ -548,16 +550,16 @@
              :bold? true
              :region :right
              :priority 3
-             :kind :footer-dirs})
-      ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
-      ;; The bubble's `progress->text` already carries live activity, and
-      ;; user-facing cancellation feedback is emitted as a host notification.
-      ;; Channel statuses (voice recording, transcription, etc.) also stay out
-      ;; of the footer. The header's left banner is their single owner.
-      ;; ── RIGHT ─────────────────────────────────────────────────────────────
-      ;; Git lives here. Provider usage moved to the second row so it sits
-      ;; directly under the repository state instead of competing with it.
-    )))
+             :kind :footer-dirs}))
+    ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
+    ;; The bubble's `progress->text` already carries live activity, and
+    ;; user-facing cancellation feedback is emitted as a host notification.
+    ;; Channel statuses (voice recording, transcription, etc.) also stay out
+    ;; of the footer. The header's left banner is their single owner.
+    ;; ── RIGHT ─────────────────────────────────────────────────────────────
+    ;; Git lives here. Provider usage moved to the second row so it sits
+    ;; directly under the repository state instead of competing with it.
+  ))
 (defn- build-usage-segments
   "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared."
   [{:keys [messages]}]
@@ -635,7 +637,7 @@
                         :fg t/footer-fg
                         :bold? true
                         :region :center
-                        :priority (+ i 3)})
+                        :priority (+ (long i) 3)})
                      keymap/prefix-commands)))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
@@ -776,8 +778,8 @@
 (defn- spans-width
   [spans separator]
   (reduce (fn [w [i span]]
-            (+ w
-               (if (zero? i) 0 (p/display-width (separator-before span separator)))
+            (+ (long w)
+               (if (zero? (long i)) 0 (p/display-width (separator-before span separator)))
                (p/display-width (:text span))))
           0
           (map-indexed vector spans)))
@@ -811,11 +813,11 @@
           (and (seq c) (seq r))
           inc)]
 
-    (+ edge-pad
-       (* gap n-gaps)
-       (spans-width l separator)
-       (spans-width c separator)
-       (spans-width r separator))))
+    (+ (long edge-pad)
+       (* (long gap) (long n-gaps))
+       (long (spans-width l separator))
+       (long (spans-width c separator))
+       (long (spans-width r separator)))))
 (defn- min-priority
   "Smallest `:priority` NUMBER present (= the MOST important tier)."
   [segs]
@@ -863,7 +865,7 @@
    model/limits chip beats a blank footer."
   [segments cols]
   (let [fit? (fn [segs sepa]
-               (<= (total-width segs sepa) cols))]
+               (<= (long (total-width segs sepa)) (long cols)))]
     (cond (fit? segments sep) [segments sep]
           (fit? segments sep-narrow) [segments sep-narrow]
           :else (loop [segs segments]
@@ -873,7 +875,7 @@
                                     victim (some #(when (= worst-priority (:priority %)) %) segs)
                                     dropped (vec (remove #(identical? victim %) segs))]
 
-                                (if (> worst-priority (min-priority segs))
+                                (if (> (long worst-priority) (long (min-priority segs)))
                                   ;; Still-droppable decoration present (a less-important
                                   ;; tier than the survivors): drop one occurrence of it.
                                   (recur dropped)
@@ -890,26 +892,26 @@
    final col after the last span."
   [g start-col row spans separator]
   (reduce (fn [c [i s]]
-            (let [c (if (zero? i)
+            (let [c (if (zero? (long i))
                       c
                       (do (p/clear-styles! g)
                           (p/set-colors! g t/footer-fg-muted t/terminal-bg)
                           (let [separator (separator-before s separator)]
                             (p/put-str! g c row separator)
-                            (+ c (p/display-width separator)))))]
+                            (+ (long c) (p/display-width separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
                 ;; accent on hover, click region registered under `:kind`).
                 (do
                   (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
-                  (+ c (p/display-width (:text s))))
+                  (+ (long c) (p/display-width (:text s))))
                 (do (p/clear-styles! g)
                     (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
                     (when (:bold? s) (p/enable! g p/BOLD))
                     (p/put-str! g c row (:text s))
                     (p/clear-styles! g)
-                    (+ c (p/display-width (:text s)))))))
+                    (+ (long c) (p/display-width (:text s)))))))
           start-col
           (map-indexed vector spans)))
 
@@ -958,14 +960,15 @@
         edge-pad
 
         r-col
-        (max (+ l-col l-w 2) (- cols edge-pad r-w))
+        (max (+ (long l-col) (long l-w) 2) (- (long cols) (long edge-pad) (long r-w)))
 
         ;; Center between L's right edge and R's left edge.
         l-end
-        (+ l-col l-w)
+        (+ (long l-col) (long l-w))
 
         c-col
-        (max (+ l-end (if (seq l) 2 0)) (- (quot (+ l-end r-col) 2) (quot c-w 2)))]
+        (max (+ (long l-end) (if (seq l) 2 0))
+             (- (quot (+ (long l-end) (long r-col)) 2) (quot (long c-w) 2)))]
 
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
@@ -1018,7 +1021,7 @@
   (p/set-colors! g t/footer-fg t/terminal-bg)
   (p/fill-rect! g 0 footer-row cols 2)
   (draw-footer-row! g db footer-row cols now-ms build-segments 0)
-  (draw-footer-row! g db (inc footer-row) cols now-ms build-limits-segments 1)
+  (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
   ;; Restore neutral state for whatever paints next.
   (p/clear-styles! g)
   (p/set-colors! g t/text-fg t/terminal-bg))

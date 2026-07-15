@@ -33,6 +33,8 @@
    `MouseAction.getPosition()`."
   (:refer-clojure :exclude [reset!]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 ;; =============================================================================
 ;; Region shape
 ;; =============================================================================
@@ -159,7 +161,15 @@
   "True when (col, row) lies inside `bounds`. Inclusive on the left
    edge, exclusive on the right edge."
   [{:keys [row col width]} c r]
-  (let [col (long col) width (long width) c (long c)]
+  (let [col
+        (long col)
+
+        width
+        (long width)
+
+        c
+        (long c)]
+
     (and (= r row) (>= c col) (< c (+ col width)))))
 
 (defn lookup

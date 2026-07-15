@@ -28,6 +28,8 @@
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 ;;; ── Model list (core service + the TUI's 'Show all' affordance) ────────────
 
 (defn- build-model-list
@@ -43,7 +45,7 @@
                 {:label id :id id})
               models)]
 
-    (if (and (not show-all?) (pos? hidden-count))
+    (if (and (not show-all?) (pos? (long hidden-count)))
       (conj items {:label "Show all models..." :id :show-all})
       items)))
 
@@ -485,18 +487,18 @@
 
 (defn- card-height
   "Total rows for n provider cards including gaps."
-  [^long n]
+  ^long [^long n]
   (if (pos? n) (+ (* n card-rows) (* (dec n) card-gap)) 0))
 
 (defn- card-start-row
   "Starting row offset for card at index i."
-  [^long i]
+  ^long [^long i]
   (* i (+ card-rows card-gap)))
 
 (defn- card-visible-count
   "Number of full two-line cards visible in `content-h`, respecting the
    one-row gap between cards."
-  [^long content-h]
+  ^long [^long content-h]
   (max 1 (quot (+ (max 0 content-h) card-gap) (+ card-rows card-gap))))
 
 (defn- card-window-start
@@ -728,10 +730,10 @@
 
 (defn- move-model-to-front
   [models idx]
-  (if (or (neg? idx) (>= idx (count models)) (zero? idx))
+  (if (or (neg? (long idx)) (>= (long idx) (count models)) (zero? (long idx)))
     models
     (let [m (nth models idx)]
-      (vec (cons m (concat (subvec models 0 idx) (subvec models (inc idx))))))))
+      (vec (cons m (concat (subvec models 0 idx) (subvec models (inc (long idx)))))))))
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
@@ -761,7 +763,7 @@
             (.newTextGraphics screen)
 
             total
-            (count @models)
+            (long (count @models))
 
             ;; Do NOT clear the whole terminal here - the chat
             ;; behind the dialog should stay visible (other modals
@@ -782,6 +784,18 @@
 
             {:keys [content-top content-h hint-row]}
             (dlg/dialog-layout bounds (card-height (max 1 total)))
+
+            left
+            (long left)
+
+            inner-w
+            (long inner-w)
+
+            content-top
+            (long content-top)
+
+            content-h
+            (long content-h)
 
             visible-count
             (card-visible-count content-h)
@@ -807,8 +821,9 @@
                                 (+ content-top (quot content-h 2))
                                 inner-w
                                 "No models. Press A to add."))
-          (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
-            (let [card-y (+ content-top (card-start-row (- idx @scroll)))
+          (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
+            (let [idx (long idx)
+                  card-y (+ content-top (card-start-row (- idx (long @scroll))))
                   model (nth @models idx)
                   previous-name (when (pos? idx) (:name (nth @models (dec idx))))
                   next-name (when (< idx (dec total)) (:name (nth @models (inc idx))))]
@@ -852,83 +867,85 @@
                                        (< mx (+ left inner-w))
                                        (>= my content-top)
                                        (< my (+ content-top content-h)))
-                              (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
+                              (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                 (cond (= action MouseActionType/SCROLL_UP)
-                      (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                      (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
+                          (recur))
                       (= action MouseActionType/SCROLL_DOWN)
-                      (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total)))) (recur))
-                      (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
+                      (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
+                          (recur))
+                      (and (= action MouseActionType/CLICK_DOWN) hit-idx (< (long hit-idx) total))
                       (do (reset! selected hit-idx) (recur))
                       :else (recur)))
               :else
               (let [ktype (.getKeyType key)]
-                (cond (= ktype KeyType/Escape) {:models (vec @models)}
-                      (= ktype KeyType/ArrowUp)
-                      (if (input/reorder-modifier? key)
-                        (do (when (pos? @selected)
-                              (swap! models swap-items @selected (dec @selected))
-                              (swap! selected dec))
-                            (recur))
-                        (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total)))) (recur)))
-                      (= ktype KeyType/ArrowDown)
-                      (if (input/reorder-modifier? key)
-                        (do (when (< @selected (dec total))
-                              (swap! models swap-items @selected (inc @selected))
-                              (swap! selected inc))
-                            (recur))
-                        (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total)))) (recur)))
-                      (= ktype KeyType/Character)
-                      (let [c (Character/toLowerCase (.getCharacter key))
-                            ctrl (.isCtrlDown key)]
+                (cond
+                  (= ktype KeyType/Escape) {:models (vec @models)}
+                  (= ktype KeyType/ArrowUp)
+                  (if (input/reorder-modifier? key)
+                    (do (when (pos? (long @selected))
+                          (swap! models swap-items @selected (dec (long @selected)))
+                          (swap! selected dec))
+                        (recur))
+                    (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
+                  (= ktype KeyType/ArrowDown)
+                  (if (input/reorder-modifier? key)
+                    (do (when (< (long @selected) (dec total))
+                          (swap! models swap-items @selected (inc (long @selected)))
+                          (swap! selected inc))
+                        (recur))
+                    (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                  (= ktype KeyType/Character)
+                  (let [c (Character/toLowerCase (.getCharacter key))
+                        ctrl (.isCtrlDown key)]
 
-                        (cond
-                          ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
-                          ;; the SAME Emacs prev/next-line keys used in every input
-                          ;; (modified arrows are unreliable on stock macOS terminals;
-                          ;; this replaces the old vim-style K/J).
-                          (and ctrl (= c keymap/picker-reorder-up))
-                          (do (when (pos? @selected)
-                                (swap! models swap-items @selected (dec @selected))
-                                (swap! selected dec))
-                              (recur))
-                          (and ctrl (= c keymap/picker-reorder-down))
-                          (do (when (< @selected (dec total))
-                                (swap! models swap-items @selected (inc @selected))
-                                (swap! selected inc))
-                              (recur))
-                          (= c \a) (do (when-let [model-name (select-model!
-                                                               screen
-                                                               provider
-                                                               (->> (concat
-                                                                      (map vis/model-name @models)
-                                                                      (:default-models
-                                                                        (vis/provider-template
-                                                                          (:id provider)))
-                                                                      (:default-models provider))
-                                                                    (remove nil?)
-                                                                    distinct
-                                                                    vec))]
-                                         (when-not (some #(= model-name (vis/model-name %)) @models)
-                                           (swap! models conj {:name model-name})
-                                           (reset! selected (dec (count @models)))))
-                                       (recur))
-                          (= c \d)
-                          (do (when (and (pos? total)
-                                         (dlg/confirm-dialog!
-                                           screen
-                                           "Remove Model"
-                                           [(str "Remove " (:name (nth @models @selected)) "?")]))
-                                (swap! models #(vec (concat (subvec % 0 @selected)
-                                                            (subvec % (inc @selected)))))
-                                (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
-                              (recur))
-                          (= c \r) (do (when (pos? total)
-                                         (swap! models move-model-to-front @selected)
-                                         (reset! selected 0))
-                                       (recur))
-                          :else (recur)))
-                      :else (recur))))))))))
+                    (cond
+                      ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
+                      ;; the SAME Emacs prev/next-line keys used in every input
+                      ;; (modified arrows are unreliable on stock macOS terminals;
+                      ;; this replaces the old vim-style K/J).
+                      (and ctrl (= c keymap/picker-reorder-up))
+                      (do (when (pos? (long @selected))
+                            (swap! models swap-items @selected (dec (long @selected)))
+                            (swap! selected dec))
+                          (recur))
+                      (and ctrl (= c keymap/picker-reorder-down))
+                      (do (when (< (long @selected) (dec total))
+                            (swap! models swap-items @selected (inc (long @selected)))
+                            (swap! selected inc))
+                          (recur))
+                      (= c \a) (do (when-let [model-name (select-model!
+                                                           screen
+                                                           provider
+                                                           (->> (concat (map vis/model-name @models)
+                                                                        (:default-models
+                                                                          (vis/provider-template
+                                                                            (:id provider)))
+                                                                        (:default-models provider))
+                                                                (remove nil?)
+                                                                distinct
+                                                                vec))]
+                                     (when-not (some #(= model-name (vis/model-name %)) @models)
+                                       (swap! models conj {:name model-name})
+                                       (reset! selected (dec (count @models)))))
+                                   (recur))
+                      (= c \d)
+                      (do (when (and (pos? total)
+                                     (dlg/confirm-dialog!
+                                       screen
+                                       "Remove Model"
+                                       [(str "Remove " (:name (nth @models @selected)) "?")]))
+                            (swap! models #(vec (concat (subvec % 0 @selected)
+                                                        (subvec % (inc (long @selected))))))
+                            (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
+                          (recur))
+                      (= c \r) (do (when (pos? total)
+                                     (swap! models move-model-to-front @selected)
+                                     (reset! selected 0))
+                                   (recur))
+                      :else (recur)))
+                  :else (recur))))))))))
 
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (shared with the web channel). Aliased privately so
@@ -1238,15 +1255,27 @@
           bounds
 
           {:keys [content-top content-h hint-row]}
-          (dlg/dialog-layout bounds)]
+          (dlg/dialog-layout bounds)
+
+          left
+          (long left)
+
+          inner-w
+          (long inner-w)
+
+          content-top
+          (long content-top)
+
+          content-h
+          (long content-h)]
 
       (p/set-bg! g t/dialog-bg)
       (p/fill-rect! g (inc left) content-top inner-w content-h)
       (let [n
-            (count welcome-lines)
+            (long (count welcome-lines))
 
             start
-            (+ content-top (max 0 (quot (- content-h n) 2)))]
+            (+ content-top (long (max 0 (quot (- content-h n) 2))))]
 
         (doseq [[i line] (map-indexed vector welcome-lines)]
           (p/set-colors!
@@ -1258,7 +1287,7 @@
             ;; dialog background (indigo on light, sky on dark).
             (if (contains? welcome-accent-lines line) t/header-active-tab-accent t/dialog-fg)
             t/dialog-bg)
-          (p/draw-centered! g (inc left) (+ start i) inner-w line)))
+          (p/draw-centered! g (inc left) (+ start (long i)) inner-w line)))
       (dlg/draw-hint-bar! g
                           left
                           hint-row
@@ -1343,7 +1372,7 @@
              ;; frame and on return the parent loop’s next iteration
              ;; redraws the parent chrome on top of any leftovers.
              total
-             (count @items)
+             (long (count @items))
 
              ;; Size the box to the cards via the explicit-height chrome arity.
              ;; The default arity substitutes a tall proportional footprint and
@@ -1371,6 +1400,18 @@
              {:keys [content-top content-h hint-row]}
              (dlg/dialog-layout bounds content-rows)
 
+             left
+             (long left)
+
+             inner-w
+             (long inner-w)
+
+             content-top
+             (long content-top)
+
+             content-h
+             (long content-h)
+
              visible-count
              (card-visible-count content-h)
 
@@ -1397,8 +1438,10 @@
                                  inner-w
                                  "No providers. Press A to add."))
            ;; Draw visible cards
-           (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
-             (let [card-y (+ content-top (card-start-row (- idx @scroll)))]
+           (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
+             (let [idx (long idx)
+                   card-y (+ content-top (card-start-row (- idx (long @scroll))))]
+
                (draw-provider-card! g
                                     left
                                     card-y
@@ -1440,13 +1483,15 @@
                                         (< mx (+ left inner-w))
                                         (>= my content-top)
                                         (< my (+ content-top content-h)))
-                               (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
+                               (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                  (cond (= action MouseActionType/SCROLL_UP)
-                       (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                       (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
+                           (recur))
                        (= action MouseActionType/SCROLL_DOWN)
-                       (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total)))) (recur))
-                       (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
+                       (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
+                           (recur))
+                       (and (= action MouseActionType/CLICK_DOWN) hit-idx (< (long hit-idx) total))
                        (do (reset! selected hit-idx) (recur))
                        :else (recur)))
                :else
@@ -1462,18 +1507,20 @@
                    ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder
                    (= ktype KeyType/ArrowUp)
                    (if (input/reorder-modifier? key)
-                     (do (when (pos? @selected)
-                           (swap! items swap-items @selected (dec @selected))
+                     (do (when (pos? (long @selected))
+                           (swap! items swap-items @selected (dec (long @selected)))
                            (swap! selected dec))
                          (recur))
-                     (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total)))) (recur)))
+                     (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
+                         (recur)))
                    (= ktype KeyType/ArrowDown)
                    (if (input/reorder-modifier? key)
-                     (do (when (< @selected (dec total))
-                           (swap! items swap-items @selected (inc @selected))
+                     (do (when (< (long @selected) (dec total))
+                           (swap! items swap-items @selected (inc (long @selected)))
                            (swap! selected inc))
                          (recur))
-                     (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total)))) (recur)))
+                     (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
+                         (recur)))
                    ;; Enter - open action menu for selected provider
                    (= ktype KeyType/Enter)
                    (do
@@ -1525,13 +1572,13 @@
                        ;; (modified arrows are unreliable on stock macOS terminals;
                        ;; this replaces the old vim-style K/J).
                        (and ctrl (= c keymap/picker-reorder-up))
-                       (do (when (pos? @selected)
-                             (swap! items swap-items @selected (dec @selected))
+                       (do (when (pos? (long @selected))
+                             (swap! items swap-items @selected (dec (long @selected)))
                              (swap! selected dec))
                            (recur))
                        (and ctrl (= c keymap/picker-reorder-down))
-                       (do (when (< @selected (dec total))
-                             (swap! items swap-items @selected (inc @selected))
+                       (do (when (< (long @selected) (dec total))
+                             (swap! items swap-items @selected (inc (long @selected)))
                              (swap! selected inc))
                            (recur))
                        ;; A - add provider
@@ -1551,7 +1598,7 @@
                                                                  "?")]))
                              (let [provider-id (:id (nth @items @selected))]
                                (swap! items #(vec (concat (subvec % 0 @selected)
-                                                          (subvec % (inc @selected)))))
+                                                          (subvec % (inc (long @selected))))))
                                (swap! statuses dissoc provider-id)
                                (swap! limits dissoc provider-id)
                                (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items)))))))

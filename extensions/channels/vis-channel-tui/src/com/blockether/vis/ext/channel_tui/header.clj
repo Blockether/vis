@@ -36,6 +36,8 @@
             ;; reuses the same values without touching TUI code.
             [com.blockether.vis.internal.header :as vh]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 ;; -- Channel-contribution conventions consumed by this namespace --------------
 ;;
 ;; Extensions contribute to the header band by adding entries to their
@@ -293,7 +295,8 @@
    ;; height on db state only.
    (header-rows db 0))
   ([db cols]
-   (+ header-rows-base (reduce + 0 (map #(long (:height (:spec %))) (header-row-specs db cols))))))
+   (+ (long header-rows-base)
+      (long (reduce + 0 (map #(long (:height (:spec %))) (header-row-specs db cols)))))))
 
 (defn- short-id
   "Project a session's UUID onto the shared short-form length."
@@ -373,19 +376,19 @@
         (max 0 (long width))
 
         max-visible
-        (vh/max-visible-workspace-count n width)
+        (long (vh/max-visible-workspace-count n width))
 
         overflow?
         (> n max-visible)
 
         active-idx
-        (active-strip-index entries active-id)
+        (long (active-strip-index entries active-id))
 
         half
         (quot max-visible 2)
 
         start
-        (if overflow? (clamp-long (- active-idx half) 0 (max 0 (- n max-visible))) 0)
+        (long (if overflow? (clamp-long (- active-idx half) 0 (max 0 (- n max-visible))) 0))
 
         end
         (min n (+ start max-visible))]
@@ -597,6 +600,12 @@
   (let [workspaces
         (tab-entries db)
 
+        header-top
+        (long header-top)
+
+        cols
+        (long cols)
+
         top-rule-row
         header-top
 
@@ -607,13 +616,28 @@
         (header-row-specs db cols)
 
         bottom-row
-        (dec (+ header-top (header-rows db cols)))
+        (dec (+ header-top (long (header-rows db cols))))
 
         edge-pad
         1
 
         {:keys [left-x left-w center-x center-w right-x]}
         (vh/slot-layout cols)
+
+        left-x
+        (long left-x)
+
+        left-w
+        (long left-w)
+
+        center-x
+        (long center-x)
+
+        center-w
+        (long center-w)
+
+        right-x
+        (long right-x)
 
         id-short
         (short-id (:session db))
@@ -657,7 +681,7 @@
         action-w
 
         right-col
-        (max right-x (- cols edge-pad right-w))
+        (long (max right-x (- cols edge-pad right-w)))
 
         action-col
         right-col
@@ -680,16 +704,17 @@
         1
 
         cluster-w
-        (+ (reduce + (map (comp long p/display-width second) chips)) (* chip-gap (count chips)))
+        (long (+ (long (reduce + (map (comp long p/display-width second) chips)))
+                 (* chip-gap (count chips))))
 
         cluster-start
-        (max edge-pad (- action-col cluster-w))
+        (long (max edge-pad (- action-col cluster-w)))
 
         center-limit
         (- cluster-start (long vh/slot-gap-cols))
 
         center-w
-        (max 0 (min (long center-w) (- center-limit (long center-x))))]
+        (max 0 (min center-w (- center-limit center-x)))]
 
     (components/band-rule! g top-rule-row cols)
     (p/clear-styles! g)
@@ -711,13 +736,19 @@
     ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
-    (reduce
-      (fn [x [kind label]]
-        (+ x
-           chip-gap
-           (components/button! g x content-row label kind {:register? *register-click-regions?*})))
-      cluster-start
-      chips)
+    (reduce (fn [x [kind label]]
+              (let [x (long x)]
+                (+ x
+                   chip-gap
+                   #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                   (long (components/button! g
+                                             x
+                                             content-row
+                                             label
+                                             kind
+                                             {:register? *register-click-regions?*})))))
+            cluster-start
+            chips)
     ;; Extension-contributed rows.
     (loop [row
            (inc content-row)

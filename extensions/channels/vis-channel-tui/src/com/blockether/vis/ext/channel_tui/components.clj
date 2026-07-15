@@ -23,6 +23,8 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]
             [com.blockether.vis.internal.format :as fmt]))
+
+(set! *unchecked-math* :warn-on-boxed)
 ;; ── text layout ─────────────────────────────────────────────────────────────
 (defn truncate-with-ellipsis
   "Truncate `s` so its display width fits in `max-cols`. When truncation
@@ -191,7 +193,8 @@
           qfield
           (str " "
                qtext
-               (apply str (repeat (max 0 (- find-input-width (p/display-width qtext))) \space))
+               (apply str
+                 (repeat (max 0 (- (long find-input-width) (p/display-width qtext))) \space))
                " ")
 
           cnt
@@ -268,28 +271,35 @@
       (p/fill-rect! g box-l box-t box-w 3)
       (p/draw-box! g box-l box-t box-w 3)
       ;; content row (vertically centred between the borders)
-      (reduce
-        (fn [x op]
-          (case (first op)
-            :btn
-            (let [kind (nth op 1)]
-              (+ x (button! g x row (nth op 2) kind (when (= kind :search-close) {:danger? true}))))
+      (reduce (fn [x op]
+                (let [x (long x)]
+                  (case (first op)
+                    :btn
+                    (let [kind (nth op 1)]
+                      (+ x
+                         #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
+                         (long (button! g
+                                        x
+                                        row
+                                        (nth op 2)
+                                        kind
+                                        (when (= kind :search-close) {:danger? true})))))
 
-            ;; input field — the canonical `box-fg` on `input-field-bg`, the same
-            ;; interior `draw-text-input-field!` paints, so every input matches.
-            :input
-            (do (p/clear-styles! g)
-                (p/set-colors! g t/box-fg t/input-field-bg)
-                (p/put-str! g x row (last op))
-                (+ x (p/display-width (last op))))
+                    ;; input field — the canonical `box-fg` on `input-field-bg`, the same
+                    ;; interior `draw-text-input-field!` paints, so every input matches.
+                    :input
+                    (do (p/clear-styles! g)
+                        (p/set-colors! g t/box-fg t/input-field-bg)
+                        (p/put-str! g x row (last op))
+                        (+ x (p/display-width (last op))))
 
-            ;; chrome / gaps ride the dialog body palette.
-            (do (p/clear-styles! g)
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/put-str! g x row (last op))
-                (+ x (p/display-width (last op))))))
-        x0
-        ops)
+                    ;; chrome / gaps ride the dialog body palette.
+                    (do (p/clear-styles! g)
+                        (p/set-colors! g t/dialog-fg t/dialog-bg)
+                        (p/put-str! g x row (last op))
+                        (+ x (p/display-width (last op)))))))
+              x0
+              ops)
       (find-bar-cursor cols text-top search))))
 
 ;; (The header help/search chips are painted inline by `header.clj` — see its
@@ -753,7 +763,7 @@
                 (if (seq ds) ds [""])]
 
             (map-indexed (fn [i dl]
-                           (row-line (if (zero? i) k "") dl))
+                           (row-line (if (zero? (long i)) k "") dl))
                          ds)))
 
         section-lines
@@ -782,19 +792,19 @@
         (count lines)
 
         max-scroll
-        (max 0 (- n content-h))
+        (max 0 (- n (long content-h)))
 
         eff
-        (max 0 (min (long (or scroll 0)) max-scroll))
+        (max 0 (min (long (or scroll 0)) (long max-scroll)))
 
         sb?
-        (> n content-h)
+        (> n (long content-h))
 
         shown-n
-        (min content-h (- n eff))]
+        (min (long content-h) (- n (long eff)))]
 
     (dotimes [i shown-n]
-      (paint-line i (nth lines (+ eff i))))
+      (paint-line i (nth lines (+ (long eff) i))))
     (when sb?
       (scrollbar/draw! g
                        {:col sb-col
@@ -805,14 +815,14 @@
                         :scroll eff}))
     (when (and hint-row sb?)
       (let [pos
-            (str (inc eff) "–" (+ eff shown-n) " / " n)
+            (str (inc (long eff)) "–" (+ (long eff) (long shown-n)) " / " n)
 
             pw
             (p/display-width pos)]
 
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-hint t/dialog-bg)
-        (p/put-str! g (- body-right pw) hint-row pos)))
+        (p/put-str! g (- (long body-right) pw) hint-row pos)))
     {:scroll eff :max-scroll max-scroll :sb? sb? :shown-n shown-n}))
 
 (defn help-overlay!
@@ -855,7 +865,7 @@
         ;; one column for the scrollbar lane — long descriptions wrap into this
         ;; width rather than overflowing the border.
         desc-w
-        (max 12 (- inner-w key-w 8 1))
+        (max 12 (- (long inner-w) (long key-w) 8 1))
 
         lines
         (box-grid-lines help-sections
@@ -874,19 +884,19 @@
 
         paint-line
         (fn [i segs]
-          (let [r (+ content-top i)]
-            (loop [x (+ left 2)
+          (let [r (+ (long content-top) (long i))]
+            (loop [x (+ (long left) 2)
                    ss segs]
 
               (when-let [[text color bold?] (first ss)]
-                (let [avail (max 0 (- (+ left 1 inner-w) x))
+                (let [avail (max 0 (- (+ (long left) 1 (long inner-w)) (long x)))
                       shown (dialogs/ellipsize (str text) avail)]
 
                   (p/clear-styles! g)
                   (p/set-colors! g color t/dialog-bg)
                   (when bold? (p/enable! g p/BOLD))
                   (p/put-str! g x r shown)
-                  (recur (+ x (p/display-width shown)) (next ss)))))))
+                  (recur (+ (long x) (p/display-width shown)) (next ss)))))))
 
         geom
         (scrollable-dialog-body! g
@@ -894,8 +904,8 @@
                                  {:content-top content-top
                                   :content-h content-h
                                   :hint-row hint-row
-                                  :sb-col (+ left inner-w)
-                                  :body-right (+ left 1 inner-w)}
+                                  :sb-col (+ (long left) (long inner-w))
+                                  :body-right (+ (long left) 1 (long inner-w))}
                                  scroll
                                  paint-line)]
 
@@ -1022,8 +1032,8 @@
         (apply str (repeat (long indent) \space))]
 
     (vec (map-indexed (fn [i piece]
-                        (let [piece (if (< i last-i) (justify-line piece (long w)) piece)]
-                          (if (zero? i)
+                        (let [piece (if (< (long i) last-i) (justify-line piece (long w)) piece)]
+                          (if (zero? (long i))
                             (conj (vec head) [piece body-color bold?])
                             [[(str pad piece) body-color bold?]])))
                       pieces))))
@@ -1133,36 +1143,38 @@
     (if (empty? lines)
       [(vec head)]
       (vec
-        (map-indexed
-          (fn [i {:keys [runs wrap?]}]
-            (let [segs
-                  (mapv (fn [r]
-                          (run->seg r base-color base-bold?))
-                        runs)
+        (map-indexed (fn [i {:keys [runs wrap?]}]
+                       (let [segs
+                             (mapv (fn [r]
+                                     (run->seg r base-color base-bold?))
+                                   runs)
 
-                  segs
-                  (if (seq segs) segs [["" base-color base-bold?]])
+                             segs
+                             (if (seq segs) segs [["" base-color base-bold?]])
 
-                  ;; Leading structural runs — a list `:marker` (`- `,
-                  ;; `• `, `1. `) or the pure-whitespace hanging-indent on
-                  ;; a wrapped continuation — must NOT be stretched, else
-                  ;; justification blows a hole right after the bullet
-                  ;; (`-      foo`). Count them so `justify-segs` protects
-                  ;; that prefix and only justifies the content gaps.
-                  prefix-n
-                  (count (take-while (fn [r]
-                                       (or (contains? (:style r) :marker) (str/blank? (:text r))))
-                                     runs))
+                             ;; Leading structural runs — a list `:marker` (`- `,
+                             ;; `• `, `1. `) or the pure-whitespace hanging-indent on
+                             ;; a wrapped continuation — must NOT be stretched, else
+                             ;; justification blows a hole right after the bullet
+                             ;; (`-      foo`). Count them so `justify-segs` protects
+                             ;; that prefix and only justifies the content gaps.
+                             prefix-n
+                             (count (take-while (fn [r]
+                                                  (or (contains? (:style r) :marker)
+                                                      (str/blank? (:text r))))
+                                                runs))
 
-                  ;; Only lines the wrapper broke on overflow (`:wrap?`)
-                  ;; get full-justified. Paragraph/block-terminal lines
-                  ;; are short and ragged-right by nature — stretching
-                  ;; them edge-to-edge is the "4 words, mega holes" bug.
-                  segs
-                  (if wrap? (justify-segs segs (long w) (long prefix-n)) segs)]
+                             ;; Only lines the wrapper broke on overflow (`:wrap?`)
+                             ;; get full-justified. Paragraph/block-terminal lines
+                             ;; are short and ragged-right by nature — stretching
+                             ;; them edge-to-edge is the "4 words, mega holes" bug.
+                             segs
+                             (if wrap? (justify-segs segs (long w) (long prefix-n)) segs)]
 
-              (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
-          lines)))))
+                         (if (zero? (long i))
+                           (into (vec head) segs)
+                           (into [[pad base-color base-bold?]] segs))))
+                     lines)))))
 (defn- task-entry-rows
   "Progressive-disclosure rows for ONE task. SETTLED tasks
    (done/cancelled/rejected/deferred) collapse to a single dim line -
@@ -1188,12 +1200,14 @@
         (or (not-empty (str (:title t))) (name k))]
 
     (if settled?
-      (conj
-        (indent-rows
-          (vec
-            (md-wrapped-rows [glyph-seg] 2 title-base (max 6 (- body-w 2)) t/footer-fg-muted false))
-          indent)
-        overlay-blank-row)
+      (conj (indent-rows (vec (md-wrapped-rows [glyph-seg]
+                                               2
+                                               title-base
+                                               (max 6 (- (long body-w) 2))
+                                               t/footer-fg-muted
+                                               false))
+                         indent)
+            overlay-blank-row)
       (let [status-label
             (case status
               :doing
@@ -1214,7 +1228,7 @@
                   (when verify-seg [verify-seg]))
 
             sub-w
-            (max 6 (- body-w 4))
+            (max 6 (- (long body-w) 4))
 
             labelled
             (fn [marker text]
@@ -1263,19 +1277,21 @@
             fact-rows
             (joined "⛁ facts" (:facts t) ", ")]
 
-        (-> (vec (md-wrapped-rows [glyph-seg] 2 title-base (max 6 (- body-w 2)) t/dialog-fg true))
-            (conj meta-row)
-            (conj overlay-blank-row)
-            (into rationale-rows)
-            (into accept-rows)
-            (into files-rows)
-            (into avoid-rows)
-            (into evidence-rows)
-            (into dep-rows)
-            (into fact-rows)
-            (indent-rows indent)
-            (conj overlay-blank-row)
-            (conj overlay-blank-row))))))
+        (->
+          (vec
+            (md-wrapped-rows [glyph-seg] 2 title-base (max 6 (- (long body-w) 2)) t/dialog-fg true))
+          (conj meta-row)
+          (conj overlay-blank-row)
+          (into rationale-rows)
+          (into accept-rows)
+          (into files-rows)
+          (into avoid-rows)
+          (into evidence-rows)
+          (into dep-rows)
+          (into fact-rows)
+          (indent-rows indent)
+          (conj overlay-blank-row)
+          (conj overlay-blank-row))))))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} task-overlay-lines
   "TASKS section body with progressive disclosure: a progress header
    (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
@@ -1319,7 +1335,7 @@
                 (sort-by (fn [[k t]]
                            [(task-status-rank (or (:status t) :todo) 9) (str k)]))
                 (mapcat (fn [[k t]]
-                          (task-entry-rows k t (- body-w (* 2 indent)) indent))))]
+                          (task-entry-rows k t (- (long body-w) (* 2 (long indent))) indent))))]
 
        (-> (indent-rows [header] indent)
            (conj overlay-blank-row)
@@ -1370,7 +1386,7 @@
           (md-wrapped-rows [["  " t/dialog-fg false]]
                            2
                            content
-                           (max 6 (- body-w 2))
+                           (max 6 (- (long body-w) 2))
                            (if super? t/footer-fg-muted t/dialog-fg)
                            false))
 
@@ -1393,7 +1409,7 @@
           (wrapped-rows [["  " t/footer-fg-muted false]]
                         2
                         (str/join "  \u00b7  " meta-parts)
-                        (max 6 (- body-w 2))
+                        (max 6 (- (long body-w) 2))
                         t/footer-fg-muted
                         false))
 
@@ -1436,7 +1452,7 @@
                                       (wrapped-rows [["        \u21b3 " t/footer-fg-muted false]]
                                                     10
                                                     text
-                                                    (max 6 (- body-w 10))
+                                                    (max 6 (- (long body-w) 10))
                                                     t/footer-fg-muted
                                                     false))))
                                 (:regions file)))]
@@ -1464,8 +1480,9 @@
     (->> facts
          (sort-by (fn [[k f]]
                     [(if (= :superseded (:status f)) 1 0) (str k)]))
-         (mapcat (fn [[k f]]
-                   (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
+         (mapcat
+           (fn [[k f]]
+             (fact-entry-rows k f (- (long body-w) (* 2 (long overlay-card-indent))) expanded)))
          vec)))
 
 (defn context-overlay!
@@ -1514,37 +1531,38 @@
         (dialogs/dialog-layout bounds req-h)
 
         sb?
-        (> n content-h)
+        (> n (long content-h))
 
         body-right
-        (+ left 1 inner-w)
+        (+ (long left) 1 (long inner-w))
 
         text-right
-        (if sb? (dec body-right) body-right)
+        (if sb? (dec (long body-right)) body-right)
 
         paint-line
         (fn [i segs]
-          (let [r (+ content-top i)]
+          (let [r (+ (long content-top) (long i))]
             ;; A meta row tagged with :fact-key gets a click region so
             ;; clicking the `> N files` glyph toggles its path list.
             (when-let [fk (:fact-key (meta segs))]
-              (cr/register! {:bounds
-                             {:row r :col (+ left 1) :width (max 0 (- text-right (+ left 1)))}
+              (cr/register! {:bounds {:row r
+                                      :col (+ (long left) 1)
+                                      :width (max 0 (- (long text-right) (+ (long left) 1)))}
                              :kind :toggle-fact-files
                              :fact-key fk
                              :enabled? true}))
-            (loop [x (+ left 1)
+            (loop [x (+ (long left) 1)
                    ss segs]
 
               (when-let [[text color bold?] (first ss)]
-                (let [avail (max 0 (- text-right x))
+                (let [avail (max 0 (- (long text-right) (long x)))
                       shown (clip-str (str text) avail)]
 
                   (p/clear-styles! g)
                   (p/set-colors! g color t/dialog-bg)
                   (when bold? (p/enable! g p/BOLD))
                   (p/put-str! g x r shown)
-                  (recur (+ x (p/display-width shown)) (next ss)))))))
+                  (recur (+ (long x) (p/display-width shown)) (next ss)))))))
 
         geom
         (scrollable-dialog-body! g
@@ -1552,7 +1570,7 @@
                                  {:content-top content-top
                                   :content-h content-h
                                   :hint-row hint-row
-                                  :sb-col (dec body-right)
+                                  :sb-col (dec (long body-right))
                                   :body-right body-right}
                                  scroll
                                  paint-line)
@@ -1564,6 +1582,7 @@
     (p/clear-styles! g)
     {:scroll (:scroll geom)
      :max-scroll (:max-scroll geom)
-     :selectable-ranges
-     (vec (for [i (range shown-n)]
-            {:row (+ content-top i) :col (+ left 1) :width (max 0 (- text-right (+ left 1)))}))}))
+     :selectable-ranges (vec (for [i (range shown-n)]
+                               {:row (+ (long content-top) (long i))
+                                :col (+ (long left) 1)
+                                :width (max 0 (- (long text-right) (+ (long left) 1)))}))}))
