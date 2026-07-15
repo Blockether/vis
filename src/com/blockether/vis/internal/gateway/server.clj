@@ -722,7 +722,7 @@
                                               (assoc :owner-id owner_id)))))))
 
 (defn- ensure-project-for-root-handler
-  "POST /v1/projects/ensure {root, name?, owner_id?} — get-or-create the project
+  "POST /v1/projects/actions/ensure {root, name?, owner_id?} — get-or-create the project
    bound to a canonical workspace root. A project IS a TUI tab set; this is the
    launch-dir -> project resolution. Idempotent (safe under concurrent TUIs)."
   [request]
@@ -1458,7 +1458,7 @@
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]
         ["/projects" {:get list-projects-handler :post create-project-handler}]
-        ["/projects/ensure" {:post ensure-project-for-root-handler}]
+        ["/projects/actions/ensure" {:post ensure-project-for-root-handler}]
         ["/projects/:pid"
          {:get get-project-handler :patch patch-project-handler :delete delete-project-handler}]
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]

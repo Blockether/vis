@@ -661,6 +661,38 @@
 
     (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
+(defn- sandbox-shims-prompt-block
+  "Advertise the Python sandbox SHIMS — pure-JVM re-implementations of popular
+   Python libraries, PRE-INSTALLED in the `python_execution` sandbox so
+   `import <lib>` just works (no pip, no native wheels). Without this the model
+   has no way to KNOW a shim exists or WHICH library it stands in for.
+   Enumerated from the extension registry (`extension/sandbox-shims`) so every
+   shim — built-in or third-party — advertises itself with ZERO prompt edits.
+   Also discoverable in-sandbox via `apropos(\"\")` / `doc(\"<name>\")`."
+  []
+  (let [shims
+        (try (extension/sandbox-shims) (catch Throwable _ nil))
+
+        lines
+        (->> shims
+             (keep
+               (fn [s]
+                 (when-let [nm (:shim/name s)]
+                   (let [d (:shim/description s)]
+                     (str "  " nm (when (and (string? d) (not (str/blank? d))) (str " — " d)))))))
+             (distinct)
+             (sort))]
+
+    (when (seq lines)
+      (prompt-block "sandbox-shims"
+                    (str "Python sandbox SHIMS — pure-JVM re-implementations of popular Python "
+                         "libraries, PRE-INSTALLED in the `python_execution` sandbox so "
+                         "`import <lib>` just works (no pip, no native wheels). Each is "
+                         "import-compatible with the real library's common API. Available shims:\n"
+                         (str/join "\n" lines)
+                         "\nDiscover them in the sandbox too: `apropos(\"\")` lists them, "
+                         "`doc(\"<name>\")` describes one.")))))
+
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime
    capabilities change.
@@ -671,8 +703,11 @@
    message in the rebuilt stateless provider message vector rather than append
    a second extension/context message."
   [environment active-extensions]
-  (when-let [extensions-block (extensions-prompt-block environment active-extensions)]
-    (prompt-block "turn-system-context" extensions-block)))
+  (let [blocks (->> [(extensions-prompt-block environment active-extensions)
+                     (sandbox-shims-prompt-block)]
+                    (filter #(and (string? %) (not (str/blank? %))))
+                    seq)]
+    (when blocks (prompt-block "turn-system-context" (str/join "\n\n" blocks)))))
 
 (defn- stable-prompt-message
   [content]

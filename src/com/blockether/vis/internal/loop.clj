@@ -5737,7 +5737,7 @@
                                               (str "Provider unavailable, transparent retry "
                                                    (inc pu-attempt)
                                                    "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
-                                    (Thread/sleep delay-ms)
+                                    (Thread/sleep (long delay-ms))
                                     ::retry-provider-unavailable)
                                   :else (handle-iteration-exception! e
                                                                      {:iteration iteration
@@ -8684,7 +8684,7 @@
   []
   (loop []
 
-    (let [continue? (try (Thread/sleep env-reaper-interval-ms)
+    (let [continue? (try (Thread/sleep (long env-reaper-interval-ms))
                          (reap-idle-envs!)
                          true
                          (catch InterruptedException _ false)

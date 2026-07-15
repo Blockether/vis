@@ -14,6 +14,16 @@
 
 (def ^:private fake-entry {:host "127.0.0.1" :port 7890 :pid 4242 :secret "s"})
 
+(deftest ensure-project-for-root-uses-project-action-route
+  (let [request (atom nil)]
+    (with-redefs-fn {(rv 'send-json!) (fn [method path body]
+                                        (reset! request [method path body])
+                                        {:id "project-id"})}
+      (fn []
+        (is (= {:id "project-id"} (client/ensure-project-for-root! "/workspace" "Vis")))
+        (is (= ["POST" "/v1/projects/actions/ensure" {:root "/workspace" :name "Vis"}]
+               @request))))))
+
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,
    consumed left-to-right) and a scripted `status`. Records how many times the
