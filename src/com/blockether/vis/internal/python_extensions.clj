@@ -759,11 +759,15 @@ def __vis_registration__():
    keywords outright, so without this an enrich-models / on-selected arg
    would throw a boundary violation before the Python fn ever runs."
   [x]
-  (letfn [(k->s [k] (cond (keyword? k) (subs (str k) 1)
-                          (symbol? k) (str k)
-                          (string? k) k
-                          :else (str k)))]
-    (cond (map? x) (into {} (map (fn [[k v]] [(k->s k) (stringify-deep v)])) x)
+  (letfn [(k->s [k]
+            (cond (keyword? k) (subs (str k) 1)
+                  (symbol? k) (str k)
+                  (string? k) k
+                  :else (str k)))]
+    (cond (map? x) (into {}
+                         (map (fn [[k v]]
+                                [(k->s k) (stringify-deep v)]))
+                         x)
           (sequential? x) (mapv stringify-deep x)
           (set? x) (mapv stringify-deep x)
           (keyword? x) (subs (str x) 1)
@@ -781,9 +785,11 @@ def __vis_registration__():
    builds on svar's conservative defaults."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [svar-provider router-opts]
-    (try (let [r (call-py-ext ext-name nil ctx pyfn
-                              [(stringify-deep svar-provider)
-                               (stringify-deep router-opts)])]
+    (try (let [r (call-py-ext ext-name
+                              nil
+                              ctx
+                              pyfn
+                              [(stringify-deep svar-provider) (stringify-deep router-opts)])]
            (when (sequential? r)
              (mapv (fn [m]
                      (let [km (keywordize m)]

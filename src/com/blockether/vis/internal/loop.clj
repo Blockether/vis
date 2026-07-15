@@ -1522,10 +1522,12 @@
              nil))
       1))
 
-;; Scope helpers (`iter-of-scope` / `scope-key` / `expand-through`) live further
-;; down next to `apply-summaries`; forward-declared so the resume-context path
-;; (above them in the file) shares the SAME fold semantics as the live wire.
-(declare iter-of-scope scope-key expand-through supersede-summaries)
+;; `iter-of-scope` (form-scope → iteration-scope) is loop-local and forward-
+;; declared so the resume-context path (above it in the file) can normalize form
+;; scopes. The selector RESOLVER (`scope-key` / `turn-key` / `expand-through` /
+;; `supersede-summaries`) lives in `ctx-engine` so the wire (`apply-summaries`)
+;; and the render-time ledger (`ctx-engine/folds-view`) share ONE resolver.
+(declare iter-of-scope)
 
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
@@ -1546,7 +1548,7 @@
         (distinct (keep #(iter-of-scope (:scope %)) forms))
 
         sums
-        (supersede-summaries (expand-through (or summaries []) universe))
+        (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries []) universe))
 
         ;; Summary intents are STRING-KEYED ({"scopes" "gist" "drop" "through"})
         ;; — they persist inside the ctx nippy blob, and the DB is strings-only.
@@ -1710,6 +1712,22 @@
    nothing was ever stamped."
   [ctx-atom util]
   (when (and ctx-atom util) (swap! ctx-atom assoc "engine_utilization" util)))
+
+(defn- stamp-iter-universe!
+  "Record the CURRENT wire's iteration universe — the `tN/iN` scopes present in
+   `trailer-iters` — on the ctx-atom as `engine_iter_universe`, so the render-time
+   `ctx-engine/folds-view` resolves fold selectors + computes the still-live
+   ledger against the SAME scopes the wire folds against. Engine-ephemeral (an
+   `engine_*` key, stripped at persist by `strip-ephemeral`); overwritten every
+   send so it always reflects the live trailer."
+  [ctx-atom trailer-iters]
+  (when ctx-atom
+    (let [uni (into []
+                    (comp (keep (fn [[_ rec]]
+                                  (some iter-of-scope (keep :scope (:forms-vec rec)))))
+                          (distinct))
+                    trailer-iters)]
+      (swap! ctx-atom assoc "engine_iter_universe" uni))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2139,145 +2157,6 @@
     (let [parts (str/split scope #"/")]
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
-(defn- scope-key
-  "Ordered key for a scope so a range cursor can compare scopes: `\"t1/i2\"` or
-   `\"t1/i2/f3\"` → `[1 2]` (the form index is intentionally dropped — `through`
-   ranges over WHOLE iterations). nil when the scope can't be parsed, so callers
-   skip it rather than mis-order it."
-  [scope]
-  (when (string? scope)
-    (when-let [m (re-matches #"t(\d+)/i(\d+)(?:/f\d+)?" (str/trim scope))]
-      [(parse-long (nth m 1)) (parse-long (nth m 2))])))
-
-(defn- turn-key
-  "Turn number of a bare WHOLE-TURN scope `\"tN\"` (no `/iN`); nil otherwise, so
-   `expand-through` only whole-turn-expands an id that is JUST a turn — a plain
-   `\"t1/i2\"` stays a single iteration."
-  [scope]
-  (when (string? scope)
-    (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
-      (parse-long (nth m 1)))))
-
-(defn- expand-through
-  "Resolve every fold SELECTOR on each summary against `universe` (the caller's
-   own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
-   expands consistently wherever summaries are read (apply-summaries: the
-   trailer; resume / prior-turn: that turn's forms). Selector keys (all optional,
-   their results UNIONED):
-     `\"scopes\"`  explicit ids — a `tN/iN` is kept verbatim; a bare `tN` EXPANDS
-                 to every iteration of that turn present in `universe`.
-     `\"through\"` `tN/iN` cursor → every universe scope AT OR BEFORE it (start→cursor).
-     `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
-     `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
-   The range keys are dropped after resolution and the union lands in `\"scopes\"`.
-   Intents with none of these keys pass through untouched. Pure — same inputs →
-   same output."
-  [summaries universe]
-  (let [ukeys
-        (into []
-              (keep (fn [u]
-                      (when-let [k (scope-key u)]
-                        [u k]))
-                    universe))
-
-        pick
-        (fn [pred]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (pred k)))
-                      (map first))
-                ukeys))
-
-        turn-scopes
-        (fn [tn]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (= tn (first k))))
-                      (map first))
-                ukeys))
-
-        selector?
-        #{"scopes" "through" "from" "to" "since"}]
-
-    (mapv
-      (fn [s]
-        (if-not (some #(contains? s %) selector?)
-          s
-          (let [thr
-                (some-> (get s "through")
-                        scope-key)
-
-                frm
-                (some-> (get s "from")
-                        scope-key)
-
-                to
-                (some-> (get s "to")
-                        scope-key)
-
-                snc
-                (some-> (get s "since")
-                        scope-key)
-
-                expl
-                (into #{}
-                      (mapcat (fn [sc]
-                                (cond (scope-key sc) [sc]
-                                      (turn-key sc) (turn-scopes (turn-key sc))
-                                      :else [sc])))
-                      (get s "scopes"))
-
-                scopes
-                (cond-> expl
-                  thr
-                  (into (pick (fn [k]
-                                (<= (compare k thr) 0))))
-
-                  (or frm to)
-                  (into (pick (fn [k]
-                                (and (or (nil? frm) (>= (compare k frm) 0))
-                                     (or (nil? to) (<= (compare k to) 0))))))
-
-                  snc
-                  (into (pick (fn [k]
-                                (>= (compare k snc) 0)))))]
-
-            (-> s
-                (dissoc "through" "from" "to" "since")
-                (assoc "scopes" scopes)))))
-      summaries)))
-
-(defn- supersede-summaries
-  "Collapse 'summary of summary': drop any summary whose scope set is fully
-   COVERED by another's — a proper subset, or an equal set recorded earlier — so
-   re-folding a region with a broader/newer gist REPLACES the finer breadcrumb
-   instead of stacking a second line. Coverage is never lost: every scope of a
-   dropped summary is present in the one that supersedes it (the superset wins;
-   for equal sets the later/newer wins). Order-stable. Expects scopes already
-   resolved (run AFTER expand-through). Pure."
-  [summaries]
-  (let [v
-        (vec summaries)
-
-        n
-        (count v)
-
-        covered?
-        (fn [i]
-          (let [si (set (get (nth v i) "scopes"))]
-            (and (seq si)
-                 (boolean (some (fn [j]
-                                  (when (not= i j)
-                                    (let [sj (set (get (nth v j) "scopes"))]
-                                      (and (every? sj si)           ; si ⊆ sj
-                                           (or (not (every? si sj)) ; proper subset → superset wins
-                                               (< i j))))))         ; equal → later wins
-                                (range n))))))]
-
-    (vec (keep-indexed (fn [i s]
-                         (when-not (covered? i) s))
-                       v))))
-
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
@@ -2386,8 +2265,8 @@
           ;; step at or before the cursor; then supersede covered summaries so a
           ;; broader re-fold replaces the finer one (one breadcrumb, not two).
           summaries
-          (supersede-summaries (expand-through summaries
-                                               (keep iter-scope-of (map second trailer-iters))))
+          (ctx-engine/supersede-summaries
+            (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters))))
 
           summarized
           (into #{} (mapcat #(get % "scopes")) summaries)
@@ -2937,7 +2816,8 @@
         folded
         (into #{}
               (mapcat #(get % "scopes"))
-              (expand-through (or summaries []) (keep iter-scope-of (map second older))))]
+              (ctx-engine/expand-through (or summaries [])
+                                         (keep iter-scope-of (map second older))))]
 
     (->> older
          (keep (fn [[_ rec]]
@@ -5690,6 +5570,7 @@
                     ;; near the start (placed by `assemble-initial-messages`); we
                     ;; never repeat it. Matches z.ai's canonical preserved-thinking
                     ;; shape (user → asst → user → asst → user).
+                    _ (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                     conversation-suffix-msgs (conversation-suffix
                                                (apply-summaries trailer-iters
                                                                 (some-> (:ctx-atom environment)
@@ -8816,7 +8697,7 @@
 
 (defn ensure-project-for-root!
   "Get-or-create the project bound to canonical workspace `root` (a project IS a
-   tab set). Race-safe: on a UNIQUE(owner_id, root) collision from a concurrent
+   tab set). Race-safe: on a UNIQUE(owner_id, workspace_root) collision from a
    creator the insert throws and we re-read. `name` seeds a freshly created
    project (falls back to the root path)."
   ([root] (ensure-project-for-root! "local" root nil))
@@ -8824,8 +8705,13 @@
    (or (get-project-by-root owner-id root)
        (try (create-project! {:name (or (not-empty (str name)) (str root))
                               :owner-id (or owner-id "local")
-                              :root root})
-            (catch Throwable _ (get-project-by-root owner-id root))))))
+                              :workspace-root root})
+            ;; ONLY a lost get-or-create race is expected here (the partial
+            ;; UNIQUE index rejects the duplicate) -> re-read the winner. Any
+            ;; OTHER failure (disk full, real constraint break) must NOT be
+            ;; swallowed as nil: re-read, and if there's still no project the
+            ;; original error was the true cause, so rethrow it.
+            (catch Throwable e (or (get-project-by-root owner-id root) (throw e)))))))
 
 (defn update-project! [project-id opts] (persistance/db-update-project! (db-info) project-id opts))
 

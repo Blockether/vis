@@ -92,6 +92,7 @@
    {:action :open-resources :key \s :label "backgrounds"}
    {:action :toggle-help :key \h :label "help"} {:action :new-session :key \n :label "new session"}
    {:action :show-sessions :key \b :label "switch session"}
+   {:action :switch-project :key \w :label "switch project"}
    {:action :close-tab :key \k :label "close tab"}
    {:action :recenter :key \j :label "jump to bottom"}
    {:action :toggle-detail-labels :key \t :label "label folds"}

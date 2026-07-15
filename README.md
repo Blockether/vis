@@ -40,7 +40,7 @@ Prereqs: `git`, `java` 21+, and the [Clojure CLI](https://clojure.org/guides/ins
 3. repo JVM uberjar (`target/vis.jar`)
 4. live source (`clojure -M:vis`)
 
-Use `vis --jvm ...` to skip native and force the JVM path.
+Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a **stock JDK 25** (e.g. `sdk install java 25.0.3-tem`) or a GraalVM matching the pinned Truffle line (`graal-25.1.3`); a mismatched GraalVM (e.g. CE 25.0.2) is rejected at startup with a clear message.
 
 ## Build / develop
 

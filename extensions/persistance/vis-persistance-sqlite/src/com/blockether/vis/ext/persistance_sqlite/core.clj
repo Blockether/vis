@@ -1129,11 +1129,12 @@
    :position (:position row)
    :created-at (->date (:created_at row))
    :archived-at (->date (:archived_at row))
-   :root (:root row)
+   :workspace-root (:workspace_root row)
    :session-count (or (:session_count row) 0)})
 
 (def ^:private project-select-cols
-  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.root :p.created_at :p.archived_at
+  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.workspace_root :p.created_at
+   :p.archived_at
    [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.project_id :p.id]}
     :session_count]])
 
@@ -1179,16 +1180,15 @@
 (defn db-get-project-by-root
   "Return the `project` bound to canonical workspace `root` for `owner-id`
    (default \"local\"), or nil. Backs the TUI's launch-dir -> project (tab set)
-   resolution. `root` matches the stored `project.root` exactly (callers pass a
-   canonical path)."
+   resolution. `root` matches the stored `project.workspace_root` exactly
+   (callers pass a canonical path)."
   [db-info owner-id root]
   (when (and (ds db-info) (not (str/blank? (str root))))
     (some-> (query-one! db-info
                         {:select project-select-cols
                          :from [[:project :p]]
-                         :where [:and
-                                 [:= :p.owner_id (or owner-id "local")]
-                                 [:= :p.root (str root)]]})
+                         :where [:and [:= :p.owner_id (or owner-id "local")]
+                                 [:= :p.workspace_root (str root)]]})
             row->project)))
 
 (defn db-create-project!
@@ -1196,7 +1196,7 @@
    cross-channel project. `:owner-id` defaults to \"local\". `:position`, when
    omitted, appends after the owner's current projects. Returns the created
    project (canonical shape)."
-  [db-info {:keys [name channel color owner-id position root]}]
+  [db-info {:keys [name channel color owner-id position workspace-root]}]
   (when (str/blank? (str name))
     (throw (ex-info "db-create-project! requires a non-blank :name"
                     {:type :persistance/invalid-project-name})))
@@ -1230,8 +1230,8 @@
                                                  color
                                                  (assoc :color color)
 
-                                                 root
-                                                 (assoc :root root))]})
+                                                 (not (str/blank? (str workspace-root)))
+                                                 (assoc :workspace_root (str workspace-root)))]})
                            pid)))]
       (db-get-project db-info project-id))))
 
@@ -1239,7 +1239,7 @@
   "Patch a `project`: any of `:name` (non-blank), `:color`, `:position`,
    `:archived?` (true stamps `archived_at`=now, false clears it). Returns the
    updated project (canonical shape) or nil when nothing to change."
-  [db-info project-id {:keys [name color position archived? root] :as opts}]
+  [db-info project-id {:keys [name color position archived? workspace-root] :as opts}]
   (when (and (ds db-info) project-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
       (throw (ex-info "db-update-project! :name must be non-blank"
@@ -1257,8 +1257,8 @@
                     (contains? opts :archived?)
                     (assoc :archived_at (when archived? (now-ms)))
 
-                    (contains? opts :root)
-                    (assoc :root root))]
+                    (contains? opts :workspace-root)
+                    (assoc :workspace_root workspace-root))]
       (when (seq set-map)
         (sqlite-write-tx!
           db-info
@@ -1278,44 +1278,90 @@
 
 (defn db-set-session-project!
   "Assign the soul behind `session-id` to `project-id`; a nil `project-id` clears
-   membership (removes it from its project). When moving INTO a project the soul
-   is APPENDED (its `project_position` becomes max+1 within that project) so
-   project sessions stay MOVABLE. Returns the soul id."
+   membership (removes it from its project AND resets its now-meaningless
+   `project_position` to 0, so no stale ordinal is left behind). Moving INTO a
+   project the soul does NOT already belong to APPENDS it (its `project_position`
+   becomes max+1 within that project) so project sessions stay MOVABLE;
+   re-assigning a soul ALREADY in the project is idempotent and keeps its current
+   position. Returns the soul id."
   [db-info session-id project-id]
   (when (and (ds db-info) session-id)
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (let [pos (when project-id
-                    (inc (or (:maxpos (query-one! tx-info
-                                                  {:select [[[:max :project_position] :maxpos]]
-                                                   :from :session_soul
-                                                   :where [:= :project_id (->id project-id)]}))
-                             -1)))]
+        (let [pid
+              (when project-id (->id project-id))
+
+              cur
+              (:project_id (query-one! tx-info
+                                       {:select [:project_id]
+                                        :from :session_soul
+                                        :where [:= :id (->id session-id)]}))
+
+              member?
+              (and pid (= (str cur) (str pid)))
+
+              set-map
+              (cond
+                ;; already a member -> idempotent, keep its order
+                member? {:project_id (->ref project-id)}
+                ;; joining a project -> append after its last member
+                pid {:project_id (->ref project-id)
+                     :project_position
+                     (inc (or (:maxpos (query-one! tx-info
+                                                   {:select [[[:max :project_position] :maxpos]]
+                                                    :from :session_soul
+                                                    :where [:= :project_id pid]}))
+                              -1))}
+                ;; leaving all projects -> clear pointer + stale ordinal
+                :else {:project_id (->ref nil) :project_position 0})]
+
           (execute! tx-info
-                    {:update :session_soul
-                     :set (cond-> {:project_id (->ref project-id)}
-                            pos
-                            (assoc :project_position pos))
-                     :where [:= :id (->id session-id)]}))))
+                    {:update :session_soul :set set-map :where [:= :id (->id session-id)]}))))
     session-id))
 
 (defn db-reorder-project-sessions!
-  "Persist a manual order for the sessions inside `project-id`: `session-ids` is
-   the desired ordering; each soul's `project_position` is rewritten to its index.
-   Only souls that already belong to `project-id` are moved. Returns the count of
-   ids applied."
+  "Persist a manual order for the sessions inside `project-id`. `session-ids` is
+   the desired LEADING order; any members not named are kept, appended after the
+   named ones in their current order. EVERY member is then renumbered to a
+   gap-free, contiguous 0-based `project_position` — so a partial or stale list
+   can never leave overlapping or orphaned ordinals (the tab strip stays a clean
+   0..n-1 sequence). Only souls that belong to `project-id` are touched. Returns
+   the count of members renumbered."
   [db-info project-id session-ids]
-  (when (and (ds db-info) project-id (seq session-ids))
+  (when (and (ds db-info) project-id)
     (sqlite-write-tx! db-info
                       (fn [tx-info]
-                        (doseq [[pos sid] (map-indexed vector session-ids)]
-                          (execute! tx-info
-                                    {:update :session_soul
-                                     :set {:project_position pos}
-                                     :where [:and [:= :id (->id sid)]
-                                             [:= :project_id (->id project-id)]]}))))
-    (count session-ids)))
+                        (let [pid
+                              (->id project-id)
+
+                              members
+                              (mapv (comp str :id)
+                                    (query! tx-info
+                                            {:select [:id]
+                                             :from :session_soul
+                                             :where [:= :project_id pid]
+                                             :order-by [[:project_position :asc]
+                                                        [:created_at :desc]]}))
+
+                              member?
+                              (set members)
+
+                              wanted
+                              (distinct (filter member? (map str session-ids)))
+
+                              wanted-set
+                              (set wanted)
+
+                              ordered
+                              (into (vec wanted) (remove wanted-set members))]
+
+                          (doseq [[pos sid] (map-indexed vector ordered)]
+                            (execute! tx-info
+                                      {:update :session_soul
+                                       :set {:project_position pos}
+                                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
+                          (count ordered))))))
 
 
 ;; =============================================================================

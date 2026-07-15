@@ -353,7 +353,8 @@ The `preset` flows into the router the same way a built-in provider's does, so
 adding `acme` to `~/.vis/config.edn`'s `:providers` (or the TUI *Add Provider*
 picker, which lists any labelled provider) makes the model call it. Callable
 slots — `get_token`, `detect`, `status`, `logout`, `limits`, `refresh_token`,
-`auth`, `auth_prompt` — are all optional; a static-key provider usually just
+`auth`, `auth_prompt`, `enrich_models`, `on_selected` — are all optional; a
+static-key provider usually just
 needs `get_token` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
 `:api-url`), and `api_style` becomes a keyword. `vis providers auth/status/limits
 <id>` work against it like any other provider.
@@ -363,6 +364,16 @@ hands it a `printer(line)` callback to emit instructions, and its return signals
 the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
 surfaces the printed lines so the user knows what to do next). `auth_prompt=`
 is a `() -> [line, ...]` for the static guidance shown in the API-key dialog.
+
+Two more optional hooks mirror their Clojure counterparts. `enrich_models=` is a
+`def enrich(provider, router_opts): ...` called once at router-build to resolve
+each model's real context window — return `[{"name": ..., "context": N,
+"tool_call": True}, ...]` (the host reads `context`/`tool_call`), as LM Studio's
+built-in provider does. `on_selected=` is a `def on_selected(event): ...`
+side-effect hook fired after this provider becomes the active one and config is
+persisted; the `event` carries `previous_provider` / `provider` / `config` /
+`source`. Both fail soft — a throw is logged and never blocks router build or
+selection.
 
 ## Python vs Clojure extensions
 

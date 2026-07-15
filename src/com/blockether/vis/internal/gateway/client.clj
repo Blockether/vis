@@ -314,9 +314,12 @@
    workspace `root` (a project IS a TUI tab set). `name` seeds a fresh project.
    Returns the project."
   ([root] (ensure-project-for-root! root nil))
-  ([root name] (send-json! "POST" "/v1/projects/ensure"
-                           (cond-> {:root (str root)}
-                             (not-empty (str name)) (assoc :name (str name))))))
+  ([root name]
+   (send-json! "POST"
+               "/v1/projects/ensure"
+               (cond-> {:root (str root)}
+                 (not-empty (str name))
+                 (assoc :name (str name))))))
 
 (defn get-project
   [pid]

@@ -716,7 +716,8 @@
                                               (assoc :color color)
 
                                               (not (str/blank? (str root)))
-                                              (assoc :root root)
+                                              (assoc :workspace-root root)
+
                                               owner_id
                                               (assoc :owner-id owner_id)))))))
 
@@ -728,9 +729,8 @@
   (let [{:keys [root name owner_id]} (body-json request)]
     (if (str/blank? (str root))
       (error-response 400 :invalid-request "root must be a non-blank string")
-      (json-response (state/ensure-project-for-root! (or (not-empty owner_id) "local")
-                                                     root
-                                                     name)))))
+      (json-response
+        (state/ensure-project-for-root! (or (not-empty owner_id) "local") root name)))))
 
 (defn- get-project-handler
   [request]

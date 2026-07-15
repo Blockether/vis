@@ -592,7 +592,8 @@
         :else
         (let [budget
               (dec max-cols)
- ; one column spent on the ellipsis
+
+              ; one column spent on the ellipsis
               tail-cols
               (quot budget 2)
 

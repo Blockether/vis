@@ -24,7 +24,7 @@
 
 (def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
 (def ^:private apply-summaries (var-get #'lp/apply-summaries))
-(def ^:private expand-through (var-get #'lp/expand-through))
+(def ^:private expand-through (var-get #'eng/expand-through))
 (def ^:private session-fold-tool (var-get #'lp/session-fold-tool))
 (def ^:private tool-call->python-source (var-get #'lp/tool-call->python-source))
 
@@ -176,118 +176,122 @@
             (filter :summary? (:forms-vec rec)))
           applied))
 
-(defdescribe apply-summaries-boundary-test
-             (it "through cursor collapses every step at/before it; the tail survives"
-                 (let [tr
-                       (trailer "t1/i1" "t1/i2" "t1/i3")
+(defdescribe
+  apply-summaries-boundary-test
+  (it "through cursor collapses every step at/before it; the tail survives"
+      (let [tr
+            (trailer "t1/i1" "t1/i2" "t1/i3")
 
-                       out
-                       (apply-summaries tr [{"through" "t1/i2" "gist" "G"}])
+            out
+            (apply-summaries tr [{"through" "t1/i2" "gist" "G"}])
 
-                       [[_ r1] [_ r2] [_ r3]]
-                       out
+            [[_ r1] [_ r2] [_ r3]]
+            out
 
-                       sfs
-                       (summary-forms out)]
+            sfs
+            (summary-forms out)]
 
-                   (expect (:collapsed? r1))
-                   (expect (:collapsed? r2))
-                   (expect (not (:collapsed? r3))) ; the tail step is untouched
-                   (expect (= [] (:forms-vec r2))) ; collapsed body left the wire
-                   (expect (= 1 (count sfs)))      ; ONE breadcrumb
-                   (expect (= "G" (:summary-gist (first sfs))))
-                   ;; the breadcrumb is injected at the EARLIEST collapsed step (t1/i1)
-                   (expect (some :summary? (:forms-vec r1)))
-                   (expect (= ["t1/i1" "t1/i2"] (:summary-iters (first sfs))))))
-             (it "a bare-turn fold collapses EVERY iteration of that turn"
-                 (let [tr
-                       (trailer "t1/i1" "t1/i2" "t1/i3")
+        (expect (:collapsed? r1))
+        (expect (:collapsed? r2))
+        (expect (not (:collapsed? r3))) ; the tail step is untouched
+        (expect (= [] (:forms-vec r2))) ; collapsed body left the wire
+        (expect (= 1 (count sfs)))      ; ONE breadcrumb
+        (expect (= "G" (:summary-gist (first sfs))))
+        ;; the breadcrumb is injected at the EARLIEST collapsed step (t1/i1)
+        (expect (some :summary? (:forms-vec r1)))
+        (expect (= ["t1/i1" "t1/i2"] (:summary-iters (first sfs))))))
+  (it "a bare-turn fold collapses EVERY iteration of that turn"
+      (let [tr
+            (trailer "t1/i1" "t1/i2" "t1/i3")
 
-                       out
-                       (apply-summaries tr [{"scopes" #{"t1"} "gist" "all of t1"}])]
+            out
+            (apply-summaries tr [{"scopes" #{"t1"} "gist" "all of t1"}])]
 
-                   (expect (every? (fn [[_ r]]
-                                     (:collapsed? r))
-                                   out))
-                   (expect (= 1 (count (summary-forms out))))))
-             (it "a from/to window collapses only the inclusive middle"
-                 (let [tr
-                       (trailer "t1/i1" "t1/i2" "t1/i3" "t1/i4")
+        (expect (every? (fn [[_ r]]
+                          (:collapsed? r))
+                        out))
+        (expect (= 1 (count (summary-forms out))))))
+  (it "a from/to window collapses only the inclusive middle"
+      (let [tr
+            (trailer "t1/i1" "t1/i2" "t1/i3" "t1/i4")
 
-                       out
-                       (apply-summaries tr [{"from" "t1/i2" "to" "t1/i3" "gist" "mid"}])]
+            out
+            (apply-summaries tr [{"from" "t1/i2" "to" "t1/i3" "gist" "mid"}])]
 
-                   ;; endpoints of the window survive; only i2,i3 collapse
-                   (expect (= 2
-                              (count (filter (fn [[_ r]]
-                                               (:collapsed? r))
-                                             out))))
-                   (expect (= 1 (count (summary-forms out))))))
-             (it "a since cursor collapses that step through the newest"
-                 (let [tr
-                       (trailer "t1/i1" "t1/i2" "t1/i3")
+        ;; endpoints of the window survive; only i2,i3 collapse
+        (expect (= 2
+                   (count (filter (fn [[_ r]]
+                                    (:collapsed? r))
+                                  out))))
+        (expect (= 1 (count (summary-forms out))))))
+  (it "a since cursor collapses that step through the newest"
+      (let [tr
+            (trailer "t1/i1" "t1/i2" "t1/i3")
 
-                       out
-                       (apply-summaries tr [{"since" "t1/i2" "gist" "tail"}])
+            out
+            (apply-summaries tr [{"since" "t1/i2" "gist" "tail"}])
 
-                       [[_ r1] [_ r2] [_ r3]]
-                       out]
+            [[_ r1] [_ r2] [_ r3]]
+            out]
 
-                   (expect (not (:collapsed? r1)))
-                   (expect (:collapsed? r2))
-                   (expect (:collapsed? r3))))
-             (it "a fold whose scopes miss the trailer entirely collapses nothing"
-                 (let [tr
-                       (trailer "t1/i1" "t1/i2")
+        (expect (not (:collapsed? r1)))
+        (expect (:collapsed? r2))
+        (expect (:collapsed? r3))))
+  (it "a fold whose scopes miss the trailer entirely collapses nothing"
+      (let [tr
+            (trailer "t1/i1" "t1/i2")
 
-                       out
-                       (apply-summaries tr [{"through" "t0/i0" "gist" "nope"}])]
+            out
+            (apply-summaries tr [{"through" "t0/i0" "gist" "nope"}])]
 
-                   (expect (not-any? (fn [[_ r]]
-                                       (:collapsed? r))
-                                     out))
-                   (expect (empty? (summary-forms out)))))
-             (it "empty summaries leave the trailer byte-for-byte"
-                 (let [tr (trailer "t1/i1" "t1/i2")]
-                   (expect (= (vec tr) (apply-summaries tr [])))))
-             (it "a broader re-fold SUPERSEDES the finer one (one breadcrumb, broader gist)"
-                 (let [[ca ev] (with-verbs)]
-                   (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"A\")")
-                   (ev "session_fold([\"t1/i2\", \"t1/i3\", \"t1/i4\"], \"B\")")
-                   (let [tr (trailer "t1/i2" "t1/i3" "t1/i4")
-                         out (apply-summaries tr (get @ca "session_summaries"))
-                         sfs (summary-forms out)]
+        (expect (not-any? (fn [[_ r]]
+                            (:collapsed? r))
+                          out))
+        (expect (empty? (summary-forms out)))))
+  (it "empty summaries leave the trailer byte-for-byte"
+      (let [tr (trailer "t1/i1" "t1/i2")]
+        (expect (= (vec tr) (apply-summaries tr [])))))
+  (it "a broader re-fold SUPERSEDES the finer one (one breadcrumb, broader gist)"
+      (let [[ca ev] (with-verbs)]
+        (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"A\")")
+        (ev "session_fold([\"t1/i2\", \"t1/i3\", \"t1/i4\"], \"B\")")
+        (let [tr (trailer "t1/i2" "t1/i3" "t1/i4")
+              out (apply-summaries tr (get @ca "session_summaries"))
+              sfs (summary-forms out)]
 
-                     (expect (= 1 (count sfs)))
-                     (expect (= "B" (:summary-gist (first sfs))))
-                     (expect (every? (fn [[_ r]]
-                                       (:collapsed? r))
-                                     out)))))
-             (it "a range re-fold supersedes an explicit finer fold of the same region"
-                 (let [[ca ev] (with-verbs)]
-                   (ev "session_fold([\"t1/i2\"], \"finer\")")
-                   (ev "session_fold({\"through\": \"t1/i3\"}, \"broad\")")
-                   (let [tr (trailer "t1/i1" "t1/i2" "t1/i3")
-                         out (apply-summaries tr (get @ca "session_summaries"))
-                         sfs (summary-forms out)]
+          (expect (= 1 (count sfs)))
+          (expect (= "B" (:summary-gist (first sfs))))
+          (expect (every? (fn [[_ r]]
+                            (:collapsed? r))
+                          out)))))
+  (it "a range re-fold supersedes an explicit finer fold of the same region"
+      (let [[ca ev] (with-verbs)]
+        (ev "session_fold([\"t1/i2\"], \"finer\")")
+        (ev "session_fold({\"through\": \"t1/i3\"}, \"broad\")")
+        (let [tr (trailer "t1/i1" "t1/i2" "t1/i3")
+              out (apply-summaries tr (get @ca "session_summaries"))
+              sfs (summary-forms out)]
 
-                     (expect (= 1 (count sfs)))
-                     (expect (= "broad" (:summary-gist (first sfs)))))))
-             (it "FOLD OF FOLD: one whole-turn re-fold swallows TWO finer folds into one breadcrumb"
-                 (let [[ca ev] (with-verbs)]
-                   ;; two disjoint finer folds recorded first…
-                   (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"fold A\")")
-                   (ev "session_fold([\"t1/i5\"], \"fold B\")")
-                   ;; …then the whole turn is re-folded — a fold OF those folds.
-                   (ev "session_fold([\"t1\"], \"meta: the whole turn\")")
-                   (let [tr  (trailer "t1/i1" "t1/i2" "t1/i3" "t1/i4" "t1/i5")
-                         out (apply-summaries tr (get @ca "session_summaries"))
-                         sfs (summary-forms out)]
-                     ;; both finer breadcrumbs are superseded — only the meta gist survives,
-                     ;; and every iteration of the turn collapses off the wire.
-                     (expect (= 1 (count sfs)))
-                     (expect (= "meta: the whole turn" (:summary-gist (first sfs))))
-                     (expect (every? (fn [[_ r]] (:collapsed? r)) out))))))
+          (expect (= 1 (count sfs)))
+          (expect (= "broad" (:summary-gist (first sfs)))))))
+  (it "FOLD OF FOLD: one whole-turn re-fold swallows TWO finer folds into one breadcrumb"
+      (let [[ca ev] (with-verbs)]
+        ;; two disjoint finer folds recorded first…
+        (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"fold A\")")
+        (ev "session_fold([\"t1/i5\"], \"fold B\")")
+        ;; …then the whole turn is re-folded — a fold OF those folds.
+        (ev "session_fold([\"t1\"], \"meta: the whole turn\")")
+        (let [tr (trailer "t1/i1" "t1/i2" "t1/i3" "t1/i4" "t1/i5")
+              out (apply-summaries tr (get @ca "session_summaries"))
+              sfs (summary-forms out)]
+
+          ;; both finer breadcrumbs are superseded — only the meta gist survives,
+          ;; and every iteration of the turn collapses off the wire.
+          (expect (= 1 (count sfs)))
+          (expect (= "meta: the whole turn" (:summary-gist (first sfs))))
+          (expect (every? (fn [[_ r]]
+                            (:collapsed? r))
+                          out))))))
 
 ;; ── layer 4: native tool_use surface ─────────────────────────────────────────
 
@@ -337,30 +341,88 @@
    "session_turn" 4
    "session_scope" {"turn" 4 "iter" 3 "next_form" 1}
    "session_workspace" {"root" "/x"}
-   "engine_utilization" {"saturation" 8}})
+   "engine_utilization" {"saturation" 8}
+   ;; the live wire's iteration universe, stamped by `stamp-iter-universe!`, so
+   ;; `folds-view` resolves selectors + computes the still-live ledger.
+   "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i5" "t3/i1"]})
 
 (defdescribe
   session-fold-ctx-reflection-test
-  (it "folds-view compacts each intent to selector + optional gist, scopes sorted"
-      (expect (= [{"scopes" ["t1/i1" "t1/i2"] "gist" "mapped"} {"through" "t2/i5"}]
-                 (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}]))))
-  (it "a gist-less drop keeps no gist key"
-      (expect (= [{"scopes" ["t1/i1"]}] (folds-view [{"scopes" #{"t1/i1"}}]))))
+  (it "folds-view resolves selectors into a concrete collapsed+live ledger"
+      (let [uni
+            ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
+
+            out
+            (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni)]
+
+        (expect (= "t1/*" (get-in out ["folded" 0 "at"]))) ; whole turn -> tN/*
+        (expect (= "mapped" (get-in out ["folded" 0 "gist"])))
+        (expect (= "t2/*" (get out "live"))) ; turn 2 still fully live
+        (expect (= "3/5 steps (60%)" (get out "saved")))))
+  (it "a through selector is RESOLVED (not shown raw); gist-less stays gist-less"
+      (let [uni
+            ["t1/i1" "t1/i2" "t2/i1"]
+
+            out
+            (folds-view [{"through" "t1/i2"}] uni)]
+
+        (expect (= "t1/*" (get-in out ["folded" 0 "at"])))
+        (expect (not (contains? (get-in out ["folded" 0]) "gist")))
+        (expect (= "t2/*" (get out "live")))))
+  (it "a partial-turn fold stays explicit, iteration numbers run-compressed"
+      (let [uni
+            ["t3/i1" "t3/i2" "t3/i3" "t3/i4" "t3/i5"]
+
+            out
+            (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni)]
+
+        (expect (= "t3/i1-i2,i4" (get-in out ["folded" 0 "at"]))) ; same-turn runs merge
+        (expect (= "t3/i3,i5" (get out "live")))))
+  (it
+    "a broader re-fold SUPERSEDES a finer one in the ledger (one folded entry)"
+    (let [uni
+          ["t1/i1" "t1/i2" "t1/i3"]
+
+          out
+          (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
+
+      (expect (= 1 (count (get out "folded"))))
+      (expect (= "meta" (get-in out ["folded" 0 "gist"])))
+      (expect (= "t*" (get-in out ["folded" 0 "at"]))) ; every turn folded -> t*
+      (expect (= "" (get out "live")))))
+  (it "with NO universe (resume / fresh seed) it stays the SAME canonical map shape"
+      ;; one shape everywhere: still {saved folded live}; explicit scopes compress,
+      ;; unresolved ranges show pending boundary markers.
+      (let [out (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}
+                             {"since" "t3/i1"} {"from" "t1/i1" "to" "t1/i4"}]
+                            nil)]
+        (expect (= ["folded" "live" "saved"] (sort (keys out)))) ; identical envelope
+        (expect (= "t1/i1-i2" (get-in out ["folded" 0 "at"]))) ; explicit run-compressed
+        (expect (= "mapped" (get-in out ["folded" 0 "gist"])))
+        (expect (= "<=t2/i5" (get-in out ["folded" 1 "at"]))) ; through -> pending marker
+        (expect (= ">=t3/i1" (get-in out ["folded" 2 "at"]))) ; since -> pending marker
+        (expect (= "t1/i1..t1/i4" (get-in out ["folded" 3 "at"]))) ; from/to -> window
+        (expect (= "" (get out "live")))
+        (expect (= "2 steps folded" (get out "saved")))) ; explicit iters only
+      (let [out (folds-view [{"scopes" #{"t1/i1"}}] nil)]
+        (expect (= [{"at" "t1/i1"}] (get out "folded"))) ; gist-less stays gist-less
+        (expect (= "1 steps folded" (get out "saved")))))
   (it "session-view derives session_folds only when summaries exist"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (expect (contains? (eng/session-view
                            (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}]))
                          "session_folds")))
-  (it "a landed fold emits ONE structural session[\"folds\"] delta"
+  (it "a landed fold emits ONE structural session[\"folds\"] ledger delta"
       (let [c1
             (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
 
             d
             (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
 
-        (expect
-          (= "session[\"folds\"] = [{\"scopes\": [\"t1/i1\", \"t1/i2\"], \"gist\": \"mapped\"}]"
-             d))))
+        (expect (re-find #"^session\[\"folds\"\] = " d))
+        (expect (re-find #"folded" d))
+        (expect (re-find #"t1/\*" d)) ; whole turn compressed in the delta
+        (expect (re-find #"mapped" d))))
   (it "appending a second fold re-emits the folds delta (only that key moves)"
       (let [c1
             (assoc base-ctx "session_summaries" [{"through" "t2/i5"}])
@@ -371,7 +433,7 @@
             d
             (cr/render-ctx-delta (delta-map c1) (delta-map c2))]
 
-        (expect (re-find #"^session\[\"folds\"\] = " d))
+        (expect (re-find #"session\[\"folds\"\]" d)) ; whole-key or nested-path delta
         (expect (not (re-find #"workspace|env|routing" d)))))
   (it "no summaries -> no folds key, no delta"
       (expect (not (contains? (delta-map base-ctx) "folds")))

@@ -30,15 +30,45 @@
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each requested namespace, selecting
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
-   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath. ns-deps is an optional map from namespace string to a vector of PROJECT namespace strings the test TRANSITIVELY requires, in dependency order (leaves first); each is reloaded before the test so source edits — including to deeper deps — are picked up."
+   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath. ns-deps is an optional map from namespace string to a vector of PROJECT namespace strings the test TRANSITIVELY requires, in dependency order (leaves first). dep-files maps each such namespace string to its absolute source path. A dep is reloaded before the test ONLY when its source file's mtime changed since it was last loaded (tracked in a persistent per-REPL registry) — so source edits, including to deeper deps, are picked up, while an unchanged closure is never recompiled and the JVM-wide require lock is held only for the files you actually edited."
   (quote
-    (fn [nsyms sel ns-files ns-deps]
-      (doseq [n nsyms]
-        (doseq [d (get ns-deps (str n))]
-          (try (require (symbol d) :reload) (catch Throwable _ nil)))
-        (if-let [path (get ns-files (str n))]
-          (load-file path)
-          (require n :reload)))
+    (fn [nsyms sel ns-files ns-deps dep-files]
+      (let [reg
+            ;; Persistent per-REPL registry: dep ns string -> the source-file mtime it
+            ;; was last loaded at. Kept in its own namespace so it survives across evals
+            ;; on this REPL. A dep is recompiled ONLY when its file changed since — so
+            ;; the JVM-wide clojure.lang.RT/REQUIRE_LOCK is held just for the files you
+            ;; actually edited, not the whole transitive closure on every run.
+            (let [ns'
+                  (create-ns 'vis.test-runner.reload-state)
+
+                  v
+                  (or (ns-resolve ns' 'mtimes) (intern ns' 'mtimes (atom {})))]
+
+              @v)
+
+            reload!
+            (fn [d]
+              (let [f
+                    (get dep-files d)
+
+                    mt
+                    (when f (.lastModified (java.io.File. ^String f)))]
+
+                ;; Unknown file (mt nil) -> always reload (safe). Record the mtime only
+                ;; AFTER a successful reload so a failed compile is retried next run.
+                (when (or (nil? mt) (not= mt (get @reg d)))
+                  (try (require (symbol d) :reload)
+                       (when mt (swap! reg assoc d mt))
+                       (catch Throwable _ nil)))))]
+
+        (doseq [n nsyms]
+          (doseq [d (get ns-deps (str n))]
+            (reload! d))
+          ;; The test ns itself is a single file under active edit — always reload it.
+          (if-let [path (get ns-files (str n))]
+            (load-file path)
+            (require n :reload))))
       (let [only*
             (set (:only sel))
 
@@ -242,15 +272,19 @@
    when the target nREPL does not have test paths on the classpath. ns-deps
    maps each namespace string to the vector of PROJECT namespaces it transitively
    requires (dependency order, leaves first), reloaded before the test so source
-   edits — including to deeper deps — are picked up.
+   edits — including to deeper deps — are picked up. dep-files maps each such
+   namespace string to its absolute source path; run-form reloads a dep only when
+   that file's mtime changed since it was last loaded, so an unchanged closure is
+   never recompiled.
 
    The printer vars are pinned (no length/level/meta/dup limits) so the emitted
    code is always COMPLETE and readable — a caller runtime that caps
    *print-level* / *print-length* would otherwise render deep sub-forms of
    run-form as `#` / `...` and produce an unreadable, unbalanced string."
-  ([ns-strs sel] (build-eval-code ns-strs sel {} {}))
-  ([ns-strs sel ns-files] (build-eval-code ns-strs sel ns-files {}))
-  ([ns-strs sel ns-files ns-deps]
+  ([ns-strs sel] (build-eval-code ns-strs sel {} {} {}))
+  ([ns-strs sel ns-files] (build-eval-code ns-strs sel ns-files {} {}))
+  ([ns-strs sel ns-files ns-deps] (build-eval-code ns-strs sel ns-files ns-deps {}))
+  ([ns-strs sel ns-files ns-deps dep-files]
    (binding [*print-length*
              nil
 
@@ -276,6 +310,8 @@
           (pr-str ns-files)
           " "
           (pr-str ns-deps)
+          " "
+          (pr-str dep-files)
           ")"))))
 
 (defn- strip-ansi
@@ -454,7 +490,10 @@
    deeper source deps stale (foo.core-test -> foo.helper -> foo.core: an edit to
    foo.core is missed). Walking the transitive project graph and reloading
    deps-first fixes that. Library namespaces are excluded: a dep counts only
-   when a matching .clj source file lives under root; the walk is cycle-safe."
+   when a matching .clj source file lives under root; the walk is cycle-safe.
+   Returns {:deps {test-ns [dep ...]} :files {ns abs-path}} — the ordered plan
+   plus each dep's absolute source path, which run-form uses to reload a dep only
+   when its file changed since it was last loaded."
   [root ns-strs ns-files]
   (let [ns->file
         ;; project ns string -> its source File (first declaration wins).
@@ -515,14 +554,26 @@
 
             (doseq [d directs]
               (walk d))
-            @order))]
+            @order))
 
-    (into {}
-          (keep (fn [ns-str]
-                  (when-let [tf (or (get ns-files ns-str) (test-file-for root ns-str))]
-                    (let [deps (transitive (direct-deps (io/file tf) ns-str))]
-                      (when (seq deps) [ns-str deps])))))
-          ns-strs)))
+        plan
+        (into {}
+              (keep (fn [ns-str]
+                      (when-let [tf (or (get ns-files ns-str) (test-file-for root ns-str))]
+                        (let [deps (transitive (direct-deps (io/file tf) ns-str))]
+                          (when (seq deps) [ns-str deps])))))
+              ns-strs)
+
+        files
+        ;; Absolute source path of every dep across all plans, so run-form can
+        ;; mtime-guard each reload. Library deps never appear (no ns->file entry).
+        (into {}
+              (keep (fn [d]
+                      (when-let [^java.io.File f (get ns->file d)]
+                        [d (.getAbsolutePath f)])))
+              (distinct (mapcat val plan)))]
+
+    {:deps plan :files files}))
 
 (defn- run-via-repl
   [root ns-strs sel port]
@@ -544,8 +595,8 @@
                     (name (or (:status probe) :unknown))
                     ") — the server is down or unresponsive. Restart it and retry.")}
       (let [ns-files (test-files-for root ns-strs)
-            ns-deps (reload-plan root ns-strs ns-files)
-            code (build-eval-code ns-strs sel ns-files ns-deps)
+            {ns-deps :deps dep-files :files} (reload-plan root ns-strs ns-files)
+            code (build-eval-code ns-strs sel ns-files ns-deps dep-files)
             ns-disp (str/join " " ns-strs)
             r
             ;; Keep BELOW the run_tests native-tool budget (5m) so a slow / wedged

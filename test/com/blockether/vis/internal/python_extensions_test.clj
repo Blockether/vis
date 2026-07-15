@@ -751,9 +751,32 @@ def _auth_prompt():
             'Or set ACME_TOKEN=... in the environment.']
 
 
+def _enrich(provider, router_opts):
+    # provider crosses in as a plain string-keyed dict (stringify-deep) so the
+    # hook can read model names; return an enriched model list.
+    return [{'name': m['name'], 'context': 262144, 'tool_call': True}
+            for m in provider['models']]
+
+
+_events = {'selected': None}
+
+
+def _on_selected(event):
+    # side-effect hook: capture the marshalled selection event.
+    _events['selected'] = {'source': event['source'],
+                           'provider_id': event['provider']['id']}
+
+
+def seen_selected():
+    '''Return the last on_selected event captured (test observation).'''
+    return _events['selected']
+
+
 vis.extension(
     name='provider-acme',
     description='Acme static-key provider fixture.',
+    alias='acme',
+    symbols=[vis.symbol(seen_selected)],
     providers=[
         vis.provider(
             id='acme',
@@ -769,6 +792,8 @@ vis.extension(
             logout=_logout,
             limits=_limits,
             refresh_token=_refresh,
+            enrich_models=_enrich,
+            on_selected=_on_selected,
         ),
         vis.provider(
             id='acme-oauth',
@@ -860,4 +885,21 @@ vis.extension(
                      ((:provider/auth-prompt-fn oauth))))
           ;; refresh-token-fn, 1-param: RECEIVES the rejected token.
           (expect (= {:token "sk-fresh-abc" :rejected-was "old-rejected-token"}
-                     ((:provider/refresh-token-fn oauth) "old-rejected-token"))))))))
+                     ((:provider/refresh-token-fn oauth) "old-rejected-token")))
+          ;; enrich-models-fn: host provider + router-opts marshal INTO Python as
+          ;; plain string-keyed dicts; the return keywordizes and the snake
+          ;; `tool_call` becomes the `:tool-call?` key the router reads.
+          (expect (= [{:name "acme-large" :context 262144 :tool-call? true}
+                      {:name "acme-small" :context 262144 :tool-call? true}]
+                     ((:provider/enrich-models-fn p)
+                       {:id :acme :models [{:name "acme-large"} {:name "acme-small"}]}
+                       {})))
+          ;; on-selected-fn: the selection event marshals INTO Python (keyword
+          ;; keys AND values stringified); the hook captures it and returns nil.
+          (expect (nil? ((:provider/on-selected-fn p)
+                          {:previous-provider {:id :openai}
+                           :provider {:id :acme}
+                           :config {:providers [{:id :acme}]}
+                           :source :tui})))
+          (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
+            (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
