@@ -67,6 +67,9 @@ jobs/
 dev/benches/4clojure/autoresearch/
 dev/benches/4clojure/.prompt_sizes.cache.json
 dev/benches/4clojure/.system_prompt_chars.cache.json
+# Prompt-regression experiment outputs (traces, fixtures, reports, logs).
+dev/benches/prompt_regression/runs/
+dev/benches/prompt_regression/.pytest_cache/
 /.bridge/ephemeral/
 # rift/bridge per-directory ULID marker — regenerated at runtime, never source.
 .rift
