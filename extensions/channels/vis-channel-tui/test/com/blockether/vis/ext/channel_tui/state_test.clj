@@ -194,14 +194,14 @@
                  (expect (nil? (get-in @state/app-db [:channel-status :voice/input])))))
 
 (defdescribe slash-command-selection-test
-             (it "cycles selected slash suggestion index for arrows and mouse wheel"
+             (it "clamps selected slash suggestion index for arrows and mouse wheel"
                  (reset! state/app-db {:slash-command-index 0 :render-version 0})
                  (state/dispatch [:move-slash-command-selection 1 3])
                  (expect (= 1 (:slash-command-index @state/app-db)))
                  (state/dispatch [:move-slash-command-selection -1 3])
                  (expect (= 0 (:slash-command-index @state/app-db)))
                  (state/dispatch [:move-slash-command-selection -1 3])
-                 (expect (= 2 (:slash-command-index @state/app-db))))
+                 (expect (= 0 (:slash-command-index @state/app-db))))
              (it "can hide slash suggestions after tab completion until input is cleared"
                  (reset! state/app-db {:input (input/paste-text (input/empty-input) "/new-tab ")
                                        :slash-command-hidden? false
@@ -2195,7 +2195,8 @@
 
     (it "closing the last idle view releases its runtime + SSE listener"
         (let [{:keys [db fx]} (close-tab (base {:session {:id "sid-main"}}) :main)]
-          (expect (= [[:release-session-listener "sid-main"] [:release-session-runtime "sid-main"]]
+          (expect (= [[:unassign-session-project "sid-main"] [:release-session-listener "sid-main"]
+                      [:release-session-runtime "sid-main"]]
                      fx))
           ;; tab is really gone; the still-open sibling stays
           (expect (= [:tab-1] (mapv :id (:tabs db))))))
@@ -2203,14 +2204,16 @@
         (let [{:keys [fx]} (close-tab (base {:session {:id "shared"}
                                              :tab-locals {:tab-1 {:session {:id "shared"}}}})
                                       :main)]
-          (expect (nil? fx))))
+          (expect (= [] fx))))
     (it "a session with a running turn is left alone (option b)"
         (let [{:keys [fx]} (close-tab (base {:session {:id "busy"} :loading? true}) :main)]
-          (expect (nil? fx))))
+          ;; Closing disowns the project membership, but a busy runtime stays alive.
+          (expect (= [[:unassign-session-project "busy"]] fx))))
     (it "a session with queued/pending sends is left alone"
         (let [{:keys [fx]}
               (close-tab (base {:session {:id "queued"} :pending-sends [{:text "later"}]}) :main)]
-          (expect (nil? fx))))
+          ;; Queued work also prevents runtime/listener release.
+          (expect (= [[:unassign-session-project "queued"]] fx))))
     (it "closing the last remaining tab is a no-op (no release)"
         (let [{:keys [db fx]} (close-tab {:tabs [{:id :main :active? true}]
                                           :active-tab-id :main
