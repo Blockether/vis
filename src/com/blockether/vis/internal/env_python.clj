@@ -1200,13 +1200,27 @@ def __vis_native_result_scan__(__vis_tree__):
         non-tool-names
         #{"ntr" "native_tools_results" "asyncio"}
 
+        ;; Shim MODULES (yaml, numpy, requests, …) publish via `sys.modules` so
+        ;; `import <lib>` works, but many are NOT top-level globals — so they'd
+        ;; miss the member-key scan below. The shim install seeds their names
+        ;; into `__vis_shims__`; fold them in so `apropos` surfaces every shim.
+        shim-names
+        (fn []
+          (try (let [d (.getMember g "__vis_shims__")]
+                 (when (and d (not (.isNull d)) (.hasArrayElements d))
+                   (into #{}
+                         (map #(.asString ^Value (.getArrayElement d (long %))))
+                         (range (.getArraySize d)))))
+               (catch Throwable _ nil)))
+
         names
         (fn []
-          (sort (filter (fn [n]
-                          (and (not (str/starts-with? n "_"))
-                               (not (contains? builtin-names n))
-                               (not (contains? non-tool-names n))))
-                        (map str (seq (.getMemberKeys g))))))]
+          (sort (distinct (concat (filter (fn [n]
+                                            (and (not (str/starts-with? n "_"))
+                                                 (not (contains? builtin-names n))
+                                                 (not (contains? non-tool-names n))))
+                                          (map str (seq (.getMemberKeys g))))
+                                  (shim-names)))))]
 
     (.putMember g
                 "apropos"
@@ -1234,9 +1248,10 @@ def __vis_native_result_scan__(__vis_tree__):
                       (.asString (.getHashValue d (->py nm)))))]
 
               (cond (nil? nm) "doc(name): describe a sandbox global"
-                    (or (nil? m) (.isNull m)) (str nm ": <not found> — try apropos(\"\")")
+                    (and (or (nil? m) (.isNull m)) (nil? docs))
+                    (str nm ": <not found> — try apropos(\"\")")
                     :else (str nm
-                               (when (.canExecute m) " (callable)")
+                               (when (and m (not (.isNull m)) (.canExecute m)) " (callable)")
                                (when docs (str " — " docs))))))))))
 
 (def ^:private posix-compat-shim-src
@@ -1909,6 +1924,42 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     ;; Eval'd BEFORE the snapshot so each shim's `__vis_*`/published-module
     ;; names are baseline (filtered out of the model-visible live-vars view).
     (install-sandbox-shims! ctx g)
+    ;; Advertise the installed shims to the sandbox's OWN discovery surface:
+    ;; `__vis_shims__` (a name list `apropos` folds in) + `__vis_docs__`
+    ;; (name -> description, so `doc("yaml")` works even for an import-only
+    ;; module that isn't a top-level global). Same JSON-hop marshalling as the
+    ;; tool docs above. Best-effort: a registry hiccup must never break context
+    ;; creation.
+    (try (let [shims
+               (registered-sandbox-shims)
+
+               names
+               (into [] (comp (keep :shim/name) (distinct)) shims)
+
+               docs
+               (reduce (fn [m s]
+                         (if-let [nm (:shim/name s)]
+                           (let [d (:shim/description s)]
+                             (assoc m
+                               nm (if (and (string? d) (not (str/blank? d)))
+                                    (str "sandbox shim \u2014 " d)
+                                    (str "sandbox shim: a pre-installed `" nm "` module"))))
+                           m))
+                       {}
+                       shims)]
+
+           (when (seq names)
+             (.putMember g "__vis_shims_json__" (json/write-json-str names))
+             (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
+             (.putMember g "__vis_shims_json__" nil))
+           (when (seq docs)
+             (.putMember g "__vis_docs_json__" (json/write-json-str docs))
+             (.eval
+               ctx
+               "python"
+               "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
+             (.putMember g "__vis_docs_json__" nil)))
+         (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
     ;; `__vis_par__` (the host virtual-thread pool) is wired as a binding above;

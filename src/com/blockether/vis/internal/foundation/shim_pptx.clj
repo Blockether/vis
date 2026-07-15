@@ -87,7 +87,7 @@
     TextParagraph$TextAlign/LEFT))
 
 (defn- pic-type
-  [ext]
+  ^PictureData$PictureType [ext]
   (case (str/lower-case (str (or ext "png")))
     ("jpg" "jpeg")
     PictureData$PictureType/JPEG
@@ -223,7 +223,7 @@
     (.dispose cur)))
 
 (defn- srgb-val
-  [s]
+  ^String [s]
   (let [^Color c (hex->awt s)]
     (format "%02X%02X%02X" (.getRed c) (.getGreen c) (.getBlue c))))
 
@@ -359,7 +359,7 @@
         (entry-of h)
 
         box
-        (.createTextBox (nth @slides (long slide)))]
+        (.createTextBox ^XSLFSlide (nth @slides (long slide)))]
 
     (.setAnchor box (Rectangle2D$Double. (emu->pt l) (emu->pt t) (emu->pt w) (emu->pt hh)))
     (set-shape-name! box (str "TextBox " (dec (.getShapeId box))))
@@ -371,7 +371,7 @@
         (entry-of h)
 
         sh
-        (.createAutoShape (nth @slides (long slide)))]
+        (.createAutoShape ^XSLFSlide (nth @slides (long slide)))]
 
     (.setShapeType sh (shape-type type-name))
     (.setAnchor sh (Rectangle2D$Double. (emu->pt l) (emu->pt t) (emu->pt w) (emu->pt hh)))
@@ -387,7 +387,7 @@
         (entry-of h)
 
         sl
-        (nth @slides (long slide))
+        ^XSLFSlide (nth @slides (long slide))
 
         pd
         (.addPicture ss ^bytes (b64dec b64) (pic-type ext))

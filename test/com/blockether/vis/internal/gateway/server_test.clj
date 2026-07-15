@@ -39,6 +39,10 @@
           (zero? remaining) false
           :else (do (Thread/sleep 10) (recur (dec remaining))))))
 
+(deftest gateway-router-compiles-with-project-action-routes
+  (testing "static project actions do not conflict with the dynamic project-id route"
+    (is (some? ((rv 'router) "test-token" [])))))
+
 (deftest foreground-daemon-does-not-refcount-stop
   (testing "a manually-run `vis gateway start` is user-owned, not client-refcounted"
     (let [stops (atom 0)]
