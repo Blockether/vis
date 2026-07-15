@@ -31,13 +31,25 @@ The agent writes code; intermediate results bind to vars in the sandbox. A 200 K
 
 ## Fold spent history in place
 
-Once a step's output has done its job, the agent replaces it with a one-line gist via `session_fold(["tN/iN"], "what it established")` — the whole step (the tool call **and** its output) collapses off the wire, so later requests stop paying for it. A fold can target a list of steps, a whole turn (a bare `"tN"`), or a range (`{"through": "tN/iN"}` / `{"since": "tN/iN"}` / `{"from": …, "to": …}`); a wider fold supersedes a finer one it covers.
+A fold is **distillation, not deletion** — keep the finding, drop the hunt. Once a step's output has served its purpose, the agent replaces it with a one-line gist:
 
-The gist of a fold lands **in place** — a `# ⋯ folded <scopes> · <gist>` breadcrumb replaces the step exactly where it collapsed, so the finding (with its `file:line` anchors) stays where the hunt was, read in context as the model scans history. It is written **once** and never re-transmitted.
+```
+session_fold(["t2/i4"], "http timeout lives at http.py:52")
+```
 
-The live **budget** rides **inside the token meter** — the model reads it in the same place it reads how full the window is:
+The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. What the agent keeps is the **signal**: the decision, the number, and the `file:line` **anchor** that makes the fact addressable later. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
 
-- `session["utilization"]["now"]` — `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away, and which steps are still live = the next fold candidates (compressed `tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`). `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage. Scopes and counts only — no gists (those live in the breadcrumbs), no position (the `# tN/iN` step tag already carries that) — so re-emitting it each iteration costs a handful of tokens.
+One fold can target several steps at once — a list, a whole turn (a bare `"tN"`), or a range: `{"through": "tN/iN"}` (up to a step), `{"since": "tN/iN"}` (from a step onward), or `{"from": …, "to": …}` (a window). A wider fold **supersedes** a finer one it already covers, so the ledger never accumulates overlapping breadcrumbs.
+
+### The gist stays where the hunt was
+
+The gist lands **in place** — a `# ⋯ folded <scopes> · <gist>` breadcrumb replaces the step exactly where it collapsed, so the finding (with its anchors) is read in context as the model scans back through history. It is written **once** and never re-transmitted.
+
+### One live budget, in the token meter
+
+The only thing re-emitted each turn is a tiny budget line, carried **inside the token meter** — the model reads it in the same place it reads how full the window is:
+
+- `session["utilization"]["now"]` — `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away, and which steps are still live = the next fold candidates (compressed `tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`). `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage. Scopes and counts only — no gists (those live once, in the breadcrumbs), no position (the `# tN/iN` step tag already carries it) — so re-emitting it each iteration costs a handful of tokens.
 
 ## The net effect
 
