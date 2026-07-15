@@ -51,37 +51,37 @@
   "Shared content width every dialog uses, derived from `cols`. Clamped
    between the theme's dialog min/max widths and bounded by the terminal so
    the box never paints off-screen."
-  [cols]
+  ^long [^long cols]
   (let [terminal-w
         (max 40 (- cols 4))
 
         min-w
-        (min t/dialog-min-width terminal-w)
+        (min (long t/dialog-min-width) terminal-w)
 
         box-w
-        (-> (int (* cols t/dialog-width-ratio))
+        (-> (long (* cols (double t/dialog-width-ratio)))
             (max min-w)
-            (min t/dialog-max-width)
+            (min (long t/dialog-max-width))
             (min terminal-w))]
 
-    (max 1 (- box-w t/dialog-chrome-w))))
+    (max 1 (- box-w (long t/dialog-chrome-w)))))
 (defn default-content-height
   "Shared content height every dialog uses, derived from `rows`.
    Clamped to a common modal footprint so dialogs keep equal height."
-  [rows]
+  ^long [^long rows]
   (let [terminal-h
         (max 8 (- rows 4))
 
         min-h
-        (min t/dialog-min-height terminal-h)
+        (min (long t/dialog-min-height) terminal-h)
 
         box-h
-        (-> (int (* rows t/dialog-height-ratio))
+        (-> (long (* rows (double t/dialog-height-ratio)))
             (max min-h)
-            (min t/dialog-max-height)
+            (min (long t/dialog-max-height))
             (min terminal-h))]
 
-    (max 1 (- box-h t/dialog-chrome-h))))
+    (max 1 (- box-h (long t/dialog-chrome-h)))))
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
    to cleanly replace the current dialog (wizard step pattern)."
@@ -101,7 +101,7 @@
     (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
     (.refresh screen Screen$RefreshType/DELTA)))
-(defn clamp [x lo hi] (max lo (min hi x)))
+(defn clamp ^long [^long x ^long lo ^long hi] (max lo (min hi x)))
 (defn ellipsize
   [s max-w]
   (let [txt
@@ -127,17 +127,17 @@
      Spacious logo / welcome screens and long browsers opt in this way.
    - a number -> clamped between `min-adaptive-content-h` and the terminal-bounded
      `dialog-max-height`, so short dialogs are compact and long ones still scroll."
-  [rows requested]
+  ^long [^long rows requested]
   (if (nil? requested)
     (default-content-height rows)
     (let [terminal-box
           (max 8 (- rows 4))
 
           max-h
-          (max 1 (- (min t/dialog-max-height terminal-box) t/dialog-chrome-h))
+          (max 1 (- (min (long t/dialog-max-height) terminal-box) (long t/dialog-chrome-h)))
 
           floor
-          (min min-adaptive-content-h max-h)]
+          (min (long min-adaptive-content-h) max-h)]
 
       (clamp (long requested) floor max-h))))
 (defn dialog-layout
@@ -176,7 +176,7 @@
       :content-h content-h
       :hint-row hint-row})))
 (defn visible-window-start
-  [idx current-start visible-count total-count]
+  ^long [^long idx ^long current-start ^long visible-count ^long total-count]
   (let [last-start
         (max 0 (- total-count visible-count))
 
@@ -453,10 +453,10 @@
    terminal. The `+2` supplies the extra pad beyond the single-column gutter
    `draw-dialog-chrome!` already reserves inside the border, so a footer of
    width W yields 2 blank columns between the frame and the hints on each side."
-  ([cols hint] (footer-content-width cols hint 0))
-  ([cols hint min-content]
-   (-> (+ (hint-bar-width hint) 2)
-       (max (long min-content))
+  (^long [cols hint] (footer-content-width cols hint 0))
+  (^long [^long cols hint ^long min-content]
+   (-> (+ (long (hint-bar-width hint)) 2)
+       (max min-content)
        (min (max 1 (- cols 8))))))
 (defn- draw-list-item!
   ;; Selection visual:
@@ -739,9 +739,15 @@
    painting. Lets a component measure its full layout — and reconcile a scroll
    window — before any drawing happens. Returns the SAME shape the chrome does
    ({:left :top :right :bottom :inner-w :inner-h}), from the same golden math."
-  [cols rows content-w content-h]
+  [^long cols ^long rows ^long content-w ^long content-h]
   (let [[box-w box-h]
         (render/golden-dialog-size cols rows content-w content-h)
+
+        box-w
+        (long box-w)
+
+        box-h
+        (long box-h)
 
         box-left
         (quot (- cols box-w) 2)
@@ -2729,7 +2735,8 @@
           reload #(magit/log-graph-lines root {:all? all?})
           title (str "Git log — " (if all? "all branches" (or (magit/current-branch root) "HEAD")))]
 
-      (log-view-dialog! screen title (reload) :grammar nil :refresh-fn reload)))
+      (log-view-dialog! screen title (reload) :grammar nil :refresh-fn reload)
+      (clear-screen! screen)))
   nil)
 
 (defn- magit-copy-action!
@@ -3159,21 +3166,25 @@
                             body (magit/visit-file-lines vroot path)]
 
                         (if (seq body)
-                          (log-view-dialog! screen
-                                            (str path)
-                                            body
-                                            :grammar
-                                            (magit-path-grammar path))
+                          (do (log-view-dialog! screen
+                                                (str path)
+                                                body
+                                                :grammar
+                                                (magit-path-grammar path))
+                              (clear-screen! screen))
                           (when-let [d (not-empty (magit/file-diff-lines vroot target))]
-                            (log-view-dialog! screen (str path "  (diff)") d :grammar nil))))
+                            (log-view-dialog! screen (str path "  (diff)") d :grammar nil)
+                            (clear-screen! screen))))
 
                       :commit
                       (when-let [d (not-empty (magit/commit-diff-lines vroot target))]
-                        (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil))
+                        (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil)
+                        (clear-screen! screen))
 
                       :stash
                       (when-let [d (not-empty (magit/stash-diff-lines vroot target))]
-                        (log-view-dialog! screen (str (:ref target)) d :grammar nil))
+                        (log-view-dialog! screen (str (:ref target)) d :grammar nil)
+                        (clear-screen! screen))
 
                       nil))))]
 
@@ -5840,12 +5851,20 @@
   "Type-to-filter selection list — the searchable spine of the command palette.
    Thin wrapper over `list-dialog!` (filter on, content-sized, palette
    placeholder). Returns the FULL chosen item map (so callers recover
-   `:id` / slash keys), or nil on Esc."
-  [^TerminalScreen screen title items]
-  (list-dialog! screen
-                title
-                items
-                {:filter? true :placeholder "Type a command…" :enter-label "run" :height :content}))
+   `:id` / slash keys), or nil on Esc.
+
+   The optional `opts` map overrides the filter field's `:placeholder` and the
+   `:enter-label` — so callers other than the command palette (e.g. the project
+   switcher) show a fitting prompt instead of \"Type a command…\"."
+  ([^TerminalScreen screen title items] (searchable-select! screen title items nil))
+  ([^TerminalScreen screen title items {:keys [placeholder enter-label]}]
+   (list-dialog! screen
+                 title
+                 items
+                 {:filter? true
+                  :placeholder (or placeholder "Type a command…")
+                  :enter-label (or enter-label "run")
+                  :height :content})))
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
