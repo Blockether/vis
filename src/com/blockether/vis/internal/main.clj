@@ -439,7 +439,7 @@
                             not-empty)]
     (when-let [idx (str/index-of model* "/")]
       (let [provider-name (subs model* 0 idx)
-            model-name (subs model* (inc idx))]
+            model-name (subs model* (inc (long idx)))]
 
         (when (and (not (str/blank? provider-name)) (not (str/blank? model-name)))
           [(keyword provider-name) model-name])))))
@@ -829,11 +829,16 @@
 
 (defn- trace-pr-str
   [x]
-  (let [s (trace-value-str x)]
-    (if (> (count s) trace-max-inline-chars)
+  (let [s
+        (trace-value-str x)
+
+        c
+        (long (count s))]
+
+    (if (> c (long trace-max-inline-chars))
       (str (subs s 0 trace-max-inline-chars)
            "… [truncated "
-           (- (count s) trace-max-inline-chars)
+           (- c (long trace-max-inline-chars))
            " chars]")
       s)))
 
@@ -937,14 +942,14 @@
               step
               (Character/charCount cp)]
 
-          (cond (= cp 9) (let [spaces (- 4 (mod col 4))]
+          (cond (= cp 9) (let [spaces (- 4 (mod (long col) 4))]
                            (.append sb (apply str (repeat spaces \space)))
-                           (recur (+ i step) (+ col spaces)))
+                           (recur (+ i step) (+ (long col) spaces)))
                 (= cp 10) (do (.append sb \newline) (recur (+ i step) 0))
-                (< cp 32) (do (.append sb \space) (recur (+ i step) (inc col)))
+                (< cp 32) (do (.append sb \space) (recur (+ i step) (inc (long col))))
                 :else (let [piece (String. (Character/toChars cp))]
                         (.append sb piece)
-                        (recur (+ i step) (+ col (codepoint-width cp))))))))))
+                        (recur (+ i step) (+ (long col) (codepoint-width cp))))))))))
 
 (defn- wrap-plain-line
   [s max-cols]
@@ -993,7 +998,7 @@
   [label body]
   (when-not (str/blank? (strip-ansi body))
     (let [cols
-          (max 40 (- (terminal-width) 4))
+          (max 40 (- (long (terminal-width)) 4))
 
           lines
           (->> (str/split-lines (expand-tabs body))
@@ -1265,33 +1270,39 @@
   "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
    whitespace; tokens longer than `width` are hard-broken so a single
    long URL or symbol can't blow the column out."
-  [s width]
-  (let [s (str s)]
+  [s ^long width]
+  (let [s
+        (str s)
+
+        s-count
+        (long (count s))]
+
     (cond (str/blank? s) [""]
-          (<= (count s) width) [s]
-          :else (let [tokens (str/split s #"\s+")]
-                  (loop [tokens tokens
-                         line ""
-                         lines []]
+          (<= s-count width) [s]
+          :else
+          (let [tokens (str/split s #"\s+")]
+            (loop [tokens tokens
+                   line ""
+                   lines []]
 
-                    (if-let [tok (first tokens)]
-                      (cond
-                        ;; token longer than the column -> hard-split it
-                        (> (count tok) width) (let [head (subs tok 0 width)
-                                                    tail (subs tok width)
-                                                    lines' (cond-> lines
-                                                             (seq line)
-                                                             (conj line))]
+              (if-let [tok (first tokens)]
+                (cond
+                  ;; token longer than the column -> hard-split it
+                  (> (long (count tok)) width) (let [head (subs tok 0 width)
+                                                     tail (subs tok width)
+                                                     lines' (cond-> lines
+                                                              (seq line)
+                                                              (conj line))]
 
-                                                (recur (cons tail (rest tokens)) head lines'))
-                        ;; fits on the current line
-                        (or (str/blank? line) (<= (+ (count line) 1 (count tok)) width))
-                        (recur (rest tokens) (if (str/blank? line) tok (str line " " tok)) lines)
-                        ;; doesn't fit -> push current line, start a new one
-                        :else (recur (rest tokens) tok (conj lines line)))
-                      (cond-> lines
-                        (seq line)
-                        (conj line))))))))
+                                                 (recur (cons tail (rest tokens)) head lines'))
+                  ;; fits on the current line
+                  (or (str/blank? line) (<= (+ (long (count line)) 1 (long (count tok))) width))
+                  (recur (rest tokens) (if (str/blank? line) tok (str line " " tok)) lines)
+                  ;; doesn't fit -> push current line, start a new one
+                  :else (recur (rest tokens) tok (conj lines line)))
+                (cond-> lines
+                  (seq line)
+                  (conj line))))))))
 
 (def ^:private fallback-terminal-width 120)
 
@@ -1302,7 +1313,7 @@
   (try (let [n (some-> s
                        str/trim
                        parse-long)]
-         (when (and n (pos? n)) n))
+         (when (and n (pos? (long n))) n))
        (catch Throwable _ nil)))
 
 (defn- shell-first-line
@@ -1344,41 +1355,41 @@
 
 (defn- table-width
   "Visible width of a rendered table with `cols`: outer padding + cells + separators."
-  [cols]
-  (+ 2 (reduce + (map :width cols)) (* 3 (max 0 (dec (count cols))))))
+  ^long [cols]
+  (+ 2 (long (reduce + (map :width cols))) (* 3 (max 0 (dec (long (count cols)))))))
 
 (defn- expand-table-cols
   "Grow table columns to `target-width`. Columns marked `:grow? true`
    share extra width; otherwise the final column grows. This keeps all
    CLI tables full-width while preserving fixed ID/count/date columns."
-  [cols target-width]
+  [cols ^long target-width]
   (let [cols
         (vec cols)
 
         extra
-        (max 0 (- (long target-width) (table-width cols)))]
+        (max 0 (- target-width (table-width cols)))]
 
-    (if (zero? extra)
+    (if (zero? (long extra))
       cols
       (let [grow-idxs
             (let [marked (keep-indexed (fn [idx col]
                                          (when (:grow? col) idx))
                                        cols)]
-              (if (seq marked) (vec marked) [(dec (count cols))]))
+              (if (seq marked) (vec marked) [(dec (long (count cols)))]))
 
             n
-            (count grow-idxs)
+            (long (count grow-idxs))
 
             base
-            (quot extra n)
+            (quot (long extra) n)
 
             remainder
-            (rem extra n)
+            (rem (long extra) n)
 
             additions
             (into {}
                   (map-indexed (fn [i idx]
-                                 [idx (+ base (if (< i remainder) 1 0))]))
+                                 [idx (+ base (if (< (long i) (long remainder)) 1 0))]))
                   grow-idxs)]
 
         (mapv (fn [idx col]
@@ -1433,7 +1444,7 @@
         (str " " label " ")
 
         rule-len
-        (max 4 (- width (count label-str) 2))]
+        (max 4 (- (long width) (long (count label-str)) 2))]
 
     (stdout! "")
     (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
@@ -1778,7 +1789,7 @@
                   (when (and (:duration-ms result) (not effective-raw?))
                     (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents)
-      (when (pos? exit-code) (System/exit exit-code)))))
+      (when (pos? (long exit-code)) (System/exit exit-code)))))
 
 ;;; ── `vis sessions` ─────────────────────────────────────────────────
 
@@ -2119,7 +2130,7 @@
                                  (str/upper-case (name fmt))
                                  (paths/abbreviate-home (:path res))
                                  (:frames res)
-                                 (long (/ (:video-ms res) 1000)))))
+                                 (long (/ (double (:video-ms res)) 1000.0)))))
               (do
                 (stdout!
                   "Cinema export (--mp4) needs the channel-tui extension, which is not installed.")
@@ -2458,7 +2469,7 @@
     (if (seq all)
       ;; Width tracks the LONGEST provider id + a 2-space gutter so ids like
       ;; `github-copilot-individual` (25 chars) never run into their label.
-      (let [w (+ 2 (reduce max 0 (map #(count (name (:provider/id %))) all)))]
+      (let [w (+ 2 (long (reduce max 0 (map #(count (name (:provider/id %))) all))))]
         (stdout! "Available providers:")
         (doseq [p (sort-by :provider/id all)]
           (stdout!
@@ -2818,13 +2829,13 @@
                       {:type :update/not-git-checkout :path (.getPath root)})))
     (stdout! (str "Updating Vis source at " (.getPath root)))
     (let [fetch (process-result ["git" "fetch" "--tags" "origin"] root)
-          pull (when (zero? (:exit fetch)) (process-result ["git" "pull" "--ff-only"] root))]
+          pull (when (zero? (long (:exit fetch))) (process-result ["git" "pull" "--ff-only"] root))]
 
-      (when-not (zero? (:exit fetch))
+      (when-not (zero? (long (:exit fetch)))
         (throw (ex-info
                  "git fetch failed"
                  {:type :update/git-fetch-failed :stderr (:err fetch) :stdout (:out fetch)})))
-      (when-not (zero? (:exit pull))
+      (when-not (zero? (long (:exit pull)))
         (throw (ex-info "git pull --ff-only failed"
                         {:type :update/git-pull-failed :stderr (:err pull) :stdout (:out pull)})))
       (stdout! (str/trim (or (:out pull) "")))
@@ -3663,9 +3674,9 @@
       (truthy-value? (System/getenv "VIS_MEASURE"))
       (truthy-value? (System/getProperty "vis.measure"))))
 
-(defn- elapsed-ms [started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+(defn- elapsed-ms [^long started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
 
-(defn- format-ms [ms] (String/format java.util.Locale/ROOT "%.1f ms" (object-array [(double ms)])))
+(defn- format-ms [^double ms] (String/format java.util.Locale/ROOT "%.1f ms" (object-array [ms])))
 
 (defn- startup-measure-line!
   [label & kvs]

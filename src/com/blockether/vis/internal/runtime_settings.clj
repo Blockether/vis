@@ -14,6 +14,30 @@
 
 (def MAX_EVAL_TIMEOUT_MS "Hard ceiling for :eval-timeout-ms." (* 30 60 1000))
 
+(def NATIVE_TOOL_TIMEOUT_MS
+  "Wall-clock fallback for Clojure-native tool handlers. Native handlers bypass
+   the Python eval watchdog, so they need their own circuit breaker."
+  (* 5 60 1000))
+
+(def ^:private native-tool-timeout-grace-ms
+  "Room for a tool's own timeout to produce its structured result first."
+  1000)
+
+(defn native-tool-timeout-ms
+  "Return the outer deadline for a native handler. An explicit `timeout_ms`
+   gets a short grace period; otherwise use the five-minute fallback."
+  [input]
+  (let [requested (when (map? input)
+                    (or (get input "timeout_ms")
+                        (get input :timeout_ms)
+                        (get input :timeout-ms)))
+        requested (when (and (number? requested) (pos? (long requested)))
+                    (long requested))]
+    (long (min MAX_EVAL_TIMEOUT_MS
+               (if requested
+                 (+ requested native-tool-timeout-grace-ms)
+                 NATIVE_TOOL_TIMEOUT_MS)))))
+
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
@@ -51,6 +75,7 @@
    Disable per call with `:semantic-timeout-ms nil`."
   185000)
 
+
 (defn with-default-ask-code-idle-timeout
   [opts]
   (cond-> opts
@@ -65,11 +90,9 @@
 
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
-  [candidate]
-  (-> candidate
-      long
-      (max MIN_EVAL_TIMEOUT_MS)
-      (min MAX_EVAL_TIMEOUT_MS)))
+  ^long [candidate]
+  (let [candidate (long candidate)]
+    (min (long MAX_EVAL_TIMEOUT_MS) (max (long MIN_EVAL_TIMEOUT_MS) candidate))))
 
 (def ^:private shell-timeout-eval-grace-ms
   "Extra room around shell_run's own timeout so the shell tool can kill, drain,
@@ -90,9 +113,10 @@
 
 (defn eval-timeout-ms-for-code
   [base-timeout-ms code]
-  (let [base (clamp-eval-timeout-ms base-timeout-ms)]
+  (let [base (long (clamp-eval-timeout-ms base-timeout-ms))]
     (if-let [shell-secs (explicit-shell-timeout-secs code)]
-      (clamp-eval-timeout-ms (max base (+ (* 1000 shell-secs) shell-timeout-eval-grace-ms)))
+      (clamp-eval-timeout-ms
+        (max base (+ (* 1000 (long shell-secs)) (long shell-timeout-eval-grace-ms))))
       base)))
 
 (def ^:dynamic *rlm-context* "Dynamic context for RLM debug logging." nil)

@@ -244,8 +244,9 @@
   ([source-root store-root]
    (mapv (fn [backend]
            (let [availability
-                 (try ((:workspace.backend/available-fn backend)
-                        {:source-root (file-path source-root) :store-root (file-path store-root)})
+                 (try ((:workspace.backend/available-fn backend
+                                                        {:source-root (file-path source-root)
+                                                         :store-root (file-path store-root)}))
                       (catch Throwable t
                         {:available? false
                          :reason :availability-check-failed
@@ -343,9 +344,10 @@
                        :required (set required)
                        :source-root (file-path source-root)
                        :capability-matrix (capability-matrix source-root store-root)})))
-    (let [root
-          ((:workspace.backend/fork-fn backend)
-            {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
+    (let [root ((:workspace.backend/fork-fn backend
+                                            {:source-root (file-path source-root)
+                                             :store-root (file-path store-root)
+                                             :name name}))]
       {:root (file-path root) :backend (:workspace.backend/id backend)})))
 
 (defn- discard-root!
@@ -714,11 +716,11 @@
                :workspace/sandbox? (not= :live (:workspace-backend ws))
                :workspace/exists? exists?
                :workspace/changed (or changed 0)
-               :workspace/dirty? (boolean (and changed (pos? changed)))
+               :workspace/dirty? (boolean (and changed (pos? (long changed))))
                ;; Sandbox-ness is independent from VCS identity. The real
                ;; :vcs/kind is computed model-side in foundation.workspace-ctx.
                ;; Back-compat alias for channels still reading `:vcs/dirty?`.
-               :vcs/dirty? (boolean (and changed (pos? changed)))))
+               :vcs/dirty? (boolean (and changed (pos? (long changed))))))
            (catch Throwable t
              (assoc ws
                :workspace/exists? (.exists (io/file root))
@@ -886,12 +888,7 @@
         ;; everything that ever appears in the clone is an agent edit and no
         ;; trunk file can predate the baseline into a spurious deletion.
         fork-ms
-        (if (or fresh?
-                (some-> (apply-fork-ms-of from)
-                        long
-                        zero?))
-          0
-          (System/currentTimeMillis))
+        (if (or fresh? (zero? (long (or (apply-fork-ms-of from) 0)))) 0 (System/currentTimeMillis))
 
         ws
         (p/db-workspace-insert! db-info

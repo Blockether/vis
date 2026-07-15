@@ -444,7 +444,7 @@
                                     (let [sj (set (get (nth v j) "scopes"))]
                                       (and (every? sj si)           ; si ⊆ sj
                                            (or (not (every? si sj)) ; proper subset → superset wins
-                                               (< i j))))))         ; equal → later wins
+                                               (< (long i) (long j))))))) ; equal → later wins
                                 (range n))))))]
 
     (vec (keep-indexed (fn [i s]
@@ -457,9 +457,11 @@
    Pure."
   [xs]
   (reduce (fn [acc n]
-            (if-let [[a b] (peek acc)]
-              (if (= n (inc b)) (conj (pop acc) [a n]) (conj acc [n n]))
-              (conj acc [n n])))
+            (let [n (long n)]
+              (if-let [[a b] (peek acc)]
+                (let [b (long b)]
+                  (if (= n (inc b)) (conj (pop acc) [a n]) (conj acc [n n])))
+                (conj acc [n n]))))
           []
           (distinct (sort xs))))
 
@@ -762,22 +764,28 @@
    collection. Walks maps/vectors/sets/sequentials; scalars pass through;
    depth-bounded so a self-referential structure cannot loop."
   ([v] (realize-value v 8))
-  ([v depth]
-   (cond (or (nil? v) (zero? depth)) v
-         (instance? clojure.lang.IDeref v) (try (realize-value (deref v) (dec depth))
-                                                (catch Throwable _ v))
-         ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
-         ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
-         ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
-         ;; the file's line order on the wire.
-         (map? v) (reduce-kv (fn [m k val]
-                               (assoc m k (realize-value val (dec depth))))
-                             (empty v)
-                             v)
-         (vector? v) (mapv #(realize-value % (dec depth)) v)
-         (set? v) (into #{} (map #(realize-value % (dec depth))) v)
-         (sequential? v) (doall (map #(realize-value % (dec depth)) v))
-         :else v)))
+  ([v ^long depth]
+   (let [depth
+         (long depth)
+
+         depth'
+         (dec depth)]
+
+     (cond (or (nil? v) (zero? depth)) v
+           (instance? clojure.lang.IDeref v) (try (realize-value (deref v) depth')
+                                                  (catch Throwable _ v))
+           ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
+           ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
+           ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
+           ;; the file's line order on the wire.
+           (map? v) (reduce-kv (fn [m k val]
+                                 (assoc m k (realize-value val depth')))
+                               (empty v)
+                               v)
+           (vector? v) (mapv #(realize-value % depth') v)
+           (set? v) (into #{} (map #(realize-value % depth')) v)
+           (sequential? v) (doall (map #(realize-value % depth') v))
+           :else v))))
 (defn block->envelope
   "Project one loop-side block `{:code :result :error :stdout}` plus its
    1-based position and the engine cursor into the form envelope shape
@@ -883,6 +891,7 @@
    hard-coding their symbol set."
   ([blocks cursor] (blocks->forms blocks cursor nil))
   ([blocks {:keys [turn iter]} head-tag-resolver]
-   (vec (map-indexed (fn [idx block]
-                       (block->envelope block (inc idx) {:turn turn :iter iter} head-tag-resolver))
-                     (or blocks [])))))
+   (vec (map-indexed
+          (fn [idx block]
+            (block->envelope block (inc (long idx)) {:turn turn :iter iter} head-tag-resolver))
+          (or blocks [])))))

@@ -103,8 +103,9 @@
   "Pad `:forms` with placeholder maps until it has at least `n` entries.
    Tolerates out-of-order chunk arrivals (futures landing at higher
    positions before earlier ones)."
-  [forms n]
-  (if (< (count forms) n) (into forms (repeat (- n (count forms)) {:position nil})) forms))
+  [forms ^long n]
+  (let [c (long (count forms))]
+    (if (< c n) (into forms (repeat (- n c) {:position nil})) forms)))
 
 (defn- envelope-duration-ms
   [envelope]
@@ -160,10 +161,10 @@
 (defn- display-form-idx
   "Map original engine `form-idx` to the visible vector index after any
    prior silent system-call forms have been elided."
-  [entry idx]
+  [entry ^long idx]
   (if (integer? idx)
     (let [elided (or (:elided-form-idxs entry) #{})]
-      (- idx (count (filter #(< % idx) elided))))
+      (- idx (long (count (filter #(< (long %) idx) elided)))))
     idx))
 
 (defn- silent-chunk?
@@ -242,7 +243,7 @@
        :silent? (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
-  [entry display-idx form]
+  [entry ^long display-idx form]
   (let [need (inc display-idx)]
     (update entry :forms #(assoc (pad-forms-to % need) display-idx form))))
 
@@ -253,9 +254,15 @@
   (update entry
           :forms
           (fn [forms]
-            (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
-              (into (subvec forms 0 idx) (subvec forms (inc idx)))
-              forms))))
+            (let [idx
+                  (long idx)
+
+                  c
+                  (long (count forms))]
+
+              (if (and (vector? forms) (not (neg? idx)) (< idx c))
+                (into (subvec forms 0 idx) (subvec forms (inc idx)))
+                forms)))))
 
 (defn- insert-empty-form-at
   "Insert a placeholder form at display index `idx`, padding if needed.
@@ -265,10 +272,11 @@
   (update entry
           :forms
           (fn [forms]
-            (if (and (vector? forms) (integer? idx) (not (neg? idx)))
-              (let [padded (pad-forms-to forms idx)]
-                (into (conj (subvec padded 0 idx) {:position idx}) (subvec padded idx)))
-              forms))))
+            (let [idx (long idx)]
+              (if (and (vector? forms) (not (neg? idx)))
+                (let [padded (pad-forms-to forms idx)]
+                  (into (conj (subvec padded 0 idx) {:position idx}) (subvec padded idx)))
+                forms)))))
 
 (defn- hide-form-slot
   "Remember original form index `idx` as elided and drop its current
@@ -439,8 +447,13 @@
 
           base
           (reduce (fn [e engine-idx]
-                    (let [display-idx (display-form-idx e engine-idx)]
-                      (if (and (integer? display-idx) (< display-idx (count (:forms e))))
+                    (let [display-idx
+                          (display-form-idx e engine-idx)
+
+                          c
+                          (long (count (:forms e)))]
+
+                      (if (and (integer? display-idx) (< (long display-idx) c))
                         (assoc-in e [:forms display-idx :silent?] true)
                         e)))
                   base
