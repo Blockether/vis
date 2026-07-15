@@ -16,7 +16,6 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
-            [com.blockether.vis.ext.channel-tui.tabs :as tabs]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
@@ -3128,9 +3127,8 @@
 
 (defonce ^:private active-project-id*
   ;; The project bound to THIS launch directory — a project IS a tab set. Resolved
-  ;; once on startup (and re-pointed by switch-project), it replaces the old
-  ;; per-place `~/.vis/tabs/<place>.edn` sidecar: the DB (project membership +
-  ;; `project_position` order) now OWNS the open-tab set.
+  ;; once on startup (and re-pointed by switch-project). The DB (project membership +
+  ;; `project_position` order) OWNS the open-tab set.
   (atom nil))
 
 (defn- launch-root
@@ -3146,12 +3144,18 @@
    unreachable (persistence then degrades to a no-op, never a crash)."
   []
   (or @active-project-id*
-      (let [root (launch-root)
-            nm   (.getName (java.io.File. root))
-            pid  (try (some-> (vis/gateway-ensure-project-for-root! root nm)
-                              :id
-                              str)
-                      (catch Throwable _ nil))]
+      (let [root
+            (launch-root)
+
+            nm
+            (.getName (java.io.File. root))
+
+            pid
+            (try (some-> (vis/gateway-ensure-project-for-root! root nm)
+                         :id
+                         str)
+                 (catch Throwable _ nil))]
+
         (when pid (reset! active-project-id* pid))
         pid)))
 
@@ -3175,18 +3179,18 @@
   []
   (when-let [pid (ensure-active-project-id!)]
     (let [snap (state/tab-session-snapshot @state/app-db)
-          ids  (mapv :id (:sessions snap))]
+          ids (mapv :id (:sessions snap))]
+
       (when (seq ids)
         (vis/worker-future
           "tui-persist-tabs"
           (fn []
-            (try
-              (let [members (set (project-member-session-ids pid))]
-                (doseq [sid ids]
-                  (when-not (contains? members (str sid))
-                    (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))
-                (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))
-              (catch Throwable _ nil))))))))
+            (try (let [members (set (project-member-session-ids pid))]
+                   (doseq [sid ids]
+                     (when-not (contains? members (str sid))
+                       (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))
+                   (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))
+                 (catch Throwable _ nil))))))))
 
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
@@ -3506,22 +3510,16 @@
                            ;; --resume: start fresh; the session picker opens
                            ;; before the main loop (see below), like `pi -r`.
                            (:resume opts) (chat/make-session config)
-                           ;; Plain launch: resume ONLY the most recent saved
-                           ;; session for this place (the saved-ACTIVE one, else the
-                           ;; first saved id that still resolves) — ONE tab, ONE
-                           ;; transcript fetch. Every other session stays in the DB
-                           ;; and opens LAZILY from the session navigator/picker;
-                           ;; startup never restores a whole tab set.
-                           ;; No usable sidecar → fall back to the newest non-empty
-                           ;; session PINNED to this project (gateway session list
-                           ;; filtered by workspace root) — still one tab. Nothing
-                           ;; at all → a fresh session.
-                           :else (let [snap (tabs/read-snapshot)
-                                       preferred (distinct (concat (when-let [a (:active snap)]
-                                                                     [a])
-                                                                   (tabs/snapshot-session-ids
-                                                                     snap)))]
-
+                           ;; Plain launch: a project IS a tab set. Resolve the
+                           ;; launch dir's PROJECT and eagerly resume its
+                           ;; most-recent member as the ONE startup tab (one
+                           ;; transcript fetch); the REST of the set restores as
+                           ;; tabs in the background once the UI is live (see
+                           ;; restore-project-tabs! below). No project / no
+                           ;; members → fall back to the newest non-empty session
+                           ;; pinned to this root, else a fresh session.
+                           :else (let [preferred (reverse (project-member-session-ids
+                                                            (ensure-active-project-id!)))]
                                    (or (some chat/resume-session preferred)
                                        (some-> (latest-project-session-id)
                                                chat/resume-session)
@@ -4065,10 +4063,63 @@
                        (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
                          (if (:reset? choice)
                            (state/dispatch [:set-model nil nil])
-                           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))]
+                           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
+                 ;; Open the launch PROJECT's OTHER member sessions as tabs (the
+                 ;; startup tab already opened one). A project IS a tab set; this
+                 ;; restores the whole set in the BACKGROUND so startup stays
+                 ;; responsive. Best effort.
+                 restore-project-tabs!
+                 (fn restore-project-tabs! []
+                   (when-let [pid (ensure-active-project-id!)]
+                     (vis/worker-future "tui-restore-project-tabs"
+                                        (fn []
+                                          (try (doseq [sid (project-member-session-ids pid)]
+                                                 (when-not (state/tab-id-for-session @state/app-db
+                                                                                     sid)
+                                                   (when-let [sr (try (chat/resume-session sid)
+                                                                      (catch Throwable _ nil))]
+                                                     (open-session-tab! sr false))))
+                                               (catch Throwable _ nil))))))
+                 ;; C-x P — switch the ACTIVE project (its tab set). Pick a
+                 ;; project, re-point `active-project-id*`, and open that
+                 ;; project's member sessions as tabs. A project IS a tab set.
+                 switch-project!
+                 (fn switch-project! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [projects (try (vis/gateway-list-projects {:channel :tui})
+                                         (catch Throwable _ []))
+                           cur (str @active-project-id*)
+                           items (mapv (fn [p]
+                                         {:id (:id p)
+                                          :label (str (when (= cur (str (:id p))) "✔ ")
+                                                      (:name p)
+                                                      (when-let [n (:session_count p)]
+                                                        (str "  (" n ")")))})
+                                       projects)]
+
+                       (when-let [pick (with-dialog-lock
+                                         #(dlg/searchable-select! screen "Switch project…" items))]
+                         (when-let [pid (some-> (:id pick)
+                                                str)]
+                           (reset! active-project-id* pid)
+                           (let [ids (project-member-session-ids pid)]
+                             (if (seq ids)
+                               (doseq [sid ids]
+                                 (when-not (state/tab-id-for-session @state/app-db sid)
+                                   (when-let [sr (try (chat/resume-session sid)
+                                                      (catch Throwable _ nil))]
+                                     (open-session-tab! sr false))))
+                               (vis/notify! "Project has no sessions yet"
+                                            :level :info
+                                            :ttl-ms copy-success-ttl-ms)))
+                           (persist-tabs!))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))
+             ;; Plain launch: restore the REST of the launch project's tab set as
+             ;; tabs (the startup tab opened one). A project IS a tab set.
+             (when-not (or (:session-id opts) (:continue opts) (:resume opts))
+               (restore-project-tabs!))
              (loop []
 
                ;; Layout fields are populated by the render thread after the first paint. Until
@@ -5172,6 +5223,9 @@
                                   :show-sessions
                                   (show-sessions!)
 
+                                  :switch-project
+                                  (switch-project!)
+
                                   :open-dirs
                                   (pick-dir!)
 
@@ -5453,6 +5507,9 @@
 
                          :show-sessions
                          (do (show-sessions!) (recur))
+
+                         :switch-project
+                         (do (switch-project!) (recur))
 
                          ;; Ctrl+B: provider / model configuration dialog (also
                          ;; reachable via the Ctrl+P palette → "Configure Providers").

@@ -2001,7 +2001,7 @@
      :color (:color p)
      :position (:position p)
      :session_count (:session-count p)
-     :root (:root p)
+     :root (:workspace-root p)
      :created_at (:created-at p)
      :archived_at (:archived-at p)}))
 

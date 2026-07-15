@@ -19,6 +19,7 @@
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
@@ -1901,6 +1902,64 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
 
+(defn- graalvm-version-major-minor
+  "Extract the leading `MAJOR.MINOR` from a version-bearing string (e.g.
+   \"25.1.3\" or \"GraalVM CE 25.0.2+10.1\" -> \"25.1\" / \"25.0\"). nil when no
+   `\\d+.\\d+` is present."
+  [s]
+  (when s
+    (some-> (re-find #"(\d+)\.(\d+)" s)
+            rest
+            (->> (str/join "."))
+            not-empty)))
+
+(defonce ^:private graalvm-runtime-checked
+  ;; Runs the preflight ONCE per process (idempotent memoisation): the first
+  ;; deref performs the check — throwing on a mismatch — and every later deref
+  ;; is a no-op. Forced at the top of `create-python-context`, before any
+  ;; polyglot Context/Engine is built.
+  (delay
+    ;; Skip in a native image (ONE runtime is baked in — no split possible) and
+    ;; on a stock (non-GraalVM) JDK, where Truffle "unchained" runs on any
+    ;; JDK 21+ with no built-in Truffle to collide with the Maven-pinned one.
+    (when-not (System/getProperty "org.graalvm.nativeimage.imagecode")
+      (let [vendor (str (System/getProperty "java.vendor.version"))]
+        (when (str/includes? vendor "GraalVM")
+          (let [pinned (some-> (io/resource "META-INF/graalvm/org.graalvm.polyglot/version")
+                               slurp
+                               str/trim
+                               not-empty)
+                ;; Parse the JDK's GraalVM version from the substring AFTER
+                ;; "GraalVM" so a stray leading digit can't win the regex.
+                jdk-ver (graalvm-version-major-minor (subs vendor (str/index-of vendor "GraalVM")))
+                want (graalvm-version-major-minor pinned)]
+
+            (when (and want jdk-ver (not= want jdk-ver))
+              (throw
+                (ex-info (str "vis embeds GraalPy/Truffle "
+                              pinned
+                              " but is running on "
+                              vendor
+                              ", whose built-in Truffle "
+                              jdk-ver
+                              ".x collides with it — every org.graalvm.polyglot "
+                              "initializer would die with an opaque "
+                              "NoClassDefFoundError (…IOHelper$ImplHolder).\n"
+                              "Fix: run vis on a GraalVM matching "
+                              want
+                              ".x (the "
+                              "graalvm-community-jdk-25i1 / graal-"
+                              pinned
+                              " build), "
+                              "OR run --jvm on a stock (non-GraalVM) JDK 25 "
+                              "(e.g. `sdk install java 25.0.3-tem`).")
+                         {:vis/error :graalvm-version-mismatch
+                          :pinned pinned
+                          :jdk-vendor vendor
+                          :want-line want
+                          :found-line jdk-ver})))))))
+    true))
+
 (defn create-python-context
   "Create the embedded-GraalPy sandbox context with all available bindings.
 
@@ -1917,6 +1976,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
   ([custom-bindings] (create-python-context custom-bindings nil nil))
   ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil))
   ([custom-bindings roots-fn network-opts]
+   ;; Preflight the JVM's GraalVM version BEFORE building any polyglot Context:
+   ;; a mismatched built-in Truffle (e.g. GraalVM CE 25.0.2 vs the pinned
+   ;; 25.1.3) otherwise dies with an opaque NoClassDefFoundError here.
+   @graalvm-runtime-checked
    ;; Warm the shared auxiliary GraalPy contexts (printer + parser) NOW — at
    ;; session start, while NO eval is running. Creating a second polyglot Context
    ;; lazily WHILE an eval is executing on another (virtual) thread DEADLOCKS

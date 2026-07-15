@@ -1,7 +1,7 @@
 """Todo — model-facing tools + a /todos slash command over durable state.
 
 Demonstrates:
-  * tools with durable state (`vis.state` — an EDN-file-backed store
+  * tools with durable state (`vis.state` — a database-backed store
     that survives /reload and process restarts)
   * a user-facing slash command reading the same state
   * a prompt fragment teaching the model the surface

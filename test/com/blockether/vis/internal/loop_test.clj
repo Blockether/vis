@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
             [com.blockether.vis.internal.foundation.shell :as sh]
             [com.blockether.vis.internal.foundation.language-surface :as lsf]
@@ -491,10 +492,10 @@
 (defdescribe
   session-fold-scope-test
   (let [scope-key
-        (var-get #'lp/scope-key)
+        (var-get #'eng/scope-key)
 
         expand-through
-        (var-get #'lp/expand-through)
+        (var-get #'eng/expand-through)
 
         apply-summaries
         (var-get #'lp/apply-summaries)
@@ -596,7 +597,7 @@
             (expect (re-find #"Heaviest live steps" hint))
             (expect (re-find #"t1/i1" hint)))))
     (it "supersede-summaries collapses summary-of-summary (subset dropped, superset/newer wins)"
-        (let [supersede (var-get #'lp/supersede-summaries)]
+        (let [supersede (var-get #'eng/supersede-summaries)]
           ;; proper subset is covered by the broader fold → only the superset survives
           (expect (= [{"scopes" #{"t1/i2" "t1/i3" "t1/i4"} "gist" "B"}]
                      (supersede [{"scopes" #{"t1/i2" "t1/i3"} "gist" "A"}

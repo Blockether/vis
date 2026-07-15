@@ -402,6 +402,52 @@
                    (expect (= ["+alpha" "+beta"]
                               (magit/file-diff-lines dir {:path "new.txt" :area :untracked}))))))
 
+;;; ── hunk-level staging + section motion ───────────────────────────────────
+
+(defdescribe
+  hunk-stage-test
+  (it "split-diff-hunks separates the shared preamble from each @@ hunk"
+      (let [{:keys [header hunks]} (magit/split-diff-hunks ["diff --git a/f b/f" "--- a/f" "+++ b/f"
+                                                            "@@ -1,2 +1,2 @@" " a" "-b" "+B"
+                                                            "@@ -9,2 +9,2 @@" " x" "-y" "+Y"])]
+        (expect (= ["diff --git a/f b/f" "--- a/f" "+++ b/f"] header))
+        (expect (= 2 (count hunks)))
+        (expect (str/starts-with? (ffirst hunks) "@@ -1"))
+        (expect (= [" x" "-y" "+Y"] (rest (second hunks))))))
+  (it "an empty diff yields no hunks" (expect (= [] (:hunks (magit/split-diff-hunks [])))))
+  (it "a stageable diff row is selectable, a plain diff row is not"
+      (expect (magit/selectable? {:kind :diff :stageable? true :hunk 0}))
+      (expect (not (magit/selectable? {:kind :diff :text "+x"}))))
+  (it "next-section jumps header-to-header and stays put at the ends"
+      (let [rows [{:kind :file} {:kind :section} {:kind :file} {:kind :repo}]]
+        (expect (= 1 (magit/next-section rows 0 1)))
+        (expect (= 3 (magit/next-section rows 1 1)))
+        (expect (= 3 (magit/next-section rows 3 1)))
+        (expect (= 1 (magit/next-section rows 2 -1)))
+        (expect (= 0 (magit/next-section rows 0 -1)))))
+  (it "stages just one hunk of a two-hunk change, leaving the other unstaged"
+      (let [dir (init-repo!)]
+        (spit (str dir "/f.txt") (str (str/join "\n" (map str (range 1 11))) "\n"))
+        (git-run! dir "add" "-A")
+        (git-run! dir "commit" "-m" "ten")
+        (let [ls (-> (vec (str/split-lines (slurp (str dir "/f.txt"))))
+                     (assoc 0 "ONE")
+                     (assoc 9 "TEN"))]
+          (spit (str dir "/f.txt") (str (str/join "\n" ls) "\n")))
+        (expect (:ok? (magit/stage-hunk! dir {:path "f.txt" :hunk 0})))
+        (let [staged (magit/file-diff-lines dir {:path "f.txt" :area :staged})
+              unstaged (magit/file-diff-lines dir {:path "f.txt" :area :unstaged})]
+
+          (expect (some #(= "+ONE" %) staged))
+          (expect (not-any? #(= "+TEN" %) staged))
+          (expect (some #(= "+TEN" %) unstaged)))
+        (expect (:ok? (magit/unstage-hunk! dir {:path "f.txt" :hunk 0})))
+        (expect (empty? (:staged (magit/status-model dir))))))
+  (it "reports a helpful failure for an out-of-range hunk"
+      (let [dir (init-repo!)]
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (expect (not (:ok? (magit/stage-hunk! dir {:path "a.txt" :hunk 9})))))))
+
 ;;; ── pure status-buffer rows ─────────────────────────────────────────────────
 
 (def ^:private sample-model
@@ -446,22 +492,24 @@
         (expect (some #(and (= :file (:kind %)) (str/includes? (:text %) "deleted")) rows))
         (expect (some #(and (= :stash (:kind %)) (= "stash@{0}" (:ref %))) rows))
         (expect (some #(and (= :commit (:kind %)) (= "abc1234" (:sha %))) rows))))
-  (it "folds the stash list and unstaged changes shut by default, keeps recent commits open (magit fold)"
-      (let [rows (magit/status-rows sample-model #{})]
-        (expect (not-any? #(= :stash (:kind %)) rows))
-        (expect (not-any? #(and (= :file (:kind %)) (= :unstaged (:area %))) rows))
-        (expect (some #(= :commit (:kind %)) rows))
-        ;; the section HEADERS still render so the counts stay visible
-        (expect (some #(and (= :section (:kind %)) (= :stashes (:area %))) rows))
-        (expect (some #(and (= :section (:kind %)) (= :unstaged (:area %))) rows))))
-  (it "section-open? reflects defaults (staged/commits open, unstaged/stash/log closed) and flips them"
-      (expect (not (magit/section-open? #{} :unstaged)))
-      (expect (magit/section-open? #{} :staged))
-      (expect (magit/section-open? #{} :commits))
-      (expect (not (magit/section-open? #{} :stashes)))
-      (expect (magit/section-open? #{[:section :stashes]} :stashes))
-      (expect (magit/section-open? #{[:section :unstaged]} :unstaged))
-      (expect (not (magit/section-open? #{[:section :commits]} :commits))))
+  (it
+    "folds the stash list and unstaged changes shut by default, keeps recent commits open (magit fold)"
+    (let [rows (magit/status-rows sample-model #{})]
+      (expect (not-any? #(= :stash (:kind %)) rows))
+      (expect (not-any? #(and (= :file (:kind %)) (= :unstaged (:area %))) rows))
+      (expect (some #(= :commit (:kind %)) rows))
+      ;; the section HEADERS still render so the counts stay visible
+      (expect (some #(and (= :section (:kind %)) (= :stashes (:area %))) rows))
+      (expect (some #(and (= :section (:kind %)) (= :unstaged (:area %))) rows))))
+  (it
+    "section-open? reflects defaults (staged/commits open, unstaged/stash/log closed) and flips them"
+    (expect (not (magit/section-open? #{} :unstaged)))
+    (expect (magit/section-open? #{} :staged))
+    (expect (magit/section-open? #{} :commits))
+    (expect (not (magit/section-open? #{} :stashes)))
+    (expect (magit/section-open? #{[:section :stashes]} :stashes))
+    (expect (magit/section-open? #{[:section :unstaged]} :unstaged))
+    (expect (not (magit/section-open? #{[:section :commits]} :commits))))
   (it "expands a stash's diff lines directly under its row"
       (let [diff-fn
             (fn [{:keys [ref]}]
@@ -757,33 +805,34 @@
 
         (expect (some? idx))
         (expect (= "Not a git repository" (:text (nth rows (inc idx)))))))
-  (it "expanded diffs are scoped per repo even for identical relative paths"
-      (let [a
-            (init-repo!)
+  (it
+    "expanded diffs are scoped per repo even for identical relative paths"
+    (let [a
+          (init-repo!)
 
-            b
-            (init-repo!)]
+          b
+          (init-repo!)]
 
-        (spit (str a "/a.txt") "one\nA-EDIT\n")
-        (spit (str b "/a.txt") "one\nB-EDIT\n")
-        (let [repos
-              (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                                 {:root b :trunk b :label "beta" :draft? false}])
+      (spit (str a "/a.txt") "one\nA-EDIT\n")
+      (spit (str b "/a.txt") "one\nB-EDIT\n")
+      (let [repos
+            (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                               {:root b :trunk b :label "beta" :draft? false}])
 
-              diff-fn
-              (fn [row]
-                (magit/file-diff-lines (:root row) row))
+            diff-fn
+            (fn [row]
+              (magit/file-diff-lines (:root row) row))
 
-              rows
-              (magit/multi-status-rows repos #{[a :section :unstaged] [a :unstaged "a.txt"]} diff-fn)
+            rows
+            (magit/multi-status-rows repos #{[a :section :unstaged] [a :unstaged "a.txt"]} diff-fn)
 
-              diffs
-              (filterv #(= :diff (:kind %)) rows)]
+            diffs
+            (filterv #(= :diff (:kind %)) rows)]
 
-          (expect (seq diffs))
-          (expect (every? #(= a (:root %)) diffs))
-          (expect (some #(str/includes? (:text %) "A-EDIT") diffs))
-          (expect (not-any? #(str/includes? (:text %) "B-EDIT") diffs)))))
+        (expect (seq diffs))
+        (expect (every? #(= a (:root %)) diffs))
+        (expect (some #(str/includes? (:text %) "A-EDIT") diffs))
+        (expect (not-any? #(str/includes? (:text %) "B-EDIT") diffs)))))
   (it
     "section-of never bleeds one repo's files into another's section"
     (let [a
