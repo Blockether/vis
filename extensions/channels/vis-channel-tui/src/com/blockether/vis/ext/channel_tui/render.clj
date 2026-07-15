@@ -222,7 +222,7 @@
 (defn- wrap-line-preserving-marker
   [line max-width]
   (if-let [[marker body] (split-structural-line-marker line)]
-    (if (<= (p/display-width line) max-width)
+    (if (<= (p/display-width line) (long max-width))
       [line]
       (mapv #(str marker %) (wrap-unmarked-line body max-width)))
     (wrap-unmarked-line line max-width)))
@@ -262,10 +262,10 @@
                          used
                          0]
 
-                    (cond (>= i n) (.toString sb)
+                    (cond (>= (long i) (long n)) (.toString sb)
                           (>= used max-cols) (.toString sb)
                           :else (let [esc-idx (or (str/index-of s "\u001b" i) n)]
-                                  (if (< i esc-idx)
+                                  (if (< (long i) (long esc-idx))
                                     (let [chunk (subs s i esc-idx)
                                           w (p/display-width chunk)]
 
@@ -279,7 +279,9 @@
                                         ;; Render it visibly as a middle dot and continue.
                                         (let [w 1]
                                           (if (<= (+ used w) max-cols)
-                                            (do (.append sb /) (recur (inc esc-idx) (+ used w)))
+                                            (do (.append sb /)
+                                                (recur (inc (long esc-idx))
+                                                       (+ (long used) (long w))))
                                             (.toString sb)))
                                         (do (.append sb s (int esc-idx) (int (inc m-idx)))
                                             (recur (inc m-idx) used))))))))))))
@@ -324,7 +326,7 @@
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
    `wrap-text` itself."
   [text max-width]
-  (if (or (str/blank? text) (<= max-width 0))
+  (if (or (str/blank? text) (<= (long max-width) 0))
     [""]
     (let [input-lines (str/split-lines text)]
       (into [] (mapcat #(wrap-line-preserving-marker % max-width)) input-lines))))
@@ -431,7 +433,7 @@
   ([g box-top box-bottom cols top-hint] (draw-box-border! g box-top box-bottom cols top-hint true))
   ([^TextGraphics g box-top box-bottom cols top-hint sides?]
    (let [inner-w
-         (- cols 2)
+         (- (long cols) 2)
 
          bar
          (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
@@ -443,17 +445,23 @@
          ;; Top: ┌── top-hint ──┐
          (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
          (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
-         (.setCharacter g (int (dec cols)) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
+         (.setCharacter g
+                        (int (dec (long cols)))
+                        (int box-top)
+                        Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
          ;; Bottom: └──────┘ (plain rule - status moved to footer row).
          (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
          (.putString g 1 (int box-bottom) bar)
-         (.setCharacter g (int (dec cols)) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
+         (.setCharacter g
+                        (int (dec (long cols)))
+                        (int box-bottom)
+                        Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
          ;; Sides: │ ... │
-         (doseq [row (range (inc box-top) box-bottom)]
+         (doseq [row (range (inc (long box-top)) box-bottom)]
            (.setForegroundColor g t/border-fg)
            (.setBackgroundColor g t/terminal-bg)
            (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
-           (.setCharacter g (int (dec cols)) (int row) Symbols/SINGLE_LINE_VERTICAL)))
+           (.setCharacter g (int (dec (long cols))) (int row) Symbols/SINGLE_LINE_VERTICAL)))
        ;; Sideless variant: top + bottom rules with horizontal padding
        ;; on each end so the rule doesn't kiss the screen edges.
        ;; `pad` cols of empty space on each side; bar spans the inner
@@ -463,7 +471,7 @@
              INPUT_BORDER_HORIZONTAL_PAD
 
              rule-w
-             (max 0 (- cols (* 2 pad)))
+             (max 0 (- (long cols) (* 2 (long pad))))
 
              padded-bar
              (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
@@ -474,13 +482,13 @@
   "Fill the interior of a box with the standard box background."
   [^TextGraphics g box-top box-bottom cols]
   (let [inner-w
-        (- cols 2)
+        (- (long cols) 2)
 
         text-top
-        (inc box-top)
+        (inc (long box-top))
 
         rows
-        (- box-bottom box-top 1)]
+        (- (long box-bottom) (long box-top) 1)]
 
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)
@@ -490,22 +498,22 @@
   "Draw bordered message area with top-anchored scrollable messages."
   [^TextGraphics g messages box-top box-bottom cols scroll]
   (let [inner-rows
-        (- box-bottom box-top 1)
+        (- (long box-bottom) (long box-top) 1)
 
         text-top
-        (inc box-top)
+        (inc (long box-top))
 
         text-w
-        (- cols 4)
+        (- (long cols) 4)
 
         total
         (count messages)
 
         offset
-        (min scroll (max 0 (- total inner-rows)))
+        (min (long scroll) (max 0 (- (long total) (long inner-rows))))
 
         visible
-        (subvec messages offset (min total (+ offset inner-rows)))]
+        (subvec messages offset (min (long total) (+ (long offset) (long inner-rows))))]
 
     (draw-box-border! g box-top box-bottom cols "")
     (fill-box-interior! g box-top box-bottom cols)
@@ -514,7 +522,10 @@
       (.setBackgroundColor g t/box-bg)
       ;; truncate-cols handles "shorter than width" (returns input verbatim)
       ;; and column-aware truncation in one call. No min-clamp needed.
-      (p/put-str! g (inc t/pad-x) (+ text-top i) (p/truncate-cols message text-w)))))
+      (p/put-str! g
+                  (inc (long t/pad-x))
+                  (+ (long text-top) (long i))
+                  (p/truncate-cols message text-w)))))
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 (def input-pad-y
   "Internal vertical padding (rows above/below text) inside the input
@@ -570,7 +581,7 @@
 
     (cond (zero? n) 1
           :else (cond-> (quot n text-w)
-                  (pos? (mod n text-w))
+                  (pos? (long (mod (long n) (long text-w))))
                   inc))))
 (defn input-visual-row-count
   "Total visual rows occupied by every logical line in the input
@@ -588,7 +599,7 @@
       :cursor-vcol  int       column within that visual row}"
   [{:keys [lines crow ccol]} text-w]
   (let [text-w
-        (max 1 text-w)
+        (max 1 (long text-w))
 
         wrapped
         (mapv #(wrap-input-line % text-w) lines)
@@ -607,15 +618,17 @@
         ;; on a non-existent next visual row. Pin it to the end of
         ;; the last segment instead so the cursor stays painted.
         seg-idx
-        (if (and (= ccol line-len) (pos? line-len) (zero? (mod line-len text-w)))
+        (if (and (= ccol line-len)
+                 (pos? line-len)
+                 (zero? (long (mod (long line-len) (long text-w)))))
           (dec seg-count)
-          (quot ccol text-w))
+          (quot (long ccol) (long text-w)))
 
         seg-off
-        (- ccol (* seg-idx text-w))]
+        (- (long ccol) (* (long seg-idx) (long text-w)))]
 
     {:visual-lines (into [] cat wrapped)
-     :cursor-vrow (+ (nth offsets crow) seg-idx)
+     :cursor-vrow (+ (long (nth offsets crow)) (long seg-idx))
      :cursor-vcol seg-off}))
 (defn- input-more-hint
   "Left-edge label for the input top border when the editor has more
@@ -653,20 +666,35 @@
    rules only, so the typing zone sits flush with the message column on
    either side and the eye tracks the prompt directly without `│`-noise."
   [^TextGraphics g input box-top text-rows cols hint]
-  (let [box-bottom
+  (let [box-top
+        (long box-top)
+
+        text-rows
+        (long text-rows)
+
+        cols
+        (long cols)
+
+        input-pad-y
+        (long input-pad-y)
+
+        input-pad-x
+        (long input-pad-x)
+
+        box-bottom
         (+ box-top (* 2 input-pad-y) text-rows 1)
 
         text-top
         (+ (inc box-top) input-pad-y)
 
         text-w
-        (input-text-w cols)
+        (long (input-text-w cols))
 
         {:keys [visual-lines cursor-vrow cursor-vcol]}
         (soft-wrap-input input text-w)
 
         v-scroll
-        (max 0 (- cursor-vrow (dec text-rows)))
+        (max 0 (- (long cursor-vrow) (dec text-rows)))
 
         more-hint
         (input-more-hint (count visual-lines) text-rows)
@@ -683,7 +711,7 @@
     ;; Pure overpaint of already-drawn chrome - no extra rows, no layout shift.
     (when bang-pfx
       (let [pad
-            INPUT_BORDER_HORIZONTAL_PAD
+            (long INPUT_BORDER_HORIZONTAL_PAD)
 
             rule-w
             (max 0 (- cols (* 2 pad)))
@@ -702,9 +730,10 @@
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
       (.putString g
-                  (+ INPUT_BORDER_HORIZONTAL_PAD 2)
+                  (+ (long INPUT_BORDER_HORIZONTAL_PAD) 2)
                   (int box-top)
-                  (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
+                  (p/truncate-cols more-hint
+                                   (max 0 (- cols (* 2 (long INPUT_BORDER_HORIZONTAL_PAD)) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
     ;; Text
     (.setForegroundColor g t/box-fg)
@@ -729,7 +758,7 @@
         (.setBackgroundColor g t/box-bg)
         (.putString g (+ input-pad-x lead) text-top bang-pfx)))
     ;; Cursor position (visual coords)
-    [(+ input-pad-x cursor-vcol) (+ text-top (- cursor-vrow v-scroll))]))
+    [(+ input-pad-x (long cursor-vcol)) (+ text-top (- (long cursor-vrow) v-scroll))]))
 (def ^:private slash-desc-separator
   "Visual separator between the inline-code usage chip and the italic
    description. Mirrors the markdown convention `\\`/cmd\\` - description`
@@ -753,8 +782,17 @@
    the overlay scrollbar thumb. Truncation drops the description first; the
    chip renders fully whenever at all possible."
   [^TextGraphics g row left inner-w suggestion]
-  (let [pad
-        p/SELECTION_WIDTH
+  (let [row
+        (long row)
+
+        left
+        (long left)
+
+        inner-w
+        (long inner-w)
+
+        pad
+        (long p/SELECTION_WIDTH)
 
         file?
         (:file/mention? suggestion)
@@ -764,10 +802,11 @@
         x0
         (+ left pad 1)
 
-        ;; Last paintable col of the inset body, keeping 1 col clear on the
-        ;; right for the scrollbar thumb (no symmetric right padding).
+        ;; Last paintable col of the inset body. Keep 1 col clear on the
+        ;; right for the scrollbar thumb PLUS a 2-col right margin so the
+        ;; description / meta never kisses the overlay's right edge.
         row-right
-        (+ left (max 0 (dec inner-w)))
+        (+ left (max 0 (- inner-w 3)))
 
         avail
         (max 0 (- row-right x0))
@@ -779,7 +818,7 @@
         (if file? (p/truncate-middle usage-raw avail) (p/truncate-cols usage-raw avail))
 
         usage-w
-        (p/display-width usage)
+        (long (p/display-width usage))
 
         ;; Inline code chip = usage padded by 1 space on each side.
         chip-w
@@ -801,9 +840,10 @@
     (when (pos? chip-w)
       (p/set-colors! g t/code-block-fg t/code-block-bg)
       (p/fill-rect! g x0 row chip-w 1)
-      ;; Literal backticks around the candidate so it reads as markdown inline
-      ;; code (`path` / `/cmd`), on top of the code-chip background.
-      (p/put-str! g x0 row (str "`" usage "`"))
+      ;; Paint the candidate PLAIN on the code-chip background — the colored
+      ;; chip IS the markdown inline-code look, so no literal backticks. The
+      ;; 1-col pad each side (chip-w = usage-w + 2) reads as a rendered chip.
+      (p/put-str! g (inc x0) row usage)
       (p/set-colors! g row-fg row-bg))
     (if file?
       ;; FILE row: size · age · status meta, RIGHT-ALIGNED to the row edge.
@@ -814,7 +854,7 @@
             (when (pos? desc-avail) (p/truncate-cols desc-raw desc-avail))
 
             desc-w
-            (if desc (p/display-width desc) 0)]
+            (long (if desc (p/display-width desc) 0))]
 
         (when (and desc (pos? desc-w))
           (let [desc-x (max (+ chip-end 2) (- row-right desc-w))]
@@ -829,15 +869,15 @@
             (if (and (pos? chip-w) (< (+ chip-w (count sep)) avail)) (count sep) 0)
 
             desc-w
-            (max 0 (- avail chip-w sep-w))
+            (max 0 (- (long avail) (long chip-w) (long sep-w)))
 
             desc
-            (when (pos? desc-w) (p/truncate-cols desc-raw desc-w))]
+            (when (pos? (long desc-w)) (p/truncate-cols desc-raw desc-w))]
 
-        (when (pos? sep-w) (p/put-str! g chip-end row sep))
+        (when (pos? (long sep-w)) (p/put-str! g (long chip-end) row sep))
         (when (and desc (pos? (p/display-width desc)))
           (p/set-fg! g t/dialog-hint)
-          (p/styled g [p/ITALIC] (p/put-str! g (+ chip-end sep-w) row desc))
+          (p/styled g [p/ITALIC] (p/put-str! g (+ (long chip-end) (long sep-w)) row desc))
           (p/set-fg! g row-fg))))))
 (def ^:private slash-title-label "Slash commands")
 (def ^:private slash-title-hints
@@ -876,7 +916,16 @@
    ;; each side stay terminal-bg to read as breathing room.
    (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
    (p/fill-rect! g left title-row inner-w 1)
-   (let [;; Inner content sits one col inside the accent stripe so the
+   (let [title-row
+         (long title-row)
+
+         left
+         (long left)
+
+         inner-w
+         (long inner-w)
+
+         ;; Inner content sits one col inside the accent stripe so the
          ;; BOLD label doesn't kiss the stripe edge.
          content-pad
          1
@@ -908,16 +957,16 @@
          (reduce + sizes)
 
          slack
-         (max 0 (- text-w total))
+         (max 0 (- (long text-w) (long total)))
 
          gaps
          (max 1 (dec n))
 
          base
-         (max 1 (quot slack gaps))
+         (max 1 (quot (long slack) (long gaps)))
 
          extra
-         (max 0 (- slack (* base gaps)))]
+         (max 0 (- (long slack) (* (long base) (long gaps))))]
 
      (loop [i
             0
@@ -925,34 +974,43 @@
             col
             text-x0]
 
-       (when (and (< i n) (< col text-x1))
+       (when (and (< (long i) (long n)) (< (long col) (long text-x1)))
          (let [size
-               (nth sizes i)
+               (long (nth sizes i))
 
                gap
-               (if (< i (dec n)) (+ base (if (< i extra) 1 0)) 0)]
+               (if (< (long i) (dec (long n)))
+                 (+ (long base) (if (< (long i) (long extra)) 1 0))
+                 0)]
 
            (if (zero? i)
              ;; Bold left-anchored label.
-             (p/styled
-               g
-               [p/BOLD]
-               (p/put-str! g col title-row (p/truncate-cols title-label (max 0 (- text-x1 col)))))
+             (p/styled g
+                       [p/BOLD]
+                       (p/put-str! g
+                                   col
+                                   title-row
+                                   (p/truncate-cols title-label
+                                                    (max 0 (- (long text-x1) (long col))))))
              ;; [key action] pair: BOLD key, plain action.
              (let [[k a]
                    (nth title-hints (dec i))
 
                    k-w
-                   (p/display-width k)]
+                   (long (p/display-width k))]
 
                (p/styled g
                          [p/BOLD]
-                         (p/put-str! g col title-row (p/truncate-cols k (max 0 (- text-x1 col)))))
+                         (p/put-str! g
+                                     col
+                                     title-row
+                                     (p/truncate-cols k (max 0 (- (long text-x1) (long col))))))
                (p/put-str! g
-                           (+ col k-w)
+                           (+ (long col) (long k-w))
                            title-row
-                           (p/truncate-cols (str " " a) (max 0 (- text-x1 (+ col k-w)))))))
-           (recur (inc i) (+ col size gap))))))))
+                           (p/truncate-cols (str " " a)
+                                            (max 0 (- (long text-x1) (+ (long col) (long k-w))))))))
+           (recur (inc (long i)) (+ (long col) (long size) (long gap)))))))))
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
 
@@ -979,7 +1037,7 @@
            pad
 
            inner-w
-           (max 1 (- cols (* 2 pad)))
+           (max 1 (- (long cols) (* 2 (long pad))))
 
            ;; Layout above the input box (rows decrease as we go up):
            ;;   margin-row    -> terminal-bg gap (optional, drops first)
@@ -992,11 +1050,11 @@
            ;; (small terminal, lots of suggestions); only the title row
            ;; is reserved up-front.
            max-list
-           (max 0 (dec input-top))
+           (max 0 (dec (long input-top)))
 
            ; reserve title only
            visible-cap
-           (max 0 (min 6 max-list))
+           (max 0 (min 6 (long max-list)))
 
            total
            (count suggestions)
@@ -1012,8 +1070,9 @@
            (max 0 (min (dec total) (long selected-pos)))
 
            first-idx
-           (if (pos? visible-cap)
-             (min (max 0 (- total visible-cap)) (max 0 (- sel (quot visible-cap 2))))
+           (if (pos? (long visible-cap))
+             (min (max 0 (- (long total) (long visible-cap)))
+                  (max 0 (- (long sel) (quot (long visible-cap) 2))))
              0)
 
            visible
@@ -1025,34 +1084,34 @@
            (count visible)
 
            have-border?
-           (>= input-top (+ n 2))
+           (>= (long input-top) (+ (long n) 2))
 
            have-margin?
-           (>= input-top (+ n 3))
+           (>= (long input-top) (+ (long n) 3))
 
            ;; Suggestions occupy rows: input-top - n .. input-top - 1.
            ;; Border (if present) sits one row above the first suggestion,
            ;; title sits one row above the border (or above the first
            ;; suggestion if border dropped).
            first-sug
-           (- input-top n)
+           (- (long input-top) (long n))
 
            border-row
-           (when have-border? (dec first-sug))
+           (when have-border? (dec (long first-sug)))
 
            title-row
-           (cond have-border? (dec border-row)
-                 (pos? first-sug) (dec first-sug)
+           (cond have-border? (dec (long border-row))
+                 (pos? (long first-sug)) (dec (long first-sug))
                  :else 0)
 
            margin-row
-           (when have-margin? (dec title-row))]
+           (when have-margin? (dec (long title-row)))]
 
        (when (pos? n)
          ;; Top margin — paint the gap row in terminal-bg so any chat
          ;; content peeking through gets cleared. This is the breathing
          ;; room above the title bar.
-         (when (and margin-row (>= margin-row 0))
+         (when (and margin-row (>= (long margin-row) 0))
            (p/set-colors! g t/text-fg t/terminal-bg)
            (p/fill-rect! g 0 margin-row cols 1))
          ;; Title bar (accent + flex hints) — the inline `@` file picker rides
@@ -1064,7 +1123,7 @@
          ;; visually delimits the title from the suggestion list, on
          ;; `terminal-bg` (outside the accent) using the same width as
          ;; the input box's top/bottom rules.
-         (when (and border-row (>= border-row 0))
+         (when (and border-row (>= (long border-row) 0))
            (p/set-colors! g t/dialog-border t/terminal-bg)
            ;; Clear margin columns to terminal-bg first so the rule
            ;; sits flush within the same column span as the title.
@@ -1078,7 +1137,7 @@
          ;; body, not in the terminal-bg margin outside of it, so it
          ;; reads as part of the menu rather than floating loose.
          (doseq [[i suggestion] (map-indexed vector visible)]
-           (let [row (+ first-sug i)]
+           (let [row (+ (long first-sug) (long i))]
              ;; Clear the full row to terminal-bg so the margin gutters
              ;; on each side don't bleed leftover paint.
              (p/set-colors! g t/text-fg t/terminal-bg)
@@ -1091,7 +1150,7 @@
              ;; visually belongs to the row. The bullet then abuts the
              ;; candidate chip directly — no wide empty gutter between.
              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-             (p/draw-selection-marker! g (inc left) row (:slash/selected? suggestion))
+             (p/draw-selection-marker! g (inc (long left)) row (:slash/selected? suggestion))
              ;; Inline-code chip + ` - ` + italic description.
              (p/set-colors! g t/dialog-fg t/dialog-bg)
              (draw-slash-suggestion-row! g row left inner-w suggestion)))
@@ -1101,9 +1160,9 @@
          ;; feel and the same 1-row thumb as every other modal. The
          ;; suggestion list is item-windowed: total = number of
          ;; matches, viewport = visible count, scroll = first visible.
-         (when (and (pos? n) (> inner-w 2))
+         (when (and (pos? (long n)) (> (long inner-w) 2))
            (scrollbar/draw! g
-                            {:col (+ left (dec inner-w))
+                            {:col (+ (long left) (dec (long inner-w)))
                              :top first-sug
                              :track-h n
                              :total-h total
@@ -1125,10 +1184,10 @@
   ([g cols rows title body] (draw-dialog! g cols rows title body nil))
   ([^TextGraphics g cols rows title body max-w]
    (let [limit-w
-         (or max-w (max 30 (int (* cols 0.6))))
+         (or max-w (max 30 (int (* (long cols) 0.6))))
 
          content-w
-         (- limit-w 6)
+         (- (long limit-w) 6)
 
          ;; padding inside dialog
          raw-lines
@@ -1141,25 +1200,25 @@
          (apply max (map count (cons title text-lines)))
 
          box-w
-         (min limit-w (+ max-line-w 6))
+         (min (long limit-w) (+ (long max-line-w) 6))
 
          box-h
          (+ (count text-lines) 4)
 
          box-left
-         (quot (- cols box-w) 2)
+         (quot (- (long cols) (long box-w)) 2)
 
          box-top
-         (quot (- rows box-h) 2)
+         (quot (- (long rows) (long box-h)) 2)
 
          box-right
-         (+ box-left box-w -1)
+         (+ (long box-left) (long box-w) -1)
 
          box-bottom
-         (+ box-top box-h -1)
+         (+ (long box-top) (long box-h) -1)
 
          inner-w
-         (- box-w 2)
+         (- (long box-w) 2)
 
          h-bar
          (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
@@ -1167,7 +1226,7 @@
      ;; Shadow
      (.setBackgroundColor g t/dialog-shadow)
      (.fillRectangle g
-                     (TerminalPosition. (+ box-left 2) (inc box-top))
+                     (TerminalPosition. (+ (long box-left) 2) (inc (long box-top)))
                      (TerminalSize. box-w box-h)
                      \space)
      ;; Background
@@ -1180,19 +1239,19 @@
      (.setCharacter g (int box-right) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
      (.setCharacter g (int box-left) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
      (.setCharacter g (int box-right) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
-     (.putString g (inc box-left) box-top h-bar)
-     (.putString g (inc box-left) box-bottom h-bar)
-     (doseq [r (range (inc box-top) box-bottom)]
+     (.putString g (inc (long box-left)) box-top h-bar)
+     (.putString g (inc (long box-left)) box-bottom h-bar)
+     (doseq [r (range (inc (long box-top)) box-bottom)]
        (.setCharacter g (int box-left) (int r) Symbols/SINGLE_LINE_VERTICAL)
        (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
      ;; Title
      (.setForegroundColor g t/dialog-title-bg)
-     (let [title-x (+ box-left (quot (- box-w (count title)) 2))]
-       (.putString g title-x (inc box-top) title))
+     (let [title-x (+ (long box-left) (quot (- (long box-w) (count title)) 2))]
+       (.putString g title-x (inc (long box-top)) title))
      ;; Body (wrapped)
      (.setForegroundColor g t/dialog-fg)
      (doseq [[i line] (map-indexed vector text-lines)]
-       (.putString g (+ box-left 3) (+ box-top 3 i) line)))))
+       (.putString g (+ (long box-left) 3) (+ (long box-top) 3 (long i)) line)))))
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 ;; Line markers live in primitives - aliases for local readability.
 (def ^:private thinking-marker p/MARKER_THINKING)
@@ -1348,8 +1407,8 @@
            (paint-chunk! [col ^String chunk fg]
              (p/set-colors! g fg bg)
              (if (sentinel-chunk? chunk)
-               (p/paint-styled-line! g (+ x col) y chunk fg bg code-fg code-bg)
-               (p/put-str! g (+ x col) y chunk)))]
+               (p/paint-styled-line! g (+ (long x) (long col)) y chunk fg bg code-fg code-bg)
+               (p/put-str! g (+ (long x) (long col)) y chunk)))]
      (loop [i
             0
 
@@ -1359,24 +1418,24 @@
             fg
             base-fg]
 
-       (if (>= i (.length line))
+       (if (>= (long i) (.length line))
          g
          (let [esc-idx (str/index-of line "\u001b[" i)]
-           (if (or (nil? esc-idx) (< i esc-idx))
+           (if (or (nil? esc-idx) (< (long i) (long esc-idx)))
              (let [end (or esc-idx (.length line))
                    chunk (subs line i end)]
 
                (paint-chunk! col chunk fg)
                (recur end (+ col (p/display-width chunk)) fg))
-             (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
+             (let [m-idx (str/index-of line "m" (+ (long esc-idx) 2))]
                (if (nil? m-idx)
                  (let [chunk (subs line esc-idx)]
                    (paint-chunk! col chunk fg)
                    g)
-                 (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
+                 (let [codes (parse-ansi-codes (subs line (+ (long esc-idx) 2) m-idx))
                        fg* (ansi-codes->fg codes fg base-fg)]
 
-                   (recur (inc m-idx) col fg*)))))))))))
+                   (recur (inc (long m-idx)) col fg*)))))))))))
 (defn- paint-turn-stamp!
   "Overdraw canonical tN/iN/bN stamps in muted italic. Used by footer
    rows and collapsed tool badge rows so scope stays visible but dim."
@@ -1385,7 +1444,7 @@
     (when-let [ci (str/index-of (str raw) stamp)]
       (let [col (p/display-width (subs (str raw) 0 ci))]
         (p/set-colors! g t/dialog-hint bg)
-        (p/styled g [p/ITALIC] (p/put-str! g (+ x col) y stamp))))))
+        (p/styled g [p/ITALIC] (p/put-str! g (+ (long x) (long col)) y stamp))))))
 (defn- paint-code-pad-payload!
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
    payload rows can also show turn/block stamps in muted italic."
@@ -1438,12 +1497,12 @@
         ;; itself, so we only need start-col for placement.
         paint-seg!
         (fn [start-char end-char start-col]
-          (when (and start-char (< start-char end-char))
+          (when (and start-char (< (long start-char) (long end-char)))
             (let [seg (subs line start-char end-char)]
               (when (pos? (count seg))
                 (if (seq body-styles)
-                  (p/styled g body-styles (p/put-str! g (+ x start-col) y seg))
-                  (p/put-str! g (+ x start-col) y seg))))))]
+                  (p/styled g body-styles (p/put-str! g (+ (long x) (long start-col)) y seg))
+                  (p/put-str! g (+ (long x) (long start-col)) y seg))))))]
 
     (loop [i
            0
@@ -1610,7 +1669,7 @@
         2
 
         content-w
-        (max 1 (- bubble-w (* 2 h-pad)))
+        (max 1 (- (long bubble-w) (* 2 (long h-pad))))
 
         ;; `:prewrapped-lines` is set by `virtual.clj` projection for
         ;; every visible bubble (walker output); the `wrap-text`
@@ -1701,14 +1760,14 @@
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/terminal-bg)
       (p/put-str! g bx start-row (p/horiz-line bubble-w)))
-    (let [label-row (+ start-row top-sep-h)]
+    (let [label-row (+ (long start-row) (long top-sep-h))]
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
       (p/styled g [p/BOLD] (p/put-str! g bx label-row label))
       (when time-str
-        (let [right-edge (+ bx bubble-w)
+        (let [right-edge (+ (long bx) (long bubble-w))
               time-w (p/display-width time-str)
-              time-x (- right-edge time-w)]
+              time-x (- (long right-edge) (long time-w))]
 
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g time-x label-row time-str))))
@@ -1727,7 +1786,7 @@
           (if user? 1 0)
 
           btop
-          (+ start-row top-sep-h 1 top-pad)]
+          (+ (long start-row) (long top-sep-h) 1 (long top-pad))]
 
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg - the only fills come from
@@ -1765,9 +1824,13 @@
                       lines)
 
               user-fill-w
-              (max 1 (min (long bubble-w) (+ content-cols (* 2 (long h-pad)))))]
+              (max 1 (min (long bubble-w) (+ (long content-cols) (* 2 (long h-pad)))))]
 
-          (p/fill-rect! g bx (- btop top-pad) user-fill-w (+ (max 1 bubble-h) top-pad bottom-pad))))
+          (p/fill-rect! g
+                        bx
+                        (- (long btop) (long top-pad))
+                        user-fill-w
+                        (+ (max 1 (long bubble-h)) (long top-pad) (long bottom-pad)))))
       ;; Text content - per-line styling via invisible marker prefixes
       ;;
       ;; The \"answer zone\" starts at the first line carrying ANY
@@ -1800,10 +1863,10 @@
             ;; arity-3 default) keep the old paint-everything
             ;; behaviour.
             i-start
-            (long (if (pos? (long viewport-h)) (max 0 (- btop)) 0))
+            (long (if (pos? (long viewport-h)) (max 0 (- (long btop))) 0))
 
             i-end
-            (long (if (pos? (long viewport-h)) (min n (- (long viewport-h) btop)) n))
+            (long (if (pos? (long viewport-h)) (min (long n) (- (long viewport-h) (long btop))) n))
 
             iteration-bg
             t/iteration-header-bg
@@ -1842,19 +1905,20 @@
                              acc
                              (transient {})]
 
-                        (if (>= i n)
+                        (if (>= (long i) (long n))
                           (persistent! acc)
                           (if (str/starts-with? (nth lines i) md-code-marker)
                             (let [j
                                   (loop [j i]
-                                    (if (and (< j n)
+                                    (if (and (< (long j) (long n))
                                              (str/starts-with? (nth lines j) md-code-marker))
-                                      (recur (inc j))
+                                      (recur (inc (long j)))
                                       j))
 
                                   w
                                   (reduce (fn [m k]
-                                            (max m (p/display-width (subs (nth lines k) 1))))
+                                            (max (long m)
+                                                 (long (p/display-width (subs (nth lines k) 1)))))
                                           0
                                           (range i j))]
 
@@ -1863,7 +1927,7 @@
                                                (assoc! a k w))
                                              acc
                                              (range i j))))
-                            (recur (inc i) acc)))))]
+                            (recur (inc (long i)) acc)))))]
 
         (loop [i i-start]
           (when (< i i-end)
@@ -1898,8 +1962,8 @@
                       ;; Assistant answer text starts at the same column as
                       ;; the `Vis` label. User bubbles keep their inset so the
                       ;; left rail remains visually separate from prompt text.
-                      x (+ bx (if user? h-pad 0))
-                      y (+ btop i)
+                      x (+ (long bx) (long (if user? h-pad 0)))
+                      y (+ (long btop) (long i))
                       iw bubble-w
                       fbx bx
                       marker (when (pos? (count line)) (subs line 0 1))
@@ -1917,12 +1981,13 @@
                                             (not= :result-headline (:kind meta)))
                       x (cond-> x
                           output-indented?
-                          (+ tool-output-indent-cols)
+                          (+ (long tool-output-indent-cols))
 
                           code-text-inset?
                           (+ 2))
-                      iw (if output-indented? (max 0 (- iw tool-output-indent-cols)) iw)
-                      fbx (if output-indented? (+ fbx tool-output-indent-cols) fbx)]
+                      iw
+                      (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
+                      fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
 
                   ;; Pre-fill answer zone bg so ALL line types get it
                   (when in-answer? (p/set-bg! g t/answer-bg) (p/fill-rect! g fbx y iw 1))
@@ -1931,7 +1996,7 @@
                   ;; graphics pass. The row itself paints blank below.
                   (when (and *image-placements* (= :image (:kind meta)))
                     (swap! *image-placements* conj
-                      {:row (+ (long viewport-top) y) :col x :img (:img meta)}))
+                      {:row (+ (long viewport-top) (long y)) :col x :img (:img meta)}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -1941,7 +2006,7 @@
                         ;; BLOCK header is a disclosure toggle: clicking it
                         ;; collapses/expands the whole card (code + op rows).
                         (when (= :toggle-details (:kind meta))
-                          (let [abs-row (+ (long viewport-top) y)
+                          (let [abs-row (+ (long viewport-top) (long y))
                                 click-width (long (or (:click-width meta) iw))]
 
                             (cr/register! {:bounds {:row abs-row :col x :width click-width}
@@ -2009,9 +2074,9 @@
                                                             t/code-block-fg
                                                             t/code-block-bg)))
                         ;; Tagged head row — paint gutter + badge + body.
-                        (let [gutter-x (inc x)       ; col after leading pad
-                              badge-x (+ gutter-x 2) ; ▎ + space
-                              body-x (+ badge-x (count badge-token) 2)]
+                        (let [gutter-x (inc (long x))       ; col after leading pad
+                              badge-x (+ (long gutter-x) 2) ; ▎ + space
+                              body-x (+ (long badge-x) (count badge-token) 2)]
 
                           ;; Leading pad space first — keeps the band
                           ;; aligned with the surrounding chrome.
@@ -2020,13 +2085,13 @@
                           ;; Gutter glyph in kind color.
                           (p/set-colors! g kind-fg t/terminal-bg)
                           (p/styled g [p/BOLD] (p/put-str! g gutter-x y "▎"))
-                          (p/put-str! g (inc gutter-x) y " ")
+                          (p/put-str! g (inc (long gutter-x)) y " ")
                           ;; Badge token — kind-fg, BOLD.
                           (p/set-colors! g kind-fg t/terminal-bg)
                           (p/styled g [p/BOLD] (p/put-str! g badge-x y badge-token))
                           ;; Two-space separator between badge and body.
                           (p/set-colors! g t/dialog-hint t/terminal-bg)
-                          (p/put-str! g (+ badge-x (count badge-token)) y "  ")
+                          (p/put-str! g (+ (long badge-x) (count badge-token)) y "  ")
                           ;; Body — dialog-hint, BOLD + ITALIC, inline sentinels honoured.
                           (p/styled g
                                     [p/BOLD p/ITALIC]
@@ -2087,13 +2152,13 @@
                       (p/styled g
                                 [p/BOLD]
                                 (p/put-str! g x y "│")
-                                (when (pos? gutter-n) (p/put-str! g (+ x 2) y ord)))
+                                (when (pos? (long gutter-n)) (p/put-str! g (+ (long x) 2) y ord)))
                       ;; Preview — dim italic, after the ordinal.
                       (p/set-colors! g t/dialog-hint bg-color)
                       (p/styled g
                                 [p/ITALIC]
                                 (p/paint-styled-line! g
-                                                      (+ x 2 gutter-n)
+                                                      (+ (long x) 2 (long gutter-n))
                                                       y
                                                       msg
                                                       t/dialog-hint
@@ -2128,7 +2193,7 @@
                       ;; detached op-row). Register the same toggle click
                       ;; region the op-row branch does.
                       (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) y)
+                        (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
                           (cr/register! {:bounds {:row abs-row :col x :width click-width}
@@ -2183,7 +2248,7 @@
                                         t/result-path-bg)
                       (paint-turn-stamp! g x y (subs line 1) t/result-bg)
                       (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) y)
+                        (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
                           (cr/register! {:bounds {:row abs-row :col x :width click-width}
@@ -2199,7 +2264,7 @@
                       (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg)
                       (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
                       (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) y)
+                        (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
                           (cr/register! {:bounds {:row abs-row :col x :width click-width}
@@ -2324,7 +2389,7 @@
                     ;; covers `iw` so the band extends to the bubble's
                     ;; right edge, not just the text width.
                     (str/starts-with? line md-summary-marker)
-                    (let [abs-row (+ (long viewport-top) y)
+                    (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
                                         (= abs-row (:row (:bounds (cr/hovered)))))
                           bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
@@ -2357,12 +2422,14 @@
                         nil))
                     (str/starts-with? line md-code-marker)
                     (let [band-w (if (and in-answer? (:list-nested-code? meta))
-                                   (min iw (+ (get code-band-w lines-idx 0) (* 2 code-block-h-pad)))
+                                   (min (long iw)
+                                        (+ (long (get code-band-w lines-idx 0))
+                                           (* 2 (long code-block-h-pad))))
                                    iw)]
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
                       (p/fill-rect! g fbx y band-w 1)
                       (paint-ansi-line! g
-                                        (+ x code-block-h-pad)
+                                        (+ (long x) (long code-block-h-pad))
                                         y
                                         (subs line 1)
                                         t/code-block-fg
@@ -2515,7 +2582,7 @@
                     ;; matches every other thinking-mode marker so the
                     ;; whole reasoning block reads as one cohesive zone.
                     (str/starts-with? line th-md-summary-marker)
-                    (let [abs-row (+ (long viewport-top) y)
+                    (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
                                         (= abs-row (:row (:bounds (cr/hovered)))))
                           bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
@@ -2674,7 +2741,7 @@
                                               t/code-block-bg))
                       (paint-turn-stamp! g x y line line-bg)
                       (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) y)
+                        (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
                           (cr/register! {:bounds {:row abs-row :col x :width click-width}
@@ -2682,10 +2749,35 @@
                                          :session-id (:session-id meta)
                                          :node-id (:node-id meta)
                                          :collapsed? (:collapsed? meta)})))))
+                  ;; Inline markdown links: register a `:url` click region per
+                  ;; link span so a click hands the href to the OS opener (the
+                  ;; MOVE/CLICK_DOWN mouse handler looks these up). `:col` is a
+                  ;; body-relative offset; markers are zero-width so `x` is the
+                  ;; first visible column of the body.
+                  (when-let [links (:links meta)]
+                    (let [abs-row (+ (long viewport-top) (long y))
+                          hovered (cr/hovered)
+                          hover-url? (= :url (:kind hovered))]
+
+                      (doseq [{:keys [col width url]} links]
+                        (let [abs-col (+ (long x) (long col))]
+                          (cr/register! {:bounds {:row abs-row :col abs-col :width (long width)}
+                                         :kind :url
+                                         :url url})
+                          ;; Hover affordance: when the pointer is over this
+                          ;; link span, brighten its already-underlined cells
+                          ;; to the link-chrome hover fg so the link lights up
+                          ;; under the cursor. At rest the static underline
+                          ;; (INLINE_LINK sentinels) still marks it as a link.
+                          (when (and hover-url?
+                                     (= abs-row (:row (:bounds hovered)))
+                                     (= abs-col (:col (:bounds hovered))))
+                            (dotimes [dc (long width)]
+                              (p/underline-cell! g (+ abs-col dc) y t/link-chrome-hover-fg)))))))
                   (when user?
                     (p/clear-styles! g)
                     (p/set-colors! g role-fg bg-color)
-                    (p/put-str! g bx (+ btop i) "│")))
+                    (p/put-str! g bx (+ (long btop) (long i)) "│")))
                 (recur (inc i))))))
         ;; Below-content footer row: optional right-aligned meta, with
         ;; one breathing row between answer body and footer.
@@ -2709,13 +2801,13 @@
               (if footer? 1 0)
 
               footer-row
-              (+ btop bubble-h bottom-pad footer-gap)]
+              (+ (long btop) (long bubble-h) (long bottom-pad) (long footer-gap))]
 
           (when footer?
             (p/clear-styles! g)
             (p/set-colors! g t/dialog-hint t/terminal-bg)
             (p/put-str! g
-                        (+ bx (max 0 (- bubble-w (p/display-width meta-str))))
+                        (+ (long bx) (max 0 (- (long bubble-w) (long (p/display-width meta-str)))))
                         footer-row
                         meta-str))
           ;; Faint italic routing sub-note, right-aligned under the main line.
@@ -2724,10 +2816,12 @@
             (p/set-colors! g t/footer-fg-muted t/terminal-bg)
             (p/styled g
                       [p/ITALIC]
-                      (p/put-str! g
-                                  (+ bx (max 0 (- bubble-w (p/display-width fallback-note))))
-                                  (inc footer-row)
-                                  fallback-note))
+                      (p/put-str!
+                        g
+                        (+ (long bx)
+                           (max 0 (- (long bubble-w) (long (p/display-width fallback-note)))))
+                        (inc (long footer-row))
+                        fallback-note))
             (p/clear-styles! g))
           ;; Return: rows consumed
           ;;   = label(1) + top-pad(user only) + content(N)
@@ -2762,7 +2856,7 @@
         2
 
         content-w
-        (max 1 (- bubble-w (* 2 h-pad)))
+        (max 1 (- (long bubble-w) (* 2 (long h-pad))))
 
         ;; Same contract: virtual.clj projection populates
         ;; `:prewrapped-lines` via the IR walker for every visible
@@ -3095,8 +3189,8 @@
     (str (truncate-ansi-cols (str/trimr (str s)) room) suffix)))
 (defn- ellipsize-cols
   ^{:tag String} [s max-w]
-  (cond (<= max-w 0) ""
-        (<= (p/display-width s) max-w) s
+  (cond (<= (long max-w) 0) ""
+        (<= (p/display-width s) (long max-w)) s
         (= max-w 1) "..."
         :else (truncate-with-suffix s "..." max-w)))
 (defn- close-dangling-code-span
@@ -3122,16 +3216,16 @@
         gap-w
         2]
 
-    (if (> (+ suffix-w gap-w 1) max-w)
+    (if (> (+ (long suffix-w) (long gap-w) 1) (long max-w))
       (str left " / " suffix)
       (let [left-w
-            (max 1 (- max-w suffix-w gap-w))
+            (max 1 (- (long max-w) (long suffix-w) (long gap-w)))
 
             left
             (close-dangling-code-span (ellipsize-cols left left-w))
 
             pad-w
-            (max gap-w (- max-w (p/display-width left) suffix-w))]
+            (max (long gap-w) (- (long max-w) (long (p/display-width left)) (long suffix-w)))]
 
         (str left (repeat-str \space pad-w) suffix)))))
 (defn- detail-node-base-id
@@ -3287,14 +3381,15 @@
         (str " " (if collapsed? "▸ " "▾ ") summary)
 
         visible
-        (format-detail-summary-line left suffix (max 1 max-w))
+        (format-detail-summary-line left suffix (max 1 (long max-w)))
 
         ;; Lift visible-label string through the IR walker so inline
         ;; emphasis (`**bold**`, `` `code` ``, etc.) renders with
         ;; sentinel-wrapped runs the painter understands; legacy
         ;; `markdown->inline` regex parser is gone.
         wrapped
-        (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir visible)) (max 1 max-w))
+        (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir visible))
+                   (max 1 (long max-w)))
 
         meta
         {:kind :toggle-details
@@ -3399,8 +3494,8 @@
             ;; that reveals fewer than `reasoning-collapse-min-hidden` extra rows
             ;; is pure friction (uncollapse just to see one more line). Render
             ;; those inline in full.
-            (< (- (count entries) reasoning-auto-collapse-line-threshold)
-               vis/reasoning-collapse-min-hidden))
+            (< (- (count entries) (long reasoning-auto-collapse-line-threshold))
+               (long vis/reasoning-collapse-min-hidden)))
       (thinking-padded-block entries)
       (let [detail-ctx {:session-id session-id
                         :session-turn-id session-turn-id
@@ -3418,7 +3513,7 @@
             full-copy (entries->body-text entries)
             ;; Collapsed shows the first-N PEEK; expanded shows all.
             preview-n reasoning-auto-collapse-line-threshold
-            hidden-n (max 0 (- (count entries) preview-n))
+            hidden-n (max 0 (- (count entries) (long preview-n)))
             shown (if expanded? entries (vec (take preview-n entries)))
             label
             (if (or expanded? (zero? hidden-n)) "THINKING" (str "THINKING  +" hidden-n " more"))
@@ -3592,7 +3687,7 @@
               true
               (assoc :repeat-count run))]
 
-        (recur (conj acc [i entry]) (+ i run) (subvec remaining run))))))
+        (recur (conj acc [i entry]) (+ (long i) (long run)) (subvec remaining run))))))
 
 (defn- section-label-entry?
   "A body row that is a whole-line **LABEL** heading (COMMAND / STATUS / STDOUT /
@@ -3682,7 +3777,7 @@
         (when ir
           (tag-copy-block-body (vec (paste-aware-ir->entries
                                       ir
-                                      (max 1 (- fill-w tool-output-indent-cols))
+                                      (max 1 (- (long fill-w) (long tool-output-indent-cols)))
                                       (assoc opts
                                         :mode :channel
                                         :image-default-expanded? true)))
@@ -3726,7 +3821,7 @@
             (mapv (fn [line]
                     {:line (str result-marker " " line) :meta meta})
                   (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
-                             (max 1 (- fill-w 1))))
+                             (max 1 (- (long fill-w) 1))))
 
             ;; A card can carry a body yet have NO node-id (nothing to fold it
             ;; under — e.g. a nil session-id). Never DROP that body: render it
@@ -3785,7 +3880,7 @@
         show-header?
 
         fill-w
-        (max 1 (dec code-width))
+        (max 1 (dec (long code-width)))
 
         line-entry
         (fn [line]
@@ -3895,7 +3990,7 @@
                   (str (label-text (if provider-error? "provider error" "error")) (or badge ""))
 
                   hdr-pad
-                  (max 0 (- fill-w (count hdr-label) 1))
+                  (max 0 (- (long fill-w) (count hdr-label) 1))
 
                   hdr-line
                   (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
@@ -4020,7 +4115,7 @@
                         ;; one-column left breathing room as code rows, without
                         ;; shifting all reasoning/thinking rows globally.
                         comment-w
-                        (max 1 (dec fill-w))
+                        (max 1 (dec (long fill-w)))
 
                         wrapped
                         (mapcat (fn [line]
@@ -4363,18 +4458,18 @@
                                       ;; is skipped inside such a run, so the band never
                                       ;; tears back to terminal bg mid-run.
                                       prev-native?
-                                      (and (pos? idx)
+                                      (and (pos? (long idx))
                                            (chrome-hidden? form)
-                                           (chrome-hidden? (nth forms-vec (dec idx))))
+                                           (chrome-hidden? (nth forms-vec (dec (long idx)))))
 
                                       fl
-                                      (form-lines form (inc idx))]
+                                      (form-lines form (inc (long idx)))]
 
                                   ;; ONE terminal-bg blank between consecutive
                                   ;; forms inside the same iteration — skipped when
                                   ;; both are chrome-hidden native cards (their shared
                                   ;; result-bg band already separates them).
-                                  (concat (when (and (pos? idx) (not prev-native?))
+                                  (concat (when (and (pos? (long idx)) (not prev-native?))
                                             [(line-entry (str iteration-pad-marker ""))])
                                           fl)))
                               (map-indexed vector forms-vec)))]
@@ -4824,9 +4919,9 @@
             ;; then the preview right-clipped with an ellipsis so it always fits
             ;; the width and never wraps.
             item-line (fn [idx entry]
-                        (let [ord (str (inc idx) ". ")
+                        (let [ord (str (inc (long idx)) ". ")
                               gutter-n (count ord)
-                              avail (max 1 (- content-w rail-w gutter-n))
+                              avail (max 1 (- (long content-w) (long rail-w) (long gutter-n)))
                               preview (ellipsize-cols (queued-preview (:text entry)) avail)]
 
                           {:line (str queue-item-marker ord preview)
@@ -4884,7 +4979,7 @@
          (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
 
          content-w
-         (max 10 (- bubble-w 4))
+         (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
                  viewport-rows pending-sends]}
@@ -5033,10 +5128,10 @@
    STRICT: `answer` is canonical answer-IR (`[:ir & nodes]`) or nil."
   [answer trace bubble-w settings _confidence cancelled? opts]
   (let [content-w
-        (max 10 (- bubble-w 4))
+        (max 10 (- (long bubble-w) 4))
 
         fill-w
-        (max 1 (dec content-w))
+        (max 1 (dec (long content-w)))
 
         line-entry
         (fn [line]
@@ -5062,7 +5157,7 @@
         ans-entries
         (if (ir-non-empty? answer)
           (vec (ir-tui/ir->entries answer
-                                   (max 1 (- fill-w 2))
+                                   (max 1 (- (long fill-w) 2))
                                    {:session-id (:session-id opts)
                                     :session-turn-id (:session-turn-id opts)
                                     :detail-expansions (:detail-expansions opts)
@@ -5082,7 +5177,7 @@
         cancel-rows
         (mapv (fn [line]
                 (line-entry (str p/INLINE_ITALIC_ON line p/INLINE_ITALIC_OFF)))
-              (wrap-text cancel-text (max 1 (- fill-w 2))))
+              (wrap-text cancel-text (max 1 (- (long fill-w) 2))))
 
         ;; Answer layout shape mirrors code blocks:
         ;;   neutral blank row = outside top margin (unless the trace
@@ -5365,7 +5460,9 @@
         (when expanded?
           (if can-draw?
             (let [box
-                  (timg/cell-size {:w width :h height} (min image-max-cols (max 1 content-w)) 40)
+                  (timg/cell-size {:w width :h height}
+                                  (min (long image-max-cols) (max 1 (long content-w)))
+                                  40)
 
                   rows
                   (max 1 (long (:rows box)))
@@ -5420,7 +5517,7 @@
   [answer bubble-w opts]
   (assert-canonical-ir! answer)
   (let [content-w
-        (max 10 (- bubble-w 4))
+        (max 10 (- (long bubble-w) 4))
 
         raw-entries
         (if (ir-non-empty? answer) (paste-aware-ir->entries answer content-w opts) [])
@@ -5494,14 +5591,23 @@
    when the session overflows. The session title (if any) is
    surfaced via the input-box bottom status line, not here."
   [^TextGraphics g layout box-top box-bottom cols]
-  (let [text-top
-        (+ box-top MESSAGE_MARGIN_TOP)
+  (let [box-top
+        (long box-top)
+
+        box-bottom
+        (long box-bottom)
+
+        cols
+        (long cols)
+
+        text-top
+        (+ box-top (long MESSAGE_MARGIN_TOP))
 
         inner-h
-        (max 0 (- box-bottom text-top MESSAGE_MARGIN_BOTTOM))
+        (max 0 (- box-bottom text-top (long MESSAGE_MARGIN_BOTTOM)))
 
         bubble-w
-        (max 1 (- cols MESSAGE_SIDE_PAD))
+        (max 1 (- cols (long MESSAGE_SIDE_PAD)))
 
         total-h
         (long (:total-h layout))

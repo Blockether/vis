@@ -687,7 +687,8 @@
 
     (when (and c (instance? Code c) (nil? (next children)))
       (let [lit (.getLiteral ^Code c)]
-        (when (and (>= (count lit) lone-code-span-block-min) (not (path-like-code-literal? lit)))
+        (when (and (>= (count lit) (long lone-code-span-block-min))
+                   (not (path-like-code-literal? lit)))
           lit)))))
 
 (defn- cm->blocks
@@ -735,7 +736,7 @@
          (reduce (fn [out i]
                    (let [line (nth lines i)
                          hdr (peek out)
-                         pre (when (> i 1) (nth lines (- i 2)))]
+                         pre (when (> (long i) 1) (nth lines (- (long i) 2)))]
 
                      (if (and (table-delimiter-line? line)
                               (string? hdr)
@@ -948,7 +949,7 @@
 
         pad
         (fn [s w]
-          (str s (apply str (repeat (max 0 (- w (count s))) " "))))
+          (str s (apply str (repeat (max 0 (- (long w) (count s))) " "))))
 
         fmt-row
         (fn [row]
@@ -1207,7 +1208,7 @@
             (str (render-md-children children opts) "\n\n")
 
             :h
-            (let [level (max 1 (min 6 (or (:level attrs) 1)))]
+            (let [level (max 1 (min 6 (long (or (:level attrs) 1))))]
               (str (apply str (repeat level "#")) " " (render-md-children children opts) "\n\n"))
 
             :code
@@ -1343,7 +1344,7 @@
 
         pad
         (fn [s w]
-          (str s (apply str (repeat (max 0 (- w (count s))) " "))))
+          (str s (apply str (repeat (max 0 (- (long w) (count s))) " "))))
 
         fmt-row
         (fn [row]
@@ -1508,10 +1509,10 @@
          max-len
          (:max-length opts)]
 
-     (if (and max-len (> (count output) max-len))
-       (let [cut (or (str/last-index-of output "\n\n" (long (- max-len 2)))
-                     (str/last-index-of output "\n" (long (- max-len 2)))
-                     (max 0 (- max-len 2)))]
+     (if (and max-len (> (count output) (long max-len)))
+       (let [cut (or (str/last-index-of output "\n\n" (long (- (long max-len) 2)))
+                     (str/last-index-of output "\n" (long (- (long max-len) 2)))
+                     (max 0 (- (long max-len) 2)))]
          (str (subs output 0 cut) "…"))
        output))))
 
