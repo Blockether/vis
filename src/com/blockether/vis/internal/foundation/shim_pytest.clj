@@ -704,21 +704,26 @@ def __vis_install_pytest_compat__():
         return _NL.join(lines)
 
     def _explain_from_tb(tb, src):
-        if src is None or tb is None:
+        if tb is None:
             return None
         target = None
         t = tb
         while t is not None:
-            if t.tb_frame.f_code.co_filename == _PROG:
+            fn = t.tb_frame.f_code.co_filename
+            if fn == _PROG or fn in linecache.cache:
                 target = t
             t = t.tb_next
         if target is None:
+            return None
+        fn = target.tb_frame.f_code.co_filename
+        usrc = src if fn == _PROG else ''.join(linecache.getlines(fn))
+        if not usrc:
             return None
         lineno = target.tb_lineno
         local = dict(target.tb_frame.f_locals)
         glob = target.tb_frame.f_globals
         try:
-            tree = ast.parse(src)
+            tree = ast.parse(usrc)
         except Exception:
             return None
         node = None
@@ -732,7 +737,7 @@ def __vis_install_pytest_compat__():
         if node is None:
             return None
         try:
-            return _render_assert(node, local, glob, src)
+            return _render_assert(node, local, glob, usrc)
         except Exception:
             return None
 
@@ -924,28 +929,48 @@ def __vis_install_pytest_compat__():
         write(_NL + '=' * pad + line + '=' * pad + _NL)
         return 1 if (counts.get('failed', 0) + counts.get('error', 0)) else 0
 
-    def main(args=None, ns=None):
-        verbose = False
-        if args:
-            if isinstance(args, str):
-                args = [args]
-            verbose = any(a in ('-v', '--verbose', '-vv', '-vvv') for a in args)
-        if ns is None:
-            ns = sys._getframe(1).f_globals
-        src = ns.get('__vis_src__')
+    def _discover_paths(paths):
+        # Walk each path arg: a dir yields its test_*.py / *_test.py files
+        # (recursively, deterministic order); a file is taken verbatim.
+        import os
+        found = []
+        for p in paths:
+            if os.path.isdir(p):
+                for root, dnames, fnames in os.walk(p):
+                    dnames.sort()
+                    for fn in sorted(fnames):
+                        if fn.endswith('.py') and (fn.startswith('test_') or fn.endswith('_test.py')):
+                            found.append(os.path.join(root, fn))
+            elif os.path.isfile(p):
+                found.append(p)
+        return found
+
+    def _load_file(path):
+        # Exec a test file into a FRESH module namespace; register its source in
+        # linecache under the real path so assert introspection reads from disk.
+        with io.open(path, 'r', encoding='utf-8') as _f:
+            source = _f.read()
+        linecache.cache[path] = (len(source), None, source.splitlines(True), path)
+        g = {'__name__': '__vis_test__', '__file__': path, '__vis_src__': source}
+        exec(compile(source, path, 'exec'), g)
+        return g, source
+
+    def _fixtures_of(ns, allow):
         fixtures = {}
-        allow = _current_block_names(src)
         for nm, obj in list(ns.items()):
             info = getattr(obj, _FIXTURE_ATTR, None)
             if info is not None and (allow is None or nm in allow or info.name in (allow or [])):
                 fixtures[info.name] = info
-        fm = FixtureManager(fixtures)
-        tests = _collect(ns, src)
-        _buf = []
-        write = _buf.append
-        write(_NL + 'vis-pytest: collected ' + str(len(tests)) + ' item' + ('' if len(tests) == 1 else 's') + _NL + _NL)
-        results = []
-        t_start = time.time()
+        return fixtures
+
+    def _group_from_file(path):
+        g, source = _load_file(path)
+        fm = FixtureManager(_fixtures_of(g, None))
+        items = [(kind, path + '::' + nodeid, func, cls, ln)
+                 for (kind, nodeid, func, cls, ln) in _collect(g, None)]
+        return (items, fm, source)
+
+    def _run_group(tests, fm, src, results, write, verbose):
         for kind, nodeid, func, cls, _ln in tests:
             base_marks = list(getattr(func, _MARKS_ATTR, []))
             for pid, pkwargs, casemarks in _expand_params(base_marks):
@@ -958,6 +983,50 @@ def __vis_install_pytest_compat__():
                     write(_CHAR.get(r.outcome, '?'))
         fm.teardown('module')
         fm.teardown('session')
+
+    def main(args=None, ns=None):
+        verbose = False
+        paths = []
+        if args:
+            if isinstance(args, str):
+                args = [args]
+            for a in args:
+                if a in ('-v', '--verbose', '-vv', '-vvv'):
+                    verbose = True
+                elif isinstance(a, str) and not a.startswith('-'):
+                    paths.append(a)
+        if ns is None:
+            ns = sys._getframe(1).f_globals
+        groups = []
+        load_errors = []
+        if paths:
+            # Disk mode: discover + import files, collect test_* from each.
+            for fpath in _discover_paths(paths):
+                try:
+                    groups.append(_group_from_file(fpath))
+                except Exception as _e:
+                    load_errors.append((fpath, _e))
+        else:
+            # Inline mode: collect from the caller's block globals.
+            src = ns.get('__vis_src__')
+            fm = FixtureManager(_fixtures_of(ns, _current_block_names(src)))
+            groups.append((_collect(ns, src), fm, src))
+        total = 0
+        for _tests, _fm, _src in groups:
+            total += len(_tests)
+        _buf = []
+        write = _buf.append
+        write(_NL + 'vis-pytest: collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)
+        results = []
+        t_start = time.time()
+        for tests, fm, src in groups:
+            _run_group(tests, fm, src, results, write, verbose)
+        for fpath, _e in load_errors:
+            r = _Result(fpath)
+            r.outcome = 'error'
+            r.longrepr = 'ERROR collecting ' + fpath + _NL + _render_failure(_e, None)
+            results.append(r)
+            write(_CHAR.get('error', 'E'))
         elapsed = time.time() - t_start
         rc = _summary(results, write, elapsed)
         sys.stdout.write(''.join(_buf))
@@ -1021,7 +1090,7 @@ del __vis_install_pytest_compat__
      :ext/sandbox-shims
      [{:shim/name "pytest"
        :shim/description
-       "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures, parametrize, marks, raises/approx, `pytest.main()`. Not supported: test-file discovery, CLI, and import-time assertion rewrite (write tests + `pytest.main()` in one block)."
+       "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures, parametrize, marks, raises/approx, `pytest.main()`. `pytest.main([paths])` discovers test_*.py / *_test.py under dirs/files on disk (assert introspection included), or with no args runs the current block's tests. Not supported: conftest.py, plugins/CLI options, and import-time assertion rewrite."
        :shim/preamble pytest-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)
