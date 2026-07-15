@@ -389,9 +389,11 @@
         {:summary label}))))
 
 (defn- render-lint-result
-  "lint_code → `` `path` — clean `` / `N files — E errors, W warnings` headline
+  "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline
    (the LINT_CODE badge already names the tool, and the headline names the linted
-   target(s) when given); the findings (`file:row:col level message`) in the body."
+   target(s) — the file/dir path(s) when given, else `snippet` for a stdin lint or
+   `N files` for a bare workspace lint); the findings (`file:row:col level message`)
+   in the body."
   [r]
   (let [errors
         (or (get r "error") 0)
@@ -428,7 +430,7 @@
               (seq targets) (str (count targets)
                                  " targets"
                                  (when (and n (> n (count targets))) (str " (" n " files)")))
-              n (str n " file" (when (not= 1 n) "s")))]
+              n (if (= 1 n) "snippet" (str n " files")))]
 
     {:summary (not-empty (str head
                               (when head
