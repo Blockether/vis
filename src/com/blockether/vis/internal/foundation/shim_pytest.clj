@@ -1021,7 +1021,7 @@ del __vis_install_pytest_compat__
      :ext/sandbox-shims
      [{:shim/name "pytest"
        :shim/description
-       "pytest-compatible `pytest` module built on the stdlib (ast/inspect/linecache). Collection, assert introspection, fixtures, parametrize, marks, raises/approx, and a pytest.main() runner. Pure Python, no host bridge."
+       "pytest-compatible `pytest` on the stdlib — collection, assert introspection, fixtures, parametrize, marks, raises/approx, `pytest.main()`. Not supported: test-file discovery, CLI, and import-time assertion rewrite (write tests + `pytest.main()` in one block)."
        :shim/preamble pytest-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

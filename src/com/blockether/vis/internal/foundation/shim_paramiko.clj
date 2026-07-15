@@ -1043,7 +1043,7 @@ del __vis_install_paramiko__
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/description
-       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP channels live host-side by integer handle)."
+       "paramiko-compatible SSH2 module backed by pure-Java JSch (sessions + SFTP by integer handle). Not supported: key generation, `from_private_key(file_obj)`, interactive `invoke_shell`, and the low-level `Transport` API — use `SSHClient` + `exec_command`/SFTP."
        :shim/bindings paramiko-bridge-bindings
        :shim/preamble paramiko-shim-src}]}))
 

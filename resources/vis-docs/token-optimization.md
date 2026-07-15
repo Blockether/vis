@@ -31,19 +31,23 @@ The agent writes code; intermediate results bind to vars in the sandbox. A 200 K
 
 ## Fold spent history in place
 
-A fold is **distillation, not deletion** — keep the finding, drop the hunt. Once a step's output has served its purpose, the agent replaces it with a one-line gist:
+A fold is **distillation, not deletion** — it drops steps off the **wire** only, never from the database, so it is always safe and always recoverable. Once a step's output has served its purpose, the agent replaces it with a one-line gist:
 
 ```
 session_fold(["t2/i4"], "http timeout lives at http.py:52")
 ```
 
-The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. What the agent keeps is the **signal**: the decision, the number, and the `file:line` **anchor** that makes the fact addressable later. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
+The whole step — the tool call **and** its output — collapses off the wire, so later requests stop paying for it. The gist is the fold's **rationale**: what the steps established and why the hunt is now safe to drop — the decision, the number, and the `file:line` **anchor** that makes the fact addressable later, so a reader scanning back sees *why* those steps went away. What it drops is the **noise**: search sweeps, raw dumps, dead ends, superseded reads.
 
 One fold can target several steps at once — a list, a whole turn (a bare `"tN"`), or a range: `{"through": "tN/iN"}` (up to a step), `{"since": "tN/iN"}` (from a step onward), or `{"from": …, "to": …}` (a window). A wider fold **supersedes** a finer one it already covers, so the ledger never accumulates overlapping breadcrumbs.
 
 ### The gist stays where the hunt was
 
 The gist lands **in place** — a `# ⋯ folded <scopes> · <gist>` breadcrumb replaces the step exactly where it collapsed, so the finding (with its anchors) is read in context as the model scans back through history. It is written **once** and never re-transmitted.
+
+### Folding never loses anything
+
+A fold is a render-time **intent**, not a delete: it hides steps from the wire, but the database keeps every one. Introspection stays available at all times — any folded **native** tool result is re-fetchable by its id via `ntr[...]` (this turn or a past turn, even after a restart clears the sandbox vars), and a whole past turn is readable via `session_state(id)`. Because a fold is reversible, the agent can collapse aggressively and re-fetch the rare detail it later needs.
 
 ### One live budget, in the token meter
 

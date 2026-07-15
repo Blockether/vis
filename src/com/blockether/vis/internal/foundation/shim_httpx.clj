@@ -291,7 +291,7 @@ del __vis_install_httpx__
      :ext/sandbox-shims
      [{:shim/name "httpx"
        :shim/description
-       "httpx-compatible `httpx` module (get/post/Client/Response/raise_for_status) wrapping the requests shim (pure Python, no host bridge)."
+       "httpx-compatible `httpx` (get/post/Client/Response/raise_for_status) wrapping the requests shim. Not supported: async `AsyncClient` and HTTP/2 (sync API only)."
        :shim/preamble httpx-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)

@@ -790,7 +790,7 @@ del __vis_install_tzdata__
      :ext/sandbox-shims
      [{:shim/name "tzdata"
        :shim/description
-       "zoneinfo/pytz/tzdata + dateutil.{tz,parser,relativedelta} backed by JVM java.time (604+ IANA zones, DST-correct, no data files)."
+       "zoneinfo/pytz/tzdata + dateutil.{tz,parser,relativedelta} backed by JVM java.time (600+ IANA zones, DST-correct, no data files). Not supported: dateutil beyond the `tz`, `parser`, and `relativedelta` submodules."
        :shim/bindings tzdata-bridge-bindings
        :shim/preamble tzdata-shim-src}]}))
 

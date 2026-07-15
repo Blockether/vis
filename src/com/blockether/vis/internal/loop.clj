@@ -3002,26 +3002,31 @@
    :description (str "Compact PAST steps out of the conversation to keep context lean: fold "
                      "the named steps (each tagged `# tN/iN` in its result) off the wire, "
                      "replaced by ONE optional gist line. `target` selects what to fold; "
-                     "`gist` is the single takeaway kept in their place — OMIT it to drop the "
+                     "`gist` is the single takeaway kept in their place — its RATIONALE: what "
+                     "the steps ESTABLISHED and why they are safe to drop — OMIT it to drop the "
                      "steps outright. Folds are idempotent and superseding: a broader re-fold "
-                     "replaces a finer one (one breadcrumb, never a stack). Same verb is "
-                     "callable inside python_execution as `session_fold(target, gist)`.")
-   :schema {:type "object"
-            :properties
-            {"target" {:description
-                       (str
-                         "What to fold. Either a LIST of step ids like [\"t2/i3\", \"t2/i4\"] "
-                         "(a bare \"t2\" in the list folds that WHOLE turn), OR a selector "
-                         "object: {\"through\": \"tN/iN\"} folds every step up to and INCLUDING "
-                         "that one; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an inclusive window "
-                         "(either bound optional); {\"since\": \"tN/iN\"} that step through the "
-                         "newest.")}
-             "gist" {:type "string"
-                     :description
-                     (str "Optional one-line takeaway kept in place of the folded steps, "
-                          "anchored (e.g. \"http timeout @ http.py:52\"). OMIT to drop the steps "
-                          "with no summary line.")}}
-            :required ["target"]}})
+                     "replaces a finer one (one breadcrumb, never a stack). Folding is WIRE-ONLY: "
+                     "it NEVER deletes from the DB, so it is always reversible — a folded native "
+                     "tool result stays fetchable by its id via `ntr[...]` (this turn or a past "
+                     "turn). Same verb is callable inside python_execution as "
+                     "`session_fold(target, gist)`.")
+   :schema
+   {:type "object"
+    :properties
+    {"target" {:description
+               (str "What to fold. Either a LIST of step ids like [\"t2/i3\", \"t2/i4\"] "
+                    "(a bare \"t2\" in the list folds that WHOLE turn), OR a selector "
+                    "object: {\"through\": \"tN/iN\"} folds every step up to and INCLUDING "
+                    "that one; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an inclusive window "
+                    "(either bound optional); {\"since\": \"tN/iN\"} that step through the "
+                    "newest.")}
+     "gist" {:type "string"
+             :description
+             (str "Optional one-line takeaway kept in place of the folded steps — the "
+                  "RATIONALE for the fold: what the steps established and why they are done, "
+                  "anchored (e.g. \"http timeout @ http.py:52\"). OMIT to drop the steps "
+                  "with no summary line.")}}
+    :required ["target"]}})
 
 (defn- native-tools
   "The native tool surface advertised to the model: the file tools declared via

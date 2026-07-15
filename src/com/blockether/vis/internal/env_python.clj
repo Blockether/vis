@@ -1939,11 +1939,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                docs
                (reduce (fn [m s]
                          (if-let [nm (:shim/name s)]
-                           (let [d (:shim/description s)]
-                             (assoc m
-                               nm (if (and (string? d) (not (str/blank? d)))
-                                    (str "sandbox shim \u2014 " d)
-                                    (str "sandbox shim: a pre-installed `" nm "` module"))))
+                           (let [d (:shim/description s)
+                                 base (if (and (string? d) (not (str/blank? d)))
+                                        (str "sandbox shim \u2014 " d)
+                                        (str "sandbox shim: a pre-installed `" nm "` module"))]
+
+                             (assoc m nm base))
                            m))
                        {}
                        shims)]

@@ -8,7 +8,7 @@ GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares 
 
 ## Sandboxed by design
 
-The interpreter runs with time and memory limits and a constrained host surface. The model can compute freely, but the blast radius is bounded — and because results are bound to vars, a large computation can be reduced to a small summary before anything is shown to the model.
+The Context is **deny-by-default**: no host-class access, native access off, polyglot access off, and filesystem IO either confined to the workspace roots or disabled entirely — with network off by default (opt-in, and even then steered by an allow/deny domain policy). Dangerous builtins (`exec`, `eval`, `compile`, `__import__`) are refused before a block runs, and each eval is bounded by a wall-clock timeout. Guest threads are allowed but GIL-like and still can't reach IO, native, or host, so the model can compute freely while the blast radius stays bounded — and because results are bound to vars, a large computation can be reduced to a small summary before anything is shown to the model.
 
 ## Why Python for the action layer
 

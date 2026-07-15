@@ -701,7 +701,7 @@ del __vis_install_bs4__
      :ext/sandbox-shims
      [{:shim/name "bs4"
        :shim/description
-       "BeautifulSoup-compatible `bs4` module (find/find_all/select/get_text) implemented in pure Python on stdlib html.parser. No host bridge."
+       "BeautifulSoup-compatible `bs4` (find/find_all/select/get_text) in pure Python on stdlib html.parser. Not supported: lxml/html5lib parsers and advanced CSS pseudo-classes in `select`."
        :shim/preamble bs4-compat-shim-src}]}))
 
 (vis/register-extension! vis-extension)
