@@ -2340,6 +2340,39 @@
         (or (vector? e) (sequential? e) (set? e)) (mapv error->wire e)
         :else e))
 
+(defn- patch-file-summary?
+  "True when `m` is a patch/write/struct_patch PER-FILE summary — the
+   `{\"path\" \"op\" \"changed\" …}` shape `patch-result-file-summary` emits. Used to
+   recognise an edit result at the model-wire crossing without touching any other
+   tool's `:result`."
+  [m]
+  (and (map? m) (string? (get m "path")) (string? (get m "op")) (contains? m "changed")))
+
+(defn- strip-echo-diff
+  "Drop the `\"diff\"` from ONE edit summary when the applied bytes are exactly what
+   the model authored — a byte-exact edit (no fuzzy `\"passes\"`, no `\"indent_delta\"`
+   auto-shift). In that case the unified diff merely re-describes the model's own
+   `replace` text and carries zero new signal, so it's pure echo-bloat on the wire.
+   Keep it whenever the harness may have changed the edit under the model (a fuzzy
+   pass fired or the indent auto-shifted) — that's the one time the diff is real
+   signal the model can't otherwise know. The HUMAN card keeps the diff regardless
+   (it renders off the un-stripped summary)."
+  [m]
+  (if (and (contains? m "diff") (not (seq (get m "passes"))) (nil? (get m "indent_delta")))
+    (dissoc m "diff")
+    m))
+
+(defn- strip-echo-diffs
+  "Model-wire compaction for a patch/write/struct_patch `:result`: strip each
+   byte-exact file summary's redundant `\"diff\"` (see `strip-echo-diff`). A no-op
+   for any non-edit `:result` (only touched when EVERY element is a file summary)."
+  [result]
+  (cond (and (sequential? result) (seq result) (every? patch-file-summary? result))
+        (mapv strip-echo-diff result)
+        (patch-file-summary? result) (strip-echo-diff result)
+        :else result))
+
+
 (def ^:private MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
    many chars in the tool result — a universal backstop for a runaway print()
@@ -2508,7 +2541,7 @@
         (fn [f]
           (cond (:summary? f) nil
                 (:error f) (str "⚠ error: " (env/ctx->python-str (error->wire (:error f))))
-                (some? (:result f)) (clip-wire (env/ctx->python-str (:result f)))
+                (some? (:result f)) (clip-wire (env/ctx->python-str (strip-echo-diffs (:result f))))
                 (not (str/blank? (str (:stdout f)))) (clip-wire (:stdout f))
                 :else nil))
 
