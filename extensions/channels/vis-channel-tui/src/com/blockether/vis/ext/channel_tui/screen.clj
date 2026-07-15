@@ -4176,11 +4176,17 @@
                                          (catch Throwable _ []))
                            cur (str @active-project-id*)
                            items (mapv (fn [p]
-                                         {:id (:id p)
-                                          :label (str (when (= cur (str (:id p))) "✔ ")
-                                                      (:name p)
-                                                      (when-let [n (:session_count p)]
-                                                        (str "  (" n ")")))})
+                                         (let [current? (= cur (str (:id p)))
+                                               session-count (:session_count p)
+                                               sessions-label (when session-count
+                                                                (str session-count " " (if (= 1 session-count)
+                                                                                         "session"
+                                                                                         "sessions")))]
+                                           {:id (:id p)
+                                            :label (:name p)
+                                            :hint (str (when current? "current")
+                                                       (when (and current? sessions-label) " · ")
+                                                       sessions-label)}))
                                        projects)]
 
                        (when-let [pick (with-dialog-lock #(dlg/searchable-select!
