@@ -3154,7 +3154,7 @@
 
 (defn- log-file-path
   []
-  (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+  (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis/logs"))]
     (when-not (.exists log-dir) (.mkdirs log-dir))
     (str log-dir "/vis.log")))
 
@@ -3299,7 +3299,7 @@
   [args]
   (when-let [{:keys [command]} (commandline/find-leaf (root-command) (cons "vis" args))]
     (when (:cmd/owns-tty? command)
-      (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
+      (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis/logs"))]
         (when-not (.exists log-dir) (.mkdirs log-dir))
         (System/setErr (java.io.PrintStream.
                          (java.io.FileOutputStream. ^String (str log-dir "/vis.log") true)
@@ -3457,7 +3457,7 @@
     (when (some-> (System/getenv "VIS_DEBUG")
                   (.equalsIgnoreCase "1"))
       (.printStackTrace t))
-    (stdout! "See ~/.vis/vis.log for details."))
+    (stdout! "See ~/.vis/logs/vis.log for details."))
   (shutdown-agents)
   (System/exit 1))
 

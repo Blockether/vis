@@ -45,7 +45,7 @@
 (def db-path (str config-dir "/vis.mdb"))
 (def default-db-spec {:backend :sqlite :path db-path})
 
-(def ^:private ^String log-path (str config-dir "/vis.log"))
+(def ^:private ^String log-path (str config-dir "/logs/vis.log"))
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 
@@ -150,8 +150,7 @@
   ;; adjacent `*out*`/`*err*` root rebinds.
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
-  (let [dir (io/file config-dir)]
-    (when-not (.exists dir) (.mkdirs dir)))
+  (.mkdirs (io/file config-dir "logs"))
   (let [raw-out
         (FileOutputStream. log-path true)
 
@@ -192,8 +191,7 @@
   ;; adjacent `*out*`/`*err*` root rebinds.
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
-  (let [dir (io/file config-dir)]
-    (when-not (.exists dir) (.mkdirs dir)))
+  (.mkdirs (io/file config-dir "logs"))
   (let [raw-out
         (FileOutputStream. log-path true)
 

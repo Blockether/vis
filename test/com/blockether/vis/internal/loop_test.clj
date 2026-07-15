@@ -1453,11 +1453,11 @@
           (expect (true? (:collapsed? r1)))
           (expect (nil? (:collapsed? r2)))
           ;; collapsed → plain-text gist line (NOT a tool_result)
-          (expect (= "# -- t1/i1 -- folded: did the thing" (:content (irm r1))))))
-    (it "session_drop collapses to a `-- dropped: <why>` line (reason kept)"
+          (expect (= "# ⋯ folded t1/i1 · did the thing" (:content (irm r1))))))
+    (it "session_drop collapses to a `⋯ dropped <scopes> · <why>` line (reason kept)"
         (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
                                    [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
-          (expect (= "# -- t1/i1 -- dropped: misread" (:content (irm (second (first out))))))))
+          (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first out))))))))
     (it "a live step renders as a tool_result tagged with its # tN/iN handle"
         (let [m (irm {:forms-vec [{:scope "t1/i1/f1" :stdout "hello"}] :tool-calls [{:id "c1"}]})]
           (expect (= "c1" (get-in m [:content 0 :tool_use_id])))
@@ -1564,7 +1564,7 @@
               (get-in m [:content 0 :content])]
 
           (expect (str/includes? c "body"))
-          (expect (str/includes? c "folded: ctx"))))
+          (expect (str/includes? c "folded t1/i0 · ctx"))))
     (it "code-entries-preflight keeps distinct native tool-calls SEPARATE (no merge)"
         (let [entries (:code-entries (pre 1
                                           [{:lang "python"
@@ -2887,3 +2887,119 @@
                                   (expect (false? (evict-if-idle! k 60000)))
                                   (expect (contains? @env-cache k))
                                   (finally (swap! env-cache dissoc k)))))))
+
+(def ^:private reap-idle-envs! (deref #'lp/reap-idle-envs!))
+(def ^:private heap-pressure? (deref #'lp/heap-pressure?))
+
+(defdescribe env-heap-watermark-test
+             ;; Layer 3: under JVM heap pressure the reaper force-evicts EVERY
+             ;; idle (unlocked) env this sweep, ignoring the idle TTL, to shed
+             ;; GraalPy Contexts fast. A running turn (lock held off-thread) is
+             ;; still skipped; the transcript reloads from the DB.
+             (describe "reap-idle-envs! under heap pressure"
+                       (it "force-evicts fresh, unlocked entries when pressured"
+                           (let [k "watermark-test/fresh"]
+                             (swap! env-cache assoc k (new-cache-entry {}))
+                             (try
+                               ;; not idle (just touched) + default 15m TTL: a
+                               ;; normal sweep keeps it ...
+                               (with-redefs [lp/heap-pressure? (constantly false)]
+                                 (reap-idle-envs!)
+                                 (expect (contains? @env-cache k)))
+                               ;; ... but under pressure it is evicted now.
+                               (with-redefs [lp/heap-pressure? (constantly true)]
+                                 (expect (pos? (reap-idle-envs!)))
+                                 (expect (not (contains? @env-cache k))))
+                               (finally (swap! env-cache dissoc k)))))
+                       (it "still skips a locked entry (a running turn) under pressure"
+                           (let [k
+                                 "watermark-test/busy"
+
+                                 entry
+                                 (new-cache-entry {})
+
+                                 ^java.util.concurrent.locks.ReentrantLock lock
+                                 (:lock entry)]
+
+                             (swap! env-cache assoc k entry)
+                             (let [held
+                                   (promise)
+
+                                   release
+                                   (promise)
+
+                                   holder
+                                   (Thread. ^Runnable
+                                            (fn []
+                                              (.lock lock)
+                                              (deliver held true)
+                                              @release
+                                              (.unlock lock)))]
+
+                               (try (.start holder)
+                                    @held
+                                    (with-redefs [lp/heap-pressure? (constantly true)]
+                                      (reap-idle-envs!)
+                                      (expect (contains? @env-cache k)))
+                                    (finally (deliver release true)
+                                             (.join holder 1000)
+                                             (swap! env-cache dissoc k))))))
+                       (it "heap-pressure? is disabled when the watermark is <= 0"
+                           (expect (false? (with-redefs [lp/env-heap-watermark-pct 0]
+                                             (heap-pressure?)))))))
+
+(def ^:private bump-turns! (deref #'lp/bump-turns!))
+(def ^:private recycle-env! (deref #'lp/recycle-env!))
+
+(defdescribe env-recycle-test
+             ;; Layer 2: a single long-lived (never-idle) session's Context is
+             ;; recycled between turns after `env-max-turns-per-ctx` turns — dispose
+             ;; + rebuild IN PLACE, reusing the same lock so a queued caller stays
+             ;; correct.
+             (describe "bump-turns!"
+                       (it "increments the per-context counter and returns the count"
+                           (let [entry (new-cache-entry {})]
+                             (expect (= 1 (bump-turns! entry)))
+                             (expect (= 2 (bump-turns! entry)))
+                             (expect (= 3 (bump-turns! entry)))))
+                       (it "returns 0 for an entry with no counter"
+                           (expect (= 0 (bump-turns! {})))))
+             (describe
+               "recycle-env!"
+               (it
+                 "swaps a fresh env in place, reuses the lock, disposes the old"
+                 (let [k
+                       "recycle-test/turn-cap"
+
+                       old-env
+                       {:marker :old}
+
+                       fresh-env
+                       {:marker :fresh}
+
+                       entry
+                       (new-cache-entry old-env)
+
+                       disposed
+                       (atom [])]
+
+                   (swap! env-cache assoc k entry)
+                   (try (with-redefs [lp/open-env!
+                                      (fn [_ _]
+                                        fresh-env)
+
+                                      lp/dispose-environment!
+                                      (fn [e]
+                                        (swap! disposed conj e))]
+
+                          (recycle-env! k))
+                        (let [e2 (get @env-cache k)]
+                          ;; fresh env installed under the same key
+                          (expect (= fresh-env (:environment e2)))
+                          ;; SAME lock preserved so a queued caller stays correct
+                          (expect (identical? (:lock entry) (:lock e2)))
+                          ;; turn counter reset for the fresh context
+                          (expect (= 0 (.get ^java.util.concurrent.atomic.AtomicLong (:turns e2))))
+                          ;; the OLD env disposed exactly once
+                          (expect (= [old-env] @disposed)))
+                        (finally (swap! env-cache dissoc k)))))))

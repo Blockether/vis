@@ -27,7 +27,8 @@
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
             [flatland.ordered.map :as omap]
             [taoensso.telemere :as tel])
-  (:import [org.graalvm.polyglot Context Engine Value PolyglotAccess PolyglotException]
+  (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
+            PolyglotException]
            [org.graalvm.polyglot.io IOAccess]
            [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
            [java.util ArrayList LinkedHashMap]))
@@ -869,7 +870,7 @@ def __vis_native_result_scan__(__vis_tree__):
   ;; setting it as a system property makes every Engine/Context build
   ;; THROW "must be enabled with allowExperimentalOptions").
   (do (when-not (System/getProperty "polyglot.log.file")
-        (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis")]
+        (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis/logs")]
           (.mkdirs vis-dir)
           (System/setProperty "polyglot.log.file" (str (java.io.File. vis-dir "vis.log")))))
       true))
@@ -1711,6 +1712,67 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
        (catch Throwable _ nil)))
 
 
+(def ^:private py-gc-task-specs
+  "GraalPy background cycle-detector tuning, applied per agent Context to attack
+   native-extension RSS that GraalPy reclaims lazily (the `BackgroundGCTask*` context
+   options — INTERNAL, so they need experimental-options). Each spec is
+   `[env-var graalpy-option lo hi default]`; the resolved value (env var, else the
+   `default`) is parsed as an integer and CLAMPED into `[lo, hi]`, so a misconfigured
+   env var can NEVER throw at Context build. A `nil` default means the option is applied
+   ONLY when its env var is set (keep GraalPy's own default otherwise). Native-image-safe
+   (runtime context options, not build-time host-VM flags).
+     VIS_PY_GC_INTERVAL_MS  python.BackgroundGCTaskInterval  RSS-monitor interval, ms   (GraalPy default 1000)
+     VIS_PY_GC_THRESHOLD    python.BackgroundGCTaskThreshold %% RSS growth between GCs   [1,100] (GraalPy default 30)
+     VIS_PY_GC_MINIMUM_MB   python.BackgroundGCTaskMinimum   RSS floor, MEGABYTES        (vis default 2048 = 2 GB;
+                                                                                          GraalPy's own is 4096)
+   The MINIMUM floor defaults to 2 GB so the background collector engages from 2 GB up
+   instead of GraalPy's dormant-until-4 GB default — the 'box shouldn't balloon' backstop."
+  [["VIS_PY_GC_INTERVAL_MS" "python.BackgroundGCTaskInterval" 1 Integer/MAX_VALUE nil]
+   ["VIS_PY_GC_THRESHOLD" "python.BackgroundGCTaskThreshold" 1 100 nil]
+   ["VIS_PY_GC_MINIMUM_MB" "python.BackgroundGCTaskMinimum" 1 Integer/MAX_VALUE 2048]])
+
+(defn- clamp-gc-value
+  "Parse `raw` as an integer and CLAMP it into `[lo, hi]`, returning the clamped value as
+   a string. Returns nil for a blank/unparseable input, so a bad env var contributes
+   nothing (never a Context-build-breaking value). Pure — the unit-testable core of the
+   GC-option guard."
+  [raw lo hi]
+  (when-let [s (some-> raw
+                       str
+                       str/trim
+                       not-empty)]
+    (when-let [n (try (Long/parseLong s) (catch NumberFormatException _ nil))]
+      (str (min (long hi) (max (long lo) n))))))
+
+(defn- resolve-py-gc-options
+  "Read `py-gc-task-specs` from the environment into a `{graalpy-option value-str}` map,
+   parsing + clamping each via `clamp-gc-value` (env var wins, else the spec `default`).
+   An unset env var with a nil default contributes nothing, so the result is always safe
+   to apply and can never make a Context build throw."
+  []
+  (into {}
+        (keep (fn [[env-var opt lo hi default]]
+                (when-let [v (clamp-gc-value (or (System/getenv env-var) default) lo hi)]
+                  [opt v])))
+        py-gc-task-specs))
+
+(defn- apply-py-gc-options!
+  "Apply the resolved GraalPy GC options to a `Context.Builder`. Values are pre-validated
+   and clamped by `resolve-py-gc-options`, and the whole application is additionally
+   wrapped so any unexpected option rejection falls back to the un-tuned builder rather
+   than failing the sandbox build. By default it applies the 2 GB `BackgroundGCTaskMinimum`
+   floor (see `py-gc-task-specs`); `VIS_PY_GC_*` env vars tune or extend it."
+  ^Context$Builder [^Context$Builder builder]
+  (let [opts (resolve-py-gc-options)]
+    (if (empty? opts)
+      builder
+      (try (reduce-kv (fn [^Context$Builder b ^String k ^String v]
+                        (.option b k v))
+                      (.allowExperimentalOptions builder true)
+                      opts)
+           (catch Throwable _ builder)))))
+
+
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
@@ -1786,6 +1848,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
             ;; printed output to the model (see `ctx->stdout`). `.out` is
             ;; independent of IOAccess (which governs the filesystem).
             (.out stdout-baos)
+            ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
+            ;; a no-op unless a VIS_PY_GC_* env var is set.
+            (apply-py-gc-options!)
             (.build))
 
         _
@@ -2013,6 +2078,16 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
    state) persist across calls in the same context."
   [python-context code]
   {:source code :result (->clj (.eval ^Context python-context "python" (str code)))})
+
+(defn collect-garbage!
+  "Best-effort guest GC between turns (Layer 1): run `gc.collect()` in the
+   session's persistent GraalPy context so reference cycles — including
+   native-extension objects GraalPy reclaims lazily — don't accrete across a
+   long-lived interpreter. Never throws; a closed/cancelled context is ignored."
+  [environment]
+  (when-let [python-context (:python-context environment)]
+    (try (.eval ^Context python-context "python" "import gc\ngc.collect()")
+         (catch Throwable _ nil))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the

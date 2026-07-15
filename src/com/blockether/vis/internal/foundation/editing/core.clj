@@ -251,6 +251,24 @@
               distinct
               vec)))
 
+(def ^:private vis-always-roots
+  "Dirs under `~/.vis` the file tools may ALWAYS reach, independent of the
+   workspace roots: the Python-extension dir `~/.vis/extensions` (author/debug an
+   extension in any project) and the log dir `~/.vis/logs` (read vis's own
+   diagnostics). Canonical (symlinks resolved), computed once on first use;
+   dropped when `user.home` is unset. Kept SEPARATE from `temp-roots`: a write
+   here is NOT captured as a session attachment (only temp writes are), and the
+   secret-bearing rest of `~/.vis` — `config.edn`, the session DB, `gateway/`
+   tokens — stays OUT of reach."
+  (delay (->> [".vis/extensions" ".vis/logs"]
+              (keep (fn [^String sub]
+                      (some-> (System/getProperty "user.home")
+                              (java.io.File. sub))))
+              (keep (fn [^java.io.File f]
+                      (try (.toPath (.getCanonicalFile f)) (catch Throwable _ nil))))
+              distinct
+              vec)))
+
 (defn- under-temp-root?
   "True when `f` canonicalizes under a system temp root (`/tmp`, `$TMPDIR`)."
   [^File f]
@@ -321,12 +339,13 @@
                       (when (and (not= tp cp) (.startsWith canonical tp))
                         (.resolve cp (.relativize tp canonical)))))
                   mappings)
-            ;; system temp dirs (/tmp, $TMPDIR) are ALWAYS reachable, independent
-            ;; of the workspace roots — read/write scratch under /tmp just works.
+            ;; system temp dirs (/tmp, $TMPDIR) + the always-on vis dirs
+            ;; (~/.vis/extensions, ~/.vis/logs) are ALWAYS reachable, independent of the
+            ;; workspace roots — /tmp scratch and extension authoring just work.
             ;; LAST so an isolated draft's trunk↔clone remap still wins first.
             (some (fn [^java.nio.file.Path tr]
                     (when (.startsWith canonical tr) canonical))
-                  @temp-roots))]
+                  (concat @temp-roots @vis-always-roots)))]
 
     (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")

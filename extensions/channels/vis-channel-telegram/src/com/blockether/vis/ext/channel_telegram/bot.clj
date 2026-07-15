@@ -12,6 +12,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [taoensso.telemere :as tel])
   (:import (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)))
@@ -230,7 +231,9 @@
 
 (defn- telegram-pid-file [] (io/file (vis-home-dir) "telegram.pid"))
 
-(defn- telegram-log-file [] (io/file (vis-home-dir) "telegram.log"))
+(defn- telegram-log-file
+  []
+  (io/file (paths/ensure-logs-dir!) "telegram.log"))
 
 (defn- current-pid [] (.pid (ProcessHandle/current)))
 

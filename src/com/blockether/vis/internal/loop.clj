@@ -2454,15 +2454,22 @@
         ;; apply-summaries injected) render FIRST as one Python comment naming the
         ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
         ;; gist carries the takeaway (fold) or the reason (drop):
-        ;;   # -- t1/i1 -- t1/i2 -- folded: <gist>
-        ;;   # -- t1/i3 -- dropped: <why>
+        ;;   # ⋯ folded t1/i1-i2 · <gist>
+        ;;   # ⋯ dropped t1/i3 · <why>
         summary-lines
         (keep (fn [f]
                 (when (:summary? f)
-                  (str "# -- " (str/join " -- " (:summary-iters f))
-                       " -- " (let [g (:summary-gist f)]
-                                (str (if (:summary-drop? f) "dropped" "folded")
-                                     (when g (str ": " g)))))))
+                  (let [at
+                        (or (ctx-engine/pretty-scopes (:summary-iters f) nil)
+                            (str/join "," (:summary-iters f)))
+
+                        g
+                        (:summary-gist f)]
+
+                    (str "# ⋯ "
+                         (if (:summary-drop? f) "dropped " "folded ")
+                         at
+                         (when g (str " · " g))))))
               forms)
 
         ;; What becomes context:
@@ -8521,6 +8528,45 @@
               parse-long)
       (* 60 1000)))
 
+(def ^:private env-max-turns-per-ctx
+  "Turns a single session's GraalPy Context serves before the reaper recycles it
+   between turns (dispose + rebuild in place). Bounds a long-lived session the
+   idle reaper never touches because it never goes idle. Override with
+   `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables. Default 50."
+  (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
+              str/trim
+              parse-long)
+      50))
+
+(def ^:private env-heap-watermark-pct
+  "JVM heap-usage percent (used/max) at or above which the reaper treats the
+   process as under memory pressure and force-evicts EVERY idle (unlocked)
+   session env this sweep — ignoring the idle TTL — to shed GraalPy Contexts
+   fast. A running turn holds its entry's lock so it is never evicted; the
+   transcript reloads from the DB on the next touch. Override with
+   `VIS_ENV_HEAP_WATERMARK_PCT`; <= 0 disables the watermark. Default 85."
+  (or (some-> (System/getenv "VIS_ENV_HEAP_WATERMARK_PCT")
+              str/trim
+              parse-long)
+      85))
+
+(defn- heap-used-pct
+  "Current JVM heap utilization as an integer percent of the max heap
+   (used = total - free). 0 when the max heap is unknown."
+  []
+  (let [rt
+        (Runtime/getRuntime)
+
+        mx
+        (.maxMemory rt)]
+
+    (if (pos? mx) (long (/ (* 100 (- (.totalMemory rt) (.freeMemory rt))) mx)) 0)))
+
+(defn- heap-pressure?
+  "True when the watermark is enabled and current heap use is at/above it."
+  []
+  (and (pos? env-heap-watermark-pct) (>= (heap-used-pct) env-heap-watermark-pct)))
+
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
    `ReentrantLock` (one turn at a time), and an `AtomicLong` `:last-active`
@@ -8528,7 +8574,8 @@
   [env]
   {:environment env
    :lock (java.util.concurrent.locks.ReentrantLock.)
-   :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))})
+   :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
+   :turns (java.util.concurrent.atomic.AtomicLong. 0)})
 
 (defn- touch-entry!
   "Bump `entry`'s `:last-active` stamp to now so the reaper treats it as warm.
@@ -8537,6 +8584,14 @@
   (when-let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
     (.set la (System/currentTimeMillis)))
   entry)
+
+(defn- bump-turns!
+  "Increment `entry`'s per-context turn counter and return the new count (0 when
+   the entry carries no counter). Read by `send!` to decide a Layer-2 recycle."
+  [entry]
+  (if-let [^java.util.concurrent.atomic.AtomicLong t (:turns entry)]
+    (.incrementAndGet t)
+    0))
 
 (defn- evict-if-idle!
   "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
@@ -8568,10 +8623,12 @@
 
 (defn reap-idle-envs!
   "One reaper sweep: dispose + evict cached session envs idle past
-   `env-idle-ttl-ms`, then — if the cache still exceeds `env-cache-max` — force-
-   evict the least-recently-active idle entries until back under the cap. Every
-   eviction is lock-guarded (a running turn is skipped). Returns the number of
-   entries evicted. Safe to call directly (tests / manual sweeps)."
+   `env-idle-ttl-ms` (or, under heap pressure past `env-heap-watermark-pct`,
+   EVERY idle env this sweep — TTL ignored), then — if the cache still exceeds
+   `env-cache-max` — force-evict the least-recently-active idle entries until
+   back under the cap. Every eviction is lock-guarded (a running turn is
+   skipped). Returns the number of entries evicted. Safe to call directly
+   (tests / manual sweeps)."
   []
   (let [now
         (System/currentTimeMillis)
@@ -8582,13 +8639,19 @@
             (- now (.get la))
             0))
 
+        pressure?
+        (heap-pressure?)
+
+        effective-ttl
+        (if pressure? 0 env-idle-ttl-ms)
+
         ttl-evicted
-        (if (pos? env-idle-ttl-ms)
+        (if (or pressure? (pos? env-idle-ttl-ms))
           (->> @cache
                (filter (fn [[_ entry]]
-                         (> (age entry) env-idle-ttl-ms)))
+                         (>= (age entry) effective-ttl)))
                (reduce (fn [n [k _]]
-                         (if (evict-if-idle! k env-idle-ttl-ms) (inc n) n))
+                         (if (evict-if-idle! k effective-ttl) (inc n) n))
                        0))
           0)
 
@@ -8639,7 +8702,7 @@
    init never spawns a thread, and only when reaping is actually enabled."
   []
   (when (and (pos? env-reaper-interval-ms)
-             (or (pos? env-idle-ttl-ms) (pos? env-cache-max))
+             (or (pos? env-idle-ttl-ms) (pos? env-cache-max) (pos? env-heap-watermark-pct))
              (nil? @env-reaper-thread))
     (locking cache
       (when (nil? @env-reaper-thread)
@@ -8766,6 +8829,25 @@
                        (if (contains? m k) m (assoc m k (new-cache-entry env)))))
         (ensure-env-reaper!)
         (get @cache k)))))
+
+(defn- recycle-env!
+  "Between-turns context recycle (Layer 2): rebuild a FRESH env for session `k`
+   and swap it into the existing cache entry IN PLACE — REUSING the same
+   `ReentrantLock` so a caller queued on the lock re-reads the fresh env — then
+   dispose the OLD GraalPy Context (and its own per-env DB connection). MUST be
+   called while holding the entry lock, so no turn races the swap and `old` is
+   stable. The transcript lives in the DB; `open-env!` resumes it, so the model
+   loses only its ephemeral Python globals — the point of the recycle."
+  [k]
+  (when-let [old (get @cache k)]
+    (let [fresh-env (open-env! k {})]
+      (swap! cache assoc
+        k
+        (assoc old
+          :environment fresh-env
+          :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
+          :turns (java.util.concurrent.atomic.AtomicLong. 0)))
+      (try (dispose-environment! (:environment old)) (catch Throwable _ nil)))))
 
 (defn db-info
   "Return the process-wide shared DB connection bound to
@@ -8920,7 +9002,10 @@
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]
-   (let [{:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
+   (let [k
+         (cache-key id)
+
+         {:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
          (ensure-env! id)
 
          message-vec
@@ -8930,8 +9015,21 @@
      ;; envs dirty; actual sandbox reset happens here, after prior IR/render is
      ;; finished and before the next user code executes.
      (.lock lock)
-     (try (turn! (:environment entry) message-vec opts)
-          (finally (touch-entry! entry) (.unlock lock))))))
+     (try
+       ;; Re-read :environment UNDER the lock: a between-turns turn-cap recycle
+       ;; or a router/extension reseat may have swapped it since we captured
+       ;; `entry`, so the queued turn runs against the CURRENT context.
+       (turn! (:environment (or (get @cache k) entry)) message-vec opts)
+       (finally (let [cur (or (get @cache k) entry)]
+                  (touch-entry! cur)
+                  (let [n (bump-turns! cur)]
+                    (if (and (pos? env-max-turns-per-ctx) (>= n env-max-turns-per-ctx))
+                      ;; Layer 2: recycle this session's Context between turns so a
+                      ;; single never-idle session can't grow it unbounded.
+                      (try (recycle-env! k) (catch Throwable _ nil))
+                      ;; Layer 1: best-effort guest gc.collect() between turns.
+                      (env/collect-garbage! (:environment cur)))))
+                (.unlock lock))))))
 
 (defn close!
   [id]

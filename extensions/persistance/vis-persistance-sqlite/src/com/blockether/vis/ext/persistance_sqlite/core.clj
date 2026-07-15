@@ -1356,6 +1356,17 @@
                               ordered
                               (into (vec wanted) (remove wanted-set members))]
 
+                          ;; Two phases so the partial UNIQUE index on
+                          ;; (project_id, project_position) never transiently
+                          ;; collides during a row-by-row renumber: first park
+                          ;; every member in a distinct NEGATIVE temp slot
+                          ;; (-1..-n, disjoint from every current/final 0..n-1),
+                          ;; then assign the final gap-free 0..n-1 order.
+                          (doseq [[pos sid] (map-indexed vector ordered)]
+                            (execute! tx-info
+                                      {:update :session_soul
+                                       :set {:project_position (- (inc pos))}
+                                       :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
                           (doseq [[pos sid] (map-indexed vector ordered)]
                             (execute! tx-info
                                       {:update :session_soul

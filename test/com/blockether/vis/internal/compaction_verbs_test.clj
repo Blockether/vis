@@ -13,8 +13,9 @@
      4. Native tool_use surface — the injected `session_fold` call-shape
         synthesizes the SAME positional `session_fold(target, gist)` into the
         bound verb, so both surfaces share one definition.
-     5. Session-bag reflection — a landed fold surfaces as a compact
-        `session[folds]` structural delta (the model's live confirmation),
+     5. Session-bag reflection — a landed fold surfaces INSIDE `session_utilization`
+        as two string leaves: `folds` (stable gists, one structural delta per fold)
+        and `now` (volatile position + budget + live, re-emitted each iteration),
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
   (:require [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.ctx-renderer :as cr]
@@ -348,15 +349,18 @@
 
 (defdescribe
   session-fold-ctx-reflection-test
-  (it "folds-view resolves selectors into a concrete collapsed+live one-line ledger"
+  ;; The ledger is split by LIFESPAN into two `"session_utilization"` string leaves:
+  ;; `"folds"` (stable gists, changes only when a fold lands) and `"now"` (volatile
+  ;; budget + live, no position — re-emits every iteration).
+  (it "folds-view resolves selectors into stable `folds` + volatile `now` leaves"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
 
             out
             (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni)]
 
-        ;; ONE compact line: <saved> | <fold> | live <scopes>
-        (expect (= "3/5 steps (60%) | t1/*: mapped | live t2/*" out))))
+        ;; `folds` = surviving folds only (no counts, no live); `now` = saved · live
+        (expect (= {"folds" "t1/*: mapped" "now" "saved 3/5 (60%) · live t2/*"} out))))
   (it "a through selector is RESOLVED (not shown raw); gist-less stays gist-less"
       (let [uni
             ["t1/i1" "t1/i2" "t2/i1"]
@@ -364,17 +368,17 @@
             out
             (folds-view [{"through" "t1/i2"}] uni)]
 
-        (expect (= "2/3 steps (67%) | t1/* | live t2/*" out))))
-  (it "a partial-turn fold stays explicit, iteration numbers run-compressed"
+        (expect (= {"folds" "t1/*" "now" "saved 2/3 (67%) · live t2/*"} out))))
+  (it "a partial-turn fold stays explicit in `folds`; the gaps stay live in `now`"
       (let [uni
             ["t3/i1" "t3/i2" "t3/i3" "t3/i4" "t3/i5"]
 
             out
             (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni)]
 
-        ;; same-turn runs merge in the fold, gaps stay live
-        (expect (= "3/5 steps (60%) | t3/i1-i2,i4: g | live t3/i3,i5" out))))
-  (it "a broader re-fold SUPERSEDES a finer one in the ledger (one folded entry)"
+        ;; same-turn runs merge in the fold; the unfolded gaps show as live
+        (expect (= {"folds" "t3/i1-i2,i4: g" "now" "saved 3/5 (60%) · live t3/i3,i5"} out))))
+  (it "a broader re-fold SUPERSEDES a finer one (one `folds` entry, no live in `now`)"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3"]
 
@@ -382,24 +386,35 @@
             (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
 
         ;; only the meta gist survives; every turn folded -> t*, nothing live
-        (expect (= "3/3 steps (100%) | t*: meta" out))))
-  (it "with NO universe (resume / fresh seed) it stays the SAME one-line string shape"
-      ;; explicit scopes compress; unresolved ranges show pending boundary markers.
+        (expect (= {"folds" "t*: meta" "now" "saved 3/3 (100%)"} out))))
+  (it "a fold whose scopes scrolled OFF the wire never inflates `saved` (phantom guard)"
+      ;; universe is 3 live iters; the fold references t1/i1 which was trimmed off the
+      ;; trailer. `saved` must count only on-wire scopes -> 0/3, not a phantom 1/4.
+      (let [uni
+            ["t3/i1" "t3/i2" "t3/i3"]
+
+            out
+            (folds-view [{"scopes" #{"t1/i1"} "gist" "old"}] uni)]
+
+        ;; nothing on the wire is folded -> no `folds` entry, saved 0/3, all live
+        (expect (= {"now" "saved 0/3 (0%) · live t*"} out))))
+  (it "with NO universe (resume / fresh seed) only the `folds` leaf is produced"
+      ;; explicit scopes compress; unresolved ranges show pending boundary markers;
+      ;; there is no `now` (no position / live) until the next send re-stamps the universe.
       (let [out (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}
                              {"since" "t3/i1"} {"from" "t1/i1" "to" "t1/i4"}]
                             nil)]
-        (expect (string? out))
-        (expect (= "2 steps folded | t1/i1-i2: mapped | <=t2/i5 | >=t3/i1 | t1/i1..t1/i4" out)))
+        (expect (= {"folds" "t1/i1-i2: mapped | <=t2/i5 | >=t3/i1 | t1/i1..t1/i4"} out)))
       (let [out (folds-view [{"scopes" #{"t1/i1"}}] nil)]
-        (expect (= "1 steps folded | t1/i1" out))))
-  (it "session-view merges the fold ledger INTO session_utilization, not a top-level key"
+        (expect (= {"folds" "t1/i1"} out))))
+  (it "session-view merges both ledger leaves INTO session_utilization, not a top-level key"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (expect (not (contains? (get (eng/session-view base-ctx) "session_utilization") "folds")))
-      (expect (contains? (get (eng/session-view (assoc base-ctx
-                                                  "session_summaries" [{"scopes" #{"t1/i1"}
-                                                                        "gist" "g"}]))
-                              "session_utilization")
-                         "folds")))
+      (let [util (get (eng/session-view (assoc base-ctx
+                                          "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}]))
+                      "session_utilization")]
+        (expect (contains? util "folds"))
+        (expect (contains? util "now"))))
   (it "a landed fold emits ONE structural session[\"utilization\"][\"folds\"] ledger delta"
       (let [c1
             (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
@@ -407,11 +422,25 @@
             d
             (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
 
-        (expect (re-find #"^session\[\"utilization\"\]\[\"folds\"\] = " d))
-        (expect (re-find #"steps" d))
+        (expect (re-find #"session\[\"utilization\"\]\[\"folds\"\] = " d))
         (expect (re-find #"t1/\*" d)) ; whole turn compressed in the delta
         (expect (re-find #"mapped" d))))
-  (it "appending a second fold re-emits only the folds subkey of utilization"
+  (it "universe grows with NO new fold -> only `now` re-emits, the heavy `folds` leaf stays silent"
+      ;; The churn fix: a new UNFOLDED iteration changes position + live (`now`) but not
+      ;; the surviving folds (`folds`), so the recursive per-leaf delta ships only `now`.
+      (let [folded
+            (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
+
+            grown
+            (update folded "engine_iter_universe" conj "t3/i2")
+
+            d
+            (cr/render-ctx-delta (delta-map folded) (delta-map grown))]
+
+        (expect (re-find #"session\[\"utilization\"\]\[\"now\"\]" d))
+        (expect (not (re-find #"\[\"folds\"\]" d)))
+        (expect (not (re-find #"mapped" d)))))
+  (it "appending a second fold re-emits the folds subkey of utilization only"
       (let [c1
             (assoc base-ctx "session_summaries" [{"through" "t2/i5"}])
 
@@ -423,10 +452,11 @@
 
         (expect (re-find #"session\[\"utilization\"\]\[\"folds\"\]" d))
         (expect (not (re-find #"workspace|env|routing" d)))))
-  (it "no summaries -> no folds subkey in utilization, no delta"
+  (it "no summaries -> no folds/now subkeys in utilization, no delta"
       (expect (not (contains? (get (delta-map base-ctx) "utilization") "folds")))
+      (expect (not (contains? (get (delta-map base-ctx) "utilization") "now")))
       (expect (nil? (cr/render-ctx-delta (delta-map base-ctx) (delta-map base-ctx)))))
-  (it "the live bound session bag (project-ctx) carries folds inside utilization"
+  (it "the live bound session bag (project-ctx) carries the ledger inside utilization"
       (expect (contains? (get (cr/project-ctx (eng/session-view (assoc base-ctx
                                                                   "session_summaries"
                                                                   [{"scopes" #{"t1/i1"}

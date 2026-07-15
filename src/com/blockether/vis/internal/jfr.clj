@@ -4,7 +4,7 @@
    Turned on per-process by the `VIS_JFR` env var (set by `bin/vis --jfr`). The
    var is INHERITED by the detached gateway daemon that a client spawns, so both
    the client (TUI/web) process AND the gateway daemon each start their OWN
-   recording into a role+pid-tagged file under `~/.vis/`:
+   recording into a role+pid-tagged file under `~/.vis/logs/`:
 
      vis-client-<pid>-<ts>.jfr     ← the TUI / web / one-shot process
      vis-gateway-<pid>-<ts>.jfr    ← the long-lived gateway daemon
@@ -35,7 +35,7 @@
                            str/trim
                            str/lower-case))))
 
-(defn- vis-home ^File [] (io/file (System/getProperty "user.home") ".vis"))
+(defn- jfr-dir ^File [] (io/file (System/getProperty "user.home") ".vis" "logs"))
 
 (defn- recording-file
   ^File [role]
@@ -45,10 +45,10 @@
         pid
         (.pid (ProcessHandle/current))]
 
-    (io/file (vis-home) (format "vis-%s-%s-%s.jfr" role pid ts))))
+    (io/file (jfr-dir) (format "vis-%s-%s-%s.jfr" role pid ts))))
 
 (def ^:private MAX_RECORDINGS
-  "Newest JFR dumps to keep under ~/.vis; older ones are pruned on each start so
+  "Newest JFR dumps to keep under ~/.vis/logs; older ones are pruned on each start so
    opt-in profiling can't silently fill the disk. `.setDumpOnExit` leaves one
    file per run tagged by pid, so dead processes' recordings pile up otherwise."
   6)
@@ -60,10 +60,10 @@
   (* 1024 1024 (if (= role "gateway") 256 128)))
 
 (defn- prune-old-recordings!
-  "Keep only the newest `MAX_RECORDINGS` `vis-*.jfr` dumps under ~/.vis and delete
+  "Keep only the newest `MAX_RECORDINGS` `vis-*.jfr` dumps under ~/.vis/logs and delete
    the rest (dead processes' orphaned recordings). Never throws."
   []
-  (try (let [files (->> (.listFiles (vis-home))
+  (try (let [files (->> (.listFiles (jfr-dir))
                         (filter (fn [^File f]
                                   (let [n (.getName f)]
                                     (and (.isFile f)
@@ -81,7 +81,7 @@
    Returns the destination `File` when a recording started, else nil."
   [role]
   (when (and (enabled?) (compare-and-set! started false true))
-    (try (.mkdirs (vis-home))
+    (try (.mkdirs (jfr-dir))
          (prune-old-recordings!)
          (let [f
                (recording-file role)
