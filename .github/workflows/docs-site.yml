@@ -44,6 +44,15 @@ jobs:
         with:
           cli: latest
 
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+
       # Self-contained: the docs namespace needs only commonmark + the
       # vis-docs resources on the classpath (no heavy app deps), so generation
       # is fast and deterministic.
