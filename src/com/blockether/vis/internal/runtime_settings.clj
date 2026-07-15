@@ -15,9 +15,9 @@
 (def MAX_EVAL_TIMEOUT_MS "Hard ceiling for :eval-timeout-ms." (* 30 60 1000))
 
 (def NATIVE_TOOL_TIMEOUT_MS
-  "Wall-clock fallback for Clojure-native tool handlers. Native handlers bypass
-   the Python eval watchdog, so they need their own circuit breaker."
-  (* 5 60 1000))
+  "Wall-clock fallback for Clojure-native tool handlers. Calls expected to take
+   longer must explicitly request a timeout or use a background workflow."
+  30000)
 
 (def ^:private native-tool-timeout-grace-ms
   "Room for a tool's own timeout to produce its structured result first."
@@ -25,18 +25,17 @@
 
 (defn native-tool-timeout-ms
   "Return the outer deadline for a native handler. An explicit `timeout_ms`
-   gets a short grace period; otherwise use the five-minute fallback."
+   gets a short grace period; otherwise use the 30-second fallback."
   [input]
-  (let [requested (when (map? input)
-                    (or (get input "timeout_ms")
-                        (get input :timeout_ms)
-                        (get input :timeout-ms)))
-        requested (when (and (number? requested) (pos? (long requested)))
-                    (long requested))]
+  (let [requested
+        (when (map? input)
+          (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
+
+        requested
+        (when (and (number? requested) (pos? (long requested))) (long requested))]
+
     (long (min MAX_EVAL_TIMEOUT_MS
-               (if requested
-                 (+ requested native-tool-timeout-grace-ms)
-                 NATIVE_TOOL_TIMEOUT_MS)))))
+               (if requested (+ requested native-tool-timeout-grace-ms) NATIVE_TOOL_TIMEOUT_MS)))))
 
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."
