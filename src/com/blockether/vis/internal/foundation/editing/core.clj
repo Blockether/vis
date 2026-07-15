@@ -4300,13 +4300,36 @@
                 1
                 anchors)
 
+        ;; Gap marker between NON-CONTIGUOUS slices (multi-range / multi-anchor
+        ;; reads) so disjoint areas read as separate regions instead of one run.
+        ;; `⋯` is the project's canonical "content omitted here" glyph (see the
+        ;; `# ⋯ folded`/`# ⋯ clipped` breadcrumbs in loop.clj); right-align it in
+        ;; the line-number gutter so it sits exactly where the skipped lines were.
+        divider
+        (format (str "%" gutter-w "s") "⋯")
+
         rows
-        (mapv (fn [[k v]]
-                (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v)))
-              anchors)
+        (:rows (reduce (fn [{:keys [rows prev]} [k v]]
+                         (let [ln
+                               (parse-long (line-no k))
+
+                               row
+                               (str (format (str "%" gutter-w "s") (line-no k))
+                                    "  "
+                                    (patch/anchor-value-text v))]
+
+                           {:prev ln
+                            :rows (cond-> rows
+                                    (and prev ln (> ln (inc prev)))
+                                    (conj divider)
+
+                                    :always
+                                    (conj row))}))
+                       {:rows [] :prev nil}
+                       (sort-by (comp parse-long line-no key) anchors)))
 
         n
-        (count rows)
+        (count anchors)
 
         spans
         (anchor-line-spans (get r "anchors"))
