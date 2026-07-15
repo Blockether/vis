@@ -34,10 +34,10 @@
         (let [{:keys [exit out]} (run-src ctx "print('hi', 1 + 1)")]
           (expect (= 0 exit))
           (expect (re-find #"hi 2" out))))
-    (it "a bare trailing expression does NOT echo (agent-sandbox semantics)"
+    (it "a bare trailing expression echoes its repr (CPython-like)"
         (let [{:keys [exit out]} (run-src ctx "40 + 2")]
           (expect (= 0 exit))
-          (expect (not (re-find #"42" out)))))
+          (expect (re-find #"42" out))))
     (it "a raised exception renders the error and exits 1"
         (let [{:keys [exit out]} (run-src ctx "raise ValueError('boom')")]
           (expect (= 1 exit))
