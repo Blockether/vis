@@ -199,13 +199,20 @@
           :else nil)))
 
 (defn- log-file
-  "Subprocess log path under the OS temp dir (never inside the user's project
-   tree), namespaced by the target dir so each managed REPL gets its own log."
+  "Subprocess log path under `~/.vis/logs` (never inside the user's project
+   tree, never the OS temp dir), namespaced by the target dir so each managed
+   REPL gets its own log. The logs dir is created on demand."
   ^java.io.File [dir]
-  (let [safe (-> (str dir)
-                 (str/replace #"[^A-Za-z0-9]+" "_")
-                 (str/replace #"(^_+|_+$)" ""))]
-    (io/file (System/getProperty "java.io.tmpdir") (str "vis-nrepl-" safe ".log"))))
+  (let [safe
+        (-> (str dir)
+            (str/replace #"[^A-Za-z0-9]+" "_")
+            (str/replace #"(^_+|_+$)" ""))
+
+        logs-dir
+        (io/file (System/getProperty "user.home") ".vis" "logs")]
+
+    (.mkdirs logs-dir)
+    (io/file logs-dir (str "vis-nrepl-" safe ".log"))))
 
 (def ^:private default-log-line-limit 500)
 

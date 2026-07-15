@@ -1021,13 +1021,12 @@
                     (fn [_ _]
                       nil)]
 
-        (reset! state/app-db
-          {:session {:id "s1"}
-           :active-tab-id "s1"
-           ;; The gateway queue snapshot can arrive before its :add event binds
-           ;; this local echo. It is the running turn, not a second queued one.
-           :pending-sends [{:text "hello" :client-id "local-echo"}]
-           :render-version 0})
+        (reset! state/app-db {:session {:id "s1"}
+                              :active-tab-id "s1"
+                              ;; The gateway queue snapshot can arrive before its :add event binds
+                              ;; this local echo. It is the running turn, not a second queued one.
+                              :pending-sends [{:text "hello" :client-id "local-echo"}]
+                              :render-version 0})
         (state/dispatch [:attach-running-turn "s1"
                          {:id "s1"
                           :status "running"

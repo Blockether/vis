@@ -336,16 +336,40 @@
       ;; through to nil so the row stays clean for providers that
       ;; legitimately have no quota story.
       :else nil)))
+
+(defn- compact-reset-text
+  [s]
+  (some-> s
+          (str/replace " @ " "@")
+          (str/replace " AM" "a")
+          (str/replace " PM" "p")))
+
+(defn- compact-limit-label
+  [row]
+  (-> (lfmt/generic-limit-label row)
+      (str/replace #"(?i)^premium interactions$" "Premium")
+      (str/replace #"(?i)^z\.ai coding plan " "Z.ai ")))
+
+(defn- compact-limit-usage
+  [row]
+  (some-> (lfmt/format-limit-usage row)
+          (str/replace #"% left$" "%")
+          (str/replace #" used \(([^)]+) left\)$" " ($1)")
+          (str/replace #" left\)$" ")")
+          (str/replace #" used$" "")
+          (str/replace #" left$" "")))
+
 (defn- format-generic-limit-row
   [now-ms row]
   (let [usage
-        (lfmt/format-limit-usage row)
+        (compact-limit-usage row)
 
         reset
         (some->> (get-in row [:window :resets-at-ms])
-                 (format-reset now-ms))]
+                 (format-reset now-ms)
+                 compact-reset-text)]
 
-    (str (lfmt/generic-limit-label row) (when usage (str " " usage)) (when reset (str " " reset)))))
+    (str (compact-limit-label row) (when usage (str " " usage)) (when reset (str " " reset)))))
 (defn- generic-limit-sort-key
   [row]
   [(case (:id row)

@@ -24,11 +24,22 @@
 
 (defn- object-map [value] (when (and (map? value) (not (record? value))) value))
 
+(defn- camel-key
+  [k]
+  (let [s (name k)]
+    (str/replace s #"_([a-zA-Z])" #(str/upper-case (second %)))))
+
+(defn- kebab-key [k] (str/replace (name k) #"_" "-"))
+
 (defn- field
   [m k]
   (when-let [m* (object-map m)]
-    (cond (contains? m* k) (get m* k)
-          (contains? m* (name k)) (get m* (name k)))))
+    (let [ks [k (name k) (keyword (camel-key k)) (camel-key k) (keyword (kebab-key k))
+              (kebab-key k)]]
+      (reduce (fn [_ k*]
+                (when (contains? m* k*) (reduced (get m* k*))))
+              nil
+              ks))))
 
 (defn- clamp-percent
   [value]
