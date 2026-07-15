@@ -18,6 +18,70 @@ class PreflightError(Exception):
 PYTHON_DEV_REQUIRED_TASKS = {
     "paperless-ngx-perf-document-counts": "verifier setup may build zxing-cpp, which needs Python3_INCLUDE_DIRS/Development.Module",
 }
+PI_GLM52_CONTEXT_WINDOW = 1_000_000
+PI_GLM52_MAX_TOKENS = 32_768
+PI_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+
+
+def pi_thinking_level(reasoning_effort: str) -> str:
+    try:
+        return {"high": "high", "max": "xhigh"}[reasoning_effort]
+    except KeyError as exc:
+        raise PreflightError(
+            "VIS_BENCH_REASONING_EFFORT must be high or max; "
+            f"got {reasoning_effort!r}"
+        ) from exc
+
+
+def pi_glm52_models_config() -> dict[str, Any]:
+    """Return the pinned Pi 0.73.1 custom-model definition used by the eval."""
+    return {
+        "providers": {
+            "zai": {
+                "name": "Z.ai Coding Plan",
+                "baseUrl": PI_ZAI_BASE_URL,
+                "api": "openai-completions",
+                "apiKey": "$ZAI_API_KEY",
+                "models": [
+                    {
+                        "id": "glm-5.2",
+                        "name": "GLM-5.2",
+                        "reasoning": True,
+                        "thinkingLevelMap": {
+                            "off": None,
+                            "minimal": None,
+                            "low": None,
+                            "medium": None,
+                            "high": "high",
+                            "xhigh": "max",
+                        },
+                        "input": ["text"],
+                        "cost": {
+                            "input": 0,
+                            "output": 0,
+                            "cacheRead": 0,
+                            "cacheWrite": 0,
+                        },
+                        "contextWindow": PI_GLM52_CONTEXT_WINDOW,
+                        "maxTokens": PI_GLM52_MAX_TOKENS,
+                        "compat": {
+                            "supportsDeveloperRole": False,
+                            "supportsReasoningEffort": True,
+                            "thinkingFormat": "deepseek",
+                            "zaiToolStream": True,
+                        },
+                    }
+                ],
+            }
+        }
+    }
+
+
+def write_pi_glm52_models_config(path: Path) -> dict[str, Any]:
+    config = pi_glm52_models_config()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    return config
 
 
 def sha256_and_head_stream(stream: Any, head_size: int = 64) -> tuple[str, bytes]:
@@ -337,18 +401,32 @@ def validate_config(path: Path) -> dict[str, Any]:
         raise PreflightError("config.edn must be a top-level map")
     providers = _get(parsed, ":providers")
     if providers is None:
-        return {"path": str(path), "providers": 0, "provider_ids": [], "warning": "no :providers key"}
+        return {
+            "path": str(path),
+            "providers": 0,
+            "provider_ids": [],
+            "provider_configs": [],
+            "warning": "no :providers key",
+        }
     if not isinstance(providers, list):
         raise PreflightError(":providers must be a vector of provider maps")
     provider_ids: list[str] = []
+    provider_configs: list[dict[str, Any]] = []
     for idx, provider in enumerate(providers):
         if not isinstance(provider, dict):
             raise PreflightError(f":providers entry {idx} must be a map, got {type(provider).__name__}")
         provider_id = _get(provider, ":id")
         if not isinstance(provider_id, str) or not provider_id:
             raise PreflightError(f":providers entry {idx} is missing keyword/string :id")
-        provider_ids.append(provider_id[1:] if provider_id.startswith(":") else provider_id)
-    return {"path": str(path), "providers": len(providers), "provider_ids": provider_ids}
+        normalized_id = provider_id[1:] if provider_id.startswith(":") else provider_id
+        provider_ids.append(normalized_id)
+        provider_configs.append({"id": normalized_id, "base_url": _get(provider, ":base-url")})
+    return {
+        "path": str(path),
+        "providers": len(providers),
+        "provider_ids": provider_ids,
+        "provider_configs": provider_configs,
+    }
 
 
 def main() -> int:
