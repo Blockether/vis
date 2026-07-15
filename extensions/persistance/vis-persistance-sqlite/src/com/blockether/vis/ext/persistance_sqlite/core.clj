@@ -1129,10 +1129,11 @@
    :position (:position row)
    :created-at (->date (:created_at row))
    :archived-at (->date (:archived_at row))
+   :root (:root row)
    :session-count (or (:session_count row) 0)})
 
 (def ^:private project-select-cols
-  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.created_at :p.archived_at
+  [:p.id :p.owner_id :p.channel :p.name :p.color :p.position :p.root :p.created_at :p.archived_at
    [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.project_id :p.id]}
     :session_count]])
 
@@ -1175,12 +1176,27 @@
                                           (when-not include-archived? [[:= :p.archived_at nil]])))
                      :order-by [[:p.position :asc] [:p.created_at :asc]]})))))
 
+(defn db-get-project-by-root
+  "Return the `project` bound to canonical workspace `root` for `owner-id`
+   (default \"local\"), or nil. Backs the TUI's launch-dir -> project (tab set)
+   resolution. `root` matches the stored `project.root` exactly (callers pass a
+   canonical path)."
+  [db-info owner-id root]
+  (when (and (ds db-info) (not (str/blank? (str root))))
+    (some-> (query-one! db-info
+                        {:select project-select-cols
+                         :from [[:project :p]]
+                         :where [:and
+                                 [:= :p.owner_id (or owner-id "local")]
+                                 [:= :p.root (str root)]]})
+            row->project)))
+
 (defn db-create-project!
   "Create a `project`. `:name` is required (non-blank). `:channel` nil => a
    cross-channel project. `:owner-id` defaults to \"local\". `:position`, when
    omitted, appends after the owner's current projects. Returns the created
    project (canonical shape)."
-  [db-info {:keys [name channel color owner-id position]}]
+  [db-info {:keys [name channel color owner-id position root]}]
   (when (str/blank? (str name))
     (throw (ex-info "db-create-project! requires a non-blank :name"
                     {:type :persistance/invalid-project-name})))
@@ -1212,7 +1228,10 @@
                                                  (assoc :channel ch)
 
                                                  color
-                                                 (assoc :color color))]})
+                                                 (assoc :color color)
+
+                                                 root
+                                                 (assoc :root root))]})
                            pid)))]
       (db-get-project db-info project-id))))
 
@@ -1220,7 +1239,7 @@
   "Patch a `project`: any of `:name` (non-blank), `:color`, `:position`,
    `:archived?` (true stamps `archived_at`=now, false clears it). Returns the
    updated project (canonical shape) or nil when nothing to change."
-  [db-info project-id {:keys [name color position archived?] :as opts}]
+  [db-info project-id {:keys [name color position archived? root] :as opts}]
   (when (and (ds db-info) project-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
       (throw (ex-info "db-update-project! :name must be non-blank"
@@ -1236,7 +1255,10 @@
                     (assoc :position position)
 
                     (contains? opts :archived?)
-                    (assoc :archived_at (when archived? (now-ms))))]
+                    (assoc :archived_at (when archived? (now-ms)))
+
+                    (contains? opts :root)
+                    (assoc :root root))]
       (when (seq set-map)
         (sqlite-write-tx!
           db-info

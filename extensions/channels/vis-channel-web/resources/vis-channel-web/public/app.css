@@ -612,6 +612,8 @@ padding:.42rem .55rem;font-size:.86rem;color:var(--fg);transition:background .1s
 .proj-pick-none .icon,.proj-pick-new .icon{flex:none;width:15px;height:15px;color:var(--dim)}
 .proj-pick-new{color:var(--accent);font-weight:600}
 .proj-pick-new .icon{color:var(--accent)}
+.proj-select{width:100%;padding:.55rem .7rem;border-radius:var(--r-md);border:1px solid var(--border);background:var(--code-bg);color:var(--fg);font-size:.9rem;font-weight:600;cursor:pointer}
+.proj-select:focus{outline:none;border-color:var(--accent)}
 /* ── add-directory filesystem picker modal ───────────────────────── */
 .dir-browser{display:flex;flex-direction:column;gap:1.15rem}
 /* intro: one-sentence explanation in a soft info panel, with clear space

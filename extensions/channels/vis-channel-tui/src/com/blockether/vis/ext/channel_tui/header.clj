@@ -673,7 +673,8 @@
         ;; left edge here and clamp the centre width to stop short of it.
         chips
         [[:header-help (str " help (" (keymap/label-for :toggle-help) ") ")]
-         [:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
+         ;; search chip hidden for now — the C-x f binding still works, just no button.
+         #_[:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
 
         chip-gap
         1

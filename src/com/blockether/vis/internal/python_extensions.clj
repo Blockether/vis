@@ -75,7 +75,7 @@ _registration = {'spec': None}
 
 def extension(name=None, description=None, version=None, kind=None, alias=None,
               activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None, ctx=None):
+              op_hooks=None, ctx=None, providers=None):
     if _registration['spec'] is not None:
         raise ValueError('vis.extension() may only be called once per file')
     if not name or not isinstance(name, str):
@@ -92,6 +92,7 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'symbols': list(symbols or []), 'prompt': prompt,
         'slash_commands': list(slash_commands or []),
         'op_hooks': list(op_hooks or []), 'ctx': ctx,
+        'providers': list(providers or []),
     }
 
 def symbol(fn, name=None, tag='observation', hidden=False):
@@ -129,6 +130,27 @@ def op_hook(ops, fn, phase='before'):
     if not ops:
         raise ValueError('vis.op_hook requires a non-empty ops list')
     return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
+
+def provider(id, label, preset=None, get_token=None, detect=None, status=None,
+             logout=None, limits=None, refresh_token=None, auth=None,
+             auth_prompt=None, enrich_models=None, on_selected=None):
+    if not id or not isinstance(id, str):
+        raise ValueError('vis.provider(...) requires id=<non-empty string>')
+    if not label or not isinstance(label, str):
+        raise ValueError('vis.provider(...) requires label=<non-empty string>')
+    for slot, f in (('get_token', get_token), ('detect', detect),
+                    ('status', status), ('logout', logout),
+                    ('limits', limits), ('refresh_token', refresh_token),
+                    ('auth', auth), ('auth_prompt', auth_prompt),
+                    ('enrich_models', enrich_models), ('on_selected', on_selected)):
+        if f is not None and not callable(f):
+            raise ValueError('vis.provider %s= must be callable or None' % (slot,))
+    return {'marker': 'provider', 'id': id, 'label': label,
+            'preset': dict(preset or {}), 'get_token': get_token,
+            'detect': detect, 'status': status, 'logout': logout,
+            'limits': limits, 'refresh_token': refresh_token,
+            'auth': auth, 'auth_prompt': auth_prompt,
+            'enrich_models': enrich_models, 'on_selected': on_selected}
 
 def ok(title, body=None, data=None):
     return {'marker': 'slash_result', 'status': 'ok', 'title': str(title),
@@ -574,6 +596,274 @@ def __vis_registration__():
             {:op (keyword (str op)) :phase (if before? :around :after) :fn f})
           (get spec "ops"))))
 
+;; ── Providers ────────────────────────────────────────────────────────────────
+;; A `vis.provider(...)` dict -> a canonical provider descriptor entry. The
+;; provider CALLABLES (get-token/detect/status/limits/…) run in the extension's
+;; trusted context; their return maps are plainified and deep-keywordized —
+;; provider descriptors are author-declared config (same trust as a Clojure
+;; provider extension), so minting keys / enum keywords here is sanctioned,
+;; unlike model data. base-url/api-style/default-models in `:preset` flow through
+;; `config/known-provider-base-url` into svar's router, so a pure-Python provider
+;; actually serves model calls once the user configures it.
+
+(def ^:private provider-enum-keys
+  #{:provider-id :id :source :status :kind :scope :precision :api-style :unit})
+
+(defn- keywordize
+  "Deep-convert a Python string-keyed provider map to keyword keys, coercing a
+   bounded allow-list of enum-ish values to keywords too."
+  [x]
+  (cond (map? x)
+        (into
+          {}
+          (map (fn [[k v]]
+                 (let [kk (keyword (str/replace (str k) "_" "-"))]
+                   [kk (if (and (string? v) (provider-enum-keys kk)) (keyword v) (keywordize v))])))
+          x)
+        (sequential? x) (mapv keywordize x)
+        :else x))
+
+(defn- plain-keywordize
+  "Keywordize map keys recursively WITHOUT dash-normalization — so a preset
+   pass-through value (`:extra-body`, `:llm-headers`) keeps its API-literal
+   nested keys (`top_p`, `min_p`) exactly as the OpenAI-style wire expects,
+   unlike the top-level preset keys which follow the kebab Clojure convention."
+  [x]
+  (cond (map? x) (into {}
+                       (map (fn [[k v]]
+                              [(keyword (str k)) (plain-keywordize v)]))
+                       x)
+        (sequential? x) (mapv plain-keywordize x)
+        (set? x) (mapv plain-keywordize x)
+        :else x))
+
+(def ^:private preset-known-keys
+  #{"base-url" "base_url" "api-style" "api_style" "default-models" "default_models" "hidden"
+    "hidden?"})
+
+(defn- ->preset
+  "UI/runtime defaults from a `vis.provider(preset=...)` dict. The four common
+   keys are coerced precisely (`:base-url` string, `:api-style` keyword,
+   `:default-models` vec of strings, `:hidden?` boolean, dash or underscore
+   accepted). Every OTHER key is passed through verbatim (top-level name
+   dash-normalized to the kebab preset convention, values kept as-is) so a
+   Python provider can set `:extra-body`, `:responses-path`, `:context`,
+   `:llm-headers` — exactly the extra preset keys `config/registered-provider-metadata`
+   merges into svar for a first-party provider."
+  [preset]
+  (let [preset
+        (into {} preset)
+
+        g
+        (fn [& ks]
+          (some #(get preset %) ks))
+
+        passthrough
+        (reduce-kv (fn [m k v]
+                     (if (preset-known-keys (str k))
+                       m
+                       (assoc m (keyword (str/replace (str k) "_" "-")) (plain-keywordize v))))
+                   {}
+                   preset)]
+
+    (cond-> passthrough
+      (g "base-url" "base_url")
+      (assoc :base-url (str (g "base-url" "base_url")))
+
+      (g "api-style" "api_style")
+      (assoc :api-style (keyword (str (g "api-style" "api_style"))))
+
+      (g "default-models" "default_models")
+      (assoc :default-models (mapv str (g "default-models" "default_models")))
+
+      (some? (g "hidden" "hidden?"))
+      (assoc :hidden? (boolean (g "hidden" "hidden?"))))))
+
+(defn- call-provider-fn
+  "Invoke a Python provider callable with `args`, tolerating an arg-count
+   mismatch the same way the loop's refresh path tolerates it for Clojure
+   hooks (`(f rejected)` falling back to `(f)`, loop.clj): a Python callable
+   that rejects the supplied args is retried with one fewer TRAILING arg, down
+   to zero. In practice only `refresh_token` is ever handed an arg (the
+   rejected token), so both a 0-param `def refresh_token():` and a 1-param
+   `def refresh_token(rejected):` work. A genuine 0-arg failure re-throws (the
+   caller logs it and yields nil)."
+  [ext-name ^Context ctx ^Value pyfn args]
+  (loop [args (vec args)]
+    (let [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
+                 (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
+      (if (contains? r :ok) (:ok r) (recur (:retry r))))))
+
+(defn- provider-fn-adapter
+  "Wrap a Python provider callable as a Clojure provider fn. Args marshal in; the
+   result is plainified + keywordized. A raised Python error is logged and
+   surfaces as nil so a broken provider fn never bricks router build / auth."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [& args]
+    (try (keywordize (plainify (call-provider-fn ext-name ctx pyfn args)))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-fn-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           nil))))
+
+(def ^:private auth-success-results
+  ;; The silent-success signals the TUI/CLI recognize (channel_tui provider.clj,
+  ;; `auth-fn-success-results`): coerce a Python string return to its keyword so
+  ;; the "success is silent" rule fires. Bounded map — no keyword minting from
+  ;; arbitrary data.
+  {"ok" :ok "already-authenticated" :already-authenticated "authenticated" :authenticated})
+
+(defn- auth-fn-adapter
+  "Wrap a Python `auth(printer)` callable as `:provider/auth-fn`. The host hands
+   in a Clojure `print!` fn; it is marshalled INTO Python as a callable the
+   extension invokes to emit one instruction line. The return coerces a
+   success-signal string to its keyword (so the silent-success path matches),
+   passes `True`/`None` through, and leaves anything else as-is. A raised Python
+   error propagates — the caller (TUI/CLI) frames it as an auth failure."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [print!]
+    (let [printer
+          (->executable (fn [line]
+                          (print! (str line))
+                          nil))
+
+          r
+          (call-py-ext ext-name nil ctx pyfn [printer])]
+
+      (if (string? r) (get auth-success-results r r) r))))
+
+(defn- auth-prompt-fn-adapter
+  "Wrap a Python `auth_prompt()` callable as `:provider/auth-prompt-fn` —
+   `() -> guidance lines` shown in the API-key dialog body. Result coerces to a
+   vector of strings (a bare string becomes a one-line vector); anything else,
+   or an error, yields nil so a broken prompt never blocks the dialog."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn []
+    (try (let [r (call-py-ext ext-name nil ctx pyfn [])]
+           (cond (sequential? r) (mapv str r)
+                 (string? r) [r]
+                 :else nil))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-fn-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           nil))))
+
+(defn- stringify-deep
+  "Deep-convert host data to the strings-only shape the `->py` boundary
+   accepts, so a map carrying keyword keys AND keyword values (a svar
+   provider, a config, a selection event) can cross INTO a Python provider
+   hook. Keyword/symbol keys and values become their name string (leading
+   `:` stripped, namespace kept); scalars pass through. `->py` forbids
+   keywords outright, so without this an enrich-models / on-selected arg
+   would throw a boundary violation before the Python fn ever runs."
+  [x]
+  (letfn [(k->s [k] (cond (keyword? k) (subs (str k) 1)
+                          (symbol? k) (str k)
+                          (string? k) k
+                          :else (str k)))]
+    (cond (map? x) (into {} (map (fn [[k v]] [(k->s k) (stringify-deep v)])) x)
+          (sequential? x) (mapv stringify-deep x)
+          (set? x) (mapv stringify-deep x)
+          (keyword? x) (subs (str x) 1)
+          (symbol? x) (str x)
+          :else x)))
+
+(defn- enrich-models-fn-adapter
+  "Wrap a Python `enrich_models(provider, router_opts)` callable as
+   `:provider/enrich-models-fn`. The host hands the svar-shaped provider and
+   the router opts INTO Python as plain string-keyed dicts (`stringify-deep`);
+   the returned model list is keywordized, and each model's snake `tool_call`
+   is renamed to the `:tool-call?` key the router reads (Python can't spell the
+   `?`). A non-sequential return or any error yields nil, which the loop's
+   `enrich-provider-models` treats as 'no enrichment' — the router still
+   builds on svar's conservative defaults."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [svar-provider router-opts]
+    (try (let [r (call-py-ext ext-name nil ctx pyfn
+                              [(stringify-deep svar-provider)
+                               (stringify-deep router-opts)])]
+           (when (sequential? r)
+             (mapv (fn [m]
+                     (let [km (keywordize m)]
+                       (if (contains? km :tool-call)
+                         (-> km
+                             (assoc :tool-call? (:tool-call km))
+                             (dissoc :tool-call))
+                         km)))
+                   r)))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-fn-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           nil))))
+
+(defn- on-selected-fn-adapter
+  "Wrap a Python `on_selected(event)` callable as `:provider/on-selected-fn` —
+   a side-effect hook run after the active provider changes and config is
+   persisted. The event `{:previous-provider :provider :config :source}` crosses
+   INTO Python as a plain string-keyed dict (`stringify-deep`); the return is
+   ignored (the contract is nil). Errors are logged and swallowed so a broken
+   hook never blocks provider selection."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [event]
+    (try (call-py-ext ext-name nil ctx pyfn [(stringify-deep event)])
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-fn-failed
+                      :data {:extension ext-name :error (ex-message t)}})))
+    nil))
+
+(defn- ->provider-entry
+  "`spec` is a Python `vis.provider(...)` dict — STRING keys."
+  [ext-name ^Context ctx spec]
+  (let [adapt
+        (fn [pk]
+          (let [v (get spec pk)]
+            (when (instance? Value v) (provider-fn-adapter ext-name ctx v))))
+
+        preset
+        (->preset (get spec "preset"))]
+
+    (cond-> {:provider/id (clojure.core/keyword (str (get spec "id")))
+             :provider/label (str (get spec "label"))}
+      (seq preset)
+      (assoc :provider/preset preset)
+
+      (adapt "get_token")
+      (assoc :provider/get-token-fn (adapt "get_token"))
+
+      (adapt "detect")
+      (assoc :provider/detect-fn (adapt "detect"))
+
+      (adapt "status")
+      (assoc :provider/status-fn (adapt "status"))
+
+      (adapt "logout")
+      (assoc :provider/logout-fn (adapt "logout"))
+
+      (adapt "limits")
+      (assoc :provider/limits-fn (adapt "limits"))
+
+      (adapt "refresh_token")
+      (assoc :provider/refresh-token-fn (adapt "refresh_token"))
+
+      (instance? Value (get spec "auth"))
+      (assoc :provider/auth-fn (auth-fn-adapter ext-name ctx (get spec "auth")))
+
+      (instance? Value (get spec "auth_prompt"))
+      (assoc :provider/auth-prompt-fn
+        (auth-prompt-fn-adapter ext-name ctx (get spec "auth_prompt")))
+
+      (instance? Value (get spec "enrich_models"))
+      (assoc :provider/enrich-models-fn
+        (enrich-models-fn-adapter ext-name ctx (get spec "enrich_models")))
+
+      (instance? Value (get spec "on_selected"))
+      (assoc :provider/on-selected-fn
+        (on-selected-fn-adapter ext-name ctx (get spec "on_selected"))))))
+
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
   [^Context ctx reg]
@@ -601,7 +891,10 @@ def __vis_registration__():
         (get reg "ctx")
 
         activation
-        (get reg "activation")]
+        (get reg "activation")
+
+        providers
+        (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))]
 
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
@@ -629,7 +922,10 @@ def __vis_registration__():
       (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))
 
       (instance? Value ctx-fn)
-      (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn)))))
+      (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn))
+
+      (seq providers)
+      (assoc :ext/providers providers))))
 
 ;; =============================================================================
 ;; Loader

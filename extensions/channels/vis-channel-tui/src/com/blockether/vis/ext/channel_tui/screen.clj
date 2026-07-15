@@ -2792,30 +2792,41 @@
    Dispatches only when the `:git` fact actually changes, so an idle session costs
    one cheap gateway read per tick and never churns the render loop."
   ^Thread []
-  (let [t (Thread. ^Runnable
-                   (fn []
-                     (loop [last-git ::init]
-                       (when-not (:shutdown? @state/app-db)
-                         (let [ws (try (when-let [sid (get-in @state/app-db [:session :id])]
-                                         (when-let [ws (vis/gateway-session-workspace sid)]
-                                           (when (:root ws) ws)))
-                                       (catch Throwable t
-                                         (tel/log! {:level :warn
-                                                    :id ::workspace-refresh-failed
-                                                    :data {:error (or (ex-message t) (str t))}
-                                                    :msg "Workspace refresh failed"})
-                                         nil))
-                               next-git (if ws
-                                          (let [g (:git ws)]
-                                            (when (not= g last-git)
-                                              (state/dispatch [:set-workspace ws]))
-                                            g)
-                                          last-git)]
+  (let [t (Thread.
+            ^Runnable
+            (fn []
+              (loop [last-key ::init]
+                (when-not (:shutdown? @state/app-db)
+                  (let [sid (get-in @state/app-db [:session :id])
+                        ws (try (when sid
+                                  (when-let [ws (vis/gateway-session-workspace sid)]
+                                    (when (:root ws) ws)))
+                                (catch Throwable t
+                                  (tel/log! {:level :warn
+                                             :id ::workspace-refresh-failed
+                                             :data {:error (or (ex-message t) (str t))}
+                                             :msg "Workspace refresh failed"})
+                                  nil))
+                        ;; Dedup key includes the session id, NOT just the
+                        ;; `:git` fact. `:set-workspace` (nil workspace-id) writes
+                        ;; the ACTIVE tab, and the active session changes on a tab
+                        ;; switch / background turn. Keying on git alone means a
+                        ;; switch to a session whose changed-file count coincides
+                        ;; with the previously-active one's suppresses the
+                        ;; dispatch, leaving the now-active tab frozen at its
+                        ;; stale turn-start snapshot (two sessions on the SAME dir
+                        ;; then show different counts). Re-dispatch on any sid OR
+                        ;; git change so the footer always tracks the active tab.
+                        next-key (if ws
+                                   (let [k [sid (:git ws)]]
+                                     (when (not= k last-key) (state/dispatch [:set-workspace ws]))
+                                     k)
+                                   last-key)]
 
-                           (try (Thread/sleep (long workspace-refresh-ms))
-                                (catch InterruptedException _ nil))
-                           (recur next-git)))))
-                   "vis-channel-tui-workspace-refresh")]
+                    (try (Thread/sleep (long workspace-refresh-ms))
+                         (catch InterruptedException _ nil))
+                    (recur next-key)))))
+            "vis-channel-tui-workspace-refresh")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -3115,11 +3126,67 @@
                         (when (and root (= place (canonical root))) id))))))
        (catch Throwable _ nil)))
 
-(defn- persist-tabs!
-  "Snapshot the current open-tab set + active tab and persist it for this
-   launch directory, so the tabs come back next time vis opens here."
+(defonce ^:private active-project-id*
+  ;; The project bound to THIS launch directory — a project IS a tab set. Resolved
+  ;; once on startup (and re-pointed by switch-project), it replaces the old
+  ;; per-place `~/.vis/tabs/<place>.edn` sidecar: the DB (project membership +
+  ;; `project_position` order) now OWNS the open-tab set.
+  (atom nil))
+
+(defn- launch-root
+  "Canonical path of the launch directory (`user.dir`) — the workspace root the
+   auto-project binds to."
   []
-  (tabs/save! (state/tab-session-snapshot @state/app-db)))
+  (try (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+       (catch Throwable _ (System/getProperty "user.dir"))))
+
+(defn- ensure-active-project-id!
+  "Resolve (and cache) the project bound to the launch root, get-or-creating it on
+   first launch here. Returns the project id string, or nil when the gateway is
+   unreachable (persistence then degrades to a no-op, never a crash)."
+  []
+  (or @active-project-id*
+      (let [root (launch-root)
+            nm   (.getName (java.io.File. root))
+            pid  (try (some-> (vis/gateway-ensure-project-for-root! root nm)
+                              :id
+                              str)
+                      (catch Throwable _ nil))]
+        (when pid (reset! active-project-id* pid))
+        pid)))
+
+(defn- project-member-session-ids
+  "Session ids belonging to `pid`, in manual (`project_position`) order — the
+   project's tab set, oldest-position first."
+  [pid]
+  (when pid
+    (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ nil))
+         (filter #(= (str pid) (str (:project_id %))))
+         (sort-by #(or (:project_position %) Long/MAX_VALUE))
+         (mapv #(str (:id %))))))
+
+(defn- persist-tabs!
+  "Persist the current open-tab set into the launch PROJECT (a project IS a tab
+   set) — no EDN sidecar. Assigns every open tab's session to the project and
+   rewrites `project_position` to match tab order. ADD-only: closing a tab does
+   NOT unassign it, so the project stays a durable tab set (use the navigator's
+   'Remove from project' to drop one). Best effort and off the input thread — a
+   gateway hiccup never breaks the UI."
+  []
+  (when-let [pid (ensure-active-project-id!)]
+    (let [snap (state/tab-session-snapshot @state/app-db)
+          ids  (mapv :id (:sessions snap))]
+      (when (seq ids)
+        (vis/worker-future
+          "tui-persist-tabs"
+          (fn []
+            (try
+              (let [members (set (project-member-session-ids pid))]
+                (doseq [sid ids]
+                  (when-not (contains? members (str sid))
+                    (try (vis/gateway-assign-project! sid pid) (catch Throwable _ nil))))
+                (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil)))
+              (catch Throwable _ nil))))))))
 
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
@@ -3961,7 +4028,14 @@
                                        (state/dispatch [:search-clear]))
                                      (with-dialog-lock #(dlg/resources-dialog!
                                                           screen
-                                                          (get-in @state/app-db [:session :id])))))
+                                                          (get-in @state/app-db [:session :id])
+                                                          ;; The log viewer opens FULLSCREEN over
+                                                          ;; the frozen chat; on Esc back to this
+                                                          ;; list, repaint the chat behind so the
+                                                          ;; box doesn't return over stale log text.
+                                                          :repaint-bg
+                                                          (fn []
+                                                            (repaint-chat-frame! screen))))))
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)

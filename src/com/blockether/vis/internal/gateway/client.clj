@@ -309,6 +309,15 @@
 
 (defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
+(defn ensure-project-for-root!
+  "POST /v1/projects/ensure — get-or-create the project bound to canonical
+   workspace `root` (a project IS a TUI tab set). `name` seeds a fresh project.
+   Returns the project."
+  ([root] (ensure-project-for-root! root nil))
+  ([root name] (send-json! "POST" "/v1/projects/ensure"
+                           (cond-> {:root (str root)}
+                             (not-empty (str name)) (assoc :name (str name))))))
+
 (defn get-project
   [pid]
   (try (send-json! "GET" (str "/v1/projects/" (enc pid)))
@@ -395,12 +404,29 @@
         (:resources (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")))))
 
 (defonce ^:private resources-cache (atom {}))
+(defonce ^:private resources-refreshing (atom #{}))
 (def ^:private resources-cache-ttl-ms 750)
 
+(defn- refresh-resources!
+  "Single-flight background refresh of the resource cache for `sid`. The daemon
+   round-trip (`list-resources`) is BLOCKING and must never run on the render
+   thread — a busy daemon then stalls every TUI frame. Only one fetch per sid is
+   ever in flight, so render-cadence misses can't pile futures up. Errors leave
+   the last-known value untouched."
+  [sid k]
+  (let [[old _] (swap-vals! resources-refreshing conj k)]
+    (when-not (contains? old k)
+      (future (try (let [v (list-resources sid)]
+                     (swap! resources-cache assoc k {:at (System/currentTimeMillis) :val v}))
+                   (catch Throwable _ nil)
+                   (finally (swap! resources-refreshing disj k)))))))
+
 (defn list-resources-cached
-  "Footer-frequency read: `list-resources` memoized per sid for a short TTL so
-   painting the TUI every frame doesn't round-trip the daemon. Swallows errors
-   to the last-known value (nil before the first success)."
+  "Footer-frequency read: the session's resource list served from a per-sid cache
+   that NEVER blocks the caller. A stale (or cold) entry kicks a background
+   single-flight refresh and this returns the last-known value immediately (nil
+   before the first success). Keeping the daemon HTTP round-trip OFF the render
+   thread is what stops a busy daemon from stalling every TUI frame."
   [sid]
   (let [k
         (str sid)
@@ -411,11 +437,8 @@
         {:keys [at val]}
         (get @resources-cache k)]
 
-    (if (and at (< (- now at) resources-cache-ttl-ms))
-      val
-      (let [v (try (list-resources sid) (catch Throwable _ (:val (get @resources-cache k))))]
-        (swap! resources-cache assoc k {:at now :val v})
-        v))))
+    (when-not (and at (< (- now at) resources-cache-ttl-ms)) (refresh-resources! sid k))
+    val))
 
 (defn stop-resource!
   "Run the resource's stop-fn in the daemon and unregister it. Returns the

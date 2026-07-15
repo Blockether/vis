@@ -256,3 +256,58 @@
             (cleanup-b)
             (is (= 2 @restarts) "only the last listener removal changes the remote session set")
             (is (empty? (:subs @@mux-var)))))))))
+
+(deftest list-resources-cached-never-blocks-the-caller
+  ;; REGRESSION: the footer calls this on the render thread every frame. The
+  ;; daemon round-trip MUST run in the background so a busy/slow daemon can't
+  ;; stall painting. A cold read returns the last-known value (nil) instantly
+  ;; and kicks a single-flight refresh; once it lands, subsequent reads are
+  ;; served from cache. If someone reintroduces a synchronous round-trip this
+  ;; test blocks for `slow-ms` and the timing assertion fails.
+  (let [slow-ms
+        300
+
+        cache
+        (rv 'resources-cache)
+
+        inflight
+        (rv 'resources-refreshing)
+
+        calls
+        (atom 0)]
+
+    (with-redefs-fn {(rv 'list-resources) (fn [_sid]
+                                            (swap! calls inc)
+                                            (Thread/sleep slow-ms)
+                                            [{"id" "bg"}])}
+      (fn []
+        (reset! @cache {})
+        (reset! @inflight #{})
+        (let [t0
+              (System/nanoTime)
+
+              cold
+              (client/list-resources-cached "sid-x")
+
+              cold-ms
+              (/ (- (System/nanoTime) t0) 1e6)]
+
+          (is (nil? cold) "cold read serves the last-known value (nil) immediately")
+          (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
+          ;; several stale reads while the fetch is in flight stay single-flight
+          (dotimes [_ 5]
+            (client/list-resources-cached "sid-x"))
+          (Thread/sleep (+ slow-ms 250))
+          (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
+          (let [t1
+                (System/nanoTime)
+
+                warm
+                (client/list-resources-cached "sid-x")
+
+                warm-ms
+                (/ (- (System/nanoTime) t1) 1e6)]
+
+            (is (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
+            (is (< warm-ms 50.0) "warm read is a pure cache hit")
+            (is (empty? @@inflight) "the in-flight slot is released after the fetch")))))))

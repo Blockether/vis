@@ -23,8 +23,9 @@ A Python extension can contribute:
 - **op hooks** — guards that can block file operations
 - **durable state** — a key/value store that survives restarts
 - **session context** — data folded into the model's `session` bag every turn
+- **LLM providers** — register an API-key provider the router can call (`vis.provider(...)`)
 
-Channels, providers, and TUI rendering stay Clojure-side.
+Channels, persistence backends, and TUI rendering stay Clojure-side.
 
 ## Hello, extension
 
@@ -311,6 +312,58 @@ imports work without pip:
 These are compatibility subsets, not the full PyPI packages — enough for
 scripting and tests, not a substitute for the real library's every corner.
 
+## LLM providers
+
+`vis.provider(...)` registers a first-class provider the model can actually
+route to — the same descriptor a Clojure provider extension builds, minus the
+Clojure. Hand it an `id`, a `label`, a `preset` (base URL / API style / default
+models), and any of the credential callables:
+
+```python
+import os, vis
+
+def _token():
+    key = os.environ.get("ACME_API_KEY")
+    if not key:
+        raise ValueError("set ACME_API_KEY")
+    return {"token": key, "api_url": "https://api.acme.ai/v1"}
+
+def _status():
+    ok = bool(os.environ.get("ACME_API_KEY"))
+    return {"authenticated?": ok, "source": "env-var", "provider_id": "acme"}
+
+vis.extension(
+    name="provider-acme",
+    description="Acme AI (OpenAI-compatible) provider.",
+    providers=[
+        vis.provider(
+            id="acme",
+            label="Acme AI",
+            preset={"base_url": "https://api.acme.ai/v1",
+                    "api_style": "openai",
+                    "default_models": ["acme-large", "acme-small"]},
+            get_token=_token,
+            status=_status,
+        ),
+    ],
+)
+```
+
+The `preset` flows into the router the same way a built-in provider's does, so
+adding `acme` to `~/.vis/config.edn`'s `:providers` (or the TUI *Add Provider*
+picker, which lists any labelled provider) makes the model call it. Callable
+slots — `get_token`, `detect`, `status`, `logout`, `limits`, `refresh_token`,
+`auth`, `auth_prompt` — are all optional; a static-key provider usually just
+needs `get_token` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
+`:api-url`), and `api_style` becomes a keyword. `vis providers auth/status/limits
+<id>` work against it like any other provider.
+
+For an interactive login, give `auth=` a `def login(printer): ...` — the runtime
+hands it a `printer(line)` callback to emit instructions, and its return signals
+the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
+surfaces the printed lines so the user knows what to do next). `auth_prompt=`
+is a `() -> [line, ...]` for the static guidance shown in the API-key dialog.
+
 ## Python vs Clojure extensions
 
 | | Python (`.vis/extensions/*.py`) | Clojure (classpath) |
@@ -318,7 +371,7 @@ scripting and tests, not a substitute for the real library's every corner.
 | Ship | drop a file | build into the binary |
 | Reload | `/reload`, in place | rebuild + restart (native) |
 | Scope | per project or per user | every install of the distribution |
-| Can contribute | tools, prompts, slash, op hooks, state | everything (channels, providers, persistence, TUI, CLI, themes, …) |
+| Can contribute | tools, prompts, slash, op hooks, state, providers | everything (channels, persistence, TUI, CLI, themes, …) |
 
 Reach for Python for project-specific tools and guards; graduate to a
 [Clojure extension](extending.md) when you need deeper

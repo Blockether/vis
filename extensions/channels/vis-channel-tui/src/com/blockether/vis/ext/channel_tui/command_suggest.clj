@@ -10,9 +10,11 @@
     (if (zero? total) 0 (max 0 (min (dec total) (long (or idx 0)))))))
 
 (defn move-index
+  ;; CLAMP at the ends — no wraparound. Scrolling past the first/last row
+  ;; parks there instead of cycling forever (both slash + `@` file pickers).
   [idx delta total]
   (let [total (long (max 0 (or total 0)))]
-    (if (zero? total) 0 (mod (+ (long (or idx 0)) (long (or delta 0))) total))))
+    (if (zero? total) 0 (max 0 (min (dec total) (+ (long (or idx 0)) (long (or delta 0))))))))
 
 (defn- command-id->name
   [id]
