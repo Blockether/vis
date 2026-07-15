@@ -2841,7 +2841,12 @@
                                  ;; the live turn — not a second time under Queued.
                                  (update :pending-sends
                                          (fn [q]
-                                           (vec (remove #(= tid (:turn-id %)) (or q [])))))
+                                           (vec
+                                             (remove #(or (= tid (:turn-id %))
+                                                          (and (nil? (:turn-id %))
+                                                               (= request-text
+                                                                  (or (:agent-text %) (:text %)))))
+                                                     (or q [])))))
                                  (assoc :scroll scroll/follow
                                         :loading? true
                                         :cancel-token token

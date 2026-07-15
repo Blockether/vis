@@ -1022,7 +1022,12 @@
                       nil)]
 
         (reset! state/app-db
-          {:session {:id "s1"} :active-tab-id "s1" :pending-sends [] :render-version 0})
+          {:session {:id "s1"}
+           :active-tab-id "s1"
+           ;; The gateway queue snapshot can arrive before its :add event binds
+           ;; this local echo. It is the running turn, not a second queued one.
+           :pending-sends [{:text "hello" :client-id "local-echo"}]
+           :render-version 0})
         (state/dispatch [:attach-running-turn "s1"
                          {:id "s1"
                           :status "running"
@@ -1032,9 +1037,10 @@
                                          {:turn-id "turn-2" :text "world" :queued-at-ms 2}]}])
         (let [db @state/app-db]
           (expect (= "turn-1" (:gateway-turn-id db)))
-          ;; the running turn is gone from the queue; only the real backlog remains
+          ;; Both the stale gateway snapshot and its unbound local echo are gone;
+          ;; only the genuinely queued sibling remains.
           (expect (= ["turn-2"] (mapv :turn-id (:pending-sends db))))
-          (expect (not (some #(= (:gateway-turn-id db) (:turn-id %)) (:pending-sends db))))))))
+          (expect (not (some #(= "hello" (:text %)) (:pending-sends db))))))))
 
 (defdescribe
   live-progress-rate-test
