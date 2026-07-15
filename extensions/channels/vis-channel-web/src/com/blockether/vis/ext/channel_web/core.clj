@@ -5749,11 +5749,11 @@
    failure - missing binary, non-zero exit, timeout - yields false rather than
    throwing, so callers can treat it as a pure hint."
   []
-  (try (let [^java.util.List args ["tailscale" "status"]
+  (try (let [^java.util.List args
+             ["tailscale" "status"]
 
              process
-             (.start (doto (ProcessBuilder. args)
-                       (.redirectErrorStream true)))
+             (.start (doto (ProcessBuilder. args) (.redirectErrorStream true)))
 
              _drain
              (future (slurp (.getInputStream process)))

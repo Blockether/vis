@@ -231,9 +231,7 @@
 
 (defn- telegram-pid-file [] (io/file (vis-home-dir) "telegram.pid"))
 
-(defn- telegram-log-file
-  []
-  (io/file (paths/ensure-logs-dir!) "telegram.log"))
+(defn- telegram-log-file [] (io/file (paths/ensure-logs-dir!) "telegram.log"))
 
 (defn- current-pid [] (.pid (ProcessHandle/current)))
 
