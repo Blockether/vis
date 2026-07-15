@@ -392,23 +392,26 @@
         (expect (= "2 steps folded | t1/i1-i2: mapped | <=t2/i5 | >=t3/i1 | t1/i1..t1/i4" out)))
       (let [out (folds-view [{"scopes" #{"t1/i1"}}] nil)]
         (expect (= "1 steps folded | t1/i1" out))))
-  (it "session-view derives session_folds only when summaries exist"
+  (it "session-view merges the fold ledger INTO session_utilization, not a top-level key"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
-      (expect (contains? (eng/session-view
-                           (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}]))
-                         "session_folds")))
-  (it "a landed fold emits ONE structural session[\"folds\"] ledger delta"
+      (expect (not (contains? (get (eng/session-view base-ctx) "session_utilization") "folds")))
+      (expect (contains? (get (eng/session-view (assoc base-ctx
+                                                  "session_summaries" [{"scopes" #{"t1/i1"}
+                                                                        "gist" "g"}]))
+                              "session_utilization")
+                         "folds")))
+  (it "a landed fold emits ONE structural session[\"utilization\"][\"folds\"] ledger delta"
       (let [c1
             (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
 
             d
             (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
 
-        (expect (re-find #"^session\[\"folds\"\] = " d))
+        (expect (re-find #"^session\[\"utilization\"\]\[\"folds\"\] = " d))
         (expect (re-find #"steps" d))
         (expect (re-find #"t1/\*" d)) ; whole turn compressed in the delta
         (expect (re-find #"mapped" d))))
-  (it "appending a second fold re-emits the folds delta (only that key moves)"
+  (it "appending a second fold re-emits only the folds subkey of utilization"
       (let [c1
             (assoc base-ctx "session_summaries" [{"through" "t2/i5"}])
 
@@ -418,13 +421,15 @@
             d
             (cr/render-ctx-delta (delta-map c1) (delta-map c2))]
 
-        (expect (re-find #"session\[\"folds\"\]" d)) ; whole-key or nested-path delta
+        (expect (re-find #"session\[\"utilization\"\]\[\"folds\"\]" d))
         (expect (not (re-find #"workspace|env|routing" d)))))
-  (it "no summaries -> no folds key, no delta"
-      (expect (not (contains? (delta-map base-ctx) "folds")))
+  (it "no summaries -> no folds subkey in utilization, no delta"
+      (expect (not (contains? (get (delta-map base-ctx) "utilization") "folds")))
       (expect (nil? (cr/render-ctx-delta (delta-map base-ctx) (delta-map base-ctx)))))
-  (it "the live bound session bag (project-ctx) also carries folds"
-      (expect (contains? (cr/project-ctx (eng/session-view (assoc base-ctx
-                                                             "session_summaries"
-                                                             [{"scopes" #{"t1/i1"} "gist" "g"}])))
+  (it "the live bound session bag (project-ctx) carries folds inside utilization"
+      (expect (contains? (get (cr/project-ctx (eng/session-view (assoc base-ctx
+                                                                  "session_summaries"
+                                                                  [{"scopes" #{"t1/i1"}
+                                                                    "gist" "g"}])))
+                              "utilization")
                          "folds"))))

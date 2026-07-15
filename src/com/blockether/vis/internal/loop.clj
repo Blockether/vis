@@ -8930,7 +8930,6 @@
      ;; envs dirty; actual sandbox reset happens here, after prior IR/render is
      ;; finished and before the next user code executes.
      (.lock lock)
-     (.lock lock)
      (try (turn! (:environment entry) message-vec opts)
           (finally (touch-entry! entry) (.unlock lock))))))
 
