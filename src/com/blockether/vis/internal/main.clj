@@ -2933,8 +2933,8 @@
 (defn- run-python-source!
   "Evaluate one Python source block in `ctx`, rendering its outcome to the
    real terminal. Returns the process exit code (0 ok, 1 on a raised error).
-   Matches the agent sandbox semantics: `print(...)` is what surfaces, a bare
-   trailing expression does NOT echo."
+   Renders like a shell REPL: captured `print(...)` output surfaces; with no
+   stdout but a value, the value's repr is echoed (CPython-like)."
   [ctx code]
   (let [{:keys [stdout result error]} (env/run-python-block ctx code)]
     (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
