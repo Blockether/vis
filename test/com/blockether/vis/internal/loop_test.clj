@@ -2270,6 +2270,35 @@
                (it "keeps escaped quotes/backslashes inside the code intact"
                    (expect (= "print(\"x\\y\")" (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
 
+(defdescribe strip-echo-diffs-test
+             ;; A patch/write/struct_patch result carries a per-file unified `"diff"`. On a
+             ;; BYTE-EXACT edit that diff merely re-describes the bytes the model just
+             ;; authored, so it's stripped from the MODEL wire (the human card keeps it).
+             ;; It's kept whenever the harness may have changed the edit under the model —
+             ;; a fuzzy `"passes"` fired or `"indent_delta"` auto-shifted.
+             (let [strip @#'lp/strip-echo-diffs]
+               (it "drops the diff from a byte-exact edit summary"
+                   (expect (= [{"path" "a.clj" "op" "update" "changed" true}]
+                              (strip [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"}]))))
+               (it "keeps the diff when a fuzzy pass fired"
+                   (let [s {"path" "a.clj" "op" "update" "changed" true "diff" "--- x"
+                            "passes" ["relative_indent"]}]
+                     (expect (= [s] (strip [s])))))
+               (it "keeps the diff when indent auto-shifted"
+                   (let [s {"path" "a.clj" "op" "update" "changed" true "diff" "--- x"
+                            "indent_delta" 2}]
+                     (expect (= [s] (strip [s])))))
+               (it "strips a single-map (write) summary too"
+                   (expect (= {"path" "a.clj" "op" "add" "changed" true}
+                              (strip {"path" "a.clj" "op" "add" "changed" true "diff" "--- x"}))))
+               (it "leaves a non-edit result untouched"
+                   (let [r {"hit_count" 3 "matches" {}}]
+                     (expect (= r (strip r)))))
+               (it "leaves a mixed vector (not all file summaries) untouched"
+                   (let [r [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"}
+                            {"text" "hi"}]]
+                     (expect (= r (strip r)))))))
+
 ;; Build the wire-name → `:call` shape map from the REAL tool symbols, exactly as
 ;; `extension/native-tool-call-shapes` does at runtime. Driving the synthesizer with
 ;; the ACTUAL declarations (not a hand-copied table) makes this an EQUIVALENCE ORACLE:
