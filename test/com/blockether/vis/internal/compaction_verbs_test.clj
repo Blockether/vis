@@ -349,44 +349,45 @@
 
 (defdescribe
   session-fold-ctx-reflection-test
-  ;; The ledger is split by LIFESPAN into two `"session_utilization"` string leaves:
-  ;; `"folds"` (stable gists, changes only when a fold lands) and `"now"` (volatile
-  ;; budget + live, no position — re-emits every iteration).
-  (it "folds-view resolves selectors into stable `folds` + volatile `now` leaves"
+  ;; The fold GIST lives ONCE in the transcript breadcrumb (rendered where the step
+  ;; collapsed, with its file:line anchors). The ONLY thing merged into
+  ;; `"session_utilization"` is the tiny volatile `"now"` budget leaf (saved + live,
+  ;; NO gists) — there is no `"folds"` leaf, so the heavy gist is never echoed.
+  (it "folds-view resolves selectors into the single volatile `now` budget leaf"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
 
             out
             (folds-view [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"} "gist" "mapped"}] uni)]
 
-        ;; `folds` = surviving folds only (no counts, no live); `now` = saved · live
-        (expect (= {"folds" "t1/*: mapped" "now" "saved 3/5 (60%) · live t2/*"} out))))
-  (it "a through selector is RESOLVED (not shown raw); gist-less stays gist-less"
+        ;; no gist here (it rides the breadcrumb); just saved · live
+        (expect (= {"now" "saved 3/5 (60%) · live t2/*"} out))))
+  (it "a through selector is RESOLVED against the wire when scoring `saved`"
       (let [uni
             ["t1/i1" "t1/i2" "t2/i1"]
 
             out
             (folds-view [{"through" "t1/i2"}] uni)]
 
-        (expect (= {"folds" "t1/*" "now" "saved 2/3 (67%) · live t2/*"} out))))
-  (it "a partial-turn fold stays explicit in `folds`; the gaps stay live in `now`"
+        (expect (= {"now" "saved 2/3 (67%) · live t2/*"} out))))
+  (it "a partial-turn fold leaves the unfolded gaps live in `now`"
       (let [uni
             ["t3/i1" "t3/i2" "t3/i3" "t3/i4" "t3/i5"]
 
             out
             (folds-view [{"scopes" #{"t3/i1" "t3/i2" "t3/i4"} "gist" "g"}] uni)]
 
-        ;; same-turn runs merge in the fold; the unfolded gaps show as live
-        (expect (= {"folds" "t3/i1-i2,i4: g" "now" "saved 3/5 (60%) · live t3/i3,i5"} out))))
-  (it "a broader re-fold SUPERSEDES a finer one (one `folds` entry, no live in `now`)"
+        ;; the unfolded gaps show as live, run-compressed
+        (expect (= {"now" "saved 3/5 (60%) · live t3/i3,i5"} out))))
+  (it "a broader re-fold SUPERSEDES a finer one (whole universe folded -> nothing live)"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3"]
 
             out
             (folds-view [{"scopes" #{"t1/i1"} "gist" "fine"} {"scopes" #{"t1"} "gist" "meta"}] uni)]
 
-        ;; only the meta gist survives; every turn folded -> t*, nothing live
-        (expect (= {"folds" "t*: meta" "now" "saved 3/3 (100%)"} out))))
+        ;; every turn folded -> no live section, no gist
+        (expect (= {"now" "saved 3/3 (100%)"} out))))
   (it "a fold whose scopes scrolled OFF the wire never inflates `saved` (phantom guard)"
       ;; universe is 3 live iters; the fold references t1/i1 which was trimmed off the
       ;; trailer. `saved` must count only on-wire scopes -> 0/3, not a phantom 1/4.
@@ -396,38 +397,32 @@
             out
             (folds-view [{"scopes" #{"t1/i1"} "gist" "old"}] uni)]
 
-        ;; nothing on the wire is folded -> no `folds` entry, saved 0/3, all live
         (expect (= {"now" "saved 0/3 (0%) · live t*"} out))))
-  (it "with NO universe (resume / fresh seed) only the `folds` leaf is produced"
-      ;; explicit scopes compress; unresolved ranges show pending boundary markers;
-      ;; there is no `now` (no position / live) until the next send re-stamps the universe.
-      (let [out (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}
-                             {"since" "t3/i1"} {"from" "t1/i1" "to" "t1/i4"}]
-                            nil)]
-        (expect (= {"folds" "t1/i1-i2: mapped | <=t2/i5 | >=t3/i1 | t1/i1..t1/i4"} out)))
-      (let [out (folds-view [{"scopes" #{"t1/i1"}}] nil)]
-        (expect (= {"folds" "t1/i1"} out))))
-  (it "session-view merges both ledger leaves INTO session_utilization, not a top-level key"
+  (it "with NO universe (resume / fresh seed) folds-view yields `{}` — breadcrumbs carry the gists"
+      ;; before the first live send stamps the universe there is no budget to report;
+      ;; the transcript breadcrumbs alone hold every fold's gist until the next send.
+      (expect
+        (= {} (folds-view [{"scopes" #{"t1/i2" "t1/i1"} "gist" "mapped"} {"through" "t2/i5"}] nil)))
+      (expect (= {} (folds-view [{"scopes" #{"t1/i1"}}] nil))))
+  (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
-      (expect (not (contains? (get (eng/session-view base-ctx) "session_utilization") "folds")))
       (let [util (get (eng/session-view (assoc base-ctx
                                           "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}]))
                       "session_utilization")]
-        (expect (contains? util "folds"))
+        (expect (not (contains? util "folds")))
         (expect (contains? util "now"))))
-  (it "a landed fold emits ONE structural session[\"utilization\"][\"folds\"] ledger delta"
+  (it "a landed fold emits a session[\"utilization\"][\"now\"] budget delta, NO gist echoed"
       (let [c1
             (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
 
             d
             (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
 
-        (expect (re-find #"session\[\"utilization\"\]\[\"folds\"\] = " d))
-        (expect (re-find #"t1/\*" d)) ; whole turn compressed in the delta
-        (expect (re-find #"mapped" d))))
-  (it "universe grows with NO new fold -> only `now` re-emits, the heavy `folds` leaf stays silent"
-      ;; The churn fix: a new UNFOLDED iteration changes position + live (`now`) but not
-      ;; the surviving folds (`folds`), so the recursive per-leaf delta ships only `now`.
+        (expect (re-find #"session\[\"utilization\"\]\[\"now\"\] = " d))
+        ;; the gist is NOT in the utilization delta — it rides only the breadcrumb
+        (expect (not (re-find #"mapped" d)))
+        (expect (not (re-find #"\[\"folds\"\]" d)))))
+  (it "universe grows with NO new fold -> `now` re-emits, and there is never a `folds` leaf"
       (let [folded
             (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
 
@@ -440,26 +435,14 @@
         (expect (re-find #"session\[\"utilization\"\]\[\"now\"\]" d))
         (expect (not (re-find #"\[\"folds\"\]" d)))
         (expect (not (re-find #"mapped" d)))))
-  (it "appending a second fold re-emits the folds subkey of utilization only"
-      (let [c1
-            (assoc base-ctx "session_summaries" [{"through" "t2/i5"}])
-
-            c2
-            (update c1 "session_summaries" conj {"since" "t3/i1"})
-
-            d
-            (cr/render-ctx-delta (delta-map c1) (delta-map c2))]
-
-        (expect (re-find #"session\[\"utilization\"\]\[\"folds\"\]" d))
-        (expect (not (re-find #"workspace|env|routing" d)))))
-  (it "no summaries -> no folds/now subkeys in utilization, no delta"
-      (expect (not (contains? (get (delta-map base-ctx) "utilization") "folds")))
+  (it "no summaries -> no now/folds subkeys in utilization, no delta"
       (expect (not (contains? (get (delta-map base-ctx) "utilization") "now")))
+      (expect (not (contains? (get (delta-map base-ctx) "utilization") "folds")))
       (expect (nil? (cr/render-ctx-delta (delta-map base-ctx) (delta-map base-ctx)))))
-  (it "the live bound session bag (project-ctx) carries the ledger inside utilization"
+  (it "the live bound session bag (project-ctx) carries the `now` budget inside utilization"
       (expect (contains? (get (cr/project-ctx (eng/session-view (assoc base-ctx
                                                                   "session_summaries"
                                                                   [{"scopes" #{"t1/i1"}
                                                                     "gist" "g"}])))
                               "utilization")
-                         "folds"))))
+                         "now"))))
