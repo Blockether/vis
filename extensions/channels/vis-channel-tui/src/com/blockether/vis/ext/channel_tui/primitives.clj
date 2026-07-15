@@ -394,6 +394,21 @@
   ^String [s ^long max-cols]
   (TerminalTextUtils/truncateColumns ^String s (int max-cols)))
 
+(defn ellipsize
+  "Shorten `s` to at most `max-cols` terminal columns, appending an ellipsis
+   `marker` (default `…`) when truncation happens. Grapheme-cluster + EAW safe
+   and WIDTH-CORRECT — the marker's own display width is charged against the
+   budget, so the result never exceeds `max-cols` (even for tiny budgets, where
+   the marker itself is truncated to fit). nil `s` → treated as empty;
+   `max-cols <= 0` → `\"\"`; a string already within budget is returned as-is.
+
+   The single canonical column-ellipsis for the TUI — `dialogs`/`table`/`header`
+   delegate here. Backed by the lanterna fork's `TerminalTextUtils/ellipsize`
+   (>= 3.1.5-vis.24)."
+  (^String [s ^long max-cols] (ellipsize s max-cols "…"))
+  (^String [s ^long max-cols ^String marker]
+   (TerminalTextUtils/ellipsize (str s) (int max-cols) marker)))
+
 (defn truncate-middle
   "Shorten `s` to at most `max-cols` columns by ELIDING THE MIDDLE behind a
    single `…`, keeping both the HEAD and the TAIL. Ideal for file paths, where
