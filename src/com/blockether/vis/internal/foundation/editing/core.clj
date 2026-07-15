@@ -601,7 +601,7 @@
 (defn- more-restrictive-rule
   [best rule]
   (if (or (nil? best)
-          (> (protected-access-rank (:access rule)) (protected-access-rank (:access best))))
+          (> (long (protected-access-rank (:access rule))) (long (protected-access-rank (:access best)))))
     rule
     best))
 
@@ -867,16 +867,16 @@
 
 (defn- validate-cat-args!
   [offset n]
-  (when-not (and (integer? offset) (pos? offset))
+  (when-not (and (integer? offset) (pos? (long offset)))
     (throw (ex-info "cat offset must be a positive integer (1-based line number)."
                     {:type :ext.foundation.editing/invalid-cat-args :offset offset})))
-  (when-not (and (integer? n) (pos? n))
+  (when-not (and (integer? n) (pos? (long n)))
     (throw (ex-info "cat limit must be a positive integer line count."
                     {:type :ext.foundation.editing/invalid-cat-args :limit n}))))
 
 (defn- validate-cat-range!
   [start end]
-  (when-not (and (integer? start) (integer? end) (pos? start) (pos? end) (<= start end))
+  (when-not (and (integer? start) (integer? end) (pos? (long start)) (pos? (long end)) (<= (long start) (long end)))
     (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
                     {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
 
@@ -1068,7 +1068,7 @@
         windows
         (mapv (fn [[start end]]
                 (let [n
-                      (inc (- end start))
+                      (inc (- (long end) (long start)))
 
                       out
                       (read-file path start n)]
@@ -1226,22 +1226,22 @@
                 :else true))
 
         walk
-        (fn walk [^File f cur-depth]
+        (fn walk [^File f ^long cur-depth]
           (check-interrupt!)
           (when-not @truncated?
             (when (and (not= f root) (keep? f))
               (vswap! acc conj! (flat-entry f))
-              (when (>= (count @acc) max-limit) (vreset! truncated? true)))
+              (when (>= (count @acc) (long max-limit)) (vreset! truncated? true)))
             ;; Descend strictly by depth budget. `:depth 0` means
             ;; \"no descent at all\" — root's children aren't visited.
             ;; `:depth 1` visits root's immediate children only.
-            (when (and (.isDirectory f) (< cur-depth max-depth) (not @truncated?))
+            (when (and (.isDirectory f) (< cur-depth (long max-depth)) (not @truncated?))
               (doseq [^File child
                       (visible-children f opts*)
 
                       :while (not @truncated?)]
 
-                (walk child (inc cur-depth))))))]
+                (walk child (inc (long cur-depth)))))))]
 
     (walk root 0)
     {:entries (persistent! @acc) :truncated? @truncated?}))
@@ -1256,7 +1256,7 @@
 (defn- entry-base-name
   [^String path]
   (let [i (str/last-index-of path "/")]
-    (if i (subs path (inc i)) path)))
+    (if i (subs path (inc (long i))) path)))
 
 (defn- group-entries-by-dir
   "Fold the pre-order flat `entries` into ONE group per directory, in
@@ -1320,12 +1320,12 @@
                            {:type :ext.foundation.editing/invalid-ls-opts :opts opts})))
 
          _
-         (when-not (and (integer? depth) (not (neg? depth)))
+         (when-not (and (integer? depth) (not (neg? (long depth))))
            (throw (ex-info "ls \"depth\" must be a non-negative integer"
                            {:type :ext.foundation.editing/invalid-ls-opts :depth depth})))
 
          _
-         (when-not (and (integer? limit) (pos? limit))
+         (when-not (and (integer? limit) (pos? (long limit)))
            (throw (ex-info "ls \"limit\" must be a positive integer"
                            {:type :ext.foundation.editing/invalid-ls-opts :limit limit})))
 
@@ -1396,24 +1396,25 @@
 
     (when (pos? n)
       (loop [s
-             0
+             (long 0)
 
              best
-             nil]
+             (long Long/MAX_VALUE)]
 
         (if (< s h)
           (if (= (.charAt hay s) (.charAt needle 0))
             (let [end (loop [i (inc s)
-                             k 1]
+                             k (long 1)]
 
                         (cond (= k n) (dec i)
-                              (>= i h) nil
+                              (>= i h) -1
                               (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
-                              :else (recur (inc i) k)))]
-              (recur (inc s) (if (and end (or (nil? best) (< (- end s) best))) (- end s) best)))
+                              :else (recur (inc i) k)))
+                  span (- (long end) s)]
+              (recur (inc s) (if (and (>= (long end) 0) (< span best)) span best)))
             (recur (inc s) best))
-          (some-> best
-                  inc))))))
+          (when (< best Long/MAX_VALUE)
+            (inc best)))))))
 
 (defn- find-token-score
   "Best subsequence-window density of `token` against the file NAME (full weight)
@@ -1428,7 +1429,7 @@
 
     (if (nil? wp)
       0.0
-      (max (if wf (/ (double (count token)) wf) 0.0) (* 0.6 (/ (double (count token)) wp))))))
+      (max (if wf (/ (double (count token)) (long wf)) 0.0) (* 0.6 (/ (double (count token)) (long wp)))))))
 
 (defn- find-relevance
   "Order-INSENSITIVE relevance of `query` to `path`, in [0.0, 1.0]. Splits the
@@ -1517,7 +1518,7 @@
        (or (get spec "limit") default-find-limit)
 
        _
-       (when-not (and (integer? limit) (pos? limit))
+       (when-not (and (integer? limit) (pos? (long limit)))
          (throw (ex-info "find \"limit\" must be a positive integer"
                          {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
 
@@ -1558,7 +1559,7 @@
   (into []
         (keep (fn [{:keys [path] :as e}]
                 (let [score (find-relevance query path)]
-                  (when (>= score find-min-score)
+                  (when (>= (double score) (double find-min-score))
                     (assoc e
                       :binary? false
                       :score score)))))
@@ -1628,7 +1629,7 @@
                                              rel (rel-path f)
                                              score (find-relevance query rel)]
 
-                                         (when (and (>= score find-min-score)
+                                         (when (and (>= (double score) (double find-min-score))
                                                     (or is_hidden (not (.isHidden f)))
                                                     (not (ignored? (load-ignore-node base) f base)))
                                            {:path rel
@@ -1671,7 +1672,7 @@
         ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
         ;; filter below do the real cutting (a fresh fff scan is ~11ms).
         candidate-page
-        (max limit 300)
+        (max (long limit) 300)
 
         ;; ONE walk-cache shared across the strict + per-token scans so an
         ;; is_respect_gitignore=false run walks each root's tree exactly once.
@@ -1701,7 +1702,7 @@
         ;; keeps the card/model focused on the strongest candidates instead of a
         ;; page of loose single-term noise.
         fuzzy-limit
-        (min limit 20)
+        (min (long limit) 20)
 
         [ranked fuzzy?]
         (if (or (seq strict) (< (count tokens) 2))
@@ -1804,7 +1805,7 @@
              "query" query
              "searched_paths" paths
              "limit" limit
-             "truncated_by" (if (>= (count items) limit) "limit" "end_of_results")}
+             "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")}
       fuzzy?
       (assoc "fuzzy" true)
 
@@ -1966,7 +1967,7 @@
 
         nonneg-int!
         (fn [label v]
-          (when (and (some? v) (not (and (integer? v) (not (neg? v)))))
+          (when (and (some? v) (not (and (integer? v) (not (neg? (long v))))))
             (throw (ex-info (str "rg " label " must be a non-negative integer")
                             {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
 
@@ -2033,9 +2034,14 @@
   "Rough char/byte size of a content-mode hit (text + context) for the rg
    total-bytes budget."
   ^long [hit]
-  (long (+ (count (str (:text hit)))
-           (reduce + 0 (map (comp count str second) (:before hit)))
-           (reduce + 0 (map (comp count str second) (:after hit))))))
+  (let [sum-lens (fn ^long [xs]
+                   (reduce (fn [^long acc x]
+                             (+ acc (count (str (second x)))))
+                           0
+                           xs))]
+    (+ (count (str (:text hit)))
+       (long (sum-lens (:before hit)))
+       (long (sum-lens (:after hit))))))
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
@@ -2088,13 +2094,13 @@
                       want-before?
                       (assoc :before
                         (mapv (fn [j]
-                                [(inc j) (nth lines j)])
+                                [(inc (long j)) (nth lines j)])
                               (range (max 0 (- i before-ctx)) i)))
 
                       want-after?
                       (assoc :after
                         (mapv (fn [j]
-                                [(inc j) (nth lines j)])
+                                [(inc (long j)) (nth lines j)])
                               (range (inc i) (min n (+ i after-ctx 1))))))]
 
                 (recur (inc i) (conj! out hit)))
@@ -2246,12 +2252,12 @@
                         (check-interrupt!)
                         (if @capped?
                           (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
-                              (when (>= (swap! probed-extra inc) rg-breadth-probe-limit)
+                              (when (>= (long (swap! probed-extra inc)) (long rg-breadth-probe-limit))
                                 (reset! breadth-capped? true)))
                           (when (file-has-any-hit? f matches?)
                             (swap! total-files inc)
                             (swap! out conj (rel-path f))
-                            (when (>= (count @out) limit) (reset! capped? true)))))
+                            (when (>= (count @out) (long limit)) (reset! capped? true)))))
                       {:files (vec @out)
                        :truncated-by (if @capped? :limit :end-of-results)
                        :total-file-count @total-files
@@ -2288,7 +2294,7 @@
                   ;; short-circuit probe (no hit objects/context, so the tail stays
                   ;; cheap), bounded by `rg-breadth-probe-limit`.
                   (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
-                      (when (>= (swap! probed-extra inc) rg-breadth-probe-limit)
+                      (when (>= (long (swap! probed-extra inc)) (long rg-breadth-probe-limit))
                         (reset! breadth-capped? true)))
                   (let [hits (search-file-content f matches? before-ctx after-ctx)]
                     (when (seq hits)
@@ -2305,8 +2311,8 @@
                                      (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
                           (swap! out conj hit*)
                           (swap! bytes-used + (hit-bytes hit*))
-                          (cond (>= (count @out) limit) (reset! cap-reason :limit)
-                                (>= @bytes-used max-rg-result-bytes) (reset! cap-reason
+                          (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
+                                (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
                                                                        :bytes))))))))
               {:hits (vec @out)
                :truncated-by (or @cap-reason :end-of-results)
@@ -2501,7 +2507,7 @@
 
 (defn- patch-loop-hint
   [^long n path]
-  (when (>= n patch-fail-loop-threshold)
+  (when (>= n (long patch-fail-loop-threshold))
     (str "Consecutive patch failures on " path
          ": " n
          ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
@@ -3251,7 +3257,7 @@
                         :path rel)]
              :loop-hint (patch-loop-hint n rel)
              :message (cond-> (:message fail)
-                        (>= n patch-fail-loop-threshold)
+                        (>= (long n) (long patch-fail-loop-threshold))
                         (str "\n" (patch-loop-hint n rel)))})
           (do (ensure-parent-dirs! file)
               (spit file content)
@@ -3623,7 +3629,7 @@
                 (:total-file-count out)
 
                 more-files?
-                (> total-files (count ordered-paths))
+                (> (long total-files) (count ordered-paths))
 
                 ;; Grouped by file → each file is an ORDERED
                 ;; `{match-anchor → value}` map (a LinkedHashMap, so it
@@ -3669,7 +3675,7 @@
                       "first_hit" (when (pos? (count hits))
                                     (let [{:keys [path line]} (nth hits 0)]
                                       (str path ":" line)))
-                      "context" (when (pos? context) {"before" context "after" context}))
+                      "context" (when (pos? (long context)) {"before" context "after" context}))
               (> (count ordered-paths) 1)
               (assoc "file_counts" file-counts)
 
@@ -3687,7 +3693,7 @@
                 (:total-file-count out)
 
                 more-files?
-                (> total-files (count files))]
+                (> (long total-files) (count files))]
 
             (cond-> (assoc shared
                       "files" files
@@ -4320,7 +4326,7 @@
 
                            {:prev ln
                             :rows (cond-> rows
-                                    (and prev ln (> ln (inc prev)))
+                                    (and prev ln (> (long ln) (inc (long prev))))
                                     (conj divider)
 
                                     :always
@@ -4650,7 +4656,7 @@
                 kw->str)]
 
     {:summary (str total
-                   (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
+                   (when (pos? (long defs)) (str " · " defs " def" (when (not= 1 defs) "s")))
                    " in "
                    fc
                    " file"
@@ -5282,7 +5288,7 @@
 ;; Move resolution now lives in editing.zipper/navigate (tree-aware: validates
 ;; boundaries, supports leftmost/rightmost/root + single-letter directions).
 
-(defn- zip-clip [s n] (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
+(defn- zip-clip [s n] (if (and (string? s) (> (count s) (long n))) (str (subs s 0 (long n)) " …[clipped]") s))
 
 (defn- zip-shape
   ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
