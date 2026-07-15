@@ -56,7 +56,7 @@
   (or (truthy-value? (System/getenv "VIS_MEASURE"))
       (truthy-value? (System/getProperty "vis.measure"))))
 
-(defn- elapsed-ms [started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+(defn- elapsed-ms [^long started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
 
 (defn- format-ms [ms] (String/format java.util.Locale/ROOT "%.1f ms" (object-array [(double ms)])))
 

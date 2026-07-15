@@ -340,9 +340,7 @@
 (defn- compact-reset-text
   [s]
   (some-> s
-          (str/replace " @ " "@")
-          (str/replace " AM" "a")
-          (str/replace " PM" "p")))
+          (str/replace " @ " "@")))
 
 (defn- compact-limit-label
   [row]
@@ -359,8 +357,22 @@
           (str/replace #" used$" "")
           (str/replace #" left$" "")))
 
-(defn- format-generic-limit-row
-  [now-ms row]
+(defn- compact-limit-label-parts
+  [row]
+  (let [label
+        (compact-limit-label row)
+
+        parts
+        (str/split label #"\s+")
+
+        window
+        (last parts)]
+    (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hd]" window))
+      {:label label :prefix (str/join " " (butlast parts)) :window window}
+      {:label label})))
+
+(defn- format-generic-limit-row-with-label
+  [now-ms row label]
   (let [usage
         (compact-limit-usage row)
 
@@ -369,7 +381,34 @@
                  (format-reset now-ms)
                  compact-reset-text)]
 
-    (str (compact-limit-label row) (when usage (str " " usage)) (when reset (str " " reset)))))
+    (str label (when usage (str " " usage)) (when reset (str " " reset)))))
+
+(defn- format-generic-limit-row
+  [now-ms row]
+  (format-generic-limit-row-with-label now-ms row (compact-limit-label row)))
+
+(defn- format-generic-limit-rows
+  [now-ms rows]
+  (let [rows
+        (take 2 rows)
+
+        label-parts
+        (map compact-limit-label-parts rows)
+
+        shared-prefix
+        (when (and (< 1 (count rows))
+                   (every? :prefix label-parts)
+                   (apply = (map :prefix label-parts)))
+          (:prefix (first label-parts)))]
+    (if shared-prefix
+      (str shared-prefix
+           " "
+           (str/join " / "
+                     (map (fn [row {:keys [window]}]
+                            (format-generic-limit-row-with-label now-ms row window))
+                          rows
+                          label-parts)))
+      (str/join "  " (map #(format-generic-limit-row now-ms %) rows)))))
 (defn- generic-limit-sort-key
   [row]
   [(case (:id row)
@@ -411,7 +450,7 @@
              (sort-by generic-limit-sort-key))]
 
     (if (seq rows)
-      (str/join "  " (map #(format-generic-limit-row now-ms %) (take 2 rows)))
+      (format-generic-limit-rows now-ms rows)
       (limits-status-text db provider))))
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 (comment

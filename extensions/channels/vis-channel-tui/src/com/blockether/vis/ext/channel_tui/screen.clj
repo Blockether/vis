@@ -1797,6 +1797,40 @@
        ;; render-thread bookkeeping. Mirrors `active-view-unchanged?`.
        (differ-only-in? prev-db db (conj view-churn-keys :scroll))))
 
+(defn- input-head-text
+  "Return the text before the caret. Test fixtures often omit cursor fields;
+   in that case the whole input text is the best available head."
+  [{:keys [lines crow ccol] :as input-state}]
+  (if (and (sequential? lines) (number? crow) (number? ccol))
+    (let [lines
+          (vec lines)
+
+          crow
+          (long crow)]
+
+      (str/join "\n" (conj (subvec lines 0 crow) (subs (nth lines crow "") 0 (long ccol)))))
+    (input/input->text input-state)))
+
+(defn- suggestion-trigger-active?
+  "True while the composer text is in the inline suggestion state.
+
+   The input fast path only repaints bottom chrome; if it is used while a
+   suggestion overlay opens/closes, stale overlay rows above the input can stay
+   on screen. Force a full frame whenever either side of an input edit is inside
+   an active `/` command token or `@` file mention, so typing the terminating
+   space restores the transcript band instead of leaving the picker ghosted."
+  [input-state]
+  (let [head
+        (input-head-text input-state)
+
+        s
+        (str/triml (input/input->text input-state))]
+
+    (boolean (or (file-suggest/mention-at head)
+                 (and (str/starts-with? s "/")
+                      (not (str/starts-with? s "//"))
+                      (not (boolean (re-find #"\s" (subs s 1)))))))))
+
 (defn- input-only-change?
   "True when the ONLY thing that changed vs the last painted frame is the input
    TEXT, AND the input box's rendered height is unchanged. The transcript
@@ -1809,11 +1843,12 @@
    identical at a fraction of the cost, and skips `virtual/layout` entirely.
 
    Anything that could make the fast path diverge — loading (the live bubble
-   grows), a mouse selection, an open overlay / find bar / jump-label mode, or a
-   keystroke that WRAPS/UNWRAPS the input to a different number of visual rows
-   (which resizes the transcript band) — fails the test and falls through to the
-   full painter. The `:input` value itself is diffed out; every other db key
-   must be equal (same churn keys excluded as `scroll-only-change?`)."
+   grows), a mouse selection, an open overlay / find bar / jump-label mode, an
+   active inline suggestion token, or a keystroke that WRAPS/UNWRAPS the input
+   to a different number of visual rows (which resizes the transcript band) —
+   fails the test and falls through to the full painter. The `:input` value
+   itself is diffed out; every other db key must be equal (same churn keys
+   excluded as `scroll-only-change?`)."
   [prev-db db cols]
   (and prev-db
        (not= (:input prev-db) (:input db))
@@ -1823,6 +1858,8 @@
        (not (:help-open? db))
        (not (:detail-labels-active? db))
        (not (get-in db [:search :active?]))
+       (not (suggestion-trigger-active? (:input prev-db)))
+       (not (suggestion-trigger-active? (:input db)))
        ;; Box height unchanged ⇒ transcript viewport geometry unchanged. A wrap
        ;; that grows/shrinks the box moves `messages-bottom` and MUST take the
        ;; full painter so the transcript re-lays-out against the new `inner-h`.

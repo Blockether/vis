@@ -229,14 +229,24 @@
 ;; =============================================================================
 
 (defn pad-right
-  [s w]
-  (let [s (str s)]
-    (if (>= (count s) w) s (str s (apply str (repeat (- w (count s)) \space))))))
+  [s ^long w]
+  (let [s
+        (str s)
+
+        c
+        (long (count s))]
+
+    (if (>= c w) s (str s (apply str (repeat (- w c) \space))))))
 
 (defn pad-left
-  [s w]
-  (let [s (str s)]
-    (if (>= (count s) w) s (str (apply str (repeat (- w (count s)) \space)) s))))
+  [s ^long w]
+  (let [s
+        (str s)
+
+        c
+        (long (count s))]
+
+    (if (>= c w) s (str (apply str (repeat (- w c) \space)) s))))
 
 ;; ---- Color ------------------------------------------------------------------
 
@@ -269,7 +279,7 @@
 (defn- visible-len ^long [s] (count (str/replace (str s) ANSI_RE "")))
 
 (defn- pad-visible-right
-  [s w]
+  [s ^long w]
   (let [pad (max 0 (- w (visible-len s)))]
     (str s (apply str (repeat pad \space)))))
 
@@ -400,7 +410,9 @@
 
 ;; ---- Public renderers -------------------------------------------------------
 
-(defn- col-width [items min-w] (max min-w (+ 2 (reduce max 0 (map visible-len items)))))
+(defn- col-width
+  ^long [items ^long min-w]
+  (max min-w (+ 2 (long (reduce max 0 (map visible-len items))))))
 
 (defn render-command
   "Render multi-section help for a single command:

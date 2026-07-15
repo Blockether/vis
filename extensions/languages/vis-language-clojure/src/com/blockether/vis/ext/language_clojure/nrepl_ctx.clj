@@ -75,11 +75,13 @@
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
-  [session-id {:keys [id dir port aliases log]}]
-  (let [existing (when (and session-id id) (vis/get-resource session-id id))]
+  [session-id statuses {:keys [id dir port aliases log]}]
+  (let [existing (when (and session-id id) (vis/get-resource session-id id))
+        status (or (:status (get statuses port)) :unknown)]
     (when (and session-id
                id
                (or (nil? existing)
+                   (not= (name status) (get existing "status"))
                    (and log (not (get existing "can_logs")))
                    (not (get existing "can_health"))))
       (vis/register-resource!
@@ -90,7 +92,7 @@
          :label (str "nREPL "
                      (.getName (io/file dir))
                      (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-         :status :up
+         :status status
          ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim,
          ;; so it must be boundary-safe already.
          :detail (cond-> {"dir" dir "port" port}
@@ -165,7 +167,7 @@
                (when (seq repls) (liveness-for host (current-turn env) (map :port repls)))]
 
            (doseq [r repls]
-             (try (ensure-resource! sid r)
+             (try (ensure-resource! sid statuses r)
                   (catch Throwable e
                     (tel/log! {:level :warn
                                :id ::sync-resource-failed

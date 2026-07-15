@@ -308,6 +308,7 @@
               (recur (inc attempt)))
             (throw t)))))))
 
+
 (defn- stream-transport-error?
   [^Throwable t]
   (let [data
@@ -454,16 +455,18 @@
 (defn- log-stage-level
   "Severity for loop-stage telemetry.
 
-   Routine stage breadcrumbs are debug-only to keep ~/.vis/vis.log cheap.  Actual
-   failed turns must still survive the default :info file handler, otherwise the
-   first post-mortem clue disappears exactly when the user needs it.  User
-   cancellation is an intentional stop, not an error."
+   Routine stage breadcrumbs are debug-only to keep ~/.vis/vis.log cheap. Actual
+   failed turns and tool timeouts must survive the default :info file handler,
+   otherwise the first post-mortem clue disappears exactly when the user needs it.
+   User cancellation is an intentional stop, not an error."
   [stage data]
-  (cond (and (= stage :error) (= :cancelled (:reason data))) :info
-        (= stage :error) :error
-        (and (= stage :turn/complete) (= :error (:status data))) :error
-        (and (= stage :turn/complete) (= :cancelled (:status data))) :info
-        :else :debug))
+  (cond
+    (and (= stage :error) (= :cancelled (:reason data))) :info
+    (= stage :error) :error
+    (and (= stage :code-result) (:timeout? data)) :error
+    (and (= stage :turn/complete) (= :error (:status data))) :error
+    (and (= stage :turn/complete) (= :cancelled (:status data))) :info
+    :else :debug))
 
 (defn log-stage!
   [stage iteration data]
@@ -948,38 +951,52 @@
       nil)))
 
 (defn- run-native-handler
-  "Execute a native-tool `:handler` DIRECTLY in Clojure — no synthesized Python,
-   no GraalPy round-trip. Normalizes the return into the SAME envelope
-   `execute-code` yields, so everything downstream (render, tool_result pairing
-   by id, DB persist, the append-only trailer, resume) is byte-identical to a
-   Python tool. A bare value becomes `{:result value}`; a `{:result …}`/`{:error
-   …}` map passes through; a thrown handler becomes a clean tool error."
+  "Execute a native-tool `:handler` directly in Clojure under a cancellable
+   wall-clock deadline. Native handlers bypass the Python eval watchdog, so this
+   boundary prevents a wedged REPL/socket/process from holding a turn forever."
   [handler environment input display-src]
-  (let [start
-        (System/currentTimeMillis)
-
-        done
-        (fn [m]
-          (merge {:lru {}
-                  :timeout? false
-                  :execution-started-at-ms start
-                  :execution-finished-at-ms (System/currentTimeMillis)
-                  :duration-ms (- (System/currentTimeMillis) start)}
-                 m))]
-
-    (try (let [ret (handler environment input)]
-           (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
-                   ret
-                   {:result ret})))
-         (catch Throwable e
-           (env/push-eval-error! environment e)
-           (done {:result nil
-                  :error (try (extension/ex->op-error e {:form-source display-src})
-                              (catch Throwable _
-                                {:message (or (ex-message e) (.getName (class e)))
-                                 :type (-> e
-                                           ex-data
-                                           :type)}))})))))
+  (let [start (System/currentTimeMillis)
+        timeout-ms (rt/native-tool-timeout-ms input)
+        worker (cancellation/worker-future
+                 "vis-native-tool"
+                 #(handler environment input))
+        dispose-cancel-hook
+        (when-let [cancel-token (:cancel-token environment)]
+          (cancellation/on-cancel!
+           cancel-token
+           #(try (.cancel ^java.util.concurrent.Future worker true)
+                 (catch Throwable _ nil))))
+        done (fn [m]
+               (merge {:lru {}
+                       :timeout? false
+                       :execution-started-at-ms start
+                       :execution-finished-at-ms (System/currentTimeMillis)
+                       :duration-ms (- (System/currentTimeMillis) start)}
+                      m))]
+    (try
+      (let [timeout-sentinel (Object.)
+            ret (deref worker timeout-ms timeout-sentinel)]
+        (if (identical? timeout-sentinel ret)
+          (do
+            (.cancel ^java.util.concurrent.Future worker true)
+            (done {:result nil
+                   :timeout? true
+                   :error {:message (str "Native tool " display-src " timed out after " timeout-ms "ms")
+                           :type :vis/native-tool-timeout
+                           :data {:tool display-src :timeout-ms timeout-ms}}}))
+          (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
+                  ret
+                  {:result ret}))))
+      (catch Throwable e
+        (env/push-eval-error! environment e)
+        (done {:result nil
+               :error (try (extension/ex->op-error e {:form-source display-src})
+                           (catch Throwable _
+                             {:message (or (ex-message e) (.getName (class e)))
+                              :type (-> e ex-data :type)}))}))
+      (finally
+        (when dispose-cancel-hook
+          (try (dispose-cancel-hook) (catch Throwable _ nil)))))))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -3701,19 +3718,19 @@
                                                                                environment)
                                                             :iteration iteration-position)]
                            (call-provider-with-stream-rewind-retry!
-                             environment
-                             {:iteration-position iteration-position
-                              :provider (some-> (:provider resolved-model)
-                                                name)
-                              :model (some-> (:name resolved-model)
-                                             str)
-                              :on-chunk on-chunk
-                              :reset-stream-state! reset-stream-state!}
-                             #(call-provider-with-interrupt-retry!
-                                environment
-                                iteration-position
-                                (fn []
-                                  (svar/ask-code! (:router environment) ask-opts)))))
+  environment
+  {:iteration-position iteration-position
+   :provider (some-> (:provider resolved-model)
+                     name)
+   :model (some-> (:name resolved-model)
+                  str)
+   :on-chunk on-chunk
+   :reset-stream-state! reset-stream-state!}
+  #(call-provider-with-interrupt-retry!
+     environment
+     iteration-position
+     (fn []
+       (svar/ask-code! (:router environment) ask-opts)))))
           ask-result ask-result-raw
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
@@ -6146,12 +6163,12 @@
                                           :status :error
                                           :status-id (status->id :error)
                                           :trace trace'
-                                          :iteration-count (inc iteration)}
+                                          :iteration-count (inc (long iteration))}
                                          (finalize-cost))]
 
                           result)
                         (recur (assoc loop-state
-                                 :iteration (inc iteration)
+                                 :iteration (inc (long iteration))
                                  :provider-error-streak provider-error-streak
                                  :empty-iteration-streak 0
                                  :messages (conj messages {:role "user" :content error-feedback})
@@ -6314,7 +6331,7 @@
                       (do (log-stage! :final
                                       iteration
                                       {:answer (answer-markdown (:answer final-result))
-                                       :iteration-count (inc iteration)})
+                                       :iteration-count (inc (long iteration))})
                           (log-stage! :iteration/stop
                                       iteration
                                       {:blocks (count blocks)
@@ -6336,7 +6353,7 @@
                                        :iteration-id iteration-id
                                        :attachment-count (count iteration-attachments)
                                        :final {:answer (:answer final-result)
-                                               :iteration-count (inc iteration)
+                                               :iteration-count (inc (long iteration))
                                                :status :success}
                                        :answer-position (:answer-position final-result)
                                        ;; Live working-memory snapshot so the F2
@@ -6345,7 +6362,7 @@
                                        :done? true}))
                           (let [result (-> (merge {:answer (:answer final-result)
                                                    :trace (conj trace trace-entry)
-                                                   :iteration-count (inc iteration)
+                                                   :iteration-count (inc (long iteration))
                                                    :utilization
                                                    (let [u @usage-atom
                                                          req (if (pos? (long (:iter-count u)))
@@ -6367,7 +6384,7 @@
                         (let [empty-streak (inc (long (or (:empty-iteration-streak loop-state) 0)))]
                           (log-stage! :empty iteration {:empty-streak empty-streak})
                           (log-stage! :iteration/stop iteration {:blocks 0 :errors 0 :times []})
-                          (if (>= empty-streak CONSECUTIVE_EMPTY_REPLY_LIMIT)
+                          (if (>= empty-streak (long CONSECUTIVE_EMPTY_REPLY_LIMIT))
                             ;; Too many consecutive empty replies — finalize on the
                             ;; best sticky answer (give-up text if none) instead of
                             ;; re-invoking forever. Mirrors the forced-finalize shape.
@@ -6378,7 +6395,8 @@
                                              {:answer loop-give-up-text})]
                               (log-stage! :final
                                           iteration
-                                          {:reason :empty-replies :iteration-count (inc iteration)})
+                                          {:reason :empty-replies
+                                           :iteration-count (inc (long iteration))})
                               (when on-chunk
                                 (on-chunk {:phase :iteration-final
                                            :iteration (inc (long iteration))
@@ -6387,12 +6405,12 @@
                                            :iteration-id iteration-id
                                            :attachment-count (count iteration-attachments)
                                            :final {:answer answer
-                                                   :iteration-count (inc iteration)
+                                                   :iteration-count (inc (long iteration))
                                                    :status :success}
                                            :done? true}))
                               (-> (merge {:answer answer
                                           :trace (conj trace trace-entry)
-                                          :iteration-count (inc iteration)
+                                          :iteration-count (inc (long iteration))
                                           :utilization
                                           (let [u @usage-atom
                                                 req (if (pos? (long (:iter-count u)))
@@ -6409,7 +6427,7 @@
                             ;; Transparent auto-continue: re-invoke so a mid-task
                             ;; thinking-only blip turns into real output next round.
                             (recur (merge loop-state
-                                          {:iteration (inc iteration)
+                                          {:iteration (inc (long iteration))
                                            :provider-error-streak 0
                                            :empty-iteration-streak empty-streak
                                            :trace (conj trace trace-entry)}))))
@@ -6504,7 +6522,7 @@
                                    :iteration-id iteration-id
                                    :attachment-count (count iteration-attachments)
                                    :final {:answer forced-answer
-                                           :iteration-count (inc iteration)
+                                           :iteration-count (inc (long iteration))
                                            :status :success}
                                    :done? true}
                                   {:phase :iteration-final
@@ -6519,14 +6537,14 @@
                               (do (log-stage! :final
                                               iteration
                                               {:reason :loop-forced
-                                               :iteration-count (inc iteration)})
+                                               :iteration-count (inc (long iteration))})
                                   ;; NB: no `:status` key — mirrors the normal
                                   ;; success path so prior_outcome derives to
                                   ;; `complete` (a bare `:status :success` violates
                                   ;; the session_turn_state.prior_outcome CHECK).
                                   (-> (merge {:answer forced-answer
                                               :trace (conj trace trace-entry)
-                                              :iteration-count (inc iteration)
+                                              :iteration-count (inc (long iteration))
                                               :utilization
                                               (let [u @usage-atom
                                                     req (if (pos? (long (:iter-count u)))
@@ -6544,7 +6562,7 @@
                               (recur
                                 (merge
                                   (dissoc loop-state :llm-provider)
-                                  {:iteration (inc iteration)
+                                  {:iteration (inc (long iteration))
                                    :provider-error-streak 0
                                    :empty-iteration-streak 0
                                    ;; Inject ONE guidance turn when repetition
@@ -7983,7 +8001,7 @@
                                :depth-atom
                                deref)
                        0))]
-    (when (> depth MAX-SUBLOOP-DEPTH)
+    (when (> (long depth) (long MAX-SUBLOOP-DEPTH))
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
                       {:type :vis/subloop-depth-exceeded :depth depth})))
     (let [db-info (:db-info parent-env)
@@ -8838,7 +8856,7 @@
 (defn- heap-pressure?
   "True when the watermark is enabled and current heap use is at/above it."
   []
-  (and (pos? env-heap-watermark-pct) (>= (heap-used-pct) env-heap-watermark-pct)))
+  (and (pos? (long env-heap-watermark-pct)) (>= (heap-used-pct) (long env-heap-watermark-pct))))
 
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
@@ -8888,7 +8906,7 @@
                           idle
                           (if la (- (System/currentTimeMillis) (.get la)) 0)]
 
-                      (when (and cur (>= idle min-idle-ms))
+                      (when (and cur (>= (long idle) (long min-idle-ms)))
                         (try (dispose-environment! (:environment cur)) (catch Throwable _ nil))
                         (swap! cache dissoc k)
                         true))
@@ -8916,39 +8934,39 @@
         (heap-pressure?)
 
         effective-ttl
-        (if pressure? 0 env-idle-ttl-ms)
+        (if pressure? 0 (long env-idle-ttl-ms))
 
         ttl-evicted
-        (if (or pressure? (pos? env-idle-ttl-ms))
+        (if (or pressure? (pos? (long env-idle-ttl-ms)))
           (->> @cache
                (filter (fn [[_ entry]]
-                         (>= (age entry) effective-ttl)))
+                         (>= (long (age entry)) (long effective-ttl))))
                (reduce (fn [n [k _]]
-                         (if (evict-if-idle! k effective-ttl) (inc n) n))
+                         (if (evict-if-idle! k effective-ttl) (inc (long n)) n))
                        0))
           0)
 
         lru-evicted
-        (if (pos? env-cache-max)
+        (if (pos? (long env-cache-max))
           (let [snapshot
                 @cache
 
                 over
-                (- (count snapshot) env-cache-max)]
+                (- (long (count snapshot)) (long env-cache-max))]
 
-            (if (pos? over)
+            (if (pos? (long over))
               (->> snapshot
                    (sort-by (fn [[_ e]]
                               (age e))
                             >)
                    (take over)
                    (reduce (fn [n [k _]]
-                             (if (evict-if-idle! k 0) (inc n) n))
+                             (if (evict-if-idle! k 0) (inc (long n)) n))
                            0))
               0))
           0)]
 
-    (+ ttl-evicted lru-evicted)))
+    (+ (long ttl-evicted) (long lru-evicted))))
 
 (defn- reaper-loop
   "Background sweep loop: sleep the interval, sweep, repeat. Exits on interrupt;
@@ -8974,8 +8992,10 @@
    insert. Started here (not at namespace load) so a native-image build-time
    init never spawns a thread, and only when reaping is actually enabled."
   []
-  (when (and (pos? env-reaper-interval-ms)
-             (or (pos? env-idle-ttl-ms) (pos? env-cache-max) (pos? env-heap-watermark-pct))
+  (when (and (pos? (long env-reaper-interval-ms))
+             (or (pos? (long env-idle-ttl-ms))
+                 (pos? (long env-cache-max))
+                 (pos? (long env-heap-watermark-pct)))
              (nil? @env-reaper-thread))
     (locking cache
       (when (nil? @env-reaper-thread)
@@ -9296,7 +9316,8 @@
        (finally (let [cur (or (get @cache k) entry)]
                   (touch-entry! cur)
                   (let [n (bump-turns! cur)]
-                    (if (and (pos? env-max-turns-per-ctx) (>= n env-max-turns-per-ctx))
+                    (if (and (pos? (long env-max-turns-per-ctx))
+                             (>= (long n) (long env-max-turns-per-ctx)))
                       ;; Layer 2: recycle this session's Context between turns so a
                       ;; single never-idle session can't grow it unbounded.
                       (try (recycle-env! k) (catch Throwable _ nil))

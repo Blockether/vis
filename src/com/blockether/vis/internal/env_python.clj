@@ -997,7 +997,7 @@ def __vis_native_result_scan__(__vis_tree__):
    (comment-only blocks). Iterations that produce no evidence are rejected at
    the model boundary."
   [code]
-  (when (zero? (count-top-level-forms code))
+  (when (zero? (long (count-top-level-forms code)))
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
                     {:type :vis/empty-block :form-count 0}))))
 
@@ -1779,7 +1779,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
                        str/trim
                        not-empty)]
     (when-let [n (try (Long/parseLong s) (catch NumberFormatException _ nil))]
-      (str (min (long hi) (max (long lo) n))))))
+      (str (min (long hi) (max (long lo) (long n)))))))
 
 (defn- resolve-py-gc-options
   "Read `py-gc-task-specs` from the environment into a `{graalpy-option value-str}` map,

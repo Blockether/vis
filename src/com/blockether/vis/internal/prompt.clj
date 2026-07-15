@@ -76,7 +76,7 @@
            (when (or req ans (seq results))
              (str
                "# ── turn "
-               (inc i)
+               (inc (long i))
                " ──\n"
                (when req (str "user asked:\n" req "\n"))
                (when (seq results)
@@ -108,7 +108,7 @@
                   (str/join "\n"
                             (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
                                                    (str "- image "
-                                                        (inc i)
+                                                        (inc (long i))
                                                         ": "
                                                         path
                                                         " ("

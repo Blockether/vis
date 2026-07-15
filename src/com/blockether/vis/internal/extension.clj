@@ -679,7 +679,7 @@
 (s/def :ext.setting/type #{:toggle :choice :action})
 (s/def :ext.setting/label non-blank-string?)
 (s/def :ext.setting/description string?)
-(s/def :ext.setting/choices (s/coll-of keyword? :kind vector? :min-count 1))
+(s/def :ext.setting/choices (s/and (s/coll-of keyword? :kind vector?) seq))
 (s/def ::setting-entry
   (s/keys :req-un [:ext.setting/key :ext.setting/type :ext.setting/label]
           :opt-un [:ext.setting/description :ext.setting/choices]))
@@ -1359,7 +1359,13 @@
 
           deindented
           (mapv (fn [line]
-                  (if (str/blank? line) "" (subs line (min indent (count line)))))
+                  (let [indent
+                        (long indent)
+
+                        c
+                        (long (count line))]
+
+                    (if (str/blank? line) "" (subs line (min indent c)))))
                 lines)
 
           collapsed
@@ -1495,7 +1501,7 @@
          (throw (ex-info (str hook-name " for '" sym "' threw: " (ex-message e))
                          {:type (keyword "extension" (str hook-name "-error")) :symbol sym}
                          e)))))
-(defn- elapsed-ms [t0] (/ (- (System/nanoTime) t0) 1e6))
+(defn- elapsed-ms [^long t0] (/ (double (- (System/nanoTime) t0)) 1e6))
 (defn- log-hook!
   [level id ext-ns sym phase ms extra-msg]
   (tel/log! {:level level
