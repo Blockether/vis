@@ -15,6 +15,8 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
+
+(set! *unchecked-math* :warn-on-boxed)
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
 (defonce ^:private event-registry (atom {}))
@@ -354,14 +356,14 @@
                     :else (recur (dec i))))
 
             end
-            (if (neg? boundary-idx)
+            (if (neg? (long boundary-idx))
               0
-              (loop [j (inc boundary-idx)]
+              (loop [j (inc (long boundary-idx))]
                 (if (and (< j n) (contains? reasoning-boundary-trailing-chars (.charAt s j)))
                   (recur (inc j))
                   j)))]
 
-        (if (> (- n end) (long max-chars))
+        (if (> (- n (long end)) (long max-chars))
           s ;; long boundary-less tail → reveal everything
           (subs s 0 end))))))
 
@@ -468,7 +470,7 @@
                (when throttled? (get @last-by-phase phase))
 
                due?
-               (or (nil? prev) (>= (- now (long prev)) live-progress-render-interval-ms))]
+               (or (nil? prev) (>= (- now (long prev)) (long live-progress-render-interval-ms)))]
 
            (cond
              ;; Lifecycle chunk → paint now; cancel pending flushes (they would
@@ -483,7 +485,7 @@
              ;; stall after the last drop still reaches the screen.
              (nil? (get @scheduled-by-phase phase))
              (let [delay-ms
-                   (max 1 (- live-progress-render-interval-ms (- now (long prev))))
+                   (max 1 (- (long live-progress-render-interval-ms) (- now (long prev))))
 
                    ^Runnable task
                    (fn []
@@ -671,7 +673,7 @@
   [provider model]
   (let [entries (model-cycle-entries nil)]
     (when-let [idx (entry-index entries provider model)]
-      [(inc idx) (count entries)])))
+      [(inc (long idx)) (count entries)])))
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
@@ -718,7 +720,7 @@
                             name
                             (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
-(defn- next-tab-number [entries] (inc (reduce max 0 (keep tab-number entries))))
+(defn- next-tab-number [entries] (inc (long (reduce max 0 (keep tab-number entries)))))
 (defn- insert-tab-grouped
   "Insert a freshly minted tab entry ADJACENT to its project group: right
    after the LAST existing tab sharing its `vh/tab-group-root`. No root, or
@@ -1214,7 +1216,7 @@
                                 delta
                                 (if (= :prev idx) -1 1)]
 
-                            (mod (+ current delta) (count entries))))
+                            (mod (+ (long current) delta) (count entries))))
                         idx)]
 
                   (if-let [entry (and (integer? idx) (nth entries idx nil))]
@@ -1288,7 +1290,7 @@
               (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
 
               remaining
-              (vec (concat (subvec entries 0 idx) (subvec entries (inc idx))))
+              (vec (concat (subvec entries 0 idx) (subvec entries (inc (long idx)))))
 
               db
               (-> db
@@ -1302,7 +1304,7 @@
               db
               (if (= target-id active-id)
                 (let [next-idx
-                      (min idx (dec (count remaining)))
+                      (min (long idx) (dec (count remaining)))
 
                       next-id
                       (:id (nth remaining next-idx))]
@@ -1944,7 +1946,7 @@
                  (conj [:gateway-delete-queued sid tid]))})
         (empty? history) {:db db}
         :else (let [new-idx
-                    (if (nil? cur-idx) (dec (count history)) (max 0 (dec cur-idx)))
+                    (if (nil? cur-idx) (dec (count history)) (max 0 (dec (long cur-idx))))
 
                     draft
                     (if (nil? cur-idx) input-text draft)]
@@ -1965,11 +1967,11 @@
                       (:input-history-draft db)]
 
                   (cond (nil? cur-idx) db
-                        (< cur-idx (dec (count history))) (let [new-idx (inc cur-idx)]
-                                                            (assoc db
-                                                              :input-history-index new-idx
-                                                              :input (text->input-state
-                                                                       (nth history new-idx))))
+                        (< (long cur-idx) (dec (count history)))
+                        (let [new-idx (inc (long cur-idx))]
+                          (assoc db
+                            :input-history-index new-idx
+                            :input (text->input-state (nth history new-idx))))
                         :else (assoc db
                                 :input-history-index nil
                                 :input-history-draft nil
@@ -1993,7 +1995,7 @@
               ;; id (Integer) via a side-channel atom that the screen loop reads
               ;; right after dispatch - see `:paste-counter` increment below.
               (fn [db [_ content image]]
-                (let [next-id (inc (or (:paste-counter db) 0))]
+                (let [next-id (inc (long (or (:paste-counter db) 0)))]
                   (-> db
                       (assoc :paste-counter next-id)
                       (assoc-in [:pastes next-id]
@@ -2148,7 +2150,7 @@
                                                    (.indexOf ^String hay ^String needle (int from))]
                                                (if (neg? pos) c (recur (+ pos n-len) (inc c)))))]
 
-                                     (when (pos? c) [i c])))
+                                     (when (pos? (long c)) [i c])))
                                  messages)]
         {:hits (mapv first counts) :total (long (reduce + 0 (map second counts)))}))))
 
@@ -2245,7 +2247,7 @@
               ;; on the next frame, then clears the pending field. One-shot.
               (fn [db [_ msg-idx]]
                 (cond-> db
-                  (and (integer? msg-idx) (>= msg-idx 0))
+                  (and (integer? msg-idx) (>= (long msg-idx) 0))
                   ;; The resolution dispatches `:set-scroll`, which parks (mode :at) on
                   ;; the hit. Parking IS the scroll-up intent now, so streaming follow
                   ;; hands off automatically until the user scrolls back to the bottom.
@@ -3020,7 +3022,8 @@
   [db now-ms]
   (boolean (and (:cancelling? db)
                 (:cancelling-at-ms db)
-                (>= (- (long now-ms) (long (:cancelling-at-ms db))) cancel-self-heal-timeout-ms))))
+                (>= (- (long now-ms) (long (:cancelling-at-ms db)))
+                    (long cancel-self-heal-timeout-ms)))))
 (reg-event-fx :cancel-self-heal-tick
               ;; Render-loop heartbeat safety net for a STUCK cancel (see
               ;; `cancel-self-heal-timeout-ms`). Once the pending `:cancelling?` has outlived
@@ -3123,7 +3126,7 @@
                         (:turn-start-ms workspace)
 
                         wall-ms
-                        (when start (- (System/currentTimeMillis) start))
+                        (when start (- (System/currentTimeMillis) (long start)))
 
                         ;; `answer` arrives as canonical IR from `chat/turn!`
                         ;; (loop result coerced + lifted there). NULL/missing

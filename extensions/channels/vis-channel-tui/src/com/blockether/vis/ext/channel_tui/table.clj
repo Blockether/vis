@@ -4,6 +4,8 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
    Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."
@@ -26,7 +28,7 @@
           :else (let [slash-idx (str/last-index-of txt "/")]
                   (if-not slash-idx
                     (ellipsize txt max-w)
-                    (let [filename (subs txt (inc slash-idx))
+                    (let [filename (subs txt (inc (long slash-idx)))
                           filename-w (p/display-width filename)
                           ellipsis "…"
                           ell-w (p/display-width ellipsis)
@@ -91,7 +93,7 @@
         (reduce + 0 (map second flex-cols))
 
         leftover
-        (max 0 (- available fixed))
+        (max 0 (- (long available) (long fixed)))
 
         widths
         (mapv (fn [col]
@@ -100,7 +102,7 @@
                   1))
               columns)]
 
-    (if (and (seq flex-cols) (pos? flex-total))
+    (if (and (seq flex-cols) (pos? (long flex-total)))
       (loop [pairs
              flex-cols
 
@@ -108,10 +110,10 @@
              widths
 
              remaining
-             leftover
+             (long leftover)
 
              remaining-flex
-             flex-total]
+             (long flex-total)]
 
         (if-let [[idx flex] (first pairs)]
           (let [w (if (next pairs)
@@ -122,7 +124,7 @@
             (recur (next pairs)
                    (assoc widths idx w)
                    (max 0 (- remaining w))
-                   (max 0 (- remaining-flex flex))))
+                   (max 0 (- remaining-flex (long flex)))))
           widths))
       widths)))
 
@@ -175,7 +177,7 @@
                     \┴
 
                     \┼)]
-     (str/join (str junction) (map #(p/horiz-line (+ % 2)) widths))))
+     (str/join (str junction) (map #(p/horiz-line (+ (long %) 2)) widths))))
   ([columns table-w kind] (border-line (column-widths columns table-w) kind)))
 
 (defn boxed-row-line
@@ -198,7 +200,7 @@
                                 ["└" "┴" "┘"]
 
                                 ["├" "┼" "┤"])]
-    (str left (str/join junction (map #(p/horiz-line (+ % 2)) widths)) right)))
+    (str left (str/join junction (map #(p/horiz-line (+ (long %) 2)) widths)) right)))
 
 (defn draw-line!
   [g x row width selected? line]

@@ -10,6 +10,8 @@
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (defn- exception->log-data
   "Build a log-friendly map from an exception that preserves EVERYTHING
    diagnostic: class, message, ex-data, full stack trace, and the

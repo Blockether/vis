@@ -16,6 +16,8 @@
             KeyDecodingProfile KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 ;;; ── Custom input patterns ──────────────────────────────────────────────────
 ;; Lanterna's AltAndCharacterPattern rejects ISO control chars (\n, \r, \t).
 ;; Alt+Enter sends ESC + '\n' which gets rejected. We fix it here.
@@ -699,9 +701,9 @@
       (let [deadline (+ (System/nanoTime) (* (long timeout-ms) 1000000))]
         (loop []
 
-          (let [avail (try (.available in) (catch Throwable _ -1))]
-            (cond (pos? avail) (let [n (try (.read in tmp 0 (int (min (long avail) 8192)))
-                                            (catch Throwable _ -1))]
+          (let [avail (long (try (.available in) (catch Throwable _ -1)))]
+            (cond (pos? avail) (let [n (long (try (.read in tmp 0 (int (min (long avail) 8192)))
+                                                  (catch Throwable _ -1)))]
                                  (when (pos? n) (.write buf tmp 0 n) (recur)))
                   ;; stream closed / broken — nothing more will arrive
                   (neg? avail) nil
@@ -1156,7 +1158,12 @@
    placeholder's `:id` (Integer). nil otherwise. The screen loop
    uses this to turn one Backspace into a whole-token delete."
   [{:keys [lines crow ccol]}]
-  (let [line (nth lines crow nil)]
+  (let [line
+        (nth lines crow nil)
+
+        ccol
+        (long ccol)]
+
     (when (and (string? line) (pos? ccol))
       (let [before (subs line 0 ccol)]
         (when (str/ends-with? before "]")
@@ -1166,7 +1173,7 @@
                 ;; line shouldn't get nuked just because the cursor
                 ;; is past it.
                 match-start (when m (str/last-index-of before (first m)))
-                match-end (when match-start (+ match-start (count (first m))))]
+                match-end (when match-start (+ (long match-start) (count (first m))))]
 
             (when (and m match-end (= match-end (count before)))
               (try (Integer/parseInt (second m)) (catch Throwable _ nil)))))))))
@@ -1289,7 +1296,7 @@
     (if (= 1 (count paste-lines))
       (-> st
           (assoc-in [:lines crow] (str before (first paste-lines) after))
-          (assoc :ccol (+ ccol (count (first paste-lines)))))
+          (assoc :ccol (+ (long ccol) (count (first paste-lines)))))
       (let [first-l
             (str before (first paste-lines))
 
@@ -1300,11 +1307,11 @@
             (subvec (vec paste-lines) 1 (dec (count paste-lines)))
 
             new-crow
-            (+ crow (dec (count paste-lines)))]
+            (+ (long crow) (dec (count paste-lines)))]
 
         (-> st
             (assoc :lines (into (conj (subvec lines 0 crow) first-l)
-                                (concat mid [last-l] (subvec lines (inc crow)))))
+                                (concat mid [last-l] (subvec lines (inc (long crow))))))
             (assoc :crow new-crow)
             (assoc :ccol (count (last paste-lines))))))))
 

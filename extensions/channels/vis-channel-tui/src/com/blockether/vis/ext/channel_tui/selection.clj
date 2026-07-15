@@ -6,6 +6,8 @@
    highlights the selected range, and copies that range on release."
   (:require [clojure.string :as str]))
 
+(set! *unchecked-math* :warn-on-boxed)
+
 (defn point "Construct a normalized screen point map." [col row] {:col (long col) :row (long row)})
 
 (defn normalize
@@ -19,17 +21,18 @@
         f
         {:col (long (:col focus 0)) :row (long (:row focus 0))}]
 
-    (if (or (< (:row a) (:row f)) (and (= (:row a) (:row f)) (<= (:col a) (:col f))))
+    (if (or (< (long (:row a)) (long (:row f)))
+            (and (= (:row a) (:row f)) (<= (long (:col a)) (long (:col f)))))
       {:start a :end f}
       {:start f :end a})))
 
 (defn- base-selected-ranges
   [selection cols rows]
   (let [cols
-        (long (max 0 cols))
+        (long (max 0 (long cols)))
 
         rows
-        (long (max 0 rows))]
+        (long (max 0 (long rows)))]
 
     (when (and (pos? cols) (pos? rows) (:anchor selection) (:focus selection))
       (let [{:keys [start end]}
@@ -48,10 +51,10 @@
             (max 0 (min (dec rows) end-row))
 
             sc
-            (max 0 (min (dec cols) (:col start)))
+            (max 0 (min (dec cols) (long (:col start))))
 
             ec
-            (max 0 (min (dec cols) (:col end)))]
+            (max 0 (min (dec cols) (long (:col end))))]
 
         (vec (keep (fn [row]
                      (let [from
@@ -109,7 +112,7 @@
          (long row)
 
          row-pad
-         (long (max 0 (or row-padding 0)))]
+         (long (max 0 (long (or row-padding 0))))]
 
      (boolean (some (fn [{r :row c :col w :width}]
                       (and (>= row (- (long r) row-pad))
@@ -143,7 +146,7 @@
   (let [elapsed (- (long now-ms) (long (:time-ms last-click 0)))]
     (boolean (and last-click
                   (= source (:source last-click))
-                  (<= 0 elapsed (long (max 0 threshold-ms)))
+                  (<= 0 elapsed (long (max 0 (long threshold-ms))))
                   (= (:row point) (get-in last-click [:point :row]))))))
 
 (defn screen->document-point
@@ -212,10 +215,10 @@
         (long bottom)
 
         edge
-        (long (max 0 (or edge-size 1)))
+        (long (max 0 (long (or edge-size 1))))
 
         max-step
-        (long (max 1 (or max-step edge 1)))]
+        (long (max 1 (long (or max-step edge 1))))]
 
     (when (and (< top bot) (pos? edge))
       (cond (< row (+ top edge)) (let [distance (max 0 (- row top))]
