@@ -1,185 +1,160 @@
-{:paths ["src" "resources"]
-
+{:aliases
+ {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
+  :bench-micro {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
+                             io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
+                 org.apache.commons/commons-compress {:mvn/version "1.28.0"}
+                 slipset/deps-deploy {:mvn/version "0.2.5"}}
+          :ns-default build}
+  :clj-watson {:main-opts ["-m" "clj-watson.cli"]
+               :replace-deps {io.github.clj-holmes/clj-watson
+                              {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"
+                               :git/tag "v6.1.0"}}}
+  :dev {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+                     io.github.tonsky/clj-reload {:mvn/version "1.0.0"}
+                     nrepl/nrepl {:mvn/version "1.7.0"}}
+        :extra-paths ["dev" "test"]
+        :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+                   "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
+                   "-Djava.awt.headless=true" "-Dapple.awt.UIElement=true"]
+        :main-opts ["-m" "com.blockether.vis.dev"]}
+  :format {:deps {io.github.enajski/codestyle {:git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"
+                                               :git/url "https://github.com/enajski/codestyle.git"}}
+           :main-opts ["-m" "codestyle.advanced-format"]}
+  :lint {:deps {io.github.enajski/codestyle {:git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"
+                                             :git/url "https://github.com/enajski/codestyle.git"}}
+         :main-opts ["-m" "codestyle.lint"]}
+  :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
+  :test
+  {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
+                io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :extra-paths
+   ["test" "extensions/persistance/vis-persistance-sqlite/test"
+    "extensions/providers/vis-provider-github-copilot/test"
+    "extensions/providers/vis-provider-openai-codex/test"
+    "extensions/providers/vis-provider-anthropic/test" "extensions/providers/vis-provider-zai/test"
+    "extensions/providers/vis-provider-standard/test" "extensions/channels/vis-channel-tui/test"
+    "extensions/channels/vis-channel-telegram/test" "extensions/channels/vis-channel-web/test"
+    "extensions/common/vis-foundation-bridge/test" "extensions/common/vis-foundation-harness/test"
+    "extensions/common/vis-foundation-search/test" "extensions/common/vis-foundation-voice/test"
+    "extensions/common/vis-foundation-mcp/test" "extensions/languages/vis-language-clojure/test"
+    "extensions/languages/vis-language-python/test"
+    "extensions/languages/vis-language-typescript-bun/test"]
+   :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+              "--enable-preview" "--sun-misc-unsafe-memory-access=allow" "-Djava.awt.headless=true"
+              "-Dapple.awt.UIElement=true" "-Dvis.drafts.dir=target/vis-drafts-test"]
+   :main-opts ["-m" "lazytest.main" "--dir" "test" "--dir"
+               "extensions/persistance/vis-persistance-sqlite/test" "--dir"
+               "extensions/providers/vis-provider-github-copilot/test" "--dir"
+               "extensions/providers/vis-provider-openai-codex/test" "--dir"
+               "extensions/providers/vis-provider-anthropic/test" "--dir"
+               "extensions/providers/vis-provider-zai/test" "--dir"
+               "extensions/providers/vis-provider-standard/test" "--dir"
+               "extensions/channels/vis-channel-tui/test" "--dir"
+               "extensions/channels/vis-channel-telegram/test" "--dir"
+               "extensions/channels/vis-channel-web/test" "--dir"
+               "extensions/common/vis-foundation-bridge/test" "--dir"
+               "extensions/common/vis-foundation-harness/test" "--dir"
+               "extensions/common/vis-foundation-search/test" "--dir"
+               "extensions/common/vis-foundation-voice/test" "--dir"
+               "extensions/common/vis-foundation-mcp/test" "--dir"
+               "extensions/languages/vis-language-clojure/test" "--dir"
+               "extensions/languages/vis-language-python/test" "--dir"
+               "extensions/languages/vis-language-typescript-bun/test"]}
+  :vis {:jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+                   "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
+                   ;; The TUI's live heap is small, but G1 over-commits and
+                   ;; never hands the pages back, so idle RSS balloons. A
+                   ;; periodic idle GC + tight free-ratios make G1 shrink
+                   ;; committed toward the live set and uncommit to the OS;
+                   ;; it re-commits smoothly under load. The interval is a
+                   ;; tradeoff: each timer-driven concurrent cycle costs a
+                   ;; small CPU blip, so a too-short period shows up as a
+                   ;; recurring idle CPU "jump". 60s keeps idle RSS shrinking
+                   ;; while making those blips ~6x rarer than the old 10s.
+                   "-XX:+G1PeriodicGCInvokesConcurrent" "-XX:G1PeriodicGCInterval=60000"
+                   "-XX:MinHeapFreeRatio=10" "-XX:MaxHeapFreeRatio=25"
+                   ;; Raise the heap CEILING. There is no explicit -Xmx, but the
+                   ;; JVM STILL caps the heap at an ergonomic default
+                   ;; MaxHeapSize of 25% of physical RAM (~2 GB on an 8 GB box)
+                   ;; — THAT is the "2 GB limit". GraalPy/Truffle warmup plus a
+                   ;; long transcript can want much more, so lift the ceiling to
+                   ;; 75% of RAM. This is a CAP, not a reservation: the
+                   ;; free-ratio + periodic-GC flags above still uncommit idle
+                   ;; pages, so steady-state RSS stays small while bursts get
+                   ;; the headroom. Percentage scales across machines instead of
+                   ;; a hardcoded number.
+                   "-XX:MaxRAMPercentage=75.0"
+                   ;; String dedup runs a concurrent G1 pass that folds
+                   ;; byte-identical LONG-LIVED strings (the retained transcript
+                   ;; text kept across renders) onto ONE shared backing array,
+                   ;; shrinking the retained live set / RSS. Note: it targets
+                   ;; survivor strings, not the short-lived per-render churn
+                   ;; (those die young, before the dedup age threshold), so its
+                   ;; win is lower retained heap, not fewer GCs. G1 is JDK 21's
+                   ;; default GC, so this is active without an explicit
+                   ;; -XX:+UseG1GC.
+                   "-XX:+UseStringDeduplication" "-Djava.awt.headless=true"
+                   "-Dapple.awt.UIElement=true"]
+        :main-opts ["-m" "com.blockether.vis.core"]}}
  :deps
- {com.blockether/vis-persistance-sqlite           {:local/root "extensions/persistance/vis-persistance-sqlite"}
-  com.blockether/vis-provider-github-copilot      {:local/root "extensions/providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex        {:local/root "extensions/providers/vis-provider-openai-codex"}
-  com.blockether/vis-provider-anthropic           {:local/root "extensions/providers/vis-provider-anthropic"}
-  com.blockether/vis-provider-zai                 {:local/root "extensions/providers/vis-provider-zai"}
-  com.blockether/vis-provider-standard            {:local/root "extensions/providers/vis-provider-standard"}
-  com.blockether/vis-channel-telegram             {:local/root "extensions/channels/vis-channel-telegram"}
-  com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
-  com.blockether/vis-channel-web                  {:local/root "extensions/channels/vis-channel-web"}
-  com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
-  com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
-  com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
-  com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
-  com.blockether/vis-foundation-mcp               {:local/root "extensions/common/vis-foundation-mcp"}
-  com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
-  com.blockether/vis-language-python              {:local/root "extensions/languages/vis-language-python"}
-  com.blockether/vis-language-typescript-bun      {:local/root "extensions/languages/vis-language-typescript-bun"}
-  com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
-
-  com.blockether/svar                             {:mvn/version "0.7.60"}
-  com.blockether/anomaly                          {:mvn/version "1.0.1"}
-  org.clojure/tools.deps                          {:mvn/version "0.31.1629"}
-  org.commonmark/commonmark                       {:mvn/version "0.29.0"}
-  org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.29.0"}
+ {com.blockether/vis-persistance-sqlite {:local/root
+                                         "extensions/persistance/vis-persistance-sqlite"}
+  com.blockether/vis-provider-github-copilot {:local/root
+                                              "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-provider-openai-codex {:local/root
+                                            "extensions/providers/vis-provider-openai-codex"}
+  com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
+  com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
+  com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
+  com.blockether/vis-channel-telegram {:local/root "extensions/channels/vis-channel-telegram"}
+  com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
+  com.blockether/vis-channel-web {:local/root "extensions/channels/vis-channel-web"}
+  com.blockether/vis-foundation-bridge {:local/root "extensions/common/vis-foundation-bridge"}
+  com.blockether/vis-foundation-harness {:local/root "extensions/common/vis-foundation-harness"}
+  com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
+  com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
+  com.blockether/vis-foundation-mcp {:local/root "extensions/common/vis-foundation-mcp"}
+  com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
+  com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
+  com.blockether/vis-language-typescript-bun {:local/root
+                                              "extensions/languages/vis-language-typescript-bun"}
+  com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
+  com.blockether/svar {:mvn/version "0.7.60"}
+  com.blockether/anomaly {:mvn/version "1.0.1"}
+  org.clojure/tools.deps {:mvn/version "0.31.1629"}
+  org.commonmark/commonmark {:mvn/version "0.29.0"}
+  org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
-  org.babashka/http-client                        {:mvn/version "0.4.23"}
-  babashka/process                                {:mvn/version "0.6.25"}
-  babashka/fs                                     {:mvn/version "0.5.33"}
-  io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.17"}
+  org.babashka/http-client {:mvn/version "0.4.23"}
+  babashka/process {:mvn/version "0.6.25"}
+  babashka/fs {:mvn/version "0.5.33"}
+  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack        {:mvn/version "1.12.3-blockether.17"}
-  com.blockether/ruff                             {:mvn/version "0.1.2"}
-  org.clojure/core.memoize                        {:mvn/version "1.2.281"}
-  com.blockether/fff                              {:mvn/version "0.9.6-8"}
-  com.taoensso/telemere                           {:mvn/version "1.2.1"}
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.17"}
+  com.blockether/ruff {:mvn/version "0.1.2"}
+  org.clojure/core.memoize {:mvn/version "1.2.281"}
+  com.blockether/fff {:mvn/version "0.9.6-8"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
-  com.taoensso/telemere-slf4j                     {:mvn/version "1.2.1"}
-  io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
-  metosin/malli                                   {:mvn/version "0.20.1"}
+  com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
+  io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
+  metosin/malli {:mvn/version "0.20.1"}
   ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
   ;; with the setup-graalvm-25 action's pinned version.
-  org.graalvm.polyglot/polyglot                   {:mvn/version "25.1.3"}
-  org.graalvm.python/python-language              {:mvn/version "25.1.3"}
-  org.graalvm.python/python-resources             {:mvn/version "25.1.3"}
-  org.graalvm.truffle/truffle-runtime             {:mvn/version "25.1.3"}
-  com.cnuernber/charred                           {:mvn/version "1.039"}
-  org.yamlstar/yamlstar                           {:mvn/version "0.1.11"}
-  ring/ring-core                                  {:mvn/version "1.15.5"}
-  ring/ring-jetty-adapter                         {:mvn/version "1.15.5"}
-  metosin/reitit-ring                             {:mvn/version "0.10.1"}
-  com.google.zxing/core                           {:mvn/version "3.5.3"}
+  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
+  org.graalvm.python/python-language {:mvn/version "25.1.3"}
+  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
+  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
+  com.cnuernber/charred {:mvn/version "1.039"}
+  org.yamlstar/yamlstar {:mvn/version "0.1.11"}
+  ring/ring-core {:mvn/version "1.15.5"}
+  ring/ring-jetty-adapter {:mvn/version "1.15.5"}
+  metosin/reitit-ring {:mvn/version "0.10.1"}
+  com.google.zxing/core {:mvn/version "3.5.3"}
   ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
-  com.github.mwiede/jsch                          {:mvn/version "2.28.4"}}
-
- :aliases
- {:lint   {:deps {io.github.enajski/codestyle
-                  {:git/url "https://github.com/enajski/codestyle.git"
-                   :git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"}}
-           :main-opts ["-m" "codestyle.lint"]}
-  :format {:deps {io.github.enajski/codestyle
-                  {:git/url "https://github.com/enajski/codestyle.git"
-                   :git/sha "658ee7f67a91dbe3f08c10b68d7c9f4107cb6a4f"}}
-           :main-opts ["-m" "codestyle.advanced-format"]}
-  :vis   {:jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
-                      "--enable-native-access=ALL-UNNAMED"
-                      "--enable-preview"
-                      "--sun-misc-unsafe-memory-access=allow"
-                      ;; The TUI's live heap is small, but G1 over-commits and
-                      ;; never hands the pages back, so idle RSS balloons. A
-                      ;; periodic idle GC + tight free-ratios make G1 shrink
-                      ;; committed toward the live set and uncommit to the OS;
-                      ;; it re-commits smoothly under load. The interval is a
-                      ;; tradeoff: each timer-driven concurrent cycle costs a
-                      ;; small CPU blip, so a too-short period shows up as a
-                      ;; recurring idle CPU "jump". 60s keeps idle RSS shrinking
-                      ;; while making those blips ~6x rarer than the old 10s.
-                      "-XX:+G1PeriodicGCInvokesConcurrent"
-                      "-XX:G1PeriodicGCInterval=60000"
-                      "-XX:MinHeapFreeRatio=10"
-                      "-XX:MaxHeapFreeRatio=25"
-                      ;; Raise the heap CEILING. There is no explicit -Xmx, but the
-                      ;; JVM STILL caps the heap at an ergonomic default
-                      ;; MaxHeapSize of 25% of physical RAM (~2 GB on an 8 GB box)
-                      ;; — THAT is the "2 GB limit". GraalPy/Truffle warmup plus a
-                      ;; long transcript can want much more, so lift the ceiling to
-                      ;; 75% of RAM. This is a CAP, not a reservation: the
-                      ;; free-ratio + periodic-GC flags above still uncommit idle
-                      ;; pages, so steady-state RSS stays small while bursts get
-                      ;; the headroom. Percentage scales across machines instead of
-                      ;; a hardcoded number.
-                      "-XX:MaxRAMPercentage=75.0"
-                      ;; String dedup runs a concurrent G1 pass that folds
-                      ;; byte-identical LONG-LIVED strings (the retained transcript
-                      ;; text kept across renders) onto ONE shared backing array,
-                      ;; shrinking the retained live set / RSS. Note: it targets
-                      ;; survivor strings, not the short-lived per-render churn
-                      ;; (those die young, before the dedup age threshold), so its
-                      ;; win is lower retained heap, not fewer GCs. G1 is JDK 21's
-                      ;; default GC, so this is active without an explicit
-                      ;; -XX:+UseG1GC.
-                      "-XX:+UseStringDeduplication"
-                      "-Djava.awt.headless=true"
-                      "-Dapple.awt.UIElement=true"]
-          :main-opts ["-m" "com.blockether.vis.core"]}
-
-  :test  {:jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
-                        "--enable-native-access=ALL-UNNAMED"
-                        "--enable-preview"
-                        "--sun-misc-unsafe-memory-access=allow"
-                        "-Djava.awt.headless=true"
-                        "-Dapple.awt.UIElement=true"
-                        "-Dvis.drafts.dir=target/vis-drafts-test"]
-          :extra-paths ["test"
-                        "extensions/persistance/vis-persistance-sqlite/test"
-                        "extensions/providers/vis-provider-github-copilot/test"
-                        "extensions/providers/vis-provider-openai-codex/test"
-                        "extensions/providers/vis-provider-anthropic/test"
-                        "extensions/providers/vis-provider-zai/test"
-                        "extensions/providers/vis-provider-standard/test"
-                        "extensions/channels/vis-channel-tui/test"
-                        "extensions/channels/vis-channel-telegram/test"
-                        "extensions/channels/vis-channel-web/test"
-                        "extensions/common/vis-foundation-bridge/test"
-                        "extensions/common/vis-foundation-harness/test"
-                        "extensions/common/vis-foundation-search/test"
-                        "extensions/common/vis-foundation-voice/test"
-                        "extensions/common/vis-foundation-mcp/test"
-                        "extensions/languages/vis-language-clojure/test"
-                        "extensions/languages/vis-language-python/test"
-                        "extensions/languages/vis-language-typescript-bun/test"]
-          :extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                        criterium/criterium            {:mvn/version "0.4.6"}}
-          :main-opts   ["-m" "lazytest.main"
-                        "--dir" "test"
-                        "--dir" "extensions/persistance/vis-persistance-sqlite/test"
-                        "--dir" "extensions/providers/vis-provider-github-copilot/test"
-                        "--dir" "extensions/providers/vis-provider-openai-codex/test"
-                        "--dir" "extensions/providers/vis-provider-anthropic/test"
-                        "--dir" "extensions/providers/vis-provider-zai/test"
-                        "--dir" "extensions/providers/vis-provider-standard/test"
-                        "--dir" "extensions/channels/vis-channel-tui/test"
-                        "--dir" "extensions/channels/vis-channel-telegram/test"
-                        "--dir" "extensions/channels/vis-channel-web/test"
-                        "--dir" "extensions/common/vis-foundation-bridge/test"
-                        "--dir" "extensions/common/vis-foundation-harness/test"
-                        "--dir" "extensions/common/vis-foundation-search/test"
-                        "--dir" "extensions/common/vis-foundation-voice/test"
-                        "--dir" "extensions/common/vis-foundation-mcp/test"
-                        "--dir" "extensions/languages/vis-language-clojure/test"
-                        "--dir" "extensions/languages/vis-language-python/test"
-                        "--dir" "extensions/languages/vis-language-typescript-bun/test"]}
-
-  :dev   {:extra-paths ["dev" "test"]
-          :extra-deps  {nrepl/nrepl                    {:mvn/version "1.7.0"}
-                        io.github.tonsky/clj-reload     {:mvn/version "1.0.0"}
-                        io.github.noahtheduke/lazytest  {:mvn/version "2.0.0"}}
-          :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
-                        "--enable-native-access=ALL-UNNAMED"
-                        "--enable-preview"
-                        "--sun-misc-unsafe-memory-access=allow"
-                        "-Djava.awt.headless=true"
-                        "-Dapple.awt.UIElement=true"]
-          :main-opts   ["-m" "com.blockether.vis.dev"]}
-
-  :bench-micro
-  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                criterium/criterium            {:mvn/version "0.4.6"}}}
-
-  :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.14"}
-                       slipset/deps-deploy           {:mvn/version "0.2.5"}
-                       org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
-          :ns-default build}
-
-  :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
-          :main-opts ["-m" "antq.core"]}
-
-  :clj-watson {:replace-deps {io.github.clj-holmes/clj-watson
-                              {:git/tag "v6.1.0" :git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"}}
-               :main-opts   ["-m" "clj-watson.cli"]}
-
-  :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}}}
+  com.github.mwiede/jsch {:mvn/version "2.28.4"}
+  ;; Pure-Java OOXML (Apache POI) backing the sandbox `xlsxwriter` + `pptx` shims.
+  org.apache.poi/poi-ooxml {:mvn/version "5.5.1"}}
+ :paths ["src" "resources"]}

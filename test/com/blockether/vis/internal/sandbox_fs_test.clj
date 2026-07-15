@@ -277,3 +277,47 @@
           ;; ...but a path outside every root AND every temp dir is still DENIED
           (expect (denied? #(write-channel! fs (p "/etc/vis-nope.txt") "x")))
           (finally (Files/deleteIfExists (p probe)))))))
+
+(defdescribe
+  confined-fs-vis-always-roots-test
+  (it
+    "ALWAYS allows ~/.vis/extensions + ~/.vis/logs (even when NOT a /fs root); denies the rest of ~/.vis"
+    (let [home
+          (System/getProperty "user.home")
+
+          ext-dir
+          (java.io.File. home ".vis/extensions")
+
+          logs-dir
+          (java.io.File. home ".vis/logs")
+
+          _
+          (do (.mkdirs ext-dir) (.mkdirs logs-dir))
+
+          ;; bogus /fs root, so the ONLY thing that can allow ~/.vis/extensions
+          ;; and ~/.vis/logs is the always-on vis-always-roots widening.
+          fs
+          (sfs/confined-filesystem (fn []
+                                     ["/no/such/workspace/root"]))
+
+          ext-probe
+          (str ext-dir "/vis-extroot-" (System/nanoTime) ".py")
+
+          log-probe
+          (str logs-dir "/vis-logroot-" (System/nanoTime) ".log")]
+
+      (try
+        ;; write + read scratch under ~/.vis/extensions works despite the bogus root
+        (write-channel! fs (p ext-probe) "print('ext-ok')")
+        (expect (= "print('ext-ok')" (slurp ext-probe)))
+        ;; ...and under ~/.vis/logs too
+        (write-channel! fs (p log-probe) "log-ok")
+        (expect (= "log-ok" (slurp log-probe)))
+        ;; the dirs themselves resolve through confinement (allowed)
+        (expect (some? (.toRealPath fs (p (str ext-dir)) (make-array java.nio.file.LinkOption 0))))
+        (expect (some? (.toRealPath fs (p (str logs-dir)) (make-array java.nio.file.LinkOption 0))))
+        ;; ...but the secret-bearing rest of ~/.vis (config.edn, DB, tokens) is DENIED
+        (expect (denied? #(write-channel! fs
+                                          (p (str home "/.vis/vis-nope-" (System/nanoTime) ".txt"))
+                                          "x")))
+        (finally (Files/deleteIfExists (p ext-probe)) (Files/deleteIfExists (p log-probe)))))))

@@ -51,3 +51,20 @@
           (and (seq home) (= path home)) "~"
           (and (seq home) (str/starts-with? path (str home "/"))) (str "~" (subs path (count home)))
           :else path)))
+
+(defn logs-dir
+  "Directory for vis diagnostic logs — `~/.vis/logs`. A DEDICATED subdir (not
+   `~/.vis` itself) so the native file tools and the Python sandbox can be
+   granted always-on access to logs without exposing `config.edn`, the session
+   DB, or gateway tokens. Returns the path string (native separators are fine
+   for real I/O)."
+  ^String []
+  (str (System/getProperty "user.home") "/.vis/logs"))
+
+(defn ensure-logs-dir!
+  "Create `~/.vis/logs` (and parents) when absent; return its path string.
+   Never throws."
+  ^String []
+  (let [d (logs-dir)]
+    (try (.mkdirs (java.io.File. d)) (catch Throwable _ nil))
+    d))

@@ -70,6 +70,26 @@
         (nil? (.getParent anc)) abs
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
+(def ^:private vis-always-roots
+  "Dirs under `~/.vis` the sandbox may ALWAYS read/write, independent of the
+   user's `/fs` roots: the Python-extension dir `~/.vis/extensions` (author or
+   debug an extension in any project) and the log dir `~/.vis/logs` (grep vis's
+   own diagnostics — `vis.log`, `telegram.log`, JFR dumps). Each canonicalized
+   ONCE via `real-path` (resolves the real path of `~/.vis`, then re-appends the
+   leaf, so it matches even before the dir exists). Held in a delay so the
+   syscall happens on first use. Kept SEPARATE from `temp-roots`: a write here is
+   NOT tapped to the OUTBOX (only temp writes are), and the secret-bearing rest
+   of `~/.vis` (config.edn, the session DB, gateway tokens) stays OUT of reach."
+  (delay (let [home (System/getProperty "user.home")]
+           (->> [["extensions"] ["logs"]]
+                (keep (fn [tail]
+                        (when-not (str/blank? (str home))
+                          (try (real-path (Paths/get (str home)
+                                                     (into-array String (cons ".vis" tail))))
+                               (catch Throwable _ nil)))))
+                distinct
+                vec))))
+
 (defn- current-real-roots
   "Canonical (real) Paths of the CURRENT filesystem roots. Reads the root STRINGS
    fresh each call (so `/fs add|remove` applies live), but MEMOIZES the expensive
@@ -95,8 +115,8 @@
 
 (defn- confine!
   "Throw a clear SecurityException unless `p` resolves under a current root OR one
-   of the always-allowed `extra-roots` (the engine outbox dir + the system temp
-   dirs `/tmp`/`$TMPDIR`). Returns `p` (a Path) on
+   of the always-allowed `extra-roots` (the engine outbox dir, the system temp
+   dirs `/tmp`/`$TMPDIR`, and the always-on vis dirs `~/.vis/extensions` + `~/.vis/logs`). Returns `p` (a Path) on
    success. `cache` memoizes root canonicalization."
   ^Path [roots-fn cache extra-roots p]
   (let [^Path pp
@@ -173,7 +193,7 @@
          (:on-close outbox)
 
          extra-roots
-         (into (if outbox-real [outbox-real] []) @temp-roots)
+         (into (into (if outbox-real [outbox-real] []) @temp-roots) @vis-always-roots)
 
          c
          (fn [p]
