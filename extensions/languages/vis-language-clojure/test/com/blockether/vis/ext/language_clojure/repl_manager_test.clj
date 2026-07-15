@@ -447,4 +447,30 @@
 
                      (core/clj-eval-fn {:workspace/root root :session-id "s"}
                                        {"code" "(+ 1 1)" "id" "nrepl:/b"})
-                     (expect (= ["nrepl:/b" (.getCanonicalPath (io/file root))] @captured))))))
+                     (expect (= ["nrepl:/b" (.getCanonicalPath (io/file root))] @captured)))))
+             (it "a stale explicit `id` does not block explicit-dir autostart"
+                 (let [root
+                       (tmp-dir)
+
+                       _
+                       (.mkdirs (io/file root "sub"))
+
+                       captured
+                       (atom nil)]
+
+                   (with-redefs [rm/repl-by-id
+                                 (fn [_sid _rid]
+                                   nil)
+
+                                 rm/resolve-target!
+                                 (fn [_sid rid default-dir]
+                                   (reset! captured [rid default-dir])
+                                   {:id "nrepl:/sub" :dir default-dir :port 7777})
+
+                                 nrepl-client/eval!
+                                 (fn [_]
+                                   {"value" "2"})]
+
+                     (core/clj-eval-fn {:workspace/root root :session-id "s"}
+                                       {"code" "(+ 1 1)" "id" "nrepl:/stale" "dir" "sub"})
+                     (expect (= [nil (.getCanonicalPath (io/file root "sub"))] @captured))))))
