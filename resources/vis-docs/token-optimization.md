@@ -33,10 +33,11 @@ The agent writes code; intermediate results bind to vars in the sandbox. A 200 K
 
 Once a step's output has done its job, the agent replaces it with a one-line gist via `session_fold(["tN/iN"], "what it established")` — the whole step (the tool call **and** its output) collapses off the wire, so later requests stop paying for it. A fold can target a list of steps, a whole turn (a bare `"tN"`), or a range (`{"through": "tN/iN"}` / `{"since": "tN/iN"}` / `{"from": …, "to": …}`); a wider fold supersedes a finer one it covers.
 
-The live ledger of what's collapsed rides **inside the token meter** — the model reads it in the same place it reads how full the window is — split by lifespan into two keys so history doesn't re-transmit every turn:
+The gist of a fold lands **in place** — a `# ⋯ folded <scopes> · <gist>` breadcrumb replaces the step exactly where it collapsed, so the finding (with its `file:line` anchors) stays where the hunt was, read in context as the model scans history. It is written **once** and never re-transmitted.
 
-- `session["utilization"]["folds"]` — the **stable** list of surviving folds, `<at>: <gist>` with `at` the compressed scopes (`tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`). It changes only when a fold lands, so the per-iteration context delta ships the heavy gists once per fold — not on every step.
-- `session["utilization"]["now"]` — the **volatile but tiny** `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away, and which steps are still live = the next fold candidates. `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage. Scopes and counts only — no gists, no position (the `# tN/iN` step tag already carries that) — so re-emitting it each iteration costs a handful of tokens.
+The live **budget** rides **inside the token meter** — the model reads it in the same place it reads how full the window is:
+
+- `session["utilization"]["now"]` — `saved <C>/<T> (<P>%) · live <scopes>`: how much of the wire is folded away, and which steps are still live = the next fold candidates (compressed `tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`). `<T>` counts only scopes still on the wire, so folds that have scrolled off the trailer never inflate the percentage. Scopes and counts only — no gists (those live in the breadcrumbs), no position (the `# tN/iN` step tag already carries that) — so re-emitting it each iteration costs a handful of tokens.
 
 ## The net effect
 

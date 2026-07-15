@@ -523,40 +523,8 @@
 
         (mapv second (sort-by first (concat full-tokens partial-tokens)))))))
 
-(defn- unresolved-iters
-  "Iter tokens for ONE recorded fold when NO iteration universe is available to
-   resolve selectors against (resume / fresh-process seed, before the first live
-   send re-stamps `engine_iter_universe`). Stays in the canonical `\"iters\"`
-   vocabulary so the ledger is ONE shape everywhere: explicit `tN/iN` scopes are
-   run-compressed exactly like `compress-scopes`; a bare `tN` stays `\"tN\"`; a
-   range selector that can't resolve yet shows its BOUNDARY as a pending marker —
-   `\"<=tN/iN\"` (through), `\">=tN/iN\"` (since), `\"tA/iA..tB/iB\"` (from/to,
-   either bound open). Strings only. Pure."
-  [s]
-  (let [scopes
-        (get s "scopes")
-
-        explicit
-        (compress-scopes (filter scope-key scopes) [])
-
-        bare
-        (vec (sort (filter turn-key scopes)))
-
-        thr
-        (when-let [x (get s "through")]
-          (str "<=" x))
-
-        snc
-        (when-let [x (get s "since")]
-          (str ">=" x))
-
-        win
-        (when (or (get s "from") (get s "to")) (str (get s "from" "") ".." (get s "to" "")))]
-
-    (into [] (concat explicit bare (keep identity [thr snc win])))))
-
 (defn- join-scopes
-  "Join compressed scope tokens (compress-scopes / unresolved-iters output) into
+  "Join compressed scope tokens (compress-scopes output) into
    ONE compact string, MERGING the iter-runs of the SAME turn:
    [\"t3/i1-i2\" \"t3/i5-i6\" \"t3/i9\" \"t4/*\"] → \"t3/i1-i2,i5-i6,i9 t4/*\".
    Whole-turn / marker tokens (`tN/*`, `tA-tB/*`, `t*`, `<=…`, `>=…`, `..`) pass
@@ -592,36 +560,28 @@
   (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
 
 (defn folds-view
-  "Model-facing LEDGER of what the recorded `session_fold` intents collapsed, split
-   by LIFESPAN into two compact SINGLE-LINE STRING leaves (never a nested map/list,
-   so the Python pretty-printer can't break them across lines). The split lets the
-   volatile part re-emit cheaply while the heavy part stays put:
+  "Model-facing LIVE BUDGET derived from the recorded `session_fold` intents.
 
-     `\"folds\"`  STABLE — the folds that SURVIVED supersession, as `\"<at>: <gist>\"` joined by
-                 ` | ` (bare `\"<at>\"` when gist-less), `at` the resolved + compressed
-                 scope string (`tN/*` / `tA-tB/*` / `t*` / `tN/i1-i2,i5`, never a raw
-                 through/from). For a fold over COMPLETED past turns the `at` is fixed,
-                 so this leaf changes only when a fold lands or supersedes and the
-                 recursive per-leaf ctx delta ships the heavy gists ONCE per fold — not
-                 once per iteration. (A fold still covering the GROWING current turn is
-                 the one exception: its `at` re-resolves as that turn gains iterations.)
-     `\"now\"`    VOLATILE but TINY — the live budget, shaped
-                 `\"saved <C>/<T> (<P>%) · live <scopes>\"`: `saved` how much of the wire
-                 (`<T>` = every `tN/iN` still on the wire, so the folded scopes that have
-                 already scrolled off the trailer never inflate it) is folded away, and
-                 `live` the compressed scopes STILL on the wire = fold candidates. It holds
-                 only scopes + counts (NO gists) and NO position (the `# tN/iN` step tag
-                 the model already sees carries that), so re-emitting it every iteration
-                 costs a handful of tokens.
+   The GIST of each fold lives ONCE — in its transcript breadcrumb, rendered in
+   place where the collapsed content was, carrying its file:line anchors (see
+   `pretty-scopes`). So this view deliberately holds NO gists; echoing them here
+   would duplicate the breadcrumb that is already on the wire. It emits only the
+   volatile budget signal:
 
-   Returns a map holding whichever leaves apply; the caller (`session-view`) merges
-   them into `\"session_utilization\"`. With a stamped `universe` (the live `tN/iN`
-   scopes this send) selectors are resolved (`expand-through`), covered folds dropped
-   (`supersede-summaries`), and both leaves are produced. Without one (resume / fresh
-   seed, before the first live send) only `\"folds\"` is produced, best-effort: each
-   `at` comes from `unresolved-iters` (explicit scopes compressed, ranges as pending
-   boundary markers), and there is no `\"now\"` until the next send re-stamps the
-   universe. Pure."
+     `\"now\"`  VOLATILE but TINY — shaped `\"saved <C>/<T> (<P>%) · live <scopes>\"`:
+              `saved` how much of the wire (`<T>` = every `tN/iN` still on the
+              wire, so folded scopes that already scrolled off the trailer never
+              inflate it) is folded away, and `live` the compressed scopes STILL
+              on the wire = fold candidates. Scopes + counts only — no gists, no
+              position (the `# tN/iN` step tag the model already sees carries
+              that) — so re-emitting it every iteration costs a handful of tokens.
+
+   Returns `{\"now\" …}` when a `universe` (the live `tN/iN` scopes this send) is
+   stamped: selectors resolved (`expand-through`), covered folds dropped
+   (`supersede-summaries`), budget computed against the live wire. Without one
+   (resume / fresh seed, before the first live send) returns `{}` — the
+   breadcrumbs still carry every gist until the next send re-stamps the universe.
+   Pure."
   [summaries universe]
   (let [universe
         (into [] (comp (filter string?) (distinct)) universe)
@@ -630,9 +590,7 @@
         (boolean (seq universe))
 
         resolved
-        (if has-uni?
-          (supersede-summaries (expand-through summaries universe))
-          (filterv map? summaries))
+        (when has-uni? (supersede-summaries (expand-through summaries universe)))
 
         uni-set
         (set universe)
@@ -641,28 +599,16 @@
         (into #{} (mapcat #(get % "scopes")) resolved)
 
         live
-        (if has-uni? (into [] (remove collapsed-set) universe) [])
-
-        folded
-        (into []
-              (keep (fn [s]
-                      (let [toks (if has-uni?
-                                   (compress-scopes (filter uni-set (get s "scopes")) universe)
-                                   (unresolved-iters s))]
-                        (when-let [at (join-scopes toks)]
-                          (if (contains? s "gist") (str at ": " (get s "gist")) at)))))
-              resolved)
+        (into [] (remove collapsed-set) universe)
 
         c
-        (if has-uni?
-          (count (filter uni-set collapsed-set))
-          (count (into #{} (comp (mapcat #(get % "scopes")) (filter scope-key)) resolved)))
+        (count (filter uni-set collapsed-set))
 
         total
         (+ c (count live))
 
         live-str
-        (join-scopes (when has-uni? (compress-scopes live universe)))
+        (join-scopes (compress-scopes live universe))
 
         now
         (when has-uni?
@@ -675,9 +621,6 @@
                (when (seq live-str) (str "live " live-str))])))]
 
     (cond-> {}
-      (seq folded)
-      (assoc "folds" (str/join " | " folded))
-
       (seq now)
       (assoc "now" now))))
 
@@ -696,22 +639,21 @@
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
-   ;; The fold LEDGER is merged INTO `"session_utilization"` (as sibling leaves
-   ;; `"folds"` + `"now"`), not a second top-level key: tokens-now + what's-folded
-   ;; are ONE readout riding the SAME per-iteration delta. The split is by LIFESPAN —
-   ;; `"folds"` (heavy gists) changes only when a fold lands (past-turn folds), so the
-   ;; recursive per-leaf
-   ;; delta ships it once per fold; `"now"` (position + budget + live) is tiny and
-   ;; re-emits every iteration. Before any request is measured (no utilization) a fold
-   ;; still surfaces via a utilization map holding only the ledger leaves.
-   (let [folds
+   ;; The fold BUDGET is merged INTO `"session_utilization"` (as the sibling leaf
+   ;; `"now"`), not a second top-level key: tokens-now + how-much-folded + what's-
+   ;; still-live are ONE readout riding the SAME per-iteration delta. The heavy
+   ;; part — each fold's GIST — is NOT here: it lives once in the transcript
+   ;; breadcrumb where the step collapsed (with its file:line anchors), so nothing
+   ;; is echoed. Before any request is measured (no universe) `folds-view` yields
+   ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
+   (let [budget
          (when (seq (get ctx "session_summaries"))
            (folds-view (get ctx "session_summaries") (get ctx "engine_iter_universe")))
 
          util
-         (cond-> (or (get ctx "engine_utilization") (when (seq folds) {}))
-           (seq folds)
-           (merge folds))]
+         (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
+           (seq budget)
+           (merge budget))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)
