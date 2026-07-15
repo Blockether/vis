@@ -3030,6 +3030,7 @@
     com.blockether.vis.internal.foundation.shim-sqlite3
     com.blockether.vis.internal.foundation.shim-httpx
     com.blockether.vis.internal.foundation.shim-urllib3
+    com.blockether.vis.internal.foundation.shim-paramiko
     com.blockether.vis.internal.foundation.shim-attach])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`

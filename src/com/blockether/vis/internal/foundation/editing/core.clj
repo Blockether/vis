@@ -2442,7 +2442,7 @@
                       :removed (vec legacy)
                       :edit edit})))
           (when-not (contains? edit "from_anchor")
-            (throw (ex-info (str "patch edit needs a from_anchor (lineno:hash from cat).")
+            (throw (ex-info "patch edit needs a from_anchor (lineno:hash from cat)."
                             {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
           (when unknown
             (throw (ex-info (str "patch edit has unknown keys: "
@@ -4505,7 +4505,7 @@
      :body (some->> (str/join "\n\n"
                               (for [{:strs [path op changed diff]} summaries]
                                 (let [diff-block (when (and changed (seq (str diff)))
-                                                   (str "```diff\n" (str diff) "\n```"))]
+                                                   (str "```diff\n" diff "\n```"))]
                                   (if (= n 1)
                                     ;; single file: summary already names it — show just the diff
                                     (or diff-block "")

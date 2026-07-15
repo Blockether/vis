@@ -718,7 +718,7 @@
                     ;; (the 40-line thinking trace guarantees it).
                     (expect (seq node-ids))
                     (doseq [nid node-ids]
-                      (let [de {[(str sid) (str nid)] true}
+                      (let [de {[sid (str nid)] true}
                             [est real] (est->real m w de)]
 
                         (expect (>= (long est) (long real))

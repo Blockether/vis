@@ -513,19 +513,15 @@ def __vis_assigned_names__(body):
                     add(nn.id)
         elif isinstance(node, (__vis_ast__.FunctionDef, __vis_ast__.AsyncFunctionDef, __vis_ast__.ClassDef)):
             add(node.name)
-        elif isinstance(node, __vis_ast__.For):
-            for nn in __vis_ast__.walk(node.target):
-                if isinstance(nn, __vis_ast__.Name):
-                    add(nn.id)
         elif isinstance(node, (__vis_ast__.Import, __vis_ast__.ImportFrom)):
             for al in node.names:
                 add((al.asname or al.name).split('.')[0])
-        elif isinstance(node, __vis_ast__.With):
-            for itm in node.items:
-                if itm.optional_vars is not None:
-                    for nn in __vis_ast__.walk(itm.optional_vars):
-                        if isinstance(nn, __vis_ast__.Name):
-                            add(nn.id)
+        # `for`/`with` targets are DELIBERATELY excluded. They are transient
+        # scratch names, so we leave them local to __vis_main__ (never added to
+        # the `global` list) — they don't persist across blocks and so can't
+        # clobber a protected callable. That also means innocuous loops like
+        # `for doc in docs:` / `with open(p) as patch:` are NOT flagged as a
+        # durable rebind of a tool name by the protected-rebind guard.
     return names
 
 def __vis_strip_protected_imports__(src):
@@ -2429,7 +2425,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
       (run-async-program ctx g code))))
 
 (defn- assigned-names-in-code
-  "Top-level names a Python block binds (assign/import/def/for/with targets).
+  "Top-level names a Python block DURABLY binds (assign/import/def targets).
+   Transient `for`/`with` loop targets are excluded (they stay function-local).
    Empty on parse failure; the normal evaluator reports the syntax error."
   [^Context ctx ^Value g code]
   (try (.putMember g "__vis_src__" (str code))

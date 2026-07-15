@@ -1082,7 +1082,7 @@
    `vis_answer` / `vis_silent` sentinel, so its raw call source is noise in
    the chat thread."
   [form]
-  (boolean (contains? silent-result-sentinels (:result form))))
+  (contains? silent-result-sentinels (:result form)))
 
 (def ^:private trace-preview-line-limit
   "Rows that stay visible before a trace block offers a `+N more` disclosure.

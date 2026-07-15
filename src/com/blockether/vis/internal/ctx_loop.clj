@@ -144,7 +144,7 @@
                           (dissoc ctx' "session_scope"))))
       (tel/log! {:level :info
                  :id ::finalize-turn
-                 :data {:answer-present? (boolean (not (clojure.string/blank? (str answer))))}}
+                 :data {:answer-present? (not (clojure.string/blank? (str answer)))}}
                 "finalize-turn completed"))
     {:answer answer :blocked? false :warnings []}))
 

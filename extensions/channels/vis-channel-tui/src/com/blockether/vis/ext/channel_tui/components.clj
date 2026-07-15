@@ -35,7 +35,7 @@
         ;; EAW=A and renders TWO columns on ambiguous-wide terminals, so a fixed
         ;; `(dec max-cols)` over-ran the cell by a column.
         ew
-        (long (p/display-width vh/workspace-ellipsis))]
+        (p/display-width vh/workspace-ellipsis)]
 
     (cond (<= max-cols 0) ""
           (<= (p/display-width s) max-cols) s
@@ -116,7 +116,7 @@
   ([g col row label kind] (button! g col row label kind nil))
   ([g col row label kind {:keys [extra danger? accent? register? tint] :or {register? true}}]
    (let [w
-         (long (p/display-width label))
+         (p/display-width label)
 
          hov
          (cr/hovered)
@@ -191,8 +191,7 @@
           qfield
           (str " "
                qtext
-               (apply str
-                 (repeat (max 0 (- find-input-width (long (p/display-width qtext)))) \space))
+               (apply str (repeat (max 0 (- find-input-width (p/display-width qtext))) \space))
                " ")
 
           cnt
@@ -222,7 +221,7 @@
           content-w
           (long (reduce +
                         (map (fn [op]
-                               (long (p/display-width (last op))))
+                               (p/display-width (last op)))
                              ops)))
 
           box-w
@@ -238,7 +237,7 @@
        ;; the typed query — the cursor rides its end. The placeholder text
        ;; ("type to search…") doesn't count: an empty query parks the cursor
        ;; at the field start, exactly like an empty prompt input.
-       :cursor-dx (+ 3 (if (str/blank? q) 0 (long (p/display-width qtext))))})))
+       :cursor-dx (+ 3 (if (str/blank? q) 0 (p/display-width qtext)))})))
 
 (defn find-bar-cursor
   "Screen cell [col row] where the terminal cursor belongs while the find bar
@@ -282,13 +281,13 @@
             (do (p/clear-styles! g)
                 (p/set-colors! g t/box-fg t/input-field-bg)
                 (p/put-str! g x row (last op))
-                (+ x (long (p/display-width (last op)))))
+                (+ x (p/display-width (last op))))
 
             ;; chrome / gaps ride the dialog body palette.
             (do (p/clear-styles! g)
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (p/put-str! g x row (last op))
-                (+ x (long (p/display-width (last op)))))))
+                (+ x (p/display-width (last op))))))
         x0
         ops)
       (find-bar-cursor cols text-top search))))
@@ -1483,8 +1482,7 @@
         "Context"
 
         lines
-        [blank [[(str "  Live task / fact / plan tracking was removed.") t/dialog-hint false]]
-         blank]
+        [blank [["  Live task / fact / plan tracking was removed." t/dialog-hint false]] blank]
 
         n
         (count lines)
