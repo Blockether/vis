@@ -2001,6 +2001,7 @@
      :color (:color p)
      :position (:position p)
      :session_count (:session-count p)
+     :root (:root p)
      :created_at (:created-at p)
      :archived_at (:archived-at p)}))
 
@@ -2013,6 +2014,17 @@
 (defn get-project [pid] (project-wire (lp/get-project pid)))
 
 (defn create-project! [opts] (project-wire (lp/create-project! opts)))
+
+(defn get-project-by-root
+  "Wire project bound to canonical workspace `root` for `owner-id` (default
+   \"local\"), or nil."
+  ([root] (get-project-by-root "local" root))
+  ([owner-id root] (project-wire (lp/get-project-by-root owner-id root))))
+
+(defn ensure-project-for-root!
+  "Get-or-create the wire project bound to canonical workspace `root`."
+  ([root] (ensure-project-for-root! "local" root nil))
+  ([owner-id root name] (project-wire (lp/ensure-project-for-root! owner-id root name))))
 
 (defn update-project! [pid opts] (project-wire (lp/update-project! pid opts)))
 

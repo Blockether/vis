@@ -321,6 +321,7 @@
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 (defdelegate db-get-project [db-info project-id])
 (defdelegate db-list-projects [db-info opts])
+(defdelegate db-get-project-by-root [db-info owner-id root])
 (defdelegate db-create-project! [db-info opts])
 (defdelegate db-update-project! [db-info project-id opts])
 (defdelegate db-delete-project! [db-info project-id])

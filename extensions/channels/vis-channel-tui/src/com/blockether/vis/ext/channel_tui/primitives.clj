@@ -579,6 +579,57 @@
                         ;; continue. For sentinels `w` is 0 so `used` stays put.
                         (do (.append sb gs) (recur (inc i) next)))))))))
 
+(defn truncate-middle
+  "Shorten `s` to at most `max-cols` columns by ELIDING THE MIDDLE behind a
+   single `…`, keeping both the HEAD and the TAIL. Ideal for file paths, where
+   the basename (tail) is as informative as the leading dirs — plain
+   `truncate-cols` drops the filename. Falls back to head truncation when there
+   isn't room for both sides plus the ellipsis. Grapheme-cluster safe."
+  ^String [s ^long max-cols]
+  (cond (or (nil? s) (<= max-cols 0)) ""
+        (<= (display-width s) max-cols) s
+        (<= max-cols 2) (truncate-cols s max-cols)
+        :else
+        (let [budget
+              (dec max-cols)
+ ; one column spent on the ellipsis
+              tail-cols
+              (quot budget 2)
+
+              head-cols
+              (- budget tail-cols)
+
+              head
+              (truncate-cols s head-cols)
+
+              cells
+              (TextCharacter/fromString ^String s)
+
+              tail
+              (loop [i
+                     (dec (alength cells))
+
+                     used
+                     0
+
+                     acc
+                     nil]
+
+                (if (neg? i)
+                  acc
+                  (let [tc
+                        ^TextCharacter (aget cells i)
+
+                        g
+                        ^String (.getCharacterString tc)
+
+                        w
+                        (if (.isDoubleWidth tc) 2 1)]
+
+                    (if (> (+ used w) tail-cols) acc (recur (dec i) (+ used w) (str g acc))))))]
+
+          (str head "…" tail))))
+
 (defn fold-cols
   "Character-fold `s` into a vector of segments, each at most `max-cols`
    display columns wide, never splitting a grapheme cluster.

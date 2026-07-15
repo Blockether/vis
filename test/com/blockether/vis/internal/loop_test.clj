@@ -98,6 +98,12 @@
 
 (def ^:private max-tokens-exceeded-error? (deref #'lp/max-tokens-exceeded-error?))
 
+(def ^:private provider-unavailable-error? (deref #'lp/provider-unavailable-error?))
+(def ^:private provider-unavailable-retry? (deref #'lp/provider-unavailable-retry?))
+(def ^:private provider-unavailable-retry-delay-ms (deref #'lp/provider-unavailable-retry-delay-ms))
+(def ^:private next-retry-counters (deref #'lp/next-retry-counters))
+(def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
+
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
 
 (def ^:private llm-provider-error-context (deref #'lp/llm-provider-error-context))
@@ -2057,6 +2063,126 @@
                                                               {:type :vis/eval-error})
                                                      ctx)]
           (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
+
+(defdescribe
+  provider-unavailable-retry-test
+  "svar's terminal `:svar.llm/provider-unavailable` (a single pinned provider
+   whose upstream call failed before any usable response) gets a few transparent
+   re-sends (widening backoff) at the provider-call boundary; if it still fails the turn ends fatal
+   with the provider-error card — never fed back to the model as an
+   unactionable outage, never a silent cross-provider hop."
+  (let [ctx {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
+    (it "recognises :svar.llm/provider-unavailable as retry-able"
+        (let [e (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 500})]
+          (expect (true? (provider-unavailable-error? e)))))
+    (it "does not confuse other svar errors with the provider-unavailable variant"
+        (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
+          (expect (false? (provider-unavailable-error? e))))
+        (let [e (ex-info "max" {:type :svar.llm/max-tokens-exceeded})]
+          (expect (false? (provider-unavailable-error? e)))))
+    (it "is fatal once retries are exhausted — fails the turn, not fed back"
+        ;; After the single transparent retry the same error reaches
+        ;; handle-iteration-exception!, which must mark it fatal so the turn
+        ;; surfaces the informative card instead of re-prompting the model
+        ;; with an outage it cannot fix.
+        (let [result (lp/handle-iteration-exception! (ex-info "Provider unavailable"
+                                                              {:type :svar.llm/provider-unavailable
+                                                               :status 500})
+                                                     ctx)]
+          (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
+          (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
+
+(defdescribe
+  provider-unavailable-retry-loop-test
+  "Drives the per-iteration retry machinery the loop actually recurs on
+   (`provider-unavailable-retry?` gate, `provider-unavailable-retry-delay-ms`
+   backoff, `next-retry-counters` counter-threading) end-to-end — proving the
+   1s->2s->4s / 3-retry budget AND that provider-unavailable's budget is
+   independent of any stream/auth retries that ran earlier in the same iteration."
+  (let [pu
+        (fn []
+          (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 503}))
+
+        ;; Faithful stand-in for the real recur: re-run `attempt-fn` (which
+        ;; either throws or returns a value) threading the SAME counters the
+        ;; production loop threads, recording each backoff slept. Returns
+        ;; {:delays [...] :pu-attempt N :outcome ...}.
+        drive
+        (fn [init attempt-fn]
+          (loop [{:keys [attempt max-tokens-attempt pu-attempt]}
+                 init
+
+                 delays
+                 []]
+
+            (let [result (try (attempt-fn) (catch Exception e e))]
+              (cond
+                ;; Not a throwable — a real iteration result: done.
+                (not (instance? Throwable result))
+                {:delays delays :pu-attempt pu-attempt :outcome result}
+                ;; provider-unavailable with budget left: sleep the indexed
+                ;; backoff and recur bumping ONLY pu-attempt, exactly like
+                ;; the ::retry-provider-unavailable arm.
+                (provider-unavailable-retry? result pu-attempt)
+                (let [d (provider-unavailable-retry-delay-ms pu-attempt)
+                      [a m p] (next-retry-counters ::lp/retry-provider-unavailable
+                                                   {:attempt attempt
+                                                    :max-tokens-attempt max-tokens-attempt
+                                                    :pu-attempt pu-attempt})]
+
+                  (recur {:attempt a :max-tokens-attempt m :pu-attempt p} (conj delays d)))
+                ;; Budget exhausted (or a different error): the loop's
+                ;; :else arm hands it to handle-iteration-exception!.
+                :else {:delays delays :pu-attempt pu-attempt :outcome :fatal}))))
+
+        zero
+        {:attempt 0 :max-tokens-attempt 0 :pu-attempt 0}]
+
+    (it "gate retries while budget remains and stops exactly at the cap"
+        (expect (= [true true true false]
+                   (mapv #(provider-unavailable-retry? (pu) %)
+                         (range (inc MAX_PROVIDER_UNAVAILABLE_RETRIES))))))
+    (it "a non-provider-unavailable error is never gated for PU retry"
+        (expect (false? (provider-unavailable-retry? (ex-info "x" {:type :svar.llm/empty-content})
+                                                     0))))
+    (it "backoff widens 1s -> 2s -> 4s and clamps past the vector"
+        (expect (= [1000 2000 4000 4000 4000]
+                   (mapv provider-unavailable-retry-delay-ms (range 5)))))
+    (it "a persistent outage: exactly 3 retries at 1s/2s/4s, then fatal"
+        (let [{:keys [delays outcome pu-attempt]} (drive zero pu)]
+          (expect (= [1000 2000 4000] delays))
+          (expect (= MAX_PROVIDER_UNAVAILABLE_RETRIES pu-attempt))
+          (expect (= :fatal outcome))))
+    (it "recovers transparently when a retry finally succeeds (no fatal)"
+        (let [calls
+              (atom 0)
+
+              flaky
+              (fn []
+                (if (< (swap! calls inc) 3) (throw (pu)) {:final-result :answer}))
+
+              {:keys [delays outcome]}
+              (drive zero flaky)]
+
+          ;; two failures -> two backoffs -> third call returns the result
+          (expect (= [1000 2000] delays))
+          (expect (= {:final-result :answer} outcome))))
+    (it "PU budget is INDEPENDENT of a preceding stream retry (turn-8 fix)"
+        ;; Enter as if two stream-rewinds already burned `attempt` to 2. PU must
+        ;; still get its FULL 1s/2s/4s budget — not start mid-backoff / short.
+        (let [{:keys [delays pu-attempt]} (drive {:attempt 2 :max-tokens-attempt 0 :pu-attempt 0}
+                                                 pu)]
+          (expect (= [1000 2000 4000] delays))
+          (expect (= MAX_PROVIDER_UNAVAILABLE_RETRIES pu-attempt))))
+    (it "next-retry-counters advances ONLY the owning policy's budget"
+        (let [base {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}]
+          (expect (= [3 1 1] (next-retry-counters ::lp/retry-stream base)))
+          (expect (= [2 1 2] (next-retry-counters ::lp/retry-provider-unavailable base)))
+          (expect (= [2 2 1] (next-retry-counters {::lp/retry-max-tokens {:max_tokens 9}} base)))
+          (expect (= [3 1 1] (next-retry-counters ::lp/retry-auth-refresh base)))
+          (expect (= [3 1 1] (next-retry-counters ::lp/retry-auth-backoff base)))))
+    (it "next-retry-counters returns nil for a real iteration result (loop exits)"
+        (expect (nil? (next-retry-counters {:blocks [] :final-result :answer} zero))))))
 
 (defdescribe
   provider-error-circuit-breaker-test

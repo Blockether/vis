@@ -34,6 +34,43 @@
 ;; {:idx <Closeable fff> :built-at <ms> :building? <bool>}
 (defonce ^:private index-cache (atom {:idx nil :built-at 0 :building? false}))
 
+(defn- status-glyph
+  "Collapse a git status word (\"modified\", \"untracked\", …) to the single
+   letter git itself uses, so the picker meta stays one column, not a word."
+  [status]
+  (case status
+    "modified"
+    "M"
+
+    "untracked"
+    "?"
+
+    ("added" "created" "new" "staged")
+    "A"
+
+    "deleted"
+    "D"
+
+    "renamed"
+    "R"
+
+    "copied"
+    "C"
+
+    ("conflict" "conflicted" "unmerged")
+    "U"
+
+    "typechange"
+    "T"
+
+    "ignored"
+    "I"
+
+    (some-> status
+            not-empty
+            (subs 0 1)
+            str/upper-case)))
+
 (defn- fresh?
   [{:keys [idx built-at]}]
   (and idx (< (- (System/currentTimeMillis) (long built-at)) index-ttl-ms)))
@@ -111,7 +148,8 @@
           (map-indexed (fn [idx it]
                          (let [status (:status-label it)
                                meta (->> [(:size-label it) (:age-label it)
-                                          (when (and status (not= "clean" status)) status)]
+                                          (when (and status (not= "clean" status))
+                                            (status-glyph status))]
                                          (remove str/blank?)
                                          (str/join " · "))]
 

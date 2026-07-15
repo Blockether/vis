@@ -20,7 +20,7 @@ The outline costs a few tokens and tells the model exactly which range to read �
 Structural editing targets a definition by name and replaces it in place:
 
 ```
-struct_edit({"op": "replace", "target": "add", "code": "(defn add [a b c] (+ a b c))"})
+struct_patch({"op": "replace", "target": "add", "code": "(defn add [a b c] (+ a b c))"})
 ```
 
 `replace` · `insert_before` · `insert_after` · `append` · `add_doc` · `replace_doc` · `replace_node` · `rename` — all backed by tree-sitter, all re-parsed and rejected if an edit would break syntax. The model never has to reproduce surrounding lines just to anchor a change.

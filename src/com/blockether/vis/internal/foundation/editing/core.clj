@@ -2805,26 +2805,81 @@
 
         (str head " failed.")))))
 
+(defn- failure-family
+  "Collapse related failure `:reason`s into ONE root-cause family so a batch that
+   failed for a single underlying cause reports as ONE grouped error. The common
+   case: the file changed under the anchors (a concurrent write, or an earlier
+   edit this turn), so every edit resolves to a different anchor reason
+   (`:stale`, `:hashline-not-found`, `:hashline-misplaced`, …) that is really the
+   SAME story — stale anchors."
+  [{:keys [reason]}]
+  (case reason
+    (:stale :hashline-not-found :hashline-misplaced
+            :hashline-line-out-of-range :hashline-range-inverted)
+    :stale-anchors
+
+    reason))
+
+(defn- family-headline
+  "One shared, actionable sentence for a group of failures in the same
+   `failure-family`. For reasons whose message is edit-specific (path errors,
+   syntax refusals, malformed anchors) it falls back to the first member's full
+   `explain-failure` — the affected-edit list rendered beside it names the rest."
+  [family failures]
+  (case family
+    :stale-anchors
+    (str "their `lineno:hash` anchors no longer match the file — it changed since"
+         " you grabbed them (a concurrent write, or an earlier edit this turn)."
+         " Re-`cat` the file for fresh anchors, then resend the whole batch.")
+
+    :overlapping-edits
+    (str "their targets overlap — two edits touch the same lines. Merge them into"
+         " ONE edit, or split them across separate patch calls.")
+
+    :missing-anchor
+    (str "no `from_anchor` — patch is anchor-only. Re-`cat` and use the"
+         " `lineno:hash` anchor it prints.")
+
+    ;; Edit-specific reasons (path errors, :hashline-malformed, :syntax-error):
+    ;; keep the first member's full, precomputed explanation.
+    (explain-failure (first failures))))
+
+(defn- failure-edit-ref
+  "Compact `edit N` reference — with its anchor and/or path when present — for the
+   per-group affected-edit list."
+  [{:keys [edit-index from_anchor path]}]
+  (str "edit " edit-index (when from_anchor (str " @" from_anchor)) (when path (str " in " path))))
+
 (defn- patch-failure-message
   [failures]
   ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
-  ;; must not assume a partial application and must not re-read to \"repair\" it.
+  ;; must not assume a partial application and must not re-read to "repair" it.
   (let
     [atomic
      "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
-      ;; Show EVERY failing edit, not just the first — reporting only `first:`
-      ;; hid the LATER edit that was the real problem and made the model fixate on
-      ;; edit 0 (typically an unrelated require/import at the top of the batch).
-      (str atomic
-           (count failures)
-           " edits failed:\n"
-           (str/join "\n"
-                     (map (fn [f]
-                            (str "  • " (explain-failure f)))
-                          failures))))))
+      ;; MULTIPLE failures: GROUP by root-cause family. The classic wall-of-errors
+      ;; is one underlying cause — the file shifted under EVERY anchor (a concurrent
+      ;; write, or an earlier edit this turn), so every edit reports :stale /
+      ;; :hashline-not-found — yet the old report printed N near-identical verbose
+      ;; paragraphs the model then fixated on line-by-line. Collapse each family to
+      ;; ONE clear cause + the compact list of affected edits instead.
+      (let [ordered-families (distinct (map failure-family failures))
+            groups (group-by failure-family failures)]
+
+        (str atomic
+             (count failures)
+             " edits failed" (when (> (count ordered-families) 1)
+                               (str " (" (count ordered-families) " distinct causes)"))
+             ":\n" (str/join "\n"
+                             (for [family ordered-families
+                                   :let [fs (get groups family)]]
+
+                               (str "  • " (count fs)
+                                    " × " (family-headline family fs)
+                                    "\n      " (str/join "; " (map failure-edit-ref fs))))))))))
 
 (defn- non-exact-passes-for-path
   "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out

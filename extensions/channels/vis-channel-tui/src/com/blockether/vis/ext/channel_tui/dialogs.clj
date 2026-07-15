@@ -1365,7 +1365,7 @@
    agent's `resource_stop`/`resource_restart` tools use, so footer, agent and
    this dialog all drive one definition. The list re-reads every loop, so an
    item vanishes the instant it's stopped."
-  [^TerminalScreen screen session-id]
+  [^TerminalScreen screen session-id & {:keys [repaint-bg]}]
   (let [selected (atom 0)]
     (loop []
 
@@ -1438,7 +1438,9 @@
                 (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (p/put-str! g action-x row-y actions)))))
         (draw-hint-bar! g left hint-row inner-w footer)
-        (.setCursorPosition screen (p/cursor-pos 0 0))
+        ;; Read-only list — no text field, so hide the terminal cursor (nil)
+        ;; instead of parking it at 0,0, where it blinks in the top-left corner.
+        (.setCursorPosition screen nil)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (if (nil? key)
@@ -1488,12 +1490,16 @@
                                lines (fetch)]
 
                               (if lines
-                                (log-view-dialog! screen
-                                                  (str "Logs — " (get r "label"))
-                                                  lines
-                                                  :refresh-fn fetch
-                                                  :tail? true
-                                                  :grammar "bash")
+                                (do (log-view-dialog! screen
+                                                      (str "Logs — " (get r "label"))
+                                                      lines
+                                                      :refresh-fn fetch
+                                                      :tail? true
+                                                      :grammar "bash")
+                                    ;; The log viewer paints FULLSCREEN, wiping the
+                                    ;; frozen chat behind this box; repaint it so the
+                                    ;; list doesn't return over stale log text.
+                                    (when repaint-bg (repaint-bg)))
                                 (vis/notify! "No output captured yet" :level :info :ttl-ms 3000))))
                           (= c \r) (when (get r "can_restart")
                                      (vis/gateway-restart-resource! session-id (get r "id"))
@@ -1759,7 +1765,9 @@
 
                           :always
                           (conj ["Enter/Esc" "close"])))
-        (.setCursorPosition screen (p/cursor-pos 0 0))
+        ;; Read-only viewer — no text field, so hide the terminal cursor (nil)
+        ;; instead of parking it at 0,0, where it blinks in the top-left corner.
+        (.setCursorPosition screen nil)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key
               (read-modal-key! screen)
@@ -2097,9 +2105,9 @@
 (def ^:private magit-hints
   "Hint-bar chords for the magit status buffer — the most important magit
    verbs, one key each, faithful to magit's own bindings."
-  [["↑/↓" "move"] ["TAB" "diff"] ["s/u" "±stage"] ["S/U" "all"] ["x" "discard"] ["c" "commit"]
-   ["P" "push"] ["F" "pull"] ["f" "fetch"] ["b" "branch"] ["z" "stash"] ["g" "refresh"]
-   ["Esc" "close"]])
+  [["↑/↓" "move"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"] ["x" "discard"]
+   ["c" "commit"] ["l" "log"] ["y" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"] ["b" "branch"]
+   ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
 
 (defn- magit-row-style
   "`[fg bold? bg]` for one status-buffer row — foreground, bold?, and an optional
@@ -2710,6 +2718,60 @@
         :drop
         (when ((:confirm! mini) (str "Drop " ref "?")) (magit/stash-drop! root ref))))))
 
+(defn- magit-log-flow!
+  "Magit's `l` log transient, TUI-style. An inline `:choose!` picks the scope —
+   the current branch's history or every ref — then the fullscreen ANSI log
+   viewer opens on git's own colored `--graph` output. `r` inside re-pulls it.
+   Returns nil (the log viewer is its own screen; nothing to echo/refresh)."
+  [^TerminalScreen screen mini root]
+  (when-let [id ((:choose! mini)
+                  "Log:"
+                  [{:key \l :label "current branch" :id :current}
+                   {:key \a :label "all branches" :id :all}])]
+    (let [all? (= id :all)
+          reload #(magit/log-graph-lines root {:all? all?})
+          title (str "Git log — " (if all? "all branches" (or (magit/current-branch root) "HEAD")))]
+
+      (log-view-dialog! screen title (reload) :grammar nil :refresh-fn reload)))
+  nil)
+
+(defn- magit-copy-action!
+  "Magit's `y`: copy the identifier under the cursor onto the system clipboard —
+   a commit sha, a stash ref, a file path, or a repo root — via the shared
+   `input/clipboard-copy!` shell helpers. Returns the `{:ok? :msg}` echo
+   contract so the action lands in the buffer's footer like every other verb."
+  [root {:keys [kind sha ref path]}]
+  (let [payload (case kind
+                  :commit
+                  sha
+
+                  :stash
+                  ref
+
+                  :file
+                  path
+
+                  :repo
+                  (str root)
+
+                  nil)]
+    (if (seq (str payload))
+      (do (input/clipboard-copy! (str payload)) {:ok? true :msg (str "Copied " payload)})
+      {:ok? false :msg "Nothing to copy here"})))
+
+(defn- magit-path-grammar
+  "Tree-sitter grammar name for a file `path`'s extension (for the RET-visit
+   viewer's syntax coloring), or nil when we don't colorize that language."
+  [path]
+  (let [s
+        (str path)
+
+        dot
+        (str/last-index-of s ".")]
+
+    (when (and dot (< (inc (long dot)) (count s)))
+      (highlight/grammar-for (subs s (inc (long dot)))))))
+
 (defn- magit-char-action!
   "Run the magit verb for character `c` against the row under the cursor.
    Returns an action result `{:ok? :msg}`, or nil when the key did nothing.
@@ -2734,6 +2796,12 @@
 
     \c
     (magit-commit-flow! mini root model)
+
+    \l
+    (magit-log-flow! screen mini root)
+
+    \y
+    (magit-copy-action! root row)
 
     \P
     (magit-push-flow! screen busy! root)
@@ -2767,13 +2835,16 @@
    edits, so the buffer shows the draft's git state, not the trunk's.
 
    Sections: head/upstream facts, untracked, unmerged, unstaged, staged,
-   stashes and recent commits. TAB (or Enter) folds a file's diff open under
-   its row. Verbs mirror magit and route to the repo UNDER THE CURSOR:
+   stashes and recent commits. TAB folds a file's diff peek open under
+   its row; RET visits it FULLSCREEN (a file's syntax-highlighted body, a
+   commit's or stash's full patch). Verbs mirror magit and route to the repo
+   UNDER THE CURSOR:
    `s`/`u` stage/unstage the file or the whole section, `S`/`U` all, `x` (or
    `k`) discard with a confirm, `c` commit/amend (message prompt), `P` push
    (plain / -u / --force-with-lease), `F` pull, `f` fetch, `b` branch
    (checkout / create / delete), `z` stash (push / pop / apply / drop), `g`
-   refresh, `q`/Esc close. Every verb shells to the real `git` binary via
+   refresh, `y` copy the sha/path/ref under point, `q`/Esc close. Every verb
+   shells to the real `git` binary via
    `internal.git`, and the buffer re-reads every repo after each action, so
    what you see is always `git status` truth. Returns nil."
   [^TerminalScreen screen root-or-repos]
@@ -3071,7 +3142,40 @@
 
                         nil)]
 
-                  (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))]
+                  (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))
+
+              visit!
+              (fn [target]
+                ;; magit's RET: VISIT the thing under point in the FULLSCREEN
+                ;; viewer (TAB still folds the inline diff peek). A file opens
+                ;; its working-tree body, syntax-highlighted by extension and
+                ;; falling back to its diff for a deleted/renamed entry; a
+                ;; commit or stash opens its full patch.
+                (when target
+                  (let [vroot (or (:root target) primary-root)]
+                    (case (:kind target)
+                      :file
+                      (let [{:keys [path]} target
+                            body (magit/visit-file-lines vroot path)]
+
+                        (if (seq body)
+                          (log-view-dialog! screen
+                                            (str path)
+                                            body
+                                            :grammar
+                                            (magit-path-grammar path))
+                          (when-let [d (not-empty (magit/file-diff-lines vroot target))]
+                            (log-view-dialog! screen (str path "  (diff)") d :grammar nil))))
+
+                      :commit
+                      (when-let [d (not-empty (magit/commit-diff-lines vroot target))]
+                        (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil))
+
+                      :stash
+                      (when-let [d (not-empty (magit/stash-diff-lines vroot target))]
+                        (log-view-dialog! screen (str (:ref target)) d :grammar nil))
+
+                      nil))))]
 
           (cond (nil? key) (recur)
                 wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
@@ -3088,7 +3192,7 @@
                                    (recur))
                   KeyType/End (do (reset! scroll max-start) (reconcile-sel!) (recur))
                   KeyType/Tab (do (toggle-diff!) (recur))
-                  KeyType/Enter (do (toggle-diff!) (recur))
+                  KeyType/Enter (do (visit! row) (recur))
                   KeyType/Character (let [c (key-character key)]
                                       (if (= c \q)
                                         nil

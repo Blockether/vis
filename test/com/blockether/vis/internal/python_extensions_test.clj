@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.python-test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -692,3 +693,171 @@ vis.extension(
         (expect (str/includes? (ex-message ex) "2 failed"))))
   (it "produces no exit signal (nil) when every test passed"
       (expect (nil? (#'runner/failure-ex {:ok? true :passed 3})))))
+
+;; =============================================================================
+;; Providers — a `vis.provider(...)` registers a first-class provider descriptor
+;; =============================================================================
+
+(def ^:private provider-py
+  "'''Acme provider fixture.'''
+import vis
+
+
+def _token():
+    return {'token': 'sk-test-123', 'api_url': 'https://acme.test/v1'}
+
+
+def _status():
+    return {'authenticated?': True, 'source': 'env-var', 'provider_id': 'acme'}
+
+
+def _detect():
+    return {'token': 'sk-test-123', 'source': 'env-var'}
+
+
+_logout_calls = {'n': 0}
+
+
+def _logout():
+    _logout_calls['n'] += 1
+    return 'logged-out'
+
+
+def _limits():
+    return {'provider_id': 'acme', 'status': 'ok',
+            'dynamic': {'limits': [{'id': 'acme-daily', 'kind': 'tokens',
+                                    'used': 10.0, 'limit': 100.0}]}}
+
+
+# Strict 0-param refresh: the runtime calls (f rejected-token); the adapter
+# must DROP the extra arg and still return the fresh token.
+def _refresh():
+    return {'token': 'sk-fresh-999', 'api_url': 'https://acme.test/v1'}
+
+
+# 1-param refresh: must RECEIVE the rejected token the runtime threads in.
+def _refresh_with_arg(rejected):
+    return {'token': 'sk-fresh-abc', 'rejected_was': rejected}
+
+
+def _auth(printer):
+    printer('  Visit https://acme.test/device and enter code ABCD.')
+    printer('  Then re-run.')
+    return 'ok'
+
+
+def _auth_prompt():
+    return ['Acme OAuth: run `vis providers auth acme-oauth`.',
+            'Or set ACME_TOKEN=... in the environment.']
+
+
+vis.extension(
+    name='provider-acme',
+    description='Acme static-key provider fixture.',
+    providers=[
+        vis.provider(
+            id='acme',
+            label='Acme AI',
+            preset={'base-url': 'https://acme.test/v1',
+                    'api_style': 'openai',
+                    'default_models': ['acme-large', 'acme-small'],
+                    'responses_path': '/responses',
+                    'extra_body': {'temperature': 0.6, 'top_p': 0.95}},
+            get_token=_token,
+            status=_status,
+            detect=_detect,
+            logout=_logout,
+            limits=_limits,
+            refresh_token=_refresh,
+        ),
+        vis.provider(
+            id='acme-oauth',
+            label='Acme OAuth',
+            refresh_token=_refresh_with_arg,
+            auth=_auth,
+            auth_prompt=_auth_prompt,
+        ),
+    ],
+)
+")
+
+(defdescribe
+  provider-test
+  (it
+    "a vis.provider(...) registers a first-class provider descriptor (preset + every provider fn)"
+    (with-loaded
+      {"acme.py" provider-py}
+      (fn [_ _]
+        (let [ext
+              (registered "provider-acme")
+
+              entries
+              (:ext/providers ext)
+
+              p
+              (registry/provider-by-id :acme)
+
+              oauth
+              (registry/provider-by-id :acme-oauth)]
+
+          (expect (= 2 (count entries)))
+          (expect (some? p))
+          (expect (= :acme (:provider/id p)))
+          (expect (= "Acme AI" (:provider/label p)))
+          ;; preset: dash/underscore keys accepted, api-style -> keyword
+          (let [preset (:provider/preset p)]
+            (expect (= "https://acme.test/v1" (:base-url preset)))
+            (expect (= :openai (:api-style preset)))
+            (expect (= ["acme-large" "acme-small"] (:default-models preset)))
+            ;; unknown preset keys pass through to svar: responses-path (dash-
+            ;; normalized) + extra-body (nested API-literal keys kept verbatim).
+            (expect (= "/responses" (:responses-path preset)))
+            (expect (= {:temperature 0.6 :top_p 0.95} (:extra-body preset))))
+          ;; get-token-fn marshals: snake_case -> kebab keys, string values
+          (expect (= {:token "sk-test-123" :api-url "https://acme.test/v1"}
+                     ((:provider/get-token-fn p))))
+          ;; status-fn: kebab keys + enum values coerced to keywords
+          (let [s ((:provider/status-fn p))]
+            (expect (true? (:authenticated? s)))
+            (expect (= :env-var (:source s)))
+            (expect (= :acme (:provider-id s))))
+          ;; detect-fn works and coerces :source
+          (let [d ((:provider/detect-fn p))]
+            (expect (= "sk-test-123" (:token d)))
+            (expect (= :env-var (:source d))))
+          ;; limits-fn: nested dynamic limits round-trip
+          (let [l ((:provider/limits-fn p))]
+            (expect (= :acme (:provider-id l)))
+            (expect (= :ok (:status l)))
+            (expect (= 1 (count (get-in l [:dynamic :limits]))))
+            (expect (= :tokens (get-in l [:dynamic :limits 0 :kind]))))
+          ;; logout-fn is a real side-effecting call (returns nil view is fine)
+          (expect (some? (:provider/logout-fn p)))
+          ((:provider/logout-fn p))
+          ;; refresh-token-fn, STRICT 0-param: runtime hands (f rejected);
+          ;; the adapter drops the extra arg -> fresh token still returned.
+          (expect (= {:token "sk-fresh-999" :api-url "https://acme.test/v1"}
+                     ((:provider/refresh-token-fn p) "old-rejected-token")))
+          (expect (= {:token "sk-fresh-999" :api-url "https://acme.test/v1"}
+                     ((:provider/refresh-token-fn p))))
+          ;; auth-fn: host hands in a print! collector; the Python fn calls it to
+          ;; emit instruction lines, and its string return coerces to a keyword.
+          (let [lines
+                (atom [])
+
+                collect
+                #(swap! lines conj %)
+
+                result
+                ((:provider/auth-fn oauth) collect)]
+
+            (expect (= :ok result))
+            (expect (= ["  Visit https://acme.test/device and enter code ABCD." "  Then re-run."]
+                       @lines)))
+          ;; auth-prompt-fn: () -> guidance lines for the API-key dialog body
+          (expect (= ["Acme OAuth: run `vis providers auth acme-oauth`."
+                      "Or set ACME_TOKEN=... in the environment."]
+                     ((:provider/auth-prompt-fn oauth))))
+          ;; refresh-token-fn, 1-param: RECEIVES the rejected token.
+          (expect (= {:token "sk-fresh-abc" :rejected-was "old-rejected-token"}
+                     ((:provider/refresh-token-fn oauth) "old-rejected-token"))))))))

@@ -310,6 +310,27 @@
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_env" "session_routing"
    "session_resources" "session_symbols"])
 
+(defn folds-view
+  "Compact model-facing reflection of the recorded `session_fold` intents so a
+   fold surfaces as a STRUCTURAL `session[\"folds\"] = …` delta — the model's live
+   confirmation that a compaction actually landed, not just the verb's return
+   string. Each recorded intent (`session_summaries`) becomes one string-keyed
+   map carrying its SELECTOR (`\"scopes\"` sorted vector | `\"through\"` | `\"from\"`/
+   `\"to\"` | `\"since\"`) plus the optional `\"gist\"` (absent gist = a plain drop).
+   Strings-only — it crosses the nippy/Python boundary. Pure."
+  [summaries]
+  (into []
+        (keep (fn [s]
+                (when (map? s)
+                  (let [sel (cond-> (select-keys s ["scopes" "through" "from" "to" "since"])
+                              (contains? s "scopes")
+                              (update "scopes" #(vec (sort %))))]
+                    (when (seq sel)
+                      (cond-> sel
+                        (contains? s "gist")
+                        (assoc "gist" (get s "gist"))))))))
+        summaries))
+
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
    `session_*` view.
@@ -327,7 +348,10 @@
   ([ctx _warnings]
    (cond-> (select-keys ctx model-facing-keys)
      (get ctx "engine_utilization")
-     (assoc "session_utilization" (get ctx "engine_utilization")))))
+     (assoc "session_utilization" (get ctx "engine_utilization"))
+
+     (seq (get ctx "session_summaries"))
+     (assoc "session_folds" (folds-view (get ctx "session_summaries"))))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
