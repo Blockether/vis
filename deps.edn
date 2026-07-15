@@ -98,33 +98,30 @@
                    "-Dapple.awt.UIElement=true"]
         :main-opts ["-m" "com.blockether.vis.core"]}}
  :deps
- {com.blockether/vis-persistance-sqlite {:local/root
-                                         "extensions/persistance/vis-persistance-sqlite"}
-  com.blockether/vis-provider-github-copilot {:local/root
-                                              "extensions/providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex {:local/root
-                                            "extensions/providers/vis-provider-openai-codex"}
-  com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
-  com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
-  com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
-  com.blockether/vis-channel-telegram {:local/root "extensions/channels/vis-channel-telegram"}
-  com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
-  com.blockether/vis-channel-web {:local/root "extensions/channels/vis-channel-web"}
-  com.blockether/vis-foundation-bridge {:local/root "extensions/common/vis-foundation-bridge"}
-  com.blockether/vis-foundation-harness {:local/root "extensions/common/vis-foundation-harness"}
-  com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
-  com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
-  com.blockether/vis-foundation-mcp {:local/root "extensions/common/vis-foundation-mcp"}
-  com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
-  com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
-  com.blockether/vis-language-typescript-bun {:local/root
-                                              "extensions/languages/vis-language-typescript-bun"}
-  com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
-  com.blockether/svar {:mvn/version "0.7.60"}
-  com.blockether/anomaly {:mvn/version "1.0.1"}
-  org.clojure/tools.deps {:mvn/version "0.31.1629"}
-  org.commonmark/commonmark {:mvn/version "0.29.0"}
-  org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
+ {com.blockether/vis-persistance-sqlite           {:local/root "extensions/persistance/vis-persistance-sqlite"}
+  com.blockether/vis-provider-github-copilot      {:local/root "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-provider-openai-codex        {:local/root "extensions/providers/vis-provider-openai-codex"}
+  com.blockether/vis-provider-anthropic           {:local/root "extensions/providers/vis-provider-anthropic"}
+  com.blockether/vis-provider-zai                 {:local/root "extensions/providers/vis-provider-zai"}
+  com.blockether/vis-provider-standard            {:local/root "extensions/providers/vis-provider-standard"}
+  com.blockether/vis-channel-telegram             {:local/root "extensions/channels/vis-channel-telegram"}
+  com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
+  com.blockether/vis-channel-web                  {:local/root "extensions/channels/vis-channel-web"}
+  com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
+  com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
+  com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
+  com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
+  com.blockether/vis-foundation-mcp               {:local/root "extensions/common/vis-foundation-mcp"}
+  com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
+  com.blockether/vis-language-python              {:local/root "extensions/languages/vis-language-python"}
+  com.blockether/vis-language-typescript-bun      {:local/root "extensions/languages/vis-language-typescript-bun"}
+  com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
+
+  com.blockether/svar                             {:mvn/version "0.7.61"}
+  com.blockether/anomaly                          {:mvn/version "1.0.1"}
+  org.clojure/tools.deps                          {:mvn/version "0.31.1629"}
+  org.commonmark/commonmark                       {:mvn/version "0.29.0"}
+  org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
   org.babashka/http-client {:mvn/version "0.4.23"}
   babashka/process {:mvn/version "0.6.25"}
