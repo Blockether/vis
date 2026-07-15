@@ -36,7 +36,7 @@
 (s/def ::name non-blank-string?)
 (s/def ::display-name non-blank-string?)
 (s/def ::mode #{:light :dark})
-(s/def ::palette (s/map-of keyword? ::rgb :min-count 1))
+(s/def ::palette (s/and (s/map-of keyword? ::rgb) seq))
 (s/def ::fonts map?)
 (s/def ::widths map?)
 (s/def ::spacing map?)
@@ -921,9 +921,15 @@
 
 (defn- mix-rgb
   "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
-  [a b t]
+  [a b ^double t]
   (mapv (fn [x y]
-          (int (Math/round (double (+ x (* t (- y x)))))))
+          (let [x
+                (double x)
+
+                y
+                (double y)]
+
+            (int (Math/round (+ x (* t (- y x)))))))
         a
         b))
 
@@ -935,7 +941,7 @@
 (defn- rel-luminance
   "Rec. 709 relative luminance of an RGB triple (0-255 scale)."
   [[r g b]]
-  (+ (* 0.2126 r) (* 0.7152 g) (* 0.0722 b)))
+  (+ (* 0.2126 (double r)) (* 0.7152 (double g)) (* 0.0722 (double b))))
 
 (defn- mix-to-luminance-delta
   "Mix `bg` toward `target`, but only as far as needed to land a luminance
@@ -943,9 +949,9 @@
    theme's hairlines at EQUAL perceptual weight regardless of how close the
    palette's border color sits to its ground — fixing washed-out, near-white
    borders on low-contrast palettes (e.g. Solarized Light)."
-  [bg target delta]
+  [bg target ^double delta]
   (let [dl
-        (Math/abs (double (- (rel-luminance target) (rel-luminance bg))))
+        (Math/abs (- (rel-luminance target) (rel-luminance bg)))
 
         t
         (if (> dl 1.0) (min 1.0 (/ delta dl)) 1.0)]

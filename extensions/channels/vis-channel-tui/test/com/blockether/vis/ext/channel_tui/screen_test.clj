@@ -813,6 +813,24 @@
             (assoc base :input {:lines ["hello world"]})]
 
         (expect (true? (boolean (input-only-change? base typed cols))))))
+  (it "falls through around inline suggestion triggers so stale picker rows clear"
+      (let [cols
+            80
+
+            base
+            {:input {:lines ["open @src"]} :scroll nil :messages [] :loading? false}
+
+            file-complete
+            (assoc base :input {:lines ["open @src "]})
+
+            slash-base
+            {:input {:lines ["/new-tab"]} :scroll nil :messages [] :loading? false}
+
+            slash-complete
+            (assoc slash-base :input {:lines ["/new-tab "]})]
+
+        (expect (false? (boolean (input-only-change? base file-complete cols))))
+        (expect (false? (boolean (input-only-change? slash-base slash-complete cols))))))
   (it "falls through to the full painter when the input box height changes"
       ;; A keystroke that wraps the input to a new visual row resizes the
       ;; transcript band (input-box-h feeds inner-h), so the fast path MUST NOT

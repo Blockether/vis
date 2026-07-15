@@ -78,9 +78,11 @@
       (if (contains? @pending k)
         (pending->val (get @pending k))
         (let [now (System/currentTimeMillis)
+              c (get @display-cache k)
+              at (long (or (:at c) 0))
               c (get @display-cache k)]
 
-          (if (and c (< (- now (long (:at c))) display-ttl-ms))
+          (if (and c (< (- now at) (long display-ttl-ms)))
             (:v c)
             (let [v (db-read db-info sid)]
               (swap! display-cache assoc k {:v v :at now})

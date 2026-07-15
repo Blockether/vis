@@ -4,6 +4,11 @@
 
 (defn truncate
   "Head-clip `s` to at most `n` chars (no ellipsis)."
-  [s n]
-  (let [s (str s)]
-    (if (> (count s) n) (subs s 0 n) s)))
+  [s ^long n]
+  (let [s
+        (str s)
+
+        c
+        (long (count s))]
+
+    (if (> c n) (subs s 0 n) s)))

@@ -450,7 +450,10 @@
                               full
                               cur1
                               (ms->frames jump-hold-ms)
-                              (+ (ms->frames jump-hold-ms) (ms->frames post-assist-ms)))]
+                              (+ (long (ms->frames jump-hold-ms))
+                                 (long (ms->frames post-assist-ms))))]
+
+
 
                   (recur (inc i) acc3))
                 :else (let [{g :grid} (render-state full scroll/follow nil nil 0)]
@@ -471,7 +474,8 @@
         frames
         (if (> (count held) (long max-frames))
           (let [step (/ (double (count held)) (double max-frames))]
-            (mapv #(nth held (min (dec (count held)) (long (* % step)))) (range max-frames)))
+            (mapv #(nth held (min (dec (count held)) (long (* (long %) step)))) (range max-frames)))
+
           held)
 
         video-ms
@@ -493,11 +497,28 @@
    pixel dimensions, `font`/`bold-font` the mono glyph fonts, `ascent` the
    baseline offset."
   ^BufferedImage [grid cols rows cw ch font bold-font ascent]
-  (let [w
+  (let [cols
+        (long cols)
+
+        rows
+        (long rows)
+
+        cw
+        (long cw)
+
+        ch
+        (long ch)
+
+        ascent
+        (long ascent)
+
+        w
         (even2 (* cols cw))
 
         h
         (even2 (* rows ch))
+
+
 
         img
         (BufferedImage. w h BufferedImage/TYPE_INT_RGB)
@@ -516,10 +537,11 @@
             (map-indexed vector row)]
 
       (let [px
-            (* x cw)
+            (* (long x) cw)
 
             py
-            (* y ch)]
+            (* (long y) ch)]
+
 
         (.setColor g (awt-color (:bg c)))
         (.fillRect g px py cw ch)
@@ -528,6 +550,7 @@
             (.setFont g (if (:bold c) bold-font font))
             (.setColor g (awt-color (:fg c)))
             (.drawString g ^String ch* (int px) (int (+ py ascent)))))))
+
     (.dispose g)
     img))
 
@@ -540,6 +563,7 @@
   "Encode a `session->frames` result to `out` (an MP4 File/path) via jcodec's
    pure-Java `AWTSequenceEncoder`. Returns the output File."
   [{:keys [cols rows frames]} out {:keys [font-size fps] :or {font-size 18 fps 8}}]
+
   (let [out-file
         (io-file out)
 

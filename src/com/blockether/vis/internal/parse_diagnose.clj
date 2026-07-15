@@ -378,7 +378,7 @@
                         (map (fn [c]
                                [c (levenshtein missing-str c)]))
                         (filter (fn [[_ d]]
-                                  (<= d 3)))
+                                  (<= (long d) 3)))
                         (sort-by second)
                         (take 3)
                         (map first))]

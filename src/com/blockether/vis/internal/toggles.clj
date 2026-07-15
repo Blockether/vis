@@ -49,8 +49,8 @@
 (s/def :toggle/persist? boolean?)
 (s/def :toggle/group keyword?)
 (s/def :toggle/type #{:boolean :enum})
-(s/def :toggle/choices (s/coll-of any? :min-count 1))
-(s/def :toggle/channels (s/coll-of keyword? :min-count 1))
+(s/def :toggle/choices (s/and (s/coll-of any?) seq))
+(s/def :toggle/channels (s/and (s/coll-of keyword?) seq))
 (s/def :toggle/visible-fn ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
 
 (s/def :toggle/spec
@@ -324,7 +324,13 @@
           (.indexOf ^java.util.List choices current)
 
           next-v
-          (nth choices (mod (inc (if (neg? idx) -1 idx)) (count choices)))]
+          (let [idx
+                (long idx)
+
+                n
+                (long (count choices))]
+
+            (nth choices (mod (inc (if (neg? idx) -1 idx)) n)))]
 
       (set-value! id next-v))))
 

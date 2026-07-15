@@ -41,12 +41,13 @@
 (def ^:private log-stage-level (deref #'lp/log-stage-level))
 
 (defdescribe loop-stage-logging-test
-             (it "keeps routine telemetry debug-only but logs failed turns at error level"
-                 (expect (= :debug (log-stage-level :provider-call/stop {:duration-ms 12})))
-                 (expect (= :error (log-stage-level :error {:reason :provider-failed})))
-                 (expect (= :error (log-stage-level :turn/complete {:status :error})))
-                 (expect (= :info (log-stage-level :error {:reason :cancelled})))
-                 (expect (= :info (log-stage-level :turn/complete {:status :cancelled})))))
+  (it "keeps routine telemetry debug-only but logs failed turns and timeouts at error level"
+    (expect (= :debug (log-stage-level :provider-call/stop {:duration-ms 12})))
+    (expect (= :error (log-stage-level :error {:reason :provider-failed})))
+    (expect (= :error (log-stage-level :code-result {:timeout? true})))
+    (expect (= :error (log-stage-level :turn/complete {:status :error})))
+    (expect (= :info (log-stage-level :error {:reason :cancelled})))
+    (expect (= :info (log-stage-level :turn/complete {:status :cancelled})))))
 
 (defn- reasoning-effort-router
   []
@@ -317,6 +318,22 @@
             (expect (= [1 2 3]
                        (mapv :attempt (filter #(= :provider-retry-reset (:phase %)) @chunks))))
             (expect (= [1 2 3] (mapv :attempt (:routed/trace result)))))))))
+
+(defdescribe native-handler-timeout-test
+  (it "returns a typed timeout and interrupts a wedged native tool"
+    (let [started (promise)
+          handler (fn [_ _]
+                    (deliver started true)
+                    (Thread/sleep 5000)
+                    :unreachable)
+          started-at (System/currentTimeMillis)
+          result ((deref #'lp/run-native-handler)
+                  handler {} {"timeout_ms" 20} "repl_eval")]
+      (expect (true? (deref started 100 false)))
+      (expect (true? (:timeout? result)))
+      (expect (= :vis/native-tool-timeout (get-in result [:error :type])))
+      (expect (= "repl_eval" (get-in result [:error :data :tool])))
+      (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
 
 (defdescribe native-tool-call-execution-test
              ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
@@ -2203,6 +2220,7 @@
                                                      ctx)]
           (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
           (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
+
 
 (defdescribe
   provider-unavailable-retry-loop-test
