@@ -777,7 +777,7 @@
      edge. Right-aligning the meta spans the full width instead of stranding
      it next to the chip with a wide empty gutter (the old symmetric padding).
 
-   The first `p/SELECTION_WIDTH` cols are the selection gutter (`>`/`•` on the
+   The first `p/SELECTION_WIDTH` cols are the selection gutter (`•` on the
    selected row, painted by the caller); ONE col on the right is kept clear for
    the overlay scrollbar thumb. Truncation drops the description first; the
    chip renders fully whenever at all possible."
@@ -1131,7 +1131,7 @@
            (p/put-str! g left border-row (p/horiz-line inner-w)))
          ;; Suggestion rows — inset by the same margin so the row body
          ;; lines up with the title accent and the input box rule.
-         ;; Selection is signalled by a `>` cursor glyph in the FIRST
+         ;; Selection is signalled by a `•` cursor glyph in the FIRST
          ;; col of the inset row (matching the project-wide convention;
          ;; see `p/SELECTION_GLYPH`). The marker sits INSIDE the inset
          ;; body, not in the terminal-bg margin outside of it, so it

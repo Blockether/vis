@@ -470,15 +470,15 @@
 (defn- draw-list-item!
   ;; Selection visual:
   ;;   col left   : │ (frame, painted by chrome)
-  ;;   col left+1 : `>` cursor glyph (or blank if not selected)
+  ;;   col left+1 : `•` cursor glyph (or blank if not selected)
   ;;   col left+2 : ` ` margin between marker and body
   ;;   col left+3+: body label (BOLD on selected)
   ;;
-  ;; The 2-col `selection-prefix` (`> ` / `  `) is concatenated to the
+  ;; The 2-col `selection-prefix` (`• ` / `  `) is concatenated to the
   ;; label and the whole string is drawn at `(inc left)` so the marker
   ;; lands RIGHT AT the inner edge of the dialog (no padding column
   ;; between the frame and the marker), then a 1-col margin, then the
-  ;; label — matching the project-wide `>`-cursor convention.
+  ;; label — matching the project-wide `•`-cursor convention.
   ([g left row inner-w selected? label] (draw-list-item! g left row inner-w selected? label nil))
   ([g left row inner-w selected? label hint]
    ;; `hint` (optional) is a dim, right-aligned chip — e.g. a command's keybind

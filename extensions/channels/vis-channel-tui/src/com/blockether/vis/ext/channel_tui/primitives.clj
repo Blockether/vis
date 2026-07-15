@@ -193,7 +193,7 @@
 ;; resources, providers, models), command palette, slash overlay,
 ;; etc.
 ;;
-;; Selected rows use one left-anchored dot, not row inversion and not
+;; Selected rows use one left-anchored `•`, not row inversion and not
 ;; ad-hoc `>` glyphs. Both selected and unselected states reserve the
 ;; same display width (2 cols) so column layout survives navigation.
 ;;
