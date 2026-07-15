@@ -20,6 +20,14 @@
             TerminalTextUtils]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
+;;; ── Numeric ─────────────────────────────────────────────────────────────────
+
+(defn clamp
+  "Clamp `x` into the inclusive range [lo, hi]. Primitive-long in and out —
+   the one canonical range clamp every dialog / header / provider view shares."
+  ^long [^long x ^long lo ^long hi]
+  (max lo (min hi x)))
+
 ;;; ── Color ──────────────────────────────────────────────────────────────────
 
 (defn set-fg! [^TextGraphics g color] (.setForegroundColor g color) g)

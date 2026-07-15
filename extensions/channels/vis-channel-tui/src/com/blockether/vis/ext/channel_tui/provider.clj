@@ -476,7 +476,7 @@
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
-;; dlg/dlg/ellipsize, dlg/clamp, dlg/visible-window-start, dlg/clear-screen!
+;; dlg/dlg/ellipsize, p/clamp, dlg/visible-window-start, dlg/clear-screen!
 
 (defn- priority-label [^long idx] (str "(" (inc idx) ")"))
 
@@ -807,7 +807,7 @@
             (if scrollable? (max 1 (dec inner-w)) inner-w)
 
             _
-            (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))
+            (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
             _
             (swap! scroll #(card-window-start @selected % content-h total))]
@@ -870,11 +870,9 @@
                               (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                 (cond (= action MouseActionType/SCROLL_UP)
-                      (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
-                          (recur))
+                      (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
                       (= action MouseActionType/SCROLL_DOWN)
-                      (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
-                          (recur))
+                      (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                       (and (= action MouseActionType/CLICK_DOWN) hit-idx (< (long hit-idx) total))
                       (do (reset! selected hit-idx) (recur))
                       :else (recur)))
@@ -888,14 +886,14 @@
                           (swap! models swap-items @selected (dec (long @selected)))
                           (swap! selected dec))
                         (recur))
-                    (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
+                    (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
                   (= ktype KeyType/ArrowDown)
                   (if (input/reorder-modifier? key)
                     (do (when (< (long @selected) (dec total))
                           (swap! models swap-items @selected (inc (long @selected)))
                           (swap! selected inc))
                         (recur))
-                    (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                    (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
                   (= ktype KeyType/Character)
                   (let [c (Character/toLowerCase (.getCharacter key))
                         ctrl (.isCtrlDown key)]
@@ -938,7 +936,7 @@
                                        [(str "Remove " (:name (nth @models @selected)) "?")]))
                             (swap! models #(vec (concat (subvec % 0 @selected)
                                                         (subvec % (inc (long @selected))))))
-                            (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
+                            (swap! selected #(p/clamp % 0 (max 0 (dec (count @models))))))
                           (recur))
                       (= c \r) (do (when (pos? total)
                                      (swap! models move-model-to-front @selected)
@@ -1422,7 +1420,7 @@
              (if scrollable? (max 1 (dec inner-w)) inner-w)
 
              _
-             (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))
+             (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
              _
              (swap! scroll #(card-window-start @selected % content-h total))]
@@ -1486,11 +1484,9 @@
                                (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
 
                  (cond (= action MouseActionType/SCROLL_UP)
-                       (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
-                           (recur))
+                       (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
                        (= action MouseActionType/SCROLL_DOWN)
-                       (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
-                           (recur))
+                       (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                        (and (= action MouseActionType/CLICK_DOWN) hit-idx (< (long hit-idx) total))
                        (do (reset! selected hit-idx) (recur))
                        :else (recur)))
@@ -1511,16 +1507,14 @@
                            (swap! items swap-items @selected (dec (long @selected)))
                            (swap! selected dec))
                          (recur))
-                     (do (swap! selected #(dlg/clamp (dec (long %)) 0 (max 0 (dec total))))
-                         (recur)))
+                     (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
                    (= ktype KeyType/ArrowDown)
                    (if (input/reorder-modifier? key)
                      (do (when (< (long @selected) (dec total))
                            (swap! items swap-items @selected (inc (long @selected)))
                            (swap! selected inc))
                          (recur))
-                     (do (swap! selected #(dlg/clamp (inc (long %)) 0 (max 0 (dec total))))
-                         (recur)))
+                     (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
                    ;; Enter - open action menu for selected provider
                    (= ktype KeyType/Enter)
                    (do
@@ -1555,7 +1549,7 @@
                                (swap! items remove-provider-by-id (:id provider))
                                (swap! statuses dissoc (:id provider))
                                (swap! limits dissoc (:id provider))
-                               (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items))))))
+                               (swap! selected #(p/clamp % 0 (max 0 (dec (count @items))))))
 
                              nil)
                            (when-let [provider* (get @items @selected)]
@@ -1601,7 +1595,7 @@
                                                           (subvec % (inc (long @selected))))))
                                (swap! statuses dissoc provider-id)
                                (swap! limits dissoc provider-id)
-                               (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items)))))))
+                               (swap! selected #(p/clamp % 0 (max 0 (dec (count @items)))))))
                            (recur))
                        :else (recur)))
                    :else (recur)))))))))))
