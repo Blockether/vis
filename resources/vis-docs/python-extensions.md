@@ -310,7 +310,11 @@ imports work without pip:
   `Session`, `Response.json()`, …).
 - `pytest` — the assertion/fixture/mark surface above (the same shim the test
   runner installs).
-- `yaml`, `matplotlib` — YAML round-trip and headless plotting.
+- `yaml`, `matplotlib` — YAML round-trip and plotting. `matplotlib` renders
+  through a Java2D PNG backend: `plt.show()` paints the figure inline in a
+  graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and falls back to an
+  ASCII plot on text-only terminals, `plt.to_ascii()` returns the ASCII plot,
+  and `savefig` writes a PNG (or `*.txt`/`*.asc` ASCII).
 - `socket` is imported and ready.
 
 These are compatibility subsets, not the full PyPI packages — enough for
