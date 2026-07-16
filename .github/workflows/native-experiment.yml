@@ -1,20 +1,10 @@
 name: Native Experiment
 
-# TEMPORARY: probe which FREE macOS runners can build the GraalPy-embedding
-# native image, since the paid larger runners are blocked by the org spending
-# limit. Free runners never bill, so we can iterate here for free. Delete once
-# native.yml / native-release.yml are updated with the winning config.
-#
-# STATUS (from run 29472962818):
-#   • linux-x64 (ubuntu-latest, 16 GB) — GREEN in ~26 min. Confirms the
-#     -Os + interpreter-only build change ships green on Linux. Not re-probed.
-#   • macos-13 (Intel, 14 GB) — DEAD END: GraalVM CE 25.1.x publishes NO
-#     macos-x64 asset (only macos-aarch64), and free Intel runners queue
-#     indefinitely here anyway. Dropped.
-#   • macos-14 / macos-15 (Apple silicon, 7 GB) — the ONLY free arm option.
-#     GraalPy forces -Xms14g; we override it down to fit and let macOS swap.
-#     The build makes forward progress (never DeadlockWatchdog-killed) but the
-#     swap crawl runs LONGER than the old 90-min cap — hence timeout 240.
+# TEMPORARY probe: can the GraalPy-embedding native image build on the FREE
+# macos-13 Intel runner (14 GB)? The paid larger runners are blocked by the org
+# spending limit; the free Apple-silicon runners are only 7 GB and stall the
+# builder (proven: zero analysis progress in 87 min). macos-13 is the only free
+# macOS runner with 14 GB. Delete once the real workflows are updated.
 on:
   workflow_dispatch:
   push:
@@ -28,17 +18,16 @@ jobs:
   probe:
     name: probe / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Free Apple-silicon runners, 7 GB — override GraalPy's -Xms14g down to
-          # fit, cap -Xmx below the 7 GB ceiling, ParallelGC for throughput on the
-          # swap-heavy build. macos-15 is what the real workflows will target
-          # (== macos-latest); macos-14 is a hedge on identical M1 hardware.
-          - { label: macos15-arm-7g, os: macos-15, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
-          - { label: macos14-arm-7g, os: macos-14, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
+          # Free Intel runner, 14 GB. Explicit heap fits the box (leave ~2 GB for
+          # the OS + native-image off-heap) instead of GraalPy's bundled -Xms14g,
+          # which on a 14 GB machine exceeds the default 80%-RAM -Xmx and can even
+          # refuse to start (initial > max heap).
+          - { label: macos13-intel-14g, os: macos-13, extra: "-J-Xmx12g -J-Xms2g" }
     steps:
       - uses: actions/checkout@v6
       - name: Report runner specs
@@ -70,6 +59,17 @@ jobs:
         run: |
           ./target/vis --version
           ./target/vis help >/dev/null
+      - name: Smoke-test the gateway
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(./target/vis providers status anthropic 2>&1 || true)"
+          echo "$out"
+          if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+            echo '::error::gateway daemon failed to boot'
+            exit 1
+          fi
+          ./target/vis gateway stop >/dev/null 2>&1 || true
       - uses: actions/upload-artifact@v5
         with:
           name: vis-${{ matrix.label }}

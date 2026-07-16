@@ -95,3 +95,6 @@ channels-*.csv
 .sidecar-start.sh
 .sidecar-base
 .td-root
+
+# local git worktrees (CI native-build probes, etc.)
+.gitworktrees/
