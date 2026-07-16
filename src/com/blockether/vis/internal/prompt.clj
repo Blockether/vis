@@ -343,7 +343,7 @@
     "  on), or `{\"from\": \"tA/iA\", \"to\": \"tB/iB\"}` (a window). A wider fold\n"
     "  SUPERSEDES a finer one it covers.\n"
     "- The gist lands IN PLACE — a `# ⋯ folded <scopes> · saved ~<N>k tokens ·\n"
-    "  utilization <P>% (req/lim) · <gist>` breadcrumb sits\n"
+    "  projected ~<P>% (req/lim) · <gist>` breadcrumb sits\n"
     "  where the step collapsed, so the finding (with its anchors) stays exactly\n"
     "  where the hunt was, read in context as you scan back. The live budget rides\n"
     "  in the token meter: `session[\"utilization\"][\"now\"]` = `saved <C>/<T>\n"

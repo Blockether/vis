@@ -95,6 +95,58 @@
 
         (expect (= [{"since" "t2/i1"}] (get @ca "session_summaries")))
         (expect (re-find #"^folded since t2/i1" out))))
+  (it
+    "session_fold({\"since\": …}) FREEZES to concrete scopes at fold time when a universe exists — no rolling swallow of future work"
+    (let [[ca ev]
+          (with-verbs)
+
+          _
+          (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"])
+
+          out
+          (ev "session_fold({\"since\": \"t1/i2\"}, \"tail\")")
+
+          [intent]
+          (get @ca "session_summaries")]
+
+      ;; frozen to the scopes present NOW — the raw `since` selector is gone
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"} "gist" "tail"} intent))
+      (expect (not (contains? intent "since")))
+      (expect (re-find #"^folded since t1/i2" out))
+      ;; and because it's frozen, a LATER-grown universe can't swallow new iters
+      (expect (= #{"t1/i2" "t1/i3"}
+                 (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t1/i3" "t1/i4" "t1/i5"]))
+                      "scopes")))))
+  (it "session_fold({\"from\": …}) with NO \"to\" also freezes its open ceiling at fold time"
+      (let [[ca ev]
+            (with-verbs)
+
+            _
+            (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1"])
+
+            _
+            (ev "session_fold({\"from\": \"t1/i2\"}, \"open\")")
+
+            [intent]
+            (get @ca "session_summaries")]
+
+        (expect (= {"scopes" #{"t1/i2" "t2/i1"} "gist" "open"} intent))
+        (expect (not (contains? intent "from")))
+        (expect (= #{"t1/i2" "t2/i1"}
+                   (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t2/i1" "t2/i2"]))
+                        "scopes")))))
+  (it
+    "bounded selectors (through / from+to) stay RAW even with a universe — their ceiling already blocks new scopes"
+    (let [[ca ev]
+          (with-verbs)
+
+          _
+          (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"])
+
+          _
+          (ev "session_fold({\"through\": \"t1/i2\"}, \"early\")")]
+
+      (expect (= [{"through" "t1/i2" "gist" "early"}] (get @ca "session_summaries")))))
   (it "session_fold([\"t2\"]): a bare turn id records as a whole-turn scope token"
       (let [[ca ev]
             (with-verbs)
@@ -512,26 +564,27 @@
   session-fold-card-test
   ;; The verb RETURN string is the tool card the human sees. It is enriched with
   ;; how much wire the fold reclaims (~tokens, summed from `engine_iter_weights`)
-  ;; and the context level that triggered it (from `engine_utilization`) — real
-  ;; provider limits, not estimates.
-  (it "an explicit scope card prices its ~tokens + the true context level"
+  ;; and the PROJECTED next-request level once this + every prior fold land
+  ;; (req − cumulative-saved, over `model_input_limit`) — real provider limits,
+  ;; not estimates.
+  (it "an explicit scope card prices its ~tokens + the projected context level"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k) → big cat dump"
+        (expect (= "folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k) → big cat dump"
                    (sf ["t1/i1"] "big cat dump")))))
   (it "a `through` selector sums the weight of EVERY scope it resolves"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
-        (expect (= "folded through t1/i2 · saved ~15k tokens · utilization 44% (42k/96k) → traced"
+        (expect (= "folded through t1/i2 · saved ~15k tokens · projected ~28% (27k/96k) → traced"
                    (sf {"through" "t1/i2"} "traced")))))
-  (it "a gist-less fold still shows the tokens + context suffix"
+  (it "a gist-less fold still shows the tokens + projected suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k)" (sf ["t1/i1"])))))
-  (it "a scope with NO stamped weight omits the token clause, keeps context"
+        (expect (= "folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k)" (sf ["t1/i1"])))))
+  (it "a scope with NO stamped weight omits the token clause, keeps the projected level"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; t2/i9 is not in the weights map (created this iteration, unsent)
-        (expect (= "folded t2/i9 · utilization 44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
+        (expect (= "folded t2/i9 · projected ~44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
   (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
-      ;; regression: the saved-tokens + utilization suffix must ride the durable
+      ;; regression: the saved-tokens + projected suffix must ride the durable
       ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
       ;; transient tool-return confirmation.
       (let [ctx
@@ -552,7 +605,7 @@
             line
             (:content (irm (second (first out))))]
 
-        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k) · big cat dump"
+        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k) · big cat dump"
                    line))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {})) 'session-fold)]

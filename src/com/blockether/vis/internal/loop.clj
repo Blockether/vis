@@ -2340,6 +2340,30 @@
                       (string? scopes) [scopes]
                       :else nil)))
 
+        freeze
+        (fn [intent]
+          ;; Unbounded-above selectors (`since`, or `from` without `to`) would
+          ;; otherwise re-resolve against the GROWING universe on every send and
+          ;; silently swallow iterations created AFTER the fold — a standing
+          ;; subscription to future work the model never chose to fold. Freeze
+          ;; the ceiling NOW: resolve to concrete scopes against the current
+          ;; universe so the fold captures only what existed at fold time.
+          ;; Bounded selectors (`through`, `from`+`to`) are already safe and
+          ;; pass through untouched (still re-resolved raw, but their upper
+          ;; bound blocks any new scope).
+          (let [unbounded?
+                (or (contains? intent "since")
+                    (and (contains? intent "from") (not (contains? intent "to"))))
+
+                universe
+                (some-> ctx-atom
+                        deref
+                        (get "engine_iter_universe"))]
+
+            (if (and unbounded? (seq universe))
+              (first (ctx-engine/expand-through [intent] universe))
+              intent)))
+
         target
         (fn [scopes]
           (if (map? scopes)
@@ -2363,13 +2387,13 @@
                   (pick "to")]
 
               (cond thr [{"through" thr} (str "through " thr)]
-                    snc [{"since" snc} (str "since " snc)]
-                    (or frm to) [(cond-> {}
-                                   frm
-                                   (assoc "from" frm)
+                    snc [(freeze {"since" snc}) (str "since " snc)]
+                    (or frm to) [(freeze (cond-> {}
+                                           frm
+                                           (assoc "from" frm)
 
-                                   to
-                                   (assoc "to" to))
+                                           to
+                                           (assoc "to" to)))
                                  (str "window " (or frm "start") ".." (or to "end"))]
                     :else nil))
             (let [ss (->set scopes)]
@@ -2385,10 +2409,13 @@
             (str (long (Math/round (/ (double t) 1000.0))) "k")
             (str (long t))))
 
-        ;; Human-facing enrichment for the fold card: how much wire this fold
-        ;; reclaims (~tokens, summed from `engine_iter_weights`) and the context
-        ;; level that triggered it (from `engine_utilization`). Best-effort — any
-        ;; hiccup degrades to no suffix rather than breaking the confirmation.
+        ;; Human-facing enrichment for the fold card: how much wire THIS fold
+        ;; reclaims (~tokens, summed from `engine_iter_weights`) and the
+        ;; PROJECTED next-request level once this fold AND every prior landed
+        ;; fold drop off the wire (req − cumulative-saved, over the model limit).
+        ;; The projection MOVES between successive same-turn folds, unlike the
+        ;; fixed trigger level it replaces (issue #27). Best-effort — any hiccup
+        ;; degrades to no suffix rather than breaking the confirmation.
         priced
         (fn [base]
           (try
@@ -2413,18 +2440,34 @@
                   toks
                   (reduce + 0 (keep #(get weights %) scopes))
 
-                  sat
-                  (get util "saturation")
+                  ;; Cumulative wire THIS fold plus every prior landed fold
+                  ;; reclaims — so the projected % moves between successive
+                  ;; same-turn folds instead of pinning to the trigger level.
+                  cum-scopes
+                  (into #{}
+                        (mapcat #(get % "scopes"))
+                        (ctx-engine/expand-through (conj (vec (get ctx "session_summaries")) base)
+                                                   (or universe [])))
+
+                  cum-toks
+                  (reduce + 0 (keep #(get weights %) cum-scopes))
 
                   req
                   (get util "last_request_tokens")
 
                   lim
-                  (get util "model_input_limit")]
+                  (get util "model_input_limit")
+
+                  proj
+                  (when (and req lim) (max 0 (- (long req) (long cum-toks))))
+
+                  proj-pct
+                  (when (and proj (pos? (long lim)))
+                    (long (Math/round (/ (* 100.0 (double proj)) (double lim)))))]
 
               (str (when (pos? (long toks)) (str " · saved ~" (fmt-tok toks) " tokens"))
-                   (when (and sat req lim)
-                     (str " · utilization " sat "% (" (fmt-tok req) "/" (fmt-tok lim) ")"))))
+                   (when (and proj proj-pct)
+                     (str " · projected ~" proj-pct "% (" (fmt-tok proj) "/" (fmt-tok lim) ")"))))
             (catch Throwable _ "")))]
 
     {'session-fold
