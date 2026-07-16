@@ -93,6 +93,16 @@
                        (expect (extension/envelope-success? result))
                        (expect (= (get canonical "slug") (get (result-of result) "slug"))))))))
 
+(defdescribe vis-docs-blank-slug-test
+             (it "treats a blank/absent slug (\"\", {}, whitespace) as the no-arg page list"
+                 (let [no-arg (result-of (vis-docs-tool))]
+                   (expect (extension/envelope-success? (vis-docs-tool)))
+                   ;; every blank shape must return the identical page listing
+                   (doseq [variant ["" "   " {} {"slug" ""} {"slug" "  "} {:slug nil}]]
+                     (let [result (vis-docs-tool variant)]
+                       (expect (extension/envelope-success? result))
+                       (expect (= no-arg (result-of result))))))))
+
 (defdescribe vis-docs-unknown-slug-test
              (it "fails with a message + hint listing valid slugs"
                  (let [result (vis-docs-tool "no-such-page")]

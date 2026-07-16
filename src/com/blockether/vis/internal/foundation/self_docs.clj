@@ -42,7 +42,7 @@
 (defn- normalize-slug
   "Coerce a caller's slug arg to a bare, comparable slug: unwrap the
    map/kwargs shape, trim, drop a trailing `.md` (pages cross-link by
-   filename), lower-case. Blank/nil → \"\" so an empty ask fails cleanly."
+   filename), lower-case. Blank/nil → \"\" so the caller can route an empty ask to the page list."
   [slug]
   (-> (if (map? slug) (or (get slug "slug") (get slug :slug) "") slug)
       str
@@ -63,16 +63,21 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
          want
          (normalize-slug slug)]
 
-     (if-let [page (some #(when (= want (normalize-slug (:slug %))) %) ps)]
-       (extension/success {:result
-                           (cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
-                             (:section page)
-                             (assoc "section" (:section page)))})
-       (extension/failure {:result nil
-                           :error {:message (str "Unknown vis docs slug " (pr-str want) ".")
-                                   :hint (str "Valid slugs: "
-                                              (str/join ", " (map :slug ps))
-                                              ". Call vis_docs() to list all pages.")}})))))
+     (cond
+       ;; blank/absent slug (nil, "", {}, whitespace-only) == the no-arg
+       ;; "list pages" ask the help advertises — return the index, don't error.
+       (str/blank? want) (extension/success {:result {"pages" (listing ps)}})
+       :else (if-let [page (some #(when (= want (normalize-slug (:slug %))) %) ps)]
+               (extension/success
+                 {:result (cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
+                            (:section page)
+                            (assoc "section" (:section page)))})
+               (extension/failure {:result nil
+                                   :error {:message (str "Unknown vis docs slug " (pr-str want) ".")
+                                           :hint (str
+                                                   "Valid slugs: "
+                                                   (str/join ", " (map :slug ps))
+                                                   ". Call vis_docs() to list all pages.")}}))))))
 
 (def vis-docs-symbol (vis/symbol #'vis-docs-tool {:symbol 'vis-docs :tag :observation}))
 
