@@ -725,11 +725,16 @@
   ;; Wall-clock the whole run so the RUN_TESTS card can headline how long it
   ;; took (parity with repl_eval's `(Nms)`); language handlers don't time
   ;; themselves, and this captures dispatch + run end-to-end.
+  ;; The run is parked OUTSIDE the native tool wall (NATIVE_TOOL_TIMEOUT_MS,
+  ;; 30s): run_tests offers no `timeout_ms` and real suites routinely take
+  ;; minutes, so the language pack's OWN budget bounds the run (e.g. the
+  ;; clojure pack's 290s nREPL eval timeout), wedge-guarded by
+  ;; MAX_EVAL_TIMEOUT_MS while the wall is parked.
   (let [start
         (System/currentTimeMillis)
 
         result
-        (dispatch! env :test-fn args)]
+        (extension/run-outside-tool-wall env #(dispatch! env :test-fn args))]
 
     (if (map? result) (assoc result :ms (- (System/currentTimeMillis) start)) result)))
 

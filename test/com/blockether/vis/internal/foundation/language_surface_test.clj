@@ -38,6 +38,23 @@
                                        {:success? true :result {:language "python" :arg arg}})}])]
         (expect (= {:language "python" :arg {"language" "python" "ns" "x"}}
                    (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))))))
+  (it "parks the test run OUTSIDE the native tool wall"
+      (let [parked
+            (atom 0)
+
+            env
+            (assoc (fake-env [{:language "clojure"
+                               :test-fn (fn [_ arg]
+                                          {:success? true :result {:arg arg}})}])
+              :vis/outside-tool-wall (fn [thunk]
+                                       (swap! parked inc)
+                                       (thunk)))
+
+            r
+            (language-surface/run-tests env {"ns" "x"})]
+
+        (expect (= 1 @parked))
+        (expect (= {"ns" "x"} (get-in r [:result :arg])))))
   (it "passes clj_repl-shaped repl_start op and opts to language handlers"
       (let [env (fake-env [{:language "clojure"
                             :start-repl-fn (fn [_ op opts]

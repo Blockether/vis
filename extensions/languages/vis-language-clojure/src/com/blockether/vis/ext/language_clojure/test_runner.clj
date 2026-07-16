@@ -22,9 +22,11 @@
             [com.blockether.vis.internal.extension :as extension]))
 
 (def ^:private default-test-timeout-ms
-  "Default budget for run_tests. Keep just below the native tool's 5-minute
-   wall-clock budget so nREPL timeouts surface as structured test results
-   instead of opaque harness kills."
+  "Default budget for run_tests. The whole test run is parked OUTSIDE the
+   native tool wall (see language-surface `run-tests`), so THIS is the real
+   budget: an nREPL timeout surfaces as a structured test result instead of
+   an opaque harness kill. Must stay well below the outside-wall wedge guard
+   (MAX_EVAL_TIMEOUT_MS, 30 min)."
   290000)
 
 (def ^{:private true} run-form
@@ -462,9 +464,9 @@
             code (build-eval-code ns-strs sel ns-files)
             ns-disp (str/join " " ns-strs)
             r
-            ;; Keep BELOW the run_tests native-tool budget (5m) so a slow / wedged
-            ;; nREPL surfaces as a real timeout ERROR (with nREPL err/tail) instead
-            ;; of an opaque harness kill. It must never exceed the caller's tool budget.
+            ;; The run is parked outside the native tool wall, so THIS timeout is
+            ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
+            ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
             (nrepl-client/eval!
               {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
             parsed (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
