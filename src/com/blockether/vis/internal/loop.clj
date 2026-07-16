@@ -996,7 +996,7 @@
           (reset! deadline (+ (System/currentTimeMillis) (long rt/MAX_EVAL_TIMEOUT_MS)))
           (try (thunk)
                (finally (reset! deadline (+ (System/currentTimeMillis)
-                                            (if (pos? (swap! park-depth dec))
+                                            (if (pos? (long (swap! park-depth dec)))
                                               (long rt/MAX_EVAL_TIMEOUT_MS)
                                               timeout-ms))))))
 
@@ -3981,9 +3981,8 @@
                                                    ;; wrote (backticks / file:line / :render spans),
                                                    ;; NOT authored markdown — fence it so the body
                                                    ;; shows VERBATIM instead of being re-styled.
-                                                   :body (str "```\n"
-                                                              (subs s (+ (long i) 3))
-                                                              "\n```")}
+                                                   :body
+                                                   (str "```\n" (subs s (+ (long i) 3)) "\n```")}
                                                   {:summary s}))))
           ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
           ;; by the result's `:op` (the only origin handle a printed value carries),
@@ -6129,37 +6128,43 @@
                                                       {:attempt attempt
                                                        :max-tokens-attempt max-tokens-attempt
                                                        :pu-attempt pu-attempt})]
-                          (cond
-                            (and (map? result) (contains? result ::retry-max-tokens))
-                            (recur attempt*
-                                   max-tokens-attempt*
-                                   pu-attempt*
-                                   (::retry-max-tokens result)
-                                   env)
-                            (= result ::retry-auth-refresh)
-                            ;; Token was force-refreshed and the router rebuilt;
-                            ;; reseat THIS turn's env onto the fresh router before
-                            ;; re-sending (run-iteration uses (:router env)).
-                            (recur attempt*
-                                   max-tokens-attempt*
-                                   pu-attempt*
-                                   current-extra-body
-                                   (assoc env :router (get-router)))
-                            (= result ::retry-auth-backoff)
-                            ;; Same just-refreshed token 401'd (propagation lag):
-                            ;; wait, then re-send the SAME token — no re-mint, no
-                            ;; router rebuild. `attempt` grows so backoff widens and
-                            ;; the retry budget still bounds it.
-                            (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
-                                (recur attempt*
-                                       max-tokens-attempt*
-                                       pu-attempt*
-                                       current-extra-body
-                                       env))
-                            ;; ::retry-stream / ::retry-provider-unavailable: same
-                            ;; request, same env; only the owning counter advanced.
-                            :else
-                            (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env))
+                          (let [attempt* (long attempt*)
+                                max-tokens-attempt* (long max-tokens-attempt*)
+                                pu-attempt* (long pu-attempt*)]
+
+                            (cond (and (map? result) (contains? result ::retry-max-tokens))
+                                  (recur attempt*
+                                         max-tokens-attempt*
+                                         pu-attempt*
+                                         (::retry-max-tokens result)
+                                         env)
+                                  (= result ::retry-auth-refresh)
+                                  ;; Token was force-refreshed and the router rebuilt;
+                                  ;; reseat THIS turn's env onto the fresh router before
+                                  ;; re-sending (run-iteration uses (:router env)).
+                                  (recur attempt*
+                                         max-tokens-attempt*
+                                         pu-attempt*
+                                         current-extra-body
+                                         (assoc env :router (get-router)))
+                                  (= result ::retry-auth-backoff)
+                                  ;; Same just-refreshed token 401'd (propagation lag):
+                                  ;; wait, then re-send the SAME token — no re-mint, no
+                                  ;; router rebuild. `attempt` grows so backoff widens and
+                                  ;; the retry budget still bounds it.
+                                  (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
+                                      (recur attempt*
+                                             max-tokens-attempt*
+                                             pu-attempt*
+                                             current-extra-body
+                                             env))
+                                  ;; ::retry-stream / ::retry-provider-unavailable: same
+                                  ;; request, same env; only the owning counter advanced.
+                                  :else (recur attempt*
+                                               max-tokens-attempt*
+                                               pu-attempt*
+                                               current-extra-body
+                                               env)))
                           result)))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
