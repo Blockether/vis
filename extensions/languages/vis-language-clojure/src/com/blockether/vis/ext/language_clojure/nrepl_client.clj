@@ -132,15 +132,15 @@
          root-ex
          nil]
 
-    (cond (> (System/currentTimeMillis) deadline) {"timed_out" true
-                                                   "value" (peek values)
-                                                   "values" values
-                                                   "out" (.toString out-acc)
-                                                   "err" (.toString err-acc)
-                                                   "ns" ns*
-                                                   "status" (conj status "timeout")
-                                                   "ex" ex
-                                                   "root_ex" root-ex}
+    (cond (> (System/currentTimeMillis) (long deadline)) {"timed_out" true
+                                                          "value" (peek values)
+                                                          "values" values
+                                                          "out" (.toString out-acc)
+                                                          "err" (.toString err-acc)
+                                                          "ns" ns*
+                                                          "status" (conj status "timeout")
+                                                          "ex" ex
+                                                          "root_ex" root-ex}
           (empty? rs) {"timed_out" false
                        "value" (peek values)
                        "values" values
@@ -318,7 +318,7 @@
          status
          #{}]
 
-    (if (or (empty? rs) (> (System/currentTimeMillis) deadline))
+    (if (or (empty? rs) (> (System/currentTimeMillis) (long deadline)))
       {:status status :msgs msgs}
       (let [msg
             (first rs)
@@ -363,7 +363,7 @@
    leftover messages. Returns true once the stream is clean (done reached)."
   [responses deadline]
   (loop [rs responses]
-    (cond (> (System/currentTimeMillis) deadline) false
+    (cond (> (System/currentTimeMillis) (long deadline)) false
           (empty? rs) true
           :else (let [s (sget (first rs) "status")
                       st (cond (nil? s) #{}
@@ -424,7 +424,7 @@
    read it as data."
   [{:keys [host port code ns timeout-ms pretty? print-margin]
     :or {host "localhost" timeout-ms 30000 print-margin 100}}]
-  (when-not (pos? (or port 0))
+  (when-not (pos? (long (or port 0)))
     (throw (ex-info "eval! requires a positive :port" {:type :clj/nrepl-bad-args :port port})))
   (when-not (string? code)
     (throw (ex-info "eval! requires a :code string" {:type :clj/nrepl-bad-args :code code})))
@@ -587,7 +587,7 @@
    `nrepl/client`, which bounds each response read regardless of the
    cached connection's transport timeout."
   [{:keys [host port timeout-ms] :or {host "localhost" timeout-ms 100}}]
-  (if-not (pos? (or port 0))
+  (if-not (pos? (long (or port 0)))
     {:status :down}
     (try
       (let [conn

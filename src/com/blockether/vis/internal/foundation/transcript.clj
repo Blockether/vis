@@ -234,7 +234,7 @@
                         (when (= 1 (count matches)) (:id (first matches)))))))))
 
 (defn- preview-string
-  [s n]
+  [s ^long n]
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "..."))))
 
@@ -595,7 +595,7 @@
         (reduce + 0 (map (comp count :blocks) (mapcat :iterations turns)))
 
         n-calls
-        (max (count calls) n-blocks)
+        (max (count calls) (long n-blocks))
 
         providers
         (->> turns
@@ -657,7 +657,7 @@
   (let [max-run (->> (re-seq #"`+" (str body))
                      (map count)
                      (reduce max 0))]
-    (apply str (repeat (max 3 (inc max-run)) "`"))))
+    (apply str (repeat (max 3 (inc (long max-run))) "`"))))
 
 (defn- render-fenced
   [lang body]

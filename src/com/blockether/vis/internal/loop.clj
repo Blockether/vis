@@ -973,7 +973,7 @@
         (System/currentTimeMillis)
 
         timeout-ms
-        (rt/native-tool-timeout-ms input)
+        (long (rt/native-tool-timeout-ms input))
 
         deadline
         (atom (+ start timeout-ms))

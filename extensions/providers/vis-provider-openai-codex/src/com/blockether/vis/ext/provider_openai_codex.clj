@@ -37,7 +37,7 @@
 (def ^:private JWT_CLAIM_PATH "https://api.openai.com/auth")
 (def ^:private CODEX_BASE_URL "https://chatgpt.com/backend-api")
 (def ^:private AUTH_FILE (str (System/getProperty "user.home") "/.vis/openai-codex-auth.json"))
-(def ^:private REFRESH_MARGIN_MS (* 5 60 1000))
+(def ^:private ^:const REFRESH_MARGIN_MS (* 5 60 1000))
 
 ;; =============================================================================
 ;; Encoding / crypto helpers

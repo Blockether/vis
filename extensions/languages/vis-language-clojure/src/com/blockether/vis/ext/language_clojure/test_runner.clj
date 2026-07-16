@@ -587,7 +587,7 @@
          "tool" (name tool)
          "command" (str/join " " cmd)
          "exit" (:exit res)
-         "pass?" (zero? (or (:exit res) -1))
+         "pass?" (zero? (long (or (:exit res) -1)))
          ;; Surface just the RESULT — the tally is all the caller needs. The
          ;; runner mechanics (which build tool, live nREPL vs CLI, selector
          ;; pass-through) are internal plumbing, not something to narrate.

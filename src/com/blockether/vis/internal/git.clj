@@ -313,7 +313,9 @@
   [porcelain]
   (let [{:keys [modified changed added untracked missing removed]} (count-buckets (:entries
                                                                                     porcelain))]
-    {:modified (+ modified changed) :created (+ added untracked) :deleted (+ missing removed)}))
+    {:modified (+ (long modified) (long changed))
+     :created (+ (long added) (long untracked))
+     :deleted (+ (long missing) (long removed))}))
 
 ;; =============================================================================
 ;; porcelain-like status entries + snapshot

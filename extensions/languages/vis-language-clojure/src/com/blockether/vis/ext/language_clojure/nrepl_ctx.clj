@@ -57,7 +57,7 @@
                    ports)]
     (into {}
           (map (fn [[p f]]
-                 [p (deref f (+ probe-timeout-ms 50) {:status :down})]))
+                 [p (deref f (+ (long probe-timeout-ms) 50) {:status :down})]))
           futs)))
 
 (defn- liveness-for
@@ -76,8 +76,12 @@
    the footer badge + stop/restart dialog see it. No-op when already registered.
    Managed REPLs get stop + restart thunks driving repl-manager."
   [session-id statuses {:keys [id dir port aliases log]}]
-  (let [existing (when (and session-id id) (vis/get-resource session-id id))
-        status (or (:status (get statuses port)) :unknown)]
+  (let [existing
+        (when (and session-id id) (vis/get-resource session-id id))
+
+        status
+        (or (:status (get statuses port)) :unknown)]
+
     (when (and session-id
                id
                (or (nil? existing)

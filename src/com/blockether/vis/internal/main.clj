@@ -942,7 +942,7 @@
               step
               (Character/charCount cp)]
 
-          (cond (= cp 9) (let [spaces (- 4 (mod (long col) 4))]
+          (cond (= cp 9) (let [spaces (- 4 (long (mod (long col) 4)))]
                            (.append sb (apply str (repeat spaces \space)))
                            (recur (+ i step) (+ (long col) spaces)))
                 (= cp 10) (do (.append sb \newline) (recur (+ i step) 0))

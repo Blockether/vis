@@ -31,7 +31,7 @@
   (let [resp
         (http/get (str (base-url token) "/getUpdates")
                   {:query-params {"offset" (str offset) "timeout" (str timeout)}
-                   :timeout (* 1000 (+ timeout 10))})
+                   :timeout (* 1000 (+ (long timeout) 10))})
 
         body
         (parse-body resp)]

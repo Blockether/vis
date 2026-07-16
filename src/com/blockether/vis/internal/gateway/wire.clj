@@ -118,7 +118,7 @@
 (defn bounded-pr
   "Bounded `pr-str` for tool results / errors riding events. Protects the
    event log and SSE frames from multi-megabyte values."
-  [x limit]
+  [x ^long limit]
   (let [s (try (pr-str x) (catch Throwable t (str "#render-error " (ex-message t))))]
     (if (> (count s) limit) (str (subs s 0 limit) " …[truncated]") s)))
 
@@ -127,7 +127,7 @@
    model-facing `render-form-value` string) — same megabyte protection as
    `bounded-pr` but WITHOUT re-`pr-str`'ing, so the string rides the wire
    verbatim instead of quoted/escaped."
-  [s limit]
+  [s ^long limit]
   (let [s (str s)]
     (if (> (count s) limit) (str (subs s 0 limit) " …[truncated]") s)))
 

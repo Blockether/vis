@@ -342,7 +342,7 @@
       (assoc :used
         (double percentage) :limit
         100.0 :remaining
-        (double (max 0 (- 100 percentage))))
+        (double (max 0.0 (- 100.0 (double percentage)))))
 
       (and (not token-pct?) (number? current))
       (assoc :used (double current))
@@ -357,7 +357,7 @@
       (assoc :used
         (double percentage) :limit
         100.0 :remaining
-        (double (max 0 (- 100 percentage)))))))
+        (double (max 0.0 (- 100.0 (double percentage))))))))
 
 (defn- quota->dynamic-limits
   [quota]

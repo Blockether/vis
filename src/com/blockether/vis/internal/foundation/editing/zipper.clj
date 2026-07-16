@@ -451,13 +451,13 @@
 
               :left
               (if (seq path)
-                (let [i (peek path)]
+                (let [i (long (peek path))]
                   (if (pos? i) (conj (pop path) (dec i)) :err-edge))
                 :err-root)
 
               :down
               (let [n (named-count lang source path)]
-                (if (and n (pos? n)) (conj path 0) :err-leaf))
+                (if (and n (pos? (long n))) (conj path 0) :err-leaf))
 
               :child
               (let [n (named-count lang source path)]
@@ -469,15 +469,15 @@
                       (named-count lang source (pop path))
 
                       i
-                      (peek path)]
+                      (long (peek path))]
 
-                  (if (and pc (< (inc i) pc)) (conj (pop path) (inc i)) :err-edge))
+                  (if (and pc (< (inc i) (long pc))) (conj (pop path) (inc i)) :err-edge))
                 :err-root)
 
               :rightmost
               (if (seq path)
                 (let [pc (named-count lang source (pop path))]
-                  (if (and pc (pos? pc)) (conj (pop path) (dec pc)) :err-edge))
+                  (if (and pc (pos? (long pc))) (conj (pop path) (dec (long pc))) :err-edge))
                 :err-root)
 
               :dfs-next

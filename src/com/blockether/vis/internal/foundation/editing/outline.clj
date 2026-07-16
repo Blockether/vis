@@ -121,7 +121,7 @@
 (defn- line-text
   [lines ln]
   ;; lines is 0-based; ln is 1-based.
-  (nth lines (dec ln) ""))
+  (nth lines (dec (long ln)) ""))
 
 (defn- doc-snippet
   "First non-blank line of a definition's doc string, trimmed and clipped to a
@@ -191,7 +191,7 @@
     (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
 
 (defn- walk-items
-  [lines items depth]
+  [lines items ^long depth]
   (mapcat (fn [^StructureItem it]
             (cons (fmt-item lines it depth) (walk-items lines (or (.children it) []) (inc depth))))
           items))
@@ -247,7 +247,7 @@
      (letfn [(walk [items depth]
                (mapcat (fn [^StructureItem it]
                          (cons (item->def lines it depth)
-                               (walk (or (.children it) []) (inc depth))))
+                               (walk (or (.children it) []) (inc (long depth)))))
                        items))]
        (cond->> (walk (structure-items source language) 0)
          (some? name)

@@ -38,7 +38,7 @@
 
 (defn- slice-lines
   "Inclusive 0-based `[start end]` line slice of `source` as a string."
-  [^String source start end]
+  [^String source ^long start ^long end]
   (->> (str/split-lines source)
        (drop start)
        (take (inc (- end start)))
@@ -49,7 +49,7 @@
    and ONLY at that seam collapse a doubled blank line back to one — so the move
    leaves no ragged gap WITHOUT touching whitespace anywhere else in the file.
    Returns the source with the span removed."
-  [^String source s e]
+  [^String source ^long s ^long e]
   (let [lines
         (vec (str/split-lines source))
 
@@ -225,7 +225,7 @@
   [path source name]
   (if-let [language (outline/detect-language path)]
     (let [lines (vec (str/split-lines source))
-          line-anchor #(patch/line-anchor % (nth lines (dec %) ""))
+          line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
           hits (vec (StructuralApi/findReferences source language name))
           defs (outline/definitions source language name)
           ;; claim: def → index of the first still-unclaimed hit inside its span.

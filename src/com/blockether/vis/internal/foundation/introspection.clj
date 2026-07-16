@@ -192,9 +192,9 @@
   (or (:duration-ms turn)
       (when-let [created (:created-at turn)]
         (try (- (System/currentTimeMillis)
-                (cond (inst? created) (inst-ms created)
-                      (integer? created) (long created)
-                      :else 0))
+                (long (cond (inst? created) (inst-ms created)
+                            (integer? created) (long created)
+                            :else 0)))
              (catch Throwable _ nil)))))
 
 (defn- parse-json-map
@@ -215,7 +215,7 @@
 
 (defn- preview
   ([text] (preview text 220))
-  ([text limit]
+  ([text ^long limit]
    (when (some? text)
      (let [string-value (str text)]
        (if (> (count string-value) limit) (str (subs string-value 0 limit) "...") string-value)))))
@@ -463,7 +463,7 @@
    operations safely."
   ([env]
    (if (:db-info env)
-     (vec (sort-by (comp #(if-let [c (:created-at %)] (cond (inst? c) (- (inst-ms c))
+     (vec (sort-by (comp #(if-let [c (:created-at %)] (cond (inst? c) (- (long (inst-ms c)))
                                                             (integer? c) (- (long c))
                                                             :else 0) 0)
                          identity)
@@ -550,7 +550,7 @@
                [classification total]))
         (frequencies (map :classification failures))))
 
-(def ^:private REPETITION_THRESHOLD
+(def ^:private ^:const REPETITION_THRESHOLD
   "Minimum number of failures sharing the same normalized signature
    before the turn is flagged as locked in a same-error loop. Empirical
    floor: agents that miss a path 2-3x and pivot stay below; agents

@@ -230,7 +230,7 @@
                                     (map? res)
                                     (assoc "code" code))}))))
 
-(defn- tail-str [^String s n] (if (<= (count s) n) s (subs s (- (count s) n))))
+(defn- tail-str [^String s ^long n] (if (<= (count s) n) s (subs s (- (count s) n))))
 
 (defn ts-test-fn
   "run_tests handler: `bun test` in the workspace (or `{dir}`), optionally

@@ -306,7 +306,7 @@
              :unlimited? false
              :used used
              :limit 100.0
-             :remaining (- 100.0 used)
+             :remaining (- 100.0 (double used))
              :window {:kind :rolling :unit window-unit :size window-size}}
       (usage-field usage :resets_at)
       (assoc-in [:window :resets-at-ms] (parse-instant-ms (usage-field usage :resets_at))))))

@@ -286,8 +286,8 @@
     (.addMergedRegion sh (CellRangeAddress. (int r1) (int r2) (int c1) (int c2)))
     (op-write wb-h sheet r1 c1 kind value fmt)
     (when-let [st (style-of styles fmt)]
-      (doseq [rr (range r1 (inc r2))
-              cc (range c1 (inc c2))]
+      (doseq [rr (range r1 (inc (long r2)))
+              cc (range c1 (inc (long c2)))]
 
         (.setCellStyle (ensure-cell wb sheet rr cc) ^XSSFCellStyle st)))
     nil))
@@ -300,7 +300,7 @@
         sh
         (.getSheetAt wb (int sheet))]
 
-    (doseq [col (range first-col (inc last-col))]
+    (doseq [col (range first-col (inc (long last-col)))]
       (when width (.setColumnWidth sh (int col) (int (Math/round (* 256.0 (double width))))))
       (when-let [st (style-of styles fmt)]
         (.setDefaultColumnStyle sh (int col) ^XSSFCellStyle st))
