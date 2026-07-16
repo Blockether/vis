@@ -1039,7 +1039,7 @@
 ;; Turn execution
 ;; =============================================================================
 
-(declare drain-next-queued!)
+(declare drain-next-queued! queued-after-cancel?)
 
 (def ^:private TURN_STALL_TIMEOUT_MS
   "Daemon backstop: force-cancel a turn wedged with NO chunk activity for this
@@ -1239,13 +1239,19 @@
                              (dissoc :answer_ir))
                            (assoc :turn_id tid)))
         (emit-context-updated! sid)
-        ;; A user cancel means "stop", not "advance": do NOT auto-start the next
-        ;; queued turn. Leaving the backlog queued lets the channel pull it back
-        ;; into the editor (TUI) or keep it visible/editable (web) instead of
-        ;; firing an uninterruptible follow-up the instant the cancel lands.
+        ;; A user cancel means "stop", not "advance": do NOT auto-start a turn
+        ;; that was already queued BEFORE the cancel. Leaving that backlog
+        ;; queued lets the channel pull it back into the editor (TUI) or keep
+        ;; it visible/editable (web) instead of firing an uninterruptible
+        ;; follow-up the instant the cancel lands. A message submitted AFTER
+        ;; the cancel fired is the OPPOSITE intent — "stop that, run THIS" —
+        ;; so it drains the moment this worker unwinds (queued-after-cancel?).
         ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
         ;; is cancelled either way, so distinguish on the stall flag and drain.
-        (when (or stalled? (not (cancellation/cancelled? cancel-token))) (drain-next-queued! sid)))
+        (when (or stalled?
+                  (not (cancellation/cancelled? cancel-token))
+                  (queued-after-cancel? sid tid))
+          (drain-next-queued! sid)))
       (catch Throwable t
         (let [stalled?
               (boolean (and stall (:stalled? @stall)))
@@ -1283,7 +1289,9 @@
                          (cond-> {:turn_id tid :status "failed" :error err}
                            eval
                            (assoc :eval eval)))
-          (when (or stalled? (not (cancellation/cancelled? cancel-token)))
+          (when (or stalled?
+                    (not (cancellation/cancelled? cancel-token))
+                    (queued-after-cancel? sid tid))
             (drain-next-queued! sid)))))))
 
 
@@ -1329,6 +1337,26 @@
           (let [turn (get-in entry [:turns tid])]
             (when (= "queued" (:status turn)) [tid turn])))
         (:turn-order entry)))
+
+(defn- queued-after-cancel?
+  "True when the oldest queued turn for `sid` was submitted AFTER turn `tid`'s
+   cancel fired (its `:cancelling_at` stamp, set by `cancel-turn!`). A user
+   cancel normally leaves the backlog queued — stop means stop — but a message
+   typed AFTER Esc is the opposite intent (\"stop that, run THIS\"): while the
+   cancelled provider call unwinds, the dying turn still holds `:current-turn`,
+   so that fresh submit lands in the queue; without this check it would sit
+   there forever because the user-cancel path skips `drain-next-queued!`."
+  [sid tid]
+  (let [entry
+        (get @registry sid)
+
+        cancelling-at
+        (get-in entry [:turns tid :cancelling_at])
+
+        [_ head]
+        (first-queued-turn entry)]
+
+    (boolean (and cancelling-at head (>= (long (or (:queued_at head) 0)) (long cancelling-at))))))
 
 (defn- replace-last-user-message-content
   "Return `messages` with the last user message content replaced by `text`.
@@ -1913,9 +1941,15 @@
   (let [turn (get-in @registry [sid :turns tid])]
     (cond (nil? turn) {:error :turn-not-found}
           (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
-          :else (do (some-> (:cancel-token turn)
-                            cancellation/cancel!)
-                    {:status "cancelling"}))))
+          :else
+          (do ;; Stamp the cancel wall-clock BEFORE firing the token so the
+              ;; unwinding worker can tell post-cancel submissions (drain
+              ;; them: "stop that, run THIS") from the pre-cancel backlog
+              ;; (leave queued) — see `queued-after-cancel?`.
+            (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
+            (some-> (:cancel-token turn)
+                    cancellation/cancel!)
+            {:status "cancelling"}))))
 
 (defn cancel-all-running!
   "Fire the cancellation token of EVERY running turn across all sessions.
