@@ -142,7 +142,7 @@
 
 (defn format-bytes
   "Human-ish byte string for picker rows."
-  [n]
+  [^long n]
   (cond (< n 1024) (str n "B")
         (< n (* 1024 1024))
         (String/format Locale/US "%.1fK" (into-array Object [(/ (double n) 1024.0)]))
@@ -150,9 +150,9 @@
 
 (defn format-relative-age
   "Compact relative age for picker rows."
-  [now-ms mtime-ms]
+  [^long now-ms ^long mtime-ms]
   (let [delta-ms
-        (max 0 (- now-ms mtime-ms))
+        (long (max 0 (- now-ms mtime-ms)))
 
         minutes
         (quot delta-ms 60000)
@@ -256,12 +256,12 @@
          (sort-by (fn [entry]
                     (case sort-mode*
                       :recent
-                      [(- (:mtime-ms entry)) (- (status-priority (:git-status entry)))
+                      [(- (long (:mtime-ms entry))) (- (long (status-priority (:git-status entry))))
                        (:path entry)]
 
                       :relevance
-                      [(- (or (:score entry) 0)) (- (:mtime-ms entry))
-                       (- (status-priority (:git-status entry))) (:path entry)]
+                      [(- (double (or (:score entry) 0))) (- (long (:mtime-ms entry)))
+                       (- (long (status-priority (:git-status entry)))) (:path entry)]
 
                       [(:path entry)])))
          (take max-results)
