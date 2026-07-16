@@ -328,7 +328,7 @@
     (.setRenderingHint g
                        RenderingHints/KEY_INTERPOLATION
                        RenderingHints/VALUE_INTERPOLATION_BILINEAR)
-    (.translate g (/ nw 2.0) (/ nh 2.0))
+    (.translate g (/ (double nw) 2.0) (/ (double nh) 2.0))
     (.rotate g (- rad))
     (.translate g (/ (- w) 2.0) (/ (- hh) 2.0))
     (.drawImage g img 0 0 nil)
@@ -687,8 +687,8 @@
 
     (dotimes [y h]
       (dotimes [x w]
-        (let [i (* (+ (* y w) x) bpp)
-              u (fn [k]
+        (let [i (* (+ (* y (long w)) x) (long bpp))
+              u (fn [^long k]
                   (bit-and (aget data (+ i k)) 0xff))]
 
           (.setRGB out
@@ -1221,9 +1221,11 @@
       (dotimes [x ow]
         (let [xd (double x)
               yd (double y)
-              den (if persp? (+ (* (nth cf 6) xd) (* (nth cf 7) yd) 1.0) 1.0)
-              sx (/ (+ (* (nth cf 0) xd) (* (nth cf 1) yd) (nth cf 2)) den)
-              sy (/ (+ (* (nth cf 3) xd) (* (nth cf 4) yd) (nth cf 5)) den)]
+              den (if persp? (+ (* (double (nth cf 6)) xd) (* (double (nth cf 7)) yd) 1.0) 1.0)
+              sx (/ (+ (* (double (nth cf 0)) xd) (* (double (nth cf 1)) yd) (double (nth cf 2)))
+                    den)
+              sy (/ (+ (* (double (nth cf 3)) xd) (* (double (nth cf 4)) yd) (double (nth cf 5)))
+                    den)]
 
           (if (and (>= sx 0.0) (< sx sw) (>= sy 0.0) (< sy sh))
             (.setRGB out x y (.getRGB img (int sx) (int sy)))
@@ -1276,16 +1278,16 @@
             pts
 
             rx
-            (int (min x0 x1))
+            (int (min (double x0) (double x1)))
 
             ry
-            (int (min y0 y1))
+            (int (min (double y0) (double y1)))
 
             rw
-            (int (Math/abs (long (- x1 x0))))
+            (int (Math/abs (- (double x1) (double x0))))
 
             rh
-            (int (Math/abs (long (- y1 y0))))]
+            (int (Math/abs (- (double y1) (double y0))))]
 
         (when (some? fill) (.setColor g (->color fill "RGB")) (.fillRect g rx ry (inc rw) (inc rh)))
         (when (some? outline) (.setColor g (->color outline "RGB")) (.drawRect g rx ry rw rh)))
@@ -1295,10 +1297,10 @@
             pts
 
             w
-            (int (- x1 x0))
+            (int (- (double x1) (double x0)))
 
             hh
-            (int (- y1 y0))]
+            (int (- (double y1) (double y0)))]
 
         (when (some? fill)
           (.setColor g (->color fill "RGB"))
@@ -1343,8 +1345,8 @@
             arc
             (java.awt.geom.Arc2D$Double. (double x0)
                                          (double y0)
-                                         (- x1 x0)
-                                         (- y1 y0)
+                                         (- (double x1) (double x0))
+                                         (- (double y1) (double y0))
                                          (- start)
                                          (- (- end start))
                                          kind)]
@@ -1368,7 +1370,7 @@
         (.setFont g (Font. "SansSerif" Font/PLAIN size))
         (.setColor g (->color (or fill [0 0 0]) "RGB"))
         (let [fm (.getFontMetrics g)]
-          (.drawString g s (int x) (int (+ y (.getAscent fm))))))
+          (.drawString g s (int x) (int (+ (double y) (.getAscent fm))))))
 
       nil)
     (.dispose g)

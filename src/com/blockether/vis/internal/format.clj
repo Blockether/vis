@@ -84,13 +84,13 @@
    the JVM default locale. Coerces the input to long up-front because
    callers routinely pass a double from `(/ ns 1e6)`."
   [ms]
-  (when (and ms (pos? ms))
+  (when (and ms (pos? (double ms)))
     (let [ms (long ms)]
       (cond (< ms 1000) (str ms "ms")
             (< ms 60000)
             (String/format Locale/US "%.1fs" (into-array Object [(double (/ ms 1000.0))]))
             :else (let [m (quot ms 60000)
-                        s (quot (mod ms 60000) 1000)]
+                        s (quot (long (mod ms 60000)) 1000)]
 
                     (str m "m " s "s"))))))
 
@@ -149,16 +149,16 @@
           out-n
           (when (number? output) output)]
 
-      (when (or in-n out-n (pos? cached-input) (pos? cache-created))
+      (when (or in-n out-n (pos? (long cached-input)) (pos? (long cache-created)))
         (let [head
               (str "tok " (or in-n 0) "→" (or out-n 0))
 
               parts
               (cond-> []
-                (pos? cached-input)
+                (pos? (long cached-input))
                 (conj (str "cached " cached-input))
 
-                (pos? cache-created)
+                (pos? (long cache-created))
                 (conj (str "cache-write " cache-created)))]
 
           (if (seq parts) (str head " (" (str/join ", " parts) ")") head))))))
@@ -178,7 +178,7 @@
               (when (number? v) v)))
           (positive-cost-number [k]
             (let [v (cost-number k)]
-              (when (and v (pos? v)) v)))
+              (when (and v (pos? (double v))) v)))
           (format-cost-number [n]
             (String/format Locale/US "~$%.6f" (into-array Object [(double n)])))
           (detail [label k]
@@ -187,7 +187,7 @@
     (let [n (cond (number? cost) cost
                   (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
                   :else nil)]
-      (when (and n (pos? n))
+      (when (and n (pos? (double n)))
         (if (map? cost)
           (let [details (cond-> []
                           (positive-cost-number :input-uncached-cost)
@@ -215,7 +215,7 @@
    (when (number? n)
      (str n
           (if (= 1 n) " iter" " iters")
-          (when (and (number? silent-count) (pos? silent-count))
+          (when (and (number? silent-count) (pos? (long silent-count)))
             (str " (" silent-count " silent)"))))))
 
 (defn- normalize-provider
@@ -305,12 +305,12 @@
             (Math/round (/ (double n) (/ (double scale) 10.0))))
 
           render
-          (fn [t unit]
+          (fn [^long t unit]
             (let [whole
                   (quot t 10)
 
                   frac
-                  (mod t 10)]
+                  (rem t 10)]
 
               (str whole (when (pos? frac) (str "." frac)) unit)))]
 
@@ -338,11 +338,12 @@
           cached
           (num [:cached-input :input-cached :cached])]
 
-      (when (or (and in (pos? in)) (and out (pos? out)))
+      (when (or (and in (pos? (long in))) (and out (pos? (long out))))
         (str (humanize-count (or in 0))
              "→"
              (humanize-count (or out 0))
-             (when (and cached (pos? cached)) (str " (cached " (humanize-count cached) ")")))))))
+             (when (and cached (pos? (long cached)))
+               (str " (cached " (humanize-count cached) ")")))))))
 
 (defn meta-cost
   "Humanized dollar cost — \"~$0.0070\" / \"~$1.23\". nil for zero / missing.
@@ -351,11 +352,11 @@
   (let [n (cond (number? cost) cost
                 (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
                 :else nil)]
-    (when (and n (pos? n))
+    (when (and n (pos? (double n)))
       (str "~$"
            (String/format Locale/US
-                          (cond (>= n 1) "%.2f"
-                                (>= n 0.0001) "%.4f"
+                          (cond (>= (double n) 1) "%.2f"
+                                (>= (double n) 0.0001) "%.4f"
                                 :else "%.6f")
                           (into-array Object [(double n)]))))))
 
@@ -499,7 +500,7 @@
                 s
                 (strip-sandbox-ns (value-pr-str v bounded-print?))]
 
-            (if (> (count s) max-chars)
-              (str (subs s 0 max-chars) " ...<+" (- (count s) max-chars) " chars>")
+            (if (> (count s) (long max-chars))
+              (str (subs s 0 max-chars) " ...<+" (- (count s) (long max-chars)) " chars>")
               s)))
         (catch Throwable t (str "<unprintable: " (.getMessage t) ">")))))
