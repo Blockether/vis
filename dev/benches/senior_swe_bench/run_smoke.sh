@@ -739,6 +739,12 @@ if [[ -n "$latest_job" && -d "$latest_job" ]]; then
     --task-id "$task_id" > "$out/harbor-output/collection.stdout.json" || true
 fi
 python3 "$here/redact_secrets.py" "${redact_args[@]}" --path "$out" --out "$out/secret-redaction.json" >/dev/null
+trace_file="$out/vis-traces/$task_id/vis.trace.jsonl"
+if [[ -s "$trace_file" ]]; then
+  python3 "$here/render_trace_transcript.py" "$trace_file" \
+    --out "$out/vis-transcript.html" \
+    --title "Vis conversation transcript — $task_id" || true
+fi
 patch_file="$out/harbor-output/trial/verifier/agent.patch"
 if [[ ! -s "$patch_file" ]]; then
   patch_file="$out/patches/$task_id.diff"

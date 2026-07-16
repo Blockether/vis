@@ -110,6 +110,7 @@
     (boolean
       (and (nil? status)
            (or (str/includes? text "received no bytes")
+               (str/includes? text "no response headers")
                (str/includes? text "header parser")
                (str/includes? text "no bytes")
                (str/includes? text "unexpected end of stream")
@@ -529,4 +530,3 @@
       1 (assoc (second ir)
           :vis/provider-error true
           :vis/provider-error-data (provider-error-info err)))))
-
