@@ -400,6 +400,17 @@
                                 "plt.bar([1,2,3,4],[3,7,2,5])\n"
                                 "s=plt.to_ascii(40,12)\n"
                                 "isinstance(s,str) and any(0x2800<=ord(c)<=0x28ff for c in s)"))))))
+  (it "to_ascii(color=True) resolves a per-element hex color list without raising (issue #32)"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                                "plt.bar([1,2,3],[1,4,9],color=['#4C9F70','#123456','#abcdef'])\n"
+                                "isinstance(plt.to_ascii(40,12,color=True), str)"))))
+        (expect (true? (ev python-context
+                           (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                                "plt.plot([1,2,3],[1,4,9],color='#4C9F70')\n"
+                                "plt.plot([1,2,3],[2,5,10],color='green')\n"
+                                "isinstance(plt.to_ascii(40,12,color=True), str)"))))))
   (it "to_ascii(color=True) emits ANSI escapes; default stays plain"
       (with-python-context
         (expect (true? (ev python-context

@@ -1314,9 +1314,19 @@ def __vis_install_matplotlib__():
         # tab10 cycle by series index when unknown/None.
         if color is None:
             return _TAB10[idx % len(_TAB10)]
-        if isinstance(color, (tuple, list)) and len(color) >= 3:
-            return tuple(max(0, min(255, int(round(float(v) * 255))))
-                         for v in color[:3])
+        if isinstance(color, (tuple, list)):
+            # An (r,g,b[,a]) NUMERIC tuple scales 0..1 floats to 0..255; a
+            # per-element color LIST (e.g. bar(..., color=['#4C9F70', ...]))
+            # resolves its first entry, so hex/named specs never reach float().
+            nums = color[:3]
+            if len(color) >= 3 and all(
+                    isinstance(v, (int, float)) and not isinstance(v, bool)
+                    for v in nums):
+                return tuple(max(0, min(255, int(round(float(v) * 255))))
+                             for v in nums)
+            if len(color):
+                return _rgb(color[0], idx)
+            return _TAB10[idx % len(_TAB10)]
         s = str(color).strip()
         if s.startswith('#'):
             h = s[1:]
