@@ -16,9 +16,11 @@
 
 (def NATIVE_TOOL_TIMEOUT_MS
   "Wall-clock fallback for Clojure-native tool handlers when the caller does not
-   request a `timeout_ms` — 1 minute. Calls expected to take longer must explicitly
-   request a timeout or use a background workflow."
-  60000)
+   request a `timeout_ms` — 30 seconds. Calls expected to take longer must
+   explicitly request a timeout or use a background workflow. Slow synchronous
+   SETUP (e.g. a cold project-REPL boot) runs OUTSIDE this wall via the loop's
+   `:vis/outside-tool-wall` hook, so it never bills against this budget."
+  30000)
 
 (def ^:private native-tool-timeout-grace-ms
   "Room for a tool's own timeout to produce its structured result first."
@@ -26,34 +28,22 @@
 
 (defn native-tool-timeout-ms
   "Return the outer wall-clock deadline for a native handler. An explicit
-   `timeout_ms` gets a short grace period; otherwise the 1-minute fallback.
+   `timeout_ms` gets a short grace period; otherwise the 30-second fallback.
+   Capped at `MAX_EVAL_TIMEOUT_MS`."
+  [input]
+  (let [requested
+        (when (map? input)
+          (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
 
-   `startup-budget-ms` (optional, default 0) is ADDED on top for handlers that do
-   slow SYNCHRONOUS setup INSIDE the wall before their real work — e.g.
-   `repl_eval`/`run_tests` cold-starting a project REPL/runtime (up to
-   `start-deadline-ms`). Without it a default `timeout_ms` (30 s) wall would kill
-   the boot before the eval even runs; with it the eval `timeout_ms` bounds only
-   the eval, and the boot gets its own room. Capped at `MAX_EVAL_TIMEOUT_MS`."
-  ([input] (native-tool-timeout-ms input 0))
-  ([input startup-budget-ms]
-   (let [requested
-         (when (map? input)
-           (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
+        requested
+        (when (and (number? requested) (pos? (long requested))) (long requested))
 
-         requested
-         (when (and (number? requested) (pos? (long requested))) (long requested))
+        base
+        (long (if requested
+                (+ (long requested) (long native-tool-timeout-grace-ms))
+                NATIVE_TOOL_TIMEOUT_MS))]
 
-         startup
-         (if (and (number? startup-budget-ms) (pos? (long startup-budget-ms)))
-           (long startup-budget-ms)
-           0)
-
-         base
-         (long (if requested
-                 (+ (long requested) (long native-tool-timeout-grace-ms))
-                 NATIVE_TOOL_TIMEOUT_MS))]
-
-     (long (min (long MAX_EVAL_TIMEOUT_MS) (+ base startup))))))
+    (long (min (long MAX_EVAL_TIMEOUT_MS) base))))
 
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."

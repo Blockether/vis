@@ -445,7 +445,11 @@
        ;; autostart and no auto-recovery.
        (extension/success {:result (run port (str host ":" port))})
        (let [target
-             (repl-manager/resolve-target! sid rid default-dir)
+             ;; A cold autostart (deps resolve + JVM boot, up to ~2 min) runs
+             ;; OUTSIDE the native tool wall — the eval's timeout_ms bounds only
+             ;; the eval itself, never the boot.
+             (extension/run-outside-tool-wall env
+                                              #(repl-manager/resolve-target! sid rid default-dir))
 
              tport
              (:port target)]

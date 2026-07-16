@@ -961,16 +961,32 @@
 (defn- run-native-handler
   "Execute a native-tool `:handler` directly in Clojure under a cancellable
    wall-clock deadline. Native handlers bypass the Python eval watchdog, so this
-   boundary prevents a wedged REPL/socket/process from holding a turn forever."
-  [handler environment input display-src startup-budget-ms]
+   boundary prevents a wedged REPL/socket/process from holding a turn forever.
+
+   Slow SYNCHRONOUS setup runs OUTSIDE the wall: the handler's env carries
+   `:vis/outside-tool-wall`, a `(fn [thunk])` that PARKS the deadline while the
+   thunk runs (wedge-guarded by MAX_EVAL_TIMEOUT_MS) and RESTARTS the clock when
+   it returns — so a cold project-REPL boot never bills against the eval's
+   `timeout_ms` (see extension/run-outside-tool-wall)."
+  [handler environment input display-src]
   (let [start
         (System/currentTimeMillis)
 
         timeout-ms
-        (rt/native-tool-timeout-ms input startup-budget-ms)
+        (rt/native-tool-timeout-ms input)
+
+        deadline
+        (atom (+ start timeout-ms))
+
+        outside-wall
+        (fn [thunk]
+          (reset! deadline (+ (System/currentTimeMillis) (long rt/MAX_EVAL_TIMEOUT_MS)))
+          (try (thunk) (finally (reset! deadline (+ (System/currentTimeMillis) timeout-ms)))))
 
         worker
-        (cancellation/worker-future "vis-native-tool" #(handler environment input))
+        (cancellation/worker-future
+          "vis-native-tool"
+          #(handler (assoc environment :vis/outside-tool-wall outside-wall) input))
 
         dispose-cancel-hook
         (when-let [cancel-token (:cancel-token environment)]
@@ -990,8 +1006,17 @@
     (try (let [timeout-sentinel
                (Object.)
 
+               ;; The deadline is a MOVABLE atom (outside-wall parks/restarts it),
+               ;; so wait in a loop: a sentinel wake re-checks the CURRENT deadline
+               ;; and keeps waiting when the wall moved while we slept.
                ret
-               (deref worker timeout-ms timeout-sentinel)]
+               (loop []
+
+                 (let [remaining (- (long @deadline) (System/currentTimeMillis))]
+                   (if (pos? remaining)
+                     (let [r (deref worker remaining timeout-sentinel)]
+                       (if (identical? timeout-sentinel r) (recur) r))
+                     timeout-sentinel)))]
 
            (if (identical? timeout-sentinel ret)
              (do (.cancel ^java.util.concurrent.Future worker true)
@@ -1276,9 +1301,6 @@
                  ;; native handler-tool dispatch carries through to execution
                  (:vis/native-handler b)
                  (assoc :vis/native-handler (:vis/native-handler b))
-
-                 (:vis/native-startup-budget-ms b)
-                 (assoc :vis/native-startup-budget-ms (:vis/native-startup-budget-ms b))
 
                  (contains? b :vis/native-input)
                  (assoc :vis/native-input (:vis/native-input b)))))
@@ -3825,8 +3847,6 @@
           ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
           ;; bare call into their bound fn and run through GraalPy as before.
           native-handlers (extension/native-tool-handlers active-extensions environment)
-          native-startup-budgets (extension/native-tool-startup-budgets active-extensions
-                                                                        environment)
           ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
           ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
           call-shapes (assoc (extension/native-tool-call-shapes active-extensions environment)
@@ -3850,7 +3870,6 @@
                               :svar/tool-call-id (:id tc)
                               :vis/tool-name (:name tc)
                               :vis/native-handler h
-                              :vis/native-startup-budget-ms (get native-startup-budgets (:name tc))
                               :vis/native-input (normalize-tool-input (:input tc))}
                              {:lang "python"
                               ;; Native file tool → synthesized bare call into its
@@ -3954,12 +3973,11 @@
                                            :duration-ms 0
                                            :op :vis/guard}
                           ;; native handler-tool → run in Clojure (run-native-handler)
-                          (:vis/native-handler entry) (run-native-handler
-                                                        (:vis/native-handler entry)
-                                                        environment
-                                                        (:vis/native-input entry)
-                                                        (:vis/tool-name entry)
-                                                        (:vis/native-startup-budget-ms entry))
+                          (:vis/native-handler entry) (run-native-handler (:vis/native-handler
+                                                                            entry)
+                                                                          environment
+                                                                          (:vis/native-input entry)
+                                                                          (:vis/tool-name entry))
                           :else
                           (if-let [err (literal-code-block-error expr)]
                             {:result nil
