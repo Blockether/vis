@@ -84,20 +84,11 @@ what surfaces.
 curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
 ```
 
-**Windows** (PowerShell):
-
-```powershell
-iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile install-vis.ps1
-powershell -ExecutionPolicy Bypass -File .\install-vis.ps1
-```
-
-Both clone Vis, verify the runtime tools, and put the `vis` launcher on your PATH. Then confirm:
+This clones Vis, verifies the runtime tools, and puts the `vis` launcher on your PATH. Then confirm:
 
 ```bash
 vis help
 ```
-
-On Windows, use the PowerShell command above: the bash installer creates unix symlinks and won't produce a working launcher under Git Bash. (WSL users: run the macOS/Linux command from inside WSL.)
 
 **Needs:** `java` 21+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what is missing. These are required to **run** Vis; the native build (below) is what removes the JVM dependency for daily use.
 

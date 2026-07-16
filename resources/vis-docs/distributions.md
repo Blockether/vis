@@ -12,7 +12,6 @@ The release builds across the platforms that matter:
 | Linux ARM64 | `aarch64-unknown-linux-gnu` |
 | macOS ARM64 | `aarch64-apple-darwin` |
 | macOS x86-64 | `x86_64-apple-darwin` |
-| Windows x86-64 | `x86_64-pc-windows-msvc` |
 
 The Intel-mac artifact is **cross-built on the Apple-Silicon runner** (Xcode's SDK is universal) rather than waiting on a scarce Intel runner — fast and reliable.
 

@@ -62,15 +62,6 @@
         "sh"
         :sh
 
-        "pwsh"
-        :pwsh
-
-        "cmd"
-        :cmd
-
-        "powershell"
-        :powershell
-
         (when base (keyword base))))))
 
 (defn- iso-clock

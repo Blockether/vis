@@ -8,19 +8,12 @@ Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps
 
 ## Install
 
-Two ways, one per platform. Each clones Vis, checks the runtime tools, and puts the `vis` launcher on your `PATH`.
+One command clones Vis, checks the runtime tools, and puts the `vis` launcher on your `PATH`.
 
 **macOS & Linux** (bash):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
-```
-
-**Windows** (PowerShell):
-
-```powershell
-iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile install-vis.ps1
-powershell -ExecutionPolicy Bypass -File .\install-vis.ps1
 ```
 
 Then confirm:

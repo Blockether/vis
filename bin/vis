@@ -298,10 +298,9 @@ vis_do_update() {
 
 # Self-compilation subcommands: build vis itself from source via the
 # tools.build tasks in build.clj (repo root), instead of launching the agent.
-# Cross-platform: this bash path covers Linux/macOS and Git-Bash/WSL on
-# Windows; bin/vis.cmd mirrors it for native Windows cmd.
+# Linux and macOS only.
 #   vis native  -> BOTH the uberjar (target/vis.jar) AND the native binary
-#                  (target/vis, target/vis.exe on Windows), in one command
+#                  (target/vis), in one command
 #   vis uber    -> just the all-in-one AOT uberjar (target/vis.jar)
 case "${1:-}" in
   native|uber)

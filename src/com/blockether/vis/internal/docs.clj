@@ -535,12 +535,10 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<div class=\"hero-install\" role=\"tablist\" aria-label=\"Install command\">"
           "<div class=\"hero-install-head\">"
           "<button type=\"button\" class=\"install-tab\" role=\"tab\" data-tab=\"unix\" aria-selected=\"true\" aria-controls=\"cmd-unix\">macOS &amp; Linux</button>"
-          "<button type=\"button\" class=\"install-tab\" role=\"tab\" data-tab=\"win\" aria-selected=\"false\" aria-controls=\"cmd-win\">Windows</button>"
           "<span class=\"hero-install-spacer\"></span>"
           "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
           "</div>"
           "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
-          "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\"><span class=\"token function\">iwr</span> <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1</span> -OutFile <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1<span class=\"token punctuation\">;</span> <span class=\"token punctuation\">&amp;</span> <span class=\"token symbol\">$env:TEMP</span>\\vis.ps1</code>"
           "</div>" "</div></section>"))
       (rewrite-md-links html mode)
       "<div class=\"foot\">"
