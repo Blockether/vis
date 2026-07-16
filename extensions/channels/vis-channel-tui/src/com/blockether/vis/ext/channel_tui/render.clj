@@ -1599,6 +1599,30 @@
    separator) that the copy-region geometry deliberately skips."
   nil)
 
+(defn- draw-bubble-footer!
+  "Paint the per-message bubble footer beneath a chat message.
+
+   Draws the right-aligned `provider/model · tokens · cost · duration` meta
+   line at `footer-row`, and — when `fallback-note` is present — a faint italic
+   routing sub-note on the row below it. Both strings are `ellipsize`d to
+   `bubble-w` so a long footer truncates with `…` instead of overflowing the
+   bubble's right edge on narrow terminals (the start-col `max 0` alone can't
+   stop the overrun). `bx` is the bubble's left column."
+  [^TextGraphics g bx bubble-w footer-row meta-str fallback-note]
+  (let [right-align (fn [shown]
+                      (+ (long bx) (max 0 (- (long bubble-w) (long (p/display-width shown))))))]
+    (when (some? meta-str)
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-hint t/terminal-bg)
+      (let [shown (p/ellipsize meta-str (long bubble-w))]
+        (p/put-str! g (right-align shown) footer-row shown)))
+    (when (and (some? meta-str) (some? fallback-note))
+      (p/clear-styles! g)
+      (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+      (let [shown (p/ellipsize fallback-note (long bubble-w))]
+        (p/styled g [p/ITALIC] (p/put-str! g (right-align shown) (inc (long footer-row)) shown)))
+      (p/clear-styles! g))))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -2803,26 +2827,7 @@
               footer-row
               (+ (long btop) (long bubble-h) (long bottom-pad) (long footer-gap))]
 
-          (when footer?
-            (p/clear-styles! g)
-            (p/set-colors! g t/dialog-hint t/terminal-bg)
-            (p/put-str! g
-                        (+ (long bx) (max 0 (- (long bubble-w) (long (p/display-width meta-str)))))
-                        footer-row
-                        meta-str))
-          ;; Faint italic routing sub-note, right-aligned under the main line.
-          (when note?
-            (p/clear-styles! g)
-            (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-            (p/styled g
-                      [p/ITALIC]
-                      (p/put-str!
-                        g
-                        (+ (long bx)
-                           (max 0 (- (long bubble-w) (long (p/display-width fallback-note)))))
-                        (inc (long footer-row))
-                        fallback-note))
-            (p/clear-styles! g))
+          (draw-bubble-footer! g bx bubble-w footer-row meta-str fallback-note)
           ;; Return: rows consumed
           ;;   = label(1) + top-pad(user only) + content(N)
           ;;     + bottom-pad(user only)
