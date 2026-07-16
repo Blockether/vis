@@ -103,6 +103,17 @@
                     ignore-file-names)]
     (when (seq rules) rules)))
 
+(defn compile-rules
+  "Compile config-supplied `patterns` (the same `.gitignore` pattern vocabulary
+   `compile-rule` parses: `dir/`, `**`, `?`, char classes, `!` negation) into a
+   matcher for `ignored?`, or nil when nothing compiles. This is how the
+   `:search` config overlay reuses the battle-tested gitignore semantics for
+   its `:include-gitignored-paths` / `:always-exclude` lists instead of
+   inventing a second glob dialect."
+  [patterns]
+  (let [rules (into [] (keep compile-rule) patterns)]
+    (when (seq rules) rules)))
+
 (defn tool-ignore-present?
   "True when `root` has a tool-only ignore file (`.ignore` or `.rgignore`) — the
    ones git never reads. Their `!` rules can RE-INCLUDE paths `.gitignore` hid, so

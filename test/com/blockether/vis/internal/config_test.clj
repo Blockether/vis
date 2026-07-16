@@ -137,3 +137,208 @@
             (expect (= [:prov-a :prov-b] (mapv :id (:providers loaded))))
             (expect (= 5.0 (get-in loaded [:router :budget :max-cost])))))
         (finally (rm-rf! (io/file tmp)))))))
+
+(defdescribe
+  yaml-config-test
+  "YAML project config (`vis.yml` / `.vis/config.yml`) maps onto the EDN
+   config shape: snake_case/kebab-case keys both land on the SAME kebab
+   keyword, keyword-valued fields (`:id`, `:backend`, `:api-style`) coerce,
+   and the string-keyed subtrees (`:environment`, `:llm-headers`,
+   `:extra-body`) stay verbatim. At a tier where BOTH formats exist the EDN
+   file wins and the YAML file is ignored — never merged."
+  (it "normalizes snake_case and kebab-case keys onto the same kebab keyword"
+      (let [keywordize @#'config/keywordize-yaml]
+        (expect (= {:system-prompt "x" :router {:budget {:max-cost 5.0}}}
+                   (keywordize {"system_prompt" "x" "router" {"budget" {"max_cost" 5.0}}})))
+        (expect (= (keywordize {"system-prompt" "x"}) (keywordize {"system_prompt" "x"})))))
+  (it "keeps :environment/:llm-headers/:extra-body keys verbatim, coerces keyword-valued fields"
+      (let [keywordize @#'config/keywordize-yaml]
+        (expect (= {:environment {"TELEGRAM_BOT_TOKEN" "tok"}
+                    :providers
+                    [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
+                   (keywordize {"environment" {"TELEGRAM_BOT_TOKEN" "tok"}
+                                "providers" [{"id" "anthropic"
+                                              "api_style" ":anthropic"
+                                              "llm-headers" {"X-Custom-Header" "v"}}]})))))
+  (it
+    "parses a vis.yml into the EDN shape; EDN wins when both formats exist"
+    (let [read-yaml
+          @#'config/read-yaml-config-map
+
+          read-tier
+          @#'config/read-tier-config-map
+
+          dir
+          (io/file "target/config-yaml-test")
+
+          yml
+          (io/file dir "vis.yml")
+
+          edn-f
+          (io/file dir "vis.edn")]
+
+      (try (.mkdirs dir)
+           (spit yml
+                 (str "system_prompt: Prefer RST.\n"
+                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+           (expect (= {:system-prompt "Prefer RST."
+                       :search {:include-gitignored-paths ["repositories/"]}}
+                      (read-yaml (.getPath yml))))
+           ;; YAML-only tier reads the YAML file
+           (expect (= "Prefer RST." (:system-prompt (read-tier (.getPath edn-f) [(.getPath yml)]))))
+           ;; both present -> EDN wins, YAML ignored
+           (spit edn-f "{:system-prompt \"EDN WINS\"}")
+           (expect (= {:system-prompt "EDN WINS"} (read-tier (.getPath edn-f) [(.getPath yml)])))
+           ;; malformed YAML -> nil, same contract as malformed EDN
+           (spit yml "{{{{: not yaml")
+           (expect (nil? (read-yaml (.getPath yml))))
+           (finally (rm-rf! dir)))))
+  (it "search-overlay: nil when unset, defaults guard includes, explicit list replaces"
+      (expect (nil? (with-redefs [config/load-config-raw (fn []
+                                                           {})]
+                      (config/search-overlay))))
+      (let [overlay (with-redefs [config/load-config-raw (fn []
+                                                           {:search {:include-gitignored-paths
+                                                                     ["repositories/"]}})]
+                      (config/search-overlay))]
+        (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
+        (expect (= config/default-search-always-exclude (:always-exclude overlay))))
+      (expect (= ["*.log"]
+                 (:always-exclude (with-redefs [config/load-config-raw
+                                                (fn []
+                                                  {:search {:include-gitignored-paths ["r/"]
+                                                            :always-exclude ["*.log"]}})]
+                                    (config/search-overlay)))))))
+
+(defdescribe
+  config-tier-precedence-test
+  "`load-config-raw` deep-merges FOUR tiers, later wins: global `~/.vis` YAML
+   base < global `~/.vis/config.edn` < root `vis.*` < nested `.vis/config.*`.
+   Two contracts under test: the NESTED hidden overlay overrides the root
+   file (personal beats committed), and the global `~/.vis` YAML tier loads
+   UNDER the machine-written `config.edn` (EDN wins per key, disjoint keys
+   merge — the file Vis itself writes can never be shadowed by hand YAML)."
+  (it
+    "nested .vis/config.yml overrides root vis.yml; disjoint keys from every tier survive"
+    (let [dir
+          (io/file "target/config-precedence-test")
+
+          gdir
+          (io/file dir "global")
+
+          gyml
+          (io/file gdir "config.yml")
+
+          gedn
+          (io/file gdir "config.edn")
+
+          root-yml
+          (io/file dir "vis.yml")
+
+          nested-yml
+          (io/file dir ".vis" "config.yml")
+
+          nested-edn
+          (io/file dir ".vis" "config.edn")]
+
+      (try (.mkdirs (io/file dir ".vis"))
+           (.mkdirs gdir)
+           (spit gyml
+                 (str "system_prompt: FROM-GLOBAL-YAML\n"
+                      "router:\n  budget:\n    max_cost: 1.0\n"))
+           (spit gedn "{:providers [{:id :prov-a}]}")
+           (spit root-yml
+                 (str "system_prompt: FROM-ROOT\n"
+                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+           (spit nested-yml "system_prompt: FROM-NESTED\n")
+           (with-redefs [config/config-path
+                         (.getPath gedn)
+
+                         config/global-config-yaml-paths
+                         (fn []
+                           [(.getPath gyml)])
+
+                         config/project-root-config-path
+                         (fn []
+                           (.getPath (io/file dir "vis.edn")))
+
+                         config/project-root-yaml-paths
+                         (fn []
+                           [(.getPath root-yml)])
+
+                         config/project-config-path
+                         (fn []
+                           (.getPath (io/file dir ".vis" "config.edn")))
+
+                         config/project-config-yaml-paths
+                         (fn []
+                           [(.getPath nested-yml)])]
+
+             (let [cfg (config/load-config-raw)]
+               ;; the nested overlay wins the conflicting key
+               (expect (= "FROM-NESTED" (:system-prompt cfg)))
+               ;; disjoint keys from every tier survive the merge
+               (expect (= ["repositories/"] (get-in cfg [:search :include-gitignored-paths])))
+               (expect (= [:prov-a] (mapv :id (:providers cfg))))
+               (expect (= 1.0 (get-in cfg [:router :budget :max-cost]))))
+             ;; a nested EDN twin shadows the nested YAML AND still beats root
+             (spit nested-edn "{:system-prompt \"FROM-NESTED-EDN\"}")
+             (expect (= "FROM-NESTED-EDN" (:system-prompt (config/load-config-raw))))
+             ;; drop the nested overlay entirely -> root wins
+             (.delete nested-edn)
+             (.delete nested-yml)
+             (expect (= "FROM-ROOT" (:system-prompt (config/load-config-raw))))
+             ;; drop root too -> the global YAML base shows through
+             (.delete root-yml)
+             (expect (= "FROM-GLOBAL-YAML" (:system-prompt (config/load-config-raw)))))
+           (finally (rm-rf! dir)))))
+  (it
+    "global ~/.vis: hand-written YAML merges UNDER machine-written config.edn (EDN wins per key)"
+    (let [dir
+          (io/file "target/config-global-yaml-test")
+
+          gyml
+          (io/file dir "config.yml")
+
+          gedn
+          (io/file dir "config.edn")
+
+          none
+          (fn []
+            [])]
+
+      (try (.mkdirs dir)
+           (spit gyml
+                 (str "system_prompt: FROM-YAML\n"
+                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+           (spit gedn "{:system-prompt \"FROM-EDN\"}")
+           (with-redefs [config/config-path
+                         (.getPath gedn)
+
+                         config/global-config-yaml-paths
+                         (fn []
+                           [(.getPath gyml)])
+
+                         config/project-root-config-path
+                         (fn []
+                           (.getPath (io/file dir "vis.edn")))
+
+                         config/project-root-yaml-paths
+                         none
+
+                         config/project-config-path
+                         (fn []
+                           (.getPath (io/file dir "absent.edn")))
+
+                         config/project-config-yaml-paths
+                         none]
+
+             (let [cfg (config/load-config-raw)]
+               ;; conflicting key: the machine-written EDN wins
+               (expect (= "FROM-EDN" (:system-prompt cfg)))
+               ;; YAML-only keys still land (merged, not ignored)
+               (expect (= ["repositories/"] (get-in cfg [:search :include-gitignored-paths])))))
+           ;; ~/.vis accepts vis.yml / vis.yaml spellings as fallbacks
+           (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
+                      (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))
+           (finally (rm-rf! dir))))))
