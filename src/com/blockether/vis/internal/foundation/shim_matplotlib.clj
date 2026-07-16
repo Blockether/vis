@@ -290,6 +290,11 @@
         has-bar?
         (some #(= "bar" (str (get % "kind"))) series)
 
+        cat-labels
+        (some (fn [s]
+                (when (= "bar" (str (get s "kind"))) (get s "labels")))
+              series)
+
         ml
         62
 
@@ -401,10 +406,24 @@
                   (.drawLine g xp py0 xp (+ py0 ph))
                   (.drawLine g px0 yp (+ px0 pw) yp))
                 (.setColor g (Color. 90 90 90))
-                (let [^String xl (fmt-num (xinv xv))]
-                  (.drawString g xl (int (- xp (quot (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
+                (when-not cat-labels
+                  (let [^String xl (fmt-num (xinv xv))]
+                    (.drawString g
+                                 xl
+                                 (int (- xp (quot (.stringWidth fm xl) 2)))
+                                 (int (+ py0 ph 16)))))
                 (let [^String yl (fmt-num (yinv yv))]
-                  (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
+                  (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))
+            (when cat-labels
+              (.setColor g (Color. 90 90 90))
+              (dotimes [i (count cat-labels)]
+                (let [^String xl (str (nth cat-labels i))
+                      xp (int (sx (double i)))]
+
+                  (.drawString g
+                               xl
+                               (int (- xp (quot (.stringWidth fm xl) 2)))
+                               (int (+ py0 ph 16))))))))
         ;; axes frame
         (.setColor g (Color. 60 60 60))
         (.setStroke g (BasicStroke. 1.0))
@@ -775,12 +794,47 @@ def __vis_install_matplotlib__():
         _add_series('scatter', x, y, label, color or c)
         return None
 
+    def _is_number(v):
+        if isinstance(v, bool):
+            return False
+        if isinstance(v, (int, float)):
+            return True
+        try:
+            float(v)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _categorical(vals):
+        # matplotlib maps string/categorical x onto an integer axis, deduping
+        # to distinct categories in first-seen order; each value takes its
+        # category's index. Numeric input keeps the float path (None, None).
+        seq = list(vals)
+        if not seq or all(_is_number(v) for v in seq):
+            return None, None
+        order = []
+        index = {}
+        for v in seq:
+            key = str(v)
+            if key not in index:
+                index[key] = len(order)
+                order.append(key)
+        return [index[str(v)] for v in seq], order
+
     def bar(x, height, width=0.8, label=None, color=None, **kwargs):
-        _add_series('bar', x, height, label, color)
+        pos, labels = _categorical(x)
+        if pos is not None:
+            _add_series('bar', pos, height, label, color, labels=labels)
+        else:
+            _add_series('bar', x, height, label, color)
         return None
 
     def barh(y, width, height=0.8, label=None, color=None, **kwargs):
-        _add_series('bar', y, width, label, color)
+        pos, labels = _categorical(y)
+        if pos is not None:
+            _add_series('bar', pos, width, label, color, labels=labels)
+        else:
+            _add_series('bar', y, width, label, color)
         return None
 
     def hist(x, bins=10, label=None, color=None, **kwargs):
@@ -1293,12 +1347,15 @@ def __vis_install_matplotlib__():
         all_x = []
         all_y = []
         has_bar = False
+        cat_labels = None
         for s in series:
             k = str(s.get('kind'))
             if k in ('pie', 'image', 'box'):
                 continue
             if k == 'bar':
                 has_bar = True
+                if cat_labels is None and s.get('labels'):
+                    cat_labels = s.get('labels')
             all_x += [float(v) for v in (s.get('x') or [])]
             all_y += [float(v) for v in (s.get('y') or [])]
             if s.get('y2') is not None:
@@ -1447,9 +1504,15 @@ def __vis_install_matplotlib__():
         axisrow = ['─'] * Wc
         nxt = min(5, Wc)
         xt = {}
-        for i in range(nxt):
-            t = (i / (nxt - 1)) if nxt > 1 else 0.0
-            xt[int(round(t * (Wc - 1)))] = fmt(xmin + t * (xmax - xmin))
+        if cat_labels:
+            for i, lab in enumerate(cat_labels):
+                col = int(round((float(i) - xmin) / (xmax - xmin) * (Wc - 1)))
+                if 0 <= col < Wc:
+                    xt[col] = str(lab)
+        else:
+            for i in range(nxt):
+                t = (i / (nxt - 1)) if nxt > 1 else 0.0
+                xt[int(round(t * (Wc - 1)))] = fmt(xmin + t * (xmax - xmin))
         for col in xt:
             if 0 <= col < Wc:
                 axisrow[col] = '┬'
