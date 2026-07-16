@@ -22,6 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Free Linux runner (16 GB) — the canonical shippable linux-x64. Also
+          # verifies the -Os + interpreter-only build change lands green on Linux.
+          - { label: linux-x64, os: ubuntu-latest, extra: "" }
           # Free Intel runner, 14 GB — same RAM as the paid macos-15-large the
           # workflows were designed for. Plain :voice build (GraalPy's -Xms14g fits).
           - { label: macos13-intel-14g, os: macos-13, extra: "" }
