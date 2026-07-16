@@ -42,6 +42,7 @@
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.gitignore :as gitignore]
             [com.blockether.vis.internal.paths :as paths]
@@ -601,7 +602,8 @@
 (defn- more-restrictive-rule
   [best rule]
   (if (or (nil? best)
-          (> (long (protected-access-rank (:access rule))) (long (protected-access-rank (:access best)))))
+          (> (long (protected-access-rank (:access rule)))
+             (long (protected-access-rank (:access best)))))
     rule
     best))
 
@@ -861,6 +863,54 @@
 
       (gitignore/ignored? node rel dir?))))
 
+(defn- search-overlay-matchers
+  "Compiled `:search` config overlay (issue #23), or nil when unconfigured.
+   `{:include <matcher> :include-prefixes [static-prefix…] :exclude <matcher>}` —
+   both matchers compiled by `gitignore/compile-rules`, so the two config lists
+   speak `.gitignore` pattern syntax. `:include-prefixes` are the patterns'
+   static path prefixes: a gitignored DIRECTORY that is an ancestor of a prefix
+   must still be DESCENDED (git itself never descends an excluded dir, which is
+   exactly why a `.gitignore` `!` negation cannot re-include these subtrees —
+   the overlay can, but only if the walker opens the ancestors)."
+  []
+  (when-let [{:keys [include-gitignored-paths always-exclude]} (config/search-overlay)]
+    {:include (gitignore/compile-rules include-gitignored-paths)
+     :include-prefixes (mapv glob-static-prefix include-gitignored-paths)
+     :exclude (gitignore/compile-rules always-exclude)}))
+
+(defn- overlay-included?
+  "True when `rel` falls under an `:include-gitignored-paths` pattern — or, for
+   a DIRECTORY, when it is an ancestor of a pattern's static prefix (the walker
+   must open `repositories/` before `repositories/**` can match anything). A
+   prefix of `.` (pattern starts with a meta char, e.g. `**/vendored/`) opens
+   every directory: any gitignored dir might hold a match."
+  [{:keys [include include-prefixes]} ^String rel dir?]
+  (boolean (or (gitignore/ignored? include rel dir?)
+               (and dir?
+                    (some (fn [^String p]
+                            (or (= "." p) (path-prefix? rel p)))
+                          include-prefixes)))))
+
+(defn- search-excluded?
+  "Issue #23 exclusion formula:
+
+     excluded?(f) = always-exclude?(f) OR (gitignored?(f) AND NOT included?(f))
+
+   `overlay` nil degrades to plain `ignored?` — unconfigured projects keep
+   today's behavior bit-for-bit. `ignore-node` nil (gitignore opt-out) leaves
+   only the `:always-exclude` guard."
+  [ignore-node overlay ^File f ^File root]
+  (let [rel
+        (paths/unixify (.relativize (.toPath root) (.toPath f)))
+
+        dir?
+        (.isDirectory f)]
+
+    (or (boolean (and overlay (gitignore/ignored? (:exclude overlay) rel dir?)))
+        (boolean (and ignore-node
+                      (gitignore/ignored? ignore-node rel dir?)
+                      (not (and overlay (overlay-included? overlay rel dir?))))))))
+
 ;; =============================================================================
 ;; cat
 ;; =============================================================================
@@ -876,7 +926,11 @@
 
 (defn- validate-cat-range!
   [start end]
-  (when-not (and (integer? start) (integer? end) (pos? (long start)) (pos? (long end)) (<= (long start) (long end)))
+  (when-not (and (integer? start)
+                 (integer? end)
+                 (pos? (long start))
+                 (pos? (long end))
+                 (<= (long start) (long end)))
     (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
                     {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
 
@@ -1403,18 +1457,24 @@
 
         (if (< s h)
           (if (= (.charAt hay s) (.charAt needle 0))
-            (let [end (loop [i (inc s)
-                             k (long 1)]
+            (let [end
+                  (loop [i
+                         (inc s)
 
-                        (cond (= k n) (dec i)
-                              (>= i h) -1
-                              (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
-                              :else (recur (inc i) k)))
-                  span (- (long end) s)]
+                         k
+                         (long 1)]
+
+                    (cond (= k n) (dec i)
+                          (>= i h) -1
+                          (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
+                          :else (recur (inc i) k)))
+
+                  span
+                  (- (long end) s)]
+
               (recur (inc s) (if (and (>= (long end) 0) (< span best)) span best)))
             (recur (inc s) best))
-          (when (< best Long/MAX_VALUE)
-            (inc best)))))))
+          (when (< best Long/MAX_VALUE) (inc best)))))))
 
 (defn- find-token-score
   "Best subsequence-window density of `token` against the file NAME (full weight)
@@ -1429,7 +1489,8 @@
 
     (if (nil? wp)
       0.0
-      (max (if wf (/ (double (count token)) (long wf)) 0.0) (* 0.6 (/ (double (count token)) (long wp)))))))
+      (max (if wf (/ (double (count token)) (long wf)) 0.0)
+           (* 0.6 (/ (double (count token)) (long wp)))))))
 
 (defn- find-relevance
   "Order-INSENSITIVE relevance of `query` to `path`, in [0.0, 1.0]. Splits the
@@ -1526,24 +1587,27 @@
        :paths paths
        :limit limit
        :is_hidden (boolean (get spec "is_hidden"))
-       :is_respect_gitignore (get spec "is_respect_gitignore" true)})))
+       :is_respect_gitignore (get spec "is_respect_gitignore" true)
+       :is_gitignore_explicit (contains? spec "is_respect_gitignore")})))
 
 (defn- find-walk-files
   "Walk directory `base` ONCE, returning a vector of `{:path :file-name :size}`
    for every file (honoring `is_hidden`; dotfiles — incl. every `.git` dir —
-   skipped unless set). When `ignore-node` is non-nil, prune paths it marks
-   ignored — so a gitignore-RESPECTING walk (used when `.ignore`/`.rgignore`
-   override files are present) still hides `.gitignore`'d files while surfacing the
-   ones a `!` rule re-included; pass nil for a full opt-out that walks everything.
+   skipped unless set). Exclusion is `search-excluded?`: `ignore-node` prunes
+   gitignored paths (nil for a full opt-out that walks everything), while a
+   non-nil `overlay` re-includes the configured `:include-gitignored-paths`
+   subtrees and prunes `:always-exclude` matches — so a gitignore-RESPECTING
+   walk still hides `.gitignore`'d files while surfacing the ones a `!` rule or
+   the `:search` overlay re-included.
    Deliberately does NO scoring: `find-search` scores the strict query AND each
    fallback token, so scoring here would re-walk the whole tree up to 6× per call.
    Walk once, score the cached vector per query instead."
-  [^File base is_hidden ignore-node]
+  [^File base is_hidden ignore-node overlay]
   (let [out (java.util.ArrayList.)]
     (letfn [(walk [^File f]
               (check-interrupt!)
               (when (and (or is_hidden (not (.isHidden f)))
-                         (not (and ignore-node (ignored? ignore-node f base))))
+                         (not (search-excluded? ignore-node overlay f base)))
                 (cond (.isDirectory f) (doseq [^File c (or (.listFiles f) (into-array File []))]
                                          (walk c))
                       (.isFile f)
@@ -1578,7 +1642,7 @@
    would never surface no matter what the flag says. `walk-cache` (a root→delay
    atom) memoizes that direct walk so the strict + per-token passes share ONE
    filesystem traversal instead of re-walking the whole tree each time."
-  [roots query is_hidden is_respect_gitignore candidate-page walk-cache]
+  [roots query is_hidden is_respect_gitignore candidate-page walk-cache overlay]
   (->>
     roots
     (mapcat
@@ -1600,6 +1664,9 @@
               ;; on full opt-out), so `find-walk-files` keeps `.gitignore`'d files
               ;; hidden yet surfaces the `!`-negated ones.
               (or (not is_respect_gitignore)
+                  ;; …OR when the `:search` config overlay is active: fff's
+                  ;; gitignore-honoring index can't see the re-included subtrees.
+                  (some? overlay)
                   (gitignore/tool-ignore-present? (.getCanonicalFile root)))
               (let [base
                     (.getCanonicalFile root)
@@ -1613,7 +1680,9 @@
                                   (if (contains? m base)
                                     m
                                     (assoc m
-                                      base (delay (find-walk-files base is_hidden ignore-node))))))
+                                      base
+                                      (delay
+                                        (find-walk-files base is_hidden ignore-node overlay))))))
                          (get base))]
 
                 (score-walked-candidates entries query))
@@ -1662,7 +1731,7 @@
 
 (defn- find-search
   [args]
-  (let [{:keys [query paths limit is_hidden is_respect_gitignore]}
+  (let [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit]}
         (coerce-find-spec args)
 
         roots
@@ -1679,9 +1748,21 @@
         walk-cache
         (atom {})
 
+        ;; `:search` config overlay (issue #23): active only on the DEFAULT
+        ;; gitignore-respecting path — an EXPLICIT per-call is_respect_gitignore
+        ;; (either value) wins over the overlay for that call.
+        search-overlay
+        (when (and is_respect_gitignore (not is_gitignore_explicit)) (search-overlay-matchers))
+
         scan
         (fn [q]
-          (find-scan roots q is_hidden is_respect_gitignore candidate-page walk-cache))
+          (find-scan roots
+                     q
+                     is_hidden
+                     is_respect_gitignore
+                     candidate-page
+                     walk-cache
+                     search-overlay))
 
         strict
         (scan query)
@@ -1988,6 +2069,7 @@
      :include (or include [])
      :is_hidden (boolean (get spec "is_hidden"))
      :is_respect_gitignore (get spec "is_respect_gitignore" true)
+     :is_gitignore_explicit (contains? spec "is_respect_gitignore")
      :limit default-grep-limit
      :context context
      :is_files_only is_files_only}))
@@ -2039,9 +2121,7 @@
                              (+ acc (count (str (second x)))))
                            0
                            xs))]
-    (+ (count (str (:text hit)))
-       (long (sum-lens (:before hit)))
-       (long (sum-lens (:after hit))))))
+    (+ (count (str (:text hit))) (long (sum-lens (:before hit))) (long (sum-lens (:after hit))))))
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
@@ -2132,7 +2212,8 @@
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let [{:keys [needles paths include is_hidden is_respect_gitignore limit context is_files_only]}
+  (let [{:keys [needles paths include is_hidden is_respect_gitignore is_gitignore_explicit limit
+                context is_files_only]}
         (coerce-rg-spec spec)
 
         before-ctx
@@ -2185,11 +2266,17 @@
         matches?
         (make-line-matcher needles)
 
+        ;; `:search` config overlay (issue #23): active only on the DEFAULT
+        ;; gitignore-respecting path — an EXPLICIT per-call is_respect_gitignore
+        ;; (either value) wins over the overlay for that call.
+        search-overlay
+        (when (and is_respect_gitignore (not is_gitignore_explicit)) (search-overlay-matchers))
+
         walk
         (fn walk [ignore-node root ^File f]
           (check-interrupt!)
           (cond (and (not is_hidden) (.isHidden f)) []
-                (and is_respect_gitignore (ignored? ignore-node f root)) []
+                (and is_respect_gitignore (search-excluded? ignore-node search-overlay f root)) []
                 (.isDirectory f) (mapcat #(walk ignore-node root %)
                                          (or (.listFiles f) (into-array File [])))
                 (and (.isFile f) (include-file? f)) [f]
@@ -2218,7 +2305,11 @@
              ;; the caller opted OUT of gitignore, OR when a tool-only
              ;; `.ignore`/`.rgignore` is present (its `!` rules re-include files fff
              ;; would never surface) — scan every walked file the matcher kept.
-             ((if (and is_respect_gitignore (not (some gitignore/tool-ignore-present? roots)))
+             ;; …and skip fff when the `:search` overlay is active, for the same
+             ;; reason: its gitignore-honoring index would re-drop the re-included files.
+             ((if (and is_respect_gitignore
+                       (nil? search-overlay)
+                       (not (some gitignore/tool-ignore-present? roots)))
                 (fn [fs]
                   (rg-fff-candidate-files roots needles fs))
                 identity)))]
@@ -2252,7 +2343,8 @@
                         (check-interrupt!)
                         (if @capped?
                           (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
-                              (when (>= (long (swap! probed-extra inc)) (long rg-breadth-probe-limit))
+                              (when (>= (long (swap! probed-extra inc))
+                                        (long rg-breadth-probe-limit))
                                 (reset! breadth-capped? true)))
                           (when (file-has-any-hit? f matches?)
                             (swap! total-files inc)
@@ -2312,8 +2404,8 @@
                           (swap! out conj hit*)
                           (swap! bytes-used + (hit-bytes hit*))
                           (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
-                                (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
-                                                                       :bytes))))))))
+                                (>= (long @bytes-used) (long max-rg-result-bytes))
+                                (reset! cap-reason :bytes))))))))
               {:hits (vec @out)
                :truncated-by (or @cap-reason :end-of-results)
                :total-file-count @total-files
@@ -5288,7 +5380,9 @@
 ;; Move resolution now lives in editing.zipper/navigate (tree-aware: validates
 ;; boundaries, supports leftmost/rightmost/root + single-letter directions).
 
-(defn- zip-clip [s n] (if (and (string? s) (> (count s) (long n))) (str (subs s 0 (long n)) " …[clipped]") s))
+(defn- zip-clip
+  [s n]
+  (if (and (string? s) (> (count s) (long n))) (str (subs s 0 (long n)) " …[clipped]") s))
 
 (defn- zip-shape
   ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
