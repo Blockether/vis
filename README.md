@@ -22,7 +22,7 @@ Then confirm:
 vis help
 ```
 
-Prereqs: `git`, `java` 21+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. Building the native binary locally needs Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
+Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. Building the native binary locally needs Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
 
 ## What `vis` runs
 
