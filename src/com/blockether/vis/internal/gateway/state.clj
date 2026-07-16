@@ -103,7 +103,7 @@
        (let [{:keys [ms len] :or {len 0}} (get last-emit phase)]
          ;; No prior record => FIRST frame of this phase: always emit (nil ms).
          (and (some? ms)
-              (< (- (long now) (long ms)) DELTA_TIME_CAP_MS)
+              (< (- (long now) (long ms)) (long DELTA_TIME_CAP_MS))
               (not (sentence-closed-in-suffix? (delta-text chunk) len))))))
 
 ;; sid (UUID) -> {:next-seq long
@@ -132,7 +132,7 @@
 (defn- trim-ring
   [events]
   (let [n (count events)]
-    (if (> n EVENT_RING_MAX) (subvec events (- n EVENT_RING_MAX)) events)))
+    (if (> n (long EVENT_RING_MAX)) (subvec events (- n (long EVENT_RING_MAX))) events)))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. A sink that throws is
@@ -171,7 +171,7 @@
        sid
        (fn [entry]
          (let [entry (or entry (fresh-entry sid))
-               n (inc (:next-seq entry 0))
+               n (inc (long (:next-seq entry 0)))
                event
                (merge
                  {:schema 1 :seq n :ts (System/currentTimeMillis) :session_id (str sid) :type type}
@@ -237,7 +237,7 @@
         (fn [entry]
           (if entry
             (let [n
-                  (inc (:next-seq entry 0))
+                  (inc (long (:next-seq entry 0)))
 
                   ev
                   (assoc event :seq n)]
@@ -304,7 +304,7 @@
       sid
       (fn [entry]
         (let [entry (or entry (fresh-entry sid))]
-          (vreset! replay (filterv #(> (:seq %) (or cursor 0)) (:events entry)))
+          (vreset! replay (filterv #(> (long (:seq %)) (long (or cursor 0))) (:events entry)))
           (assoc-in entry [:subscribers sub-id] sink))))
     ;; Lazy daemon-boot auto-resume: a client just attached, so re-run its
     ;; orphaned turn if one was staged at boot (no-op otherwise).
@@ -325,7 +325,7 @@
    `turn.started` seq so its SSE reconnect can replay the WHOLE in-flight
    turn instead of only what happens after connect."
   [sid cursor]
-  (filterv #(> (:seq %) (or cursor 0)) (get-in @registry [sid :events] [])))
+  (filterv #(> (long (:seq %)) (long (or cursor 0))) (get-in @registry [sid :events] [])))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the
@@ -810,7 +810,7 @@
              (or (= (str (:answer_md live)) (str (:answer-markdown row)))
                  (str/blank? (str (:answer_md live))))
              (if-let [created (date->ms (:created-at row))]
-               (>= created (long (or (:started_at live) 0)))
+               (>= (long created) (long (or (:started_at live) 0)))
                true)))))
 
 (defn get-turn
@@ -880,7 +880,7 @@
                         (or (= :running (:status row))
                             (when-let [d (:created-at row)]
                               (and (instance? java.util.Date d)
-                                   (>= (.getTime ^java.util.Date d) run-start)))))))
+                                   (>= (.getTime ^java.util.Date d) (long run-start))))))))
 
         persisted-rows
         (try (->> (persistance/db-list-session-turns (lp/db-info) sid)
@@ -1605,7 +1605,8 @@
                           (string? user-request)
                           (not (str/blank? user-request))
                           (lp/by-id session-id)
-                          (< (trailing-interrupted-count session-id) MAX_AUTO_RESUME_ATTEMPTS)))
+                          (< (long (trailing-interrupted-count session-id))
+                             (long MAX_AUTO_RESUME_ATTEMPTS))))
             orphans))]
 
     ;; Clean the stale :running flags exactly as the plain sweep did.
@@ -1627,7 +1628,8 @@
                             (string? request)
                             (not (str/blank? request))
                             (lp/by-id session-id)
-                            (< (trailing-interrupted-count session-id) MAX_AUTO_RESUME_ATTEMPTS)))
+                            (< (long (trailing-interrupted-count session-id))
+                               (long MAX_AUTO_RESUME_ATTEMPTS))))
               queued))]
 
       (doseq [{:keys [session-id request]} queued-eligible]
@@ -1928,7 +1930,7 @@
                       (if (and (= "running" (:status turn)) (:cancel-token turn))
                         (do (try (cancellation/cancel! (:cancel-token turn))
                                  (catch Throwable _ nil))
-                            (inc n))
+                            (inc (long n)))
                         n))
                     n
                     (vals (:turns sess))))
