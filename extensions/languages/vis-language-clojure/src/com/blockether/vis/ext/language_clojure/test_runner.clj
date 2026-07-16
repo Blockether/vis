@@ -30,7 +30,10 @@
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each requested namespace, selecting
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
-   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath."
+   granularity. An :only entry matches either the bare var name or the
+   fully-qualified ns/name form; a non-empty :only that matches NOTHING is an
+   ERROR carrying the available var names, never a silent 0/0 pass.
+   ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath."
   (quote
     (fn [nsyms sel ns-files]
       (doseq [n nsyms]
@@ -57,18 +60,44 @@
             (fn [v]
               (name (:name (meta v))))
 
+            fqname-of
+            (fn [v]
+              (str (ns-name (:ns (meta v))) "/" (name (:name (meta v)))))
+
             keep?
             (fn [v]
               (let [tags
                     (tags-of v)
 
                     nm
-                    (vname-of v)]
+                    (vname-of v)
+
+                    fqn
+                    (fqname-of v)]
 
                 (cond (some exc* tags) false
-                      (and (seq only*) (not (only* nm))) false
+                      (and (seq only*) (not (or (only* nm) (only* fqn)))) false
                       (and (seq inc*) (not (some inc* tags))) false
                       :else true)))
+
+            ;; A non-empty :only that selects NOTHING is a caller mistake
+            ;; (wrong var names) — surface it as an error listing what IS
+            ;; available instead of reporting a vacuous 0/0 pass.
+            only-miss
+            (fn [framework all]
+              (when (and (seq only*) (empty? (filter keep? all)))
+                {"framework" framework
+                 "error"
+                 (str "only " (pr-str (vec (:only sel)))
+                      " matched no test vars in [" (apply str (interpose " " (map str nsyms)))
+                      "] — available vars: " (apply str (interpose " " (sort (map fqname-of all)))))
+                 "total" 0
+                 "pass" 0
+                 "fail" 0
+                 "selected" 0
+                 "skipped" (count all)
+                 "failures" []
+                 "errors" []}))
 
             all-ct
             (mapcat (fn [n]
@@ -98,139 +127,143 @@
                       out-writer]
 
               (if (seq all-ct)
-                (let [selected
-                      (vec (filter keep? all-ct))
+                (or
+                  (only-miss "clojure.test" all-ct)
+                  (let [selected
+                        (vec (filter keep? all-ct))
 
-                      skipped
-                      (- (count all-ct) (count selected))
+                        skipped
+                        (- (count all-ct) (count selected))
 
-                      fails
-                      (atom [])
+                        fails
+                        (atom [])
 
-                      cnt
-                      (atom {:pass 0 :fail 0 :error 0})]
+                        cnt
+                        (atom {:pass 0 :fail 0 :error 0})]
 
-                  (with-redefs [clojure.test/report
-                                (fn [m]
-                                  (when (#{:fail :error :pass} (:type m))
-                                    (swap! cnt update (:type m) (fnil inc 0)))
-                                  (when (#{:fail :error} (:type m))
-                                    (let [v0 (first clojure.test/*testing-vars*)]
-                                      (swap! fails conj
-                                        {"ns" (str (:ns (meta v0)))
-                                         "test" (when v0 (str (:name (meta v0))))
-                                         "type" (name (:type m))
-                                         "message" (str (or (:message m) (:type m)))
-                                         "expected" (pr-str (:expected m))
-                                         "actual" (pr-str (:actual m))
-                                         "file" (str (:file m))
-                                         "line" (:line m)}))))]
-                    (clojure.test/test-vars selected))
-                  (let [c
-                        (clojure.core/deref cnt)
+                    (with-redefs [clojure.test/report
+                                  (fn [m]
+                                    (when (#{:fail :error :pass} (:type m))
+                                      (swap! cnt update (:type m) (fnil inc 0)))
+                                    (when (#{:fail :error} (:type m))
+                                      (let [v0 (first clojure.test/*testing-vars*)]
+                                        (swap! fails conj
+                                          {"ns" (str (:ns (meta v0)))
+                                           "test" (when v0 (str (:name (meta v0))))
+                                           "type" (name (:type m))
+                                           "message" (str (or (:message m) (:type m)))
+                                           "expected" (pr-str (:expected m))
+                                           "actual" (pr-str (:actual m))
+                                           "file" (str (:file m))
+                                           "line" (:line m)}))))]
+                      (clojure.test/test-vars selected))
+                    (let [c
+                          (clojure.core/deref cnt)
 
-                        fs
-                        (clojure.core/deref fails)]
+                          fs
+                          (clojure.core/deref fails)]
 
-                    {"framework" "clojure.test"
-                     "total" (+ (:pass c) (:fail c) (:error c))
-                     "pass" (:pass c)
-                     "fail" (+ (:fail c) (:error c))
+                      {"framework" "clojure.test"
+                       "total" (+ (:pass c) (:fail c) (:error c))
+                       "pass" (:pass c)
+                       "fail" (+ (:fail c) (:error c))
+                       "selected" (count selected)
+                       "skipped" skipped
+                       "failures" fs
+                       "errors" (vec (filter (fn [f]
+                                               (= "error" (get f "type")))
+                                             fs))})))
+                (or
+                  (only-miss "lazytest" all-lt)
+                  (let [selected
+                        (vec (filter keep? all-lt))
+
+                        skipped
+                        (- (count all-lt) (count selected))
+
+                        lt-suite
+                        (requiring-resolve (quote lazytest.suite/suite))
+
+                        run-suite
+                        (requiring-resolve (quote lazytest.runner/filter-and-run))
+
+                        var->suite
+                        (fn [v]
+                          ;; A defdescribe var derefs to a THUNK that builds the
+                          ;; suite; the older style stores it in :lazytest/test
+                          ;; metadata. Mirror lazytest.runner's own extraction.
+                          (let [m (meta v)]
+                            (if (contains? m :lazytest/test)
+                              (:lazytest/test m)
+                              (let [x (deref v)]
+                                (if (fn? x) (x) x)))))
+
+                        run-var
+                        (fn [v]
+                          ;; lazytest.runner/run-test-var DROPS the ns-level
+                          ;; :context that set-ns-context! attaches (only
+                          ;; find-ns-suite reads it), so ns fixtures such as
+                          ;; around-each never fire under per-var running.
+                          ;; Rebuild the per-var run suite WITH the ns context so
+                          ;; around-each / before-each wrappers apply. When a ns
+                          ;; has no :context this is nil -> behaves exactly like
+                          ;; run-test-var.
+                          (let [tns (the-ns (symbol (namespace (symbol v))))]
+                            (run-suite (lt-suite {:type :lazytest/run
+                                                  :nses [tns]
+                                                  :children [(var->suite v)]
+                                                  :context (:context (meta tns))})
+                                       {})))
+
+                        rseq
+                        (requiring-resolve (quote lazytest.results/result-seq))
+
+                        trees
+                        (mapv (fn [v]
+                                (run-var v))
+                              selected)
+
+                        results
+                        (mapcat rseq trees)
+
+                        leaves
+                        (filter (fn [x]
+                                  (#{:fail :error :pass} (:type x)))
+                                results)
+
+                        fails
+                        (filter (fn [x]
+                                  (#{:fail :error} (:type x)))
+                                results)
+
+                        ->fail
+                        (fn [f]
+                          {"ns" (str (:ns f))
+                           "test" (str (:doc f))
+                           "type" (name (:type f))
+                           "message" (let [m (:message f)]
+                                       (cond (seq (str m)) (str m)
+                                             (:thrown f) (str (.getMessage (:thrown f)))
+                                             :else (str "expected " (pr-str (:expected f))
+                                                        " actual " (pr-str (:actual f)))))
+                           "expected" (pr-str (:expected f))
+                           "actual" (pr-str (:actual f))
+                           "file" (str (:file f))
+                           "line" (:line f)})]
+
+                    {"framework" "lazytest"
+                     "total" (count leaves)
+                     "pass" (count (filter (fn [x]
+                                             (= :pass (:type x)))
+                                           results))
+                     "fail" (count fails)
                      "selected" (count selected)
                      "skipped" skipped
-                     "failures" fs
-                     "errors" (vec (filter (fn [f]
-                                             (= "error" (get f "type")))
-                                           fs))}))
-                (let [selected
-                      (vec (filter keep? all-lt))
-
-                      skipped
-                      (- (count all-lt) (count selected))
-
-                      lt-suite
-                      (requiring-resolve (quote lazytest.suite/suite))
-
-                      run-suite
-                      (requiring-resolve (quote lazytest.runner/filter-and-run))
-
-                      var->suite
-                      (fn [v]
-                        ;; A defdescribe var derefs to a THUNK that builds the
-                        ;; suite; the older style stores it in :lazytest/test
-                        ;; metadata. Mirror lazytest.runner's own extraction.
-                        (let [m (meta v)]
-                          (if (contains? m :lazytest/test)
-                            (:lazytest/test m)
-                            (let [x (deref v)]
-                              (if (fn? x) (x) x)))))
-
-                      run-var
-                      (fn [v]
-                        ;; lazytest.runner/run-test-var DROPS the ns-level
-                        ;; :context that set-ns-context! attaches (only
-                        ;; find-ns-suite reads it), so ns fixtures such as
-                        ;; around-each never fire under per-var running.
-                        ;; Rebuild the per-var run suite WITH the ns context so
-                        ;; around-each / before-each wrappers apply. When a ns
-                        ;; has no :context this is nil -> behaves exactly like
-                        ;; run-test-var.
-                        (let [tns (the-ns (symbol (namespace (symbol v))))]
-                          (run-suite (lt-suite {:type :lazytest/run
-                                                :nses [tns]
-                                                :children [(var->suite v)]
-                                                :context (:context (meta tns))})
-                                     {})))
-
-                      rseq
-                      (requiring-resolve (quote lazytest.results/result-seq))
-
-                      trees
-                      (mapv (fn [v]
-                              (run-var v))
-                            selected)
-
-                      results
-                      (mapcat rseq trees)
-
-                      leaves
-                      (filter (fn [x]
-                                (#{:fail :error :pass} (:type x)))
-                              results)
-
-                      fails
-                      (filter (fn [x]
-                                (#{:fail :error} (:type x)))
-                              results)
-
-                      ->fail
-                      (fn [f]
-                        {"ns" (str (:ns f))
-                         "test" (str (:doc f))
-                         "type" (name (:type f))
-                         "message" (let [m (:message f)]
-                                     (cond (seq (str m)) (str m)
-                                           (:thrown f) (str (.getMessage (:thrown f)))
-                                           :else (str "expected " (pr-str (:expected f))
-                                                      " actual " (pr-str (:actual f)))))
-                         "expected" (pr-str (:expected f))
-                         "actual" (pr-str (:actual f))
-                         "file" (str (:file f))
-                         "line" (:line f)})]
-
-                  {"framework" "lazytest"
-                   "total" (count leaves)
-                   "pass" (count (filter (fn [x]
-                                           (= :pass (:type x)))
-                                         results))
-                   "fail" (count fails)
-                   "selected" (count selected)
-                   "skipped" skipped
-                   "failures" (mapv ->fail fails)
-                   "errors" (mapv ->fail
-                                  (filter (fn [x]
-                                            (= :error (:type x)))
-                                          results))})))]
+                     "failures" (mapv ->fail fails)
+                     "errors" (mapv ->fail
+                                    (filter (fn [x]
+                                              (= :error (:type x)))
+                                            results))}))))]
 
         (assoc result "output" (clojure.core/str out-writer))))))
 
@@ -456,27 +489,29 @@
   (let [lines (str/split-lines (strip-ansi (or s "")))]
     (str/join "\n" (take-last 40 lines))))
 (defn- lazytest-selector-args
-  "Translate normalized selectors into lazytest.main CLI flags.\n   When :only is specified, uses --var for precise targeting (cross-product\n   of nses x only names); otherwise uses --namespace for ns-level filtering.\n   --include and --exclude are always passed when present."
+  "Translate normalized selectors into lazytest.main CLI flags.
+   When :only is specified, uses --var for precise targeting: an entry already
+   fully qualified (contains /) passes through as-is, a bare name is
+   cross-producted over nses; otherwise uses --namespace for ns-level filtering.
+   --include and --exclude are always passed when present."
   [{:keys [nses only include exclude]}]
   (vec
     (concat (if (seq only)
-              (mapcat (fn [[ns vname]]
-                        ["--var" (str ns "/" vname)])
-                      (for [ns
-                            nses
-
-                            vname
-                            only]
-
-                        [ns vname]))
+              (mapcat (fn [o]
+                        (if (str/includes? (str o) "/")
+                          ["--var" (str o)]
+                          (mapcat (fn [ns]
+                                    ["--var" (str ns "/" o)])
+                                  nses)))
+                      only)
               (mapcat (fn [ns]
-                        ["--namespace" ns])
+                        ["--namespace" (str ns)])
                       nses))
-            (mapcat (fn [tag]
-                      ["--include" tag])
+            (mapcat (fn [t]
+                      ["--include" (str t)])
                     include)
-            (mapcat (fn [tag]
-                      ["--exclude" tag])
+            (mapcat (fn [t]
+                      ["--exclude" (str t)])
                     exclude))))
 
 (defn- lazytest-cli?
