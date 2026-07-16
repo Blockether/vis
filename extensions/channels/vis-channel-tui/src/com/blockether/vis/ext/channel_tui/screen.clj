@@ -5594,22 +5594,32 @@
                          ;; with no turn running falls through to nil and
                          ;; the TUI exits as before.
                          (let [db @state/app-db]
-                           (cond (:loading? db) (do (state/dispatch [:cancel-turn]) (recur))
-                                 (state/any-background-loading? db)
-                                 (let [n (count (state/background-loading-tokens db))
-                                       ok? (with-dialog-lock #(dlg/confirm-dialog!
-                                                                screen
-                                                                "Abort running tasks?"
-                                                                [(str n
-                                                                      " background task"
-                                                                      (when (> n 1) "s")
-                                                                      " still running in other tab"
-                                                                      (when (> n 1) "s")
-                                                                      ".")
-                                                                 "Abort them and quit?"]))]
+                           (cond
+                             ;; First Ctrl+C on a live turn cancels it (the user's only
+                             ;; escape hatch from a stuck iteration) instead of orphaning
+                             ;; the worker. But once a cancel is ALREADY pending
+                             ;; (`:cancelling?`, e.g. after an Esc), `:loading?` stays true
+                             ;; until the daemon's terminal event lands — so re-firing
+                             ;; cancel-turn here just re-arms and recurs, and the TUI never
+                             ;; quits ("I hit Ctrl+C and it won't die"). A Ctrl+C while a
+                             ;; cancel is in flight means "get me out": quit now and let
+                             ;; teardown fire the cancel token.
+                             (and (:loading? db) (not (:cancelling? db)))
+                             (do (state/dispatch [:cancel-turn]) (recur))
+                             (state/any-background-loading? db)
+                             (let [n (count (state/background-loading-tokens db))
+                                   ok? (with-dialog-lock #(dlg/confirm-dialog!
+                                                            screen
+                                                            "Abort running tasks?"
+                                                            [(str n
+                                                                  " background task"
+                                                                  (when (> n 1) "s")
+                                                                  " still running in other tab"
+                                                                  (when (> n 1) "s")
+                                                                  ".") "Abort them and quit?"]))]
 
-                                   (if ok? (do (state/dispatch [:cancel-all-turns]) nil) (recur)))
-                                 :else nil))
+                               (if ok? (do (state/dispatch [:cancel-all-turns]) nil) (recur)))
+                             :else nil))
 
                          :clear-input
                          ;; Priority order while a turn is loading:
