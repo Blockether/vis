@@ -5714,6 +5714,17 @@
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
                                                             (recur))
                            (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
+                           ;; Not loading, but a queued backlog is draining into the
+                           ;; gateway: Esc DROPS the whole queue (the user's "get rid
+                           ;; of it" escape hatch) rather than silently clearing only
+                           ;; the draft while the queue keeps auto-draining.
+                           (seq (:pending-sends @state/app-db))
+                           (let [n (count (:pending-sends @state/app-db))]
+                             (state/dispatch [:clear-pending-sends])
+                             (vis/notify! (str "Cleared " n " queued message" (when (> n 1) "s"))
+                                          :level :info
+                                          :ttl-ms copy-success-ttl-ms)
+                             (recur))
                            (get-in @state/app-db [:search :active?])
                            (do
                              (state/dispatch [:search-clear])
@@ -5983,13 +5994,22 @@
                            (recur))
 
                          :cancel
-                         (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help])
-                                                               (recur))
-                               (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
-                                                                (recur))
-                               :else (do (when (:loading? @state/app-db)
-                                           (state/dispatch [:cancel-turn]))
-                                         (recur)))
+                         (cond
+                           (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
+                           (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
+                                                            (recur))
+                           (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
+                           ;; Not loading but a queued backlog is draining: Esc
+                           ;; drops the whole queue instead of no-op'ing while the
+                           ;; queue auto-drains into the gateway.
+                           (seq (:pending-sends @state/app-db))
+                           (let [n (count (:pending-sends @state/app-db))]
+                             (state/dispatch [:clear-pending-sends])
+                             (vis/notify! (str "Cleared " n " queued message" (when (> n 1) "s"))
+                                          :level :info
+                                          :ttl-ms copy-success-ttl-ms)
+                             (recur))
+                           :else (recur))
 
                          ;; PageUp / M-v (Emacs `scroll-down-command`): a FULL screen
                          ;; back, keeping 2 lines of context overlap (Emacs's
