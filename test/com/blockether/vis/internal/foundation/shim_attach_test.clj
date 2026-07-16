@@ -69,6 +69,42 @@
         (expect (nil? (:error out)))
         (expect (= "image/png" (:media-type att)))
         (expect (= "image" (:kind att)))))
+  (it
+    "emits a vis-image display fence (host temp path + dims) for a decodable image"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       ;; a real 1x1 PNG so the host ImageIO decode yields dimensions
+       out
+       (block
+         pctx
+         (str
+           "import base64\n"
+           "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
+           "vis_attach_bytes(png, 'dot.png')\n"))
+
+       so
+       (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      ;; the fence a graphical TUI/web reads to paint the image inline
+      (expect (re-find #"vis-image" so))
+      (expect (re-find #"1x1" so))
+      ;; the header carries a readable HOST path under the vis-attach temp dir
+      (expect (re-find #"vis-attach" so))
+      ;; and the bytes are still captured for the vision-replay path
+      (expect (= "image/png" (:media-type (first (:attachments out)))))))
+  (it "records a non-decodable image (svg) with NO display fence"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (block pctx "vis_attach_bytes('<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
+
+        (expect (nil? (:error out)))
+        (expect (not (re-find #"vis-image" (str (:stdout out)))))
+        (expect (= "image/svg+xml" (:media-type (first (:attachments out)))))))
   (it "falls back to text/plain for undecorated utf-8 bytes"
       (let [pctx
             (ctx-with-root (temp-root))
