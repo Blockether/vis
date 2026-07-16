@@ -522,7 +522,8 @@
     "Each live connection is a session RESOURCE (footer count, F4 dialog, resource_stop(\"mcp:<server>\")).\n"
     "Connected servers + tool counts also ride in ctx under ctx[\"env\"][\"mcp\"][\"servers\"].\n"
     "Workflow: mcp__servers() to see what's there → mcp__tools(server) to learn a tool's input_schema →\n"
-    "mcp__call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"]."))
+    "mcp__call(server, tool, {...}) to invoke it. Read text results via content[i][\"text\"].\n"
+    "Results come back to you IN FULL — filter / shape them in python_execution (content is a list: loop, slice, json.loads a text block), never paste a raw tool dump back."))
 
 (defn- activation-fn
   "Active when at least one MCP server is configured."
