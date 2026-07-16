@@ -2434,13 +2434,16 @@
                          str
                          str/trim
                          not-empty)
+               note (priced base)
                intent (cond-> base
                         g
-                        (assoc "gist" g))]
+                        (assoc "gist" g)
+                        (not (str/blank? note))
+                        (assoc "note" note))]
 
            (record! intent)
            (tel/log! {:level :info :id ::session-fold :data {:intent intent}} "model folded scopes")
-           (str "folded " label (priced base) (when g (str " → " g))))
+           (str "folded " label note (when g (str " → " g))))
          (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
               "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
               "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}")))}))
@@ -2490,7 +2493,8 @@
                         (fnil conj [])
                         {:gist (get s "gist")
                          :drop? (get s "drop")
-                         :summary-iters (vec (sort (get s "scopes")))})
+                         :summary-iters (vec (sort (get s "scopes")))
+                         :note (get s "note")})
                 m))
             {}
             summaries)]
@@ -2510,7 +2514,8 @@
                                         :summary? true
                                         :summary-gist (:gist g)
                                         :summary-drop? (:drop? g)
-                                        :summary-iters (:summary-iters g)})
+                                        :summary-iters (:summary-iters g)
+                                        :summary-note (:note g)})
                                      gists))]
 
                          [pos
@@ -2702,12 +2707,16 @@
                         (or (ctx-engine/pretty-scopes (:summary-iters f) nil)
                             (str/join "," (:summary-iters f)))
 
+                        note
+                        (:summary-note f)
+
                         g
                         (:summary-gist f)]
 
                     (str "# ⋯ "
                          (if (:summary-drop? f) "dropped " "folded ")
                          at
+                         note
                          (when g (str " · " g))))))
               forms)
 
