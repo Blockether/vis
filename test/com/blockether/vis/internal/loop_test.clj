@@ -312,8 +312,9 @@
                           :reset-stream-state! (fn [])}
                          (fn []
                            (if (<= (swap! calls inc) 3)
-                             (throw (ex-info "Stream TTFT timeout (60000ms with no response headers)"
-                                             {:type :http-error :stream? true}))
+                             (throw (ex-info
+                                      "Stream TTFT timeout (60000ms with no response headers)"
+                                      {:type :http-error :stream? true}))
                              {:routed/trace []})))]
             (expect (= 4 @calls))
             (expect (= [1 2 3]
@@ -2498,7 +2499,6 @@
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
         (expect (= {:pos ["path"]} (get real-call-shapes "file_exists")))
         (expect (fn? (get real-call-shapes "patch")))
-        (expect (fn? (get real-call-shapes "ls")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code"))))
     (it "a tool with NO :call gets the generic whole-dict call"
@@ -2561,12 +2561,6 @@
         (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
         (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
-    (it "ls forces a leading path when opts are present (escape hatch)"
-        (expect (= "ls()" (synth {:name "ls" :input {}})))
-        (expect (= "ls(\"src\")" (synth {:name "ls" :input {"path" "src"}})))
-        (expect (= "ls(\"src\", {\"depth\": 2})"
-                   (synth {:name "ls" :input {"path" "src" "depth" 2}})))
-        (expect (= "ls(\".\", {\"depth\": 2})" (synth {:name "ls" :input {"depth" 2}}))))
     (it "patch carries a single-file top-level path through (escape hatch)"
         (expect (= "patch([{\"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch" :input {"edits" [{"from_anchor" "1:a"}]}})))
@@ -2631,7 +2625,6 @@
         {"cat" :observation
          "rg" :observation
          "find_files" :observation
-         "ls" :observation
          "outline" :observation
          "occurrences" :observation
          "file_exists" :observation

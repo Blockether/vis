@@ -74,7 +74,7 @@
    cardinality are the regression signal."
   []
   (let [ops
-        (vec (take 304 (cycle [:cat :cat :ls :patch :z/locators :rg])))
+        (vec (take 304 (cycle [:cat :cat :outline :patch :z/locators :rg])))
 
         huge
         (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
@@ -92,7 +92,7 @@
                      :z/locators
                      huge
 
-                     :ls
+                     :outline
                      "directory listing"
 
                      :patch
@@ -105,7 +105,7 @@
            :kind (if (= op :cat) :preview :tool)
            :detail {:op op
                     :tag (case op
-                           (:cat :z/locators :rg :ls)
+                           (:cat :z/locators :rg :outline)
                            :observation
 
                            :patch
