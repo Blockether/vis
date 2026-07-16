@@ -27,16 +27,19 @@ jobs:
   native:
     name: native / ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  bin: target/vis,     asset: vis-linux-x64 }
-          # macos-15-xlarge: arm64 larger runner (14 GB RAM). The default
-          # macos-latest (M1, 7 GB) deadlocks the native-image builder because
-          # GraalPy forces -Xms14g — 7 GB swaps into a DeadlockWatchdog kill.
-          - { os: macos-15-xlarge, bin: target/vis,     asset: vis-macos-arm64 }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64, extra_args: '' }
+          # macos-15: FREE Apple-silicon runner (M1, 7 GB). The paid macos-15-xlarge
+          # (14 GB) is blocked by the org spending limit, so free runners are the only
+          # option. GraalPy forces -Xms14g, which on a 7 GB host swaps into a
+          # DeadlockWatchdog kill — so VIS_NATIVE_EXTRA_ARGS overrides the heap
+          # (-Xmx6g/-Xms1g), and the -Os + interpreter-only build (DefaultTruffleRuntime,
+          # no Truffle JIT) keeps the analysis footprint low enough to fit via swap.
+          - { os: macos-15, bin: target/vis, asset: vis-macos-arm64, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
     steps:
       - uses: actions/checkout@v6
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
@@ -60,6 +63,8 @@ jobs:
       # The full agent: all channels + voice ASR. The voice model is NOT embedded
       # (no :with-assets) — it downloads on first use, so the binary stays lean.
       - name: Build native image
+        env:
+          VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
         run: clojure -T:build native :profile :voice
       - name: Stage asset
         shell: bash
