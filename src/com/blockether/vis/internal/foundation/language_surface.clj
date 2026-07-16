@@ -802,15 +802,6 @@
      :before-fn inject-env
      :tag :observation}))
 
-(def ^:private repl-startup-budget-ms
-  "Extra wall-clock room ADDED to repl_eval/run_tests' outer timeout so a COLD
-   project REPL/runtime boot (a language pack's autostart, which may take up to
-   ~2 min: deps resolve + JVM boot + namespace compile) fits under the deadline
-   instead of racing the eval `timeout_ms`. Without it a default 30 s wall kills
-   the boot before the eval runs. See runtime-settings/native-tool-timeout-ms and
-   the clojure pack's `start-deadline-ms` (120 s)."
-  150000)
-
 (def test-symbol
   (vis/symbol
     #'run-tests
@@ -821,7 +812,6 @@
      ;; directly in Clojure so the language pack's own timeout budget wins.
      :handler (fn [env input]
                 (run-tests env input))
-     :startup-budget-ms repl-startup-budget-ms
      :render render-test-result
      :color-role :tool-color/test
      :schema
@@ -869,7 +859,6 @@
      ;; run_tests above).
      :handler (fn [env input]
                 (repl-eval env input))
-     :startup-budget-ms repl-startup-budget-ms
      :render render-repl-eval-result
      :color-role :tool-color/shell
      :schema
