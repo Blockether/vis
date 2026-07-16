@@ -287,6 +287,13 @@
    `[[sid cursor] …]` keeping only sids that resolve to a live soul, so a
    stale/unknown sid can't wedge the whole fan-out.
 
+   Each sid is parsed to a `java.util.UUID` — the SAME key type `path-sid`
+   hands every other route — because the gateway registry is UUID-keyed. A
+   string sid here registered the SSE sink under a GHOST string entry: idle
+   tabs never received queue/turn events, and the lazy daemon-boot
+   auto-resume (`subscribe!` -> `maybe-resume-pending!`) never fired on tab
+   open — only on the next submit, whose handler parses the sid properly.
+
    When the request carries a `Last-Event-ID` header AND resolves to exactly
    ONE sid, that header overrides the sole sid's cursor. This lets a NATIVE
    EventSource (browser / react-native-sse) whose reconnect carries only a
@@ -302,9 +309,10 @@
             (->> (str/split raw #",")
                  (keep (fn [tok]
                          (let [[sid c] (str/split (str/trim tok) #":" 2)
-                               sid (str/trim (str sid))]
+                               sid (some-> (str/trim (str sid))
+                                           parse-uuid)]
 
-                           (when (and (seq sid) (state/soul sid))
+                           (when (and sid (state/soul sid))
                              [sid
                               (or (some-> c
                                           str/trim
@@ -363,7 +371,10 @@
                (doseq [[sid cursor] sid+cursors]
                  ;; seed the guard at the requested cursor BEFORE registering the
                  ;; live sink, so a live event racing replay still dedups cleanly.
-                 (swap! last-seqs assoc sid (long cursor))
+                 ;; `sid` is a UUID (parse-multi-sids); events demux by the
+                 ;; STRING :session_id, so seed the dedup guard under the
+                 ;; string key `write!` reads back.
+                 (swap! last-seqs assoc (str sid) (long cursor))
                  (doseq [event (state/subscribe! sid sub-id write! cursor)]
                    (write! event)))
                (loop []

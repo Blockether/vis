@@ -1944,6 +1944,32 @@
         :not-queued
         {:error :not-queued :status status}))))
 
+(defn- persist-cancel-stamp!
+  "Durably mark `sid`'s in-flight ENGINE turn row `:cancelled` the moment a
+   user cancel fires. The engine's own unwind persists the full cancel record
+   when it survives — but the documented quit-during-cancel path (second
+   Ctrl+C fires the token and exits immediately) can kill the JVM first,
+   leaving the row `:running`; daemon-boot auto-resume then staged it as a
+   crash orphan and RE-RAN the very turn the user stopped. Stamping BEFORE
+   the token fires makes the cancel durable even when nothing else ever gets
+   to run. The engine's later terminal write (same row) simply overwrites
+   this with the full record. Best-effort: cancellation must never block on
+   persistence, so every failure is logged and swallowed."
+  [sid]
+  (try (let [db (lp/db-info)]
+         (doseq [{:keys [id status iteration-count duration-ms]}
+                 (persistance/db-list-session-turns db sid)
+                 :when (= :running status)]
+
+           (persistance/db-update-session-turn! db
+                                                id
+                                                {:status :cancelled
+                                                 :prior-outcome :cancelled
+                                                 :iteration-count iteration-count
+                                                 :duration-ms duration-ms})))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: cancel stamp persist failed" (str sid) (ex-message t)]))))
+
 (defn cancel-turn!
   "Fire the cancellation token of a running turn. Returns
    `{:status \"cancelling\"}` or `{:error ...}`."
@@ -1957,6 +1983,10 @@
               ;; them: "stop that, run THIS") from the pre-cancel backlog
               ;; (leave queued) — see `queued-after-cancel?`.
             (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
+            ;; Durable twin of the stamp above: a JVM death mid-unwind must
+            ;; not leave the engine row `:running` (it would resurrect via
+            ;; daemon-boot auto-resume).
+            (persist-cancel-stamp! sid)
             (some-> (:cancel-token turn)
                     cancellation/cancel!)
             {:status "cancelling"}))))

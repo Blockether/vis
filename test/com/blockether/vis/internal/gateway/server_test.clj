@@ -266,25 +266,46 @@
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
 
 (deftest parse-multi-sids-parses-and-filters
-  (testing "sid[:cursor] comma list — cursor defaults to 0, unknown sids dropped"
-    (with-redefs-fn {#'state/soul (fn [sid]
-                                    (contains? #{"a" "b"} sid))}
-      (fn []
-        (let [parse (rv 'parse-multi-sids)]
-          (is (= [["a" 10] ["b" 0]] (parse {:query-params {"sids" "a:10, b , zzz:3"}})))
-          (is (nil? (parse {:query-params {}})))
-          (is (nil? (parse {:query-params {"sids" ""}})))
-          (testing "Last-Event-ID overrides the cursor for the SINGLE-sid case (native reconnect)"
-            (is (= [["a" 42]]
-                   (parse {:query-params {"sids" "a:0"} :headers {"last-event-id" "42"}})))
-            (is (= [["a" 7]] (parse {:query-params {"sids" "a"} :headers {"last-event-id" "7"}}))))
-          (testing
-            "Last-Event-ID is IGNORED for multi-sid (one header can't resume N per-session seqs)"
-            (is (= [["a" 10] ["b" 0]]
-                   (parse {:query-params {"sids" "a:10,b"} :headers {"last-event-id" "42"}}))))
-          (testing "a non-numeric Last-Event-ID is ignored"
-            (is (= [["a" 3]]
-                   (parse {:query-params {"sids" "a:3"} :headers {"last-event-id" ""}})))))))))
+  (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
+    (let [sid-a
+          (java.util.UUID/randomUUID)
+
+          sid-b
+          (java.util.UUID/randomUUID)
+
+          a
+          (str sid-a)
+
+          b
+          (str sid-b)]
+
+      (with-redefs-fn {#'state/soul (fn [sid]
+                                      (contains? #{sid-a sid-b} sid))}
+        (fn []
+          (let [parse (rv 'parse-multi-sids)]
+            ;; sids are parsed to java.util.UUID — the registry's key type
+            ;; (path-sid parity). A string key registered a ghost registry
+            ;; entry: deaf idle tabs + boot auto-resume never firing on open.
+            (is (= [[sid-a 10] [sid-b 0]]
+                   (parse {:query-params {"sids" (str a ":10, " b " , zzz:3")}})))
+            (is (nil? (parse {:query-params {}})))
+            (is (nil? (parse {:query-params {"sids" ""}})))
+            (testing "a syntactically valid but UNKNOWN UUID is dropped"
+              (is (= [] (parse {:query-params {"sids" (str (java.util.UUID/randomUUID))}}))))
+            (testing "Last-Event-ID overrides the cursor for the SINGLE-sid case (native reconnect)"
+              (is (= [[sid-a 42]]
+                     (parse {:query-params {"sids" (str a ":0")} :headers {"last-event-id" "42"}})))
+              (is (= [[sid-a 7]]
+                     (parse {:query-params {"sids" a} :headers {"last-event-id" "7"}}))))
+            (testing
+              "Last-Event-ID is IGNORED for multi-sid (one header can't resume N per-session seqs)"
+              (is (= [[sid-a 10] [sid-b 0]]
+                     (parse {:query-params {"sids" (str a ":10," b)}
+                             :headers {"last-event-id" "42"}}))))
+            (testing "a non-numeric Last-Event-ID is ignored"
+              (is (= [[sid-a 3]]
+                     (parse {:query-params {"sids" (str a ":3")}
+                             :headers {"last-event-id" ""}}))))))))))
 
 (deftest multi-sse-fans-many-sessions-down-one-stream
   (testing
