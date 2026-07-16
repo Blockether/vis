@@ -94,7 +94,7 @@
 ;; while the launcher is STILL ALIVE — a dead launcher short-circuits to a
 ;; :failed result in ≤ ~250ms via `wait-until-up` — so it can be generous
 ;; enough for a cold-cache deps resolve without making real failures slow.
-(def ^:private start-deadline-ms 120000)
+(def ^:private ^:const start-deadline-ms 120000)
 
 (defn- booting?
   "True when `info`'s process is alive and still inside its cold-boot window
@@ -104,7 +104,7 @@
   [info]
   (boolean (and (proc-alive? info)
                 (:started-at info)
-                (< (- (System/currentTimeMillis) (:started-at info)) start-deadline-ms))))
+                (< (- (System/currentTimeMillis) (long (:started-at info))) start-deadline-ms))))
 
 (defn- health-probe-ms
   "How long to wait for a recorded REPL to answer a describe before judging it
@@ -112,7 +112,7 @@
    slow legit boot is never killed mid-flight); anything else gets a short grace."
   [info]
   (if (booting? info)
-    (max 5000 (- start-deadline-ms (- (System/currentTimeMillis) (:started-at info))))
+    (max 5000 (- start-deadline-ms (- (System/currentTimeMillis) (long (:started-at info)))))
     5000))
 
 (def ^:private default-aliases
@@ -535,7 +535,7 @@
    one wedged stop never blocks reaping the rest. The session's resource mirror
    self-prunes once `stop!` drops the process (its `:alive-fn` flips to false)."
   []
-  (when (pos? idle-reap-ms)
+  (when (pos? (long idle-reap-ms))
     (let [now
           (System/currentTimeMillis)
 
@@ -544,8 +544,8 @@
                 @processes
 
                 :let [t
-                      (or (:last-touch info) (:started-at info) 0)]
-                :when (> (- now t) idle-reap-ms)]
+                      (long (or (:last-touch info) (:started-at info) 0))]
+                :when (> (- now t) (long idle-reap-ms))]
 
             [sid dir])]
 
@@ -557,7 +557,7 @@
    a no-op when idle reaping is disabled (`idle-reap-ms` <= 0). The thread is a
    daemon so it never keeps the JVM alive on shutdown."
   []
-  (when (and (pos? idle-reap-ms) (compare-and-set! reaper nil ::starting))
+  (when (and (pos? (long idle-reap-ms)) (compare-and-set! reaper nil ::starting))
     (let [t (Thread. ^Runnable
                      (fn []
                        (loop []

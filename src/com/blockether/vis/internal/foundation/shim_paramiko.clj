@@ -113,7 +113,7 @@
       (loop []
 
         (cond (.isClosed ch) nil
-              (and deadline (> (System/currentTimeMillis) deadline))
+              (and deadline (> (System/currentTimeMillis) (long deadline)))
               (do (.disconnect ch) (throw (ex-info "SSH command timed out." {})))
               :else (do (Thread/sleep 15) (recur)))))
     (let [status (.getExitStatus ch)]

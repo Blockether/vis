@@ -109,7 +109,7 @@
                 (apply str
                   (for [x (range w)]
                     (let [top? (.get matrix x y)
-                          bot? (and (< (inc y) h) (.get matrix x (inc y)))]
+                          bot? (and (< (inc (long y)) h) (.get matrix x (inc (long y))))]
 
                       (cond (and top? bot?) "█"
                             top? "▀"

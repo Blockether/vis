@@ -107,10 +107,10 @@
         (long seconds)
 
         day?
-        (zero? (mod seconds (* 24 60 60)))
+        (zero? (long (mod seconds (* 24 60 60))))
 
         hour?
-        (zero? (mod seconds (* 60 60)))
+        (zero? (long (mod seconds (* 60 60))))
 
         [unit size suffix]
         (cond day? [:day (quot seconds (* 24 60 60)) "d"]

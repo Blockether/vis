@@ -75,7 +75,7 @@
   "Persisted OAuth token file."
   (str (System/getProperty "user.home") "/.vis/github-copilot-auth.json"))
 
-(def ^:private REFRESH_MARGIN_MS
+(def ^:private ^:const REFRESH_MARGIN_MS
   "Refresh the Copilot API token 5 minutes before expiry."
   (* 5 60 1000))
 
@@ -412,7 +412,7 @@
    recovery loop, trusting `expires_at`, re-serves/re-mints it forever without
    converging. Falls back to `expires_at - REFRESH_MARGIN_MS` for caches minted
    before `:refresh-at-ms` existed."
-  [cached account-type now]
+  [cached account-type ^long now]
   (let [hard
         (long (or (:expires-at-ms cached) 0))
 
@@ -520,7 +520,7 @@
                                :account-type account-type))
          (tel/log! {:level :info
                     :id ::copilot-token-refreshed
-                    :data {:expires-in-ms (- (:expires-at-ms fresh) now)
+                    :data {:expires-in-ms (- (long (:expires-at-ms fresh)) now)
                            :api-url (:api-url fresh)
                            :account-type account-type}
                     :msg "Copilot API token refreshed"})
@@ -567,8 +567,8 @@
             (:token cached)
             (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
        (assoc :copilot-token-valid?
-         (> (:expires-at-ms cached) now) :expires-in-ms
-         (- (:expires-at-ms cached) now) :api-url
+         (> (long (:expires-at-ms cached)) now) :expires-in-ms
+         (- (long (:expires-at-ms cached)) now) :api-url
          (:api-url cached))))))
 
 (defn logout!

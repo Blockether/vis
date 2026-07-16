@@ -44,18 +44,18 @@
    still stats every journal, so backing off to 2×/s here (vs 17×/s before) is
    what keeps an otherwise-idle daemon off the CPU."
   500)
-(def ^:private IDLE_AFTER
+(def ^:private ^:const IDLE_AFTER
   "Consecutive quiet polls before backing off from `POLL_MS` to `IDLE_POLL_MS`."
   20)
-(def ^:private MAX_FILE_BYTES (* 16 1024 1024))
+(def ^:private ^:const MAX_FILE_BYTES (* 16 1024 1024))
 
-(def ^:private RETAIN_MS
+(def ^:private ^:const RETAIN_MS
   "Age past which an untouched journal is presumed orphaned and swept: a live
    session rewrites (truncates + appends) its journal every turn, so a file whose
    mtime is a day stale cannot belong to a running turn."
   (* 24 60 60 1000))
 
-(def ^:private SWEEP_MS
+(def ^:private ^:const SWEEP_MS
   "Run the orphan-journal sweep about this often (wall-clock ms)."
   (* 60 1000))
 
@@ -293,7 +293,7 @@
         (.length f)
 
         off0
-        (get @offsets sid 0)
+        (long (get @offsets sid 0))
 
         ;; truncation/rotation: file shrank under our cursor -> rewind
         off

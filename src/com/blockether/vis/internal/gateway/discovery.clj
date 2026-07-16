@@ -326,7 +326,7 @@
          (System/currentTimeMillis)
 
          deadline
-         (+ start timeout-ms)]
+         (+ start (long timeout-ms))]
 
      (loop []
 

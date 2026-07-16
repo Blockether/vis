@@ -14,7 +14,7 @@
 
 (def ^:private default-profile-paths [".bridge/profile.edn" ".bridge/persistent/profile.edn"])
 
-(defn- now-ms [] (System/currentTimeMillis))
+(defn- now-ms ^long [] (System/currentTimeMillis))
 
 (defn- workspace-root [env] (or (:workspace/root env) (System/getProperty "user.dir")))
 
@@ -280,7 +280,7 @@
                         :result result
                         :metadata {:started-at-ms started-at-ms
                                    :finished-at-ms finished-at-ms
-                                   :duration-ms (- finished-at-ms started-at-ms)
+                                   :duration-ms (- finished-at-ms (long started-at-ms))
                                    :opts (selected-opts opts)}})))
 
 (defn- tool-failure
@@ -292,7 +292,7 @@
                         :error error
                         :metadata {:started-at-ms started-at-ms
                                    :finished-at-ms finished-at-ms
-                                   :duration-ms (- finished-at-ms started-at-ms)
+                                   :duration-ms (- finished-at-ms (long started-at-ms))
                                    :opts (selected-opts opts)}})))
 
 (defn- bridge-tool
@@ -366,7 +366,7 @@
      :next-step (action->extension-op (:next-action check-result))
      :suggestions (vec actions)}))
 
-(def ^:private hint-recheck-ms
+(def ^:private ^:const hint-recheck-ms
   "Re-run the reflective Bridge check at most this often per workspace even when
    `.bridge/` looks unchanged, so working-tree drift (stale artifacts vs edited
    sources) still refreshes the nudge without paying the check every iteration."
