@@ -2985,35 +2985,49 @@
       (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
               :provider))))
 (defn- start-provider-limits-thread!
-  "Refresh provider limit metadata outside the render thread."
+  "Refresh provider limit metadata outside the render thread.
+
+   `active-provider-id` is EXPENSIVE on some machines (~100ms: gateway
+   session-model read + get-router/resolve-effective-model fallback — the
+   same call behind the #29 footer lag), so it must NOT run on every 1s
+   tick (#31). Each tick only reads app-db (cheap): the resolve fires
+   solely when a refresh is actually DUE — the 60s stale window elapsed,
+   a :force-provider-limits-refresh was dispatched, or the cheap change
+   signal (session id + per-session model pref, the same source the
+   footer reads) moved. Provider changes made OUTSIDE app-db (e.g. a
+   router-default edit) are picked up by the 60s stale refresh."
   ^Thread []
   (let [t (Thread.
             ^Runnable
             (fn []
               (loop [last-provider-id nil
-                     last-refresh-ms 0]
+                     last-refresh-ms 0
+                     last-signal ::init]
 
                 (when-not (:shutdown? @state/app-db)
-                  (let [now-ms (System/currentTimeMillis)
-                        provider-id (active-provider-id)
-                        changed? (not= provider-id last-provider-id)
-                        forced? (:provider-limits-force? @state/app-db)
+                  (let [db @state/app-db
+                        now-ms (System/currentTimeMillis)
+                        signal [(get-in db [:session :id]) (:session-model-pref db)]
+                        forced? (:provider-limits-force? db)
                         stale? (>= (- now-ms (long last-refresh-ms))
-                                   (long provider-limits-refresh-ms))]
+                                   (long provider-limits-refresh-ms))
+                        due? (or (not= signal last-signal) forced? stale?)
+                        provider-id (if due? (active-provider-id) last-provider-id)
+                        changed? (not= provider-id last-provider-id)
+                        refresh? (and due? (or changed? stale? forced?))]
 
-                    (try (cond (nil? provider-id) (when last-provider-id
-                                                    (state/dispatch [:clear-provider-limits]))
-                               (or changed? stale? forced?)
-                               (state/dispatch [:set-provider-limits provider-id
-                                                (vis/gateway-provider-limits provider-id)]))
-                         (catch Throwable t
-                           (tel/log! {:level :warn
-                                      :id ::provider-limits-refresh-failed
-                                      :data {:provider provider-id
-                                             :error (or (ex-message t) (str t))}
-                                      :msg "Provider limits refresh failed"})))
+                    (try
+                      (cond (and due? (nil? provider-id))
+                            (when last-provider-id (state/dispatch [:clear-provider-limits]))
+                            refresh? (state/dispatch [:set-provider-limits provider-id
+                                                      (vis/gateway-provider-limits provider-id)]))
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::provider-limits-refresh-failed
+                                   :data {:provider provider-id :error (or (ex-message t) (str t))}
+                                   :msg "Provider limits refresh failed"})))
                     (try (Thread/sleep 1000) (catch InterruptedException _ nil))
-                    (recur provider-id (if (or changed? stale? forced?) now-ms last-refresh-ms))))))
+                    (recur provider-id (if refresh? now-ms last-refresh-ms) signal)))))
             "vis-channel-tui-provider-limits")]
     (.setDaemon t true)
     (.start t)

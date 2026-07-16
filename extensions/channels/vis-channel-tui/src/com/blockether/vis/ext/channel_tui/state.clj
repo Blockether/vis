@@ -3351,7 +3351,11 @@
 ;; rail shows the same value — one source of truth across channels.
 (reg-fx :set-session-model
         (fn [sid provider model]
-          (vis/gateway-set-session-model! sid provider model)))
+          (vis/gateway-set-session-model! sid provider model)
+          ;; The background limits poller no longer resolves the active provider on
+          ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
+          ;; per-session model switch reflects in the footer's usage row promptly.
+          (dispatch [:force-provider-limits-refresh])))
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
         ;; interleaving it with Lanterna's output is safe; the terminal turns it
