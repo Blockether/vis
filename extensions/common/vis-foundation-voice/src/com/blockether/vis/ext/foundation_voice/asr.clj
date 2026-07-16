@@ -442,9 +442,9 @@
                                              (= 16 (u16le fb 14)))))) ; 16-bit
                       ;; chunks are word-aligned, but a final odd-sized
                       ;; chunk may legally arrive unpadded
-                      next-pos (min len (+ end (mod size 2)))]
+                      next-pos (long (min len (+ end (rem size 2))))]
 
-                  (loop [n (- next-pos (+ pos 8 (if fmt-read? 16 0)))]
+                  (loop [n (- next-pos (+ pos 8 (long (if fmt-read? 16 0))))]
                     (when (pos? n)
                       (let [s (.skipBytes in (int n))]
                         (when-not (pos? s) (fail! "unexpected EOF inside a chunk" {:chunk id}))
@@ -452,7 +452,7 @@
                   (recur next-pos pcm16? (or data? (= id "data"))))))))))
   audio-path)
 
-(def min-audio-seconds
+(def ^:const min-audio-seconds
   "Minimum microphone audio length sent to Parakeet ASR.
    Very short clips either transcribe blank or trigger opaque ONNX Conv_quant
    shape errors, so reject them before inference."
@@ -474,7 +474,7 @@
 (defn- assert-audio-long-enough!
   [audio-path ^WaveReader reader]
   (let [{:keys [duration-seconds] :as stats} (audio-stats reader)]
-    (when (< duration-seconds min-audio-seconds)
+    (when (< (double duration-seconds) min-audio-seconds)
       (throw (ex-info "Voice recording too short - try again"
                       (assoc stats
                         :type :voice-asr/audio-too-short
