@@ -3977,7 +3977,13 @@
                                               (let [s (str result)]
                                                 (if-let [i (str/index-of s " → ")]
                                                   {:summary (subs s 0 (long i))
-                                                   :body (subs s (+ (long i) 3))}
+                                                   ;; The gist is a terse breadcrumb the model
+                                                   ;; wrote (backticks / file:line / :render spans),
+                                                   ;; NOT authored markdown — fence it so the body
+                                                   ;; shows VERBATIM instead of being re-styled.
+                                                   :body (str "```\n"
+                                                              (subs s (+ (long i) 3))
+                                                              "\n```")}
                                                   {:summary s}))))
           ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
           ;; by the result's `:op` (the only origin handle a printed value carries),
