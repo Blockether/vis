@@ -1417,6 +1417,33 @@
           (expect (= {:message "Divide by zero"} (:error exec)))
           ;; :result intentionally omitted on error - cond-> drops nil.
           (expect (not (contains? exec :result))))))
+  (it "keeps a realized non-lazy seq (`sort` output) in error data, not {:vis/ref :expr}"
+      (let [s
+            (h/store)
+
+            cid
+            (h/store-session! s {:channel :tui})
+
+            qid
+            (vis/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})]
+
+        ;; The protected-rebind guard's :names is built via `sort` — an
+        ;; ArraySeq. freeze-safe must persist it as DATA, not flatten it to
+        ;; the {:vis/ref :expr} runtime placeholder (only LazySeq is one).
+        (h/store-iteration! s
+                            {:session-turn-id qid
+                             :code "ls = 1"
+                             :error {:message "protected" :data {:names (sort ["ls" "cat"])}}
+                             :duration-ms 5})
+        (let [iteration
+              (first (vis/db-list-session-turn-iterations s qid))
+
+              err
+              (:error (first (:forms iteration)))]
+
+          (expect (= ["cat" "ls"] (vec (get-in err [:data :names])))))))
   (it ":comment field carries leading `;; ... / #_(...)` blocks alongside :code"
       (let [s
             (h/store)
