@@ -1622,7 +1622,11 @@
                     (into #{} (map #(freeze-safe % (dec depth))) v))
          (list? v)
          (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
-         (seq? v) {:vis/ref :expr}
+         ;; A NON-lazy seq (ArraySeq from `sort`, Cons, ChunkedCons) is already
+         ;; realized DATA — walk it like a list. Only LazySeq (caught above) is
+         ;; a computation whose durable form is the source in :expr.
+         (seq? v)
+         (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
          :else v)))
 
 ;; =============================================================================
