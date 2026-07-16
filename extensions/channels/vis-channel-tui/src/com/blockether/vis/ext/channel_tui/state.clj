@@ -2104,8 +2104,11 @@
                       pre
                       (scroll-pre! db)
 
+                      cur
+                      (:scroll db)
+
                       sc
-                      (scroll/ease (:scroll db) max-s)
+                      (scroll/ease cur max-s)
 
                       post
                       (scroll-snapshot sc)]
@@ -2115,7 +2118,20 @@
                   ;; settled zeros every frame).
                   (when (or (not= (:mode pre) (:mode post)) (not= (:offset pre) (:offset post)))
                     (log-scroll! :ease-scroll pre post {:max-s max-s}))
-                  (assoc db :scroll sc))))
+                  ;; Preserve `:scroll` IDENTITY when the ease produced an EQUAL
+                  ;; value. `scroll/ease` re-`assoc`s `:pos` every tick (a freshly
+                  ;; boxed row), so its result is `=` but never `identical?` to the
+                  ;; current scroll even when the view sits settled at the follow
+                  ;; bottom. `:ease-scroll` pulses on every ~80ms streaming tick, so
+                  ;; that churn silently rewrote app-db's `:scroll` to a new object
+                  ;; each tick. The render loop's fast-path predicates
+                  ;; (`live-progress-only-change?` / `scroll-only-change?`) diff db
+                  ;; by `identical?` per key, so a churning-but-unchanged `:scroll`
+                  ;; demoted EVERY progress-driven repaint to a FULL frame
+                  ;; (100-280ms on a long transcript) instead of the cheap
+                  ;; partial-live band. Return db untouched when nothing moved so the
+                  ;; identity — and the fast path — survive.
+                  (if (= sc cur) db (assoc db :scroll sc)))))
 
 ;; ── In-session search ──────────────────────────────────────────────────────
 ;; The render side already exists (paint-search-hits! highlights bubbles whose
