@@ -142,6 +142,9 @@
   ;; it would).
   (it "retries a socket that closed before any response byte"
       (expect (perr/transport-throwable? (ex-info "HTTP/1.1 header parser received no bytes" {}))))
+  (it "retries a TTFT timeout before response headers"
+      (expect (perr/transport-throwable?
+                (ex-info "Stream TTFT timeout (60000ms with no response headers)" {}))))
   (it "walks the cause chain for a wrapped transport failure"
       (expect (perr/transport-throwable? (ex-info "provider call failed"
                                                   {}
