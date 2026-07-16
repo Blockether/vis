@@ -2507,6 +2507,7 @@
                                         :loading? true
                                         :cancel-token token
                                         :cancelling? false
+                                        :cancel-awaiting-turn-id? false
                                         :progress {:iterations []}
                                         :turn-start-ms (System/currentTimeMillis)
                                         :submitted-input {:text text
@@ -2573,38 +2574,49 @@
                                                            e))
                                                        (vec (or q [])))))))}
                     {:db db :fx (when (and sid tid) [[:gateway-delete-queued sid tid]])}))))
-(reg-event-db :sync-turn-clock
+(reg-event-fx :sync-turn-clock
               ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
               ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares —
-              ;; AND the gateway `:turn-id`. Two jobs, both only while the tab is mid-turn
-              ;; (:loading?):
-              ;;   1. Re-seed this tab's elapsed timer from `started_at`. The local stamps
-              ;;      (:send-message's submit time, :drain-pending's drain time) drift from
-              ;;      the gateway's actual run start, so two terminals attached to the same
-              ;;      work showed different elapsed.
-              ;;   2. LATE-BIND `:gateway-turn-id`. A plain `:send-message` submit has NO turn
-              ;;      id yet — it's minted server-side, and `turn.started` is the first place
-              ;;      it reaches this tab. Without this bind the id stays nil and `:cancel-turn`
-              ;;      short-circuits `(when (and sid tid) …)`: the cancel NEVER reaches the
-              ;;      gateway, the daemon keeps running the "cancelled" turn, and the next
-              ;;      submit queues behind that ghost — only surfacing once it finishes on its
-              ;;      own. Fill a still-empty slot only: a drain/attach that already bound the
-              ;;      id (2593 / 2705) wins.
+              ;; AND the gateway `:turn-id`. Three jobs here:
+              ;;   1. Re-seed this tab's elapsed timer from `started_at` (only mid-turn) so
+              ;;      two terminals attached to the same work show the SAME elapsed.
+              ;;   2. LATE-BIND `:gateway-turn-id` (only mid-turn). A plain `:send-message`
+              ;;      submit has NO turn id yet — it's minted server-side, and `turn.started`
+              ;;      is the first place it reaches this tab. Without this bind the id stays
+              ;;      nil and `:cancel-turn` short-circuits `(when (and sid tid) …)`: the
+              ;;      cancel NEVER reaches the gateway.
+              ;;   3. FINISH A CANCEL THAT RACED THE BIND. If Esc was pressed BEFORE the id
+              ;;      bound (`:cancel-awaiting-turn-id?`), that cancel couldn't reach the
+              ;;      daemon, so it kept running the "cancelled" turn (a ghost) and the next
+              ;;      submit queued behind it — only surfacing once the ghost finished on its
+              ;;      own (the visible "queue for a few seconds then it vanishes"). Now that
+              ;;      the id is here, fire the gateway cancel automatically instead of forcing
+              ;;      a SECOND Esc, and clear the marker so it never bites a later turn.
               (fn [db [_ workspace-id {:keys [started-at-ms turn-id]}]]
                 (let [workspace-id (or workspace-id (current-tab-id db))]
                   (if-not workspace-id
-                    db
-                    (update-tab db
-                                workspace-id
-                                (fn [w]
-                                  (if (:loading? w)
-                                    (cond-> w
-                                      (nat-int? started-at-ms)
-                                      (assoc :turn-start-ms started-at-ms)
+                    {:db db}
+                    (let [target (db-for-tab db workspace-id)
+                          awaiting-cancel? (boolean (and turn-id
+                                                         (:cancel-awaiting-turn-id? target)))
+                          sid (get-in target [:session :id])
+                          db' (update-tab db
+                                          workspace-id
+                                          (fn [w]
+                                            (cond-> (if (:loading? w)
+                                                      (cond-> w
+                                                        (nat-int? started-at-ms)
+                                                        (assoc :turn-start-ms started-at-ms)
 
-                                      (and turn-id (nil? (:gateway-turn-id w)))
-                                      (assoc :gateway-turn-id turn-id))
-                                    w)))))))
+                                                        (and turn-id (nil? (:gateway-turn-id w)))
+                                                        (assoc :gateway-turn-id turn-id))
+                                                      w)
+                                              (:cancel-awaiting-turn-id? w)
+                                              (dissoc :cancel-awaiting-turn-id?))))]
+
+                      (cond-> {:db db'}
+                        (and awaiting-cancel? sid)
+                        (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
 (reg-event-db
   :sync-queued-turn
   ;; Mirror ONE gateway queue event (turn.queued / .updated / .deleted —
@@ -3044,9 +3056,16 @@
                     {:db (clear-active-turn-state db)
                      :fx [[:notify "Turn is no longer running; cleared local cancelling state."
                            :info cancel-notification-ttl-ms]]}
-                    {:db (assoc db
-                           :cancelling? true
-                           :cancelling-at-ms (System/currentTimeMillis))
+                    {:db (cond-> (assoc db
+                                   :cancelling? true
+                                   :cancelling-at-ms (System/currentTimeMillis))
+                           ;; Esc landed BEFORE turn.started bound the gateway id, so the
+                           ;; cancel above couldn't reach the daemon. Remember it: when the
+                           ;; id late-binds (`:sync-turn-clock`) the gateway cancel fires
+                           ;; automatically, so a single Esc tears the turn down instead of
+                           ;; leaving a ghost the next submit queues behind.
+                           (nil? tid)
+                           (assoc :cancel-awaiting-turn-id? true))
                      :fx [[:notify "Cancelling current turn..." :info
                            cancel-notification-ttl-ms]]})))))
 (defn- cancel-self-heal-due?
@@ -3562,6 +3581,14 @@
         (fn [sid tid]
           (when (and sid tid)
             (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+
+(reg-fx :gateway-cancel-turn
+        ;; Fire-and-forget cancel of a RUNNING gateway turn. Used by `:sync-turn-clock`
+        ;; to finish a cancel that was armed before the turn id late-bound (see
+        ;; `:cancel-awaiting-turn-id?`); the result is irrelevant — we've already torn
+        ;; the turn down locally, this just stops the daemon-side ghost.
+        (fn [sid tid]
+          (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))))
 
 (reg-fx :drain-idle-queue
         ;; Kick a server-side queued backlog into motion for an IDLE session on

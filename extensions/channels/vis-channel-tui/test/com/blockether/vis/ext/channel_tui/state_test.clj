@@ -817,6 +817,45 @@
                    (state/dispatch [:cancel-turn])
                    (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))))))
 
+(defdescribe cancel-auto-fires-on-late-bind-test
+             ;; REGRESSION (user report): "I send siema, hit Esc, then send siema again and
+             ;; I see BOTH the queue and the sent text; after a few seconds it renegotiates
+             ;; and the queue vanishes." A single Esc pressed BEFORE `turn.started` bound the
+             ;; gateway id armed `:cancelling?` but could not reach the daemon, leaving a
+             ;; ghost turn running server-side that the next submit queued behind. It only
+             ;; drained once the ghost finished on its own. Fix: `:sync-turn-clock` finishes
+             ;; the pending cancel automatically when the id late-binds — no second Esc, no
+             ;; ghost, no phantom queue.
+             (it "a single Esc kills the turn the moment turn.started binds the id"
+                 (let [cancelled-gateway (atom nil)]
+                   (with-redefs [vis/cancel! (fn [_]
+                                               nil)
+                                 vis/notify! (fn [_ & _]
+                                               nil)
+                                 vis/gateway-cancel-turn! (fn [sid tid]
+                                                            (reset! cancelled-gateway [sid tid])
+                                                            {:status "cancelling"})]
+
+                     (reset! state/app-db {:session {:id "s1"}
+                                           :active-tab-id "s1"
+                                           :render-version 0
+                                           :loading? true
+                                           :cancel-token :token
+                                           :cancelling? false
+                                           :gateway-turn-id nil
+                                           :turn-start-ms 10})
+                     ;; One Esc, before the id is known: nothing reaches the gateway yet, but
+                     ;; the intent is remembered.
+                     (state/dispatch [:cancel-turn])
+                     (expect (nil? @cancelled-gateway))
+                     (expect (true? (:cancel-awaiting-turn-id? @state/app-db)))
+                     ;; turn.started lands — the cancel now fires automatically, no 2nd Esc.
+                     (state/dispatch [:sync-turn-clock nil
+                                      {:turn-id "gw-turn-1" :started-at-ms 123}])
+                     (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))
+                     ;; Marker is one-shot — cleared so it can't cancel a later turn.
+                     (expect (not (:cancel-awaiting-turn-id? @state/app-db)))))))
+
 (defdescribe
   cancel-turn-stale-gateway-test
   (it
