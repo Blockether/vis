@@ -5296,7 +5296,15 @@
   [entry]
   ;; Reserved inline-image rows LOOK blank but must survive trimming — the
   ;; graphics sequence is painted over them after the delta refresh.
-  (if (#{:image :image-pad} (:kind (:meta entry)))
+  ;;
+  ;; A blank row that starts with `md-code-marker` is an inside-code PAD row:
+  ;; it paints the code-block background band (breathing room above/below the
+  ;; payload) even though its text strips to blank. A user prompt carrying a
+  ;; `[Pasted #N]` disclosure ends with one such pad row — trimming it (and its
+  ;; neutral outer margin) left the last payload line flush against the band's
+  ;; bottom edge with no bottom padding in the code background.
+  (if (or (#{:image :image-pad} (:kind (:meta entry)))
+          (str/starts-with? (str (:line entry)) md-code-marker))
     false
     (let [visible (strip-paint-markers-line (:line entry))]
       (or (str/blank? visible) (boolean (re-matches #"^\s*│\s*$" visible))))))
