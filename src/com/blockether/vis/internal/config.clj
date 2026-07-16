@@ -24,7 +24,8 @@
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.registry :as registry]
-            [taoensso.telemere :as tel])
+            [taoensso.telemere :as tel]
+            [yamlstar.core :as yamlstar])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)))
 
 (def config-dir (str (System/getProperty "user.home") "/.vis"))
@@ -564,6 +565,101 @@
              (when (map? raw) raw))
            (catch Exception _ nil)))))
 
+(def ^:private verbatim-key-subtrees
+  "Config subtrees whose MAP KEYS are user-owned strings — env var names,
+   HTTP header names, provider wire fields. YAML keywordization must never
+   touch them: `TELEGRAM_BOT_TOKEN` under `:environment` stays a verbatim
+   string key, never `:telegram-bot-token`."
+  #{:environment :llm-headers :extra-body})
+
+(def ^:private keyword-valued-keys
+  "Config keys whose VALUES are keywords in the EDN shape. YAML has no keyword
+   literal, so `id: anthropic` arrives as the string \"anthropic\" — coerce it
+   to `:anthropic` so a YAML provider block behaves exactly like its EDN twin."
+  #{:id :backend :api-style})
+
+(defn- yaml-key->keyword
+  "Normalize one YAML map key onto the config's keyword vocabulary: both
+   `snake_case` and `kebab-case` spellings land on the SAME kebab keyword
+   (`system_prompt` ≡ `system-prompt` ≡ `:system-prompt`)."
+  [k]
+  (if (string? k) (keyword (str/replace k "_" "-")) k))
+
+(defn- keywordize-yaml
+  "Recursively map a YAMLStar-parsed value (string keys — the YAML boundary
+   contract) onto the EDN config shape: keys → kebab keywords, keyword-valued
+   fields (`keyword-valued-keys`, plus any explicit `\":foo\"` string) coerced
+   to keywords, and `verbatim-key-subtrees` kept EXACTLY as parsed — string
+   keys, string values, no case-mangling."
+  [v]
+  (cond (map? v) (into {}
+                       (map (fn [[k val]]
+                              (let [kw (yaml-key->keyword k)]
+                                [kw
+                                 (cond (contains? verbatim-key-subtrees kw) val
+                                       (and (string? val) (contains? keyword-valued-keys kw))
+                                       (keyword (str/replace-first val ":" ""))
+                                       :else (keywordize-yaml val))])))
+                       v)
+        (sequential? v) (mapv keywordize-yaml v)
+        (and (string? v) (str/starts-with? v ":")) (keyword (subs v 1))
+        :else v))
+
+(defn- read-yaml-config-map
+  "Parse one YAML config file into the EDN config shape (kebab keywords,
+   verbatim string subtrees), or nil when absent / malformed / not a map —
+   the same failure contract as `read-config-map`."
+  [path]
+  (let [f (io/file path)]
+    (when (.exists f)
+      (try (let [raw (yamlstar/load (slurp f))]
+             (when (map? raw) (keywordize-yaml raw)))
+           (catch Exception _ nil)))))
+
+(defn- project-config-yaml-paths
+  "YAML candidates for the hidden `.vis/` project overlay tier."
+  []
+  [(str (System/getProperty "user.dir") "/.vis/config.yml")
+   (str (System/getProperty "user.dir") "/.vis/config.yaml")])
+
+(defn- project-root-yaml-paths
+  "YAML candidates for the visible project-root tier: `vis.yml` / `vis.yaml`."
+  []
+  [(str (System/getProperty "user.dir") "/vis.yml")
+   (str (System/getProperty "user.dir") "/vis.yaml")])
+
+(defn- global-config-yaml-paths
+  "YAML candidates for the hand-written global tier under `~/.vis`:
+   `config.yml` / `config.yaml` (the `config.edn` twins) plus `vis.yml` /
+   `vis.yaml` for symmetry with the project-root spelling. First existing
+   file wins."
+  []
+  (mapv (fn [n]
+          (str config-dir "/" n))
+        ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]))
+
+(defn- read-tier-config-map
+  "Read ONE project config tier that accepts either format: the EDN file when
+   present, else the first existing YAML candidate. Both present → EDN wins and
+   the YAML file is IGNORED (logged, never merged): two spellings of the same
+   tier must not deep-merge into a config neither file describes."
+  [edn-path yaml-paths]
+  (let [edn-file
+        (io/file ^String edn-path)
+
+        yaml-path
+        (first (filter (fn [^String p]
+                         (.exists (io/file p)))
+                       yaml-paths))]
+
+    (when (and (.exists edn-file) yaml-path)
+      (tel/log! :warn
+                ["config: both" edn-path "and" yaml-path
+                 "exist at the same tier; EDN wins, the YAML file is ignored"]))
+    (cond (.exists edn-file) (read-config-map edn-path)
+          yaml-path (read-yaml-config-map yaml-path)
+          :else nil)))
+
 (defn- deep-merge-config
   [& maps]
   (letfn [(merge* [a b]
@@ -574,12 +670,29 @@
     (reduce merge* nil maps)))
 
 (defn load-global-config-raw
-  "Load only the global `~/.vis/config.edn` map (or nil on read/parse error)."
+  "Load only the machine-written global `~/.vis/config.edn` map (or nil on
+   read/parse error). EDN ONLY on purpose: Vis itself read-modify-writes this
+   exact file (`save-config!`, provider add/remove, OAuth token persistence),
+   so the RMW cycle must never fold hand-written YAML into the file it spits
+   back out."
   []
   (read-config-map config-path))
 
+(defn load-global-yaml-config-raw
+  "Load only the hand-written global YAML tier: the first existing of
+   `~/.vis/config.yml` / `config.yaml` / `vis.yml` / `vis.yaml`, or nil.
+   Unlike the project tiers, this file COEXISTS with `~/.vis/config.edn`
+   instead of being shadowed by it: the EDN file there is machine-written
+   (OAuth tokens, TUI-added providers), the YAML file is user-written —
+   different authors, not two spellings of one file — so `load-config-raw`
+   deep-merges them with the EDN file winning per key."
+  []
+  (some read-yaml-config-map (global-config-yaml-paths)))
+
 (defn load-project-config-raw
-  "Load only `<invocation-cwd>/.vis/config.edn` (or nil on read/parse error)."
+  "Load only the hidden project overlay tier: `<invocation-cwd>/.vis/config.edn`,
+   or its YAML twin `.vis/config.yml` / `.yaml` when no EDN file exists (EDN
+   wins when both exist; nil on read/parse error)."
   []
   (let [global-file
         (io/file config-path)
@@ -588,20 +701,53 @@
         (io/file (project-config-path))]
 
     (when-not (= (.getCanonicalPath global-file) (.getCanonicalPath project-file))
-      (read-config-map (.getPath project-file)))))
+      (read-tier-config-map (.getPath project-file) (project-config-yaml-paths)))))
 (defn load-project-root-config-raw
-  "Load only `<invocation-cwd>/vis.edn` (or nil on read/parse error)."
+  "Load only the visible project-root tier: `<invocation-cwd>/vis.edn`, or its
+   YAML twin `vis.yml` / `vis.yaml` when no EDN file exists (EDN wins when both
+   exist; nil on read/parse error)."
   []
-  (read-config-map (project-root-config-path)))
+  (read-tier-config-map (project-root-config-path) (project-root-yaml-paths)))
 
 (defn load-config-raw
-  "Load raw config as global `~/.vis/config.edn`, then the project-local
-   `.vis/config.edn` overlay, then the root `vis.edn` overlay. Later sources
-   win; nested maps merge; scalar/vector values replace."
+  "Load raw config as the deep-merge of four sources — later sources win,
+   nested maps merge, scalar/vector values replace:
+
+   1. `~/.vis/config.yml` (or `.yaml` / `vis.yml` / `vis.yaml`) — hand-written
+      global YAML base
+   2. `~/.vis/config.edn` — machine-written global; wins over its YAML twin
+   3. `<cwd>/vis.edn` (or `vis.yml` / `vis.yaml`) — visible project root,
+      the committed team config
+   4. `<cwd>/.vis/config.edn` (or `.vis/config.yml`) — hidden project overlay;
+      the NESTED overlay wins over the root file (personal beats committed)"
   []
-  (deep-merge-config (load-global-config-raw)
-                     (load-project-config-raw)
-                     (load-project-root-config-raw)))
+  (deep-merge-config (load-global-yaml-config-raw)
+                     (load-global-config-raw)
+                     (load-project-root-config-raw)
+                     (load-project-config-raw)))
+
+(def default-search-always-exclude
+  "Default `:search :always-exclude` patterns (`.gitignore` syntax) guarding
+   the subtrees an `:include-gitignored-paths` overlay re-includes:
+   machine-generated dirs nobody wants surfaced even inside a rescued vendored
+   repo. Setting `:always-exclude` in config REPLACES this list (vectors
+   replace on merge, like everywhere else in config)."
+  [".git/" "node_modules/" "target/" "build/" "dist/" "__pycache__/" ".venv/" ".gradle/" "vendor/"
+   ".next/" "out/"])
+
+(defn search-overlay
+  "The `:search` overlay from raw config (issue #23), or nil when unset.
+   Returns `{:include-gitignored-paths [pattern…] :always-exclude [pattern…]}`
+   with patterns in `.gitignore` syntax. `:always-exclude` falls back to
+   `default-search-always-exclude` when include patterns are set without an
+   explicit exclude list. nil ⇒ no overlay: search behaves exactly as before
+   (this is what keeps the feature zero-cost for unconfigured projects)."
+  []
+  (let [{:keys [include-gitignored-paths always-exclude]} (:search (load-config-raw))]
+    (when (or (seq include-gitignored-paths) (seq always-exclude))
+      {:include-gitignored-paths (mapv str include-gitignored-paths)
+       :always-exclude
+       (mapv str (if (some? always-exclude) always-exclude default-search-always-exclude))})))
 
 (defn- apply-provider-metadata
   "Attach catalog metadata needed by the runtime while preserving the

@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
@@ -3609,3 +3610,82 @@
 
           (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
           (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))))))
+
+(defdescribe
+  search-overlay-config-test
+  ;; Issue #23: a `:search {:include-gitignored-paths [...]}` config overlay
+  ;; re-includes chosen gitignored subtrees for rg AND find_files with
+  ;; is_respect_gitignore left at its DEFAULT — the walker descends the
+  ;; excluded dir (which a `.gitignore` `!` negation can never do: git never
+  ;; descends an excluded directory, so a negation on a child is dead code),
+  ;; while `:always-exclude` (defaults: `.git/`, `node_modules/`, `target/`, …)
+  ;; keeps pruning INSIDE the rescued subtree. An EXPLICIT per-call
+  ;; is_respect_gitignore — either value — wins over the overlay.
+  (let [grep
+        (private-fn "rg-search")
+
+        find-search
+        (private-fn "find-search")
+
+        rg-files
+        (fn [path & [spec-extra]]
+          (:files (grep (merge {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true}
+                               spec-extra))))
+
+        find-paths
+        (fn [path]
+          (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
+
+        has?
+        (fn [coll frag]
+          (boolean (some #(string/includes? % frag) coll)))
+
+        overlay!
+        (fn [search-block f]
+          (with-redefs [config/load-config-raw (fn []
+                                                 {:search search-block})]
+            (f)))
+
+        fixture!
+        (fn [dir]
+          (write-temp! (str dir "/.gitignore") "repositories/\n")
+          (write-temp! (str dir "/repositories/corp/secret.txt") "NEEDLE_TOKEN here\n")
+          (write-temp! (str dir "/repositories/corp/node_modules/dep/secret_dep.txt")
+                       "NEEDLE_TOKEN here\n")
+          (temp-dir-path dir))]
+
+    (it
+      "re-includes the configured subtree for rg AND find_files; default :always-exclude still prunes"
+      (let [path (fixture! "search-overlay-basic")]
+        ;; unconfigured: .gitignore hides everything under repositories/
+        (expect (not (has? (rg-files path) "repositories/corp/secret.txt")))
+        (expect (not (has? (find-paths path) "repositories/corp/secret.txt")))
+        (overlay! {:include-gitignored-paths ["repositories/"]}
+                  (fn []
+                    ;; rescued for both tools, no per-call flag needed…
+                    (expect (has? (rg-files path) "repositories/corp/secret.txt"))
+                    (expect (has? (find-paths path) "repositories/corp/secret.txt"))
+                    ;; …but node_modules INSIDE the rescue stays pruned (default guard)
+                    (expect (not (has? (rg-files path) "secret_dep.txt")))
+                    (expect (not (has? (find-paths path) "secret_dep")))))))
+    (it "the `repositories/**` glob spelling opens the ancestor dir too"
+        (let [path (fixture! "search-overlay-glob")]
+          (overlay! {:include-gitignored-paths ["repositories/**"]}
+                    (fn []
+                      (expect (has? (rg-files path) "repositories/corp/secret.txt"))))))
+    (it "an explicit per-call is_respect_gitignore — either value — beats the overlay"
+        (let [path (fixture! "search-overlay-explicit")]
+          (overlay! {:include-gitignored-paths ["repositories/"]}
+                    (fn []
+                      ;; explicit true → pure gitignore: the rescued subtree stays hidden
+                      (expect (not (has? (rg-files path {"is_respect_gitignore" true})
+                                         "repositories/corp/secret.txt")))
+                      ;; explicit false → full walk: even node_modules shows
+                      (expect (has? (rg-files path {"is_respect_gitignore" false})
+                                    "secret_dep.txt"))))))
+    (it "an explicit :always-exclude REPLACES the defaults"
+        (let [path (fixture! "search-overlay-replace")]
+          (overlay! {:include-gitignored-paths ["repositories/"] :always-exclude ["*.md"]}
+                    (fn []
+                      ;; node_modules resurfaces — the default guard list is gone
+                      (expect (has? (rg-files path) "secret_dep.txt"))))))))
