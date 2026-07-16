@@ -940,7 +940,7 @@
 
 (defn- rel-luminance
   "Rec. 709 relative luminance of an RGB triple (0-255 scale)."
-  [[r g b]]
+  ^double [[r g b]]
   (+ (* 0.2126 (double r)) (* 0.7152 (double g)) (* 0.0722 (double b))))
 
 (defn- mix-to-luminance-delta
