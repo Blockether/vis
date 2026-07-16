@@ -2422,9 +2422,9 @@
                   lim
                   (get util "model_input_limit")]
 
-              (str (when (pos? (long toks)) (str " · ~" (fmt-tok toks) " tokens"))
+              (str (when (pos? (long toks)) (str " · saved ~" (fmt-tok toks) " tokens"))
                    (when (and sat req lim)
-                     (str " · context " sat "% (" (fmt-tok req) "/" (fmt-tok lim) ")"))))
+                     (str " · utilization " sat "% (" (fmt-tok req) "/" (fmt-tok lim) ")"))))
             (catch Throwable _ "")))]
 
     {'session-fold
