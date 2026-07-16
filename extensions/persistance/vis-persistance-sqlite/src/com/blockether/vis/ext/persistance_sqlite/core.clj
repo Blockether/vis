@@ -1210,12 +1210,13 @@
                                ch (some-> channel
                                           ->kw)
                                pos (or position
-                                       (inc (or (:maxpos (query-one! tx-info
-                                                                     {:select [[[:max :position]
-                                                                                :maxpos]]
-                                                                      :from :project
-                                                                      :where [:= :owner_id owner]}))
-                                                -1)))]
+                                       (inc (long (or (:maxpos (query-one!
+                                                                 tx-info
+                                                                 {:select [[[:max :position]
+                                                                            :maxpos]]
+                                                                  :from :project
+                                                                  :where [:= :owner_id owner]}))
+                                                      -1))))]
 
                            (execute! tx-info
                                      {:insert-into :project
@@ -1307,12 +1308,13 @@
                 member? {:project_id (->ref project-id)}
                 ;; joining a project -> append after its last member
                 pid {:project_id (->ref project-id)
-                     :project_position
-                     (inc (or (:maxpos (query-one! tx-info
-                                                   {:select [[[:max :project_position] :maxpos]]
-                                                    :from :session_soul
-                                                    :where [:= :project_id pid]}))
-                              -1))}
+                     :project_position (inc (long (or (:maxpos (query-one!
+                                                                 tx-info
+                                                                 {:select [[[:max :project_position]
+                                                                            :maxpos]]
+                                                                  :from :session_soul
+                                                                  :where [:= :project_id pid]}))
+                                                      -1)))}
                 ;; leaving all projects -> clear pointer + stale ordinal
                 :else {:project_id (->ref nil) :project_position 0})]
 
@@ -1365,7 +1367,7 @@
           (doseq [[pos sid] (map-indexed vector ordered)]
             (execute! tx-info
                       {:update :session_soul
-                       :set {:project_position (- (inc pos))}
+                       :set {:project_position (- (inc (long pos)))}
                        :where [:and [:= :id (->id sid)] [:= :project_id pid]]}))
           (doseq [[pos sid] (map-indexed vector ordered)]
             (execute! tx-info
@@ -1506,7 +1508,7 @@
                   now (now-ms)
                   parent-title (:title current)
                   fork-title (or title (str parent-title " (fork)"))
-                  new-version (inc (:version current))]
+                  new-version (inc (long (:version current)))]
 
               (execute! tx-info
                         {:insert-into :session_state
@@ -1603,7 +1605,7 @@
    `[:strong {} [:vis/ref :depth-exceeded ...]]` after persistance, and
    restored bubbles painted no badge text."
   ([v] (freeze-safe v 32))
-  ([v depth]
+  ([v ^long depth]
    (cond (nil? v) nil
          (runtime-object? v) {:vis/ref :expr}
          (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
@@ -1997,7 +1999,7 @@
                                        [(cond-> {:id (str new-id)
                                                  :session_turn_soul_id soul-id-s
                                                  :forked_from_session_turn_state_id (:id current)
-                                                 :version (inc (:version current))
+                                                 :version (inc (long (:version current)))
                                                  :status (normalize-status (or status :running))
                                                  :llm_root_model model
                                                  :created_at now}
