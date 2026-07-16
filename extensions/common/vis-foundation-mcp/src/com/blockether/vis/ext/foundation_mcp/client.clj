@@ -226,7 +226,7 @@
                          {:keys [status body]}
                          (post! body timeout-ms)]
 
-                     (when (>= status 400)
+                     (when (>= (long status) 400)
                        (throw (ex-info
                                 (str "MCP " name " HTTP " status " on " method)
                                 {:type :mcp/http-error :server name :status status :body body})))

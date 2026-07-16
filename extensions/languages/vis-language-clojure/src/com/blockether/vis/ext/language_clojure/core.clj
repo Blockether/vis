@@ -943,7 +943,8 @@
         "message" "clj-kondo lint check failed while validating parinfer repair"}]
       (->> (set/union (set (keys before-errors)) (set (keys after-errors)))
            (keep (fn [finding]
-                   (let [extra (- (get after-errors finding 0) (get before-errors finding 0))]
+                   (let [extra (- (long (get after-errors finding 0))
+                                  (long (get before-errors finding 0)))]
                      (when (pos? extra) (assoc finding "count" extra)))))
            vec))))
 

@@ -26,7 +26,7 @@
 (defonce ^:private pres-counter (atom 0))
 (defonce ^:private shape-counter (atom 0))
 
-(def ^:private emu-per-pt 12700.0)
+(def ^:private ^:const emu-per-pt 12700.0)
 
 (defn- emu->pt ^double [emu] (/ (double emu) emu-per-pt))
 (defn- b64enc [^bytes ba] (.encodeToString (Base64/getEncoder) ba))

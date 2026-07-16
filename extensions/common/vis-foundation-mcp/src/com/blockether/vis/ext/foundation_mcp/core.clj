@@ -80,7 +80,7 @@
                 (let [line (str/trim line)]
                   (when-let [i (and (seq line) (str/index-of line "="))]
                     (let [k (str/trim (subs line 0 i))]
-                      (when (seq k) [k (str/trim (subs line (inc i)))]))))))
+                      (when (seq k) [k (str/trim (subs line (inc (long i))))]))))))
         (str/split-lines (str s))))
 
 (defn- add-configured-server!

@@ -222,7 +222,7 @@
    untruncated as the blockquote body below, so nothing is lost — only the
    headline preview is bounded."
   ([s] (clip-subject s 72))
-  ([s max-len]
+  ([s ^long max-len]
    (let [s (str/trim (str s))]
      (if (> (count s) max-len) (str (str/trimr (subs s 0 (max 0 (dec max-len)))) "\u2026") s))))
 
@@ -235,11 +235,11 @@
         (get r "exit")
 
         failed?
-        (or (get r "timed_out") (and exit (not (zero? exit))))
+        (or (get r "timed_out") (and exit (not (zero? (long exit)))))
 
         note
         (cond (get r "timed_out") " (timed out)"
-              (and exit (not (zero? exit))) (str " (exit " exit ")")
+              (and exit (not (zero? (long exit)))) (str " (exit " exit ")")
               :else "")
 
         msg

@@ -72,7 +72,7 @@
     (.resolve dir
               (if (<= (count name) room)
                 name
-                (str (Integer/toHexString (bit-and (hash (sanitize session)) 0x7fffffff))
+                (str (Integer/toHexString (bit-and (long (hash (sanitize session))) 0x7fffffff))
                      "__"
                      iid
                      ".sock")))))

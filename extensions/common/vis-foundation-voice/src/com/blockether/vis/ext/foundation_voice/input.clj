@@ -54,7 +54,7 @@
 (defn- filler-token? [token] (contains? filler-tokens (comparable-token token)))
 
 (defn- repeated-run?
-  [tokens i n]
+  [tokens ^long i ^long n]
   (and (<= (+ i n n) (count tokens))
        (= (map comparable-token (subvec tokens i (+ i n)))
           (map comparable-token (subvec tokens (+ i n) (+ i n n))))))
@@ -84,8 +84,8 @@
       tokens
       (if-let [n (some #(when (repeated-run? tokens i %) %)
                        (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
-        (recur (vec (concat (map strip-outer-punct (subvec tokens 0 (+ i n)))
-                            (subvec tokens (+ i n n))))
+        (recur (vec (concat (map strip-outer-punct (subvec tokens 0 (+ i (long n))))
+                            (subvec tokens (+ i (long n) (long n)))))
                i)
         (recur tokens (inc i))))))
 

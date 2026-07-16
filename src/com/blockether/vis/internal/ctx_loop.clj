@@ -96,7 +96,9 @@
    atom (e.g. early hooks)."
   [env]
   (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
-    (str "t" (or turn-position 1) "/i" (normalize-iteration iteration) "/f" (inc (or form-idx 0)))))
+    (str "t" (or turn-position 1)
+         "/i" (normalize-iteration iteration)
+         "/f" (inc (long (or form-idx 0))))))
 
 (defn cursor-snapshot
   "Build a `\"session_scope\"` map from `:turn-state-atom`. Mirrors the
@@ -106,7 +108,7 @@
   (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
     {"turn" (or turn-position 1)
      "iter" (normalize-iteration iteration)
-     "next_form" (inc (or form-idx 0))}))
+     "next_form" (inc (long (or form-idx 0)))}))
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop

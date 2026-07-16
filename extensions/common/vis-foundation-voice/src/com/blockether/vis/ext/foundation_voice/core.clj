@@ -606,7 +606,8 @@
 
 (defn- executable?
   [cmd]
-  (try (zero? (:exit (process/sh {:out :string :err :string :continue true} "command" "-v" cmd)))
+  (try (zero? (long (:exit
+                      (process/sh {:out :string :err :string :continue true} "command" "-v" cmd))))
        (catch Throwable _ false)))
 
 (defn- resolved? [sym] (boolean (requiring-resolve sym)))

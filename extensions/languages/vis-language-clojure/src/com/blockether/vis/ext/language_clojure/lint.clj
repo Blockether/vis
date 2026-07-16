@@ -58,10 +58,10 @@
   [results]
   (reduce (fn [a b]
             {"op" "clj-lint"
-             "error" (+ (or (get a "error") 0) (or (get b "error") 0))
-             "warning" (+ (or (get a "warning") 0) (or (get b "warning") 0))
-             "info" (+ (or (get a "info") 0) (or (get b "info") 0))
-             "files" (+ (or (get a "files") 0) (or (get b "files") 0))
+             "error" (+ (long (or (get a "error") 0)) (long (or (get b "error") 0)))
+             "warning" (+ (long (or (get a "warning") 0)) (long (or (get b "warning") 0)))
+             "info" (+ (long (or (get a "info") 0)) (long (or (get b "info") 0)))
+             "files" (+ (long (or (get a "files") 0)) (long (or (get b "files") 0)))
              "findings" (into (vec (get a "findings")) (get b "findings"))})
           empty-result
           results))
