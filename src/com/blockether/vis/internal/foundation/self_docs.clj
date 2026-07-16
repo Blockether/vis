@@ -79,7 +79,62 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
                                                    (str/join ", " (map :slug ps))
                                                    ". Call vis_docs() to list all pages.")}}))))))
 
-(def vis-docs-symbol (vis/symbol #'vis-docs-tool {:symbol 'vis-docs :tag :observation}))
+(defn- docs-cell
+  "One-line, pipe-escaped, length-capped text for a GFM table cell (the TUI
+   table painter draws cells as plain text, so no inline markdown here)."
+  [s max-len]
+  (let [s (-> (str s)
+              (str/replace #"\s+" " ")
+              str/trim
+              (str/replace "|" "\\|"))]
+    (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
+
+(defn- render-vis-docs
+  "Op-card renderer for `vis_docs`. The page LISTING (no-arg / blank slug)
+   paints a GFM table — slug · section · title · blurb — the channels draw as
+   a boxed grid; a single fetched page shows a titled headline over the page's
+   full markdown body."
+  [r]
+  (cond (get r "pages")
+        (let [ps
+              (get r "pages")
+
+              n
+              (count ps)
+
+              header
+              ["| Slug | Section | Title | Blurb |" "|------|---------|-------|-------|"]
+
+              rows
+              (map (fn [p]
+                     (str "| "
+                          (docs-cell (get p "slug") 28)
+                          " | "
+                          (docs-cell (or (not-empty (str (get p "section"))) "—") 16)
+                          " | "
+                          (docs-cell (get p "title") 40)
+                          " | "
+                          (docs-cell (or (get p "blurb") "—") 90)
+                          " |"))
+                   ps)]
+
+          {:summary (str n " vis docs page" (when (not= 1 n) "s"))
+           :body (str/join "\n" (concat header rows))})
+        (get r "content") (let [title
+                                (not-empty (str (get r "title")))
+
+                                section
+                                (not-empty (str (get r "section")))
+
+                                slug
+                                (str (get r "slug"))]
+
+                            {:summary (str (or title slug) (when section (str " · " section)))
+                             :body (str (get r "content"))})
+        :else nil))
+
+(def vis-docs-symbol
+  (vis/symbol #'vis-docs-tool {:symbol 'vis-docs :tag :observation :render render-vis-docs}))
 
 (def symbols [vis-docs-symbol])
 
