@@ -1650,15 +1650,13 @@
         image-sink
         (atom [])]
 
-    ;; Paint passes live in ONE `let` so each phase-end timestamp is a real
-    ;; binding; `log-slow-frame!` then splits the opaque `:paint-ms` into
-    ;; `:messages-ms` / `:chrome-ms` / `:capture-ms` / `:post-ms` (see
+    (render/fill-background! g cols rows)
+    ;; The remaining paint passes live in ONE `let` so each phase-end timestamp
+    ;; is a real binding; `log-slow-frame!` then splits the opaque `:paint-ms`
+    ;; into `:messages-ms` / `:chrome-ms` / `:capture-ms` / `:post-ms` (see
     ;; `paint-phase-detail`) so a stutter warning names the pass that regressed
     ;; instead of one lumped paint number (issue #24 lived in `messages`).
-    (let [_
-          (render/fill-background! g cols rows)
-
-          ;; Messages area draws FIRST. It opens a new click-region staging
+    (let [;; Messages area draws FIRST. It opens a new click-region staging
           ;; pass via `cr/begin-frame!` and registers every painted chrome
           ;; row (links, image markers, file links). The header then
           ;; registers its :copy-id region. The published click-region
@@ -1668,12 +1666,17 @@
           ;; instead of a half-filled buffer (the bug that made the header
           ;; copy-id button feel "sometimes broken" when the spinner was
           ;; ticking).
+          ;;
+          ;; #24's copy-region storm lived in `draw-messages-area!`; bracket it
+          ;; with its own timestamps so a regression there reads `messages`, not
+          ;; `paint`.
+          messages-start-ns
+          (System/nanoTime)
+
           _
           (binding [render/*image-placements* image-sink]
             (render/draw-messages-area! g layout messages-top messages-bottom cols))
 
-          ;; #24's copy-region storm lived in `draw-messages-area!`; time it on
-          ;; its own so a regression there reads as `messages`, not `paint`.
           messages-end-ns
           (System/nanoTime)
 
@@ -1810,7 +1813,7 @@
                :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
                ;; Sub-paint phase split: a regression names its own
                ;; pass instead of hiding in :paint-ms (issue #24).
-               :messages-ms (nanos->ms layout-end-ns messages-end-ns)
+               :messages-ms (nanos->ms messages-start-ns messages-end-ns)
                :chrome-ms (nanos->ms messages-end-ns capture-start-ns)
                :capture-ms (nanos->ms capture-start-ns capture-end-ns)
                :post-ms (nanos->ms capture-end-ns refresh-start-ns)
