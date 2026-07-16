@@ -328,6 +328,15 @@
     (vis/worker-future "vis-tui-copy-bubble"
                        #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
     (vis/notify! "✓ Copied bubble" :level :success :ttl-ms copy-success-ttl-ms)))
+(defn- copy-bubble-hit!
+  "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
+   (see `bubble-copy-regions`) so the expensive clipboard formatting of a
+   trace bubble runs once, at click time, instead of on every painted
+   frame. Blank payloads (e.g. a still-empty streaming bubble) copy
+   nothing rather than clobbering the clipboard."
+  [hit]
+  (let [text (force (:text hit))]
+    (when-not (str/blank? text) (copy-bubble! text))))
 (defn- handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]
   (case op
@@ -1006,7 +1015,15 @@
    regions only answer the release-time question: which message did this
    simple click land on? They cover the visible bubble rectangle except for
    the final inter-bubble gap row, so clicking the role row or bubble padding
-   still copies the message while clicking between bubbles does nothing."
+   still copies the message while clicking between bubbles does nothing.
+
+   Each region's `:text` is a DELAY, not a string. Whole-bubble clipboard
+   text for a trace bubble runs a full `format-answer-with-thinking-data`
+   pass with every disclosure expanded — a cache key the draw path never
+   warms, so computing it eagerly here made EVERY full frame re-pay that
+   formatting for every visible trace bubble (the ::slow-frame paint storm
+   of issue #24). The frame now only pays for geometry; the click handler
+   forces the payload via `copy-bubble-hit!`."
   [layout messages text-top inner-h cols settings copy-opts]
   (let [bubble-left
         (long render/MESSAGE_MARGIN_LEFT)
@@ -1044,8 +1061,17 @@
                     message
                     (if (:traces raw-message) raw-message (or projected raw-message))
 
+                    ;; Cheap content check — the old eager
+                    ;; `(str/blank? text)` guard forced the full clipboard
+                    ;; formatting per bubble per frame just to decide the
+                    ;; region exists.
+                    has-copyable-content?
+                    (boolean (or (:traces message)
+                                 (some? (:ir message))
+                                 (not (str/blank? (:text message)))))
+
                     text
-                    (copyable-bubble-text message bubble-w settings copy-opts)
+                    (delay (copyable-bubble-text message bubble-w settings copy-opts))
 
                     sep-pad
                     0
@@ -1064,7 +1090,7 @@
 
                     clipped-height
                     (- copy-bottom row)]
-              :when (and (pos? clipped-height) (not (str/blank? text)))]
+              :when (and (pos? clipped-height) has-copyable-content?)]
 
           {:row row :col bubble-left :width bubble-w :height clipped-height :text text})))))
 (defn- disclosure-copy-regions
@@ -4840,7 +4866,7 @@
 
                              (state/dispatch [:clear-mouse-selection])
                              (cond disclosure-hit (copy-bubble! (:text disclosure-hit))
-                                   bubble-hit (copy-bubble! (:text bubble-hit))
+                                   bubble-hit (copy-bubble-hit! bubble-hit)
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
                            (when (and (not was-dragging?) (not already-handled?))
@@ -4924,7 +4950,7 @@
                                                         (bubble-copy-hit
                                                           point
                                                           transcript-bubble-copy-regions)]
-                                               (copy-bubble! (:text bubble-hit))))))))
+                                               (copy-bubble-hit! bubble-hit)))))))
                          (recur))
                        ;; MOVE - hover. We want the chat link-chrome
                        ;; rows to highlight when the user hovers over
