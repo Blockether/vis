@@ -548,18 +548,31 @@
                           (if (string? x) (edn/read-string x) x))
                         (catch Throwable _ nil))]
 
-        (if (map? parsed)
-          (-> parsed
-              (compose-repl-output)
-              (assoc "mode" "repl"
-                     "ns" ns-disp
-                     "port" port))
+        (cond
+          ;; nREPL never returned a result within the budget (eval! reports it and
+          ;; evicts the connection). Surface a CLEAR timeout instead of the opaque
+          ;; "could not parse test result" a nil value would otherwise produce.
+          (get r "timed_out")
           {"mode" "repl"
            "ns" ns-disp
            "port" port
-           "error" (str "could not parse test result"
-                        (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
-           "raw_value" (get r "value")})))))
+           "timed_out" true
+           "error" (str "test run timed out after " default-test-timeout-ms
+                        "ms — the nREPL never returned. The eval is likely wedged "
+                        "(infinite loop, blocked I/O, or a deadlock in the code under "
+                        "test); the connection was evicted so a retry reconnects fresh."
+                        (when (seq (str (get r "err"))) (str " nREPL err: " (get r "err"))))}
+          (map? parsed) (-> parsed
+                            (compose-repl-output)
+                            (assoc "mode" "repl"
+                                   "ns" ns-disp
+                                   "port" port))
+          :else {"mode" "repl"
+                 "ns" ns-disp
+                 "port" port
+                 "error" (str "could not parse test result"
+                              (when (seq (str (get r "err"))) (str " - nREPL err " (get r "err"))))
+                 "raw_value" (get r "value")})))))
 
 (defn- cli-tail
   "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the

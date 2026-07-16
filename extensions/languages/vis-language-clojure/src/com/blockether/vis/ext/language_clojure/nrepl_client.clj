@@ -132,102 +132,110 @@
          root-ex
          nil]
 
-    (cond (> (System/currentTimeMillis) (long deadline)) {"timed_out" true
-                                                          "value" (peek values)
-                                                          "values" values
-                                                          "out" (.toString out-acc)
-                                                          "err" (.toString err-acc)
-                                                          "ns" ns*
-                                                          "status" (conj status "timeout")
-                                                          "ex" ex
-                                                          "root_ex" root-ex}
-          (empty? rs) {"timed_out" false
-                       "value" (peek values)
-                       "values" values
-                       "out" (.toString out-acc)
-                       "err" (.toString err-acc)
-                       "ns" ns*
-                       "status" (vec status)
-                       "ex" ex
-                       "root_ex" root-ex}
-          :else
-          ;; nREPL keys are *strings* over bencode; some clients keywordize.
-          ;; Read both shapes so we don't silently lose value / status / out
-          ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
-          ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
-          (let [msg
-                (first rs)
+    (cond
+      (> (System/currentTimeMillis) (long deadline)) {"timed_out" true
+                                                      "value" (peek values)
+                                                      "values" values
+                                                      "out" (.toString out-acc)
+                                                      "err" (.toString err-acc)
+                                                      "ns" ns*
+                                                      "status" (conj status "timeout")
+                                                      "ex" ex
+                                                      "root_ex" root-ex}
+      ;; The response seq ended WITHOUT a `done`. nREPL only yields nil (ending
+      ;; the seq) when the client's response-timeout elapses waiting for the next
+      ;; message — or the socket dropped — so reaching here is a genuine eval
+      ;; TIMEOUT, never a clean finish (a completed eval returns on `done` above).
+      ;; Report it as one (matching the `> deadline` branch) so run_tests /
+      ;; repl_eval surface an actionable timeout instead of an opaque nil `value`
+      ;; that downstream reads as "could not parse test result".
+      (empty? rs) {"timed_out" true
+                   "value" (peek values)
+                   "values" values
+                   "out" (.toString out-acc)
+                   "err" (.toString err-acc)
+                   "ns" ns*
+                   "status" (conj (vec status) "timeout")
+                   "ex" ex
+                   "root_ex" root-ex}
+      :else
+      ;; nREPL keys are *strings* over bencode; some clients keywordize.
+      ;; Read both shapes so we don't silently lose value / status / out
+      ;; depending on transport wiring. (This `mg` reads the nREPL WIRE, not
+      ;; the strings-only Clojure->Python boundary — leave it dual-shape.)
+      (let [msg
+            (first rs)
 
-                mg
-                (fn [k]
-                  (or (get msg k) (get msg (keyword k))))
+            mg
+            (fn [k]
+              (or (get msg k) (get msg (keyword k))))
 
+            v
+            (mg "value")
+
+            o
+            (mg "out")
+
+            e
+            (mg "err")
+
+            n
+            (mg "ns")
+
+            s
+            (mg "status")
+
+            ex2
+            (mg "ex")
+
+            rx2
+            (mg "root-ex")]
+
+        (when o (.append out-acc ^String o))
+        (when e (.append err-acc ^String e))
+        (let [new-status
+              (into status
+                    (cond (nil? s) []
+                          (string? s) [s]
+                          (coll? s) (map str s)
+                          :else [(str s)]))
+
+              done?
+              (contains? new-status "done")
+
+              terminal-error?
+              (terminal-error-output? (.toString err-acc))
+
+              values'
+              (cond-> values
                 v
-                (mg "value")
+                (conj v))
 
-                o
-                (mg "out")
+              ns''
+              (or n ns*)
 
-                e
-                (mg "err")
+              ex''
+              (or ex2 ex)
 
-                n
-                (mg "ns")
+              rx''
+              (or rx2 root-ex)]
 
-                s
-                (mg "status")
-
-                ex2
-                (mg "ex")
-
-                rx2
-                (mg "root-ex")]
-
-            (when o (.append out-acc ^String o))
-            (when e (.append err-acc ^String e))
-            (let [new-status
-                  (into status
-                        (cond (nil? s) []
-                              (string? s) [s]
-                              (coll? s) (map str s)
-                              :else [(str s)]))
-
-                  done?
-                  (contains? new-status "done")
-
-                  terminal-error?
-                  (terminal-error-output? (.toString err-acc))
-
-                  values'
-                  (cond-> values
-                    v
-                    (conj v))
-
-                  ns''
-                  (or n ns*)
-
-                  ex''
-                  (or ex2 ex)
-
-                  rx''
-                  (or rx2 root-ex)]
-
-              (if (or done? terminal-error?)
-                ;; Drain no further. Once "done" arrived the eval is complete; for
-                ;; terminal errors nREPL may never send done, and waiting for it
-                ;; turns a useful syntax error into a timeout.
-                {"timed_out" false
-                 "value" (peek values')
-                 "values" values'
-                 "out" (.toString out-acc)
-                 "err" (.toString err-acc)
-                 "ns" ns''
-                 "status" (cond-> new-status
-                            terminal-error?
-                            (conj "eval-error"))
-                 "ex" ex''
-                 "root_ex" rx''}
-                (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
+          (if (or done? terminal-error?)
+            ;; Drain no further. Once "done" arrived the eval is complete; for
+            ;; terminal errors nREPL may never send done, and waiting for it
+            ;; turns a useful syntax error into a timeout.
+            {"timed_out" false
+             "value" (peek values')
+             "values" values'
+             "out" (.toString out-acc)
+             "err" (.toString err-acc)
+             "ns" ns''
+             "status" (cond-> new-status
+                        terminal-error?
+                        (conj "eval-error"))
+             "ex" ex''
+             "root_ex" rx''}
+            (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
 ;; ---------------------------------------------------------------------------
 ;; error enrichment — a beautiful, structured stacktrace on the eval-error path
@@ -445,38 +453,47 @@
                session
                (nrepl/client-session client)]
 
-           (try (let [req
-                      (cond-> {:op "eval" :code code}
-                        (string? ns)
-                        (assoc :ns ns)
+           (try
+             (let [req
+                   (cond-> {:op "eval" :code code}
+                     (string? ns)
+                     (assoc :ns ns)
 
-                        pretty?
-                        (assoc :nrepl.middleware.print/print
-                          "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                          {:right-margin print-margin}))
+                     pretty?
+                     (assoc :nrepl.middleware.print/print
+                       "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                       {:right-margin print-margin}))
 
-                      responses
-                      (session req)
+                   responses
+                   (session req)
 
-                      combined
-                      (combine responses deadline)
+                   combined
+                   (combine responses deadline)
 
-                      combined
-                      (if (eval-error? combined)
-                        (merge combined (fetch-stacktrace! session responses))
-                        combined)
+                   combined
+                   (if (eval-error? combined)
+                     (merge combined (fetch-stacktrace! session responses))
+                     combined)
 
-                      elapsed
-                      (- (System/currentTimeMillis) start)]
+                   elapsed
+                   (- (System/currentTimeMillis) start)
 
-                  (assoc combined
-                    "ms" elapsed
-                    "port" (int port)
-                    "host" host))
-                (finally
-                  ;; Reap the cloned session's server-side thread — otherwise every
-                  ;; eval leaks a parked nREPL-session-* executor on the server.
-                  (close-session! session)))))]
+                   res
+                   (assoc combined
+                     "ms" elapsed
+                     "port" (int port)
+                     "host" host)]
+
+               ;; A timed-out eval leaves a possibly-desynced keep-alive socket
+               ;; (background reader still parked, late messages pending). Evict it
+               ;; so the NEXT eval reconnects fresh instead of inheriting the wedge
+               ;; — the cascade that historically stalled run_tests past its budget.
+               (when (get res "timed_out") (evict! host port))
+               res)
+             (finally
+               ;; Reap the cloned session's server-side thread — otherwise every
+               ;; eval leaks a parked nREPL-session-* executor on the server.
+               (close-session! session)))))]
       (try (try (attempt)
                 (catch IOException _ioe
                   ;; A cached keep-alive socket the server has since reaped fails the FIRST
