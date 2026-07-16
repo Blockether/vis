@@ -2826,7 +2826,21 @@
                    (session-running? session)
                    (not (:loading? target))
                    (not (:gateway-turn-id target)))
-        {:db db}
+        ;; Not attaching a live turn here. But if the session is IDLE with a
+        ;; server-side queued backlog (left queued by a cancel, or submitted
+        ;; from another channel while we were away) and this tab isn't already
+        ;; busy, kick the queue into motion so it starts RIGHT AWAY on
+        ;; open/resume instead of sitting there. The daemon starts the head
+        ;; turn and emits turn.started, which our event subscription turns into
+        ;; :sibling-turn-started -> :attach-running-turn (which paints it).
+        (if (and workspace-id
+                 sid
+                 (not (session-running? session))
+                 (seq (:queued-turns session))
+                 (not (:loading? target))
+                 (not (:gateway-turn-id target)))
+          {:db db :fx [[:drain-idle-queue sid]]}
+          {:db db})
         (let [token
               (vis/cancellation-token)
 
@@ -3548,6 +3562,15 @@
         (fn [sid tid]
           (when (and sid tid)
             (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))
+
+(reg-fx :drain-idle-queue
+        ;; Kick a server-side queued backlog into motion for an IDLE session on
+        ;; open/resume: the daemon starts the head queued turn (no-op if one is
+        ;; already running) and emits turn.started, which the tab's event
+        ;; subscription turns into :sibling-turn-started -> :attach-running-turn.
+        ;; Best-effort; a stopped daemon or lost race simply leaves it queued.
+        (fn [sid]
+          (when sid (try (vis/gateway-drain-idle! sid) (catch Throwable _ nil)))))
 (reg-fx :gateway-close-session
         (fn [sid]
           (when sid (try (vis/gateway-close-session! sid) (catch Throwable _ nil)))))

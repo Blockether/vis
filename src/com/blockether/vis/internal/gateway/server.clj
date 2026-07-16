@@ -915,6 +915,16 @@
                                 :turn_id tid
                                 :turn_status (:status result)))))
 
+(defn- drain-idle-handler
+  "POST /sessions/:sid/drain-queue — start the session's oldest queued turn iff
+   it is idle. Returns `{:turn <started>|nil}`; nil turn means nothing was
+   queued or a turn is already running (both benign)."
+  [request]
+  (let [sid (path-sid request)]
+    (if (and sid (state/soul sid))
+      (json-response {:turn (state/drain-idle! sid)})
+      (session-404 (get-in request [:path-params :sid])))))
+
 (defn- context-handler
   [request]
   (if-let [snapshot (some-> (path-sid request)
@@ -1490,7 +1500,8 @@
           :patch update-queued-turn-handler
           :delete delete-queued-turn-handler}]
         ["/sessions/:sid/turns/:tid/trace" {:get turn-trace-handler}]
-        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
+        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
+        ["/sessions/:sid/drain-queue" {:post drain-idle-handler}]]]
       (keep (fn [{:keys [routes]}]
               (when routes
                 (try (routes token)

@@ -1060,6 +1060,30 @@
           (expect (not (some #(= "hello" (:text %)) (:pending-sends db))))))))
 
 (defdescribe
+  attach-running-turn-drains-idle-queue-test
+  ;; Auto-start on open/resume (option a): when a tab attaches to an IDLE
+  ;; session that still carries a server-side queued backlog (left queued by a
+  ;; cancel, or submitted from a sibling channel while we were away), the
+  ;; handler must kick the daemon to start the head turn RIGHT AWAY via the
+  ;; :drain-idle-queue fx — not leave it sitting invisibly queued.
+  (it "fires :drain-idle-queue for an idle session with a queued backlog"
+      (let [drained (atom nil)]
+        (with-redefs [vis/gateway-drain-idle! (fn [sid]
+                                                (reset! drained sid))]
+          (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
+          (state/dispatch
+            [:attach-running-turn "s1"
+             {:id "s1" :status "idle" :queued-turns [{:turn-id "q1" :text "hi" :queued-at-ms 1}]}])
+          (expect (= "s1" @drained)))))
+  (it "does not drain when the idle session has no queued backlog"
+      (let [drained (atom :unset)]
+        (with-redefs [vis/gateway-drain-idle! (fn [sid]
+                                                (reset! drained sid))]
+          (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
+          (state/dispatch [:attach-running-turn "s1" {:id "s1" :status "idle" :queued-turns []}])
+          (expect (= :unset @drained))))))
+
+(defdescribe
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
       (let [make-progress-render-updater

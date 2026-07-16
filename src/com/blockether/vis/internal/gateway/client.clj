@@ -578,6 +578,8 @@
   [sid tid]
   (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/cancel")))
 
+(defn drain-idle! [sid] (send-json! "POST" (str "/v1/sessions/" (enc sid) "/drain-queue")))
+
 (defn reconcile-running-turns!
   "Clients do not sweep. Only the daemon may reconcile its own startup orphans."
   []

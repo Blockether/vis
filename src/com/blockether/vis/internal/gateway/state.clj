@@ -1435,6 +1435,16 @@
                             :attachments attachments})
       (get-turn sid tid))))
 
+(defn drain-idle!
+  "Start the oldest queued turn for `sid` IF the session is idle (no turn in
+   flight). No-op returning nil when a turn is already running or nothing is
+   queued. Lets an attaching channel kick an orphaned backlog — left queued by a
+   cancel, or submitted from another channel while this one was away — into
+   motion the moment a client opens/resumes, instead of letting it sit forever.
+   Safe to call redundantly: `drain-next-queued!` guards on `:current-turn`."
+  [sid]
+  (drain-next-queued! sid))
+
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
 

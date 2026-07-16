@@ -119,6 +119,7 @@
              [gateway-update-queued-turn! gateway-client/update-queued-turn!]
              [gateway-delete-queued-turn! gateway-client/delete-queued-turn!]
              [gateway-cancel-turn! gateway-client/cancel-turn!]
+             [gateway-drain-idle! gateway-client/drain-idle!]
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]

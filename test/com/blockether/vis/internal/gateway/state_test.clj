@@ -459,6 +459,62 @@
              (finally (swap! registry dissoc sid))))))
 
 (defdescribe
+  drain-idle-test
+  ;; Auto-start on open/resume: an attaching channel calls `drain-idle!` to kick
+  ;; an orphaned queued backlog into motion — but ONLY when the session is idle.
+  ;; A turn already in flight must be left alone (one engine turn per session).
+  (it "drain-idle! starts the queued head when the session is idle"
+      (let [sid
+            (str "drain-idle-" (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            launched
+            (atom nil)]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :turns {"q1"
+                        {:turn_id "q1" :session_id sid :status "queued" :request "hi" :queued_at 1}}
+                :turn-order ["q1"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec (take 2 args))))}
+               #(state/drain-idle! sid))
+             (expect (= [sid "q1"] @launched))
+             (expect (= "running" (:status (state/get-turn sid "q1"))))
+             (finally (swap! registry dissoc sid)))))
+  (it "drain-idle! is a no-op while a turn is already running"
+      (let [sid
+            (str "drain-idle-busy-" (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            launched
+            (atom nil)
+
+            result
+            (atom :unset)]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn "r0"
+                :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                        "q1"
+                        {:turn_id "q1" :session_id sid :status "queued" :request "hi" :queued_at 1}}
+                :turn-order ["r0" "q1"]})
+             (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec (take 2 args))))}
+               #(reset! result (state/drain-idle! sid)))
+             (expect (nil? @result))
+             (expect (nil? @launched))
+             (expect (= "queued" (:status (state/get-turn sid "q1"))))
+             (finally (swap! registry dissoc sid))))))
+
+(defdescribe
   delta-coalesce-test
   ;; Model text phases stream LIVE but coalesced to SENTENCE granularity: a frame
   ;; is skipped only while still mid-sentence AND within the time cap. A closed
