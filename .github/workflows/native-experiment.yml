@@ -6,6 +6,8 @@ name: Native Experiment
 # native.yml / native-release.yml are updated with the winning config.
 on:
   workflow_dispatch:
+  push:
+    branches: [ci/native-free-runners]
 
 concurrency:
   group: native-experiment-${{ github.ref }}
