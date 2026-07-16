@@ -110,13 +110,30 @@
   "Log frames whose Lanterna DELTA refresh alone crosses this duration."
   20)
 (defn- nanos->ms [start-ns end-ns] (/ (double (- (long end-ns) (long start-ns))) 1000000.0))
+(defn- paint-phase-detail
+  "Render the sub-paint phase split as a compact ` [messages n.n, chrome n.n,
+   capture n.n, post n.n]` suffix, or \"\" when the frame carried no phase
+   breakdown. The full-frame path times each pass so a stutter warning names the
+   exact sub-pass that blew up (e.g. `messages` for the copy-region storm in
+   issue #24) instead of hiding it in one opaque `paint` number."
+  [data]
+  (let [phases (for [[k label] [[:messages-ms "messages"] [:chrome-ms "chrome"]
+                                [:capture-ms "capture"] [:post-ms "post"]]
+                     :let [v (get data k)]
+                     :when (some? v)]
+
+                 (format "%s %.1f" label (double v)))]
+    (if (seq phases) (str " [" (str/join ", " phases) "]") "")))
 (defn- log-slow-frame!
   "Warn-log a TUI frame whose wall-clock total OR Lanterna DELTA refresh crosses
    the stutter thresholds. `:path` (\"live\" / \"full\" / \"scroll\") tags WHICH
    render path produced it, and the message spells out the layout/paint/refresh
-   split so a stutter report says where the time actually went instead of
-   guessing (the raw `:data` map carries the rest). Only slow frames log, so the
-   default file handler stays quiet during smooth playback."
+   split - plus, on the full path, the per-sub-pass `paint` breakdown
+   (`paint-phase-detail`) and the render cardinalities (`:copy-regions`,
+   `:images`, `:total-h`) that actually drive paint cost - so a stutter report
+   says where the time went AND what was on screen instead of guessing (the raw
+   `:data` map carries the rest). Only slow frames log, so the default file
+   handler stays quiet during smooth playback."
   [data]
   (let [total-ms
         (double (:total-ms data 0.0))
@@ -136,12 +153,82 @@
     (when (or (>= total-ms (long slow-live-frame-threshold-ms))
               (>= refresh-ms (long slow-refresh-threshold-ms)))
       (tel/log! {:level :warn :id ::slow-frame :data data}
-                (format "slow TUI %s frame: %.1fms total (layout %.1f, paint %.1f, refresh %.1f)"
+                (format "slow TUI %s frame: %.1fms total (layout %.1f, paint %.1f%s, refresh %.1f)"
                         path
                         total-ms
                         layout-ms
                         paint-ms
+                        (paint-phase-detail data)
                         refresh-ms)))))
+
+(def ^:private frame-trend-interval-ms
+  "Emit the always-on `::frame-trend` summary at most this often (ms). Rate
+   limiting keeps the trend line a trickle (~1/sec while frames actually render,
+   nothing when idle) rather than the per-frame flood that forced the old
+   diagnostics down to `:debug`."
+  1000)
+
+(def ^:private frame-trend-state
+  "Accumulator for the always-on frame-trend line: an open window
+   `{:since-ms :frames :sum-ms :max-ms :by-path}` plus, once the window closes, a
+   carried `:emit` snapshot the caller drains and logs."
+  (atom nil))
+
+(defn- record-frame!
+  "Fold one rendered frame (any heavy path) into the trend accumulator and, once
+   per `frame-trend-interval-ms`, emit a compact `::frame-trend` INFO line -
+   frame count, avg/max wall-clock, and per-path counts. This is the always-on
+   half: a slow creep (avg 400->430->460ms across a session) shows up in the
+   trend BEFORE any single frame trips the `log-slow-frame!` stutter threshold,
+   which is the regression the one-shot slow-frame warning misses. Runs on the
+   single render thread, so the swap is uncontended."
+  [path total-ms]
+  (let [now
+        (System/currentTimeMillis)
+
+        ms
+        (double total-ms)
+
+        st
+        (swap! frame-trend-state (fn [s]
+                                   (if (and s
+                                            (< (- now (long (:since-ms s)))
+                                               (long frame-trend-interval-ms)))
+                                     ;; window still open - fold this frame in, clear any
+                                     ;; already-drained emit snapshot.
+                                     (-> s
+                                         (update :frames inc)
+                                         (update :sum-ms + ms)
+                                         (update :max-ms max ms)
+                                         (update-in [:by-path path] (fnil inc 0))
+                                         (dissoc :emit))
+                                     ;; first frame OR window elapsed - carry the closed window
+                                     ;; out via :emit and open a fresh one seeded with THIS frame.
+                                     {:since-ms now
+                                      :frames 1
+                                      :sum-ms ms
+                                      :max-ms ms
+                                      :by-path {path 1}
+                                      :emit (when s (dissoc s :emit))})))]
+
+    (when-let [w (:emit st)]
+      (let [frames (long (:frames w))
+            avg-ms (/ (double (:sum-ms w)) (max 1 frames))]
+
+        (tel/log! {:level :info
+                   :id ::frame-trend
+                   :data (-> w
+                             (dissoc :emit)
+                             (assoc :avg-ms avg-ms
+                                    :window-ms (- now (long (:since-ms w)))))}
+                  (format "TUI frame-trend: %d frames, avg %.1fms, max %.1fms (%s)"
+                          frames
+                          avg-ms
+                          (double (:max-ms w))
+                          (str/join " "
+                                    (map (fn [[k v]]
+                                           (format "%s=%d" k v))
+                                         (:by-path w)))))))))
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
    :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
@@ -1563,52 +1650,70 @@
         image-sink
         (atom [])]
 
-    (render/fill-background! g cols rows)
-    ;; Messages area draws FIRST. It opens a new click-region staging
-    ;; pass via `cr/begin-frame!` and registers every painted chrome
-    ;; row (links, image markers, file links). The header then
-    ;; registers its :copy-id region. The published click-region
-    ;; registry is unchanged until `cr/commit-frame!` runs at the end
-    ;; of this fn - so the input thread can `cr/lookup` at any time
-    ;; during the paint and still get a complete previous frame back
-    ;; instead of a half-filled buffer (the bug that made the header
-    ;; copy-id button feel \"sometimes broken\" when the spinner was
-    ;; ticking).
-    (binding [render/*image-placements* image-sink]
-      (render/draw-messages-area! g layout messages-top messages-bottom cols))
-    (header/draw-header! g db header-top cols)
-    ;; Bottom band (input box + footer + slash suggestions) — always painted so
-    ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
-    (draw-bottom-chrome! screen
-                         g
-                         db
-                         {:input input
-                          :input-top input-top
-                          :text-rows text-rows
-                          :cols cols
-                          :now-ms now-ms
-                          :echo-row echo-row
-                          :footer-row footer-row
-                          :slash-suggestions slash-suggestions
-                          :slash-command-index slash-command-index})
-    ;; Atomically publish every chrome region painted above. Until this swap runs the input
-    ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
-    ;; frame matches what's actually still on the user's screen up to this instant.
-    ;; capture-screen-cells walks cols×rows of the back buffer and allocates a 2D string vec.
-    ;; On a 200×50 terminal that's 10000 .getBackCharacter calls + ~10000 string allocations
-    ;; per frame. The cells are ONLY consumed by the mouse-selection clipboard copy path - we
-    ;; read `(:screen-cells (:layout db))` to extract the text under the user's drag. When no
-    ;; selection is active, nothing reads them. Skip the capture in that case.
-    ;;
-    ;; Safety: when a fresh selection starts (mouse press), the next
-    ;; full render is dispatched (the input handler bumps
-    ;; render-version on every mouse event); :mouse-selection becomes
-    ;; non-nil in db, so we DO capture this frame. Selection content
-    ;; uses these cells. The only edge case is a press+release within
-    ;; the SAME render frame, which can't happen because each event
-    ;; bumps version and the render loop processes one version at a
-    ;; time. See autoresearch A11.
-    (let [overlay-geom
+    ;; Paint passes live in ONE `let` so each phase-end timestamp is a real
+    ;; binding; `log-slow-frame!` then splits the opaque `:paint-ms` into
+    ;; `:messages-ms` / `:chrome-ms` / `:capture-ms` / `:post-ms` (see
+    ;; `paint-phase-detail`) so a stutter warning names the pass that regressed
+    ;; instead of one lumped paint number (issue #24 lived in `messages`).
+    (let [_
+          (render/fill-background! g cols rows)
+
+          ;; Messages area draws FIRST. It opens a new click-region staging
+          ;; pass via `cr/begin-frame!` and registers every painted chrome
+          ;; row (links, image markers, file links). The header then
+          ;; registers its :copy-id region. The published click-region
+          ;; registry is unchanged until `cr/commit-frame!` runs at the end
+          ;; of this fn - so the input thread can `cr/lookup` at any time
+          ;; during the paint and still get a complete previous frame back
+          ;; instead of a half-filled buffer (the bug that made the header
+          ;; copy-id button feel "sometimes broken" when the spinner was
+          ;; ticking).
+          _
+          (binding [render/*image-placements* image-sink]
+            (render/draw-messages-area! g layout messages-top messages-bottom cols))
+
+          ;; #24's copy-region storm lived in `draw-messages-area!`; time it on
+          ;; its own so a regression there reads as `messages`, not `paint`.
+          messages-end-ns
+          (System/nanoTime)
+
+          _
+          (header/draw-header! g db header-top cols)
+
+          ;; Bottom band (input box + footer + slash suggestions) — always painted so
+          ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
+          _
+          (draw-bottom-chrome! screen
+                               g
+                               db
+                               {:input input
+                                :input-top input-top
+                                :text-rows text-rows
+                                :cols cols
+                                :now-ms now-ms
+                                :echo-row echo-row
+                                :footer-row footer-row
+                                :slash-suggestions slash-suggestions
+                                :slash-command-index slash-command-index})
+
+          ;; Atomically publish every chrome region painted above. Until this swap runs the input
+          ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
+          ;; frame matches what's actually still on the user's screen up to this instant.
+          ;; capture-screen-cells walks cols×rows of the back buffer and allocates a 2D string vec.
+          ;; On a 200×50 terminal that's 10000 .getBackCharacter calls + ~10000 string allocations
+          ;; per frame. The cells are ONLY consumed by the mouse-selection clipboard copy path - we
+          ;; read `(:screen-cells (:layout db))` to extract the text under the user's drag. When no
+          ;; selection is active, nothing reads them. Skip the capture in that case.
+          ;;
+          ;; Safety: when a fresh selection starts (mouse press), the next
+          ;; full render is dispatched (the input handler bumps
+          ;; render-version on every mouse event); :mouse-selection becomes
+          ;; non-nil in db, so we DO capture this frame. Selection content
+          ;; uses these cells. The only edge case is a press+release within
+          ;; the SAME render frame, which can't happen because each event
+          ;; bumps version and the render loop processes one version at a
+          ;; time. See autoresearch A11.
+          overlay-geom
           (when (:tasks-open? db)
             (components/context-overlay! g
                                          cols
@@ -1633,8 +1738,16 @@
           ;; this `screen-cells` capture, so its text lands in the back buffer in
           ;; time to be copyable. The panel used to paint LAST (after capture),
           ;; which is exactly why its cells were never selectable.
+          ;; The 10k-cell capture is the OTHER known-heavy full-frame pass, so
+          ;; bracket it with its own timestamps for a `:capture-ms` phase.
+          capture-start-ns
+          (System/nanoTime)
+
           screen-cells
           (when need-cells? (capture-screen-cells screen cols rows))
+
+          capture-end-ns
+          (System/nanoTime)
 
           viewport
           (if overlay-sel?
@@ -1687,15 +1800,32 @@
       (when-not *skip-frame-refresh?*
         (let [refresh-start-ns (System/nanoTime)]
           (.refresh screen Screen$RefreshType/DELTA)
-          (log-slow-frame! {:path "full"
-                            :total-ms (nanos->ms frame-start-ns (System/nanoTime))
-                            :layout-ms (nanos->ms frame-start-ns layout-end-ns)
-                            :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
-                            :refresh-ms (nanos->ms refresh-start-ns (System/nanoTime))
-                            :cols cols
-                            :rows rows
-                            :messages (count messages)
-                            :visible (count (:visible layout))}))
+          (let [frame-end-ns (System/nanoTime)
+                total-ms (nanos->ms frame-start-ns frame-end-ns)]
+
+            (log-slow-frame!
+              {:path "full"
+               :total-ms total-ms
+               :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+               :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+               ;; Sub-paint phase split: a regression names its own
+               ;; pass instead of hiding in :paint-ms (issue #24).
+               :messages-ms (nanos->ms layout-end-ns messages-end-ns)
+               :chrome-ms (nanos->ms messages-end-ns capture-start-ns)
+               :capture-ms (nanos->ms capture-start-ns capture-end-ns)
+               :post-ms (nanos->ms capture-end-ns refresh-start-ns)
+               :refresh-ms (nanos->ms refresh-start-ns frame-end-ns)
+               :cols cols
+               :rows rows
+               ;; "What is rendered" cardinalities that drive paint
+               ;; cost - a copy-region/image spike names itself.
+               :messages (count messages)
+               :visible (count (:visible layout))
+               :copy-regions (+ (count transcript-bubble-copy-regions)
+                                (count transcript-disclosure-copy-regions))
+               :images (count @image-sink)
+               :total-h total-h})
+            (record-frame! "full" total-ms)))
         ;; Inline images ride the terminal's graphics layer, which Lanterna
         ;; doesn't model. Draw them AFTER the delta so they sit on top of the
         ;; blank cells the renderer reserved for each expanded `vis-image`.
@@ -2256,7 +2386,8 @@
            :total-h (long (:total-h layout))
            :inner-h inner-h
            :eff-scroll (long (:eff-scroll layout))
-           :search-active? (boolean (get-in db [:search :active?]))})))
+           :search-active? (boolean (get-in db [:search :active?]))})
+        (record-frame! "live" (nanos->ms frame-start-ns refresh-end-ns))))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -2381,15 +2512,20 @@
     (.setCursorPosition screen nil)
     (let [refresh-start-ns (System/nanoTime)]
       (.refresh screen Screen$RefreshType/DELTA)
-      (log-slow-frame! {:path "scroll"
-                        :total-ms (nanos->ms frame-start-ns (System/nanoTime))
-                        :layout-ms (nanos->ms frame-start-ns layout-end-ns)
-                        :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
-                        :refresh-ms (nanos->ms refresh-start-ns (System/nanoTime))
-                        :cols cols
-                        :rows rows
-                        :messages (count messages)
-                        :visible (count (:visible layout))}))
+      (let [frame-end-ns (System/nanoTime)
+            total-ms (nanos->ms frame-start-ns frame-end-ns)]
+
+        (log-slow-frame! {:path "scroll"
+                          :total-ms total-ms
+                          :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+                          :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+                          :refresh-ms (nanos->ms refresh-start-ns frame-end-ns)
+                          :cols cols
+                          :rows rows
+                          :messages (count messages)
+                          :visible (count (:visible layout))
+                          :total-h (long (:total-h layout))})
+        (record-frame! "scroll" total-ms)))
     (merge previous-layout
            {:cols cols
             :rows rows
