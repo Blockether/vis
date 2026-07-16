@@ -208,8 +208,6 @@
 
 
 (def ^:private default-find-limit 50)
-(def ^:private default-list-depth 10)
-(def ^:private default-list-limit 3000)
 
 ;; cat pagination contract:
 ;;   `default-cat-limit`     - lines per window when the model omits `n`.
@@ -1223,32 +1221,8 @@
                 (recur (inc total)))))))))
 
 ;; =============================================================================
-;; ls
+;; directory-walk cancellation
 ;; =============================================================================
-
-(defn- visible-children
-  [^File f {:keys [is_hidden is_respect_gitignore ignore-node root]}]
-  (when (.isDirectory f)
-    (let [kids (->> (.listFiles f)
-                    (remove (fn [^File c]
-                              (and (not is_hidden) (.isHidden c))))
-                    (remove (fn [^File c]
-                              (and is_respect_gitignore (ignored? ignore-node c root)))))]
-      (sort-by (juxt #(if (.isDirectory ^File %) 0 1) #(.getName ^File %)) kids))))
-
-;; Flat-listing helper. The earlier nested `:children` shape made the
-;; model walk the tree client-side (`tree-seq map? :children`) for the
-;; most common questions (find a file, count files, filter by ext). Flat
-;; output sidesteps that — every entry is a top-level row the model can
-;; filter directly.
-(defn- flat-entry
-  "Project a `File` into the flat-list row shape used by ls.
-   `:path` is workspace-relative; trailing `/` on dir paths is left to
-   the renderer so the data shape stays uniform."
-  [^File f]
-  {:path (rel-path f)
-   :type (if (.isDirectory f) :dir :file)
-   :size (if (.isDirectory f) nil (.length f))})
 
 (defn- check-interrupt!
   "Throw `InterruptedException` when the worker thread has been interrupted
@@ -1259,164 +1233,6 @@
   []
   (when (.isInterrupted (Thread/currentThread))
     (throw (InterruptedException. "directory walk cancelled"))))
-
-(defn- collect-flat-entries
-  "BFS-like (actually pre-order DFS) walk under `root` up to `max-depth`.
-   Returns `{:entries [...] :truncated? B}`. Respects `:is_hidden` /
-   `:is_respect_gitignore` like before. `:is_files_only` and `:is_dirs_only`
-   are post-filters applied per entry (root is never emitted). Stops at
-   `max-limit` entries and marks `:truncated? true`."
-  [^File root opts* max-depth max-limit is_files_only is_dirs_only]
-  (let [acc
-        (volatile! (transient []))
-
-        truncated?
-        (volatile! false)
-
-        keep?
-        (fn [^File f]
-          (cond is_files_only (.isFile f)
-                is_dirs_only (.isDirectory f)
-                :else true))
-
-        walk
-        (fn walk [^File f ^long cur-depth]
-          (check-interrupt!)
-          (when-not @truncated?
-            (when (and (not= f root) (keep? f))
-              (vswap! acc conj! (flat-entry f))
-              (when (>= (count @acc) (long max-limit)) (vreset! truncated? true)))
-            ;; Descend strictly by depth budget. `:depth 0` means
-            ;; \"no descent at all\" — root's children aren't visited.
-            ;; `:depth 1` visits root's immediate children only.
-            (when (and (.isDirectory f) (< cur-depth (long max-depth)) (not @truncated?))
-              (doseq [^File child
-                      (visible-children f opts*)
-
-                      :while (not @truncated?)]
-
-                (walk child (inc (long cur-depth)))))))]
-
-    (walk root 0)
-    {:entries (persistent! @acc) :truncated? @truncated?}))
-
-(defn- entry-parent-dir
-  "Workspace-relative parent directory of a flat entry path, or `root-rel`
-   when the path has no slash (a direct child of the listed root)."
-  [^String path root-rel]
-  (let [i (str/last-index-of path "/")]
-    (if i (subs path 0 i) root-rel)))
-
-(defn- entry-base-name
-  [^String path]
-  (let [i (str/last-index-of path "/")]
-    (if i (subs path (inc (long i))) path)))
-
-(defn- group-entries-by-dir
-  "Fold the pre-order flat `entries` into ONE group per directory, in
-   first-seen (pre-order) order:
-     [{:dir \"bin\" :files [{:name \"dev\" :size 2308} ...]} ...]
-
-   The dir path is stated ONCE per group instead of repeating its full
-   prefix on every file — that prefix duplication is the whole reason a
-   flat ls bloats context. Every directory the walk covered appears as a
-   group header (so the tree stays visible even for dirs that hold only
-   subdirs); `root-rel` is the listed root and always leads. Files carry
-   the raw `:size` int (nil for the implicit dir rows); display formats it."
-  [entries root-rel]
-  (let [order
-        (volatile! [])
-
-        seen
-        (volatile! #{})
-
-        files
-        (volatile! {})
-
-        ensure!
-        (fn [d]
-          (when-not (contains? @seen d)
-            (vswap! seen conj d)
-            (vswap! order conj d)
-            (vswap! files assoc d (transient []))))]
-
-    (ensure! root-rel)
-    (doseq [{:keys [path type size]} entries]
-      (if (= type :dir)
-        (ensure! path)
-        (let [d (entry-parent-dir path root-rel)]
-          (ensure! d)
-          (vswap! files update d conj! {"name" (entry-base-name path) "size" size}))))
-    ;; This vector is the model-facing `ls` "groups" payload — string keys.
-    (mapv (fn [d]
-            {"dir" d "files" (persistent! (get @files d))})
-          @order)))
-
-(defn- list-files
-  ;; Internal helper — always called with a real map (or nil).
-  ;; The dual kwargs/map calling convention lives on the public
-  ;; `ls-tool` wrapper; this stays positional to keep nil-forwarding
-  ;; trivial.
-  ([path] (list-files path nil))
-  ([path opts]
-   (let [{:strs [depth limit is_hidden is_respect_gitignore is_files_only is_dirs_only]
-          :or {depth default-list-depth
-               limit default-list-limit
-               is_hidden false
-               is_respect_gitignore true
-               is_files_only false
-               is_dirs_only false}}
-         (or opts {})
-
-         _
-         (when (and is_files_only is_dirs_only)
-           (throw (ex-info "ls \"is_files_only\" and \"is_dirs_only\" are mutually exclusive"
-                           {:type :ext.foundation.editing/invalid-ls-opts :opts opts})))
-
-         _
-         (when-not (and (integer? depth) (not (neg? (long depth))))
-           (throw (ex-info "ls \"depth\" must be a non-negative integer"
-                           {:type :ext.foundation.editing/invalid-ls-opts :depth depth})))
-
-         _
-         (when-not (and (integer? limit) (pos? (long limit)))
-           (throw (ex-info "ls \"limit\" must be a positive integer"
-                           {:type :ext.foundation.editing/invalid-ls-opts :limit limit})))
-
-         f
-         (safe-path path)
-
-         _
-         (when-not (.exists f)
-           (throw (ex-info (str "Path not found: " (.getPath f))
-                           {:type :ext.foundation.editing/path-not-found})))
-
-         opts*
-         {:is_hidden is_hidden
-          :is_respect_gitignore is_respect_gitignore
-          :ignore-node (when is_respect_gitignore (load-ignore-node f))
-          :root f}
-
-         {:keys [entries truncated?]}
-         (collect-flat-entries f opts* depth limit is_files_only is_dirs_only)
-
-         file-count
-         (count (filter #(= :file (:type %)) entries))
-
-         dir-count
-         (count (filter #(= :dir (:type %)) entries))]
-
-     ;; This map is the model-facing `ls` result — string keys, no keyword values.
-     {"path" (rel-path f)
-      "absolute_path" (.getAbsolutePath f)
-      "root_type" (if (.isDirectory f) "dir" "file")
-      "groups" (group-entries-by-dir entries (rel-path f))
-      "entry_count" (count entries)
-      "file_count" file-count
-      "dir_count" dir-count
-      "truncated" truncated?
-      "depth" depth
-      "limit" limit})))
 
 ;; =============================================================================
 ;; find
@@ -3589,36 +3405,6 @@
      (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"anchor\": [from, to]}"
                      {:type :ext.foundation.editing/invalid-cat-args :got mode})))))
 
-(defn- ls-tool
-  "List a directory tree, grouped by directory.
-     await ls()                 # current dir (like os.listdir)
-     await ls(\".\")
-     await ls(path, {\"depth\": 2, \"is_files_only\": True})
-
-   Returns {\"groups\": [{\"dir\": D, \"files\": [{\"name\": N, \"size\": BYTES}]}],
-   \"path\", \"entry_count\", \"file_count\", \"dir_count\", \"truncated\", \"depth\", \"limit\"}.
-   Each dir is stated ONCE; rebuild a path as g[\"dir\"] + \"/\" + f[\"name\"].
-     [g[\"dir\"]+\"/\"+f[\"name\"] for g in r[\"groups\"] for f in g[\"files\"]]
-
-   Opts (snake_case): depth, limit, is_files_only, is_dirs_only, is_hidden,
-   is_respect_gitignore (default True). Gotcha: \"truncated\": True means limit
-   (default 3000) clamped the walk — narrow with depth/path, don't assume complete."
-  ([] (ls-tool "."))
-  ([path & {:as opts}]
-   (let [listing (list-files path opts)]
-     (tool-success {:op :ls
-                    :path path
-                    :kind :dir
-                    :result listing
-                    :metadata {:depth (get listing "depth")
-                               :limit (get listing "limit")
-                               :entry-count (get listing "entry_count")
-                               :file-count (get listing "file_count")
-                               :dir-count (get listing "dir_count")
-                               :truncated? (get listing "truncated")
-                               :is_hidden (get opts "is_hidden")
-                               :is_respect_gitignore (get opts "is_respect_gitignore" true)}}))))
-
 (defn- rg-tool
   "Search file CONTENT — smart-case, loose. (For file NAMES use find_files; it's fuzzy.)
      await rg(\"request_timeout\")                    # one loose term
@@ -4806,25 +4592,6 @@
      (when (seq files)
        (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (get % "path"))) files)) "\n```"))}))
 
-(defn- render-ls-result
-  "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
-   get a trailing `/`). `r` is `{:path :entries [{:type :name}] :entry_count}`."
-  [r]
-  (let [n
-        (or (get r "entry_count") (count (get r "entries")) 0)
-
-        path
-        (some-> (get r "path")
-                kw->str)
-
-        row
-        (fn [e]
-          (str "  " (get e "name") (when (= "dir" (get e "type")) "/")))]
-
-    {:summary (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`")))
-     :body (when (seq (get r "entries"))
-             (str "\n```\n" (str/join "\n" (map row (get r "entries"))) "\n```"))}))
-
 (defn- render-move-result
   "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
   [r]
@@ -4970,43 +4737,6 @@
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
-
-(def ls-symbol
-  (vis/symbol
-    #'ls-tool
-    {:symbol 'ls
-     :native-tool? false
-     ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
-     ;; opts are present force a leading path (default "."). Escape hatch:
-     ;; returns RAW arg values (the engine renders them).
-     :call (fn [input]
-             (let [path
-                   (get input "path")
-
-                   opts
-                   (dissoc input "path")]
-
-               (if (seq opts) {:args [(or path ".") opts]} {:args (if path [path] [])})))
-     :description (str
-                    "List the entries of a directory `path` (default: the workspace root), grouped "
-                    "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
-                    "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
-     :render render-ls-result
-     :color-role :tool-color/read
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string" :description "Directory to list (default workspace root)."}
-       "depth" {:type "integer" :description "Recursion depth (default shallow)."}
-       "limit" {:type "integer" :description "Max entries before truncation (default 3000)."}
-       "is_files_only" {:type "boolean" :description "List only files."}
-       "is_dirs_only" {:type "boolean" :description "List only directories."}
-       "is_hidden" {:type "boolean" :description "Include dotfiles."}
-       "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
-      :required []}
-     :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def find-symbol
   (vis/symbol
@@ -5853,9 +5583,9 @@
 
 (defn available-editing-symbols
   []
-  [outline-symbol cat-symbol ls-symbol find-symbol rg-symbol patch-symbol write-symbol
-   struct-patch-symbol sexpr-symbol occurrences-symbol symbol-rename-symbol create-dirs-symbol
-   copy-symbol move-symbol delete-symbol delete-if-exists-symbol file-exists-symbol])
+  [outline-symbol cat-symbol find-symbol rg-symbol patch-symbol write-symbol struct-patch-symbol
+   sexpr-symbol occurrences-symbol symbol-rename-symbol create-dirs-symbol copy-symbol move-symbol
+   delete-symbol delete-if-exists-symbol file-exists-symbol])
 
 (defn- project-languages-line
   "One compact `Project languages: PRIMARY x · also y, z` line from the cached
@@ -5904,7 +5634,7 @@
            (str
              "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / patch / move / delete / copy / file_exists / write"
              (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
-             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (ls and delete_if_exists are python_execution-ONLY, not native — call them inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
+             ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only. (delete_if_exists is python_execution-ONLY, not native — call it inside python_execution; `delete` now takes {is_missing_ok: True} to cover the delete_if_exists case.)")
            ""])
         (if struct?
           ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
@@ -5928,7 +5658,7 @@
            "    new_file      → write(path, content)"
            "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
         [""
-         "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
+         "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
          "" "ESSENTIALS (full shapes + mechanics: doc(name)):"
          "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": {\"text\": line}} map — MIRRORS rg's hit value, so read v[\"text\"] for the line (iterate `for a, v in c[\"anchors\"].items(): v[\"text\"]`); there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
          "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": {\"text\": line}}}, \"hit_count\"} — the hit VALUE is a {\"text\": line} map (WITH context it ALSO carries \"before\"/\"after\" {anchor: {\"text\": line}} maps — same shape throughout), so read v[\"text\"] uniformly; every line patchable by its anchor; is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."

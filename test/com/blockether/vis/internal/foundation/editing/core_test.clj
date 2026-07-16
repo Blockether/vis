@@ -55,19 +55,6 @@
     (fs/create-dirs rel)
     rel))
 
-(defn- ensure-rg-corpus!
-  "Idempotently build the small known directory fixture the ls/list-files tests
-   list. Shape: two files at the root + a nested dir with one file, so the tree
-   has files AND a subdir at depth 1 (exercises depth/files-only/dirs-only/limit).
-   Returns the cwd-relative path."
-  []
-  (let [rel "target/probe/rg-corpus"]
-    (fs/create-dirs (str rel "/nested"))
-    (spit (fs/file (str rel "/alpha.txt")) "alpha\n")
-    (spit (fs/file (str rel "/beta.txt")) "beta\n")
-    (spit (fs/file (str rel "/nested/gamma.txt")) "gamma\n")
-    rel))
-
 (defdescribe
   native-tools-flat-spec-guard
   ;; Cross-check the STRONG flat spec across EVERY editing native tool: schema is
@@ -502,19 +489,6 @@
                      :failures
                      first
                      :intent)))))
-  (it "ls allows current directory even when descendants are protected"
-      (let [before
-            (:ext.symbol/before-fn (private-fn "ls-symbol"))
-
-            out
-            (before (protected-env [{:glob "target/editing-test/protected/*.edn"
-                                     :access :none
-                                     :hint "Use owner API."}])
-                    (constantly :ok)
-                    ["."])]
-
-        (expect (not (contains? out :result)))
-        (expect (= ["."] (:args out)))))
   (it
     "rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
     ;; Repro for transcript ccee2e1f-16ee-4acf-8d93-b4505034c0de iter 1:
@@ -598,38 +572,6 @@
 
         (expect (some? failure))
         (expect (false? (:success? failure)))))
-  (it "ls still blocks non-root ancestor directories that would reveal :none protected children"
-      (let [hint
-            "Use (br/files) instead of listing Bridge-owned files."
-
-            before
-            (:ext.symbol/before-fn (private-fn "ls-symbol"))
-
-            out
-            (before (protected-env
-                      [{:glob "target/editing-test/protected/*.edn" :access :none :hint hint}])
-                    (constantly :ok)
-                    ["target/editing-test"])
-
-            failure
-            (:result out)]
-
-        (expect (some? failure))
-        (expect (false? (:success? failure)))
-        (expect (= :ext.foundation.editing/path-protected
-                   (-> failure
-                       :error
-                       :type)))
-        (expect (= hint
-                   (-> failure
-                       :error
-                       :hint)))
-        (expect (= :read
-                   (-> failure
-                       :error
-                       :failures
-                       first
-                       :intent)))))
   ;; =============================================================================
   ;; FORCING plan-gate composition — write/patch consult env :mutation-gate AFTER
   ;; path-protection clears. (proposal Decision 2 / G1)
@@ -741,7 +683,7 @@
 
           (expect (not (contains? out :result))))))
   (it
-    "allows first-match :read-write exceptions for the exact file without unblocking parents"
+    "allows first-match :read-write exceptions for the exact file without unblocking siblings"
     (let [hint
           "Use (br/files) instead of listing Bridge-owned files."
 
@@ -755,19 +697,21 @@
           patch-before
           (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
-          ls-before
-          (:ext.symbol/before-fn (private-fn "ls-symbol"))
+          cat-before
+          (:ext.symbol/before-fn (private-fn "cat-symbol"))
 
           patch-out
           (patch-before (protected-env rules)
                         (constantly :ok)
                         [[{"path" path "search" "old" "replace" "new"}]])
 
-          ls-out
-          (ls-before (protected-env rules) (constantly :ok) ["target/editing-test/protected"])
+          cat-out
+          (cat-before (protected-env rules)
+                      (constantly :ok)
+                      ["target/editing-test/protected/secret.edn"])
 
           failure
-          (:result ls-out)]
+          (:result cat-out)]
 
       (expect (not (contains? patch-out :result)))
       (expect (= [[{"path" path "search" "old" "replace" "new"}]] (:args patch-out)))
@@ -783,136 +727,6 @@
                      :failures
                      first
                      :access))))))
-
-(defdescribe
-  vis-ls-grouped-shape-test
-  ;; ls returns entries GROUPED BY DIRECTORY: [{:dir D :files [{:name :size}]}]
-  ;; — the dir prefix is stated once per group instead of repeating on every
-  ;; file, so the result stays compact. The dir tree is the set of group :dir
-  ;; headers; full path = (str dir "/" name).
-  (it
-    "returns dir-grouped entries with workspace-relative dir headers"
-    (let [list-files
-          (private-fn "list-files")
-
-          ls-tool
-          (private-fn "ls-tool")
-
-          out
-          (list-files "." {"depth" 1})
-
-          envelope
-          (ls-tool "." {"depth" 1})
-
-          result
-          (:result envelope)
-
-          groups
-          (get out "groups")]
-
-      (expect (= "." (get out "path")))
-      (expect (= (str (.toAbsolutePath (fs/path (fs/cwd)))) (get out "absolute_path")))
-      (expect (= :ls (:symbol envelope)))
-      (expect (= (get out "groups") (get result "groups")))
-      (expect (vector? groups))
-      ;; every group is {"dir" <str> "files" [{"name" <str> "size" <int|nil>}]}
-      (expect (every? #(= #{"dir" "files"} (set (keys %))) groups))
-      (expect (every? (fn [g]
-                        (string? (get g "dir")))
-                      groups))
-      (expect (every? (fn [g]
-                        (every? #(= #{"name" "size"} (set (keys %))) (get g "files")))
-                      groups))
-      ;; root group leads and dir headers are unique (one group per dir)
-      (expect (= "." (get (first groups) "dir")))
-      (expect (= (count groups) (count (distinct (map #(get % "dir") groups)))))
-      ;; total files across groups == file-count; dir headers == dir-count + root
-      (expect (= (get out "file_count") (reduce + 0 (map (comp count #(get % "files")) groups))))
-      (expect (= (inc (get out "dir_count")) (count groups)))))
-  (it "ls() with no args lists the current directory — same as ls(\".\")"
-      ;; The model naturally calls `ls()` (Pythonic, like os.listdir()). The
-      ;; zero-arg arity must default the path to \".\" instead of throwing an
-      ;; ArityException (regression: `ls()` failed with
-      ;; \"Wrong number of args (0)\" and the model had to grope to `ls(\".\")`).
-      (let [ls-tool
-            (private-fn "ls-tool")
-
-            e0
-            (ls-tool)
-
-            r0
-            (:result e0)
-
-            r1
-            (:result (ls-tool "."))]
-
-        (expect (= :ls (:symbol e0)))
-        (expect (= "." (get r0 "path")))
-        (expect (= (get r0 "absolute_path") (get r1 "absolute_path")))
-        (expect (= (get r0 "entry_count") (get r1 "entry_count")))))
-  (it "recurses up to :depth (default 10) and reports entry counts"
-      (let [list-files
-            (private-fn "list-files")
-
-            ;; target/probe/rg-corpus is a small known fixture
-            path
-            (ensure-rg-corpus!)
-
-            out
-            (list-files path)]
-
-        (expect (pos? (get out "entry_count")))
-        (expect (pos? (get out "file_count")))
-        (expect (pos? (get out "dir_count")))
-        (expect (false? (get out "truncated")))
-        (expect (= 10 (get out "depth")))))
-  (it ":is_files_only excludes directory entries; :is_dirs_only excludes files"
-      (let [list-files
-            (private-fn "list-files")
-
-            path
-            (ensure-rg-corpus!)
-
-            files-only
-            (list-files path {"is_files_only" true})
-
-            dirs-only
-            (list-files path {"is_dirs_only" true})]
-
-        ;; files-only: dir-count 0; every listed file lives under a group
-        (expect (zero? (get files-only "dir_count")))
-        (expect (= (get files-only "file_count")
-                   (reduce + 0 (map (comp count #(get % "files")) (get files-only "groups")))))
-        ;; dirs-only: every group is a bare dir header (no files), file-count 0
-        (expect (zero? (get dirs-only "file_count")))
-        (expect (every? (comp empty? #(get % "files")) (get dirs-only "groups")))))
-  (it ":limit caps entries and surfaces :truncated? true"
-      (let [list-files
-            (private-fn "list-files")
-
-            path
-            (ensure-rg-corpus!)
-
-            out
-            (list-files path {"limit" 2})]
-
-        (expect (= 2 (get out "entry_count")))
-        (expect (true? (get out "truncated")))))
-  (it ":is_files_only and :is_dirs_only are mutually exclusive"
-      (let [list-files (private-fn "list-files")]
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(list-files "." {"is_files_only" true "is_dirs_only" true})))))
-  (it ":depth 0 emits no entries (root not included)"
-      (let [list-files
-            (private-fn "list-files")
-
-            out
-            (list-files (ensure-rg-corpus!) {"depth" 0})]
-
-        (expect (= 0 (get out "entry_count")))
-        ;; only the root group remains, with no files (nothing walked)
-        (expect (= 1 (count (get out "groups"))))
-        (expect (empty? (get (first (get out "groups")) "files"))))))
 
 (defn- numbered-tuples
   "[[start str0] [start+1 str1] …] helper for assembling expected
