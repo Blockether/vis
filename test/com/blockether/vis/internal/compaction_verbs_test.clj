@@ -515,20 +515,20 @@
   ;; provider limits, not estimates.
   (it "an explicit scope card prices its ~tokens + the true context level"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · ~12k tokens · context 44% (42k/96k) → big cat dump"
+        (expect (= "folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k) → big cat dump"
                    (sf ["t1/i1"] "big cat dump")))))
   (it "a `through` selector sums the weight of EVERY scope it resolves"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
-        (expect (= "folded through t1/i2 · ~15k tokens · context 44% (42k/96k) → traced"
+        (expect (= "folded through t1/i2 · saved ~15k tokens · utilization 44% (42k/96k) → traced"
                    (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + context suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · ~12k tokens · context 44% (42k/96k)" (sf ["t1/i1"])))))
+        (expect (= "folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k)" (sf ["t1/i1"])))))
   (it "a scope with NO stamped weight omits the token clause, keeps context"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; t2/i9 is not in the weights map (created this iteration, unsent)
-        (expect (= "folded t2/i9 · context 44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
+        (expect (= "folded t2/i9 · utilization 44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))
