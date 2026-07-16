@@ -100,7 +100,7 @@
     (and managed?
          (or saw-client?
              (>= (- (System/currentTimeMillis) (long (or started-at-ms 0)))
-                 STARTUP_IDLE_GRACE_MS)))))
+                 (long STARTUP_IDLE_GRACE_MS))))))
 
 (defn- maybe-stop-when-idle!
   "Refcount shutdown (Q1): no timer/idle timeout for foreground daemons. A managed
@@ -110,13 +110,13 @@
   []
   (when (and @server-state
              (idle-shutdown-eligible?)
-             (zero? (client-count))
-             (zero? (running-turn-count)))
+             (zero? (long (client-count)))
+             (zero? (long (running-turn-count))))
     (future (try (Thread/sleep 25) ; let the HTTP response that released the last client flush
                  (when (and @server-state
                             (idle-shutdown-eligible?)
-                            (zero? (client-count))
-                            (zero? (running-turn-count)))
+                            (zero? (long (client-count)))
+                            (zero? (long (running-turn-count))))
                    (stop!))
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
@@ -1642,7 +1642,8 @@
 
     (let [outcome (try {:server (jetty/run-jetty handler opts)}
                        (catch Throwable t
-                         (if (and (bind-failure? t) (< (System/currentTimeMillis) deadline-ms))
+                         (if (and (bind-failure? t)
+                                  (< (System/currentTimeMillis) (long deadline-ms)))
                            ::retry
                            (throw t))))]
       (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
@@ -1766,10 +1767,10 @@
   "Block up to `GRACEFUL_DRAIN_MS` for running turns to reach zero, polling
    every 100ms. Returns the residual running-turn count (0 = fully drained)."
   []
-  (let [deadline (+ (System/currentTimeMillis) GRACEFUL_DRAIN_MS)]
+  (let [deadline (+ (System/currentTimeMillis) (long GRACEFUL_DRAIN_MS))]
     (loop []
 
-      (let [n (running-turn-count)]
+      (let [n (long (running-turn-count))]
         (if (or (zero? n) (>= (System/currentTimeMillis) deadline))
           n
           (do (Thread/sleep 100) (recur)))))))
@@ -1790,7 +1791,7 @@
     ;; Graceful drain: give in-flight turns a bounded window to finish before we
     ;; tear the socket + runtime down, so a SIGTERM / restart mid-turn doesn't
     ;; guillotine active work. No-op when nothing is running (refcount-idle stop).
-    (let [pending (running-turn-count)]
+    (let [pending (long (running-turn-count))]
       (when (pos? pending)
         (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
         ;; Cancel in-flight turns FIRST. The drain below only waits for them to
@@ -1800,7 +1801,7 @@
         ;; pool and die with a RejectedExecutionException surfaced to the user
         ;; as a bogus "Provider unavailable"; cancelling makes it exit cleanly.
         (try (state/cancel-all-running!) (catch Throwable _ nil))
-        (let [residual (await-turns-drained!)]
+        (let [residual (long (await-turns-drained!))]
           (when (pos? residual)
             (tel/log! :warn
                       ["gateway: drain timed out; forcing stop" residual
