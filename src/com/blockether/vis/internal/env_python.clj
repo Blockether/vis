@@ -2588,7 +2588,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
         (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
 
         hits
-        (sort (set/intersection protected (assigned-names-in-code ctx g code)))]
+        (vec (sort (set/intersection protected (assigned-names-in-code ctx g code))))]
 
     (when (seq hits)
       {:message (str "Block tries to rebind protected sandbox/tool name(s): "

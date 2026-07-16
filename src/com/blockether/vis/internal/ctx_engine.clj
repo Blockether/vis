@@ -844,8 +844,11 @@
        (some? (:stdout block))
        (assoc :stdout (:stdout block))
 
+       ;; Errors get realized too: an error's `:data` may carry a realized seq
+       ;; (e.g. the protected-name guard's `:names` from `sort`) that the
+       ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
        (some? (:error block))
-       (assoc :error (:error block))
+       (assoc :error (realize-value (:error block)))
 
        ;; Tool-call identity: which native tool-call (svar tool_use id) this form
        ;; answers, plus its name. `iteration-results-message` groups forms by this
