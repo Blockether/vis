@@ -973,7 +973,28 @@
              ;;   • Python needs a big charset set + a deep C stack.
              "-H:+UnlockExperimentalVMOptions" "-H:IncludeResources=org.graalvm.python.vfs/.*"
              "-J-Dpolyglot.image-build-time.PreinitializeContexts=python" "-R:StackSize=16777216"
-             "-H:+AddAllCharsets"]
+             "-H:+AddAllCharsets"
+             ;; ── Binary-size + build-time reduction ──────────────────────────
+             ;; A GraalPy image is huge (~558 MB): ~115 MB machine code +
+             ;; ~465 MB SVM image heap (embedded CPython interpreter/stdlib +
+             ;; icu4j locale data + charsets). Two levers, both from GraalPy's
+             ;; own "Reducing Binary Size" guide — they ALSO slash native-image
+             ;; BUILD time (the full :voice image otherwise stalls the runner
+             ;; building/compiling ~18k Truffle runtime-compiled methods):
+             ;;   • -Os optimizes the COMPILED CODE for size instead of -O2
+             ;;     speed — trims the ~115 MB __text with negligible impact on
+             ;;     an I/O-bound agent, and cuts compile time.
+             "-Os"
+             ;;   • Run embedded Python INTERPRETED: drop the Truffle/Graal JIT
+             ;;     from the image. GraalPy documents this as ~40% smaller — the
+             ;;     single biggest lever — and it removes the giant runtime-
+             ;;     compiled-method set that made native-image hang in universe
+             ;;     building on the full profile. vis's python_execution sandbox
+             ;;     runs SHORT, I/O-bound glue scripts, exactly the
+             ;;     "performance not critical / short-running" case this targets.
+             ;;     Delete these two lines to restore the JIT if a workload needs it.
+             "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime"
+             "-Dpolyglot.engine.WarnInterpreterOnly=false"]
       ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
       ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
       ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
