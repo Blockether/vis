@@ -148,16 +148,33 @@
                                     (when (#{:fail :error :pass} (:type m))
                                       (swap! cnt update (:type m) (fnil inc 0)))
                                     (when (#{:fail :error} (:type m))
-                                      (let [v0 (first clojure.test/*testing-vars*)]
+                                      (let [v0 (first clojure.test/*testing-vars*)
+                                            vm (meta v0)
+                                            thrown (when (= :error (:type m))
+                                                     (let [a (:actual m)]
+                                                       (when (instance? Throwable a) a)))]
+
                                         (swap! fails conj
-                                          {"ns" (str (:ns (meta v0)))
-                                           "test" (when v0 (str (:name (meta v0))))
+                                          {"ns" (str (:ns vm))
+                                           "test" (when v0 (str (:name vm)))
                                            "type" (name (:type m))
-                                           "message" (str (or (:message m) (:type m)))
+                                           "message" (if thrown
+                                                       (str (.getName (class thrown))
+                                                            (when-let [msg (.getMessage ^Throwable
+                                                                                        thrown)]
+                                                              (str ": " msg)))
+                                                       (str (or (:message m) (:type m))))
                                            "expected" (pr-str (:expected m))
-                                           "actual" (pr-str (:actual m))
-                                           "file" (str (:file m))
-                                           "line" (:line m)}))))]
+                                           ;; For an :error the raw :actual is the whole Throwable
+                                           ;; (a giant #error map with stacktrace) — the class+message
+                                           ;; above already carries the signal, so drop the dump.
+                                           "actual" (if thrown "" (pr-str (:actual m)))
+                                           ;; clojure.test pins :file/:line to the THROWING JVM frame
+                                           ;; for errors (e.g. Numbers.java:190) — fall back to the
+                                           ;; test var's own source location so the digest points
+                                           ;; at the deftest, not clojure internals.
+                                           "file" (if thrown (str (:file vm)) (str (:file m)))
+                                           "line" (if thrown (:line vm) (:line m))}))))]
                       (clojure.test/test-vars selected))
                     (let [c
                           (clojure.core/deref cnt)
@@ -215,7 +232,7 @@
                                                   :nses [tns]
                                                   :children [(var->suite v)]
                                                   :context (:context (meta tns))})
-                                       {})))
+                                       {:output []})))
 
                         rseq
                         (requiring-resolve (quote lazytest.results/result-seq))
@@ -319,6 +336,56 @@
    `[32m`-style escape fragments. nil-safe."
   [s]
   (when s (str/replace s #"\u001b\[[0-9;]*[A-Za-z]" "")))
+
+(defn- failures->text
+  "Concise, framework-neutral digest of the structured failure/error maps a
+   run-form result carries: one `✗ ns/test (file:line)` line per failure with its
+   message (and expected/actual when they add signal). REPLACES each framework's own
+   verbose per-namespace reporter tree, so a run's `output` stays a tight, ANSI-free
+   summary instead of a `Ran N test cases … 0 failures` block repeated per
+   defdescribe."
+  [fails]
+  (->> fails
+       (map
+         (fn [{:strs [ns test message expected actual file line]}]
+           (let [keep?
+                 (fn [x]
+                   (and x (not (str/blank? (str x))) (not= "nil" (str x))))
+
+                 loc
+                 (when (keep? file) (str "  (" file (when line (str ":" line)) ")"))
+
+                 head
+                 (str "✗ " ns (when (keep? test) (str "/" test)) loc)
+
+                 detail
+                 (cond-> []
+                   (keep? message)
+                   (conj (str "    " message))
+
+                   (keep? expected)
+                   (conj (str "    expected: " expected))
+
+                   (keep? actual)
+                   (conj (str "    actual:   " actual)))]
+
+             (str/join "\n" (cons head detail)))))
+       (str/join "\n")))
+
+(defn- compose-repl-output
+  "Final `output` for a repl-mode result: the tests' OWN captured stdout (ANSI-
+   stripped — empty on a quiet pass now the reporter is silenced) followed by a tidy
+   `failures->text` digest when the run failed. Never the framework's per-namespace
+   reporter tree, so a green run reads clean and a red one shows only what broke."
+  [parsed]
+  (let [cap
+        (not-empty (str/trim (or (strip-ansi (str (get parsed "output"))) "")))
+
+        digest
+        (when-let [fails (seq (get parsed "failures"))]
+          (failures->text fails))]
+
+    (assoc parsed "output" (str/join "\n\n" (remove nil? [cap digest])))))
 
 (defn- ns-of-file
   "Read the ns symbol declared in a Clojure (test) file as a string, or nil when
@@ -483,7 +550,7 @@
 
         (if (map? parsed)
           (-> parsed
-              (update "output" strip-ansi)
+              (compose-repl-output)
               (assoc "mode" "repl"
                      "ns" ns-disp
                      "port" port))
