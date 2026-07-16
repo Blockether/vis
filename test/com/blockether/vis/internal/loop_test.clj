@@ -324,37 +324,30 @@
              (it "uses a 30-second fallback while honoring explicit timeouts"
                  (expect (= 30000 (rt/native-tool-timeout-ms {})))
                  (expect (= 21000 (rt/native-tool-timeout-ms {"timeout_ms" 20000})))
-                 (expect (= 21000 (rt/native-tool-timeout-ms {:timeout-ms 20000})))
-                 ;; startup budget is ADDED on top of the base wall so a cold
-                 ;; REPL/runtime boot (repl_eval/run_tests autostart) fits.
-                 (expect (= 180000 (rt/native-tool-timeout-ms {} 150000)))
-                 (expect (= 171000 (rt/native-tool-timeout-ms {"timeout_ms" 20000} 150000)))
-                 (expect (= 21000 (rt/native-tool-timeout-ms {"timeout_ms" 20000} 0)))
-                 (expect (= 21000 (rt/native-tool-timeout-ms {"timeout_ms" 20000} nil)))))
+                 (expect (= 21000 (rt/native-tool-timeout-ms {:timeout-ms 20000})))))
 
 (defdescribe native-handler-timeout-test
-             (it
-               "returns a typed timeout and interrupts a wedged native tool"
-               (let [started
-                     (promise)
+             (it "returns a typed timeout and interrupts a wedged native tool"
+                 (let [started
+                       (promise)
 
-                     handler
-                     (fn [_ _]
-                       (deliver started true)
-                       (Thread/sleep 5000)
-                       :unreachable)
+                       handler
+                       (fn [_ _]
+                         (deliver started true)
+                         (Thread/sleep 5000)
+                         :unreachable)
 
-                     started-at
-                     (System/currentTimeMillis)
+                       started-at
+                       (System/currentTimeMillis)
 
-                     result
-                     ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "repl_eval" 0)]
+                       result
+                       ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "repl_eval")]
 
-                 (expect (true? (deref started 100 false)))
-                 (expect (true? (:timeout? result)))
-                 (expect (= :vis/native-tool-timeout (get-in result [:error :type])))
-                 (expect (= "repl_eval" (get-in result [:error :data :tool])))
-                 (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
+                   (expect (true? (deref started 100 false)))
+                   (expect (true? (:timeout? result)))
+                   (expect (= :vis/native-tool-timeout (get-in result [:error :type])))
+                   (expect (= "repl_eval" (get-in result [:error :data :tool])))
+                   (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
 
 (defdescribe native-tool-call-execution-test
              ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
