@@ -7,6 +7,447 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.4] - 2026-07-16
+
+### Changed
+- Revert "build(release): publish ONE canonical com.blockether/vis jar"
+- build: publish ONE bundled com.blockether/vis jar instead of sibling packages
+- build(release): publish ONE canonical com.blockether/vis jar
+- feat(attachments): paint vis_attach images inline in the TUI
+- perf(channel-tui): defer whole-bubble clipboard formatting to click time (#24)
+- fix(shim-matplotlib): accept categorical (string) x/y on bar/barh
+- ci(native): drop native-experiment.yml — no Intel/macos-13 build in the matrix
+- fix(render): drop the 🖼 emoticon placeholder from :img nodes
+- fix(language-surface): park run_tests outside the 30s native tool wall
+- refactor(editing)!: remove the ls tool — find_files/outline/rg supersede it
+- docs(prompt): enforce full-output access + python/shell narrowing across shell, mcp, bridge fragments
+- Merge remote-tracking branch 'origin/main' into ci/native-free-runners
+- ci(native): probe free macos-13 intel runner + gateway smoke test
+- chore(verify): ratchet boxed-math baseline to 0
+- fix(persist,ctx): keep realized non-lazy seqs in error :data instead of the {:vis/ref :expr} sentinel
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide
+- ci(native): build macOS arm64 release on free macos-15 runner
+- ci(native): raise arm probe timeout to 240m, drop dead intel/linux probes
+- feat(config,search): YAML config tiers + :search :include-gitignored-paths overlay (#23)
+- fix(provider): retry pre-response TTFT timeouts
+- feat(bench): add readable Vis transcripts
+- fix(channel-tui): stop streaming FULL-frame spin from :scroll identity churn
+- perf(boxed-math): primitive leaves in asr, persistance-sqlite, shim-sqlite3, attachments
+- perf(boxed-math): coerce primitive leaves in shim-pil, format, foundation-search, file-picker
+- perf(shims,shell,channel-web,channel-telegram): eliminate boxed math in cold render/format paths
+- fix(transcript): keep bottom code-bg padding on expanded paste disclosure
+- ci(native): add linux-x64 probe to native-experiment matrix
+- perf(build): restore -Os + interpreter-only GraalPy (accidentally reverted)
+- ci(native): trigger experiment on branch push
+- ci(native): probe free macOS runners + env-tunable builder heap
+- fix(gateway): drain a message queued after Esc as soon as the cancelled turn unwinds
+- feat(compaction): session_fold receipt carries saved-tokens note and op-card headline
+- fix(theme): hint rel-luminance ^double to kill Math/abs reflection; baseline 1977->395
+- feat(loop): surface the saved-tokens note on fold breadcrumb cards
+- docs(language-surface): teach manual reload after editing source (no auto-reload)
+- refactor(loop): clarify fold card wording (saved ~tokens / utilization %)
+- fix(language-clojure): :only matches fully-qualified var names and errors on no-match
+- refactor(loop,extension): park the native tool wall during slow setup instead of startup budgets
+- fix(gateway): clear remaining boxed-math warnings in state.clj and server.clj
+- chore(deps): bump svar to 0.7.62 (Responses-API "completed" clean-stop fix)
+- fix(loop,gateway,language-surface): boxed-math cleanup + startup-aware native tool timeouts
+- fix(loop): fail stuck native tool calls faster
+- fix(native): use glibc-compatible FFF
+- fix(editing): clean boxed math and tighten hashline error data
+- fix(tui): compact provider limit footer resets
+- fix(language-surface): name the lint target in the LINT_CODE headline
+- ci: cache docs site dependencies
+- ci: run docs site on java 25
+- ci: upgrade actions to node24
+- feat(cli): add `vis python` standalone interpreter exposing GraalPy sandbox + shims
+- feat(context): surface reclaimed tokens + live utilization in fold readouts
+- refactor(channel-tui): move box rule builders to lanterna
+- ci: cache classpath dependencies
+- refactor(channel-tui): reuse lanterna clamp and clear table boxed math
+- fix(clojure): autostart repl_eval with stale id and dir
+- fix(channel-tui): remove duplicate queued prompt echo
+- fix(tui): improve project picker selection
+- refactor(channel-tui): hoist canonical ^long clamp into primitives, dedup call sites
+- fix(channel-tui): eliminate all boxed-math warnings across the TUI
+- feat(shim-paramiko): add server-side API surface (ServerInterface/SFTPServer/…)
+- chore: ignore prompt regression outputs
+- style: format channel sources
+- chore(lint): exclude generated Telemere vars
+- feat(swe-bench): add GLM-5.2 effort parity evaluation
+- fixup! fix(native): require tree-sitter platform artifact
+- test: repair stale UI and editing contracts
+- feat(eval): add provider-native reasoning effort
+- fix(native): require tree-sitter platform artifact
+- feat(editing): strip echo diffs from python_execution stdout for patch/write/struct_patch
+- perf(channel-tui): eliminate boxed-math in render pipeline
+- docs(graalpython): document the two Python surfaces (sandbox vs project interpreter)
+- perf(loop): drop echo diff from patch/write results on model wire
+- feat(language-python): run_tests handler with graalpy (default) + project pytest backends
+- fix(channel-tui): keep a send-during-cancel in the editor, never queued
+- perf(editing): primitive-hint diff-preview helpers in editing/core.clj
+- perf(tui): primitive-hint components.clj justify-line/justify-segs
+- perf(tui): long-hint provider.clj copilot dialogs + card painters
+- feat(shim-pytest): pytest.main([paths]) discovers test files on disk (#19)
+- chore(graal): re-baseline boxed-math ratchet to 2079 (external loop fix +1)
+- refactor(channel-tui): delegate ANSI fold/slice to lanterna 3.1.5-vis.26
+- fix(loop): key post-refresh 401 lag detection on recency, not token value
+- feat(cat): mark non-contiguous slices with canonical ⋯ divider
+- perf(tui): primitive-hint provider.clj + dialogs.clj leaf layout helpers
+- fix(provider-github-copilot): subtract refresh margin on the refresh_in mint branch (#21)
+- refactor(tui): move column layout kernels into lanterna fork (vis.25)
+- chore: update python shims, docs, and tui channel
+- perf(tui): primitive-hint dialog geometry producers to cut boxed math
+- refactor(tui): collapse duplicate ellipsize into one lanterna-backed p/ellipsize
+- perf(tui): move column measurement into lanterna fork (vis.24), delegate primitives
+- perf(tui): primitive-hint render.clj input/geometry leaf helpers
+- perf(tui): primitive-hint dialogs.clj leaf layout helpers to cut boxed math
+- chore(graal): re-baseline boxed-math ratchet to 2270 (pre-existing drift; reflection now 0)
+- fix(graal): add type hints to silence reflective calls + advertise sandbox shims
+- Remove the leftovers
+- feat(compaction): breadcrumb-canonical fold gist, utilization keeps only the live budget
+- refactor(sqlite): squash migrations V1..V10 into a single consolidated V1__schema.sql
+- chore: sync workspace changes across core, extensions, and docs
+- feat(compaction): merge fold ledger into utilization as one-line readout
+- feat(python-extensions): author LLM providers from Python
+- feat(env-python): guard against GraalVM/Truffle version mismatch on --jvm
+- chore: sync workspace changes across core, extensions, and docs
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings
+- fix(loop): treat post-refresh 401 as propagation lag, not dead credential
+- fix(loop): latch dead OAuth credentials gateway-wide to stop 401 refresh storms
+- fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness
+- perf(channel-tui): throttle render-loop scroll-ease to stop streaming CPU spin
+- perf(build): shrink native image with -Os + interpreter-only GraalPy
+- fix(build,ci): build native image on every commit for all platforms
+- perf(channel-tui): input-text fast path + phase-tagged slow-frame logs
+- fix(copilot): honor refresh_in to stop the 401 'IDE token expired' storm (#16)
+- feat(self-docs): add per-page blurbs to vis_docs listing
+- fix(loop): treat live thread interrupt as user cancel (#13)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume
+- chore(deps): bump com.blockether/svar 0.7.59 -> 0.7.60 (models.dev-backed catalog, slim overlays, canonical :resets-at-ms)
+- feat(gateway): multiplexed /v1/events — ONE SSE stream for many sessions
+- perf(gateway/bus,repl-mgr): kill journal-scan churn + reap idle project REPLs
+- feat(progress/web/tui): surface a live 'Vis is running: …' ticker for coarse activity
+- fix(tui/render-test): assert the real coalesced flush contract
+- fix(tui/shell): green the suite — resume duration bug + stale expectations
+- perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc
+- perf(gateway/bus): adaptive tailer poll to kill idle CPU burn
+- fix(gateway): reap orphaned event journals + JFR recordings; isolate draft store
+- chore(rn-companion): harden app .gitignore for Expo/native build artifacts
+- feat(magit): colorize diff header filenames in TUI status view
+- fix(language-clojure): resolve lint config from nearest .clj-kondo in nested projects
+- chore: wip changes to env_python, loop, prompt, compaction tests
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement
+- fix(openai-codex): retry quota fetch after oauth rotation
+- fix(openai-codex): honor explicit quota window duration
+- docs(todo): rename gateway command to `vis gateway start` and refresh status
+- fix(channel-tui): single space before footer chord hint
+- fix(clojure): treat "default" repl id as sentinel
+- style: format sources with zprint
+- fix(companion): keep QR pairing stable while settings scroll
+- fix(companion): make settings sheet dismissible and compact
+- style(companion): capitalize shared UI module
+- fix(companion): make settings full-screen and scrollable
+- test(gateway): lock Tailscale preference for pairing QR
+- fix(companion): keep gateway settings scrollable while scanning
+- fix(companion): pin gateway settings until connection recovers
+- fix(companion): explain gateway network failures
+- style(companion): native iOS polish without yellow chrome
+- style(companion): make settings feel native on iOS
+- feat(sandbox): add pure-Python/JVM-bridge compat shims for the GraalPy sandbox
+- style(companion): format ios app before TestFlight build
+- feat(companion): consume canonical gateway feature surface
+- feat(companion): rehydrate settled tool cards from turn trace
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.12
+- feat(companion): local turn-completion notifications + restore app.json / build bump
+- test(companion): jest-expo unit suite for streaming/markdown/gateway logic
+- fix(companion): render streaming/unclosed markdown fences + graceful group/error handling
+- fix(companion): resolve iOS white-screen crash from mismatched Expo native modules
+- fix(companion): disable user script sandboxing on iOS app target
+- release: update version files for v0.1.3, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- Revert "build(release): publish ONE canonical com.blockether/vis jar" (a1872194)
+- build: publish ONE bundled com.blockether/vis jar instead of sibling packages (c2bde1c5)
+- build(release): publish ONE canonical com.blockether/vis jar (8e6385f3)
+- feat(attachments): paint vis_attach images inline in the TUI (d3fc1f1c)
+- fix(shim-matplotlib): accept categorical (string) x/y on bar/barh (7896231b)
+- ci(native): drop native-experiment.yml — no Intel/macos-13 build in the matrix (7b595c5a)
+- fix(render): drop the 🖼 emoticon placeholder from :img nodes (fed01943)
+- fix(language-surface): park run_tests outside the 30s native tool wall (60d096f3)
+- refactor(editing)!: remove the ls tool — find_files/outline/rg supersede it (7aeef72a)
+- docs(prompt): enforce full-output access + python/shell narrowing across shell, mcp, bridge fragments (990d9bc2)
+- Merge remote-tracking branch 'origin/main' into ci/native-free-runners (b2d60bd9)
+- ci(native): probe free macos-13 intel runner + gateway smoke test (c5b3cef8)
+- chore(verify): ratchet boxed-math baseline to 0 (43f8b71d)
+- fix(persist,ctx): keep realized non-lazy seqs in error :data instead of the {:vis/ref :expr} sentinel (d3c6ed7b)
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- ci(native): build macOS arm64 release on free macos-15 runner (5796db1d)
+- ci(native): raise arm probe timeout to 240m, drop dead intel/linux probes (0a0fe93e)
+- feat(config,search): YAML config tiers + :search :include-gitignored-paths overlay (#23) (8d47c25e)
+- fix(provider): retry pre-response TTFT timeouts (b9d46872)
+- feat(bench): add readable Vis transcripts (d8f8c588)
+- perf(boxed-math): primitive leaves in asr, persistance-sqlite, shim-sqlite3, attachments (15d48cc1)
+- perf(boxed-math): coerce primitive leaves in shim-pil, format, foundation-search, file-picker (44b68ad0)
+- perf(shims,shell,channel-web,channel-telegram): eliminate boxed math in cold render/format paths (489c0b67)
+- ci(native): add linux-x64 probe to native-experiment matrix (cf6fa27c)
+- perf(build): restore -Os + interpreter-only GraalPy (accidentally reverted) (ee3ce58b)
+- ci(native): trigger experiment on branch push (fc385eaf)
+- ci(native): probe free macOS runners + env-tunable builder heap (22b22dba)
+- fix(gateway): drain a message queued after Esc as soon as the cancelled turn unwinds (b4afb32d)
+- feat(compaction): session_fold receipt carries saved-tokens note and op-card headline (f56fced4)
+- fix(theme): hint rel-luminance ^double to kill Math/abs reflection; baseline 1977->395 (a1433367)
+- feat(loop): surface the saved-tokens note on fold breadcrumb cards (5b21d983)
+- docs(language-surface): teach manual reload after editing source (no auto-reload) (321c48f2)
+- refactor(loop): clarify fold card wording (saved ~tokens / utilization %) (f1473666)
+- refactor(loop,extension): park the native tool wall during slow setup instead of startup budgets (7cd3e3e8)
+- fix(gateway): clear remaining boxed-math warnings in state.clj and server.clj (9b655432)
+- chore(deps): bump svar to 0.7.62 (Responses-API "completed" clean-stop fix) (91fb359d)
+- fix(loop,gateway,language-surface): boxed-math cleanup + startup-aware native tool timeouts (8fee45ab)
+- fix(loop): fail stuck native tool calls faster (98988948)
+- fix(native): use glibc-compatible FFF (f0d135e6)
+- fix(editing): clean boxed math and tighten hashline error data (f019e131)
+- fix(tui): compact provider limit footer resets (c80cf071)
+- fix(language-surface): name the lint target in the LINT_CODE headline (28f6f8a6)
+- ci: cache docs site dependencies (a542387c)
+- ci: run docs site on java 25 (b5fa21e9)
+- ci: upgrade actions to node24 (e0ed7526)
+- feat(cli): add `vis python` standalone interpreter exposing GraalPy sandbox + shims (1afcec09)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- ci: cache classpath dependencies (798dee3a)
+- feat(shim-paramiko): add server-side API surface (ServerInterface/SFTPServer/…) (48d41c40)
+- chore: ignore prompt regression outputs (958ab100)
+- chore(lint): exclude generated Telemere vars (8b8cb098)
+- feat(swe-bench): add GLM-5.2 effort parity evaluation (846328a4)
+- fixup! fix(native): require tree-sitter platform artifact (12afc4aa)
+- test: repair stale UI and editing contracts (8bf435e1)
+- feat(eval): add provider-native reasoning effort (c415ef58)
+- fix(native): require tree-sitter platform artifact (e039e4f0)
+- feat(editing): strip echo diffs from python_execution stdout for patch/write/struct_patch (571b199f)
+- perf(channel-tui): eliminate boxed-math in render pipeline (9c093753)
+- docs(graalpython): document the two Python surfaces (sandbox vs project interpreter) (a4e00cd9)
+- perf(loop): drop echo diff from patch/write results on model wire (8653e0c4)
+- perf(editing): primitive-hint diff-preview helpers in editing/core.clj (6f879e1c)
+- perf(tui): primitive-hint components.clj justify-line/justify-segs (507d832a)
+- perf(tui): long-hint provider.clj copilot dialogs + card painters (0bbd7de6)
+- feat(shim-pytest): pytest.main([paths]) discovers test files on disk (#19) (4755d28d)
+- chore(graal): re-baseline boxed-math ratchet to 2079 (external loop fix +1) (690d36ed)
+- fix(loop): key post-refresh 401 lag detection on recency, not token value (b6de8d56)
+- feat(cat): mark non-contiguous slices with canonical ⋯ divider (7cc5740c)
+- perf(tui): primitive-hint provider.clj + dialogs.clj leaf layout helpers (c05d7bec)
+- refactor(tui): move column layout kernels into lanterna fork (vis.25) (e8bcb2da)
+- chore: update python shims, docs, and tui channel (5444a1fc)
+- perf(tui): primitive-hint dialog geometry producers to cut boxed math (e2ed742c)
+- perf(tui): move column measurement into lanterna fork (vis.24), delegate primitives (ea6d17d7)
+- perf(tui): primitive-hint render.clj input/geometry leaf helpers (296c13c5)
+- perf(tui): primitive-hint dialogs.clj leaf layout helpers to cut boxed math (45da5d14)
+- chore(graal): re-baseline boxed-math ratchet to 2270 (pre-existing drift; reflection now 0) (9a17a06a)
+- fix(graal): add type hints to silence reflective calls + advertise sandbox shims (4d17b60a)
+- Remove the leftovers (709c1451)
+- feat(compaction): breadcrumb-canonical fold gist, utilization keeps only the live budget (eec7c974)
+- refactor(sqlite): squash migrations V1..V10 into a single consolidated V1__schema.sql (c0898015)
+- chore: sync workspace changes across core, extensions, and docs (9a68ff54)
+- feat(compaction): merge fold ledger into utilization as one-line readout (c35868e8)
+- feat(python-extensions): author LLM providers from Python (e370650e)
+- feat(env-python): guard against GraalVM/Truffle version mismatch on --jvm (9aaf179c)
+- chore: sync workspace changes across core, extensions, and docs (e410b355)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+- fix(loop): treat post-refresh 401 as propagation lag, not dead credential (473c0f9f)
+- fix(loop): latch dead OAuth credentials gateway-wide to stop 401 refresh storms (f7a251b8)
+- fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness (8ee71a22)
+- perf(build): shrink native image with -Os + interpreter-only GraalPy (46e006d4)
+- fix(build,ci): build native image on every commit for all platforms (793b1ba1)
+- feat(self-docs): add per-page blurbs to vis_docs listing (767f0c93)
+- fix(loop): treat live thread interrupt as user cancel (#13) (aaae74f4)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- chore(deps): bump com.blockether/svar 0.7.59 -> 0.7.60 (models.dev-backed catalog, slim overlays, canonical :resets-at-ms) (069da8fa)
+- feat(gateway): multiplexed /v1/events — ONE SSE stream for many sessions (9594470c)
+- perf(gateway/bus,repl-mgr): kill journal-scan churn + reap idle project REPLs (ee1109b5)
+- feat(progress/web/tui): surface a live 'Vis is running: …' ticker for coarse activity (0e0280fc)
+- fix(tui/shell): green the suite — resume duration bug + stale expectations (bccd7d22)
+- perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc (605d6639)
+- perf(gateway/bus): adaptive tailer poll to kill idle CPU burn (17357e96)
+- fix(gateway): reap orphaned event journals + JFR recordings; isolate draft store (9dddbc53)
+- feat(magit): colorize diff header filenames in TUI status view (1dc58309)
+- fix(language-clojure): resolve lint config from nearest .clj-kondo in nested projects (61f475f4)
+- chore: wip changes to env_python, loop, prompt, compaction tests (c74adc11)
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement (3ff2d07b)
+- docs(todo): rename gateway command to `vis gateway start` and refresh status (2144797e)
+- style: format sources with zprint (e15b9a35)
+- test(gateway): lock Tailscale preference for pairing QR (6660f83c)
+- feat(sandbox): add pure-Python/JVM-bridge compat shims for the GraalPy sandbox (ce5af764)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.12 (96a4f2c4)
+- release: update version files for v0.1.3, bump to next dev version (0768f7c8)
+
+#### com.blockether/vis-channel-telegram
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- perf(shims,shell,channel-web,channel-telegram): eliminate boxed math in cold render/format paths (489c0b67)
+- style: format channel sources (605ed163)
+- chore: sync workspace changes across core, extensions, and docs (9a68ff54)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+
+#### com.blockether/vis-channel-tui
+- perf(channel-tui): defer whole-bubble clipboard formatting to click time (#24) (7840d0b5)
+- refactor(editing)!: remove the ls tool — find_files/outline/rg supersede it (7aeef72a)
+- fix(channel-tui): stop streaming FULL-frame spin from :scroll identity churn (bd0c5c52)
+- fix(transcript): keep bottom code-bg padding on expanded paste disclosure (ed37efde)
+- fix(tui): compact provider limit footer resets (c80cf071)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- refactor(channel-tui): move box rule builders to lanterna (600386a8)
+- refactor(channel-tui): reuse lanterna clamp and clear table boxed math (afd5ae56)
+- fix(channel-tui): remove duplicate queued prompt echo (e5495522)
+- fix(tui): improve project picker selection (31236707)
+- refactor(channel-tui): hoist canonical ^long clamp into primitives, dedup call sites (98d4e62f)
+- fix(channel-tui): eliminate all boxed-math warnings across the TUI (2697ef5a)
+- test: repair stale UI and editing contracts (8bf435e1)
+- feat(editing): strip echo diffs from python_execution stdout for patch/write/struct_patch (571b199f)
+- perf(channel-tui): eliminate boxed-math in render pipeline (9c093753)
+- fix(channel-tui): keep a send-during-cancel in the editor, never queued (c6227d9b)
+- perf(tui): primitive-hint components.clj justify-line/justify-segs (507d832a)
+- perf(tui): long-hint provider.clj copilot dialogs + card painters (0bbd7de6)
+- refactor(channel-tui): delegate ANSI fold/slice to lanterna 3.1.5-vis.26 (48b24ac7)
+- perf(tui): primitive-hint provider.clj + dialogs.clj leaf layout helpers (c05d7bec)
+- chore: update python shims, docs, and tui channel (5444a1fc)
+- perf(tui): primitive-hint dialog geometry producers to cut boxed math (e2ed742c)
+- refactor(tui): collapse duplicate ellipsize into one lanterna-backed p/ellipsize (9082bf66)
+- perf(tui): move column measurement into lanterna fork (vis.24), delegate primitives (ea6d17d7)
+- perf(tui): primitive-hint render.clj input/geometry leaf helpers (296c13c5)
+- perf(tui): primitive-hint dialogs.clj leaf layout helpers to cut boxed math (45da5d14)
+- fix(graal): add type hints to silence reflective calls + advertise sandbox shims (4d17b60a)
+- feat(compaction): merge fold ledger into utilization as one-line readout (c35868e8)
+- feat(python-extensions): author LLM providers from Python (e370650e)
+- feat(env-python): guard against GraalVM/Truffle version mismatch on --jvm (9aaf179c)
+- chore: sync workspace changes across core, extensions, and docs (e410b355)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+- fix(loop): treat post-refresh 401 as propagation lag, not dead credential (473c0f9f)
+- fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness (8ee71a22)
+- perf(channel-tui): throttle render-loop scroll-ease to stop streaming CPU spin (1bffb7e7)
+- perf(channel-tui): input-text fast path + phase-tagged slow-frame logs (fc738374)
+- feat(self-docs): add per-page blurbs to vis_docs listing (767f0c93)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- feat(gateway): multiplexed /v1/events — ONE SSE stream for many sessions (9594470c)
+- feat(progress/web/tui): surface a live 'Vis is running: …' ticker for coarse activity (0e0280fc)
+- fix(tui/render-test): assert the real coalesced flush contract (0de6e6a3)
+- fix(tui/shell): green the suite — resume duration bug + stale expectations (bccd7d22)
+- perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc (605d6639)
+- feat(magit): colorize diff header filenames in TUI status view (1dc58309)
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement (3ff2d07b)
+- fix(channel-tui): single space before footer chord hint (5cd3685f)
+- style: format sources with zprint (e15b9a35)
+- feat(sandbox): add pure-Python/JVM-bridge compat shims for the GraalPy sandbox (ce5af764)
+
+#### com.blockether/vis-channel-web
+- perf(shims,shell,channel-web,channel-telegram): eliminate boxed math in cold render/format paths (489c0b67)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- style: format channel sources (605ed163)
+- fix(graal): add type hints to silence reflective calls + advertise sandbox shims (4d17b60a)
+- feat(python-extensions): author LLM providers from Python (e370650e)
+- chore: sync workspace changes across core, extensions, and docs (e410b355)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+- fix(loop): treat live thread interrupt as user cancel (#13) (aaae74f4)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- feat(progress/web/tui): surface a live 'Vis is running: …' ticker for coarse activity (0e0280fc)
+- fix(tui/shell): green the suite — resume duration bug + stale expectations (bccd7d22)
+- perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc (605d6639)
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement (3ff2d07b)
+- style: format sources with zprint (e15b9a35)
+- feat(sandbox): add pure-Python/JVM-bridge compat shims for the GraalPy sandbox (ce5af764)
+
+#### com.blockether/vis-foundation-bridge
+- docs(prompt): enforce full-output access + python/shell narrowing across shell, mcp, bridge fragments (990d9bc2)
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+- perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc (605d6639)
+
+#### com.blockether/vis-foundation-harness
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+
+#### com.blockether/vis-foundation-mcp
+- docs(prompt): enforce full-output access + python/shell narrowing across shell, mcp, bridge fragments (990d9bc2)
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+
+#### com.blockether/vis-foundation-search
+- perf(boxed-math): coerce primitive leaves in shim-pil, format, foundation-search, file-picker (44b68ad0)
+
+#### com.blockether/vis-foundation-voice
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- perf(boxed-math): primitive leaves in asr, persistance-sqlite, shim-sqlite3, attachments (15d48cc1)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+
+#### com.blockether/vis-language-clojure
+- fix(language-surface): park run_tests outside the 30s native tool wall (60d096f3)
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- fix(language-clojure): :only matches fully-qualified var names and errors on no-match (1b897c6e)
+- refactor(loop,extension): park the native tool wall during slow setup instead of startup budgets (7cd3e3e8)
+- fix(loop,gateway,language-surface): boxed-math cleanup + startup-aware native tool timeouts (8fee45ab)
+- fix(tui): compact provider limit footer resets (c80cf071)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- fix(clojure): autostart repl_eval with stale id and dir (212a660f)
+- feat(python-extensions): author LLM providers from Python (e370650e)
+- feat(env-python): guard against GraalVM/Truffle version mismatch on --jvm (9aaf179c)
+- chore: sync workspace changes across core, extensions, and docs (e410b355)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+- fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness (8ee71a22)
+- feat(self-docs): add per-page blurbs to vis_docs listing (767f0c93)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- perf(gateway/bus,repl-mgr): kill journal-scan churn + reap idle project REPLs (ee1109b5)
+- fix(language-clojure): resolve lint config from nearest .clj-kondo in nested projects (61f475f4)
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement (3ff2d07b)
+- fix(clojure): treat "default" repl id as sentinel (a867ae48)
+- style: format sources with zprint (e15b9a35)
+
+#### com.blockether/vis-language-python
+- feat(language-python): run_tests handler with graalpy (default) + project pytest backends (2d4b6670)
+
+#### com.blockether/vis-language-typescript-bun
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+
+#### com.blockether/vis-persistance-sqlite
+- fix(persist,ctx): keep realized non-lazy seqs in error :data instead of the {:vis/ref :expr} sentinel (d3c6ed7b)
+- perf(boxed-math): primitive leaves in asr, persistance-sqlite, shim-sqlite3, attachments (15d48cc1)
+- style: format channel sources (605ed163)
+- refactor(sqlite): squash migrations V1..V10 into a single consolidated V1__schema.sql (c0898015)
+- chore: sync workspace changes across core, extensions, and docs (9a68ff54)
+- feat(python-extensions): author LLM providers from Python (e370650e)
+- feat(env-python): guard against GraalVM/Truffle version mismatch on --jvm (9aaf179c)
+- chore: sync workspace changes across core, extensions, and docs (e410b355)
+- perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- fix(gateway): unwedge stalled turns, drain queue, sync fs confinement (3ff2d07b)
+- feat(sandbox): add pure-Python/JVM-bridge compat shims for the GraalPy sandbox (ce5af764)
+
+#### com.blockether/vis-provider-anthropic
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
+
+#### com.blockether/vis-provider-github-copilot
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- fix(provider-github-copilot): subtract refresh margin on the refresh_in mint branch (#21) (8334a21b)
+- fix(copilot): honor refresh_in to stop the 401 'IDE token expired' storm (#16) (39635a88)
+
+#### com.blockether/vis-provider-openai-codex
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+- feat(context): surface reclaimed tokens + live utilization in fold readouts (65cffcf7)
+- fix(gateway): converge auth-token rotation storm, graceful drain, DB-backed turn queue + auto-resume (c16a1134)
+- fix(openai-codex): retry quota fetch after oauth rotation (3bac7996)
+- fix(openai-codex): honor explicit quota window duration (f64a1754)
+
+#### com.blockether/vis-provider-zai
+- perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
+
+
+
 ### Fixed
 
 - fix(openai-codex): give new Codex models svar's pinned catalog doesn't know
@@ -262,7 +703,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.4...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
+[v0.1.4]: https://github.com/Blockether/vis/releases/tag/v0.1.4
