@@ -2410,65 +2410,51 @@
             (str (long t))))
 
         ;; Human-facing enrichment for the fold card: how much wire THIS fold
-        ;; reclaims (~tokens, summed from `engine_iter_weights`) and the
-        ;; PROJECTED next-request level once this fold AND every prior landed
-        ;; fold drop off the wire (req − cumulative-saved, over the model limit).
-        ;; The projection MOVES between successive same-turn folds, unlike the
-        ;; fixed trigger level it replaces (issue #27). Best-effort — any hiccup
-        ;; degrades to no suffix rather than breaking the confirmation.
+        ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
+        ;; fraction of the model's per-call limit. Deliberately the fold's OWN
+        ;; contribution (a REDUCTION), never an absolute "how full am I" level:
+        ;; `last_request_tokens` grows with every new tool result, so a
+        ;; projected level would RISE across iterations even when the fold
+        ;; helped — a fold, one tool call, another fold and the number climbs
+        ;; (issue #27's scary regression: a moving-for-the-wrong-reason figure
+        ;; sitting beside `saved ~Nk` reads as the fold's result). A per-fold
+        ;; reduction can't mislead that way; the authoritative live fullness
+        ;; stays in `session["utilization"]["now"]`'s `context <U>%`. Best-effort
+        ;; — any hiccup degrades to no suffix rather than breaking the card.
         priced
         (fn [base]
-          (try
-            (let [ctx
-                  (some-> ctx-atom
-                          deref)
+          (try (let [ctx
+                     (some-> ctx-atom
+                             deref)
 
-                  universe
-                  (get ctx "engine_iter_universe")
+                     universe
+                     (get ctx "engine_iter_universe")
 
-                  weights
-                  (get ctx "engine_iter_weights")
+                     weights
+                     (get ctx "engine_iter_weights")
 
-                  util
-                  (get ctx "engine_utilization")
+                     util
+                     (get ctx "engine_utilization")
 
-                  scopes
-                  (into #{}
-                        (mapcat #(get % "scopes"))
-                        (ctx-engine/expand-through [base] (or universe [])))
+                     scopes
+                     (into #{}
+                           (mapcat #(get % "scopes"))
+                           (ctx-engine/expand-through [base] (or universe [])))
 
-                  toks
-                  (reduce + 0 (keep #(get weights %) scopes))
+                     toks
+                     (reduce + 0 (keep #(get weights %) scopes))
 
-                  ;; Cumulative wire THIS fold plus every prior landed fold
-                  ;; reclaims — so the projected % moves between successive
-                  ;; same-turn folds instead of pinning to the trigger level.
-                  cum-scopes
-                  (into #{}
-                        (mapcat #(get % "scopes"))
-                        (ctx-engine/expand-through (conj (vec (get ctx "session_summaries")) base)
-                                                   (or universe [])))
+                     lim
+                     (get util "model_input_limit")
 
-                  cum-toks
-                  (reduce + 0 (keep #(get weights %) cum-scopes))
+                     pct
+                     (when (and (pos? (long toks)) lim (pos? (long lim)))
+                       (long (Math/round (/ (* 100.0 (double toks)) (double lim)))))]
 
-                  req
-                  (get util "last_request_tokens")
-
-                  lim
-                  (get util "model_input_limit")
-
-                  proj
-                  (when (and req lim) (max 0 (- (long req) (long cum-toks))))
-
-                  proj-pct
-                  (when (and proj (pos? (long lim)))
-                    (long (Math/round (/ (* 100.0 (double proj)) (double lim)))))]
-
-              (str (when (pos? (long toks)) (str " · saved ~" (fmt-tok toks) " tokens"))
-                   (when (and proj proj-pct)
-                     (str " · projected ~" proj-pct "% (" (fmt-tok proj) "/" (fmt-tok lim) ")"))))
-            (catch Throwable _ "")))]
+                 (when (pos? (long toks))
+                   (str " · saved ~" (fmt-tok toks)
+                        " tokens" (when pct (str " · ~" pct "% of window")))))
+               (catch Throwable _ "")))]
 
     {'session-fold
      (fn session-fold [scopes & [gist]]

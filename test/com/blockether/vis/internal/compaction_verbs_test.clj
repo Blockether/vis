@@ -563,26 +563,55 @@
 (defdescribe
   session-fold-card-test
   ;; The verb RETURN string is the tool card the human sees. It is enriched with
-  ;; how much wire the fold reclaims (~tokens, summed from `engine_iter_weights`)
-  ;; and the PROJECTED next-request level once this + every prior fold land
-  ;; (req − cumulative-saved, over `model_input_limit`) — real provider limits,
-  ;; not estimates.
-  (it "an explicit scope card prices its ~tokens + the projected context level"
+  ;; how much wire the fold reclaims — in ~tokens (summed from `engine_iter_weights`)
+  ;; AND as a fraction of `model_input_limit`. This is the fold's OWN reduction,
+  ;; NOT an absolute level: a projected level baselines on the growing
+  ;; `last_request_tokens`, so it RISES across iterations even when the fold helped
+  ;; (issue #27's scary regression). A per-fold reduction can never mislead that way.
+  (it "an explicit scope card prices its ~tokens + the reduction as % of window"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k) → big cat dump"
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window → big cat dump"
                    (sf ["t1/i1"] "big cat dump")))))
   (it "a `through` selector sums the weight of EVERY scope it resolves"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
-        (expect (= "folded through t1/i2 · saved ~15k tokens · projected ~28% (27k/96k) → traced"
+        (expect (= "folded through t1/i2 · saved ~15k tokens · ~16% of window → traced"
                    (sf {"through" "t1/i2"} "traced")))))
-  (it "a gist-less fold still shows the tokens + projected suffix"
+  (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (= "folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k)" (sf ["t1/i1"])))))
-  (it "a scope with NO stamped weight omits the token clause, keeps the projected level"
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window" (sf ["t1/i1"])))))
+  (it "a scope with NO stamped weight reclaims nothing, so the card omits the suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        ;; t2/i9 is not in the weights map (created this iteration, unsent)
-        (expect (= "folded t2/i9 · projected ~44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
+        ;; t2/i9 is not in the weights map (created this iteration, unsent) — a fold
+        ;; that frees no wire honestly shows no savings, not a phantom level.
+        (expect (= "folded t2/i9 → fresh" (sf ["t2/i9"] "fresh")))))
+  (it "a later, bigger request can't inflate the card — the reduction is the fold's own"
+      ;; The scary regression (fold → tool call → fold → % climbs): a projected
+      ;; level subtracts cumulative-saved from the GROWING `last_request_tokens`, so
+      ;; the second card would RISE. The per-fold reduction is immune — it prices
+      ;; only the scope THIS fold reclaims, never the live request size.
+      (let [ca
+            (priced-ctx)
+
+            sf
+            (get (compaction-verbs ca) 'session-fold)
+
+            card1
+            (sf ["t1/i1"] "first")
+
+            ;; one iteration passes: a big tool result lands, the request grows,
+            ;; and t1/i1 is now collapsed on the wire so its weight drops to 0.
+            _
+            (swap! ca assoc
+              "engine_iter_weights" {"t1/i1" 0 "t1/i2" 3400 "t1/i3" 900 "t2/i1" 500}
+              "engine_utilization" {"last_request_tokens" 90000 "model_input_limit" 96000})
+
+            card2
+            (sf ["t1/i2"] "second")]
+
+        (expect (= "folded t1/i1 · saved ~12k tokens · ~13% of window → first" card1))
+        ;; second fold reclaims only its own 3.4k regardless of the 90k request
+        (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of window → second" card2))))
   (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
       ;; regression: the saved-tokens + projected suffix must ride the durable
       ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
@@ -605,8 +634,7 @@
             line
             (:content (irm (second (first out))))]
 
-        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · projected ~31% (30k/96k) · big cat dump"
-                   line))))
+        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · ~13% of window · big cat dump" line))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))

@@ -43,7 +43,7 @@ One fold can target several steps at once — a list, a whole turn (a bare `"tN"
 
 ### The gist stays where the hunt was
 
-The gist lands **in place** — a `# ⋯ folded <scopes> · saved ~<N>k tokens · projected ~<P>% (req/lim) · <gist>` breadcrumb replaces the step exactly where it collapsed, so the wire it reclaimed and the *projected* next-request level once this fold (and every prior one) drops off the wire — `req − cumulative-saved` over the model limit, which visibly falls between successive same-turn folds rather than pinning to the fixed trigger level — plus the finding's anchors, are read in context as the model scans back through history. It is written **once** and never re-transmitted.
+The gist lands **in place** — a `# ⋯ folded <scopes> · saved ~<N>k tokens · ~<P>% of window · <gist>` breadcrumb replaces the step exactly where it collapsed, so the wire it reclaimed — in ~tokens and as a fraction of the model's per-call limit — plus the finding's anchors, are read in context as the model scans back through history. The `~<P>%` is the fold's OWN reduction, not an absolute "how full am I" level: that would baseline on the ever-growing `last_request_tokens` and so RISE across iterations even when the fold helped (fold → tool call → fold → the number climbs). The authoritative live fullness stays in `session["utilization"]["now"]`'s `context <U>%`. The breadcrumb is written **once** and never re-transmitted.
 
 ### Folding never loses anything
 
