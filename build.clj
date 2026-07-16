@@ -1,23 +1,24 @@
 (ns build
-  "Build script for vis: ONE canonical library. The whole monorepo — the repo
-   root plus every extension under `extensions/` — is bundled into a SINGLE jar
-   published as `com.blockether/vis`. There are no sibling package names.
+  "Build script for vis: ONE jar at `com.blockether/vis`, plus separate
+   jars for every classpath plug-in under `extensions/`.
 
    Earlier this monorepo published three host packages (vis-sdk, vis-runtime,
-   vis-main) and a separate jar per extension. They've all been collapsed into
-   the one `com.blockether/vis` artifact whose source is `com/blockether/vis/**`
-   (extensions land under `com/blockether/vis/ext/**`), with every extension's
-   `META-INF/vis-extension/vis.edn` merged so all still register at runtime.
+   vis-main). They've been merged into a single namespace at
+   `src/com/blockether/vis/core.clj` shipped as `com.blockether/vis`.
 
    Tasks
    =====
 
-     clojure -T:build jar              # build the canonical jar
-     clojure -T:build install          # build + install into ~/.m2
-     clojure -T:build deploy           # build + deploy to Clojars
+     clojure -T:build jar              # build every jar
+     clojure -T:build install          # build + install all into ~/.m2
+     clojure -T:build deploy           # build + deploy all to Clojars
      clojure -T:build clean            # delete target/
 
-     clojure -T:build native           # standalone native-image binary"
+     clojure -T:build jar     :package vis-channel-tui    # one only
+     clojure -T:build install :package vis-channel-tui
+     clojure -T:build deploy  :package vis-channel-tui
+
+   The `:package` selector matches `:lib` short name (after the slash)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
@@ -43,39 +44,50 @@
 ;; Package catalog
 ;; =============================================================================
 
-(def packages
-  "The one canonical library. vis bundles every extension's source into a single
-   jar, so the monorepo publishes exactly ONE Clojars artifact —
-   `com.blockether/vis`. There are no sibling package names."
-  [{:lib 'com.blockether/vis :dir "." :bundle-all? true}])
+(def ^:private extension-package-root "extensions")
 
-(defn- bundle-publish-deps
-  "Every real Maven dependency across the root project and every extension,
-   unioned into one map. In-repo `:local/root` sibling deps are DROPPED — their
-   source is bundled into the single canonical jar, so they are not POM
-   dependencies and are no longer published under their own names."
+(defn- extension-package-deps-file?
+  [^java.io.File f]
+  (let [path (str/replace (.getPath f) "\\" "/")]
+    (and (.isFile f)
+         (= "deps.edn" (.getName f))
+         (some? (re-matches #"extensions/[^/]+/[^/]+/deps\.edn" path)))))
+
+(defn- extension-package-dirs
+  "Every extension subproject that declares its own deps.edn. New extension
+  packages are publishable automatically — no hard-coded package list to
+  remember when adding `extensions/<kind>/<name>/deps.edn`."
   []
-  (let [root
-        (read-string (slurp "deps.edn"))
+  (->> (file-seq (io/file extension-package-root))
+       (filter extension-package-deps-file?)
+       (map #(-> %
+                 .getParentFile
+                 .getPath))
+       sort))
 
-        exts
-        (->> (:deps root)
-             vals
-             (keep :local/root))
+(defn- extension-dir->package
+  [dir]
+  {:lib (symbol "com.blockether" (.getName (io/file dir))) :dir dir})
 
-        merged
-        (reduce (fn [m dir]
-                  (let [f (io/file dir "deps.edn")]
-                    (cond-> m
-                      (.exists f)
-                      (merge (:deps (read-string (slurp f)))))))
-                (:deps root)
-                exts)]
+(def packages
+  "Every publishable jar in the monorepo. Deploy builds every selected package
+  with local-root deps first, then rewrites publish POMs to same-version Maven
+  coords and pushes the jars to Clojars. Extension packages are discovered from
+  `extensions/**/deps.edn`, so adding a new extension package automatically
+  includes it in `jar`, `install`, and `deploy`."
+  (into [{:lib 'com.blockether/vis :dir "."}]
+        (map extension-dir->package)
+        (extension-package-dirs)))
 
-    (into {}
-          (remove (fn [[_ coord]]
-                    (and (map? coord) (:local/root coord))))
-          merged)))
+(def ^:private sibling-versions
+  "Map of every monorepo lib -> mvn coord at the shared version. Passed
+   as `:override-deps` to each per-package basis so `:local/root` sibling
+   deps are emitted into the published POM as `<dependency>` entries
+   referencing Clojars artifacts instead of pointing at relative paths."
+  (into {}
+        (map (fn [{:keys [lib]}]
+               [lib {:mvn/version version}]))
+        packages))
 
 (defn- pkg-by-name
   "Resolve a `:package` selector (short name) to a package descriptor.
@@ -142,19 +154,19 @@
     (if (.isAbsolute f) (.getCanonicalPath f) (.getCanonicalPath (io/file dir root)))))
 
 (defn- prepare-package-deps
-  "Normalize package deps for basis creation. Local roots are absolutized so an
-   in-memory deps map resolves; when preparing a publish POM the in-repo
-   `:local/root` sibling deps are DROPPED entirely (their source is bundled into
-   the one canonical jar, so they are not POM dependencies)."
+  "Normalize package deps for basis creation. Local roots must be absolute
+  because release builds pass an in-memory deps map to tools.deps; publish POMs
+  additionally rewrite listed sibling packages to same-version Maven coords."
   [dir publish? deps]
   (into {}
-        (comp (remove (fn [[_ coord]]
-                        (and publish? (map? coord) (:local/root coord))))
-              (map (fn [[lib coord]]
-                     [lib
-                      (if (and (map? coord) (:local/root coord))
-                        (update coord :local/root #(absolute-local-root dir %))
-                        coord)])))
+        (map (fn [[lib coord]]
+               [lib
+                (cond
+                  (and publish? (contains? sibling-versions lib) (map? coord) (:local/root coord))
+                  (get sibling-versions lib)
+                  (and (map? coord) (:local/root coord))
+                  (update coord :local/root #(absolute-local-root dir %))
+                  :else coord)]))
         deps))
 
 (defn- read-package-deps
@@ -175,37 +187,23 @@
                                  (:extra-deps a)
                                  (update :extra-deps #(prepare-package-deps dir publish? %))))))))))
 
-(defn- package-basis
-  [pkg]
-  (if (:bundle-all? pkg)
-    (b/create-basis {:project {:deps (bundle-publish-deps) :paths ["src" "resources"]}})
-    (b/create-basis {:project (read-package-deps (:dir pkg))})))
+(defn- package-basis [pkg] (b/create-basis {:project (read-package-deps (:dir pkg))}))
 
 (defn- package-publish-basis
   [pkg]
-  (if (:bundle-all? pkg)
-    (b/create-basis {:project {:deps (bundle-publish-deps) :paths ["src" "resources"]}})
-    (b/create-basis {:project (read-package-deps (:dir pkg) :publish? true)})))
-
-;; Forward refs: the bundling jar reuses the native path's source-root gatherer
-;; and manifest/migration collapsers, which are defined further down.
-(declare all-source-roots merge-extension-manifests! write-migration-indexes!)
+  (b/create-basis {:project (read-package-deps (:dir pkg) :publish? true)}))
 
 (defn- src-dirs
-  [{:keys [dir bundle-all?]}]
-  (if bundle-all?
-    ;; The one canonical library ships the source of the repo root AND every
-    ;; extension. `:voice` drops nothing, so this is the full source set.
-    (all-source-roots :voice)
-    (let [src
-          (str dir "/src")
+  [{:keys [dir]}]
+  (let [src
+        (str dir "/src")
 
-          res
-          (str dir "/resources")]
+        res
+        (str dir "/resources")]
 
-      (cond-> [src]
-        (.exists (io/file res))
-        (conj res)))))
+    (cond-> [src]
+      (.exists (io/file res))
+      (conj res))))
 
 (defn- install-local!
   [{:keys [lib class-dir jar-file]}]
@@ -222,7 +220,7 @@
                 :pom-data (build-pom-data lib)}))
 
 (defn- build-one!
-  [{:keys [lib bundle-all?] :as pkg}]
+  [{:keys [lib] :as pkg}]
   (let [{:keys [class-dir jar-file]}
         (target-paths pkg)
 
@@ -235,12 +233,6 @@
     (b/delete {:path (str "target/" (name lib))})
     (write-package-pom! pkg class-dir basis)
     (b/copy-dir {:src-dirs srcs :target-dir class-dir})
-    (when bundle-all?
-      ;; A single jar collapses every extension's `META-INF/vis-extension/vis.edn`
-      ;; to one path — merge them so ALL extensions still register at runtime, and
-      ;; index Flyway migrations so they're discoverable without a dir listing.
-      (merge-extension-manifests! class-dir :voice)
-      (write-migration-indexes! class-dir))
     (b/jar {:class-dir class-dir :jar-file jar-file})
     (let [result {:pkg pkg :lib lib :class-dir class-dir :jar-file jar-file}]
       (install-local! result)
@@ -250,9 +242,10 @@
 (defn- selected-packages [{:keys [package]}] (if package [(pkg-by-name package)] packages))
 
 (defn- deploy-build-order
-  "Deploy order for the selected packages. With one canonical `com.blockether/vis`
-   jar this is a trivial identity, kept as a seam should a second artifact ever
-   return."
+  "Build extension/sibling packages before the root `com.blockether/vis` jar. The
+   root publish POM rewrites its `:local/root` extension deps to same-version
+   Maven coordinates, so a fresh tag release must have already installed those
+   sibling jars into ~/.m2 before `package-publish-basis` resolves the root POM."
   [pkgs]
   (sort-by #(if (= 'com.blockether/vis (:lib %)) 1 0) pkgs))
 
@@ -280,9 +273,12 @@
   (jar opts))
 
 (defn deploy
-  "Build the canonical `com.blockether/vis` jar (all extension source bundled,
-  in-repo `:local/root` sibling deps dropped from the POM) and deploy it to
-  Clojars."
+  "Build and install every selected package locally, then deploy them to Clojars.
+
+  The publish POMs rewrite in-repo `:local/root` sibling deps to same-version
+  Maven coords. We generate those publish POMs only after the full selected set
+  has been installed locally so a fresh release can resolve same-version sibling
+  artifacts before they exist on Clojars."
   [opts]
   (let [built (doall (for [pkg (deploy-build-order (selected-packages opts))]
                        (do (println "[" (name (:lib pkg)) "] build") (build-one! pkg))))]
