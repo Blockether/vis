@@ -4,6 +4,17 @@ name: Native Experiment
 # native image, since the paid larger runners are blocked by the org spending
 # limit. Free runners never bill, so we can iterate here for free. Delete once
 # native.yml / native-release.yml are updated with the winning config.
+#
+# STATUS (from run 29472962818):
+#   • linux-x64 (ubuntu-latest, 16 GB) — GREEN in ~26 min. Confirms the
+#     -Os + interpreter-only build change ships green on Linux. Not re-probed.
+#   • macos-13 (Intel, 14 GB) — DEAD END: GraalVM CE 25.1.x publishes NO
+#     macos-x64 asset (only macos-aarch64), and free Intel runners queue
+#     indefinitely here anyway. Dropped.
+#   • macos-14 / macos-15 (Apple silicon, 7 GB) — the ONLY free arm option.
+#     GraalPy forces -Xms14g; we override it down to fit and let macOS swap.
+#     The build makes forward progress (never DeadlockWatchdog-killed) but the
+#     swap crawl runs LONGER than the old 90-min cap — hence timeout 240.
 on:
   workflow_dispatch:
   push:
@@ -17,21 +28,17 @@ jobs:
   probe:
     name: probe / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Free Linux runner (16 GB) — the canonical shippable linux-x64. Also
-          # verifies the -Os + interpreter-only build change lands green on Linux.
-          - { label: linux-x64, os: ubuntu-latest, extra: "" }
-          # Free Intel runner, 14 GB — same RAM as the paid macos-15-large the
-          # workflows were designed for. Plain :voice build (GraalPy's -Xms14g fits).
-          - { label: macos13-intel-14g, os: macos-13, extra: "" }
-          # Free Apple-silicon runner, 7 GB — override GraalPy's -Xms14g down to
-          # fit; if the image build peaks under ~6 GB this yields a native arm64.
-          - { label: macos15-arm-7g-tuned, os: macos-15, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
-          - { label: macos14-arm-7g-tuned, os: macos-14, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
+          # Free Apple-silicon runners, 7 GB — override GraalPy's -Xms14g down to
+          # fit, cap -Xmx below the 7 GB ceiling, ParallelGC for throughput on the
+          # swap-heavy build. macos-15 is what the real workflows will target
+          # (== macos-latest); macos-14 is a hedge on identical M1 hardware.
+          - { label: macos15-arm-7g, os: macos-15, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
+          - { label: macos14-arm-7g, os: macos-14, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
     steps:
       - uses: actions/checkout@v6
       - name: Report runner specs
