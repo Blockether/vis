@@ -1069,7 +1069,7 @@
                  "</a>")
 
             :img
-            (str "<i>🖼 " (escape-html (or (:alt attrs) "image")) "</i>")
+            (str "<i>" (escape-html (or (:alt attrs) "image")) "</i>")
 
             :kbd
             (str "<code>" (escape-html (raw-body node)) "</code>")
@@ -1438,7 +1438,7 @@
               (if (= text href) text (str text " (" href ")")))
 
             :img
-            (str "🖼 " (or (:alt attrs) (:src attrs) "image"))
+            (or (:alt attrs) (:src attrs) "image")
 
             :kbd
             (raw-body node)
