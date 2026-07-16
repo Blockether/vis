@@ -2583,6 +2583,23 @@
     (it "content mode is unchanged: `N hits in M files`"
         (let [card (render {"matches" {"x.clj" {"1:abc" "line one"}} "hit_count" 1 "file_count" 1})]
           (expect (= "1 hit in 1 file" (:summary card)))))
+    (it "an explicit `paths` scope is named on the headline; the default `.` is not"
+        (let [scoped (render {"matches" {"x.clj" {"1:abc" "line one"}}
+                              "hit_count" 1
+                              "file_count" 1
+                              "needles" ["foo"]
+                              "paths" ["src" "test"]})
+              default (render {"matches" {"x.clj" {"1:abc" "line one"}}
+                               "hit_count" 1
+                               "file_count" 1
+                               "needles" ["foo"]
+                               "paths" ["."]})
+              files-only
+              (render {"files" ["src/a.clj"] "file_count" 1 "needles" ["foo"] "paths" ["src"]})]
+
+          (expect (= "`foo` · 1 hit in 1 file · in `src`, `test`" (:summary scoped)))
+          (expect (= "`foo` · 1 hit in 1 file" (:summary default)))
+          (expect (= "`foo` · 1 matching file · in `src`" (:summary files-only)))))
     (it "content mode right-aligns the gutter to the file's widest line number"
         ;; Same class as the cat-card margin bug: mixed 1- and 4-digit line
         ;; numbers must NOT stagger the text column. Each row's text starts at
@@ -3087,7 +3104,18 @@
               (render-find-result
                 {"item_count" 0 "query" "zzz" "paths" [] "hint" "No FILENAME matched"})]
           (expect (string/includes? summary "0 matches"))
-          (expect (string/includes? (str body) "No FILENAME matched"))))))
+          (expect (string/includes? (str body) "No FILENAME matched"))))
+    (it "an explicit `searched_paths` scope is named on the headline; default `.` is not"
+        (let [scoped (render-find-result {"item_count" 1
+                                          "query" "render"
+                                          "paths" ["src/render.clj"]
+                                          "searched_paths" ["src"]})
+              default
+              (render-find-result
+                {"item_count" 1 "query" "render" "paths" ["render.clj"] "searched_paths" ["."]})]
+
+          (expect (= "1 match for \"render\" · in `src`" (:summary scoped)))
+          (expect (= "1 match for \"render\"" (:summary default)))))))
 
 (defdescribe
   structural-tool-gating-test

@@ -4360,9 +4360,20 @@
         query-chip
         (when needles (str/join " OR " (map #(str "`" % "`") needles)))
 
+        ;; NAME the search SCOPE too — WHERE rg looked. The implicit `["."]`
+        ;; default (the whole workspace) stays off the headline; an explicit
+        ;; `paths` scope is chipped so the card says which dir(s) were swept.
+        scope
+        (seq (remove #(= "." (kw->str %)) (get r "paths")))
+
+        scope-chip
+        (when scope (str "in " (str/join ", " (map #(str "`" (kw->str %) "`") scope))))
+
         with-query
         (fn [tail]
-          (if query-chip (str query-chip " · " tail) tail))]
+          (str (when query-chip (str query-chip " · "))
+               tail
+               (when scope-chip (str " · " scope-chip))))]
 
     (cond
       ;; files-only — the matching FILES are the result; there are no per-line hits.
@@ -4480,12 +4491,22 @@
                               not-empty)
                      (get r "matched_terms"))))
 
+        ;; NAME the search SCOPE too — WHERE find_files looked. The implicit
+        ;; `["."]` default (the whole workspace) stays off the headline; an
+        ;; explicit `paths` scope is chipped so the card says which dir(s).
+        scope
+        (seq (remove #(= "." (kw->str %)) (get r "searched_paths")))
+
+        scope-chip
+        (when scope (str "in " (str/join ", " (map #(str "`" (kw->str %) "`") scope))))
+
         head
         (str n
              " match"
              (when (not= 1 n) "es")
              (when q (str " for \"" q "\""))
-             (when terms (str " · terms: " (str/join ", " terms))))]
+             (when terms (str " · terms: " (str/join ", " terms)))
+             (when scope-chip (str " · " scope-chip)))]
 
     {:summary head
      :body (cond (seq paths) (str "\n```\n" (str/join "\n" (map kw->str paths)) "\n```")
