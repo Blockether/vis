@@ -959,6 +959,45 @@ def __vis_native_result_scan__(__vis_tree__):
       "if '__vis_pyify__' in globals():\n" ; guard: a context without the substrate keeps the proxy
       "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
 
+(defn seed-cli-runtime!
+  "Seed a standalone `vis python` CLI context with script `argv` (bound to
+   `sys.argv`) and, when non-empty, an `env` map merged into `os.environ`.
+   This is what gives the CLI real-`python` semantics: unlike the deny-by-
+   default AGENT sandbox (env scrubbed for isolation — the human never sees
+   their shell here), the human-run CLI forwards trailing script args and,
+   by default, the caller's environment.
+
+   Mirrors the `VIS_OUTBOX` injection: values cross via `putMember`, then a
+   guest eval assigns them (a JSON hop keeps ProxyHashMaps off the boundary
+   and reuses the auto-imported `json`). Best-effort: a bad value never
+   aborts startup."
+  [python-context {:keys [argv env]}]
+  (let [^Context ctx
+        python-context
+
+        g
+        (.getBindings ctx "python")]
+
+    (when (some? argv)
+      (try (.putMember g "__vis_cli_argv_json__" (json/write-json-str (vec argv)))
+           (.eval ctx
+                  "python"
+                  (str "import sys as __vis_sys__\n"
+                       "__vis_sys__.argv = list(json.loads(__vis_cli_argv_json__))\n"
+                       "del __vis_sys__"))
+           (.putMember g "__vis_cli_argv_json__" nil)
+           (catch Throwable _ nil)))
+    (when (seq env)
+      (try (.putMember g "__vis_cli_env_json__" (json/write-json-str env))
+           (.eval ctx
+                  "python"
+                  (str "import os as __vis_os__\n"
+                       "__vis_os__.environ.update(json.loads(__vis_cli_env_json__))\n"
+                       "del __vis_os__"))
+           (.putMember g "__vis_cli_env_json__" nil)
+           (catch Throwable _ nil)))
+    python-context))
+
 (def ^:dynamic *lru-atom* nil)
 (def ^:dynamic *current-turn-position* nil)
 (defn fresh-lru-atom [] (atom {}))

@@ -2926,8 +2926,13 @@
   "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
    installed, filesystem rooted at the current working directory, network
    enabled unless `network?` is false. No tool bindings -- just the
-   interpreter with its shims."
-  [{:keys [network?]}]
+   interpreter with its shims.
+
+   Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
+   real-`python` niceties: `argv` is bound to `sys.argv` and `env` (the
+   caller's environment by default) is merged into `os.environ` -- see
+   `env/seed-cli-runtime!`."
+  [{:keys [network? argv env]}]
   (let [cwd
         (.getCanonicalPath (io/file "."))
 
@@ -2939,6 +2944,9 @@
 
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
+    ;; Forward script argv + (by default) the caller's env — real-python CLI
+    ;; semantics, distinct from the scrubbed agent sandbox.
+    (env/seed-cli-runtime! python-context {:argv argv :env env})
     python-context))
 
 (defn- run-python-source!
@@ -2978,36 +2986,109 @@
         (when (seq code) (run-python-source! ctx code))
         (if eof? (stdout! "") (recur))))))
 
+(defn- python-cli-env-overrides->map
+  "Turn `--env` values (`\"K=V\"`, or a bare `\"K\"`) into a `{key value}` map.
+   A bare key with no `=` maps to an empty string."
+  [overrides]
+  (reduce (fn [m kv]
+            (if-let [i (str/index-of kv "=")]
+              (assoc m (subs kv 0 i) (subs kv (inc i)))
+              (assoc m kv "")))
+          {}
+          overrides))
+
+(defn- python-program-plan
+  "Given the args from the program selector onward, return the run plan:
+   `-c CODE …` → `{:mode :code :code CODE :argv [\"-c\" …trailing]}`,
+   `- …`       → `{:mode :stdin :argv [\"-\" …trailing]}`,
+   `FILE …`    → `{:mode :file :file FILE :argv [FILE …trailing]}`.
+   Trailing tokens ride into `argv` verbatim (CPython semantics)."
+  [prog]
+  (cond (= "-c" (first prog)) {:mode :code :code (second prog) :argv (into ["-c"] (drop 2 prog))}
+        (= "-" (first prog)) {:mode :stdin :argv (vec prog)}
+        :else {:mode :file :file (first prog) :argv (vec prog)}))
+
+(defn- parse-python-cli-args
+  "Parse `vis python` residual args into a runtime plan. Leading options
+   (`--no-network`, `--no-env`, `--env K=V`, and an explicit `--`) are
+   consumed until the program selector (`-c`, `-`, or a FILE); everything
+   from the selector on is the program plus its verbatim script `argv`
+   (mirrors CPython: trailing args land in `sys.argv`, flags included).
+   With no selector the mode is `:interactive` (REPL on a TTY, else stdin)."
+  [residual]
+  (loop [network?
+         true
+
+         inherit-env?
+         true
+
+         env-overrides
+         []
+
+         args
+         (vec residual)]
+
+    (let [a (first args)]
+      (cond (nil? a) {:network? network?
+                      :inherit-env? inherit-env?
+                      :env-overrides env-overrides
+                      :mode :interactive
+                      :argv []}
+            (= a "--no-network") (recur false inherit-env? env-overrides (subvec args 1))
+            (= a "--no-env") (recur network? false env-overrides (subvec args 1))
+            (= a "--env") (recur network?
+                                 inherit-env?
+                                 (cond-> env-overrides
+                                   (some? (second args))
+                                   (conj (second args)))
+                                 (subvec args (min (count args) 2)))
+            (str/starts-with? a "--env=")
+            (recur network? inherit-env? (conj env-overrides (subs a 6)) (subvec args 1))
+            :else
+            (let [prog (if (= a "--") (subvec args 1) args)]
+              (merge
+                {:network? network? :inherit-env? inherit-env? :env-overrides env-overrides}
+                (if (empty? prog) {:mode :interactive :argv []} (python-program-plan prog))))))))
+
 (defn- cli-python!
   "`vis python` -- run code in the embedded GraalPy sandbox (all shims, no tool
    bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
-   piped stdin (run stdin), or an interactive REPL on a bare TTY. `--no-network`
-   disables sandbox network."
+   piped stdin (run stdin), or an interactive REPL on a bare TTY. Trailing args
+   after the program selector become `sys.argv`. `--no-network` disables sandbox
+   network; the caller's environment is inherited into `os.environ` by default
+   (`--no-env` scrubs it, `--env K=V` sets/overrides one var)."
   [_parsed residual]
   (config/init-cli!)
-  (let [raw
-        (vec residual)
+  (let [{:keys [network? inherit-env? env-overrides mode code file argv]}
+        (parse-python-cli-args residual)
 
-        no-network?
-        (boolean (some #{"--no-network"} raw))
-
-        args
-        (vec (remove #{"--no-network"} raw))
+        env
+        (merge (if inherit-env? (into {} (System/getenv)) {})
+               (python-cli-env-overrides->map env-overrides))
 
         ctx
-        (python-cli-context {:network? (not no-network?)})
+        (python-cli-context {:network? network? :argv argv :env env})
 
         exit
-        (cond (= "-c" (first args)) (if-let [code (second args)]
-                                      (run-python-source! ctx code)
-                                      (do (stdout! "vis python -c requires a CODE argument.") 2))
-              (= "-" (first args)) (run-python-source! ctx (slurp System/in))
-              (seq args) (let [f (io/file (first args))]
-                           (if (.isFile f)
-                             (run-python-source! ctx (slurp f))
-                             (do (stdout! (str "vis python: no such file: " (first args))) 2)))
-              (some? (System/console)) (do (python-repl! ctx) 0)
-              :else (run-python-source! ctx (slurp System/in)))]
+        (case mode
+          :code
+          (if code
+            (run-python-source! ctx code)
+            (do (stdout! "vis python -c requires a CODE argument.") 2))
+
+          :stdin
+          (run-python-source! ctx (slurp System/in))
+
+          :file
+          (let [f (io/file file)]
+            (if (.isFile f)
+              (run-python-source! ctx (slurp f))
+              (do (stdout! (str "vis python: no such file: " file)) 2)))
+
+          :interactive
+          (if (some? (System/console))
+            (do (python-repl! ctx) 0)
+            (run-python-source! ctx (slurp System/in))))]
 
     (shutdown-agents)
     (System/exit exit)))
@@ -3053,10 +3134,14 @@
                :cmd/subcommands #(registry/registered-under ["gateway"])}
               {:cmd/name "python"
                :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
-               :cmd/usage "vis python [-c CODE | FILE.py | -] [--no-network]"
-               :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
-                              "vis python script.py" "echo 'print(1 + 1)' | vis python"
-                              "vis python   # interactive REPL"]
+               :cmd/usage "vis python [OPTS] [-c CODE | FILE.py | -] [ARG...]"
+               :cmd/examples
+               ["vis python -c \"import requests; print(requests.__version__)\""
+                "vis python script.py --flag foo   # ARGs land in sys.argv"
+                "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
+                "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
+                "vis python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
+                "echo 'print(1 + 1)' | vis python" "vis python   # interactive REPL"]
                :cmd/owns-tty? true
                :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
