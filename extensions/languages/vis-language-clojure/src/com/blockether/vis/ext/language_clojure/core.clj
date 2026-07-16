@@ -367,12 +367,13 @@
    The just-autostarted REPL is mirrored into the session resources on the next
    ctx render (footer + stop/restart).
 
-   AUTO-RECOVERY: a managed REPL whose OS process is alive but whose nREPL socket
-   is dead/wedged (a boot that never bound its port, or a crashed server thread)
-   makes the resolver hand back a port nothing listens on. On that connect
-   failure we restart THIS session's REPL for the target dir and retry the eval
-   ONCE — so an eval Just Works instead of surfacing a dead-port error. A pinned
-   `port`, or a real eval/timeout error, is never retried."
+   AUTO-RECOVERY lives in ONE place — the resolver's autostart path
+   (`ensure-repl-for-dir!`), which drops a dead/wedged process and reboots it
+   BEFORE handing back a port, and is boot-aware (a still-booting REPL is waited
+   out, never killed mid-flight). We do NOT restart-and-retry around the eval
+   itself: layering a second reboot onto the eval stacks another cold boot inside
+   the tool wall and, done per eval, spins an endless restart cycle. A genuine
+   connect failure therefore surfaces as DATA, so the model can repl_start / wait."
   ([env arg]
    (let [m
          (coerce-eval-arg arg)
@@ -454,19 +455,14 @@
              (ex-info
                "no nREPL port resolved — could not autostart a project nREPL (no deps.edn / project.clj / bb.edn?)"
                {:type :clj/no-port :workspace-root root})))
-         (extension/success
-           {:result (try (run tport (:id target))
-                         (catch clojure.lang.ExceptionInfo e
-                           (if (and (= :clj/nrepl-connect-failed (:type (ex-data e))) (:dir target))
-                             ;; Managed target's process is alive but not serving nREPL:
-                             ;; restart it and retry the eval once.
-                             (let [fresh (repl-manager/restart-for-dir! sid (:dir target))]
-                               (when-not (:port fresh) (throw e))
-                               ;; Drop the stale resource mirror so ctx re-adds it with the
-                               ;; fresh port on the next render.
-                               (vis/unregister-resource! sid (repl-resource-id (:dir target)))
-                               (run (:port fresh) (:id target)))
-                             (throw e))))}))))))
+         ;; Recovery of a dead/wedged REPL lives in ONE place: the resolver's
+         ;; boot-aware autostart (`ensure-repl-for-dir!`). We do NOT restart and
+         ;; retry here — a second reboot layered onto the eval stacks another
+         ;; cold boot inside the tool wall and, against a still-booting port,
+         ;; kills real boot progress; done on every eval it spins an endless
+         ;; restart cycle. A genuine connect failure surfaces as DATA (the model
+         ;; can repl_start / wait), never a hidden reload.
+         (extension/success {:result (run tport (:id target))}))))))
 
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:

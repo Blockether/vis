@@ -281,6 +281,47 @@
   (it "tolerates a nil process (pure port probe)"
       (expect (= :starting (#'rm/wait-until-up nil 59873 300)))))
 
+(defn- sleep-proc
+  "A real, long-lived child process so `proc-alive?` is genuinely true (no
+   with-redefs — lazytest `it` bodies run OUTSIDE the surrounding dynamic scope)."
+  ^Process []
+  (.start (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String ["sh" "-c" "sleep 30"]))))
+
+(defdescribe
+  health-probe-ms-test
+  "The wedged-vs-slow-boot guard: a still-booting REPL is given its REMAINING
+   cold-boot window so a legitimately slow boot is never killed + restarted
+   mid-flight (the cross-eval restart cycle), while a dead / past-deadline
+   process gets only the short grace before it is judged wedged."
+  (it "gives a still-booting REPL the remaining cold-boot window (not the short grace)"
+      (let [p (sleep-proc)]
+        (try (let [ms (#'rm/health-probe-ms
+                       {:process p :started-at (- (System/currentTimeMillis) 30000) :port 1})]
+               (expect (> ms 5000))
+               (expect (<= ms @#'rm/start-deadline-ms)))
+             (finally (.destroyForcibly p)))))
+  (it "gives a live process past its boot deadline only the short grace"
+      (let [p (sleep-proc)]
+        (try (expect (= 5000
+                        (#'rm/health-probe-ms
+                         {:process p
+                          :started-at (- (System/currentTimeMillis) @#'rm/start-deadline-ms 1000)
+                          :port 1})))
+             (finally (.destroyForcibly p)))))
+  (it "gives a live process with no :started-at only the short grace"
+      (let [p (sleep-proc)]
+        (try (expect (= 5000 (#'rm/health-probe-ms {:process p :port 1})))
+             (finally (.destroyForcibly p)))))
+  (it "treats a dead process as not booting — never waits out the boot window"
+      (let [p (.start (ProcessBuilder. ^"[Ljava.lang.String;"
+                                       (into-array String ["sh" "-c" "exit 0"])))]
+        (.waitFor p)
+        (expect (false? (#'rm/booting?
+                         {:process p :started-at (System/currentTimeMillis) :port 1})))
+        (expect (= 5000
+                   (#'rm/health-probe-ms
+                    {:process p :started-at (System/currentTimeMillis) :port 1}))))))
+
 (defdescribe
   slow-start-watcher-test
   (it "reports :starting for a slow boot, then the .onExit watcher flips a later death to :failed"

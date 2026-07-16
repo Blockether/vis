@@ -380,7 +380,7 @@
     (let [changed (get r "changed")
           note (if changed "(changed)" "(no change)")
           delta (get r "chars")
-          mag (when (and changed (number? delta) (not (zero? delta)))
+          mag (when (and changed (number? delta) (not (zero? (long delta))))
                 (str " (" (if (pos? (long delta)) "+" "-") (Math/abs (long delta)) " chars)"))
           label (str note mag)]
 
@@ -396,13 +396,13 @@
    in the body."
   [r]
   (let [errors
-        (or (get r "error") 0)
+        (long (or (get r "error") 0))
 
         warnings
-        (or (get r "warning") 0)
+        (long (or (get r "warning") 0))
 
         infos
-        (or (get r "info") 0)
+        (long (or (get r "info") 0))
 
         findings
         (get r "findings")
@@ -426,10 +426,10 @@
 
         head
         (cond (= 1 (count targets)) (str "`" (first targets)
-                                         "`" (when (and n (> n 1)) (str " (" n " files)")))
+                                         "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
               (seq targets) (str (count targets)
                                  " targets"
-                                 (when (and n (> n (count targets))) (str " (" n " files)")))
+                                 (when (and n (> (long n) (count targets))) (str " (" n " files)")))
               n (if (= 1 n) "snippet" (str n " files")))]
 
     {:summary (not-empty (str head
@@ -472,7 +472,7 @@
 
         ok
         (and (not error)
-             (cond (number? fail) (zero? fail)
+             (cond (number? fail) (zero? (long fail))
                    (contains? r "pass?") (boolean (get r "pass?")) ; CLI fallback: exit-code verdict
                    :else (boolean (get r "pass"))))
 
@@ -498,7 +498,7 @@
                    (when total
                      (str " — " pass
                           "/" total
-                          " passed" (when (and (number? fail) (pos? fail))
+                          " passed" (when (and (number? fail) (pos? (long fail)))
                                       (str ", " fail " failed"))))
                    (when (and (not ok) (not total)) " — error")
                    (when-let [ms (get r "ms")]
@@ -596,7 +596,8 @@
                      (some #{"eval-error"} (get r "status"))))
 
         long-form?
-        (boolean (and code (or (str/includes? code "\n") (> (count code) repl-form-inline-max))))
+        (boolean (and code
+                      (or (str/includes? code "\n") (> (count code) (long repl-form-inline-max)))))
 
         ;; The form on the chip: single-lined + clipped. Short → it's the whole
         ;; story; long → it's a teaser and the full form leads the expanded body.
@@ -801,6 +802,15 @@
      :before-fn inject-env
      :tag :observation}))
 
+(def ^:private repl-startup-budget-ms
+  "Extra wall-clock room ADDED to repl_eval/run_tests' outer timeout so a COLD
+   project REPL/runtime boot (a language pack's autostart, which may take up to
+   ~2 min: deps resolve + JVM boot + namespace compile) fits under the deadline
+   instead of racing the eval `timeout_ms`. Without it a default 30 s wall kills
+   the boot before the eval runs. See runtime-settings/native-tool-timeout-ms and
+   the clojure pack's `start-deadline-ms` (120 s)."
+  150000)
+
 (def test-symbol
   (vis/symbol
     #'run-tests
@@ -811,6 +821,7 @@
      ;; directly in Clojure so the language pack's own timeout budget wins.
      :handler (fn [env input]
                 (run-tests env input))
+     :startup-budget-ms repl-startup-budget-ms
      :render render-test-result
      :color-role :tool-color/test
      :schema
@@ -858,6 +869,7 @@
      ;; run_tests above).
      :handler (fn [env input]
                 (repl-eval env input))
+     :startup-budget-ms repl-startup-budget-ms
      :render render-repl-eval-result
      :color-role :tool-color/shell
      :schema
