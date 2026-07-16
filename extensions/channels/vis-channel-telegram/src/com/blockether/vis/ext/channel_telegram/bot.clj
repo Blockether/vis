@@ -315,7 +315,8 @@
 
 (defn- executable?
   [cmd]
-  (try (zero? (:exit (process/sh {:out :string :err :string :continue true} "command" "-v" cmd)))
+  (try (zero? (long (:exit
+                      (process/sh {:out :string :err :string :continue true} "command" "-v" cmd))))
        (catch Throwable _ false)))
 
 (defn- audio-extension
@@ -341,7 +342,7 @@
                                        "1" "-ar"
                                        "16000" "-f"
                                        "wav" (str wav-file))]
-    (when-not (zero? exit)
+    (when-not (zero? (long exit))
       (throw (ex-info "ffmpeg failed to convert Telegram voice audio for transcription"
                       {:type :telegram-voice/ffmpeg-failed
                        :source-extension (audio-extension audio-file)
@@ -396,22 +397,22 @@
 ;; resets the clock; HTTP 429 doubles next two intervals; `message is
 ;; not modified` swallowed.
 
-(def ^:private throttle-min-ms 1200)
-(def ^:private throttle-min-delta 40)
+(def ^:private ^:const throttle-min-ms 1200)
+(def ^:private ^:const throttle-min-delta 40)
 ;; Reasoning window. Kept well under Telegram's 4096 hard limit so the
 ;; bubble (reasoning + the code-block feed + chrome) can NEVER exceed it —
 ;; once an edit is too long, editMessageText 400s and the bubble freezes
 ;; mid-turn (never reaching the answer). Left room for the per-form code
 ;; blocks below.
-(def ^:private thinking-window-chars 2200)
+(def ^:private ^:const thinking-window-chars 2200)
 ;; The live feed shows the last few forms as code blocks, each badged with
 ;; its run status. Each is a multi-line <pre> block; per-step code is
 ;; clamped (lines, then chars) so a stack of blocks stays comfortably
 ;; under the hard limit.
 (def ^:private max-feed-steps 4)
-(def ^:private step-code-max-lines 12)
+(def ^:private ^:const step-code-max-lines 12)
 (def ^:private step-code-max-chars 380)
-(def ^:private telegram-msg-limit 4096)
+(def ^:private ^:const telegram-msg-limit 4096)
 
 (defn- esc-html
   "Escape the three HTML-significant chars for Telegram HTML parse mode."
@@ -449,7 +450,7 @@
   "Hard char cap with ellipsis (operates on raw text, before escaping)."
   [s n]
   (let [s (str s)]
-    (if (> (count s) n) (str (subs s 0 n) "…") s)))
+    (if (> (count s) (long n)) (str (subs s 0 n) "…") s)))
 
 (defn- clamp-step-code
   "Bound a live-feed code block: cap lines first, then total chars, so a
@@ -564,7 +565,7 @@
   [chunk]
   (if-let [code (chunk-display-code chunk)]
     (subs code 0 (min 72 (count code)))
-    (str "form #" (inc (or (:form-idx chunk) 0)))))
+    (str "form #" (inc (long (or (:form-idx chunk) 0))))))
 
 (defn- chunk-code-block
   "Full code string for a live-feed step BLOCK: the code render-segments
@@ -637,7 +638,7 @@
   [{:keys [last-edit-ms backoff-ms pending-html]} new-html flush?]
   (cond flush? true
         (= new-html pending-html) false
-        (< (- (now-ms) last-edit-ms) (max throttle-min-ms (or backoff-ms 0)))
+        (< (- (now-ms) (long last-edit-ms)) (max throttle-min-ms (long (or backoff-ms 0))))
         (boolean (or (str/ends-with? new-html "\n")
                      (>= (- (count new-html) (count (or pending-html ""))) throttle-min-delta)))
         :else true))
@@ -657,11 +658,11 @@
                                                                 :parameters
                                                                 :retry_after
                                                                 (or 1))]
-                                            (update-bubble-state! chat-id
-                                                                  assoc
-                                                                  :backoff-ms
-                                                                  (* 1000 (max retry-after 1))
-                                                                  :last-edit-ms (now-ms)))
+                                            (update-bubble-state!
+                                              chat-id
+                                              assoc
+                                              :backoff-ms (* 1000 (long (max (long retry-after) 1)))
+                                              :last-edit-ms (now-ms)))
     :else (update-bubble-state! chat-id assoc :last-edit-ms (now-ms))))
 
 (defn- update-live-bubble!
@@ -831,7 +832,7 @@
         (do (update-bubble-state! chat-id
                                   assoc
                                   :status-line
-                                  (str "⏳ Iteration " (inc (or (:iteration chunk) 0))))
+                                  (str "⏳ Iteration " (inc (long (or (:iteration chunk) 0)))))
             (update-live-bubble! token chat-id :flush? true))
         ;; Stream-end is handled by handle-user-text! finally clause;
         ;; we still flush thinking so the final bubble carries a clean
@@ -1014,12 +1015,14 @@
         now
         (System/currentTimeMillis)]
 
-    (if (and (< (- now fetched-at-ms) (long ttl-ms)) (contains? by-provider (:id provider)))
+    (if (and (< (- (long now) (long fetched-at-ms)) (long ttl-ms))
+             (contains? by-provider (:id provider)))
       (get by-provider (:id provider))
       (let [fresh (or (fetch-live-models provider) [])]
         (swap! model-catalog-cache (fn [state]
                                      (cond-> state
-                                       (>= (- now (:fetched-at-ms state)) (:ttl-ms state))
+                                       (>= (- (long now) (long (:fetched-at-ms state)))
+                                           (long (:ttl-ms state)))
                                        (assoc :fetched-at-ms
                                          now :by-provider
                                          {})
@@ -1094,7 +1097,7 @@
 
     (if (nil? idx)
       items
-      (vec (concat [(nth items idx)] (subvec items 0 idx) (subvec items (inc idx)))))))
+      (vec (concat [(nth items idx)] (subvec items 0 idx) (subvec items (inc (long idx))))))))
 
 (defn- select-model-entry
   [config {:keys [provider-id model]}]
@@ -1321,7 +1324,7 @@
 (defn- voice-mode-lines
   [active modes]
   (map-indexed (fn [idx mode]
-                 (str (inc idx) ". " (when (= mode active) "✅ ") (name mode)))
+                 (str (inc (long idx)) ". " (when (= mode active) "✅ ") (name mode)))
                modes))
 
 (defn- voice-inline-keyboard
@@ -1703,7 +1706,7 @@
                              "libopus" "-b:a"
                              "32k" (str ogg)))]
 
-      (if (zero? exit) ogg (do (.delete ogg) nil)))))
+      (if (zero? (long exit)) ogg (do (.delete ogg) nil)))))
 
 (defn- send-answer-audio!
   [token chat-id answer]
@@ -1954,7 +1957,7 @@
                                                      "):"))
                                       (.printStackTrace ^Throwable e
                                                         ^java.io.PrintStream vis/original-stdout))))
-                                (recur (inc (apply max (map :update_id updates)))))
+                                (recur (inc (long (apply max (map :update_id updates))))))
               :else (recur offset))))))
 
 (defn- resolve-token!

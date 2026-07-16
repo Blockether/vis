@@ -92,7 +92,7 @@
   16000)
 (def ^:private default-log-tail 200)
 
-(defn- now-ms [] (System/currentTimeMillis))
+(defn- now-ms ^long [] (System/currentTimeMillis))
 
 ;; =============================================================================
 ;; Small helpers
@@ -107,7 +107,7 @@
    the middle is collapsed at read time, so a megabyte-then-killed command can't
    balloon the heap. Returns {:text :truncated}. Never throws: a stream closed
    mid-read (the timeout/stop path closes it) just ends the drain."
-  [^java.io.Reader r head-limit tail-limit]
+  [^java.io.Reader r ^long head-limit ^long tail-limit]
   (let [sb
         (StringBuilder.)
 
@@ -127,7 +127,9 @@
 
            (let [n (.read r buf 0 (alength buf))]
              (when (pos? n)
-               (vswap! total + n)
+               (vswap! total
+                       (fn [t]
+                         (+ (long t) n)))
                (.append sb buf 0 n)
                (when (> (.length sb) cap)
                  (vreset! trunc true)
@@ -138,7 +140,7 @@
          (catch Throwable _ nil))
     {:text (if @trunc
              (str (subs (.toString sb) 0 head-limit)
-                  "\n\n…[" (- @total cap)
+                  "\n\n…[" (- (long @total) cap)
                   " chars omitted]…\n\n" (subs (.toString sb) head-limit))
              (.toString sb))
      :truncated @trunc}))
@@ -156,7 +158,7 @@
 
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
-  [s limit]
+  [s ^long limit]
   (let [s (-> (str s)
               (str/replace #"\s+" " ")
               str/trim)]
@@ -419,9 +421,10 @@
 (defn- clamp-timeout-secs
   "Effective sync timeout from the opts value: default 120, floor 1, cap 600."
   ^long [v]
-  (-> (or (->pos-long v "timeout_secs") default-timeout-secs)
+  (-> (long (or (->pos-long v "timeout_secs") default-timeout-secs))
       (max 1)
-      (min max-timeout-secs)))
+      long
+      (min (long max-timeout-secs))))
 
 (defn- shell-run-impl
   ([env cmd] (shell-run-impl env cmd nil))
@@ -536,11 +539,11 @@
         (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
     (swap! buffer (fn [{:keys [lines next-seq dropped]}]
                     (let [lines (conj lines [next-seq line])
-                          over (- (count lines) max-bg-lines)]
+                          over (- (count lines) (long max-bg-lines))]
 
-                      {:lines (if (pos? over) (subvec lines over) lines)
-                       :next-seq (inc next-seq)
-                       :dropped (+ dropped (max over 0))})))))
+                      {:lines (if (< 0 over) (subvec lines over) lines)
+                       :next-seq (inc (long next-seq))
+                       :dropped (+ (long dropped) (long (max over 0)))})))))
 
 (defn- start-pump!
   "Daemon thread: drain the process's merged output into the ring buffer,
@@ -570,7 +573,7 @@
                            (= c (int \newline))
                            (do (push-line! buffer (str sb)) (.setLength sb 0) (recur))
                            :else (do (.append sb (char c))
-                                     (when (>= (.length sb) max-line-chars)
+                                     (when (>= (.length sb) (long max-line-chars))
                                        (push-line! buffer (str sb " …[line truncated]"))
                                        (.setLength sb 0))
                                      (recur)))))))
@@ -748,15 +751,16 @@
                             " listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (let [n
-           (-> (or (->pos-long n "n") default-log-tail)
+           (-> (long (or (->pos-long n "n") default-log-tail))
                (max 1)
-               (min max-bg-lines))
+               long
+               (min (long max-bg-lines)))
 
            {:keys [lines dropped next-seq]}
            @(:buffer entry)
 
            total
-           (dec next-seq)
+           (dec (long next-seq))
 
            shown
            (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
@@ -776,7 +780,7 @@
                            "status" (if (some? exit) "exited" "running")
                            "lines" shown
                            "line_count" total
-                           "uptime_ms" (- t (:started-at entry))}
+                           "uptime_ms" (- t (long (:started-at entry)))}
                     (some? exit)
                     (assoc "exit" exit)
 
@@ -988,8 +992,8 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
   "Human duration for shell card chips/status sections."
   [ms]
   (when (number? ms)
-    (cond (< ms 1000) (str (long ms) "ms")
-          (< ms 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
+    (cond (< (long ms) 1000) (str (long ms) "ms")
+          (< (long ms) 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
           :else (str/replace (format "%.1fm" (/ (double ms) 60000.0)) "," "."))))
 
 (defn- format-shell-command
@@ -1084,7 +1088,7 @@ Gotcha: only a RUNNING background shell accepts input; an exited one raises. A s
                                            (when-let [s (get r "timeout_secs")]
                                              (str " after " s "s")))
                                :failed? true}
-          (and exit (not (zero? exit))) {:icon "✗" :label (str "exit " exit) :failed? true}
+          (and exit (not (== 0 (long exit)))) {:icon "✗" :label (str "exit " exit) :failed? true}
           exit {:icon "✓" :label (str "exit " exit) :failed? false}
           :else {:icon "✓" :label "finished" :failed? false})))
 

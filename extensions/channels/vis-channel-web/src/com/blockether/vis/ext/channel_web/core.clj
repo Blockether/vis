@@ -51,7 +51,7 @@
 ;; burst to at most one ticker write per this window so we stop hammering the
 ;; edge; the pinned thought (`iteration.completed`) and every non-ticker frame
 ;; still pass through untouched.
-(def ^:private THINKING_COALESCE_MS 100)
+(def ^:private ^:const THINKING_COALESCE_MS 100)
 
 (def ^:private ui-load-stamp
   "Re-evaluated on every namespace (re)load — deliberately `def`, NOT
@@ -1100,11 +1100,11 @@
         (str/split-lines (str/trimr (str text)))
 
         hidden
-        (max 0 (- (count lines) trace-preview-line-limit))]
+        (long (max 0 (- (count lines) (long trace-preview-line-limit))))]
 
     ;; Don't split off a tiny tail: a `+1 more` toggle that reveals one extra
     ;; line is pure friction. Below the min, render the whole trace inline.
-    (if (< hidden trace-collapse-min-hidden)
+    (if (< hidden (long trace-collapse-min-hidden))
       {:preview (str/join "\n" lines) :tail "" :hidden-count 0}
       {:preview (str/join "\n" (take trace-preview-line-limit lines))
        :tail (str/join "\n" (drop trace-preview-line-limit lines))
@@ -1324,7 +1324,7 @@
          [:div.block-thinking-card (live-key-attr live-key) [:div.block-thinking-label "thinking"]
           [:div.block.block-thinking
            [:div.block-think-body.md {:data-md preview} (think-md->hiccup preview)]
-           (when (pos? hidden-count)
+           (when (pos? (long hidden-count))
              [:details.block-thinking-more
               [:summary.block-sum [:span.block-summary-label (str "+" hidden-count " more")]]
               [:div.block-think-body.md {:data-md tail} (think-md->hiccup tail)]])]])))))
@@ -1340,7 +1340,9 @@
   "How many recent turns the initial page renders. Older ones page in on
    scroll-up."
   6)
-(def ^:private OLDER_TURN_PAGE "How many older turns one scroll-up `.load-older` fetch returns." 6)
+(def ^:private ^:const OLDER_TURN_PAGE
+  "How many older turns one scroll-up `.load-older` fetch returns."
+  6)
 
 (defn- older-sentinel
   "Top-of-thread infinite-scroll trigger. When it scrolls into view (user
@@ -1503,7 +1505,8 @@
                   (number? raw) raw
                   :else 0)]
 
-      (when (or (> n 1) (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
+      (when (or (> (long n) 1)
+                (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? (long n))))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace
            (merge {:hx-get url
@@ -2032,72 +2035,72 @@
        :headers {"Content-Type" "text/event-stream"
                  "Cache-Control" "no-cache, no-transform"
                  "X-Accel-Buffering" "no"}
-       :body (reify
-               ring-protocols/StreamableResponseBody
-                 (write-body-to-stream [_ _ output-stream]
-                   (let [^OutputStream out
-                         output-stream
+       :body
+       (reify
+         ring-protocols/StreamableResponseBody
+           (write-body-to-stream [_ _ output-stream]
+             (let [^OutputStream out
+                   output-stream
 
-                         sub-id
-                         (str (java.util.UUID/randomUUID))
+                   sub-id
+                   (str (java.util.UUID/randomUUID))
 
-                         ;; Tracks the last ticker write so a `reasoning.delta`
-                         ;; token-burst coalesces to one write per window.
-                         last-thinking
-                         (volatile! 0)
+                   ;; Tracks the last ticker write so a `reasoning.delta`
+                   ;; token-burst coalesces to one write per window.
+                   last-thinking
+                   (volatile! 0)
 
-                         sink
-                         (fn [event]
-                           (locking out
-                             (let [now (System/currentTimeMillis)]
-                               ;; Drop intermediate reasoning ticks that land inside
-                               ;; the coalesce window: they only re-render the
-                               ;; transient #thinking ticker, so skipping a few costs
-                               ;; nothing but spares the tunnel a write+flush each.
-                               (when-not (and (= "reasoning.delta" (:type event))
-                                              (< (- now @last-thinking) THINKING_COALESCE_MS))
-                                 (when (= "reasoning.delta" (:type event))
-                                   (vreset! last-thinking now))
-                                 (doseq [frame (event->frames sid event)]
-                                   ;; stamp the gateway seq so the client can
-                                   ;; rewind a reconnect to it (pings carry none —
-                                   ;; an id-less frame leaves lastEventId alone)
-                                   (write-frame! out (assoc frame :id (:seq event))))
-                                 (.flush out)))))]
+                   sink
+                   (fn [event]
+                     (locking out
+                       (let [now (System/currentTimeMillis)]
+                         ;; Drop intermediate reasoning ticks that land inside
+                         ;; the coalesce window: they only re-render the
+                         ;; transient #thinking ticker, so skipping a few costs
+                         ;; nothing but spares the tunnel a write+flush each.
+                         (when-not (and (= "reasoning.delta" (:type event))
+                                        (< (- now (long @last-thinking)) THINKING_COALESCE_MS))
+                           (when (= "reasoning.delta" (:type event)) (vreset! last-thinking now))
+                           (doseq [frame (event->frames sid event)]
+                             ;; stamp the gateway seq so the client can
+                             ;; rewind a reconnect to it (pings carry none —
+                             ;; an id-less frame leaves lastEventId alone)
+                             (write-frame! out (assoc frame :id (:seq event))))
+                           (.flush out)))))]
 
-                     (try (locking out
-                            ;; 8KB SSE comment pad (clients ignore comments): proxy
-                            ;; edges (Cloudflare tunnel) buffer a streaming body until
-                            ;; a byte threshold — without the pad the first real frames
-                            ;; sit in the edge buffer and live streaming looks dead.
-                            ;; ONLY for proxied requests; a direct localhost client
-                            ;; needs no pad and shouldn't pay the bytes.
-                            (when proxied?
-                              (.write out
-                                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                                 StandardCharsets/UTF_8))
-                              (.flush out))
-                            ;; Immediate NAMED ping (not a comment): the page's
-                            ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
-                            ;; stream proves itself within a second; silence means an
-                            ;; edge proxy is buffering the body and ui.js falls back
-                            ;; to polling /ui/session/:sid/poll.
-                            (write-frame! out {:event "ping" :html ""})
-                            (.flush out)
-                            (doseq [event (vis/gateway-subscribe!
-                                            sid
-                                            sub-id
-                                            sink
-                                            (or from (vis/gateway-current-seq sid)))]
-                              (sink event)))
-                          (loop []
+               (try (locking out
+                      ;; 8KB SSE comment pad (clients ignore comments): proxy
+                      ;; edges (Cloudflare tunnel) buffer a streaming body until
+                      ;; a byte threshold — without the pad the first real frames
+                      ;; sit in the edge buffer and live streaming looks dead.
+                      ;; ONLY for proxied requests; a direct localhost client
+                      ;; needs no pad and shouldn't pay the bytes.
+                      (when proxied?
+                        (.write out
+                                (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                           StandardCharsets/UTF_8))
+                        (.flush out))
+                      ;; Immediate NAMED ping (not a comment): the page's
+                      ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
+                      ;; stream proves itself within a second; silence means an
+                      ;; edge proxy is buffering the body and ui.js falls back
+                      ;; to polling /ui/session/:sid/poll.
+                      (write-frame! out {:event "ping" :html ""})
+                      (.flush out)
+                      (doseq [event (vis/gateway-subscribe! sid
+                                                            sub-id
+                                                            sink
+                                                            (or from
+                                                                (vis/gateway-current-seq sid)))]
+                        (sink event)))
+                    (loop []
 
-                            (Thread/sleep (long HEARTBEAT_MS))
-                            (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
-                            (recur))
-                          (catch Throwable _ nil)
-                          (finally (vis/gateway-unsubscribe! sid sub-id)
-                                   (try (.close out) (catch Throwable _ nil)))))))})))
+                      (Thread/sleep (long HEARTBEAT_MS))
+                      (locking out (write-frame! out {:event "ping" :html ""}) (.flush out))
+                      (recur))
+                    (catch Throwable _ nil)
+                    (finally (vis/gateway-unsubscribe! sid sub-id)
+                             (try (.close out) (catch Throwable _ nil)))))))})))
 
 (defn- poll-handler
   "GET /ui/session/:sid/poll?from=N — the SSE stream's PULL twin for
@@ -2113,13 +2116,13 @@
                 parse-uuid)
 
         from
-        (max 0 (or (query-from request) 0))
+        (max 0 (long (or (query-from request) 0)))
 
         frame
-        (max 0 (or (query-long request :frame) 0))
+        (max 0 (long (or (query-long request :frame) 0)))
 
         offset
-        (max 0 (or (query-long request :offset) 0))]
+        (max 0 (long (or (query-long request :offset) 0)))]
 
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404
@@ -2339,7 +2342,7 @@
                                 (session-row-li
                                   s
                                   active-sid
-                                  {:pid (:id p) :first? (zero? i) :last? (= i last-idx)}))
+                                  {:pid (:id p) :first? (zero? (long i)) :last? (= i last-idx)}))
                               members)]
                 [:p.side-project-empty "empty — move a session here"])])
            (when (and (seq ordered) (seq no-project)) [:div.side-project-label "No project"])
@@ -2423,7 +2426,7 @@
                    (filter #(= "turn.started" (:type %)))
                    last
                    :seq
-                   dec))
+                   #(dec (long %))))
 
         from
         page-seq
@@ -3414,13 +3417,13 @@
         (when ordered (.indexOf ^java.util.List ordered (str sid)))
 
         swap-with
-        (when (and idx (>= idx 0))
+        (when (and idx (>= (long idx) 0))
           (case dir
             "up"
-            (when (> idx 0) (dec idx))
+            (when (> (long idx) 0) (dec (long idx)))
 
             "down"
-            (when (< idx (dec (count ordered))) (inc idx))
+            (when (< (long idx) (dec (count ordered))) (inc (long idx)))
 
             nil))
 
@@ -4007,9 +4010,10 @@
          (str base "/p/" pid "/diag") :hx-trigger
          "load" :hx-swap
          "outerHTML"))
-     [:div.pcard-line [:span.pcard-pri (inc idx)]
-      [:span.pcard-moves (move-act "up" "↑" (zero? idx)) (move-act "down" "↓" (>= idx (dec total)))]
-      [:span.pcard-label label] [:span.pcard-host host]
+     [:div.pcard-line [:span.pcard-pri (inc (long idx))]
+      [:span.pcard-moves (move-act "up" "↑" (zero? (long idx)))
+       (move-act "down" "↓" (>= (long idx) (dec (long total))))] [:span.pcard-label label]
+      [:span.pcard-host host]
       [:span
        {:class (str "provider-dot"
                     (cond loading? ""
@@ -4276,7 +4280,7 @@
                         {:model m :api_key (or api-key "") :base_url (or (:base-url preset) "")})
              :hx-target "#modal"
              :hx-swap "innerHTML"} m])])
-      (when (and (not show-all?) (pos? hidden-count))
+      (when (and (not show-all?) (pos? (long hidden-count)))
         [:button.show-all
          {:type "button"
           :hx-post (str base "/add/" (name pid) "/models")
@@ -4508,7 +4512,7 @@
                         :when nm]
 
                     [:div.model-row [:span.model-name nm]
-                     (if (zero? idx)
+                     (if (zero? (long idx))
                        [:span.model-primary "★ Primary"]
                        [:button.pcard-act
                         {:type "button"
@@ -4561,7 +4565,7 @@
                         :hx-vals (json-text {:model m})
                         :hx-target "#modal"
                         :hx-swap "innerHTML"} m])])
-                 (when (and (not show-all?) (pos? hidden-count))
+                 (when (and (not show-all?) (pos? (long hidden-count)))
                    [:button.show-all
                     {:type "button"
                      :hx-get (str base "/p/" (name pid) "/models/options?show_all=1")
@@ -4675,7 +4679,7 @@
                 (count turns-all))
 
             start
-            (max 0 (- idx OLDER_TURN_PAGE))
+            (long (max 0 (- (long idx) OLDER_TURN_PAGE)))
 
             batch
             (subvec turns-all start idx)
@@ -4975,16 +4979,14 @@
                     j
                     (case dir
                       "up"
-                      (some-> idx
-                              dec)
+                      (when idx (dec (long idx)))
 
                       "down"
-                      (some-> idx
-                              inc)
+                      (when idx (inc (long idx)))
 
                       nil)]
 
-                (if (and idx j (<= 0 j) (< j (count v)))
+                (if (and idx j (<= 0 (long j)) (< (long j) (count v)))
                   (assoc v
                     idx (v j)
                     j (v idx))

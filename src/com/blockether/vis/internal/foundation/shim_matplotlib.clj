@@ -155,7 +155,9 @@
 
 (defn- lerp-col
   [[r1 g1 b1] [r2 g2 b2] ^double t]
-  [(+ r1 (* (- r2 r1) t)) (+ g1 (* (- g2 g1) t)) (+ b1 (* (- b2 b1) t))])
+  [(+ (double r1) (* (- (double r2) (double r1)) t))
+   (+ (double g1) (* (- (double g2) (double g1)) t))
+   (+ (double b1) (* (- (double b2) (double b1)) t))])
 
 (defn- viridis
   ^Color [^double t]
@@ -180,12 +182,15 @@
     (Color. (int a) (int b) (int c))))
 
 (defn- draw-title
-  [^Graphics2D g title px0 pw]
+  [^Graphics2D g title ^long px0 ^long pw]
   (when (and (string? title) (seq title))
     (.setColor g (Color. 30 30 30))
     (.setFont g (Font. "SansSerif" Font/BOLD 14))
     (let [fm (.getFontMetrics g)]
-      (.drawString g ^String title (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fm title) 2))) 18))))
+      (.drawString g
+                   ^String title
+                   (int (- (+ px0 (quot pw 2)) (quot (.stringWidth fm title) 2)))
+                   18))))
 
 (defn- render-pie
   "Full-canvas pie chart (ignores axes). `s` carries sizes in `x` and optional
@@ -195,18 +200,18 @@
     (try
       (let [vals (mapv #(Math/abs (as-double %)) (get s "x"))
             labels (get s "labels")
-            total (reduce + 0.0 vals)
+            total (double (reduce + 0.0 vals))
             cx (/ W 2.0)
             cy (+ 12.0 (/ H 2.0))
-            r (double (- (/ (min W H) 2) 66))
+            r (double (- (quot (long (min W H)) 2) 66))
             start (volatile! 90.0)]
 
         (.setFont g (Font. "SansSerif" Font/PLAIN 11))
         (dotimes [i (count vals)]
-          (let [frac (if (pos? total) (/ (nth vals i) total) 0.0)
+          (let [frac (if (< 0.0 total) (/ (double (nth vals i)) total) 0.0)
                 ang (* 360.0 frac)
                 col (->color nil i)
-                mid (Math/toRadians (- @start (/ ang 2.0)))]
+                mid (Math/toRadians (- (double @start) (/ ang 2.0)))]
 
             (.setColor g col)
             (.fillArc g
@@ -228,7 +233,9 @@
                            lbl
                            (int (if (neg? (Math/cos mid)) (- lx (.stringWidth fm lbl)) lx))
                            (int ly)))
-            (vswap! start - ang)))
+            (vswap! start
+                    (fn [s]
+                      (- (double s) ang)))))
         (draw-title g (get spec "title") 0 W)
         (png-base64 img))
       (finally (.dispose g)))))
@@ -302,10 +309,10 @@
         mt
 
         pw
-        (max 1 (- W ml mr))
+        (long (max 1 (- W ml mr)))
 
         ph
-        (max 1 (- H mt mb))
+        (long (max 1 (- H mt mb)))
 
         all-x
         (map xfwd (mapcat series-xs series))
@@ -339,23 +346,27 @@
           (if (seq raw-ys) [(apply min raw-ys) (apply max raw-ys)] [0.0 1.0]))
 
         [xmin xmax]
-        (if (== xmin xmax) [(- xmin 1.0) (+ xmax 1.0)] [xmin xmax])
+        (if (== (double xmin) (double xmax))
+          [(- (double xmin) 1.0) (+ (double xmax) 1.0)]
+          [xmin xmax])
 
         [ymin ymax]
-        (if (== ymin ymax) [(- ymin 1.0) (+ ymax 1.0)] [ymin ymax])
+        (if (== (double ymin) (double ymax))
+          [(- (double ymin) 1.0) (+ (double ymax) 1.0)]
+          [ymin ymax])
 
         ypad
-        (* 0.05 (- ymax ymin))
+        (* 0.05 (- (double ymax) (double ymin)))
 
         ymin
-        (- ymin ypad)
+        (- (double ymin) ypad)
 
         ymax
-        (+ ymax ypad)
+        (+ (double ymax) ypad)
 
         sxf
         (fn ^double [^double xf]
-          (+ px0 (* pw (/ (- xf xmin) (- xmax xmin)))))
+          (+ px0 (* pw (/ (- xf (double xmin)) (- (double xmax) (double xmin))))))
 
         syf
         (fn ^double [^double yf]
@@ -380,7 +391,7 @@
           (let [fm (.getFontMetrics g)]
             (dotimes [i (inc ticks)]
               (let [t (/ (double i) ticks)
-                    xv (+ xmin (* t (- xmax xmin)))
+                    xv (+ (double xmin) (* t (- (double xmax) (double xmin))))
                     yv (+ ymin (* t (- ymax ymin)))
                     xp (int (sxf xv))
                     yp (int (syf yv))]
@@ -391,7 +402,7 @@
                   (.drawLine g px0 yp (+ px0 pw) yp))
                 (.setColor g (Color. 90 90 90))
                 (let [^String xl (fmt-num (xinv xv))]
-                  (.drawString g xl (int (- xp (/ (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
+                  (.drawString g xl (int (- xp (quot (.stringWidth fm xl) 2))) (int (+ py0 ph 16))))
                 (let [^String yl (fmt-num (yinv yv))]
                   (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))))
         ;; axes frame
@@ -403,7 +414,7 @@
             (count (filter #(= "bar" (str (get % "kind"))) series))
 
             bar-slots
-            (max 1 (reduce max 1 (map #(count (series-xs %)) series)))]
+            (long (max 1 (long (reduce max 1 (map #(count (series-xs %)) series)))))]
 
         (doseq [[idx s] (map-indexed vector series)]
           (let [kind (str (get s "kind"))
@@ -416,10 +427,10 @@
             (case kind
               "scatter"
               (doseq [[x y] pts]
-                (.fillOval g (int (- (sx x) 3)) (int (- (sy y) 3)) 6 6))
+                (.fillOval g (int (- (long (sx x)) 3)) (int (- (long (sy y)) 3)) 6 6))
 
               "bar"
-              (let [bw (max 2 (int (* (/ pw bar-slots) (/ 0.7 (max 1 nbar)))))
+              (let [bw (long (max 2 (int (* (quot pw bar-slots) (/ 0.7 (long (max 1 nbar)))))))
                     y0 (int (syf (max ymin (min ymax 0.0))))]
 
                 (doseq [[x y] pts]
@@ -427,7 +438,7 @@
                         top (min y0 yp)
                         hgt (Math/abs (- y0 yp))]
 
-                    (.fillRect g (int (- (sx x) (/ bw 2))) top bw (max 1 hgt)))))
+                    (.fillRect g (int (- (long (sx x)) (quot bw 2))) top bw (max 1 hgt)))))
 
               "hline"
               (when (seq ys)
@@ -493,7 +504,7 @@
                     bw 24]
 
                 (doseq [[bi st] (map-indexed vector stats)]
-                  (let [xc (int (sx (nth pos bi (inc bi))))
+                  (let [xc (int (sx (nth pos bi (inc (long bi)))))
                         q1 (int (sy (as-double (get st "q1"))))
                         q2 (int (sy (as-double (get st "q2"))))
                         q3 (int (sy (as-double (get st "q3"))))
@@ -520,7 +531,7 @@
                     (.drawLine g (int (sx x1)) (int (sy y1)) (int (sx x2)) (int (sy y2))))
                   (when (seq (str (get s "marker")))
                     (doseq [[x y] pts]
-                      (.fillOval g (int (- (sx x) 3)) (int (- (sy y) 3)) 6 6))))))))
+                      (.fillOval g (int (- (long (sx x)) 3)) (int (- (long (sy y)) 3)) 6 6))))))))
       ;; title / axis labels
       (draw-title g title px0 pw)
       (.setColor g (Color. 30 30 30))
@@ -529,7 +540,7 @@
         (let [fm (.getFontMetrics g)]
           (.drawString g
                        ^String xlabel
-                       (int (- (+ px0 (/ pw 2)) (/ (.stringWidth fm xlabel) 2)))
+                       (int (- (+ px0 (quot pw 2)) (quot (.stringWidth fm xlabel) 2)))
                        (int (- H 12)))))
       (when (and (string? ylabel) (seq ylabel))
         (.setFont g (Font. "SansSerif" Font/PLAIN 12))
@@ -539,9 +550,9 @@
               tx
               (.getTransform g)]
 
-          (.translate g 16.0 (double (+ py0 (/ ph 2))))
+          (.translate g 16.0 (double (+ py0 (quot ph 2))))
           (.rotate g (- (/ Math/PI 2)))
-          (.drawString g ^String ylabel (int (- (/ (.stringWidth fm ylabel) 2))) 0)
+          (.drawString g ^String ylabel (int (- (quot (.stringWidth fm ylabel) 2))) 0)
           (.setTransform g tx)))
       ;; text annotations (data coords)
       (when (seq annotations)
@@ -563,7 +574,7 @@
           (.setFont g (Font. "SansSerif" Font/PLAIN 11))
           (let [fm (.getFontMetrics g)
                 rows (vec labelled)
-                lw (+ 34 (reduce max 0 (map #(.stringWidth fm (str (get % "label"))) rows)))
+                lw (+ 34 (long (reduce max 0 (map #(.stringWidth fm (str (get % "label"))) rows))))
                 lh (+ 8 (* 16 (count rows)))
                 lx (- (+ px0 pw) lw 8)
                 ly (+ py0 8)]
@@ -573,7 +584,7 @@
             (.setColor g (Color. 180 180 180))
             (.drawRect g lx ly lw lh)
             (doseq [[ri s] (map-indexed vector rows)]
-              (let [yy (+ ly 8 (* ri 16))]
+              (let [yy (+ ly 8 (* (long ri) 16))]
                 (.setColor g (->color (get s "color") (get s "__idx")))
                 (.fillRect g (+ lx 8) (+ yy 3) 16 6)
                 (.setColor g (Color. 40 40 40))
