@@ -69,12 +69,12 @@
                      (< (inc i) n)
                      (let [c2 (.charAt sql (inc i))]
                        (or (Character/isLetter c2) (= c2 \_))))
-                (let [j (loop [k (inc i)]
-                          (if (and (< k n)
-                                   (let [c (.charAt sql k)]
-                                     (or (Character/isLetterOrDigit c) (= c \_))))
-                            (recur (inc k))
-                            k))]
+                (let [j (long (loop [k (inc i)]
+                                (if (and (< k n)
+                                         (let [c (.charAt sql k)]
+                                           (or (Character/isLetterOrDigit c) (= c \_))))
+                                  (recur (inc k))
+                                  k)))]
                   (.add names (subs sql (inc i) j))
                   (.append sb \?)
                   (recur j nil))
@@ -122,14 +122,14 @@
         (.getColumnCount md)
 
         cols
-        (mapv #(.getColumnLabel md (inc %)) (range nc))
+        (mapv #(.getColumnLabel md (inc (long %))) (range nc))
 
         rows
         (ArrayList.)]
 
     (while (.next rs)
       (.add rows
-            (mapv (fn [i]
+            (mapv (fn [^long i]
                     (->cell (.getObject rs (int (inc i)))))
                   (range nc))))
     {"description" cols "rows" (vec rows)}))

@@ -45,7 +45,7 @@
 ;; Magic-byte MIME sniffing (pi utils/mime.ts parity)
 ;; =============================================================================
 
-(defn- u8 [^bytes b ^long i] (bit-and (long (aget b i)) 0xff))
+(defn- u8 ^long [^bytes b ^long i] (bit-and (long (aget b i)) 0xff))
 
 (defn- u16-le ^long [^bytes b ^long i] (+ (u8 b i) (bit-shift-left (u8 b (inc i)) 8)))
 
