@@ -1,0 +1,65 @@
+name: Native Experiment
+
+# TEMPORARY: probe which FREE macOS runners can build the GraalPy-embedding
+# native image, since the paid larger runners are blocked by the org spending
+# limit. Free runners never bill, so we can iterate here for free. Delete once
+# native.yml / native-release.yml are updated with the winning config.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: native-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: probe / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Free Intel runner, 14 GB — same RAM as the paid macos-15-large the
+          # workflows were designed for. Plain :voice build (GraalPy's -Xms14g fits).
+          - { label: macos13-intel-14g, os: macos-13, extra: "" }
+          # Free Apple-silicon runner, 7 GB — override GraalPy's -Xms14g down to
+          # fit; if the image build peaks under ~6 GB this yields a native arm64.
+          - { label: macos15-arm-7g-tuned, os: macos-15, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
+          - { label: macos14-arm-7g-tuned, os: macos-14, extra: "-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC" }
+    steps:
+      - uses: actions/checkout@v6
+      - name: Report runner specs
+        shell: bash
+        run: |
+          sw_vers || true
+          echo "arch: $(uname -m)"
+          echo "mem bytes: $(sysctl -n hw.memsize 2>/dev/null || true)"
+          echo "cpus: $(sysctl -n hw.ncpu 2>/dev/null || true)"
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+            ~/.vis/build-cache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+      - name: Build native image (:voice)
+        env:
+          VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra }}
+        run: clojure -T:build native :profile :voice
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          ./target/vis --version
+          ./target/vis help >/dev/null
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vis-${{ matrix.label }}
+          path: target/vis
+          if-no-files-found: error
