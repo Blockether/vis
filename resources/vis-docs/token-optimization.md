@@ -43,7 +43,7 @@ One fold can target several steps at once — a list, a whole turn (a bare `"tN"
 
 ### The gist stays where the hunt was
 
-The gist lands **in place** — a `# ⋯ folded <scopes> · <gist>` breadcrumb replaces the step exactly where it collapsed, so the finding (with its anchors) is read in context as the model scans back through history. It is written **once** and never re-transmitted.
+The gist lands **in place** — a `# ⋯ folded <scopes> · saved ~<N>k tokens · utilization <P>% (req/lim) · <gist>` breadcrumb replaces the step exactly where it collapsed, so the wire it reclaimed and the context level that triggered it (plus the finding's anchors) are read in context as the model scans back through history. It is written **once** and never re-transmitted.
 
 ### Folding never loses anything
 
