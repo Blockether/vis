@@ -22,7 +22,7 @@ jobs:
     name: native / ${{ matrix.os }}
     # (release-only — builds the shippable binaries when a Release is published.)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -30,22 +30,21 @@ jobs:
           - os: ubuntu-latest
             bin: target/vis
             artifact: vis-linux-x64
-          # macOS is built for BOTH arches so Apple-silicon users get a native
-          # arm64 binary and Intel users an x64 one. Both need 14 GB because GraalPy
-          # forces -Xms14g; the default macos-latest (M1, 7 GB) swaps into a
-          # DeadlockWatchdog kill (exit 30), so 7 GB runners are unusable here.
+            extra_args: ''
+          # macOS arm64 on the FREE macos-15 runner (M1, 7 GB). The paid 14 GB
+          # runners (macos-15-xlarge/-large) are blocked by the org spending limit,
+          # so free runners are the only option. GraalPy forces -Xms14g, which on a
+          # 7 GB host swaps into a DeadlockWatchdog kill — VIS_NATIVE_EXTRA_ARGS
+          # overrides the heap (-Xmx6g/-Xms1g) and the -Os + interpreter-only build
+          # (no Truffle JIT) keeps the footprint low enough to fit via swap.
           #
-          # arm64: macos-15-xlarge (M2 Pro, 14 GB) is the smallest Apple-silicon
-          # runner that clears the 14 GB floor. Larger runners need a Team/Enterprise
-          # plan and bill at ~$0.16/min.
-          - os: macos-15-xlarge
+          # There is NO macOS-x64 build: GraalVM CE 25.1.x ships no macos-x64 asset
+          # (only macos-aarch64), so an Intel binary can't be produced on CE. Apple-
+          # silicon users get the native arm64 binary; Intel users run it via Rosetta.
+          - os: macos-15
             bin: target/vis
             artifact: vis-macos-arm64
-          # x64: macos-15-large (Intel, 12-core, 14 GB) is the standard-tier 14 GB
-          # runner at ~half the xlarge rate — no Team/Enterprise gating.
-          - os: macos-15-large
-            bin: target/vis
-            artifact: vis-macos-x64
+            extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC'
     steps:
       - uses: actions/checkout@v6
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
@@ -66,6 +65,8 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
+        env:
+          VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
         run: clojure -T:build native
       - name: Smoke-test the binary (--version, help)
         shell: bash
