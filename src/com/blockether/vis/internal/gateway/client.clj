@@ -88,7 +88,7 @@
          (gw-send! entry method path {:body body})
 
          status
-         (:status response)
+         (long (:status response))
 
          parsed
          (parse-json-body (:body response))]
@@ -217,14 +217,14 @@
       (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
     (let [cached @cached-entry
           now (System/nanoTime)
-          fresh?
-          (if (and (map? cached) (< now @entry-fresh-until-ns) (discovery/pid-alive? (:pid cached)))
-            true
-            ;; Window elapsed (or no cached entry): pay for the real
-            ;; HTTP probe once, then re-open the debounce window.
-            (when (discovery/registry-fresh? cached probe-entry?)
-              (reset! entry-fresh-until-ns (+ now (* entry-probe-ttl-ms 1000000)))
-              true))]
+          fresh-until (long @entry-fresh-until-ns)
+          fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                   true
+                   ;; Window elapsed (or no cached entry): pay for the real
+                   ;; HTTP probe once, then re-open the debounce window.
+                   (when (discovery/registry-fresh? cached probe-entry?)
+                     (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                     true))]
 
       (if fresh?
         cached
@@ -238,7 +238,8 @@
                                            :timeout-ms (if (discovery/native-image?) 15000 60000))]
           (if entry
             (do (reset! cached-entry entry)
-                (reset! entry-fresh-until-ns (+ (System/nanoTime) (* entry-probe-ttl-ms 1000000)))
+                (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                (* (long entry-probe-ttl-ms) 1000000)))
                 entry)
             (throw (ex-info "gateway daemon did not become ready"
                             (assoc result :type :gateway/start-timeout)))))))))
@@ -440,7 +441,8 @@
         {:keys [at val]}
         (get @resources-cache k)]
 
-    (when-not (and at (< (- now at) resources-cache-ttl-ms)) (refresh-resources! sid k))
+    (when-not (and at (< (- now (long at)) (long resources-cache-ttl-ms)))
+      (refresh-resources! sid k))
     val))
 
 (defn stop-resource!
@@ -499,7 +501,7 @@
         response
         (gw-send! entry "GET" path {:as :bytes})]
 
-    (when (< (:status response) 400) (:body response))))
+    (when (< (long (:status response)) 400) (:body response))))
 
 (defn set-session-model!
   [sid provider model]
@@ -692,8 +694,8 @@
 
       :absent
       (let [st (status)
-            clients (or (:clients st) 0)
-            running (or (:running_turns st) 0)]
+            clients (long (or (:clients st) 0))
+            running (long (or (:running_turns st) 0))]
 
         (when (or (> clients 1) (pos? running))
           (throw (ex-info (str "gateway daemon does not serve " path
@@ -724,6 +726,95 @@
     (ensure-client! entry)
     (:status (send-json-with-entry! entry "GET" path))))
 
+(defn- wire-enum [x] (if (string? x) (keyword x) x))
+
+(defn- wire-get
+  [m kebab-key snake-key]
+  (if (contains? m kebab-key) (get m kebab-key) (get m snake-key)))
+
+(defn- provider-limit-window<-wire
+  [window]
+  (when (map? window)
+    (cond-> {:kind (wire-enum (wire-get window :kind :kind))}
+      (some? (wire-get window :unit :unit))
+      (assoc :unit (wire-enum (wire-get window :unit :unit)))
+
+      (some? (wire-get window :size :size))
+      (assoc :size (wire-get window :size :size))
+
+      (some? (wire-get window :resets-at-ms :resets_at_ms))
+      (assoc :resets-at-ms (wire-get window :resets-at-ms :resets_at_ms)))))
+
+(defn- provider-limit-row<-wire
+  [row]
+  (when (map? row)
+    (cond-> {:id (wire-enum (wire-get row :id :id))
+             :label (wire-get row :label :label)
+             :scope (wire-enum (wire-get row :scope :scope))
+             :kind (wire-enum (wire-get row :kind :kind))
+             :precision (wire-enum (wire-get row :precision :precision))
+             :source (wire-enum (wire-get row :source :source))
+             :unlimited? (wire-get row :unlimited? :unlimited?)}
+      (some? (wire-get row :subject :subject))
+      (assoc :subject (wire-get row :subject :subject))
+
+      (some? (wire-get row :window :window))
+      (assoc :window (provider-limit-window<-wire (wire-get row :window :window)))
+
+      (some? (wire-get row :used :used))
+      (assoc :used (wire-get row :used :used))
+
+      (some? (wire-get row :limit :limit))
+      (assoc :limit (wire-get row :limit :limit))
+
+      (some? (wire-get row :remaining :remaining))
+      (assoc :remaining (wire-get row :remaining :remaining))
+
+      (some? (wire-get row :note :note))
+      (assoc :note (wire-get row :note :note)))))
+
+(defn- provider-limit-error<-wire
+  [error]
+  (when (map? error)
+    (cond-> {:type (wire-enum (wire-get error :type :type))
+             :message (wire-get error :message :message)}
+      (some? (wire-get error :data :data))
+      (assoc :data (wire-get error :data :data)))))
+
+(defn- provider-limits<-wire
+  "Restore the gateway provider-limits report to the engine/TUI shape using the
+  explicit provider-limits schema only. Do not generic-walk gateway data here:
+  this boundary knows the few string/snake_case fields it accepts and rewrites
+  only those fields."
+  [report]
+  (when (map? report)
+    (let [static
+          (or (wire-get report :static :static) {})
+
+          dynamic
+          (or (wire-get report :dynamic :dynamic) {})
+
+          limits
+          (wire-get dynamic :limits :limits)
+
+          error
+          (wire-get report :error :error)]
+
+      (cond-> {:provider-id (wire-enum (wire-get report :provider-id :provider_id))
+               :status (wire-enum (wire-get report :status :status))
+               :fetched-at-ms (wire-get report :fetched-at-ms :fetched_at_ms)
+               :static (cond-> {}
+                         (some? (wire-get static :rpm :rpm))
+                         (assoc :rpm (wire-get static :rpm :rpm))
+
+                         (some? (wire-get static :tpm :tpm))
+                         (assoc :tpm (wire-get static :tpm :tpm)))
+               :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
+                          (some? (wire-get dynamic :note :note))
+                          (assoc :note (wire-get dynamic :note :note)))}
+        (some? error)
+        (assoc :error (provider-limit-error<-wire error))))))
+
 (defn provider-limits
   [provider-id]
   (let [path
@@ -733,7 +824,7 @@
         (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (:report (send-json-with-entry! entry "GET" path))))
+    (provider-limits<-wire (:report (send-json-with-entry! entry "GET" path)))))
 
 (defn current-seq [sid] (:seq (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq"))))
 
@@ -747,7 +838,7 @@
   "Undo gateway.wire's keyword->string JSON coercion for canonical IR vectors."
   [x]
   (cond (vector? x) (mapv (fn [i v]
-                            (if (and (zero? i) (string? v)) (keyword v) (ir-from-wire v)))
+                            (if (and (zero? (long i)) (string? v)) (keyword v) (ir-from-wire v)))
                           (range)
                           x)
         (map? x) (into {}
@@ -963,11 +1054,11 @@
                                 (catch Throwable _ true))]
               (when (and dropped? (contains? @subscriptions sub-id))
                 (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
-                (let [interrupted? (try (Thread/sleep (long (min 5000
-                                                                 (* sse-reconnect-backoff-ms
-                                                                    (inc attempt)))))
-                                        false
-                                        (catch InterruptedException _ true))]
+                (let [delay-ms (long (min 5000
+                                          (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+                      interrupted?
+                      (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+
                   (when-not interrupted? (recur (inc attempt)))))))
           (swap! subscriptions dissoc sub-id))]
 
@@ -1098,11 +1189,11 @@
                                 (catch Throwable _ true))]
               (when (and dropped? (= my-epoch (:epoch @mux)) (seq (:subs @mux)))
                 (mux-broadcast! "gateway.disconnected")
-                (let [interrupted? (try (Thread/sleep (long (min 5000
-                                                                 (* sse-reconnect-backoff-ms
-                                                                    (inc attempt)))))
-                                        false
-                                        (catch InterruptedException _ true))]
+                (let [delay-ms (long (min 5000
+                                          (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+                      interrupted?
+                      (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+
                   (when-not interrupted? (recur (inc attempt)))))))))
 
 (defn- restart-mux!
@@ -1249,8 +1340,8 @@
           ;; Stream closed before a terminal event → the daemon dropped us
           ;; mid-turn. Back off and reconnect from the last cursor; give up
           ;; (with a real error) once the budget is spent.
-          (if (< attempt sse-reconnect-max-attempts)
-            (do (Thread/sleep (long (* sse-reconnect-backoff-ms (inc attempt))))
+          (if (< (long attempt) (long sse-reconnect-max-attempts))
+            (do (Thread/sleep (* (long sse-reconnect-backoff-ms) (inc (long attempt))))
                 (recur (inc attempt)))
             (throw (ex-info "Lost connection to the gateway daemon before the turn finished."
                             {:gateway-disconnected true :turn-id (str wanted-turn-id)}))))))))

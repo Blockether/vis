@@ -415,6 +415,10 @@
 (s/def :ext.symbol/name non-blank-string?)
 ;; Direct Clojure executor `(fn [env input] -> result)`; absent ⇒ synthesized-Python path.
 (s/def :ext.symbol/handler fn?)
+;; Extra wall-clock budget (ms) ADDED to a handler tool's outer timeout for slow
+;; SYNCHRONOUS setup inside the wall before its real work (e.g. cold-starting a
+;; project REPL/runtime before eval). See runtime-settings/native-tool-timeout-ms.
+(s/def :ext.symbol/startup-budget-ms (s/and integer? (complement neg?)))
 ;; Model-facing schema description OVERRIDE; absent ⇒ defaults to `:doc` (ONE source).
 (s/def :ext.symbol/description non-blank-string?)
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
@@ -429,7 +433,7 @@
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
                 :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/render
-                :ext.symbol/color-role]))
+                :ext.symbol/color-role :ext.symbol/startup-budget-ms]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
 (s/def ::symbol-entry
@@ -870,6 +874,7 @@
                    :description (or (:ext.symbol/description e) (:ext.symbol/doc e))
                    :schema (:ext.symbol/schema e)
                    :handler (:ext.symbol/handler e)
+                   :startup-budget-ms (:ext.symbol/startup-budget-ms e)
                    :call (:ext.symbol/call e)
                    :render (:ext.symbol/render e)
                    :color-role (:ext.symbol/color-role e)
@@ -897,6 +902,19 @@
    (into {}
          (keep (fn [t]
                  (when (and (:active? t) (:handler t)) [(:name t) (:handler t)]))
+               (native-tools-for active-extensions env)))))
+
+(defn native-tool-startup-budgets
+  "Map wire-name → extra startup budget (ms) for every ACTIVE native handler tool
+   that declares `:startup-budget-ms`. The loop ADDS this to that tool's outer
+   wall so a slow synchronous boot (e.g. a REPL cold-start) fits under the
+   deadline instead of racing the eval `timeout_ms`."
+  ([active-extensions] (native-tool-startup-budgets active-extensions nil))
+  ([active-extensions env]
+   (into {}
+         (keep (fn [t]
+                 (when (and (:active? t) (:handler t) (:startup-budget-ms t))
+                   [(:name t) (:startup-budget-ms t)]))
                (native-tools-for active-extensions env)))))
 
 (defn native-tool-call-shapes
@@ -1131,6 +1149,11 @@
 
           (:handler opts)
           (assoc :ext.symbol/handler (:handler opts))
+
+          ;; :startup-budget-ms — extra wall room ADDED to this handler's outer
+          ;; timeout for slow synchronous setup (e.g. cold-starting a REPL).
+          (:startup-budget-ms opts)
+          (assoc :ext.symbol/startup-budget-ms (:startup-budget-ms opts))
 
           (:description opts)
           (assoc :ext.symbol/description (:description opts))

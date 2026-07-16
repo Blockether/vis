@@ -96,6 +96,25 @@
 ;; enough for a cold-cache deps resolve without making real failures slow.
 (def ^:private start-deadline-ms 120000)
 
+(defn- booting?
+  "True when `info`'s process is alive and still inside its cold-boot window
+   (`start-deadline-ms` since `:started-at`). Such a REPL is a slow-but-healthy
+   boot we must WAIT for — never stop+restart it: a restart throws away real
+   boot progress and, repeated across evals, spins an endless restart cycle."
+  [info]
+  (boolean (and (proc-alive? info)
+                (:started-at info)
+                (< (- (System/currentTimeMillis) (:started-at info)) start-deadline-ms))))
+
+(defn- health-probe-ms
+  "How long to wait for a recorded REPL to answer a describe before judging it
+   wedged. A still-booting process gets the REMAINING cold-boot window (so a
+   slow legit boot is never killed mid-flight); anything else gets a short grace."
+  [info]
+  (if (booting? info)
+    (max 5000 (- start-deadline-ms (- (System/currentTimeMillis) (:started-at info))))
+    5000))
+
 (def ^:private default-aliases
   "Every managed REPL boots with the project's dev + test deps/paths. Unknown
    aliases are silently ignored by tools.deps, so this is safe everywhere."
@@ -594,9 +613,11 @@
    a wedged server thread that `proc-alive?` alone cannot see): such a stale
    process is stopped and REPLACED instead of silently swallowing every eval on a
    dead socket (the failure that stalls `run_tests` past the tool budget). A
-   still-present process gets a brief `wait-until-up` grace window to finish a slow
-   cold boot before it is judged wedged, so a legitimately-booting REPL is never
-   needlessly restarted. When the (re)start does NOT yield a live process, returns
+   still-booting process is given the REMAINING cold-boot window (see
+   `health-probe-ms`) to finish before it is judged wedged, so a legitimately
+   slow cold boot is never killed + restarted mid-flight (which would spin an
+   endless restart cycle across evals). When the (re)start does NOT yield a live
+   process, returns
    start!'s STRING-keyed lifecycle result (\"failed\"/\"no-launcher\"… with exit +
    log_tail) instead of swallowing it — callers tell the cases apart by `:port`
    (live keyword-keyed info) vs `\"result\"` (string-keyed lifecycle map)."
@@ -609,7 +630,7 @@
 
     (if (and (proc-alive? info)
              (:port info)
-             (= :up (wait-until-up (:process info) (:port info) 5000)))
+             (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))
       (do (touch! session-id dir) info)
       ;; Dead, or alive-but-wedged (port never answers): drop the stale process
       ;; first, then autostart — surfacing start!'s lifecycle result when no live
@@ -618,21 +639,6 @@
           (let [r (start! session-id dir nil)]
             (or (get @processes k) r))))))
 
-(defn restart-for-dir!
-  "Recover THIS session's REPL for `dir` when its recorded process is dead OR
-   alive-but-UNREACHABLE (a boot that never bound its port, or a wedged server
-   thread) — the failure `proc-alive?` alone cannot see. Gives a still-present
-   process a brief grace window to finish booting before killing it, so a slow
-   cold-deps start is not needlessly restarted; otherwise stops the stale
-   process and autostarts a fresh one. Returns the live REPL info, or nil when
-   `dir` has no launchable Clojure build file."
-  [session-id dir]
-  (let [info (get @processes [session-id dir])]
-    (if (and (proc-alive? info)
-             (:port info)
-             (= :up (wait-until-up (:process info) (:port info) 5000)))
-      info
-      (do (stop! session-id dir) (start! session-id dir nil) (get @processes [session-id dir])))))
 
 (defn resolve-target!
   "Resolve — and AUTOSTART when needed — the REPL an eval should hit for

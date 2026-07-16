@@ -24,6 +24,38 @@
         (is (= ["POST" "/v1/projects/actions/ensure" {:root "/workspace" :name "Vis"}]
                @request))))))
 
+(deftest provider-limits-restores-engine-shape-from-gateway-wire
+  (let [request (atom nil)]
+    (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
+                                                     (reset! request path)
+                                                     fake-entry)
+                     (rv 'ensure-client!) (constantly "client-id")
+                     (rv 'send-json-with-entry!)
+                     (fn [_ method path]
+                       (is (= "GET" method))
+                       (is (= @request path))
+                       {:report {:provider_id "openai-codex"
+                                 :status "ok"
+                                 :dynamic {:limits [{:id "codex-5h"
+                                                     :scope "account"
+                                                     :kind "percentage"
+                                                     :precision "percent"
+                                                     :source "live"
+                                                     :window {:kind "rolling"
+                                                              :unit "hour"
+                                                              :size 5
+                                                              :resets_at_ms 1234}}]}}})}
+      (fn []
+        (let [report (client/provider-limits :openai-codex)]
+          (is (= "/v1/providers/openai-codex/limits" @request))
+          (is (= :openai-codex (:provider-id report)))
+          (is (= :ok (:status report)))
+          (is (= :codex-5h (get-in report [:dynamic :limits 0 :id])))
+          (is (= :account (get-in report [:dynamic :limits 0 :scope])))
+          (is (= :rolling (get-in report [:dynamic :limits 0 :window :kind])))
+          (is (= :hour (get-in report [:dynamic :limits 0 :window :unit])))
+          (is (= 1234 (get-in report [:dynamic :limits 0 :window :resets-at-ms]))))))))
+
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,
    consumed left-to-right) and a scripted `status`. Records how many times the

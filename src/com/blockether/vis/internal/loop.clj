@@ -174,7 +174,7 @@
    CONSECUTIVE_PROVIDER_ERROR_LIMIT - the iteration loop fails the turn fast
    instead of re-sending the same doomed request."
   [streak]
-  (>= (long streak) CONSECUTIVE_PROVIDER_ERROR_LIMIT))
+  (>= (long streak) (long CONSECUTIVE_PROVIDER_ERROR_LIMIT)))
 
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES
   "Transparent retries for svar's terminal `:svar.llm/provider-unavailable`
@@ -226,12 +226,21 @@
   [result
    {:keys [attempt max-tokens-attempt pu-attempt]
     :or {attempt 0 max-tokens-attempt 0 pu-attempt 0}}]
-  (cond (= result ::retry-stream) [(inc attempt) max-tokens-attempt pu-attempt]
-        (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
-        (and (map? result) (contains? result ::retry-max-tokens)) [attempt (inc max-tokens-attempt)
-                                                                   pu-attempt]
-        (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt pu-attempt]
-        (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt pu-attempt]))
+  (let [attempt
+        (long attempt)
+
+        max-tokens-attempt
+        (long max-tokens-attempt)
+
+        pu-attempt
+        (long pu-attempt)]
+
+    (cond (= result ::retry-stream) [(inc attempt) max-tokens-attempt pu-attempt]
+          (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
+          (and (map? result) (contains? result ::retry-max-tokens))
+          [attempt (inc max-tokens-attempt) pu-attempt]
+          (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt pu-attempt]
+          (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt pu-attempt])))
 
 (def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000 4000])
 
@@ -278,7 +287,7 @@
   [^Throwable t environment elapsed-ms]
   (and (interrupted-cause? t)
        (not (provider-call-cancelled? environment))
-       (< (long elapsed-ms) INTERRUPT_RETRY_MAX_ELAPSED_MS)))
+       (< (long elapsed-ms) (long INTERRUPT_RETRY_MAX_ELAPSED_MS))))
 
 (defn- call-provider-with-interrupt-retry!
   [environment iteration-position f]
@@ -291,7 +300,7 @@
         (let [t (:throwable outcome)
               elapsed-ms (long (/ (- (System/nanoTime) start-ns) 1000000))]
 
-          (if (and (< attempt PROVIDER_INTERRUPT_RETRIES)
+          (if (and (< (long attempt) (long PROVIDER_INTERRUPT_RETRIES))
                    (retryable-provider-interrupt? t environment elapsed-ms))
             (do
               ;; Router restores interrupt status before rethrowing. Clear it
@@ -407,7 +416,7 @@
       (if (:ok? outcome)
         (prepend-routing-trace (:value outcome) retry-events)
         (let [t (:throwable outcome)
-              can-retry? (and (< attempt PROVIDER_STREAM_REWIND_RETRIES)
+              can-retry? (and (< (long attempt) (long PROVIDER_STREAM_REWIND_RETRIES))
                               (not (provider-call-cancelled? environment))
                               ;; `stream-transport-error?` covers MID-stream drops (chunks
                               ;; delivered, needs the UI rewind); `perr/transport-throwable?`
@@ -460,13 +469,12 @@
    otherwise the first post-mortem clue disappears exactly when the user needs it.
    User cancellation is an intentional stop, not an error."
   [stage data]
-  (cond
-    (and (= stage :error) (= :cancelled (:reason data))) :info
-    (= stage :error) :error
-    (and (= stage :code-result) (:timeout? data)) :error
-    (and (= stage :turn/complete) (= :error (:status data))) :error
-    (and (= stage :turn/complete) (= :cancelled (:status data))) :info
-    :else :debug))
+  (cond (and (= stage :error) (= :cancelled (:reason data))) :info
+        (= stage :error) :error
+        (and (= stage :code-result) (:timeout? data)) :error
+        (and (= stage :turn/complete) (= :error (:status data))) :error
+        (and (= stage :turn/complete) (= :cancelled (:status data))) :info
+        :else :debug))
 
 (defn log-stage!
   [stage iteration data]
@@ -474,7 +482,7 @@
              :id ::loop-stage
              :data (merge {:stage stage :iteration iteration} data)}))
 
-(defn- elapsed-ms [started-ns] (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+(defn- elapsed-ms [started-ns] (/ (double (- (System/nanoTime) (long started-ns))) 1000000.0))
 
 (defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
 
@@ -593,7 +601,7 @@
 
 (defn- comment-only-block?
   [^String expr]
-  (try (zero? (env/count-top-level-forms (str/trim expr))) (catch Throwable _ false)))
+  (try (zero? (long (env/count-top-level-forms (str/trim expr)))) (catch Throwable _ false)))
 
 (defn- literal-code-block-error
   [expr]
@@ -756,7 +764,7 @@
         (System/currentTimeMillis)
 
         execution-time
-        (- finished-time start-time)]
+        (- (long finished-time) (long start-time))]
 
     (cond-> execution-result
       true
@@ -954,49 +962,63 @@
   "Execute a native-tool `:handler` directly in Clojure under a cancellable
    wall-clock deadline. Native handlers bypass the Python eval watchdog, so this
    boundary prevents a wedged REPL/socket/process from holding a turn forever."
-  [handler environment input display-src]
-  (let [start (System/currentTimeMillis)
-        timeout-ms (rt/native-tool-timeout-ms input)
-        worker (cancellation/worker-future
-                 "vis-native-tool"
-                 #(handler environment input))
+  [handler environment input display-src startup-budget-ms]
+  (let [start
+        (System/currentTimeMillis)
+
+        timeout-ms
+        (rt/native-tool-timeout-ms input startup-budget-ms)
+
+        worker
+        (cancellation/worker-future "vis-native-tool" #(handler environment input))
+
         dispose-cancel-hook
         (when-let [cancel-token (:cancel-token environment)]
-          (cancellation/on-cancel!
-           cancel-token
-           #(try (.cancel ^java.util.concurrent.Future worker true)
-                 (catch Throwable _ nil))))
-        done (fn [m]
-               (merge {:lru {}
-                       :timeout? false
-                       :execution-started-at-ms start
-                       :execution-finished-at-ms (System/currentTimeMillis)
-                       :duration-ms (- (System/currentTimeMillis) start)}
-                      m))]
-    (try
-      (let [timeout-sentinel (Object.)
-            ret (deref worker timeout-ms timeout-sentinel)]
-        (if (identical? timeout-sentinel ret)
-          (do
-            (.cancel ^java.util.concurrent.Future worker true)
-            (done {:result nil
-                   :timeout? true
-                   :error {:message (str "Native tool " display-src " timed out after " timeout-ms "ms")
-                           :type :vis/native-tool-timeout
-                           :data {:tool display-src :timeout-ms timeout-ms}}}))
-          (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
-                  ret
-                  {:result ret}))))
-      (catch Throwable e
-        (env/push-eval-error! environment e)
-        (done {:result nil
-               :error (try (extension/ex->op-error e {:form-source display-src})
-                           (catch Throwable _
-                             {:message (or (ex-message e) (.getName (class e)))
-                              :type (-> e ex-data :type)}))}))
-      (finally
-        (when dispose-cancel-hook
-          (try (dispose-cancel-hook) (catch Throwable _ nil)))))))
+          (cancellation/on-cancel! cancel-token
+                                   #(try (.cancel ^java.util.concurrent.Future worker true)
+                                         (catch Throwable _ nil))))
+
+        done
+        (fn [m]
+          (merge {:lru {}
+                  :timeout? false
+                  :execution-started-at-ms start
+                  :execution-finished-at-ms (System/currentTimeMillis)
+                  :duration-ms (- (System/currentTimeMillis) start)}
+                 m))]
+
+    (try (let [timeout-sentinel
+               (Object.)
+
+               ret
+               (deref worker timeout-ms timeout-sentinel)]
+
+           (if (identical? timeout-sentinel ret)
+             (do (.cancel ^java.util.concurrent.Future worker true)
+                 (done {:result nil
+                        :timeout? true
+                        :error
+                        {:message
+                         (str "Native tool "
+                              display-src
+                              " timed out after "
+                              timeout-ms
+                              "ms; retry with an explicit timeout_ms or use a background workflow")
+                         :type :vis/native-tool-timeout
+                         :data {:tool display-src :timeout-ms timeout-ms}}}))
+             (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
+                     ret
+                     {:result ret}))))
+         (catch Throwable e
+           (env/push-eval-error! environment e)
+           (done {:result nil
+                  :error (try (extension/ex->op-error e {:form-source display-src})
+                              (catch Throwable _
+                                {:message (or (ex-message e) (.getName (class e)))
+                                 :type (-> e
+                                           ex-data
+                                           :type)}))}))
+         (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -1056,19 +1078,18 @@
 
 (defn- hopeless-context-overflow?
   "True when ex-data is a preflight context overflow too large for any
-   within-turn compaction to recover (see CONTEXT_OVERFLOW_HOPELESS_FACTOR)."
+   realistic same-model compaction pass to rescue."
   [ex-data-map]
-  (and (= :svar.tokens/context-overflow (:type ex-data-map))
-       (let [input
-             (:input-tokens ex-data-map)
+  (let [input
+        (:input-tokens ex-data-map)
 
-             max-input
-             (:max-input-tokens ex-data-map)]
+        max-input
+        (:max-input-tokens ex-data-map)]
 
-         (and (number? input)
-              (number? max-input)
-              (pos? max-input)
-              (>= (double input) (* CONTEXT_OVERFLOW_HOPELESS_FACTOR (double max-input)))))))
+    (and (number? input)
+         (number? max-input)
+         (pos? (long max-input))
+         (>= (double input) (* (double CONTEXT_OVERFLOW_HOPELESS_FACTOR) (double max-input))))))
 
 (def ^:private LAST_USER_PREVIEW_CHARS 500)
 
@@ -1081,11 +1102,13 @@
               ;; Multimodal content: preview the text blocks only — stringifying
               ;; the vector would dump base64 image payloads into error logs.
               (str/join " " (keep #(when (= "text" (:type %)) (:text %)) c))
-              (str c))]
-      (if (> (count s) LAST_USER_PREVIEW_CHARS)
+              (str c))
+          n (long (count s))]
+
+      (if (> n (long LAST_USER_PREVIEW_CHARS))
         (str (subs s 0 LAST_USER_PREVIEW_CHARS)
              " ...<+"
-             (- (count s) LAST_USER_PREVIEW_CHARS)
+             (- n (long LAST_USER_PREVIEW_CHARS))
              " chars>")
         s))))
 
@@ -1253,6 +1276,9 @@
                  ;; native handler-tool dispatch carries through to execution
                  (:vis/native-handler b)
                  (assoc :vis/native-handler (:vis/native-handler b))
+
+                 (:vis/native-startup-budget-ms b)
+                 (assoc :vis/native-startup-budget-ms (:vis/native-startup-budget-ms b))
 
                  (contains? b :vis/native-input)
                  (assoc :vis/native-input (:vis/native-input b)))))
@@ -2560,10 +2586,10 @@
                 (str/trimr (str s))
 
                 n
-                (count s)]
+                (long (count s))]
 
             (when (pos? n)
-              (if (> n MAX_FORM_WIRE_CHARS)
+              (if (> n (long MAX_FORM_WIRE_CHARS))
                 (str (subs s 0 MAX_FORM_WIRE_CHARS)
                      "\n# ⋯ output clipped at "
                      MAX_FORM_WIRE_CHARS
@@ -2676,9 +2702,9 @@
                 (str/trimr (str s))
 
                 n
-                (count s)]
+                (long (count s))]
 
-            (if (> n MAX_FORM_WIRE_CHARS)
+            (if (> n (long MAX_FORM_WIRE_CHARS))
               (str (subs s 0 MAX_FORM_WIRE_CHARS)
                    "\n# ⋯ output clipped at "
                    MAX_FORM_WIRE_CHARS
@@ -2742,7 +2768,7 @@
         (fn [idx tc]
           (let [own
                 (cond-> (vec (get forms-by-id (:id tc)))
-                  (zero? idx)
+                  (zero? (long idx))
                   (into (or orphan-forms [])))
 
                 lines
@@ -2758,7 +2784,7 @@
                 (when (seq lines) (result-handle tc own))
 
                 body-ls
-                (concat (when (zero? idx) summary-lines)
+                (concat (when (zero? (long idx)) summary-lines)
                         (when header [header])
                         (when handle [handle])
                         lines)
@@ -2766,7 +2792,7 @@
                 body
                 (when (seq body-ls) (str/join "\n" body-ls))]
 
-            (str/join "\n\n" (remove str/blank? [body (when (zero? idx) ctx-diff)]))))
+            (str/join "\n\n" (remove str/blank? [body (when (zero? (long idx)) ctx-diff)]))))
 
         ;; Legacy text fallback (a record with NO tool calls): all forms joined.
         fallback-content
@@ -2805,7 +2831,7 @@
            (fn [idx tc]
              (let [own
                    (cond-> (vec (get forms-by-id (:id tc)))
-                     (zero? idx)
+                     (zero? (long idx))
                      (into (or orphan-forms [])))
 
                    ;; A tool call FAILED when any of its forms errored.
@@ -2989,12 +3015,13 @@
    so a giant read can't over-rank itself. Strings count directly; a non-string
    result is serialized the way the wire renders it. Pure."
   [f]
-  (let [n (cond (:summary? f) 0
-                (some? (:error f)) (count (str (:error f)))
-                (some? (:result f)) (let [r (:result f)]
-                                      (if (string? r) (count r) (count (env/ctx->python-str r))))
-                :else (count (str (:stdout f))))]
-    (min (long n) MAX_FORM_WIRE_CHARS)))
+  (let [n (long (cond (:summary? f) 0
+                      (some? (:error f)) (count (str (:error f)))
+                      (some? (:result f))
+                      (let [r (:result f)]
+                        (if (string? r) (count r) (count (env/ctx->python-str r))))
+                      :else (count (str (:stdout f)))))]
+    (long (min n (long MAX_FORM_WIRE_CHARS)))))
 
 (defn- fold-candidates
   "Heaviest NON-folded iterations in `trailer-iters`, ranked by ~token weight
@@ -3023,7 +3050,8 @@
                        (iter-scope-of rec)
 
                        chars
-                       (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec))))]
+                       (long
+                         (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec)))))]
 
                    (when (and isc (not (contains? folded isc)) (pos? chars))
                      {:scope isc :tokens (quot (long chars) 4)}))))
@@ -3062,12 +3090,14 @@
         win
         (long (or window-tokens 0))]
 
-    (when (and (pos? req) (pos? win) (>= req (long (* OVER_UTILIZATION_FRACTION win))))
+    (when (and (pos? req)
+               (pos? win)
+               (>= req (long (* (double OVER_UTILIZATION_FRACTION) (double win)))))
       (let [pct
             (long (Math/round (* 100.0 (/ (double req) (double win)))))
 
             urgent?
-            (>= req (long (* URGENT_UTILIZATION_FRACTION win)))
+            (>= req (long (* (double URGENT_UTILIZATION_FRACTION) (double win))))
 
             fmt-tok
             (fn [t]
@@ -3518,7 +3548,7 @@
           turn-prefix (runtime-turn-prefix environment)
           turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
           form-scope (fn [idx]
-                       (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
+                       (str "t" turn-position "/i" iteration-position "/f" (inc (long idx))))
           effective-reasoning (when (and (nil? reasoning-effort)
                                          (some? reasoning-level)
                                          (reasoning-effort-configurable? resolved-model))
@@ -3718,19 +3748,19 @@
                                                                                environment)
                                                             :iteration iteration-position)]
                            (call-provider-with-stream-rewind-retry!
-  environment
-  {:iteration-position iteration-position
-   :provider (some-> (:provider resolved-model)
-                     name)
-   :model (some-> (:name resolved-model)
-                  str)
-   :on-chunk on-chunk
-   :reset-stream-state! reset-stream-state!}
-  #(call-provider-with-interrupt-retry!
-     environment
-     iteration-position
-     (fn []
-       (svar/ask-code! (:router environment) ask-opts)))))
+                             environment
+                             {:iteration-position iteration-position
+                              :provider (some-> (:provider resolved-model)
+                                                name)
+                              :model (some-> (:name resolved-model)
+                                             str)
+                              :on-chunk on-chunk
+                              :reset-stream-state! reset-stream-state!}
+                             #(call-provider-with-interrupt-retry!
+                                environment
+                                iteration-position
+                                (fn []
+                                  (svar/ask-code! (:router environment) ask-opts)))))
           ask-result ask-result-raw
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
@@ -3795,6 +3825,8 @@
           ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
           ;; bare call into their bound fn and run through GraalPy as before.
           native-handlers (extension/native-tool-handlers active-extensions environment)
+          native-startup-budgets (extension/native-tool-startup-budgets active-extensions
+                                                                        environment)
           ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
           ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
           call-shapes (assoc (extension/native-tool-call-shapes active-extensions environment)
@@ -3818,6 +3850,7 @@
                               :svar/tool-call-id (:id tc)
                               :vis/tool-name (:name tc)
                               :vis/native-handler h
+                              :vis/native-startup-budget-ms (get native-startup-budgets (:name tc))
                               :vis/native-input (normalize-tool-input (:input tc))}
                              {:lang "python"
                               ;; Native file tool → synthesized bare call into its
@@ -3893,7 +3926,9 @@
                   :vis/keys [preflight-error]
                   form-repaired? :repaired?
                   :as entry}]
-              (log-stage! :code-exec iteration {:idx (inc idx) :total total-blocks :code expr})
+              (log-stage! :code-exec
+                          iteration
+                          {:idx (inc (long idx)) :total total-blocks :code expr})
               (when (and on-chunk (not suppress-form-start?))
                 (on-chunk {:phase :form-start
                            :iteration iteration-position
@@ -3919,11 +3954,12 @@
                                            :duration-ms 0
                                            :op :vis/guard}
                           ;; native handler-tool → run in Clojure (run-native-handler)
-                          (:vis/native-handler entry) (run-native-handler (:vis/native-handler
-                                                                            entry)
-                                                                          environment
-                                                                          (:vis/native-input entry)
-                                                                          (:vis/tool-name entry))
+                          (:vis/native-handler entry) (run-native-handler
+                                                        (:vis/native-handler entry)
+                                                        environment
+                                                        (:vis/native-input entry)
+                                                        (:vis/tool-name entry)
+                                                        (:vis/native-startup-budget-ms entry))
                           :else
                           (if-let [err (literal-code-block-error expr)]
                             {:result nil
@@ -3959,7 +3995,7 @@
 
                               (log-stage! :code-result
                                           iteration
-                                          {:idx (inc idx)
+                                          {:idx (inc (long idx))
                                            :total total-blocks
                                            :duration-ms (:duration-ms r)
                                            :error (:error r)
@@ -4319,8 +4355,13 @@
   "True when an exception represents a provider stream that was cut
    before any content arrived. Safe to retry transparently."
   [^Throwable e]
-  (let [data (ex-data e)]
-    (and (contains? stream-truncated-types (:type data)) (zero? (or (:content-acc-len data) 0)))))
+  (let [data
+        (ex-data e)
+
+        content-acc-len
+        (long (or (:content-acc-len data) 0))]
+
+    (and (contains? stream-truncated-types (:type data)) (zero? content-acc-len))))
 
 (def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
   "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
@@ -4362,7 +4403,7 @@
         (long (or prev-max 8192))
 
         bumped
-        (long (Math/ceil (* (double base) MAX_TOKENS_RETRY_BUMP_FACTOR)))]
+        (long (Math/ceil (* (double base) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))]
 
     (assoc (or prev-extra-body {}) :max_tokens bumped)))
 
@@ -4688,7 +4729,7 @@
 (defn- auth-propagation-backoff-ms
   "Backoff (ms) for the Nth (0-based) post-refresh propagation retry, capped 5s."
   [attempt]
-  (min 5000 (* AUTH_PROPAGATION_BACKOFF_MS (long (inc attempt)))))
+  (long (min 5000 (* (long AUTH_PROPAGATION_BACKOFF_MS) (inc (long attempt))))))
 
 (defonce ^:private auth-refresh-events
   ;; provider-id -> vector of epoch-ms timestamps of recent forced refreshes.
@@ -4713,17 +4754,17 @@
         (System/currentTimeMillis)
 
         cutoff
-        (- now AUTH_REFRESH_WINDOW_MS)
+        (- now (long AUTH_REFRESH_WINDOW_MS))
 
         recent
         (-> (swap! auth-refresh-events
               update
               pid
               (fn [ts]
-                (conj (filterv #(> % cutoff) (or ts [])) now)))
+                (conj (filterv #(> (long %) cutoff) (or ts [])) now)))
             (get pid))]
 
-    (<= (count recent) AUTH_REFRESH_WINDOW_MAX)))
+    (<= (long (count recent)) (long AUTH_REFRESH_WINDOW_MAX))))
 
 (defn auth-refresh-metrics
   "Observability snapshot of the OAuth-refresh circuit breaker. Returns the
@@ -4734,7 +4775,7 @@
    grep."
   []
   (let [cutoff
-        (- (System/currentTimeMillis) AUTH_REFRESH_WINDOW_MS)
+        (- (System/currentTimeMillis) (long AUTH_REFRESH_WINDOW_MS))
 
         in-window
         (into {}
@@ -4742,7 +4783,7 @@
                     @auth-refresh-events
 
                     :let [n
-                          (count (filter #(> % cutoff) ts))]
+                          (long (count (filter #(> (long %) cutoff) ts)))]
                     :when (pos? n)]
 
                 [pid n]))]
@@ -4752,7 +4793,7 @@
      :refreshes-in-window in-window
      :breaker-open (into #{}
                          (keep (fn [[pid n]]
-                                 (when (> n AUTH_REFRESH_WINDOW_MAX) pid)))
+                                 (when (> (long n) (long AUTH_REFRESH_WINDOW_MAX)) pid)))
                          in-window)}))
 
 (defn- auth-error-shaped?
@@ -4784,7 +4825,8 @@
   (let [pid (:provider resolved-model)]
     (and (auth-error-shaped? e)
          (boolean (when-let [{:keys [at]} (get @auth-last-refreshed pid)]
-                    (< (- (System/currentTimeMillis) (long at)) AUTH_PROPAGATION_WINDOW_MS))))))
+                    (< (- (System/currentTimeMillis) (long at))
+                       (long AUTH_PROPAGATION_WINDOW_MS)))))))
 
 (defn- note-provider-request-ok!
   "Clear the just-refreshed propagation marker for this turn's provider once a
@@ -4870,7 +4912,7 @@
                                   :max AUTH_REFRESH_WINDOW_MAX}}
                           (str "Auth 401 — OAuth refresh circuit OPEN for " pid
                                " (> " AUTH_REFRESH_WINDOW_MAX
-                               " refreshes in " (quot AUTH_REFRESH_WINDOW_MS 1000)
+                               " refreshes in " (quot (long AUTH_REFRESH_WINDOW_MS) 1000)
                                "s); NOT refreshing — surfacing provider error,"
                                " re-authenticate this provider"))
                 false)
@@ -5519,7 +5561,7 @@
                 @usage-atom
 
                 total-tokens
-                (+ input-tokens output-tokens)
+                (+ (long input-tokens) (long output-tokens))
 
                 ;; Prefer the SUM of per-iteration costs (each priced
                 ;; by its actual serving model) over re-estimating the
@@ -5893,15 +5935,15 @@
                               (catch Exception e
                                 (cond
                                   (and (stream-truncated-error? e)
-                                       (< attempt MAX_STREAM_TRUNCATED_RETRIES))
+                                       (< (long attempt) (long MAX_STREAM_TRUNCATED_RETRIES)))
                                   (do (tel/log! {:level :warn
                                                  :id ::stream-truncated-retry
                                                  :data {:iteration iteration
-                                                        :attempt (inc attempt)
+                                                        :attempt (inc (long attempt))
                                                         :max-retries MAX_STREAM_TRUNCATED_RETRIES
                                                         :type (:type (ex-data e))}}
                                                 (str "Stream truncated, transparent retry "
-                                                     (inc attempt)
+                                                     (inc (long attempt))
                                                      "/" MAX_STREAM_TRUNCATED_RETRIES))
                                       ::retry-stream)
                                   ;; Max-tokens cap: model burnt the entire output
@@ -5912,7 +5954,8 @@
                                   ;; heavy iterations hit this when the provider's
                                   ;; finish_reason: \"length\" leaves content-acc empty.
                                   (and (max-tokens-exceeded-error? e)
-                                       (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
+                                       (< (long max-tokens-attempt)
+                                          (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
                                   (let [data (ex-data e)
                                         prev-max (or (:output-tokens data)
                                                      (:max_tokens current-extra-body)
@@ -5923,7 +5966,7 @@
                                     (tel/log! {:level :warn
                                                :id ::max-tokens-exceeded-retry
                                                :data {:iteration iteration
-                                                      :attempt (inc max-tokens-attempt)
+                                                      :attempt (inc (long max-tokens-attempt))
                                                       :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                       :prev-max prev-max
                                                       :new-max (:max_tokens bumped)
@@ -5931,7 +5974,7 @@
                                               (str "max_tokens exhausted on reasoning (~"
                                                    (or (:reasoning-length data) "?")
                                                    " reasoning tokens); retry "
-                                                   (inc max-tokens-attempt)
+                                                   (inc (long max-tokens-attempt))
                                                    "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                    " with max_tokens=" (:max_tokens bumped)))
                                     ;; Bump max-tokens-attempt so a second cap-hit
@@ -5948,7 +5991,7 @@
                                   ;; seconds later. Re-minting is what CAUSES
                                   ;; the storm, so DON'T refresh: back off and
                                   ;; retry the SAME token until it settles.
-                                  (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                  (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
                                        (refresh-just-failed? e resolved-model))
                                   ::retry-auth-backoff
                                   ;; Auth 401/403 from a refreshable
@@ -5957,7 +6000,7 @@
                                   ;; `try-refresh-provider-token!` does
                                   ;; the work and returns true only when
                                   ;; a refresh actually happened.
-                                  (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                  (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
                                        (auth-refreshable-error? e resolved-model)
                                        (try-refresh-provider-token! resolved-model))
                                   ::retry-auth-refresh
@@ -5975,12 +6018,12 @@
                                     (tel/log! {:level :warn
                                                :id ::provider-unavailable-retry
                                                :data {:iteration iteration
-                                                      :attempt (inc pu-attempt)
+                                                      :attempt (inc (long pu-attempt))
                                                       :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
                                                       :delay-ms delay-ms
                                                       :status (:status (ex-data e))}}
                                               (str "Provider unavailable, transparent retry "
-                                                   (inc pu-attempt)
+                                                   (inc (long pu-attempt))
                                                    "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
                                     (Thread/sleep (long delay-ms))
                                     ::retry-provider-unavailable)
@@ -7997,10 +8040,10 @@
      {:task_id <focus> :status <string> :answer :changed_files}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
   [parent-env {:keys [prompt subctx models system-prompt]}]
-  (let [depth (inc (or (some-> parent-env
-                               :depth-atom
-                               deref)
-                       0))]
+  (let [depth (inc (long (or (some-> parent-env
+                                     :depth-atom
+                                     deref)
+                             0)))]
     (when (> (long depth) (long MAX-SUBLOOP-DEPTH))
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
                       {:type :vis/subloop-depth-exceeded :depth depth})))
@@ -8856,7 +8899,8 @@
 (defn- heap-pressure?
   "True when the watermark is enabled and current heap use is at/above it."
   []
-  (and (pos? (long env-heap-watermark-pct)) (>= (heap-used-pct) (long env-heap-watermark-pct))))
+  (and (pos? (long env-heap-watermark-pct))
+       (>= (long (heap-used-pct)) (long env-heap-watermark-pct))))
 
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
