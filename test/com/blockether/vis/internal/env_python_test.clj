@@ -320,3 +320,46 @@
           ;; interval/threshold stay on GraalPy's own defaults (nil default)
           (expect (nil? (get opts "python.BackgroundGCTaskInterval")))
           (expect (nil? (get opts "python.BackgroundGCTaskThreshold")))))))
+
+(defdescribe
+  deferred-call-inline-settle-test
+  "A deferred `__vis_Call__` (a tool call you forgot to `await`) auto-settles
+   when USED INLINE via subscript / `len` / `in` — killing the classic
+   `git(x)['stdout']` \"'__vis_Call__' object is not subscriptable\" papercut —
+   WITHOUT weakening the loud unawaited repr or adding spooky `__getattr__`
+   auto-run. The call is built INSIDE a function body so the top-level
+   assignment auto-settle doesn't resolve it first."
+  (let [ctx
+        (:python-context (ep/create-python-context {}))
+
+        run
+        (fn [code]
+          (str (:stdout (ep/run-python-block ctx code))))]
+
+    (it "subscript / len / in on an un-awaited call settle it in place"
+        (let [out
+              (run (str
+                     "def _t():\n"
+                     "    c = __vis_deferred__(lambda: {'stdout': 'hi', 'exit': 0}, 'faketool')()\n"
+                     "    kind = type(c).__name__\n"
+                     "    return [kind, c['stdout'], len(c), 'exit' in c, 'zzz' in c]\n"
+                     "print(_t())"))]
+          (expect (re-find #"\['__vis_Call__', 'hi', 2, True, False\]" out))))
+    (it "an un-awaited call still repr's a LOUD hint and never silently ran"
+        (let [out (run
+                    (str
+                      "def _t():\n" "    ran = []\n"
+                      "    c = __vis_deferred__(lambda: ran.append(1) or {'k': 1}, 'faketool')()\n"
+                      "    r = repr(c)\n"
+                      "    return [r, ran]\n" "print(_t())"))]
+          (expect (re-find #"unawaited async tool call" out))
+          (expect (re-find #"faketool" out))
+          ;; repr must NOT have executed the tool — `ran` stays empty
+          (expect (re-find #", \[\]\]" out))))
+    (it "no __getattr__ auto-run: a non-slot attribute raises, it does not settle"
+        (let [out (run (str "def _t():\n"
+                            "    c = __vis_deferred__(lambda: {'stdout': 'hi'}, 'faketool')()\n"
+                            "    try:\n" "        c.stdout\n"
+                            "        return 'leaked'\n" "    except AttributeError:\n"
+                            "        return 'safe'\n" "print(_t())"))]
+          (expect (re-find #"safe" out))))))

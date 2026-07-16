@@ -314,7 +314,9 @@ def __vis_pp__(o, indent=0, width=100):
    output because you forgot `await` on a call you USE still repr's a loud hint
    rather than running silently — EXCEPT `print(...)`, which auto-settles a
    deferred call/gather handed straight to it (so `print(rg(x))` shows the real
-   result); only TOP-LEVEL bare calls otherwise auto-settle."
+   result), and EXCEPT inline subscript / `len` / `in` on a deferred call (so
+   `git(x)['stdout']` settles that ONE call in place — no concurrency to lose);
+   only TOP-LEVEL bare calls otherwise auto-settle."
   "
 import ast as __vis_ast__
 
@@ -326,6 +328,20 @@ class __vis_Call__:
         return (yield self)
     def __repr__(self):
         return '<unawaited async tool call: write `await ' + self.nm + '(...)`>'
+    # INLINE-USE auto-settle. Subscripting / `len(...)` / `in` a deferred call is
+    # ALWAYS a single-expression use of that ONE call's result — there is no
+    # concurrency to forfeit (unlike a batchable set of calls), so we settle it
+    # synchronously right here instead of raising 'not subscriptable'. This kills
+    # the `git(...)[\"stdout\"]` / `cat(...)[\"anchors\"]` papercut. We deliberately
+    # do NOT add `__getattr__`/`__iter__`: attribute access is probed by internal
+    # plumbing (`hasattr(v, 'send')`), and iteration is exactly the batch-me-instead
+    # case the loud repr must keep nudging toward `await gather(...)`.
+    def __getitem__(self, k):
+        return __vis_settle__(self)[k]
+    def __len__(self):
+        return len(__vis_settle__(self))
+    def __contains__(self, k):
+        return k in __vis_settle__(self)
 
 class __vis_Gather__:
     __slots__ = ('aws',)
