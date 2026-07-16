@@ -141,6 +141,26 @@
                            (expect (< 100 (png-len python-context "plt.barh([1,2,3],[4,5,6])")))
                            (expect
                              (< 100 (png-len python-context "plt.hist([1,1,2,3,3,3,4], bins=4)")))))
+  (it "bar/barh accept string (categorical) x labels via an integer axis"
+      (with-python-context
+        ;; categorical x renders instead of raising / collapsing to x=0
+        (expect (< 100 (png-len python-context "plt.bar(['a','b','c'],[10,20,30])")))
+        (expect (< 100 (png-len python-context "plt.barh(['a','b','c'],[10,20,30])")))
+        ;; the ASCII backend maps the strings onto an integer axis and prints
+        ;; every category name as an x tick label (proves the categorical path)
+        (let [ascii (ev python-context
+                        (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                             "plt.bar(['repo-a','repo-b','repo-c'],[1,2,3])\n"
+                             "plt.to_ascii(60,12)"))]
+          (expect (str/includes? ascii "repo-a"))
+          (expect (str/includes? ascii "repo-b"))
+          (expect (str/includes? ascii "repo-c")))
+        ;; barh with string categories renders through the same path
+        (expect (str/includes? (ev python-context
+                                   (str "import matplotlib.pyplot as plt\nplt.clf()\n"
+                                        "plt.barh(['alpha','beta','gamma'],[3,7,2])\n"
+                                        "plt.to_ascii(60,12)"))
+                               "alpha"))))
   (it
     "renders fill_between / step / axhline / axvline"
     (with-python-context
