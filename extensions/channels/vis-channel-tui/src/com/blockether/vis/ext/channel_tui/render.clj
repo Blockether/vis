@@ -5441,9 +5441,13 @@
     (vec (concat header body))))
 
 (def ^:private image-max-cols
-  "Cap the inline-image box width so a big screenshot doesn't consume the
-   whole bubble; matches pi's default `maxWidthCells`."
-  60)
+  "Ceiling on the inline-image box WIDTH in cells. The box otherwise fills the
+   bubble's content width, so on a wide terminal a screenshot is no longer
+   pinned to a tiny 60-cell strip; this only caps the pathological ultra-wide
+   case. Height is bounded separately (see the `cell-size` call) so a filled-
+   width portrait/4:3 image still fits a normal viewport instead of being
+   dropped by `fitting-image-placements`."
+  90)
 
 (defn- image-disclosure-entries
   "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
@@ -5485,7 +5489,11 @@
           (let [box
                 (timg/cell-size {:w width :h height}
                                 (min (long image-max-cols) (max 1 (long content-w)))
-                                40)
+                                ;; Height ceiling in cells — kept comfortably
+                                ;; below a typical transcript viewport so a
+                                ;; width-filled image is still fully placeable
+                                ;; (an over-tall box is dropped, not clipped).
+                                30)
 
                 rows
                 (max 1 (long (:rows box)))

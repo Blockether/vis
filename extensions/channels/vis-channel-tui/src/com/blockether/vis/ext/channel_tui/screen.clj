@@ -3530,6 +3530,56 @@
     (input/register-custom-patterns! terminal)
     (try (.setMouseCaptureMode ^UnixTerminal terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
          (catch Throwable _ nil))))
+(defn- probe-terminal-cell-size!
+  "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
+   `timg/set-cell-dimensions!`, so an inline-image box reserves the EXACT rows ×
+   cols the picture occupies. The box sizer otherwise runs on a hardcoded 9×18
+   cell guess; Kitty fits the image into the reserved `c×r` box PRESERVING aspect
+   ratio, so when that guess is off the picture letterboxes INSIDE the reserved
+   rows and reads as \"too small / detached from the card\".
+
+   Queries `CSI 16 t` (cell size in px) with `CSI 14 t`/`CSI 18 t`
+   (text-area px / cells) as a fallback, then reads the reply straight off the
+   tty. Runs in the startup window AFTER `.startScreen` (raw mode on) but BEFORE
+   the render + input loops exist, so it owns the tty exclusively. Best-effort
+   and time-bounded: a terminal that stays silent (or isn't graphical) just
+   keeps the built-in default. Never throws."
+  []
+  (when (timg/graphical-terminal?)
+    (try (let [^java.io.OutputStream out
+               @vis/tty-out
+
+               ^java.io.InputStream in
+               @vis/tty-in]
+
+           (when (and out in)
+             (.write out (.getBytes "\u001b[16t\u001b[14t\u001b[18t" "UTF-8"))
+             (.flush out)
+             (let [deadline
+                   (+ (System/currentTimeMillis) 150)
+
+                   buf
+                   (StringBuilder.)
+
+                   tmp
+                   (byte-array 512)]
+
+               (loop []
+
+                 (when (< (System/currentTimeMillis) deadline)
+                   (let [avail (long (try (.available in) (catch Throwable _ 0)))]
+                     (when (pos? avail)
+                       (let [n (.read in tmp 0 (int (min avail 512)))]
+                         (when (pos? n) (.append buf (String. tmp 0 n "UTF-8")))))
+                     (when (nil? (timg/parse-cell-size-report (.toString buf)))
+                       (Thread/sleep 5)
+                       (recur)))))
+               (when-let [{:keys [w h]} (timg/parse-cell-size-report (.toString buf))]
+                 (timg/set-cell-dimensions! w h)
+                 (tel/log! {:level :debug :id ::cell-size :data {:w w :h h}}
+                           "Detected terminal cell pixel size for inline-image box sizing.")))))
+         (catch Throwable _ nil))))
+
 (defn- enable-terminal-escape-modes!
   [_opts]
   (input/enable-bracketed-paste! @vis/tty-out)
@@ -3772,6 +3822,9 @@
            terminal-signal-cleanup (volatile! nil)]
 
        (.startScreen screen)
+       ;; Ask the terminal for its real cell pixel size NOW — raw mode is on and
+       ;; nothing reads input yet — so inline-image boxes reserve the exact rows.
+       (probe-terminal-cell-size!)
        ;; `:close-tab` fires this when the LAST view of an idle session closes:
        ;; invoke + drop that session's SSE title-listener bundle (host title +
        ;; queue-sync/attach stream) so a closed tab stops holding a live

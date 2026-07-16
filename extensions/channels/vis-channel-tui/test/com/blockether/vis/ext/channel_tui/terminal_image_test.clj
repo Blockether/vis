@@ -80,3 +80,34 @@
 
                    (expect (str/includes? s "m=1;"))
                    (expect (str/includes? s "m=0;")))))
+
+(defdescribe
+  cell-size-report-test
+  (it "parses a CSI 16t cell-size reply ESC[6;<h>;<w>t"
+      (expect (= {:w 9 :h 18} (timg/parse-cell-size-report "\u001b[6;18;9t"))))
+  (it "derives cell size from CSI 14t (px) + CSI 18t (cells) when 16t is absent"
+      ;; 1600x900 px text area over 100 cols x 30 rows => 16x30 px cells.
+      (expect (= {:w 16 :h 30} (timg/parse-cell-size-report "\u001b[4;900;1600t\u001b[8;30;100t"))))
+  (it "tolerates the replies interleaved with other bytes / arbitrary order"
+      (expect (= {:w 8 :h 17}
+                 (timg/parse-cell-size-report "junk\u001b[8;40;120t\u001b[4;680;960tmore"))))
+  (it "returns nil for a silent / unparseable terminal"
+      (expect (nil? (timg/parse-cell-size-report "")))
+      (expect (nil? (timg/parse-cell-size-report nil)))
+      (expect (nil? (timg/parse-cell-size-report "\u001b[6;0;0t")))
+      (expect (nil? (timg/parse-cell-size-report "random noise")))))
+
+(defdescribe cell-dimensions-drive-box-sizing-test
+             ;; The whole point of the startup cell-size probe: feeding the REAL cell px
+             ;; size changes the box aspect so the reserved rows match how the terminal
+             ;; actually lays out the image (issue #32 follow-up).
+             (it "a square-cell terminal reserves a square box for a square image"
+                 (try (timg/set-cell-dimensions! 20 20)
+                      (let [{:keys [cols rows]} (timg/cell-size {:w 500 :h 500} 40 40)]
+                        (expect (= cols rows)))
+                      ;; The default 9x18 (tall) cell makes the SAME square image span more
+                      ;; cols than rows — proving the box tracks the cell dims, not a constant.
+                      (timg/set-cell-dimensions! 9 18)
+                      (let [{:keys [cols rows]} (timg/cell-size {:w 500 :h 500} 40 40)]
+                        (expect (> cols rows)))
+                      (finally (timg/set-cell-dimensions! 9 18)))))

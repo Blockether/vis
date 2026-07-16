@@ -48,6 +48,42 @@
 
 (defn set-cell-dimensions! [w h] (TerminalImage/setCellDimensions (int w) (int h)))
 
+(defn parse-cell-size-report
+  "Parse a terminal window-report reply into `{:w :h}` CELL pixel dimensions, or
+   nil. Recognises the `CSI 16 t` cell-size reply `ESC[6;<h>;<w>t` directly, and
+   falls back to deriving the cell size from a `CSI 14 t` text-area-pixels reply
+   `ESC[4;<hpx>;<wpx>t` paired with a `CSI 18 t` text-area-cells reply
+   `ESC[8;<rows>;<cols>t` (cell = px / cells). Tolerant of the replies arriving
+   concatenated in any order / interleaved with other bytes."
+  [^String s]
+  (when (and (string? s) (seq s))
+    (or (when-let [m (re-find #"\u001b\[6;(\d+);(\d+)t" s)]
+          (let [h (parse-long (nth m 1))
+                w (parse-long (nth m 2))]
+
+            (when (and (pos? w) (pos? h)) {:w w :h h})))
+        (let [px
+              (re-find #"\u001b\[4;(\d+);(\d+)t" s)
+
+              ch
+              (re-find #"\u001b\[8;(\d+);(\d+)t" s)]
+
+          (when (and px ch)
+            (let [hpx
+                  (parse-long (nth px 1))
+
+                  wpx
+                  (parse-long (nth px 2))
+
+                  rows
+                  (parse-long (nth ch 1))
+
+                  cols
+                  (parse-long (nth ch 2))]
+
+              (when (and (pos? wpx) (pos? hpx) (pos? rows) (pos? cols))
+                {:w (quot wpx cols) :h (quot hpx rows)})))))))
+
 ;; =============================================================================
 ;; Intrinsic pixel-dimension sniffing
 ;; =============================================================================
