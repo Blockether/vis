@@ -911,7 +911,17 @@
         (= :voice profile)
 
         [t-os t-arch]
-        (truffle-platform-tokens)]
+        (truffle-platform-tokens)
+
+        ;; Extra native-image args spliced from the environment (space-separated).
+        ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx12g -J-Xms2g to fit
+        ;; a 14 GB free macOS runner), overriding GraalPy's bundled -Xms14g since
+        ;; command-line -J args are applied AFTER the classpath properties.
+        extra
+        (some-> (System/getenv "VIS_NATIVE_EXTRA_ARGS")
+                str/trim
+                not-empty
+                (str/split #"\s+"))]
 
     (cond-> ["-cp" (native-classpath basis) "-o" (str/replace native-bin #"\.exe$" "")
              "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
@@ -974,6 +984,9 @@
 
       with-assets?
       (conj "-H:IncludeResources=voice-assets/.*")
+
+      (seq extra)
+      (into extra)
 
       :always
       (conj "com.blockether.vis.core"))))

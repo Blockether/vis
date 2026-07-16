@@ -1,0 +1,71 @@
+name: Native Experiment
+
+# TEMPORARY probe: can the GraalPy-embedding native image build on the FREE
+# macos-13 Intel runner (14 GB)? Paid larger runners are blocked by the org
+# spending limit; free Apple-silicon runners are only 7 GB and stall the builder
+# (proven: zero analysis progress in 87 min). macos-13 is the only free macOS
+# runner with 14 GB. Delete once the real workflows are updated.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/native-macos13]
+
+concurrency:
+  group: native-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: probe / macos13-intel-14g
+    runs-on: macos-13
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - name: Report runner specs
+        shell: bash
+        run: |
+          sw_vers || true
+          echo "arch: $(uname -m)"
+          echo "mem bytes: $(sysctl -n hw.memsize 2>/dev/null || true)"
+          echo "cpus: $(sysctl -n hw.ncpu 2>/dev/null || true)"
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+            ~/.vis/build-cache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+      # Explicit heap fits the 14 GB box (leave ~2 GB for the OS + native-image
+      # off-heap) instead of GraalPy's bundled -Xms14g, which on a 14 GB machine
+      # exceeds the default 80%-RAM -Xmx and can refuse to start (initial > max).
+      - name: Build native image (:voice)
+        env:
+          VIS_NATIVE_EXTRA_ARGS: "-J-Xmx12g -J-Xms2g"
+        run: clojure -T:build native :profile :voice
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          ./target/vis --version
+          ./target/vis help >/dev/null
+      - name: Smoke-test the gateway
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(./target/vis providers status anthropic 2>&1 || true)"
+          echo "$out"
+          if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+            echo '::error::gateway daemon failed to boot'
+            exit 1
+          fi
+          ./target/vis gateway stop >/dev/null 2>&1 || true
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vis-macos13-intel-x64
+          path: target/vis
+          if-no-files-found: error
