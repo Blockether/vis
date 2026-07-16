@@ -277,7 +277,14 @@
    The printer vars are pinned (no length/level/meta/dup limits) so the emitted
    code is always COMPLETE and readable — a caller runtime that caps
    *print-level* / *print-length* would otherwise render deep sub-forms of
-   run-form as `#` / `...` and produce an unreadable, unbalanced string."
+   run-form as `#` / `...` and produce an unreadable, unbalanced string.
+
+   The emitted code RETURNS its result map pr-str'd to a STRING under those same
+   pinned vars. A plain string value is immune to a truncating nREPL SESSION
+   (a server whose *print-length* / *print-level* is set clips collections and
+   nesting with `...` / `#`, but never a string's characters), so run-via-repl
+   always gets parseable EDN back — it reads the value twice: once to unwrap the
+   string literal, once to parse the map inside it."
   ([ns-strs sel] (build-eval-code ns-strs sel {}))
   ([ns-strs sel ns-files]
    (binding [*print-length*
@@ -295,15 +302,16 @@
              *print-dup*
              false]
 
-     (str "("
-          (pr-str run-form)
-          " (quote ["
-          (str/join " " ns-strs)
-          "]) "
-          (pr-str sel)
-          " "
-          (pr-str ns-files)
-          ")"))))
+     (str
+       "(binding [*print-length* nil *print-level* nil *print-namespace-maps* false *print-meta* false *print-dup* false] (pr-str ("
+       (pr-str run-form)
+       " (quote ["
+       (str/join " " ns-strs)
+       "]) "
+       (pr-str sel)
+       " "
+       (pr-str ns-files)
+       ")))"))))
 
 (defn- strip-ansi
   "Strip ANSI escape sequences (colors / cursor controls) from a captured test
@@ -469,7 +477,9 @@
             ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
             (nrepl-client/eval!
               {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
-            parsed (try (edn/read-string (get r "value")) (catch Throwable _ nil))]
+            parsed (try (let [x (edn/read-string (get r "value"))]
+                          (if (string? x) (edn/read-string x) x))
+                        (catch Throwable _ nil))]
 
         (if (map? parsed)
           (-> parsed
