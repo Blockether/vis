@@ -1886,7 +1886,8 @@
      :is_hidden (boolean (get spec "is_hidden"))
      :is_respect_gitignore (get spec "is_respect_gitignore" true)
      :is_gitignore_explicit (contains? spec "is_respect_gitignore")
-     :limit default-grep-limit
+     :limit (let [l (get spec "limit")]
+              (if (and (integer? l) (pos? (long l))) (long l) default-grep-limit))
      :context context
      :is_files_only is_files_only}))
 
@@ -2091,7 +2092,11 @@
         walk
         (fn walk [ignore-node root ^File f]
           (check-interrupt!)
-          (cond (and (not is_hidden) (.isHidden f)) []
+          ;; The hidden-guard filters hidden DESCENDANTS, but must never reject the
+          ;; scan ROOT for its own dotname — an explicit/allowed root like `~/.vis`
+          ;; is entered on purpose, so exempt `f == root` (else a dotfile root scans
+          ;; to nothing, silently skipping a whole filesystem root on the default sweep).
+          (cond (and (not is_hidden) (not= f root) (.isHidden f)) []
                 (and is_respect_gitignore (search-excluded? ignore-node search-overlay f root)) []
                 (.isDirectory f) (mapcat #(walk ignore-node root %)
                                          (or (.listFiles f) (into-array File [])))
@@ -4531,8 +4536,9 @@
       {:summary (str (or loc "outline") " · no structural outline")})))
 
 (defn- render-occurrences-result
-  "occurrences → `{:summary :body}`: a `N · K defs in M files` headline (no leading
-   'occurrences' word — the op-card badge already names it),
+  "occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`
+   headline (no leading 'occurrences' word — the op-card badge already names it);
+   <scope> is `project-wide` for the default/whole-project scan, else `in <paths>`,
    then per file the DEFINITION(s) (kind/visibility/signature + span anchors) on their
    own lines and the use lines (derived from each use's anchor) compacted. `r` is
    wire-shaped: `{:name :files [{:path :occurrences [{:anchor :is_definition :kind
@@ -4552,7 +4558,14 @@
 
         nm
         (some-> (get r "name")
-                kw->str)]
+                kw->str)
+
+        paths
+        (mapv kw->str (get r "paths"))
+
+        scope
+        (cond (or (empty? paths) (= paths ["."])) "project-wide"
+              :else (str "in " (str/join ", " paths)))]
 
     {:summary (str total
                    (when (pos? (long defs)) (str " · " defs " def" (when (not= 1 defs) "s")))
@@ -4560,7 +4573,8 @@
                    fc
                    " file"
                    (when (not= 1 fc) "s")
-                   (when nm (str " of `" nm "`")))
+                   (when nm (str " of `" nm "`"))
+                   (when scope (str " · " scope)))
      :body (when (seq files)
              (str "\n"
                   (str/join "\n\n"
@@ -5328,7 +5342,14 @@
         ;; match casing, but a definition keeps the name's case, so a case-
         ;; sensitive identifier still lands among these files); each is parsed.
         files
-        (vec (or (:files (rg-search {"query" [name] "is_files_only" true "paths" paths})) []))
+        ;; occurrences PARSES every matching file, so the rg prefilter must not
+        ;; cap the candidate set at `default-grep-limit` (250) — a large dir /
+        ;; project would silently drop every file past the 250th, contradicting
+        ;; the "Not truncated" contract. Pass an unbounded limit.
+        (vec (or (:files
+                   (rg-search
+                     {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
+                 []))
 
         ;; `per`/`failed` entries are the model-facing result payload — string keys.
         {:keys [per failed]}
@@ -5365,6 +5386,7 @@
                             "count" total
                             "definition_count" defs
                             "scanned" (count files)
+                            "paths" paths
                             "failed" failed}
                    :metadata {:name name :paths paths :count total :definition_count defs}})))
 

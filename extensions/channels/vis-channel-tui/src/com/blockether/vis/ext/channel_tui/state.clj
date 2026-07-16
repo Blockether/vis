@@ -641,6 +641,17 @@
   [provider model]
   (when-let [model-name (and model (vis/model-name model))]
     (when (:id provider) {:provider-id (:id provider) :model model-name})))
+
+(defn- entries-from-providers
+  "Model-cycle entries derived from a provider fleet vec, priority order.
+   Shared by the LIVE `model-cycle-entries` (the C-x m handler) and the
+   CACHED footer variant so the two always derive identically."
+  [providers]
+  (->> providers
+       (mapcat (fn [provider]
+                 (keep #(model-entry provider %) (:models provider))))
+       vec))
+
 (defn- model-cycle-entries
   "Entries for the Ctrl+T model cycle, read from the LIVE provider fleet
    (`vis/configured-providers` — the SAME source the web picker uses) in
@@ -651,10 +662,21 @@
    for the existing caller but intentionally ignored now that the source is
    live (this is exactly what the web channel already does)."
   [_config]
-  (->> (try (vis/configured-providers) (catch Throwable _ nil))
-       (mapcat (fn [provider]
-                 (keep #(model-entry provider %) (:models provider))))
-       vec))
+  (entries-from-providers (try (vis/configured-providers) (catch Throwable _ nil))))
+
+(defn- model-cycle-entries-cached
+  "Footer-frequency variant of `model-cycle-entries`: the SAME entries,
+   derived from the CACHED fleet snapshot (`vis/configured-providers-cached`)
+   so the per-frame footer read never re-runs the full provider enumeration
+   on the render thread — that enumeration parses four config files per call
+   and costs ~200ms on machines with slow file IO, which stalled every live
+   frame (issue #29). The C-x m `:cycle-model` handler keeps the LIVE
+   `model-cycle-entries` (Tab-through must be exact); the fleet cache is
+   invalidated on every same-process provider mutation, so the two agree
+   outside a bounded cross-process staleness window."
+  []
+  (entries-from-providers (try (vis/configured-providers-cached) (catch Throwable _ nil))))
+
 (defn- entry-index
   "Index (0-based) of the model-cycle ENTRY matching `provider`+`model`
    (both strings), or nil when nothing matches. Shared by the `:cycle-model`
@@ -667,11 +689,13 @@
 (defn model-cycle-position
   "Live `[position total]` (1-based) of `provider`/`model` within the model
    cycle, or nil when the current model isn't one of the cycle entries. The
-   footer button renders this as the `n/N` inside its `(cycle …)` hint; it
-   reads the SAME `model-cycle-entries` the C-x m handler steps through, so the
-   count the button shows is exactly the count the cycle walks."
+   footer button renders this as the `n/N` inside its `(cycle …)` hint. Runs
+   on the render thread EVERY footer frame, so it derives from the cached
+   fleet snapshot (`model-cycle-entries-cached`) — the entries are the same
+   ones the C-x m handler steps through, so the count the button shows is
+   exactly the count the cycle walks (issue #29)."
   [provider model]
-  (let [entries (model-cycle-entries nil)]
+  (let [entries (model-cycle-entries-cached)]
     (when-let [idx (entry-index entries provider model)]
       [(inc (long idx)) (count entries)])))
 (defn- current-model-info

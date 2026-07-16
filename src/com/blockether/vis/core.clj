@@ -447,6 +447,7 @@
              [provider-status-text providers/status-text]
              [provider-status-md providers/status-md]
              [configured-providers providers/configured-providers]
+             [configured-providers-cached providers/configured-providers-cached]
              [provider-presets-available providers/available-presets]
              [provider-ensure-base-url providers/ensure-base-url]
              [provider-persisted-config providers/persisted-provider-config]

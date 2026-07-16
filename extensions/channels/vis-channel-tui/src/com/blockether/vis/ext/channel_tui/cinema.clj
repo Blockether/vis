@@ -453,8 +453,6 @@
                               (+ (long (ms->frames jump-hold-ms))
                                  (long (ms->frames post-assist-ms))))]
 
-
-
                   (recur (inc i) acc3))
                 :else (let [{g :grid} (render-state full scroll/follow nil nil 0)]
                         (recur (inc i) (add acc g (ms->frames post-user-ms))))))
@@ -475,7 +473,6 @@
         (if (> (count held) (long max-frames))
           (let [step (/ (double (count held)) (double max-frames))]
             (mapv #(nth held (min (dec (count held)) (long (* (long %) step)))) (range max-frames)))
-
           held)
 
         video-ms
@@ -518,8 +515,6 @@
         h
         (even2 (* rows ch))
 
-
-
         img
         (BufferedImage. w h BufferedImage/TYPE_INT_RGB)
 
@@ -542,7 +537,6 @@
             py
             (* (long y) ch)]
 
-
         (.setColor g (awt-color (:bg c)))
         (.fillRect g px py cw ch)
         (let [ch* (:ch c)]
@@ -550,7 +544,6 @@
             (.setFont g (if (:bold c) bold-font font))
             (.setColor g (awt-color (:fg c)))
             (.drawString g ^String ch* (int px) (int (+ py ascent)))))))
-
     (.dispose g)
     img))
 
@@ -563,7 +556,6 @@
   "Encode a `session->frames` result to `out` (an MP4 File/path) via jcodec's
    pure-Java `AWTSequenceEncoder`. Returns the output File."
   [{:keys [cols rows frames]} out {:keys [font-size fps] :or {font-size 18 fps 8}}]
-
   (let [out-file
         (io-file out)
 

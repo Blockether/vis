@@ -512,6 +512,60 @@
   []
   (vec (:providers (config/load-config))))
 
+(defonce ^:private fleet-cache
+  ;; {:at <epoch-ms> :val <fleet vec>} — last-known `configured-providers`
+  ;; snapshot; nil until the first read or right after an invalidation.
+  (atom nil))
+(defonce ^:private fleet-refreshing (atom false))
+(def ^:private fleet-cache-ttl-ms
+  ;; Cross-process safety net ONLY: same-process fleet mutations invalidate
+  ;; explicitly (`save-providers!` / `remove-provider!`), so the TTL just
+  ;; bounds staleness when ANOTHER process (a second channel, a hand edit)
+  ;; changes the config files.
+  30000)
+
+(defn invalidate-configured-providers!
+  "Drop the fleet snapshot so the next `configured-providers-cached` read
+   re-enumerates. Called by every same-process fleet mutation — which is what
+   lets the TTL stay long (issue #29 follow-up: invalidate on change instead
+   of polling)."
+  []
+  (reset! fleet-cache nil))
+
+(defn- refresh-fleet-cache!
+  "Single-flight BACKGROUND re-enumeration of the fleet snapshot. Errors
+   leave the last-known value untouched."
+  []
+  (when (compare-and-set! fleet-refreshing false true)
+    (future (try (reset! fleet-cache {:at (System/currentTimeMillis) :val (configured-providers)})
+                 (catch Throwable _ nil)
+                 (finally (reset! fleet-refreshing false))))))
+
+(defn configured-providers-cached
+  "Frame/request-frequency read of `configured-providers` that never re-runs
+   the full enumeration on a warm caller. The enumeration behind
+   `config/load-config` parses four config files per call — ~200ms on
+   machines with slow file IO — which stalled every TUI footer frame when it
+   ran on the render thread (issue #29).
+
+   - FRESH snapshot → returned as-is (pure atom read).
+   - STALE snapshot → returned immediately; a single-flight background
+     refresh replaces it off-thread.
+   - COLD (first read / just invalidated) → enumerates synchronously ONCE, so
+     callers always get a real fleet, never a nil-because-cold."
+  []
+  (let [now
+        (System/currentTimeMillis)
+
+        {:keys [at val]}
+        @fleet-cache]
+
+    (cond (nil? at) (let [v (configured-providers)]
+                      (reset! fleet-cache {:at now :val v})
+                      v)
+          (>= (- now (long at)) (long fleet-cache-ttl-ms)) (do (refresh-fleet-cache!) val)
+          :else val)))
+
 (defn available-presets
   "Provider presets not yet in the configured fleet — the 'Add
    Provider' picker contents."
@@ -561,6 +615,8 @@
   "Replace the `:providers` vec in the GLOBAL config file (project
    overlay files are never edited), preserving unrelated keys, then
    reload the in-memory config so the running router sees the change.
+   Invalidates the fleet snapshot so `configured-providers-cached`
+   readers (the TUI footer) pick the change up on their next read.
    Returns the persisted vec."
   ([providers] (save-providers! providers nil))
   ([providers source]
@@ -574,6 +630,7 @@
        (if (seq providers*) (assoc raw :providers providers*) (dissoc raw :providers))
        source)
      (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
      providers*)))
 
 (defn add-config-provider!
@@ -595,11 +652,13 @@
 
 (defn remove-provider!
   "Remove a provider from the persisted fleet AND run the registered
-   extension's logout when present. Returns true when config changed."
+   extension's logout when present. Invalidates the fleet snapshot.
+   Returns true when config changed."
   ([provider-id] (remove-provider! provider-id nil))
   ([provider-id source]
    (when-let [logout-fn (:provider/logout-fn (registry/provider-by-id provider-id))]
      (try (logout-fn) (catch Throwable _ nil)))
    (let [changed? (config/remove-config-provider! provider-id source)]
      (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
      changed?)))

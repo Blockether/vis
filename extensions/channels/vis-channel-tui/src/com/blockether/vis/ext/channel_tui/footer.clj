@@ -367,6 +367,7 @@
 
         window
         (last parts)]
+
     (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hd]" window))
       {:label label :prefix (str/join " " (butlast parts)) :window window}
       {:label label})))
@@ -400,6 +401,7 @@
                    (every? :prefix label-parts)
                    (apply = (map :prefix label-parts)))
           (:prefix (first label-parts)))]
+
     (if shared-prefix
       (str shared-prefix
            " "
@@ -449,9 +451,7 @@
         (->> (or (seq (filter lfmt/generic-limit-has-signal? raw-rows)) raw-rows)
              (sort-by generic-limit-sort-key))]
 
-    (if (seq rows)
-      (format-generic-limit-rows now-ms rows)
-      (limits-status-text db provider))))
+    (if (seq rows) (format-generic-limit-rows now-ms rows) (limits-status-text db provider))))
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 (comment
   "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")

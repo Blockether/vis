@@ -136,76 +136,78 @@
           (fn []
             (expect (not-any? #(= "cancelling..." (:text %))
                               (build-segments {:messages [] :settings {} :cancelling? true} 0)))))))
-  (it "shows Codex dynamic quota windows on the second footer line"
-      (let [build-limits-segments
-            @#'footer/build-limits-segments
+  (it
+    "shows Codex dynamic quota windows on the second footer line"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
-            now-ms
-            1000000000000
+          now-ms
+          1000000000000
 
-            report
-            {:dynamic {:limits [{:id :codex-5h
-                                 :label "Codex 5h quota (%)"
-                                 :remaining 76.0
-                                 :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
-                                {:id :codex-7d
-                                 :label "Codex 7d quota (%)"
-                                 :remaining 85.0
-                                 :window {:resets-at-ms (+ now-ms
-                                                           (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+          report
+          {:dynamic {:limits [{:id :codex-5h
+                               :label "Codex 5h quota (%)"
+                               :remaining 76.0
+                               :window {:resets-at-ms (+ now-ms (* 115 60 1000))}}
+                              {:id :codex-7d
+                               :label "Codex 7d quota (%)"
+                               :remaining 85.0
+                               :window {:resets-at-ms (+ now-ms
+                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
 
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5.5" :provider :openai-codex})}
-          (fn []
-            (let [text (->> (build-limits-segments {:messages []
-                                                    :settings {}
-                                                    :provider-limits {:provider-id :openai-codex
-                                                                      :report report}}
-                                                   now-ms)
-                            (filter #(= :left (:region %)))
-                            first
-                            :text)]
-              (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85% ↺3d18h@" text))
-              (expect (not (str/includes? text "Codex 7d")))
-              (expect (str/includes? text " AM"))
-              (expect (str/includes? text " PM"))
-              (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
-  (it "shares the Claude provider label across 5h and 7d windows"
-      (let [build-limits-segments
-            @#'footer/build-limits-segments
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "gpt-5.5" :provider :openai-codex})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :openai-codex
+                                                                    :report report}}
+                                                 now-ms)
+                          (filter #(= :left (:region %)))
+                          first
+                          :text)]
+            (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85% ↺3d18h@" text))
+            (expect (not (str/includes? text "Codex 7d")))
+            (expect (str/includes? text " AM"))
+            (expect (str/includes? text " PM"))
+            (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
+  (it
+    "shares the Claude provider label across 5h and 7d windows"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
-            now-ms
-            1000000000000
+          now-ms
+          1000000000000
 
-            report
-            {:provider-id :anthropic-coding-plan
-             :dynamic {:limits [{:id :claude-5h
-                                  :label "Claude 5h"
-                                  :kind :rate
-                                  :limit 100.0
-                                  :remaining 0.0
-                                  :window {:resets-at-ms (+ now-ms (* 5 60 60 1000))}}
-                                 {:id :claude-7d
-                                  :label "Claude 7d"
-                                  :kind :rate
-                                  :limit 100.0
-                                  :remaining 75.0
-                                  :window {:resets-at-ms (+ now-ms (* 6 24 60 60 1000))}}]}}]
+          report
+          {:provider-id :anthropic-coding-plan
+           :dynamic {:limits [{:id :claude-5h
+                               :label "Claude 5h"
+                               :kind :rate
+                               :limit 100.0
+                               :remaining 0.0
+                               :window {:resets-at-ms (+ now-ms (* 5 60 60 1000))}}
+                              {:id :claude-7d
+                               :label "Claude 7d"
+                               :kind :rate
+                               :limit 100.0
+                               :remaining 75.0
+                               :window {:resets-at-ms (+ now-ms (* 6 24 60 60 1000))}}]}}]
 
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "claude-opus-4-6"
-                                                       :provider :anthropic-coding-plan})}
-          (fn []
-            (let [text (->> (build-limits-segments {:messages []
-                                                    :settings {}
-                                                    :provider-limits {:provider-id :anthropic-coding-plan
-                                                                      :report report}}
-                                                   now-ms)
-                            (filter #(= :left (:region %)))
-                            first
-                            :text)]
-              (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75% ↺6d0h@" text))
-              (expect (not (str/includes? text "Claude 7d"))))))))
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "claude-opus-4-6"
+                                                     :provider :anthropic-coding-plan})}
+        (fn []
+          (let [text (->> (build-limits-segments
+                            {:messages []
+                             :settings {}
+                             :provider-limits {:provider-id :anthropic-coding-plan :report report}}
+                            now-ms)
+                          (filter #(= :left (:region %)))
+                          first
+                          :text)]
+            (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75% ↺6d0h@" text))
+            (expect (not (str/includes? text "Claude 7d"))))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let [build-limits-segments

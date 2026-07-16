@@ -87,27 +87,38 @@
             (expect (= ["starting" "ready"] (vis/resource-logs sid rid))))
           (finally (vis/unregister-resource! sid rid) (.delete log))))))
 
-(defdescribe resource-mirror-health-test
-             (it "does not mark a classpath-resolving nREPL healthy before its port answers"
-                 (let [sid (str "nrepl-ctx-health-" (System/nanoTime))
-                       rid "nrepl:/proj"]
-                   (try
-                     (with-redefs [rm/session-repls (fn [_]
-                                                      [{:id rid :dir "/proj" :port 7001 :tool :clj}])
-                                   nc/probe! (fn [_] {:status :starting})]
-                       (nx/contribute {:workspace/root "/proj"
-                                       :session-id sid
-                                       :ctx-atom (atom {:session/turn 42})})
-                       (expect (= "starting" (get (vis/get-resource sid rid) "status"))))
-                     (finally (vis/unregister-resource! sid rid)))))
-             (it "refreshes an existing mirror from healthy to failed when liveness changes"
-                 (let [sid (str "nrepl-ctx-health-refresh-" (System/nanoTime))
-                       rid "nrepl:/proj"]
-                   (try
-                     (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir "/proj" :port 7001})
-                     (@#'nx/ensure-resource! sid {7001 {:status :failed}} {:id rid :dir "/proj" :port 7001})
-                     (expect (= "failed" (get (vis/get-resource sid rid) "status")))
-                     (finally (vis/unregister-resource! sid rid))))))
+(defdescribe
+  resource-mirror-health-test
+  (it "does not mark a classpath-resolving nREPL healthy before its port answers"
+      (let [sid
+            (str "nrepl-ctx-health-" (System/nanoTime))
+
+            rid
+            "nrepl:/proj"]
+
+        (try (with-redefs [rm/session-repls
+                           (fn [_]
+                             [{:id rid :dir "/proj" :port 7001 :tool :clj}])
+
+                           nc/probe!
+                           (fn [_]
+                             {:status :starting})]
+
+               (nx/contribute
+                 {:workspace/root "/proj" :session-id sid :ctx-atom (atom {:session/turn 42})})
+               (expect (= "starting" (get (vis/get-resource sid rid) "status"))))
+             (finally (vis/unregister-resource! sid rid)))))
+  (it "refreshes an existing mirror from healthy to failed when liveness changes"
+      (let [sid
+            (str "nrepl-ctx-health-refresh-" (System/nanoTime))
+
+            rid
+            "nrepl:/proj"]
+
+        (try (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir "/proj" :port 7001})
+             (@#'nx/ensure-resource! sid {7001 {:status :failed}} {:id rid :dir "/proj" :port 7001})
+             (expect (= "failed" (get (vis/get-resource sid rid) "status")))
+             (finally (vis/unregister-resource! sid rid))))))
 
 (defdescribe default-selection-test
              (it "no default when MORE THAN ONE REPL is owned (id must be specified)"

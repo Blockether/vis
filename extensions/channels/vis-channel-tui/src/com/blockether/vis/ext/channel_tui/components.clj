@@ -565,7 +565,8 @@
            [(keymap/label-for :toggle-help) "Toggle this help"]]}
    {:title "Messaging & navigation"
     :rows
-    [["Enter" "Send — or queue it while a turn is running"] ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
+    [["Enter" "Send — or queue it while a turn is running"]
+     ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
      ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
      ["M-> · C-x j · C-l · C-End" "Jump to newest — end-of-buffer (or click the ↓ latest chip)"]
      ["M-<" "Jump to the top — beginning-of-buffer"]

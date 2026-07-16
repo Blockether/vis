@@ -353,3 +353,70 @@
             (is (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
             (is (< warm-ms 50.0) "warm read is a pure cache hit")
             (is (empty? @@inflight) "the in-flight slot is released after the fetch")))))))
+
+(deftest session-model-cached-never-blocks-the-caller
+  ;; REGRESSION (issue #29, gateway leg): the footer reads the session's model
+  ;; pref every frame. This used to be a LIVE daemon round-trip per frame; it
+  ;; must serve from a per-sid cache and refresh in the background — same
+  ;; discipline as `list-resources-cached` above.
+  (let [slow-ms
+        300
+
+        cache
+        (rv 'session-model-cache)
+
+        inflight
+        (rv 'session-model-refreshing)
+
+        calls
+        (atom 0)]
+
+    (with-redefs-fn {(rv 'session-model) (fn [_sid]
+                                           (swap! calls inc)
+                                           (Thread/sleep slow-ms)
+                                           {:provider "anthropic" :model "opus"})}
+      (fn []
+        (reset! @cache {})
+        (reset! @inflight #{})
+        (let [t0
+              (System/nanoTime)
+
+              cold
+              (client/session-model-cached "sid-m")
+
+              cold-ms
+              (/ (- (System/nanoTime) t0) 1e6)]
+
+          (is (nil? cold) "cold read serves the last-known value (nil) immediately")
+          (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
+          ;; several stale reads while the fetch is in flight stay single-flight
+          (dotimes [_ 5]
+            (client/session-model-cached "sid-m"))
+          (Thread/sleep (+ slow-ms 250))
+          (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
+          (let [t1
+                (System/nanoTime)
+
+                warm
+                (client/session-model-cached "sid-m")
+
+                warm-ms
+                (/ (- (System/nanoTime) t1) 1e6)]
+
+            (is (= {:provider "anthropic" :model "opus"} warm) "a fresh entry is served from cache")
+            (is (< warm-ms 50.0) "warm read is a pure cache hit")
+            (is (empty? @@inflight) "the in-flight slot is released after the fetch")))))))
+
+(deftest set-session-model!-writes-through-the-session-model-cache
+  ;; A pick made in THIS client must show on the very next footer frame, not
+  ;; after the cache TTL expires.
+  (let [cache (rv 'session-model-cache)]
+    (with-redefs-fn {(rv 'send-json!) (fn [method path body]
+                                        (is (= "PATCH" method))
+                                        (is (= "/v1/sessions/sid-w/model" path))
+                                        {:model body})}
+      (fn []
+        (reset! @cache {})
+        (is (= {:provider "zai" :model "glm"} (client/set-session-model! "sid-w" "zai" "glm")))
+        (is (= {:provider "zai" :model "glm"} (:val (get @@cache "sid-w")))
+            "the PATCHed pref lands in the footer cache immediately")))))

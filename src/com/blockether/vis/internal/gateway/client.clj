@@ -391,7 +391,44 @@
 
 (defn session-model [sid] (:model (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model"))))
 
-(defn session-model-cached [sid] (session-model sid))
+(defonce ^:private session-model-cache (atom {}))
+(defonce ^:private session-model-refreshing (atom #{}))
+(def ^:private session-model-cache-ttl-ms 750)
+
+(defn- refresh-session-model!
+  "Single-flight background refresh of the session-model cache for `sid` —
+   same discipline as `refresh-resources!`: the daemon round-trip is BLOCKING
+   and must never run on the render thread. Errors leave the last-known value
+   untouched."
+  [sid k]
+  (let [[old _] (swap-vals! session-model-refreshing conj k)]
+    (when-not (contains? old k)
+      (future (try (let [v (session-model sid)]
+                     (swap! session-model-cache assoc k {:at (System/currentTimeMillis) :val v}))
+                   (catch Throwable _ nil)
+                   (finally (swap! session-model-refreshing disj k)))))))
+
+(defn session-model-cached
+  "Footer-frequency read of the session's model pref served from a per-sid
+   cache that NEVER blocks the caller (issue #29, gateway leg: this used to
+   be a live `session-model` HTTP round-trip per footer frame). A stale (or
+   cold) entry kicks a background single-flight refresh and this returns the
+   last-known value immediately (nil before the first success).
+   `set-session-model!` writes through, so a pick made in THIS client shows
+   on the very next frame."
+  [sid]
+  (let [k
+        (str sid)
+
+        now
+        (System/currentTimeMillis)
+
+        {:keys [at val]}
+        (get @session-model-cache k)]
+
+    (when-not (and at (< (- now (long at)) (long session-model-cache-ttl-ms)))
+      (refresh-session-model! sid k))
+    val))
 
 ;; ---------------------------------------------------------------------------
 ;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
@@ -504,10 +541,15 @@
     (when (< (long (:status response)) 400) (:body response))))
 
 (defn set-session-model!
+  "PATCH the session's model pref in the daemon. Writes the returned pref
+   straight through into the `session-model-cached` snapshot so the footer
+   chip flips on the very next frame instead of waiting out the cache TTL."
   [sid provider model]
-  (:model (send-json! "PATCH"
-                      (str "/v1/sessions/" (enc sid) "/model")
-                      {:provider provider :model model})))
+  (let [pref (:model (send-json! "PATCH"
+                                 (str "/v1/sessions/" (enc sid) "/model")
+                                 {:provider provider :model model}))]
+    (swap! session-model-cache assoc (str sid) {:at (System/currentTimeMillis) :val pref})
+    pref))
 
 (defn- decode-workspace
   "Re-hydrate a gateway workspace response into the engine's HYPHENATED

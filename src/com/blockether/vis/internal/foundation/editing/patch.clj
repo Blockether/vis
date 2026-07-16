@@ -46,12 +46,14 @@
     (.toString sb)))
 (defn- match-at?
   [lines pattern i cmp]
-  (let [i (long i)
-        n (long (count pattern))]
+  (let [i
+        (long i)
+
+        n
+        (long (count pattern))]
+
     (loop [k 0]
-      (if (= k n)
-        true
-        (if (cmp (nth lines (+ i k)) (nth pattern k)) (recur (inc k)) false)))))
+      (if (= k n) true (if (cmp (nth lines (+ i k)) (nth pattern k)) (recur (inc k)) false)))))
 (def ^:private fuzzy-passes
   "Per-line fuzzy strategies. `seek-sequence-with-pass` orchestrates them
    in two phases so the structure-preserving `:relative-indent` pass can
@@ -274,8 +276,12 @@
   "Vec of `[token ^long start ^long end]` for every maximal non-whitespace
    run in `s`. `start`/`end` are raw char offsets (end exclusive)."
   [^String s]
-  (let [n (long (count s))
-        acc (java.util.ArrayList.)]
+  (let [n
+        (long (count s))
+
+        acc
+        (java.util.ArrayList.)]
+
     (loop [i (long 0)]
       (when (< (long i) n)
         (if (Character/isWhitespace (.charAt s (long i)))
@@ -528,15 +534,15 @@
   [tuples]
   (->> tuples
        (reduce (fn [groups [ln :as t]]
-                 (let [ln (long ln)
+                 (let [ln
+                       (long ln)
+
                        g
                        (peek groups)]
 
                    (if g
                      (let [last-ln (long (first (peek g)))]
-                       (if (= ln (inc last-ln))
-                         (conj (pop groups) (conj g t))
-                         (conj groups [t])))
+                       (if (= ln (inc last-ln)) (conj (pop groups) (conj g t)) (conj groups [t])))
                      (conj groups [t]))))
                [])
        (mapv (fn [g]
@@ -645,7 +651,7 @@
                       (let [tol (long hash-line-drift-tolerance)
                             in-win (filterv (fn [i]
                                               (<= (Math/abs (- (inc (long i)) (long line))) tol))
-                                            matches)]
+                                     matches)]
 
                         (cond
                           ;; 2. drifted — one nearby match, follow the content
