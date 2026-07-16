@@ -28,6 +28,7 @@
 (def ^:private expand-through (var-get #'eng/expand-through))
 (def ^:private session-fold-tool (var-get #'lp/session-fold-tool))
 (def ^:private tool-call->python-source (var-get #'lp/tool-call->python-source))
+(def ^:private irm (var-get #'lp/iteration-results-message))
 
 (defn- with-verbs
   "Fresh ctx-atom + a GraalPy context with session_fold bound.
@@ -529,6 +530,30 @@
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         ;; t2/i9 is not in the weights map (created this iteration, unsent)
         (expect (= "folded t2/i9 · utilization 44% (42k/96k) → fresh" (sf ["t2/i9"] "fresh")))))
+  (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
+      ;; regression: the saved-tokens + utilization suffix must ride the durable
+      ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
+      ;; transient tool-return confirmation.
+      (let [ctx
+            (priced-ctx)
+
+            sf
+            (get (compaction-verbs ctx) 'session-fold)
+
+            _
+            (sf ["t1/i1"] "big cat dump")
+
+            trailer
+            [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
+
+            out
+            (apply-summaries trailer (get @ctx "session_summaries"))
+
+            line
+            (:content (irm (second (first out))))]
+
+        (expect (= "# ⋯ folded t1/i1 · saved ~12k tokens · utilization 44% (42k/96k) · big cat dump"
+                   line))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))

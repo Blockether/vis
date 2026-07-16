@@ -2438,6 +2438,7 @@
                intent (cond-> base
                         g
                         (assoc "gist" g)
+
                         (not (str/blank? note))
                         (assoc "note" note))]
 
@@ -3920,7 +3921,18 @@
           ;; per-tool result renderers (symbol `:native-tool :render`), looked up
           ;; once for this iteration — form-result-display applies them so a native
           ;; tool's result shows as a clean card, unified across TUI + web.
-          native-renderers (extension/native-tool-renderers active-extensions)
+          ;; `session_fold` is ENGINE-level (no extension symbol), so its card
+          ;; renderer rides here: the verb returns "folded <label><note> → <gist>"
+          ;; — split it so the receipt (label + reclaimed tokens + utilization) is
+          ;; the op-card HEADLINE and the gist the expandable body, instead of the
+          ;; whole string hiding as a body-only card the user must expand.
+          native-renderers (assoc (extension/native-tool-renderers active-extensions)
+                             "session_fold" (fn [result]
+                                              (let [s (str result)]
+                                                (if-let [i (str/index-of s " → ")]
+                                                  {:summary (subs s 0 (long i))
+                                                   :body (subs s (+ (long i) 3))}
+                                                  {:summary s}))))
           ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
           ;; by the result's `:op` (the only origin handle a printed value carries),
           ;; so `print(await rg(...))` paints rg's card just like a native call.
