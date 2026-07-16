@@ -683,6 +683,24 @@
     (it "ease-scroll settles a parked move and drops :pos"
         (let [r ((ev :ease-scroll) {:scroll {:mode :at :offset 50 :pos 50}} [:ease-scroll 150 100])]
           (expect (= {:mode :at :offset 50} (:scroll r)))))
+    (it "ease-scroll preserves :scroll IDENTITY when settled (fast-path survives)"
+        ;; Regression for the streaming FULL-frame spin: `scroll/ease` re-`assoc`s
+        ;; :pos every tick, so a settled follow-bottom returned a fresh-but-EQUAL
+        ;; scroll map each ~80ms pulse. app-db's :scroll churned identity, and the
+        ;; render loop's identical?-keyed fast paths (live-progress-only-change?)
+        ;; demoted every progress tick to a FULL repaint. The handler must return
+        ;; db UNTOUCHED when nothing moved so the cheap partial-live path stays live.
+        (let [db {:scroll (assoc scroll/follow :pos 200) :progress {:iterations []}}
+              ;; max-s = total-h(240) - inner-h(40) = 200, already at bottom -> settled
+              once ((ev :ease-scroll) db [:ease-scroll 240 40])
+              twice ((ev :ease-scroll) once [:ease-scroll 240 40])]
+
+          ;; no move -> same db object, and :scroll identity is stable across ticks
+          (expect (identical? once db))
+          (expect (identical? (:scroll once) (:scroll twice)))
+          ;; real growth still moves the scroll (view follows the new bottom)
+          (expect (not (identical? (:scroll twice)
+                                   (:scroll ((ev :ease-scroll) twice [:ease-scroll 340 40])))))))
     (it "set-scroll snap-parks at an exact row (search jump)"
         (let [r ((ev :set-scroll) {:scroll scroll/follow} [:set-scroll 42])]
           (expect (= {:mode :at :offset 42} (:scroll r)))))
