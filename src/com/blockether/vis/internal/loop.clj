@@ -978,10 +978,27 @@
         deadline
         (atom (+ start timeout-ms))
 
+        park-depth
+        (atom 0)
+
         outside-wall
         (fn [thunk]
+          ;; RE-ENTRANT park. Native handlers nest this: run_tests wraps the
+          ;; WHOLE run (language-surface) AND clj-test-fn separately wraps its
+          ;; ensure-repl-for-dir! boot. A non-reentrant park let the INNER exit
+          ;; collapse the clock back to the base `timeout-ms` (30s) while the
+          ;; OUTER park was still live, so the actual test eval that ran after
+          ;; the boot got only 30s — a slow first-load / wedged eval then died
+          ;; at exactly 30000ms even though the pack budget is 290s. Fix: only
+          ;; the OUTERMOST park restores the base wall; a nested exit re-parks to
+          ;; MAX so the enclosing park (and its own budget) survives.
+          (swap! park-depth inc)
           (reset! deadline (+ (System/currentTimeMillis) (long rt/MAX_EVAL_TIMEOUT_MS)))
-          (try (thunk) (finally (reset! deadline (+ (System/currentTimeMillis) timeout-ms)))))
+          (try (thunk)
+               (finally (reset! deadline (+ (System/currentTimeMillis)
+                                            (if (pos? (swap! park-depth dec))
+                                              (long rt/MAX_EVAL_TIMEOUT_MS)
+                                              timeout-ms))))))
 
         worker
         (cancellation/worker-future

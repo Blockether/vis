@@ -350,6 +350,35 @@
                    (expect (= "repl_eval" (get-in result [:error :data :tool])))
                    (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
 
+(defdescribe nested-outside-tool-wall-test
+             ;; REGRESSION: run_tests nests the park — language-surface wraps the
+             ;; WHOLE run in run-outside-tool-wall AND clj-test-fn wraps its
+             ;; ensure-repl-for-dir! boot. A non-reentrant park let the INNER
+             ;; exit collapse the clock back to the 30s base wall while the OUTER
+             ;; park was still live, so a slow test eval after the boot died at
+             ;; 30000ms even though the pack budget is 290s.
+             (it "a nested park does not collapse the enclosing park's deadline"
+                 (let [handler
+                       (fn [env _]
+                         ;; OUTER park (mirrors language-surface run-tests).
+                         (extension/run-outside-tool-wall env
+                                                          (fn []
+                                                            ;; INNER park returns fast (mirrors the REPL boot).
+                                                            (extension/run-outside-tool-wall
+                                                              env
+                                                              (fn []
+                                                                :booted))
+                                                            ;; Still inside the OUTER park: work well past the
+                                                            ;; base wall must stay parked, not time out.
+                                                            (Thread/sleep 1500)
+                                                            :ran)))
+
+                       result
+                       ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "run_tests")]
+
+                   (expect (false? (:timeout? result)))
+                   (expect (= :ran (:result result))))))
+
 (defdescribe native-tool-call-execution-test
              ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
              ;; synthesized `env* (assoc environment)` (a 1-arg assoc) before execute-code, so
