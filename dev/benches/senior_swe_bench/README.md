@@ -399,6 +399,7 @@ Important files:
 | `summary.json` | Normalized completion, score, agent identity, token usage, and failure outcome from `metrics.py`. |
 | `patches/<task-id>.diff` | Agent patch fallback when Harbor verifier artifacts do not include one. |
 | `vis-traces/<task-id>/vis.trace.jsonl` | Vis trace copied from task artifacts when present. |
+| `vis-transcript.html` | Readable standalone transcript rendered from the redacted Vis trace. |
 
 Inspect a preflight run:
 
