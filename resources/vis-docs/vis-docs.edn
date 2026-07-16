@@ -22,6 +22,8 @@
           :blurb "Exporting and sharing past sessions and forensic reports."}
          {:file "skills.md" :title "Skills" :section "Using Vis" :order 60
           :blurb "On-demand skills the agent loads only when a task needs them."}
+         {:file "queue-and-cancel.md" :title "Queue, cancel & quit" :section "Using Vis" :order 62
+          :blurb "Queueing follow-up messages, auto-drain on resume, cancelling a turn, and Ctrl+C quit."}
          {:file "gateway.md" :title "Gateway & pairing" :section "Using Vis" :order 65
           :blurb "The gateway server and device pairing for remote sessions."}
          {:file "python-extensions.md" :title "Python extensions" :section "Extensions" :order 70
