@@ -440,6 +440,7 @@ def collect_run(
             "runner_log": str(runner_log.resolve()) if runner_log.exists() else None,
             "patch": str(patch_path.resolve()) if patch_path.exists() else None,
             "trace": deep_get(trial, "agent_result", "metadata", "vis", "trace"),
+            "transcript": str((run_dir / "vis-transcript.html").resolve()) if (run_dir / "vis-transcript.html").exists() else None,
             "harbor_job_dir": deep_get(first_json(run_dir, "collection.json") or {}, "job_dir"),
         },
         "notes": [],
@@ -625,7 +626,12 @@ def harness_card(harness: dict[str, Any]) -> str:
     artifact_items = []
     for key, value in artifacts.items():
         if value:
-            artifact_items.append(f"<li><span>{html_escape(key)}</span><code>{html_escape(value)}</code></li>")
+            rendered = (
+                f'<a href="{html_escape(value)}">open transcript</a>'
+                if key == "transcript"
+                else f"<code>{html_escape(value)}</code>"
+            )
+            artifact_items.append(f"<li><span>{html_escape(key)}</span>{rendered}</li>")
     if not artifact_items:
         artifact_items.append(f"<li>{MISSING}</li>")
 

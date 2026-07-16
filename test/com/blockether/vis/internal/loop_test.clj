@@ -312,8 +312,8 @@
                           :reset-stream-state! (fn [])}
                          (fn []
                            (if (<= (swap! calls inc) 3)
-                             (throw (ex-info "Stream connection error: closed"
-                                             {:type :svar.core/http-error :stream? true}))
+                             (throw (ex-info "Stream TTFT timeout (60000ms with no response headers)"
+                                             {:type :http-error :stream? true}))
                              {:routed/trace []})))]
             (expect (= 4 @calls))
             (expect (= [1 2 3]

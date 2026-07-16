@@ -138,3 +138,20 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
     assert "openai/local-model" in html
     assert "json_schema" in html
     assert "2 files, +10 / -2 (12 changed)" in html
+
+
+def test_report_links_generated_transcript(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "vis-transcript.html").write_text("transcript")
+
+    harness = render_report.collect_run(
+        run,
+        label="Vis",
+        harness="Vis",
+        fair_provider="z.ai",
+        fair_model="glm-5.2",
+    )
+
+    assert harness["artifacts"]["transcript"] == str((run / "vis-transcript.html").resolve())
+    assert "open transcript" in render_report.harness_card(harness)
