@@ -35,6 +35,51 @@
   [f]
   (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
+(defn- image-display-info
+  "For an image attachment, write the decoded bytes to a HOST temp file and read
+   back its pixel dimensions, returning `[abs-path width height]` — the attach
+   shim prints these as a `vis-image` display fence so a graphical TUI/web paints
+   the picture inline (the same fence matplotlib's `plt.show()` emits). The bytes
+   are written HOST-side (like `__vis_mpl_render_file__`), so inline display works
+   even when the sandbox's own Python filesystem is denied. Returns nil for a
+   non-image media-type, or when the bytes can't be decoded as an image (e.g. an
+   SVG or a format with no ImageIO reader) — the caller then records the
+   attachment with no inline fence and the renderer keeps its text placeholder.
+   Never throws: a temp-file/decoding hiccup must not break `vis_attach`."
+  [^String media-type ^String b64]
+  (try (when (str/starts-with? (str media-type) "image/")
+         (let [bytes
+               (.decode (java.util.Base64/getDecoder) b64)
+
+               img
+               (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. bytes))]
+
+           (when img
+             (let [w
+                   (.getWidth img)
+
+                   h
+                   (.getHeight img)
+
+                   dir
+                   (doto (java.io.File. (System/getProperty "java.io.tmpdir") "vis-attach")
+                     (.mkdirs))
+
+                   ext
+                   (or (some-> media-type
+                               (str/split #"/")
+                               second
+                               (str/replace #"[^a-z0-9]" ""))
+                       "img")
+
+                   f
+                   (java.io.File/createTempFile "att-" (str "." ext) dir)]
+
+               (with-open [o (java.io.FileOutputStream. f)]
+                 (.write o ^bytes bytes))
+               [(.getAbsolutePath f) w h]))))
+       (catch Throwable _ nil)))
+
 (defn- attach-bridge-bindings
   "Host callable the `vis_attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
@@ -69,7 +114,7 @@
                                                                  :size (long (or size 0))}
                                                           (not (str/blank? (str filename)))
                                                           (assoc :filename (str filename))))
-                        nil))))
+                        (image-display-info (str media-type) (str b64))))))
    "__vis_list_attachments__"
    (fn []
      (attach-envelope
@@ -158,6 +203,30 @@ def __vis_install_attach__():
         except Exception:
             return 'application/octet-stream'
 
+    def __vis_emit_image_fence(disp, name, mt, nbytes):
+        # A `vis-image` fence (the same shape plt.show() emits): 5 header lines
+        # (summary / host path / mime / WxH / size) a graphical TUI/web reads to
+        # paint the picture inline, with the closing fence. No backslash escapes
+        # in this shim, so the lines are joined with chr(10).
+        try:
+            path = str(disp[0])
+            w = int(disp[1])
+            h = int(disp[2])
+        except Exception:
+            return
+        def _human(n):
+            n = float(n)
+            for unit in ('B', 'KB', 'MB'):
+                if n < 1024.0 or unit == 'MB':
+                    return (str(int(n)) + ' B') if unit == 'B' else ('%.1f %s' % (n, unit))
+                n = n / 1024.0
+        size = _human(nbytes)
+        summary = '[Image: ' + str(name) + ' ' + str(w) + '×' + str(h) + ', ' + size + ']'
+        fence = '`' * 4
+        lines = [fence + 'vis-image', summary, path, str(mt),
+                 str(w) + 'x' + str(h), size, fence]
+        print(chr(10).join(lines))
+
     def vis_attach_bytes(data, filename, kind=None, media_type=None):
         if isinstance(data, str):
             data = data.encode('utf-8')
@@ -172,6 +241,9 @@ def __vis_install_attach__():
         env = rec(knd, mt, b64, name, len(data))
         if not env[0]:
             raise RuntimeError('vis_attach: ' + str(env[1]))
+        disp = env[1] if len(env) > 1 else None
+        if disp:
+            __vis_emit_image_fence(disp, name, mt, len(data))
         return {'filename': name, 'media_type': mt, 'kind': knd, 'size': len(data)}
 
     def vis_attach(path, kind=None, media_type=None, filename=None):
