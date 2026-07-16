@@ -83,7 +83,7 @@
 (defn- positive-long
   [x fallback]
   (let [n (parse-long* x)]
-    (if (and n (pos? n)) n fallback)))
+    (if (and n (pos? (long n))) n fallback)))
 
 (defn- normalize-string [x] (when (string? x) (not-empty (str/trim x))))
 
@@ -335,7 +335,7 @@
 (defn- parse-response
   [{:keys [status body] :as resp} id notification?]
   (cond (#{202 204} status) nil
-        (or (nil? status) (< status 200) (>= status 300))
+        (or (nil? status) (< (long status) 200) (>= (long status) 300))
         (throw (ex-info (str "MCP HTTP " status
                              ": " (subs (or body "") 0 (min 240 (count (or body "")))))
                         {:type :search/mcp-http-error :status status}))
@@ -419,9 +419,9 @@
             (first remaining)
 
             extra
-            (+ (utf8-bytes line) (if (seq out) 1 0))]
+            (+ (long (utf8-bytes line)) (if (seq out) 1 0))]
 
-        (if (> (+ used extra) max-bytes)
+        (if (> (+ used extra) (long max-bytes))
           out
           (recur (conj out line) (next remaining) (+ used extra)))))))
 
@@ -497,8 +497,10 @@
 (defn- effective-limits
   [opts]
   (let [cfg (effective-config)]
-    {:max-bytes (min (positive-long (:max-bytes opts) (:max-bytes cfg)) (:max-bytes cfg))
-     :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg)) (:max-lines cfg))}))
+    {:max-bytes (min (long (positive-long (:max-bytes opts) (:max-bytes cfg)))
+                     (long (:max-bytes cfg)))
+     :max-lines (min (long (positive-long (:max-lines opts) (:max-lines cfg)))
+                     (long (:max-lines cfg)))}))
 
 (def ^:private exa-bracket-marker-re
   "A line that is ONLY Exa's bracketed `[...]` separator. Unambiguously a
@@ -659,8 +661,11 @@
            open nil]
 
       (if (>= i (count lines))
-        (if (and open (str/blank? (:lang open)) (doc-prose? (subvec lines (inc (:idx open)))))
-          (str/join "\n" (into (subvec lines 0 (:idx open)) (subvec lines (inc (:idx open)))))
+        (if (and open
+                 (str/blank? (:lang open))
+                 (doc-prose? (subvec lines (inc (long (:idx open))))))
+          (str/join "\n"
+                    (into (subvec lines 0 (:idx open)) (subvec lines (inc (long (:idx open))))))
           excerpt)
         (let [m (re-matches fence-open-re (nth lines i))]
           (cond (and m (nil? open)) (recur (inc i) {:idx i :lang (second m)})
@@ -1106,7 +1111,7 @@
               (str/replace #"\s+" " ")
               str/trim
               (str/replace "|" "\\|"))]
-    (if (> (count s) max-len) (str (subs s 0 (max 0 (dec max-len))) "…") s)))
+    (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
 (defn- search-host
   "Bare host of a URL (leading `www.` stripped) for the compact Source column.
@@ -1162,7 +1167,7 @@
             ["| # | Result | Source | Published |" "|--:|--------|--------|-----------|"]
 
             rows
-            (map-indexed (fn [i c]
+            (map-indexed (fn [^long i c]
                            (str "| "
                                 (inc i)
                                 " | "
@@ -1178,7 +1183,7 @@
             (str/join "\n" (concat header rows))
 
             cards
-            (map-indexed (fn [i c]
+            (map-indexed (fn [^long i c]
                            (let [title
                                  (str/trim (str (get c "title")))
 
